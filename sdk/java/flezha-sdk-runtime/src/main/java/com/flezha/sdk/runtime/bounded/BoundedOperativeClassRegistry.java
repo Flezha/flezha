@@ -11,9 +11,10 @@ import javax.annotation.Nonnull;
  * Process-global registry of registered {@link BoundedOperative} classes keyed by
  * {@code factoryId}, each carrying its frozen {@link BoundedSpec} (the run-sugar
  * body or the validated structured linear chain). The runtime sibling of
- * {@link UnboundedOperativeClassRegistry}; reached reflectively from
- * {@link com.flezha.sdk.bounded.BoundedOperativeRegistry} so {@code flezha-sdk-api}
- * compiles standalone. Looked up when an {@code AddOperative} whose kind
+ * {@link UnboundedOperativeClassRegistry}; reached reflectively from the api
+ * module's {@code RegistryCore} so {@code flezha-sdk-api}
+ * compiles standalone. Overwrite-on-insert — the per-runner declared set owns
+ * duplicate detection. Looked up when an {@code AddOperative} whose kind
  * resolves to {@code :bounded} arrives.
  */
 public final class BoundedOperativeClassRegistry {
@@ -23,12 +24,12 @@ public final class BoundedOperativeClassRegistry {
     private BoundedOperativeClassRegistry() {}
 
     /**
-     * Reflective entry point invoked from {@link com.flezha.sdk.bounded.BoundedOperativeRegistry}.
+     * Reflective entry point invoked from the api module's {@code RegistryCore}.
      * Builds and validates the class's {@link BoundedSpec} (which reads a stable
      * {@code factoryId()} and validates the authoring), then records
-     * {@code (factoryId → spec)}. Rejects a factory id that collides with a
-     * registered operative or another bounded. Returns the controller-facing
-     * factory id.
+     * {@code (factoryId → spec)} — overwriting any prior registration of the
+     * id. Rejects a factory id that collides with a registered unbounded
+     * operative. Returns the controller-facing factory id.
      *
      * @throws IllegalArgumentException if the BoundedOperative class lacks a public
      *     no-arg constructor, returns a null/empty factory id, or collides with
@@ -47,13 +48,23 @@ public final class BoundedOperativeClassRegistry {
                     + boundedClass.getName() + "` (already registered as an UnboundedOperative)");
         }
 
-        BoundedSpec existing = ENTRIES.putIfAbsent(factoryId, spec);
-        if (existing != null) {
-            throw new IllegalArgumentException("Duplicate factory id `" + factoryId + "` for BoundedOperative class `"
-                    + boundedClass.getName() + "` (already registered as `"
-                    + existing.operativeClass().getName() + "`)");
-        }
+        ENTRIES.put(factoryId, spec);
         return factoryId;
+    }
+
+    /**
+     * On-demand removal ({@code FlezhaRunner.removeBounded}). Returns the
+     * removed spec (for {@code FlezhaImpl.removeType}'s re-register-on-live-hit
+     * path), or {@code null} when the id is unknown. Reached reflectively from
+     * the api module's {@code RegistryCore} on the pre-start path.
+     */
+    public static BoundedSpec unregisterClass(@Nonnull String factoryId) {
+        return ENTRIES.remove(factoryId);
+    }
+
+    /** Restore a spec {@code unregisterClass} removed (live-instance refusal). */
+    public static void restore(@Nonnull String factoryId, @Nonnull BoundedSpec spec) {
+        ENTRIES.put(factoryId, spec);
     }
 
     /** The frozen spec for a registered bounded factory, or {@code null} if unknown. */
@@ -70,7 +81,7 @@ public final class BoundedOperativeClassRegistry {
         return ENTRIES.isEmpty();
     }
 
-    /** Test-only — invoked by {@code BoundedOperativeRegistry.reset()}. */
+    /** Test-only — invoked by the api module's {@code RegistryCore.reset()}. */
     public static void reset() {
         ENTRIES.clear();
     }

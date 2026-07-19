@@ -7,7 +7,7 @@ import javax.annotation.Nonnull;
 /**
  * Frozen, immutable per-UnboundedOperative-class topology produced by
  * {@link com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder} at
- * {@link com.flezha.sdk.operative.UnboundedOperativeRegistry#registerUnbounded(Class) registerUnbounded}
+ * {@code FlezhaRunner.defineUnbounded(Class)}
  * time. Shared across every {@link UnboundedOperativeInstance} of this UnboundedOperative class.
  *
  * <p>The hot path (entry-channel input → consumer-operation segment) reads

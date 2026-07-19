@@ -9,7 +9,6 @@ import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.EventTimeFrom;
 import com.flezha.sdk.state.LogicalClock;
@@ -35,13 +34,13 @@ class ClockAndKeyedValidationTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
     }
 
     @Test
     @DisplayName("EventTimeFrom without an eventTime override is refused")
     void eventTimeFromWithoutExtractorIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(NoExtractorOperative.class))
+        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(NoExtractorOperative.class))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
                 .hasMessageContaining("no_extractor")
                 .hasMessageContaining("eventTime");
@@ -50,7 +49,7 @@ class ClockAndKeyedValidationTest {
     @Test
     @DisplayName("EventTimeFrom WITH an eventTime override registers")
     void eventTimeFromWithExtractorRegisters() {
-        UnboundedOperativeRegistry.registerUnbounded(ExtractorOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(ExtractorOperative.class);
         assertThat(UnboundedOperativeClassRegistry.getTopology("clock-extractor"))
                 .isNotNull();
     }
@@ -58,7 +57,7 @@ class ClockAndKeyedValidationTest {
     @Test
     @DisplayName("LogicalClock with NoChange is refused as UnservableClock")
     void logicalClockWithNoChangeIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(UnservableClockOperative.class))
+        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(UnservableClockOperative.class))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
                 .hasMessageContaining("UnservableClock");
     }
@@ -66,7 +65,7 @@ class ClockAndKeyedValidationTest {
     @Test
     @DisplayName("a keyed channel with no plugin wire is refused")
     void keyedChannelWithoutPluginWireIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(KeyedNoPluginOperative.class))
+        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(KeyedNoPluginOperative.class))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
                 .hasMessageContaining("keyed")
                 .hasMessageContaining("flz.key");
@@ -75,7 +74,7 @@ class ClockAndKeyedValidationTest {
     @Test
     @DisplayName("a keyed plugin-bound channel registers and is marked keyed on the descriptor")
     void keyedPluginChannelRegisters() {
-        UnboundedOperativeRegistry.registerUnbounded(KeyedPluginOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(KeyedPluginOperative.class);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology("clock-keyed-plugin");
         assertThat(topology).isNotNull();
         ChannelDescriptor out = topology.channel(topology.lookupChannelId("out"));

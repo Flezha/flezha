@@ -7,7 +7,6 @@ import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
@@ -48,7 +47,7 @@ class DynamicSegmentTest {
     @BeforeEach
     void reset() {
         SEEN.clear();
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
@@ -65,7 +64,7 @@ class DynamicSegmentTest {
     @Test
     @DisplayName("a dynamic Operation registers and creates one Segment per key seen")
     void dynamicOperationCreatesSegmentsLazily() throws Exception {
-        UnboundedOperativeRegistry.registerUnbounded(DynamicOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(DynamicOperative.class);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology("dynamic");
         assertThat(topology)
                 .as("dynamic mode is no longer refused at registration")
@@ -94,7 +93,7 @@ class DynamicSegmentTest {
     @Test
     @DisplayName("eviction is OFF unless a TTL is declared")
     void evictionIsOffByDefault() throws Exception {
-        UnboundedOperativeRegistry.registerUnbounded(DynamicOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(DynamicOperative.class);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology("dynamic");
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, "no-ttl-inst", ctx, ctx.workerPool());
@@ -118,7 +117,7 @@ class DynamicSegmentTest {
             return true;
         });
 
-        UnboundedOperativeRegistry.registerUnbounded(TtlOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(TtlOperative.class);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology("dynamic-ttl");
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, "ttl-inst", ctx, ctx.workerPool());

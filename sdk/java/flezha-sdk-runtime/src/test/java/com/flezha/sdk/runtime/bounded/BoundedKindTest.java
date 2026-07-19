@@ -7,14 +7,12 @@ import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeConfigurationException;
 import com.flezha.sdk.bounded.BoundedOperativeCtx;
 import com.flezha.sdk.bounded.BoundedOperativeException;
-import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.BoundedCompleted;
 import com.flezha.sdk.proto.BoundedStop;
@@ -36,6 +34,7 @@ import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.Operative;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstanceRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
@@ -100,8 +99,8 @@ class BoundedKindTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
-        BoundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
+        BoundedOperativeClassRegistry.reset();
         EMIT_RUNS.set(0);
         COMPENSATION_LOG.clear();
         STAGE0_RAN.set(false);
@@ -120,38 +119,30 @@ class BoundedKindTest {
     @DisplayName("registerBounded builds the spec and makes the factory resolvable")
     void registerBoundedOperativeResolvable() {
         assertThat(BoundedOperativeClassRegistry.getSpec("test-emit-bounded")).isNull();
-        BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(EmitBoundedOperative.class);
         assertThat(BoundedOperativeClassRegistry.getSpec("test-emit-bounded")).isNotNull();
-        assertThat(BoundedOperativeRegistry.factoryIds()).contains("test-emit-bounded");
-    }
-
-    @Test
-    @DisplayName("registerBounded after freeze throws IllegalStateException")
-    void registerAfterFreezeRejected() {
-        BoundedOperativeRegistry.freeze();
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class))
-                .isInstanceOf(IllegalStateException.class);
+        assertThat(BoundedOperativeClassRegistry.factoryIds()).contains("test-emit-bounded");
     }
 
     @Test
     @DisplayName("a bounded factory colliding with a operative (either order) is rejected")
     void crossKindDuplicateRejected() {
-        UnboundedOperativeRegistry.registerUnbounded(CollideUnboundedOperative.class);
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(CollideBoundedOperative.class))
+        UnboundedOperativeClassRegistry.registerClass(CollideUnboundedOperative.class);
+        assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(CollideBoundedOperative.class))
                 .isInstanceOf(IllegalArgumentException.class);
 
-        UnboundedOperativeRegistry.reset();
-        BoundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
+        BoundedOperativeClassRegistry.reset();
 
-        BoundedOperativeRegistry.registerBounded(CollideBoundedOperative.class);
-        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(CollideUnboundedOperative.class))
+        BoundedOperativeClassRegistry.registerClass(CollideBoundedOperative.class);
+        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(CollideUnboundedOperative.class))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     @DisplayName("an external-stop-only operative (no self-termination, no maxDuration) is rejected at registration")
     void externalStopOnlyAuthoringRejected() {
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(ExternalStopOnlyBoundedOperative.class))
+        assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(ExternalStopOnlyBoundedOperative.class))
                 .isInstanceOf(BoundedOperativeConfigurationException.class)
                 .hasMessageContaining("terminal condition");
     }
@@ -162,7 +153,7 @@ class BoundedKindTest {
         // Formerly rejected outright ("branching"). One producer now feeds two
         // downstream operations, and BFS order keeps completion topological — which
         // is why the compensation planner needed no change at all.
-        BoundedOperativeRegistry.registerBounded(BranchingBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(BranchingBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -179,7 +170,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a dynamic-segment operation is rejected at registration")
     void dynamicSegmentOperationRejected() {
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(DynamicBoundedOperative.class))
+        assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(DynamicBoundedOperative.class))
                 .isInstanceOf(BoundedOperativeConfigurationException.class)
                 .hasMessageContaining("dynamic");
     }
@@ -210,7 +201,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("AddOperative kind=bounded spawns a bounded, runs once with init_values, and is idempotent")
     void addBoundedOperativeRunsOnce() throws Exception {
-        BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(EmitBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -246,7 +237,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("ctx.complete(result) carries the result payload into BoundedCompleted")
     void completeResultReachesCompletion() throws Exception {
-        BoundedOperativeRegistry.registerBounded(CompleteBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(CompleteBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -263,7 +254,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("inbox delivers post-start input to a running loop; a terminal predicate completes ok")
     void inboxLoopProcessesInputAndTerminalPredicateCompletesOk() throws Exception {
-        BoundedOperativeRegistry.registerBounded(LoopBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(LoopBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -286,7 +277,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("BoundedStop trips cooperative cancellation → terminal cancelled completion")
     void boundedStopCancelsCooperatively() throws Exception {
-        BoundedOperativeRegistry.registerBounded(LoopBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(LoopBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -302,7 +293,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("hard RemOperative removes a running bounded and cancels its driver → cancelled completion")
     void hardRemOperativeCancelsBounded() throws Exception {
-        BoundedOperativeRegistry.registerBounded(LoopBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(LoopBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -319,7 +310,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("maxDuration elapse cancels an interactive loop → cancelled completion")
     void maxDurationElapseCancels() throws Exception {
-        BoundedOperativeRegistry.registerBounded(TimedBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(TimedBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -336,7 +327,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("success: emits an instance-id-keyed empty-metadata output frame and BoundedCompleted ok")
     void successEmitsOutputAndOkCompletion() throws Exception {
-        BoundedOperativeRegistry.registerBounded(EmitBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(EmitBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -362,7 +353,7 @@ class BoundedKindTest {
     @DisplayName(
             "failure: a thrown BoundedOperativeException reports BoundedCompleted error with the message, no output")
     void failureEmitsErrorCompletion() throws Exception {
-        BoundedOperativeRegistry.registerBounded(FailBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(FailBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -384,7 +375,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a structured single-operation bounded equals the run-sugar one-operation form")
     void structuredSingleOpEqualsSugar() throws Exception {
-        BoundedOperativeRegistry.registerBounded(EchoStructuredOperative.class);
+        BoundedOperativeClassRegistry.registerClass(EchoStructuredOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -400,7 +391,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a multi-operation bounded runs its operations in order with a barrier")
     void structuredChainRunsInOrder() throws Exception {
-        BoundedOperativeRegistry.registerBounded(ChainBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(ChainBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -418,7 +409,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("parallel static segments run with independent per-segment state and a barrier")
     void structuredParallelSegmentsKeepPerSegmentState() throws Exception {
-        BoundedOperativeRegistry.registerBounded(FanBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(FanBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -436,7 +427,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a hybrid inter-operation channel both feeds the next stage and routes to a plugin sink")
     void structuredHybridChannelRoutesBoth() throws Exception {
-        BoundedOperativeRegistry.registerBounded(HybridBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(HybridBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -470,8 +461,8 @@ class BoundedKindTest {
     @Test
     @DisplayName("§5b.1/§7c.1 a durable bounded writes WAL frames; an opt-out one writes nothing")
     void durableBoundedWritesWalOptOutWritesNothing() throws Exception {
-        BoundedOperativeRegistry.registerBounded(FanBoundedOperative.class);
-        BoundedOperativeRegistry.registerBounded(FanOptOutBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(FanBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(FanOptOutBoundedOperative.class);
 
         List<byte[]> walFrames = new CopyOnWriteArrayList<>();
         SegmentStateSink.installGlobalSink((payloadId, frame) -> {
@@ -510,7 +501,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a durable chain journals an OpCommit at every op barrier")
     void durableChainJournalsEveryOpBoundary() throws Exception {
-        BoundedOperativeRegistry.registerBounded(ChainBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(ChainBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -528,7 +519,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("an opted-out class journals nothing (it re-runs from the top by design)")
     void optedOutClassJournalsNothing() throws Exception {
-        BoundedOperativeRegistry.registerBounded(FanOptOutBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(FanOptOutBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -548,7 +539,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a durable structured class with a codec-less inter-op channel is refused")
     void missingInterOpCodecIsRefused() {
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(NoCodecBoundedOperative.class))
+        assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(NoCodecBoundedOperative.class))
                 .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
                 .hasMessageContaining("MissingInterOpCodec")
                 .hasMessageContaining("mid");
@@ -574,7 +565,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a durable op STAGES its output onto the barrier's outbox instead of shipping it")
     void durableOpStagesOutputOntoTheOutbox() throws Exception {
-        BoundedOperativeRegistry.registerBounded(ChainBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(ChainBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -592,7 +583,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a failing stage leaks no staged output")
     void failingStageLeaksNoStagedOutput() throws Exception {
-        BoundedOperativeRegistry.registerBounded(EmitThenFailBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(EmitThenFailBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -639,7 +630,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a PER_INPUT loop commits one iteration per inbox item, then PARKS when idle")
     void perInputLoopCommitsPerIterationThenParks() throws Exception {
-        BoundedOperativeRegistry.registerBounded(LoopingBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(LoopingBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -665,7 +656,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a loop on run-sugar is refused (there is no chain to iterate)")
     void loopOnRunSugarIsRefused() {
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(LoopingSugarOperative.class))
+        assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(LoopingSugarOperative.class))
                 .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
                 .hasMessageContaining("LoopWithoutChain");
     }
@@ -673,7 +664,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a durable CHAINED loop whose terminal op has no codec is refused")
     void chainedLoopWithoutTerminalCodecIsRefused() {
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(ChainedNoCodecOperative.class))
+        assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(ChainedNoCodecOperative.class))
                 .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
                 .hasMessageContaining("LoopTerminalWithoutCodec");
     }
@@ -741,7 +732,7 @@ class BoundedKindTest {
     @DisplayName("a transient segment failure recovers on retry, and emits its output ONCE")
     void transientSegmentFailureRecoversOnRetry() throws Exception {
         RETRY_ATTEMPTS.set(0);
-        BoundedOperativeRegistry.registerBounded(FlakyBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(FlakyBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -764,7 +755,7 @@ class BoundedKindTest {
     @DisplayName("a non-retryable failure skips the ladder entirely")
     void nonRetryableFailureSkipsTheLadder() throws Exception {
         RETRY_ATTEMPTS.set(0);
-        BoundedOperativeRegistry.registerBounded(PoisonBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(PoisonBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -782,7 +773,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("retryAttempts > 1 with a zero backoff is refused (it would hot-spin)")
     void zeroRetryBackoffIsRefused() {
-        assertThatThrownBy(() -> BoundedOperativeRegistry.registerBounded(ZeroBackoffOperative.class))
+        assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(ZeroBackoffOperative.class))
                 .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
                 .hasMessageContaining("ZeroRetryBackoff");
     }
@@ -875,7 +866,7 @@ class BoundedKindTest {
     @DisplayName("a rewind unwinds the owed ops in reverse, and a HOOKLESS op still journals its drain")
     void rewindUnwindsOwedOpsInReverseAndDrainsHooklessOnes() throws Exception {
         REWIND_UNDO_LOG.clear();
-        BoundedOperativeRegistry.registerBounded(RewindSagaOperative.class);
+        BoundedOperativeClassRegistry.registerClass(RewindSagaOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -975,7 +966,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("§5b.2 a durable bounded holds its first Operation until a Segment restore lands, then resumes it")
     void durableBoundedResumesFromRestoreThroughGate() throws Exception {
-        BoundedOperativeRegistry.registerBounded(FanBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(FanBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -1021,7 +1012,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("§7b.1 a failed step rolls back completed steps in reverse, each with its own output")
     void sagaReverseOrderRollbackOnError() throws Exception {
-        BoundedOperativeRegistry.registerBounded(SagaBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(SagaBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -1041,7 +1032,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("§7b.2 keep-progress mode is plumbed to the driver; a single pass unwinds all-or-nothing")
     void sagaKeepProgressModeUnwindsSinglePass() throws Exception {
-        BoundedOperativeRegistry.registerBounded(KeepProgressSagaOperative.class);
+        BoundedOperativeClassRegistry.registerClass(KeepProgressSagaOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -1057,7 +1048,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("§7b.1 a clean completion does not compensate")
     void sagaCleanCompletionDoesNotCompensate() throws Exception {
-        BoundedOperativeRegistry.registerBounded(CleanSagaOperative.class);
+        BoundedOperativeClassRegistry.registerClass(CleanSagaOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -1074,7 +1065,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("§7b.1 compensation fires once per segment that ran; a hookless operation is skipped")
     void sagaPerSegmentRollback() throws Exception {
-        BoundedOperativeRegistry.registerBounded(FanSagaOperative.class);
+        BoundedOperativeClassRegistry.registerClass(FanSagaOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -1093,7 +1084,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("§7b.1 a cooperative stop after partial progress compensates the completed steps")
     void sagaForcedStopCompensatesPartialProgress() throws Exception {
-        BoundedOperativeRegistry.registerBounded(StopSagaOperative.class);
+        BoundedOperativeClassRegistry.registerClass(StopSagaOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
@@ -1121,7 +1112,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("§4.3 a durable saga records compensation_intent per completed op and compensation_done per undo")
     void sagaDurableEmitsCompensationRecords() throws Exception {
-        BoundedOperativeRegistry.registerBounded(SagaBoundedOperative.class);
+        BoundedOperativeClassRegistry.registerClass(SagaBoundedOperative.class);
         List<String> records = new CopyOnWriteArrayList<>();
         SegmentStateSink.installGlobalSink((payloadId, frame) -> {
             records.add(payloadId);
@@ -1151,7 +1142,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("§4.3 crash-resume finishes the remaining hooks, skipping already-done ones, no forward re-run")
     void sagaCrashResumeSkipsDoneCompensations() throws Exception {
-        BoundedOperativeRegistry.registerBounded(ResumeSagaOperative.class);
+        BoundedOperativeClassRegistry.registerClass(ResumeSagaOperative.class);
         List<String> records = new CopyOnWriteArrayList<>();
         SegmentStateSink.installGlobalSink((payloadId, frame) -> {
             records.add(payloadId);

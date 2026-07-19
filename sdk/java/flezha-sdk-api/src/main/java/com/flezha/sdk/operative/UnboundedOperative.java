@@ -8,7 +8,7 @@ import javax.annotation.Nonnull;
  * per-class topology of channels + Operations via {@link #channels(ChannelBuilder)}.
  *
  * <p>The runtime calls {@link #channels(ChannelBuilder)} once at
- * {@link UnboundedOperativeRegistry#registerUnbounded(Class) registerUnbounded} time and freezes
+ * {@link com.flezha.sdk.FlezhaRunner#defineUnbounded(Class) defineUnbounded} time and records
  * the resulting topology shared by every {@code UnboundedOperativeInstance} of this class.
  *
  * <p>Implementations MUST provide a public no-arg constructor — the runtime
@@ -27,7 +27,7 @@ public interface UnboundedOperative extends Computation {
 
     /**
      * One-shot topology declaration. Called exactly once per UnboundedOperative class at
-     * {@link UnboundedOperativeRegistry#registerUnbounded(Class) registerUnbounded} time. The
+     * {@link com.flezha.sdk.FlezhaRunner#defineUnbounded(Class) defineUnbounded} time. The
      * builder collects channel declarations into a topology shared by every
      * UnboundedOperative instance spawned for this class.
      */

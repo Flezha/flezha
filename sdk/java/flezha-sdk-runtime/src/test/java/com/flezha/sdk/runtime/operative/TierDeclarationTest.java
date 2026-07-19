@@ -9,7 +9,6 @@ import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperativeResponse;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
@@ -30,13 +29,13 @@ class TierDeclarationTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
     }
 
     @Test
     @DisplayName("a tier operative declares effectively_once to the controller")
     void tierOperativeDeclaresEffectivelyOnce() throws Exception {
-        UnboundedOperativeRegistry.registerUnbounded(TierOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(TierOperative.class);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology("tier-ok");
 
         assertThat(topology.effectivelyOnce()).isTrue();
@@ -48,7 +47,7 @@ class TierDeclarationTest {
     @Test
     @DisplayName("a non-tier operative still declares nothing (zero bytes)")
     void nonTierOperativeDeclaresNothing() {
-        UnboundedOperativeRegistry.registerUnbounded(PlainOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(PlainOperative.class);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology("tier-plain");
 
         assertThat(topology.effectivelyOnce()).isFalse();
@@ -58,7 +57,7 @@ class TierDeclarationTest {
     @Test
     @DisplayName("a tier operative with a non-keyed plugin channel is refused")
     void tierWithNonKeyedPluginChannelIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(TierUnkeyedOperative.class))
+        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(TierUnkeyedOperative.class))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
                 .hasMessageContaining("effectivelyOnce")
                 .hasMessageContaining("keyed");

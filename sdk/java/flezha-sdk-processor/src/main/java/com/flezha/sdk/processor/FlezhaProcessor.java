@@ -41,7 +41,7 @@ import javax.tools.Diagnostic;
  * (field-granular variants + {@code apply} + {@code kryoTypes}); {@code @Operation}
  * classes generate a {@code <Name>Operation} (and, with a {@code sink}, a
  * single-operation {@code <Name>UnboundedOperative}); {@code @UnboundedOperative} classes are collected. On
- * the final round a {@code com.flezha.generated.GeneratedUnboundedOperatives.registerAll()}
+ * the final round a {@code com.flezha.generated.GeneratedUnboundedOperatives.defineAll(FlezhaRunner)}
  * aggregator is emitted so authors register every sugared operative with one call.
  */
 @SupportedAnnotationTypes({
@@ -821,15 +821,13 @@ public final class FlezhaProcessor extends AbstractProcessor {
     private void emitAggregator() {
         StringBuilder b = new StringBuilder();
         b.append("package com.flezha.generated;\n\n");
-        b.append("import com.flezha.sdk.operative.UnboundedOperativeRegistry;\n\n");
-        b.append("/** Generated aggregator: registers every sugared operative with one call. */\n");
+        b.append("import com.flezha.sdk.FlezhaRunner;\n\n");
+        b.append("/** Generated aggregator: defines every sugared operative on the runner with one call. */\n");
         b.append("public final class GeneratedUnboundedOperatives {\n");
         b.append("    private GeneratedUnboundedOperatives() {}\n\n");
-        b.append("    public static void registerAll() {\n");
+        b.append("    public static void defineAll(FlezhaRunner runner) {\n");
         for (String fqn : operativeFqns) {
-            b.append("        UnboundedOperativeRegistry.registerUnbounded(")
-                    .append(fqn)
-                    .append(".class);\n");
+            b.append("        runner.defineUnbounded(").append(fqn).append(".class);\n");
         }
         b.append("    }\n}\n");
         write("com.flezha.generated.GeneratedUnboundedOperatives", b.toString());

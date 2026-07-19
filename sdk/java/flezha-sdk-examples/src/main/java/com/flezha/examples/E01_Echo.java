@@ -21,7 +21,7 @@ import java.util.Optional;
  * <ol>
  *   <li>an <b>Operation</b> — the unit of work, run per Segment;
  *   <li>an <b>Operative</b> — the topology that wires Operations to Channels;
- *   <li><b>declaration</b>, via {@code Flezha.newRunner(...).defineUnbounded(...)}.
+ *   <li><b>declaration</b>, via {@code Flezha.createRunner(...).defineUnbounded(...)}.
  * </ol>
  *
  * <p>{@code Change = NoChange} means "no state to persist", which opts the whole
@@ -99,7 +99,7 @@ public final class E01_Echo {
         // Declare every operative type on the builder, then run(): connect,
         // then block until shutdown (SIGTERM or close() from another thread).
         // Use .start() instead of .run() to keep the calling thread.
-        Flezha.newRunner(args.length > 0 ? args[0] : "my_app")
+        Flezha.createRunner(args.length > 0 ? args[0] : "my_app")
                 .defineUnbounded(EchoOperative.class)
                 .run();
     }

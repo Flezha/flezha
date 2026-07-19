@@ -3,7 +3,7 @@ package com.flezha.test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.generated.GeneratedUnboundedOperatives;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.WallClock;
 import com.flezha.sdk.testing.OperationTestHarness;
@@ -24,7 +24,7 @@ class SugarTwinTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
     }
 
     @Test
@@ -62,9 +62,9 @@ class SugarTwinTest {
     }
 
     @Test
-    void generatedUnboundedOperativesRegister() {
-        GeneratedUnboundedOperatives.registerAll();
-        assertThat(UnboundedOperativeRegistry.factoryIds())
+    void generatedUnboundedOperativesDefine() {
+        GeneratedUnboundedOperatives.defineAll(com.flezha.sdk.Flezha.createRunner("sugar_twin_ns"));
+        assertThat(com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry.factoryIds())
                 .contains("java_sugar_do_nothing", "java_sugar_store", "java_sugar_static_segment");
     }
 

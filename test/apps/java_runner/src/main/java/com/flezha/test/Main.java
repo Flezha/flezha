@@ -17,7 +17,7 @@ public final class Main {
     public static void main(String[] args) throws Exception {
         String namespace = args.length > 0 ? args[0] : "default";
         spawnStdinEofExit();
-        Flezha.newRunner(namespace)
+        Flezha.createRunner(namespace)
                 .defineUnbounded(DoNothingUnboundedOperative.class)
                 .defineUnbounded(StoreInputUnboundedOperative.class)
                 .defineUnbounded(CompareFilterUnboundedOperative.class)

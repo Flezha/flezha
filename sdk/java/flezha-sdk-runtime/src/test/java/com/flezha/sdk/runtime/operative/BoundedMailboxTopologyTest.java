@@ -8,7 +8,6 @@ import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
@@ -27,7 +26,7 @@ class BoundedMailboxTopologyTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
     }
 
     @Test

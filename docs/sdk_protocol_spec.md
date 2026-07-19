@@ -1662,6 +1662,40 @@ journal + iteration-boundary snapshots and delivering the undelivered
 inbox tail. Because both wake sources go through the inbox, two racing
 wakes collapse into exactly one rehydration.
 
+### Control command `UpdateFactories` (SDK → controller)
+
+```protobuf
+message FactoryDecl {
+    string id          = 1;
+    string description = 2;
+}
+message UpdateFactories {
+    repeated FactoryDecl factories = 1;  // the FULL current factory set
+}
+```
+
+Ships the runner's **full current factory set** after a post-start
+`define*`/`remove*` on the runner handle
+(`sdk-runner-entrypoint-redesign`), so a live runner's placeable types can
+change without a reconnect. Full-set semantics make delivery idempotent —
+the controller applies it as a replacement of that runner's stored factory
+list (remove-then-store in FleetManager), scoped to the sending runner; an
+empty set is legal and leaves the runner connected with zero placeable
+factories.
+
+**Fire-and-forget: no ack.** Unlike `OpCommit` it gates no durability
+barrier — a stale placement racing a removal fails at the SDK's
+`AddOperative` handler and convergence re-places it, the same failure
+mode as a runner dying mid-placement. A lost frame is corrected by the
+next one or by the reconnect init frame, whose `factory_ids` list is
+built from the same per-runner declared set and remains the resync of
+record.
+
+When the replacement drops a factory that still has controller-known
+operatives bound to that runner (the suspended-instance removal hole —
+see `docs/resilience/bounded_operative.md`), FleetManager logs a warning
+naming the namespace, runner, factory id, and affected operatives.
+
 ### Data frame metadata: durable-inbox offset (`flz.inbox_offset`)
 
 Post-start input for a **durable bounded** instance is appended to the

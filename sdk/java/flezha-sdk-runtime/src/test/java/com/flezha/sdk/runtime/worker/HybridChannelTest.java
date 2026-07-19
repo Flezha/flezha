@@ -8,7 +8,6 @@ import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.Frame;
@@ -75,7 +74,7 @@ class HybridChannelTest {
         PURE_OBSERVED.clear();
         PURE_EMIT_OUTCOMES.clear();
         capturedWrites.clear();
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
 
         OperationDispatcher.setWireWriter((handle, streamId, frame) -> {
             capturedWrites.add(frame);
@@ -98,7 +97,7 @@ class HybridChannelTest {
 
     private UnboundedOperativeInstance instantiate(
             Class<? extends UnboundedOperative> operativeClass, String factoryId) {
-        UnboundedOperativeRegistry.registerUnbounded(operativeClass);
+        UnboundedOperativeClassRegistry.registerClass(operativeClass);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         return UnboundedOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }
@@ -220,7 +219,7 @@ class HybridChannelTest {
     void hybridDuplicatePluginSinkIsRejected() {
         UnboundedOperativeConfigurationException ex = assertThrows(
                 UnboundedOperativeConfigurationException.class,
-                () -> UnboundedOperativeRegistry.registerUnbounded(DuplicateSinkUnboundedOperative.class));
+                () -> UnboundedOperativeClassRegistry.registerClass(DuplicateSinkUnboundedOperative.class));
         assertThat(ex.getMessage()).contains("alsoToPluginWith");
         assertThat(ex.getMessage()).contains("dup_out");
     }

@@ -4,6 +4,7 @@ import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import javax.annotation.Nonnull;
 import org.slf4j.Logger;
@@ -35,12 +36,13 @@ public final class ControlChannel {
     }
 
     /**
-     * Send the handshake. It always carries the runner's self-owned stable
-     * identity (initial connect and reconnect alike), so the controller resolves
-     * a reconnect as a binding swap. Mirrors the Rust SDK.
+     * Send the handshake, carrying the runner's current declared factory set
+     * (possibly empty — zero-operative start is legal) and its self-owned
+     * stable identity (initial connect and reconnect alike), so the
+     * controller resolves a reconnect as a binding swap. Mirrors the Rust SDK.
      */
-    public void sendHandshake(@Nonnull String namespace) throws Exception {
-        HandshakeMessage msg = HandshakeMessage.from(namespace);
+    public void sendHandshake(@Nonnull String namespace, @Nonnull List<String> factoryIds) throws Exception {
+        HandshakeMessage msg = HandshakeMessage.from(namespace, factoryIds);
         String json = ctx.objectMapper().writeValueAsString(msg);
         byte[] frame = FrameEncoder.build(HANDSHAKE_PAYLOAD_ID, json.getBytes(StandardCharsets.UTF_8), Map.of());
         int status = NativeTransport.streamWrite(ctx.nativeHandle(), controlStreamId, frame);

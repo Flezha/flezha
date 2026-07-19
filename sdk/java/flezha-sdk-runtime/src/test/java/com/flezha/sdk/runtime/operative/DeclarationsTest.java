@@ -3,7 +3,6 @@ package com.flezha.sdk.runtime.operative;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.bounded.BoundedOperative;
-import com.flezha.sdk.bounded.BoundedOperativeRegistry;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
@@ -31,7 +30,7 @@ class DeclarationsTest {
 
     @BeforeEach
     void reset() {
-        BoundedOperativeRegistry.reset();
+        BoundedOperativeClassRegistry.reset();
     }
 
     private static AddOperativeResponse decode(byte[] bytes) throws Exception {
@@ -41,7 +40,7 @@ class DeclarationsTest {
     @Test
     @DisplayName("a bounded chain declares its compensable ops and its leaf")
     void boundedChainDeclaresCompensableOpsAndLeaf() throws Exception {
-        BoundedOperativeRegistry.registerBounded(MixedSagaOperative.class);
+        BoundedOperativeClassRegistry.registerClass(MixedSagaOperative.class);
         BoundedSpec spec = BoundedOperativeClassRegistry.getSpec("declarations-mixed-saga");
         assertThat(spec).isNotNull();
 
@@ -56,7 +55,7 @@ class DeclarationsTest {
     @Test
     @DisplayName("a chain with nothing compensable declares an EMPTY value, not a missing key")
     void nothingCompensableDeclaresAnEmptyValue() throws Exception {
-        BoundedOperativeRegistry.registerBounded(NoCompensateOperative.class);
+        BoundedOperativeClassRegistry.registerClass(NoCompensateOperative.class);
         BoundedSpec spec = BoundedOperativeClassRegistry.getSpec("declarations-no-compensate");
 
         AddOperativeResponse response = decode(Declarations.forBounded(spec));
@@ -73,7 +72,7 @@ class DeclarationsTest {
     @Test
     @DisplayName("run-sugar declares nothing and encodes to zero bytes")
     void runSugarDeclaresNothing() {
-        BoundedOperativeRegistry.registerBounded(RunSugarOperative.class);
+        BoundedOperativeClassRegistry.registerClass(RunSugarOperative.class);
         BoundedSpec spec = BoundedOperativeClassRegistry.getSpec("declarations-run-sugar");
         assertThat(spec.isRunSugar()).isTrue();
 

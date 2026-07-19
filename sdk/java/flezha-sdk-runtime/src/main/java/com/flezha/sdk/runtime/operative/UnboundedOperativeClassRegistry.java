@@ -15,9 +15,10 @@ import javax.annotation.Nonnull;
  * {@link UnboundedOperativeTopologyBuilder} at registration time, plus the
  * {@code Class<? extends UnboundedOperative>} for diagnostic logging.
  *
- * <p>Reached reflectively from
- * {@link com.flezha.sdk.operative.UnboundedOperativeRegistry#registerUnbounded(Class)} so that
- * {@code flezha-sdk-api} compiles standalone.
+ * <p>Reached reflectively from the api module's {@code RegistryCore} so that
+ * {@code flezha-sdk-api} compiles standalone. Overwrite-on-insert: the
+ * per-runner declared set (api side) owns duplicate detection, so a restarted
+ * runner generation re-registering a class is idempotent here.
  */
 public final class UnboundedOperativeClassRegistry {
 
@@ -26,10 +27,11 @@ public final class UnboundedOperativeClassRegistry {
     private UnboundedOperativeClassRegistry() {}
 
     /**
-     * Reflective entry point invoked from
-     * {@link com.flezha.sdk.operative.UnboundedOperativeRegistry}. Instantiates the UnboundedOperative
+     * Reflective entry point invoked from the api module's
+     * {@code RegistryCore}. Instantiates the UnboundedOperative
      * class via its no-arg ctor, builds the topology, and records
-     * {@code (factoryId → topology + class)}. Returns the controller-facing
+     * {@code (factoryId → topology + class)} — overwriting any prior
+     * registration of the id. Returns the controller-facing
      * factory id so the caller can de-duplicate on its side.
      *
      * @throws UnboundedOperativeConfigurationException if topology validation fails.
@@ -61,13 +63,19 @@ public final class UnboundedOperativeClassRegistry {
 
         UnboundedOperativeTopology topology = UnboundedOperativeTopologyBuilder.build(operative);
 
-        Entry existing = ENTRIES.putIfAbsent(factoryId, new Entry(operativeClass, topology));
-        if (existing != null) {
-            throw new IllegalArgumentException("Duplicate factory id `" + factoryId + "` for UnboundedOperative class `"
-                    + operativeClass.getName() + "` (already registered as `"
-                    + existing.operativeClass().getName() + "`)");
-        }
+        ENTRIES.put(factoryId, new Entry(operativeClass, topology));
         return factoryId;
+    }
+
+    /**
+     * On-demand removal ({@code FlezhaRunner.removeUnbounded}). Returns the
+     * removed class (for {@code FlezhaImpl.removeType}'s re-register-on-live-hit
+     * path), or {@code null} when the id is unknown. Reached reflectively from
+     * the api module's {@code RegistryCore} on the pre-start path.
+     */
+    public static Class<? extends UnboundedOperative> unregisterClass(@Nonnull String factoryId) {
+        Entry removed = ENTRIES.remove(factoryId);
+        return removed == null ? null : removed.operativeClass();
     }
 
     public static UnboundedOperativeTopology getTopology(@Nonnull String factoryId) {
@@ -98,7 +106,7 @@ public final class UnboundedOperativeClassRegistry {
         return ENTRIES.isEmpty();
     }
 
-    /** Test-only — invoked by {@code UnboundedOperativeRegistry.reset()}. */
+    /** Test-only — invoked by the api module's {@code RegistryCore.reset()}. */
     public static void reset() {
         ENTRIES.clear();
     }

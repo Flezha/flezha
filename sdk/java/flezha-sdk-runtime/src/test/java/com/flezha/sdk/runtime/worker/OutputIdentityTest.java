@@ -7,7 +7,6 @@ import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.Frame;
@@ -53,7 +52,7 @@ class OutputIdentityTest {
         IDS_SEEN.clear();
         EMIT_OUTCOMES.clear();
         capturedWrites.clear();
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
 
         OperationDispatcher.setWireWriter((handle, streamId, frame) -> {
             capturedWrites.add(frame);
@@ -75,7 +74,7 @@ class OutputIdentityTest {
     }
 
     private UnboundedOperativeInstance instantiate(Class<? extends UnboundedOperative> cls, String factoryId) {
-        UnboundedOperativeRegistry.registerUnbounded(cls);
+        UnboundedOperativeClassRegistry.registerClass(cls);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         return UnboundedOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }

@@ -311,13 +311,14 @@ defmodule Flezha.Service.HubManager do
   Per-operative view of a namespace's durable registry for operator surfaces:
   one row per registered operative (including FAILED ones whose only placement is
   a dead node, which `get_all_operatives/1` filters out), carrying the assigned
-  runner and live node from the registry dump and the live health classified
+  runner, the declared factory (from the durable cspec start-args) and live node
+  from the registry dump and the live health classified
   by the Convergence Loop (`Snapshot.operative_health/2`), so the CLI sees exactly
   what the loop sees. A registry row the loop has not yet observed reports
   `:unknown` until the next tick covers it.
   """
   @spec operative_rows(String.t()) :: [
-          %{id: term(), health: atom(), runner: term(), node: term()}
+          %{id: term(), health: atom(), runner: term(), factory: term(), node: term()}
         ]
   def operative_rows(namespace) do
     hub_id = Identificator.hub(namespace)
@@ -326,12 +327,13 @@ defmodule Flezha.Service.HubManager do
       hub_id
       |> ProcessRegistry.dump()
       |> Enum.map(fn {operative_id, entry} ->
-        {_cspec, node_pids, metadata} = normalize_registry_entry(entry)
+        {cspec, node_pids, metadata} = normalize_registry_entry(entry)
 
         %{
           id: operative_id,
           health: Snapshot.operative_health(namespace, operative_id),
           runner: Map.get(metadata, :tag),
+          factory: cspec_factory_id(cspec),
           node: live_node(node_pids)
         }
       end)
@@ -340,6 +342,19 @@ defmodule Flezha.Service.HubManager do
       []
     end
   end
+
+  # The declared factory from a registry entry's cspec start-args — the same
+  # `{namespace, operative}` / `{namespace, runner, operative}` arg shapes
+  # `alter_child_data/2` rewrites.
+  defp cspec_factory_id(%{start: {_m, _f, [arg]}}) do
+    case arg do
+      {_namespace, %{} = operative} -> Map.get(operative, :factory_id)
+      {_namespace, _runner, %{} = operative} -> Map.get(operative, :factory_id)
+      _ -> nil
+    end
+  end
+
+  defp cspec_factory_id(_), do: nil
 
   defp normalize_registry_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
   defp normalize_registry_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}

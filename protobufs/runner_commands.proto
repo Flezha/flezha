@@ -42,6 +42,7 @@ message CommandRequest {
         IterCommit iter_commit = 30;
         IterCommitResponse iter_commit_response = 31;
         IterPark iter_park = 32;
+        UpdateFactories update_factories = 33;
     }
 }
 
@@ -466,6 +467,27 @@ message CreditGrant {
 // One-way; the generic CommandResponse it solicits is ignored.
 message ParkPayloadAck {
     string park_id = 1;
+}
+
+// One declared operative factory: the controller-facing factory id plus a
+// human-readable description, mirroring the connect init frame's factory
+// entries.
+message FactoryDecl {
+    string id = 1;
+    string description = 2;
+}
+
+// SDK -> Controller. Ships the runner's FULL current factory set after a
+// post-start define or remove (sdk-runner-entrypoint-redesign). Full-set
+// semantics make delivery idempotent; the reconnect init frame remains the
+// resync of record, so a lost frame self-heals. Fire-and-forget: the
+// Controller does not ack (it gates no durability barrier — a stale
+// placement fails at the SDK's AddOperative handler and convergence
+// re-places). Direction is reversed like RunnerShutdownNotification:
+// SDK -> Controller over the "control_command" payload_id; old Controllers
+// ignore the unknown variant via Protox unknown-field handling.
+message UpdateFactories {
+    repeated FactoryDecl factories = 1;
 }
 
 // Controller -> SDK. Cooperative external stop for a bounded operative

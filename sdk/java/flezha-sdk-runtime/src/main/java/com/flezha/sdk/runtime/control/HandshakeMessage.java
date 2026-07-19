@@ -1,10 +1,7 @@
 package com.flezha.sdk.runtime.control;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.flezha.sdk.bounded.BoundedOperativeRegistry;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerIdStore;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -29,11 +26,14 @@ public record HandshakeMessage(
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record FactoryInfo(String id, String description) {}
 
-    public static HandshakeMessage from(String namespace) {
-        // UnboundedOperative factories first, then bounded factories — both kinds are advertised
-        // in one combined list so the controller validates any AddOperative kind.
-        List<String> ids = new ArrayList<>(UnboundedOperativeRegistry.factoryIds());
-        ids.addAll(BoundedOperativeRegistry.factoryIds());
+    /**
+     * Build the init payload from the runner's per-runner declared factory
+     * set (unbounded first, then bounded — one combined list so the
+     * controller validates any AddOperative kind). Read at send time, so
+     * every reconnect naturally resyncs post-start defines/removes — the
+     * init frame is the resync of record.
+     */
+    public static HandshakeMessage from(String namespace, List<String> ids) {
         List<FactoryInfo> infos =
                 ids.stream().map(id -> new FactoryInfo(id, "")).collect(Collectors.toList());
         return new HandshakeMessage(namespace, ids, infos, RunnerIdStore.stableId(namespace, ids));

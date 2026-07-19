@@ -216,17 +216,7 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_call({:runners_for_factory, namespace, factory_id}, _from, state) do
-    active_ids = MapSet.new(get_runner_ids(state, namespace, :active))
-
-    ce_ids =
-      state.namespace_factories
-      |> Map.get(namespace, %{})
-      |> Map.get(factory_id, %{ce_ids: MapSet.new()})
-      |> Map.get(:ce_ids)
-      |> MapSet.intersection(active_ids)
-      |> MapSet.to_list()
-
-    {:reply, ce_ids, state}
+    {:reply, MapSet.to_list(placeable_runners(state, namespace, factory_id)), state}
   end
 
   @impl true
@@ -340,6 +330,25 @@ defmodule Flezha.Runner.FleetManager do
   @impl true
   def handle_call(:runner_cleanup, _from, state) do
     {:reply, :ok, runner_cleanup(state)}
+  end
+
+  # Full-set replacement of one runner's declared factory list, cast from
+  # `ControlChannel` on an SDK `UpdateFactories` frame (post-start
+  # define/remove). Composes the existing removal + store paths, so redelivery
+  # is idempotent and other runners' factory refs are untouched. An empty set
+  # is legal: the runner stays connected with zero placeable factories.
+  @impl true
+  def handle_cast({:sync_factories, namespace, runner_id, factories}, state) do
+    dropped = dropped_factory_ids(state, namespace, runner_id, factories)
+
+    state =
+      state
+      |> remove_ce_factories(namespace, runner_id)
+      |> store_factories(namespace, runner_id, factories)
+
+    warn_dropped_factories(state, namespace, runner_id, dropped)
+
+    {:noreply, state}
   end
 
   @impl true
@@ -767,15 +776,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   defp parse_factories(init_payload) do
-    case Map.get(init_payload, "factories") do
-      nil ->
-        # Backward compat: old SDKs only send factory_ids
-        (Map.get(init_payload, "factory_ids") || [])
-        |> Enum.map(fn id -> %{"id" => id, "description" => nil} end)
-
-      factories when is_list(factories) ->
-        factories
-    end
+    Map.get(init_payload, "factories") || []
   end
 
   defp store_factories(state, namespace, runner_id, factories) do
@@ -809,5 +810,64 @@ defmodule Flezha.Runner.FleetManager do
       |> Map.new()
 
     put_in(state, [:namespace_factories, namespace], ns_factories)
+  end
+
+  # Factory ids this runner advertised before a sync that are absent from the
+  # incoming full set.
+  defp dropped_factory_ids(state, namespace, runner_id, factories) do
+    new_ids = MapSet.new(factories, & &1["id"])
+
+    state.namespace_factories
+    |> Map.get(namespace, %{})
+    |> Enum.filter(fn {factory_id, info} ->
+      MapSet.member?(info.ce_ids, runner_id) and not MapSet.member?(new_ids, factory_id)
+    end)
+    |> Enum.map(fn {factory_id, _info} -> factory_id end)
+  end
+
+  # Tripwire for the suspended-instance removal hole: a dropped factory with
+  # controller-known operatives still bound to this runner — or suspended
+  # (runner tag nil) with no other active runner advertising the factory —
+  # escaped the SDK-side live-instance check, and its rehydration will fail
+  # placement. Warn only; a blocking policy is deferred.
+  defp warn_dropped_factories(state, namespace, runner_id, dropped) do
+    Enum.each(dropped, fn factory_id ->
+      case affected_operatives(state, namespace, runner_id, factory_id) do
+        [] ->
+          :ok
+
+        affected ->
+          Logger.warning(
+            "[fleet_manager] runner #{runner_id} on #{namespace} dropped factory " <>
+              "#{factory_id} that still has controller-known operatives " <>
+              "#{inspect(affected)}; their (re)placement will fail until a " <>
+              "runner re-defines the factory"
+          )
+      end
+    end)
+  end
+
+  defp affected_operatives(state, namespace, runner_id, factory_id) do
+    still_placeable = MapSet.size(placeable_runners(state, namespace, factory_id)) > 0
+
+    namespace
+    |> HubManager.operative_rows()
+    |> Enum.filter(fn row ->
+      row.factory == factory_id and
+        (row.runner == runner_id or (is_nil(row.runner) and not still_placeable))
+    end)
+    |> Enum.map(& &1.id)
+  end
+
+  # ACTIVE runners currently advertising `factory_id` — the placement filter
+  # (`runners_for_factory`) and the dropped-factory tripwire share this view.
+  defp placeable_runners(state, namespace, factory_id) do
+    active_ids = MapSet.new(get_runner_ids(state, namespace, :active))
+
+    state.namespace_factories
+    |> Map.get(namespace, %{})
+    |> Map.get(factory_id, %{ce_ids: MapSet.new()})
+    |> Map.get(:ce_ids)
+    |> MapSet.intersection(active_ids)
   end
 end

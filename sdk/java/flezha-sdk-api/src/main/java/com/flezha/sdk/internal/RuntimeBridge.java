@@ -6,8 +6,8 @@ import javax.annotation.Nullable;
 /**
  * The ONE reflective bridge from {@code flezha-sdk-api} into
  * {@code flezha-sdk-runtime}. The api module resolves runtime classes by name
- * so it compiles standalone; every caller (the class registries,
- * {@code RunnerBuilder.start()}) routes through here so the classpath
+ * so it compiles standalone; every caller (the registry cores,
+ * {@code FlezhaRunner.start()}) routes through here so the classpath
  * diagnosis and the cause-unwrapping live in one place.
  *
  * <p><b>Internal.</b> Not part of the SDK's public API; user code never calls

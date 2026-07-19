@@ -7,7 +7,6 @@ import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RunnerShutdownNotification;
@@ -16,6 +15,7 @@ import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,7 +42,7 @@ class GracefulShutdownTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
         GracefulShutdown.resetForTests();
     }
 
@@ -152,8 +152,8 @@ class GracefulShutdownTest {
     }
 
     private static RunnerContext newCtxWithUnboundedOperative(String operativeId) {
-        if (UnboundedOperativeRegistry.factoryIds().isEmpty()) {
-            UnboundedOperativeRegistry.registerUnbounded(ShutdownTestUnboundedOperative.class);
+        if (UnboundedOperativeClassRegistry.factoryIds().isEmpty()) {
+            UnboundedOperativeClassRegistry.registerClass(ShutdownTestUnboundedOperative.class);
         }
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         RunnerContext ctx = new RunnerContext("ns", cfg, 0L);

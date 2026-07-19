@@ -7,13 +7,13 @@ import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
@@ -52,7 +52,7 @@ class RestoreInitStateHandlerTest {
     @BeforeEach
     @AfterEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
         SegmentFlusher.resetForTesting();
         SegmentStateSink.resetForTesting();
     }
@@ -166,7 +166,7 @@ class RestoreInitStateHandlerTest {
     }
 
     private static RunnerContext newContextWithUnboundedOperative() {
-        UnboundedOperativeRegistry.registerUnbounded(CounterUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(CounterUnboundedOperative.class);
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));

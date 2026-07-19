@@ -7,7 +7,6 @@ import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
@@ -52,7 +51,7 @@ class TierDispatchTest {
     @BeforeEach
     void reset() {
         PLUGIN_WRITES.clear();
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
         shipped.install();
         OperationDispatcher.setWireWriter((handle, streamId, frame) -> {
             PLUGIN_WRITES.add(frame);
@@ -75,7 +74,7 @@ class TierDispatchTest {
     /** Dispatch one input, then wait for the background flusher to ship its record. */
     private void feed(Class<? extends UnboundedOperative> cls, String factoryId, String input, long offset)
             throws Exception {
-        UnboundedOperativeRegistry.registerUnbounded(cls);
+        UnboundedOperativeClassRegistry.registerClass(cls);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, factoryId + "-inst", ctx, ctx.workerPool());

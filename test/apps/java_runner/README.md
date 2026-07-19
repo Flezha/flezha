@@ -5,7 +5,7 @@ by the Java↔controller integration matrix under `mix test --only java_sdk` and
 by the `mix bench --runtime java` regression bench.
 
 The app declares its UnboundedOperative classes via
-`Flezha.newRunner(ns).defineUnbounded(...)` — the integration-matrix core
+`Flezha.createRunner(ns).defineUnbounded(...)` — the integration-matrix core
 being:
 
 - `do_nothing` — `DoNothingUnboundedOperative` + `DoNothingOperation`

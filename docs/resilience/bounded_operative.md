@@ -167,6 +167,18 @@ with their iteration, the `iter_committed` records with their consumed offsets,
 and the final `parked` entry) and `flz state inbox <instance>` (offsets, and
 which are still undelivered).
 
+**Known limitation — removing a suspended instance's type.** A parked/suspended
+durable bounded instance is evicted from the SDK's live-instance registry, so
+`removeBounded` / `remove_bounded` for its factory cannot see it: the SDK-side
+live-instance check passes and the removal succeeds. The suspended instance
+survives on the controller, but its later rehydration fails placement — no
+runner advertises the factory anymore — and stays failed until a runner
+re-defines the type. FleetManager logs a warning when an `UpdateFactories`
+replacement drops a factory that still has controller-known operatives for that
+runner; the warning is the tripwire, and convergence keeps surfacing the failed
+placement. A blocking policy (refusing the removal while suspended instances
+exist) is deliberately future work.
+
 ## Segment retry: the rung before the abort
 
 A segment error inside a **structured** operation is not immediately fatal. The

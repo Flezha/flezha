@@ -80,7 +80,7 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single operation's critical section. The registry SHALL preserve the existing internal shape: Operative classes are declared via `RunnerBuilder::define_unbounded::<R: UnboundedOperative>()`, called before `.start()`/`.run()` on a `Flezha::new_runner(namespace)` builder; `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<UnboundedInstance>` or equivalent handle.
+The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single operation's critical section. Operative classes are declared via `FlezhaRunner::define_unbounded::<R: UnboundedOperative>()`, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<UnboundedInstance>` or equivalent handle. Bounded instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
 
 The "registry" name carries forward from the pre-change implementation; what's stored in it is unchanged by this requirement. The concurrency guarantees are unchanged.
 
@@ -89,8 +89,12 @@ The "registry" name carries forward from the pre-change implementation; what's s
 - **THEN** no reader thread observes a latency spike greater than 1 millisecond attributable to the writer
 
 #### Scenario: Registry preserves the declaration contract
-- **WHEN** user code calls `.define_unbounded::<R>()` on a `RunnerBuilder` and later `AddOperative` triggers an Operative instance creation
+- **WHEN** user code calls `.define_unbounded::<R>()` on a `FlezhaRunner` and later `AddOperative` triggers an Operative instance creation
 - **THEN** the resulting `UnboundedInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-operation-segment-model` capability's scenarios
+
+#### Scenario: Post-start removal is serialized with AddOperative
+- **WHEN** a `remove_unbounded` request and an `AddOperative` command for the same factory race
+- **THEN** both SHALL be processed on the coordinator loop in some serial order — either the add lands first and the removal returns `Err(FlezhaError::OperativeTypeInUse { .. })`, or the removal lands first and the add fails as an unknown factory — with no interleaving where the removal succeeds while an instance exists
 
 ### Requirement: Reconnect Semantics Preserved
 
@@ -132,7 +136,7 @@ Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `Con
 
 ### Requirement: Per-Segment flusher single-thread linger drain
 
-The Rust SDK SHALL spawn at most one `SegmentFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `RunnerBuilder::define_unbounded::<R>()` call that declares an Operation with a non-`NoChange` Change type. Programs that declare only `NoChange` Operations SHALL NOT spawn a flusher thread.
+The Rust SDK SHALL spawn at most one `SegmentFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::define_unbounded::<R>()` call that declares an Operation with a non-`NoChange` Change type. Programs that declare only `NoChange` Operations SHALL NOT spawn a flusher thread.
 
 The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Segments; (c) for each Segment, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Segment's `send_frame` function pointer.
 
@@ -335,62 +339,111 @@ On a fresh process start (not a reconnect) the SDK SHALL load its node-local per
 
 ### Requirement: Rust SDK Entry Point
 
-The Rust SDK SHALL provide `Flezha::new_runner(namespace: impl Into<String>) -> Result<RunnerBuilder, ...>` as the single entry point for starting a Flezha runner. Calling `.start(self)` on the builder MUST connect to the controller's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2, wait for `AssignRunnerId`, and return a `FlezhaRunner` handle exposing `id()` and `operatives()`. `.run(self)` SHALL be sugar for `.start(self)` followed by `await_termination()` on the returned handle. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical; this is the first time that behavior has been captured for Rust in `openspec/specs/`.
+The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) -> Result<FlezhaRunner, FlezhaError>` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start(&self)` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2 carrying the runner's currently-declared factory set (possibly empty), wait for `AssignRunnerId`, and return `Ok(&Self)` for chaining. The started runner SHALL expose `namespace()` (replacing `id()` — the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is never the handle's identity) and `operatives()`. `.run(&self)` SHALL be sugar for `.start()` followed by `await_termination()`, never an independent implementation. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical.
 
 #### Scenario: Successful connection returns a live handle
-- **WHEN** an SDK user calls `Flezha::new_runner("my_app")?.define_unbounded::<MarketOperative>()?.start()` with the controller running
-- **THEN** the call blocks until the connect handshake is written, and the returned handle's `id()` returns the runner's stable namespace identity (non-empty); the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is not the handle's identity
+- **WHEN** an SDK user calls `Flezha::create_runner("my_app")?.define_unbounded::<MarketOperative>()?.start()` (binding the runner with `let`) with the controller running
+- **THEN** the call blocks until the connect handshake completes, and the runner's `namespace()` returns `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
-- **WHEN** an SDK user calls `.start(self)` on a builder and the controller's control socket is not yet listening
+- **WHEN** an SDK user calls `.start()` on a runner and the controller's control socket is not yet listening
 - **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
 
-#### Scenario: start() without any defined operative type fails fast
-- **WHEN** `.start(self)` is called on a `RunnerBuilder` with no `.define_unbounded(...)`/`.define_bounded(...)` calls and no `inventory`-harvested classes on the binary
-- **THEN** the SDK SHALL return `Err(RunnerStartError::NoOperativeDeclared)` describing the missing operative type declaration
+#### Scenario: start() with zero defined operative types is legal
+- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.define_unbounded(...)`/`.define_bounded(...)` calls and no `inventory`-harvested classes on the binary
+- **THEN** the runner SHALL connect successfully with an empty factory list in the handshake init message, and operative types MAY be defined later on the live runner
+
+#### Scenario: RunnerBuilder does not compile
+- **WHEN** user code references `flezha::RunnerBuilder`, `Flezha::new_runner`, `RunnerStartError`, or `RunnerError`
+- **THEN** compilation SHALL fail — the builder type, the old entry-point name, and the superseded error types are deleted with no shim
 
 ### Requirement: Runner declaration and connection failures surface as typed Results
 
-`RunnerBuilder::define_unbounded::<R>(self)` SHALL return `Result<Self, TopologyBuildError>` and `RunnerBuilder::define_bounded::<T>(self)` SHALL return `Result<Self, BuildBoundedError>` — the two existing per-kind authoring error types, mirroring Java's two per-kind configuration exceptions. An invalid topology (duplicate channel names, unwired channels, missing `segment_for` overrides, type mismatches, etc.) SHALL be reported as a typed `Err` at the call site, not a panic. `RunnerBuilder::start(self)` SHALL return `Err(RunnerStartError::ConnectFailed(..))` if the connect handshake fails (socket error, or the confirmation channel closing unexpectedly) instead of panicking. This mirrors `java-sdk`'s `OperativeConfigurationException`/`IllegalStateException` for the identical failure classes, closing the gap where the pre-change SDK panicked via `.expect(...)` for a program state the equivalent Java call already reported as a catchable, named exception.
+Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.define_unbounded::<A>()?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidBounded(#[from] BuildBoundedError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `segment_for` overrides, type mismatches, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
+
+`operatives()` SHALL return `Result<HashMap<String, Arc<UnboundedInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
 
 #### Scenario: Invalid topology is reported as a Result, not a panic
-- **WHEN** an Operative declares `c.channel(Trade.class, "trade.parsed").from(ParseOperation).into(OhlcOperation)` but `OhlcOperation`'s input type does not match `Trade`
-- **THEN** `.define_unbounded::<ThatOperative>()` SHALL return `Err(TopologyBuildError { .. })` carrying the `BuildTopologyError::TypeMismatch` diagnosis naming the mismatch — the call SHALL NOT panic
+- **WHEN** an Operative declares a channel whose consumer's input type does not match the channel payload type
+- **THEN** `.define_unbounded::<ThatOperative>()` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::TypeMismatch` diagnosis naming the mismatch — the call SHALL NOT panic
 
 #### Scenario: A connection failure at start() is a Result, not a panic
 - **WHEN** the confirmation channel from the runner thread closes without delivering `RunnerIdConfirmation` (e.g. the runner thread panicked internally)
-- **THEN** `.start(self)` SHALL return `Err(RunnerStartError::ConnectFailed(..))` — the caller's thread SHALL NOT panic
+- **THEN** `.start()` SHALL return `Err(FlezhaError::ConnectFailed(..))` — the caller's thread SHALL NOT panic
+
+#### Scenario: The fluent chain compiles under one question mark
+- **WHEN** user code writes `Flezha::create_runner("ns")?.define_unbounded::<A>()?.define_bounded::<B>()?.run()?` in a function returning `Result<(), FlezhaError>`
+- **THEN** it SHALL compile without intermediate `map_err` calls
+
+#### Scenario: operatives() on a never-started runner
+- **WHEN** code calls `.operatives()` on a runner created but never started
+- **THEN** the call SHALL return `Err(FlezhaError::NotStarted)` and SHALL NOT panic
 
 ### Requirement: Runner process singleton guard
 
-The Rust SDK SHALL allow at most one runner to be started per process. `RunnerBuilder::start()`/`run()` SHALL check a process-global guard (a mutex-held slot storing the running namespace — releasable on close, which a `OnceLock` is not) before connecting; if a prior builder's `.start()`/`.run()` has already succeeded in this process, the call SHALL return `Err(RunnerStartError::AlreadyRunning { namespace })` naming the already-running namespace, and SHALL NOT connect, mutate any shared registry, or spawn any background thread. `RunnerBuilder::start()` and `RunnerBuilder::run()` SHALL consume `self` (`fn start(self) -> Result<FlezhaRunner, RunnerStartError>`), so a builder cannot be started twice even before the runtime guard is checked.
+The Rust SDK SHALL allow at most one runner to be **started** per process. `Flezha::create_runner(...)` SHALL NOT claim the singleton slot — any number of unstarted runners may exist. `.start()`/`.run()` SHALL claim a process-global guard (a mutex-held slot storing the running namespace — releasable on close/Drop, which a `OnceLock` is not) by compare-and-set before connecting; if a prior runner's `.start()`/`.run()` has already succeeded in this process and not yet shut down, the call SHALL return `Err(FlezhaError::AlreadyRunning { namespace })` naming the already-running namespace, and SHALL NOT connect, mutate any shared registry, or spawn any background thread. Calling `.start()` twice on the same runner SHALL also be an error.
 
 #### Scenario: Second start() in the same process is rejected
-- **GIVEN** a process where `Flezha::new_runner("ns1")?.define_unbounded::<A>()?.start()` has already succeeded
-- **WHEN** code in the same process calls `Flezha::new_runner("ns2")?.define_unbounded::<B>()?.start()`
-- **THEN** the call SHALL return `Err(RunnerStartError::AlreadyRunning { namespace: "ns1".into() })`
+- **GIVEN** a process where a runner for `"ns1"` created via `Flezha::create_runner("ns1")?` has been started
+- **WHEN** code in the same process starts a second runner for `"ns2"`
+- **THEN** the call SHALL return `Err(FlezhaError::AlreadyRunning { namespace: "ns1".into() })`
 - **AND** no connection SHALL be attempted for `"ns2"`, and the process's `STABLE_ID`, `segment_state_sink`, and `credit::global()` state SHALL remain exclusively `"ns1"`'s
 
+#### Scenario: Creating runners never claims the slot
+- **GIVEN** a process where a runner for `"ns1"` is already started
+- **WHEN** code calls `Flezha::create_runner("ns2")?` and mutates it with `define_*`/`remove_*` without calling `.start()`
+- **THEN** no error SHALL occur and `"ns1"` SHALL remain the process's active runner
+
 #### Scenario: A runner may be started again after the first one is dropped
-- **GIVEN** a process where a runner for `"ns1"` was started and then dropped (triggering `Drop`'s graceful-shutdown sequence)
-- **WHEN** code in the same process calls `Flezha::new_runner("ns2")?.define_unbounded::<B>()?.start()`
+- **GIVEN** a process where a started runner for `"ns1"` was dropped (triggering `Drop`'s graceful-shutdown sequence)
+- **WHEN** code in the same process creates and starts a runner for `"ns2"`
 - **THEN** the call SHALL succeed and `"ns2"` SHALL become the process's active runner
+- **AND** the new runner's declared factory set SHALL start empty — generation 2 must re-define its types (no cross-generation declaration leak)
 
 #### Scenario: Concurrent start() calls — exactly one wins
 - **GIVEN** a process with no runner started yet
-- **WHEN** two threads each call `.start(self)` on a distinct, fully-built `RunnerBuilder` (`"ns1"` and `"ns2"`) at the same time
-- **THEN** exactly one call SHALL succeed and become the process's active runner, and the other SHALL return `Err(RunnerStartError::AlreadyRunning { namespace })` naming the winner — the guard's compare-and-set SHALL make this outcome deterministic per-run (no scenario where both succeed or both fail)
+- **WHEN** two threads each call `.start()` on a distinct `FlezhaRunner` (`"ns1"` and `"ns2"`) at the same time
+- **THEN** exactly one call SHALL succeed and become the process's active runner, and the other SHALL return `Err(FlezhaError::AlreadyRunning { namespace })` naming the winner — the guard's compare-and-set SHALL make this outcome deterministic per-run (no scenario where both succeed or both fail)
 
 ### Requirement: Runner lifecycle — start, run, await_termination, Drop
 
-`RunnerBuilder::start(self) -> Result<FlezhaRunner, RunnerStartError>` SHALL connect and return a `FlezhaRunner` handle without blocking the calling thread for the runner's ongoing lifetime. `FlezhaRunner::await_termination(&self)` SHALL block the calling thread until the runner shuts down (via `Drop`, SIGTERM-triggered graceful shutdown, or a controller-driven stop). `RunnerBuilder::run(self) -> Result<(), RunnerError>` SHALL be exactly `self.start()?` followed by `.await_termination()` on the result, with no independently-implemented blocking logic. `FlezhaRunner`'s existing `Drop` impl (graceful shutdown) SHALL be unchanged, and SHALL cause any thread blocked in `await_termination()` to return.
+`FlezhaRunner::start(&self) -> Result<&Self, FlezhaError>` SHALL connect and return without blocking the calling thread for the runner's ongoing lifetime. `FlezhaRunner::await_termination(&self)` SHALL block the calling thread until the runner shuts down (via `Drop`, SIGTERM-triggered graceful shutdown, or a controller-driven stop); on a never-started runner it SHALL return `Err(FlezhaError::NotStarted)`. `FlezhaRunner::run(&self) -> Result<(), FlezhaError>` SHALL be exactly `start()` followed by `await_termination()`, with no independently-implemented blocking logic. The owning handle's `Drop` SHALL run the graceful-shutdown sequence, release the singleton slot, and wake any thread blocked in `await_termination()` — but ONLY if the runner was started; an owner-never-started `Drop` SHALL be a no-op. Observer handles from `Flezha::current_runner()` (`owner: false`) SHALL have a no-op `Drop`.
 
 #### Scenario: start() returns immediately after the handshake, before shutdown
-- **WHEN** an SDK user calls `.start()` on a builder
+- **WHEN** an SDK user calls `.start()` on a runner
 - **THEN** the call returns as soon as the runner has an assigned id, without waiting for the runner to ever shut down
 - **AND** the runner continues dispatching in background threads exactly as it does today
 
 #### Scenario: run() blocks until shutdown
-- **WHEN** an SDK user calls `.run()` on a builder in a standalone `fn main()`
+- **WHEN** an SDK user calls `.run()` on a runner in a standalone `fn main()`
 - **THEN** the call blocks the calling thread until the runner shuts down, replacing the hand-rolled stdin-reading `std_keeper()` pattern used by `test/apps/rust_runner/src/main.rs` today
+
+#### Scenario: Dropping a never-started runner is free
+- **WHEN** a `FlezhaRunner` created via `Flezha::create_runner(..)` is dropped without `.start()` having been called
+- **THEN** `Drop` SHALL perform no shutdown work, touch no shared state, and release no slot (none was claimed)
+
+#### Scenario: await_termination() on a never-started runner
+- **WHEN** code calls `.await_termination()` on a runner created but never started
+- **THEN** the call SHALL return `Err(FlezhaError::NotStarted)` immediately and SHALL NOT block
+
+### Requirement: On-demand operative type declaration and removal (Rust)
+
+`FlezhaRunner` SHALL provide `define_unbounded::<R>()` / `define_bounded::<T>()` and their inverses `remove_unbounded::<R>()` / `remove_bounded::<T>()`, each returning `Result<&Self, FlezhaError>`, legal before and after `.start()`. The declared factory set SHALL be per-runner, starting empty each generation (inventory-harvested classes are merged into it at every `.start()`). A post-start define or remove SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `remove_*` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperativeTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`.
+
+#### Scenario: Pre-start remove shapes the init frame
+- **WHEN** user code defines A and B on an unstarted runner, removes B, then starts
+- **THEN** the handshake init frame's factory list SHALL contain only A
+
+#### Scenario: Post-start define ships UpdateFactories
+- **WHEN** user code calls `.define_unbounded::<C>()` on a started runner already declaring A
+- **THEN** the SDK SHALL send an `UpdateFactories` control message carrying the full set {A, C}, and a subsequent `AddOperative{factory_id: C}` SHALL succeed
+
+#### Scenario: Post-start remove with live instances refuses
+- **GIVEN** a started runner with one live instance of factory `"market"`
+- **WHEN** user code calls `.remove_unbounded::<MarketOperative>()`
+- **THEN** the call SHALL return `Err(FlezhaError::OperativeTypeInUse { factory_id: "market", live_instances: 1 })` and the type SHALL remain defined
+
+#### Scenario: Removing an undefined factory
+- **WHEN** user code calls `.remove_unbounded::<X>()` and X's factory id is not in the runner's declared set
+- **THEN** the call SHALL return `Err(FlezhaError::NotDefined { .. })`
 

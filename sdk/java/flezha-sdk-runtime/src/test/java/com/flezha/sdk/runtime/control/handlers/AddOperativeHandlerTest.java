@@ -7,11 +7,11 @@ import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -28,13 +28,13 @@ class AddOperativeHandlerTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
     }
 
     @Test
     @DisplayName("unknown kind literal is rejected with an error and nothing is registered")
     void unknownKindIsRejected() {
-        UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(IdempotentUnboundedOperative.class);
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
@@ -60,7 +60,7 @@ class AddOperativeHandlerTest {
     @Test
     @DisplayName("an unbounded class declaring nothing replies with zero bytes (pre-declaration behaviour)")
     void classDeclaringNothingRepliesWithZeroBytes() {
-        UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(IdempotentUnboundedOperative.class);
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
@@ -87,7 +87,7 @@ class AddOperativeHandlerTest {
     @Test
     @DisplayName("duplicate AddOperative for the same operative_id is a no-op (no panic, no growth)")
     void duplicateAddUnboundedOperativeIsNoOp() {
-        UnboundedOperativeRegistry.registerUnbounded(IdempotentUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(IdempotentUnboundedOperative.class);
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         RunnerContext ctx = new RunnerContext("ns", cfg, 0L);

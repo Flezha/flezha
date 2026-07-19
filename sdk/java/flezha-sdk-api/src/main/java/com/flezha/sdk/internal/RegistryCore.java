@@ -1,34 +1,34 @@
 package com.flezha.sdk.internal;
 
+import com.flezha.sdk.operative.Computation;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nonnull;
 
 /**
- * The ONE implementation behind the two process-global class registries
- * ({@code UnboundedOperativeRegistry}, {@code BoundedOperativeRegistry}),
- * which stay as thin static facades for the published API. Owns the
- * lock/freeze/unfreeze/reset semantics and the delegation into the runtime's
- * class registry via {@link RuntimeBridge}.
+ * The ONE implementation behind a {@code FlezhaRunner}'s two declared factory
+ * sets (unbounded + bounded). Instance-scoped: each runner carries its own
+ * cores, so a later runner starts with an empty declared set (generation 2
+ * must re-define its types); the runtime-side class registries reached via
+ * {@link RuntimeBridge} stay process-global and overwrite on insert.
  *
  * <p><b>Internal.</b> Not part of the SDK's public API; user code never calls
  * this.
  *
  * @param <C> the authoring interface the registry holds classes of
  */
-public final class RegistryCore<C> {
+public final class RegistryCore<C extends Computation> {
 
     private final Object lock = new Object();
     private final Map<String, Class<? extends C>> entries = new LinkedHashMap<>();
-    private final AtomicBoolean frozen = new AtomicBoolean(false);
     private final String runtimeRegistryFqn;
     private final String kindLabel;
 
     /**
      * @param runtimeRegistryFqn the runtime-side class registry reached via
-     *     {@link RuntimeBridge} ({@code registerClass(Class)} / {@code reset()})
+     *     {@link RuntimeBridge} ({@code registerClass(Class)} /
+     *     {@code unregisterClass(String)} / {@code reset()})
      * @param kindLabel {@code "operative"} / {@code "bounded"} — used in error
      *     messages
      */
@@ -41,18 +41,14 @@ public final class RegistryCore<C> {
      * Register a class: validate via the runtime side (which returns the
      * controller-facing factory id), then record it here.
      *
-     * @throws IllegalStateException if the registry is already frozen.
+     * @return the controller-facing factory id.
      * @throws IllegalArgumentException on a null class or duplicate factory id.
      */
-    public void register(Class<? extends C> cls) {
+    public String register(Class<? extends C> cls) {
         if (cls == null) {
             throw new IllegalArgumentException(kindLabel + "Class must not be null");
         }
         synchronized (lock) {
-            if (frozen.get()) {
-                throw new IllegalStateException(
-                        "Cannot register " + kindLabel + " '" + cls.getName() + "' — the SDK is already initialized");
-            }
             // Delegate to the runtime side (which validates the authoring and
             // returns the controller-facing factory id) before we record it here.
             String factoryId = (String) RuntimeBridge.invoke(
@@ -65,28 +61,61 @@ public final class RegistryCore<C> {
                 throw new IllegalArgumentException("Duplicate factory id: '" + factoryId + "'");
             }
             entries.put(factoryId, cls);
+            return factoryId;
         }
     }
 
-    /** Freeze the registry. Called by {@code RunnerBuilder.start()}. */
-    public void freeze() {
-        frozen.set(true);
+    /**
+     * The factory id under which {@code cls} is defined in this core.
+     *
+     * @throws IllegalArgumentException naming the class's factory id when it
+     *     is not defined here (never defined, or already removed).
+     */
+    @Nonnull
+    public String definedFactoryIdOf(@Nonnull Class<? extends C> cls) {
+        synchronized (lock) {
+            for (Map.Entry<String, Class<? extends C>> e : entries.entrySet()) {
+                if (e.getValue().equals(cls)) {
+                    return e.getKey();
+                }
+            }
+        }
+        throw new IllegalArgumentException(
+                kindLabel + " factory '" + factoryIdOf(cls) + "' is not defined on this runner");
     }
 
     /**
-     * Unfreeze the registry, keeping its entries. Called when the active
-     * runner closes, so a later runner in the same JVM may declare new
-     * operative types.
+     * Remove {@code factoryId}: unregister the class from the runtime-side
+     * registry and drop the entry here. Pre-start path — no live instance can
+     * exist, so no in-use check is needed.
      */
-    public void unfreeze() {
-        frozen.set(false);
+    public void remove(@Nonnull String factoryId) {
+        synchronized (lock) {
+            RuntimeBridge.invoke(
+                    runtimeRegistryFqn,
+                    "unregisterClass",
+                    new Class<?>[] {String.class},
+                    "Failed to remove " + kindLabel + " factory '" + factoryId + "'",
+                    factoryId);
+            dropEntry(factoryId);
+        }
+    }
+
+    /**
+     * Drop {@code factoryId}'s entry WITHOUT touching the runtime registry —
+     * the post-start path, where the runtime's {@code removeType} already
+     * unregistered it under the race-free live-instance check.
+     */
+    public void dropEntry(@Nonnull String factoryId) {
+        synchronized (lock) {
+            entries.remove(factoryId);
+        }
     }
 
     /** Thaw and clear the registry (and its runtime side). For tests. */
     public void reset() {
         synchronized (lock) {
             entries.clear();
-            frozen.set(false);
             RuntimeBridge.invokeIfPresent(runtimeRegistryFqn, "reset");
         }
     }
@@ -107,6 +136,19 @@ public final class RegistryCore<C> {
     public boolean contains(@Nonnull String factoryId) {
         synchronized (lock) {
             return entries.containsKey(factoryId);
+        }
+    }
+
+    /**
+     * The class's self-declared factory id, resolved by instantiating it via
+     * its public no-arg constructor — the same resolution registration uses,
+     * for error messages about undefined classes.
+     */
+    private String factoryIdOf(Class<? extends C> cls) {
+        try {
+            return cls.getDeclaredConstructor().newInstance().factoryId();
+        } catch (ReflectiveOperationException e) {
+            return cls.getName();
         }
     }
 }

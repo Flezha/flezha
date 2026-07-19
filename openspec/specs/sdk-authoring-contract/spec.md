@@ -187,16 +187,16 @@ The operation authoring sugar SHALL offer an opt-in that maps a segment's operat
 
 ### Requirement: Unbounded and bounded share a `Computation` authoring base
 
-Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `UnboundedOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The declaration siblings (`defineUnbounded`/`defineBounded` in Java, `define_unbounded`/`define_bounded` in Rust — both builder methods on `RunnerBuilder`, not free functions or static methods) SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and adding a corresponding `define_*`/`defineX` builder method, without editing the existing two authoring surfaces.
+Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `UnboundedOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The declaration siblings (`defineUnbounded`/`defineBounded` in Java, `define_unbounded`/`define_bounded` in Rust) and their removal inverses (`removeUnbounded`/`removeBounded`, `remove_unbounded`/`remove_bounded`) SHALL be methods on the concrete `FlezhaRunner` handle — not free functions, static methods, or methods on a builder type (there is no builder) — and SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and adding a corresponding `define_*`/`defineX` (and `remove_*`/`removeX`) runner method, without editing the existing two authoring surfaces.
 
 #### Scenario: Both kinds implement the base
 
-- **WHEN** an unbounded operative class and a bounded operative class are declared on the same `RunnerBuilder`
-- **THEN** both SHALL be `Computation` implementations resolvable through their respective `define_*`/`defineX` builder method, sharing `factory_id()`
+- **WHEN** an unbounded operative class and a bounded operative class are declared on the same `FlezhaRunner`
+- **THEN** both SHALL be `Computation` implementations resolvable through their respective `define_*`/`defineX` runner method, sharing `factory_id()`
 
 #### Scenario: A future kind plugs into the base without touching existing kinds
 
-- **WHEN** a new operative kind is added by implementing `Computation` and adding a new `define_*`/`defineX` builder method for it
+- **WHEN** a new operative kind is added by implementing `Computation` and adding a new `define_*`/`defineX` runner method for it
 - **THEN** the `UnboundedOperative` and `BoundedOperative` authoring surfaces SHALL be unchanged
 
 #### Scenario: The instance enum is not forced symmetric

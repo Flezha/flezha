@@ -2,7 +2,7 @@ package com.flezha.test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,17 +13,17 @@ class FactoryIdsTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
     }
 
     @Test
     @DisplayName("three factories match the Rust test app ids")
     void sameIds() {
-        UnboundedOperativeRegistry.registerUnbounded(DoNothingUnboundedOperative.class);
-        UnboundedOperativeRegistry.registerUnbounded(StoreInputUnboundedOperative.class);
-        UnboundedOperativeRegistry.registerUnbounded(CompareFilterUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(DoNothingUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(StoreInputUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(CompareFilterUnboundedOperative.class);
 
-        List<String> ids = UnboundedOperativeRegistry.factoryIds();
+        List<String> ids = UnboundedOperativeClassRegistry.factoryIds();
         Set<String> expected = Set.of("do_nothing", "store_input", "compare_filter");
         assertEquals(expected, Set.copyOf(ids));
     }

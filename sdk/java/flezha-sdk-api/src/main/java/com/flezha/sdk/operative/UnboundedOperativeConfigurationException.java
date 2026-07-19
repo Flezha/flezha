@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Thrown by {@link UnboundedOperativeRegistry#registerUnbounded(Class)} when an UnboundedOperative's
+ * Thrown by {@link com.flezha.sdk.FlezhaRunner#defineUnbounded(Class)} when an UnboundedOperative's
  * declared topology violates a wiring constraint (entry-channel-type,
  * type-equality between channel payload and producer/consumer Operation,
  * unwired channel, multi-producer, static-mode default-impl detection).

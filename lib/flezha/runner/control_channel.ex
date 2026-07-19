@@ -232,6 +232,10 @@ defmodule Flezha.Runner.ControlChannel do
         handle_iter_park(state, park)
         {:noreply, state}
 
+      {:update_factories, %{} = update, _reference_id} ->
+        handle_update_factories(state, update)
+        {:noreply, state}
+
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message})
         {:noreply, state}
@@ -348,7 +352,8 @@ defmodule Flezha.Runner.ControlChannel do
     :bounded_completed,
     :op_commit,
     :iter_commit,
-    :iter_park
+    :iter_park,
+    :update_factories
   ]
 
   defp decode_sdk_initiated(message) do
@@ -712,6 +717,22 @@ defmodule Flezha.Runner.ControlChannel do
           )
       end
     end)
+  end
+
+  # Full-set replacement of this runner's declared factory list after a
+  # post-start define/remove (sdk-runner-entrypoint-redesign). Fire-and-forget
+  # by design — no ack — and dispatched as a cast so it never blocks the
+  # control channel; the reconnect init frame remains the resync of record.
+  defp handle_update_factories(state, %RunnerCommands.UpdateFactories{factories: factories}) do
+    factories =
+      Enum.map(factories, fn %RunnerCommands.FactoryDecl{id: id, description: description} ->
+        %{"id" => id, "description" => if(description == "", do: nil, else: description)}
+      end)
+
+    GenServer.cast(
+      FleetManager,
+      {:sync_factories, state.namespace, state.runner_id, factories}
+    )
   end
 
   # Journal-driven flush: everything this instance owes, in journal order, with

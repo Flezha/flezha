@@ -177,13 +177,16 @@ and registers it automatically — the user writes no registration call.
   strictly linear chain). The SDK refuses (compile error) rather than guessing
   a graph.
 - **Auto-registration** uses a compile-time-collected registry (Rust:
-  `inventory`, harvested inside `RunnerBuilder::start()`; Java: the processor
-  emits the registry call). Explicit declaration —
-  `RunnerBuilder::define_unbounded::<R>()` / `RunnerBuilder.defineUnbounded(Class)`
-  — stays valid for hand-written operatives.
-- **Duplicate factory id fails fast.** When auto-registration and manual
-  registration would register two operatives with the same `factory_id`, startup
-  fails with an error naming the colliding id.
+  `inventory`, merged into the runner's declared set at every
+  `FlezhaRunner::start()`; Java: the processor emits a
+  `GeneratedUnboundedOperatives.defineAll(FlezhaRunner)` aggregator). Explicit
+  declaration — `FlezhaRunner::define_unbounded::<R>()` /
+  `FlezhaRunner.defineUnbounded(Class)`, legal before and after `start()`,
+  with `remove_unbounded`/`removeUnbounded` as the inverse — stays valid for
+  hand-written operatives.
+- **Duplicate factory id fails fast.** Declaring two operatives with the same
+  `factory_id` on one runner fails at the second `define*` call with an error
+  naming the colliding id.
 
 ## 6. Canonical reference operative (cross-SDK conformance anchor)
 

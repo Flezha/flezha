@@ -10,7 +10,6 @@ import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
@@ -49,7 +48,7 @@ class CorrectionTest {
     @BeforeEach
     void reset() {
         SEEN.clear();
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));
@@ -64,7 +63,7 @@ class CorrectionTest {
     }
 
     private UnboundedOperativeInstance instantiate(Class<? extends UnboundedOperative> cls, String factoryId) {
-        UnboundedOperativeRegistry.registerUnbounded(cls);
+        UnboundedOperativeClassRegistry.registerClass(cls);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         return UnboundedOperativeInstance.create(topology, factoryId + "-inst", ctx, ctx.workerPool());
     }
@@ -150,7 +149,7 @@ class CorrectionTest {
     @Test
     @DisplayName("a correction window without the tier is refused")
     void correctionWithoutTierIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(NoTierCorrectionOperative.class))
+        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(NoTierCorrectionOperative.class))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
                 .hasMessageContaining("effectivelyOnce");
     }
@@ -158,7 +157,7 @@ class CorrectionTest {
     @Test
     @DisplayName("a correction window without an EventTimeFrom clock is refused")
     void correctionWithoutEventTimeClockIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(NoEventTimeOperative.class))
+        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(NoEventTimeOperative.class))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
                 .hasMessageContaining("EventTimeFrom");
     }

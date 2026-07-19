@@ -7,7 +7,6 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import java.util.List;
@@ -31,13 +30,13 @@ class UnboundedOperativeStateSerializerTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
     }
 
     @Test
     @DisplayName("serialize emits the documented per-Operation / per-Segment shape")
     void serializeShape() throws Exception {
-        UnboundedOperativeRegistry.registerUnbounded(MixedUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(MixedUnboundedOperative.class);
         UnboundedOperativeInstance instance = newInstance("mixed");
 
         // Manually mutate the segment states so the test asserts the
@@ -69,7 +68,7 @@ class UnboundedOperativeStateSerializerTest {
     @Test
     @DisplayName("deserialize round-trips identical segment states")
     void deserializeRoundTrips() throws Exception {
-        UnboundedOperativeRegistry.registerUnbounded(MixedUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(MixedUnboundedOperative.class);
         UnboundedOperativeInstance instance = newInstance("mixed");
         instance.segments().get(operationId(instance, "a")).get(0).state().set(new OperationAState(7));
         instance.segments().get(operationId(instance, "b")).get(0).state().set(new OperationBState(11));

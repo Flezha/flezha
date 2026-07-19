@@ -198,7 +198,7 @@ public interface Operation<
      * {@link #mailboxCapacityOverridden()} to return {@code true} so the
      * runtime applies the Operation value over any {@code FLEZHA_MAILBOX_CAPACITY}
      * env value. Capacity must be in {@code 1..=1_048_576}; out-of-range
-     * values fail {@code UnboundedOperativeRegistry.registerUnbounded(...)} with the
+     * values fail {@code FlezhaRunner.defineUnbounded(...)} with the
      * offending Operation's name.
      */
     default int mailboxCapacity() {

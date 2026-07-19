@@ -34,7 +34,7 @@ import javax.annotation.Nonnull;
  *
  * <p>Authoring is a distinct, lightweight interface (not a degenerate
  * {@code Operation}). Declare a bounded with
- * {@link com.flezha.sdk.RunnerBuilder#defineBounded(Class)} — the sibling of
+ * {@link com.flezha.sdk.FlezhaRunner#defineBounded(Class)} — the sibling of
  * {@code defineUnbounded} — before {@code start()}/{@code run()}:
  *
  * <pre>{@code
@@ -44,7 +44,7 @@ import javax.annotation.Nonnull;
  *         ctx.complete(("hello " + args).getBytes(StandardCharsets.UTF_8));
  *     }
  * }
- * Flezha.newRunner("my_app").defineBounded(GreetBoundedOperative.class).run();
+ * Flezha.createRunner("my_app").defineBounded(GreetBoundedOperative.class).run();
  * }</pre>
  */
 public interface BoundedOperative extends Computation {

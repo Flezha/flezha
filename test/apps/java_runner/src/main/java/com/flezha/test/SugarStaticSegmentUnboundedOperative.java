@@ -7,7 +7,7 @@ import com.flezha.sdk.channel.ChannelBuilder;
  * Multioperation reference operative authored with explicit topology, wiring the
  * generated {@code SugarEntryOperation} -> {@code SugarDownstreamOperation} -> plugin.
  * {@code @UnboundedOperative} collects it into
- * {@code GeneratedUnboundedOperatives.registerAll()}.
+ * {@code GeneratedUnboundedOperatives.defineAll(FlezhaRunner)}.
  */
 @UnboundedOperative
 public class SugarStaticSegmentUnboundedOperative implements com.flezha.sdk.operative.UnboundedOperative {

@@ -6,7 +6,7 @@ import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
@@ -37,7 +37,7 @@ class JavaStatePersistenceTest {
     void resetFlusher() {
         SegmentFlusher.resetForTesting();
         SegmentStateSink.resetForTesting();
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
     }
 
     @Test
@@ -87,7 +87,7 @@ class JavaStatePersistenceTest {
         // by the integration harness: a fresh StatefulCounterUnboundedOperative
         // instance is handed the controller's persisted change-log and must resume
         // at N (not 0, the pre-fix bug; not 2N, a double-apply).
-        UnboundedOperativeRegistry.registerUnbounded(StatefulCounterUnboundedOperative.class);
+        UnboundedOperativeClassRegistry.registerClass(StatefulCounterUnboundedOperative.class);
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
         ctx.setWorkerPool(Executors.newFixedThreadPool(1));

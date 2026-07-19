@@ -9,7 +9,6 @@ import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
@@ -49,7 +48,7 @@ class CheckpointAckTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
         shipped.install();
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
         ctx = new RunnerContext("ns", cfg, 0L);
@@ -67,7 +66,7 @@ class CheckpointAckTest {
     /** Dispatch inputs 0..n-1 and return the Segment, WITHOUT letting the flusher drain. */
     private SegmentSlot feedAll(Class<? extends UnboundedOperative> cls, String factoryId, List<String> inputs)
             throws Exception {
-        UnboundedOperativeRegistry.registerUnbounded(cls);
+        UnboundedOperativeClassRegistry.registerClass(cls);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, factoryId + "-inst", ctx, ctx.workerPool());
@@ -135,7 +134,7 @@ class CheckpointAckTest {
     @Test
     @DisplayName("checkpointAck without the tier is refused")
     void checkpointAckWithoutTierIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeRegistry.registerUnbounded(NoTierOperative.class))
+        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(NoTierOperative.class))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
                 .hasMessageContaining("CheckpointAckWithoutTier");
     }

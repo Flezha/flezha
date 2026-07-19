@@ -7,7 +7,6 @@ import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.StatelessTestOperation;
@@ -64,7 +63,7 @@ class DlqRetryTest {
         PANIC_RUNS.set(0);
         PANIC_OK.set(0);
         PARKED.clear();
-        UnboundedOperativeRegistry.reset();
+        UnboundedOperativeClassRegistry.reset();
 
         // Auto-acking sink: capture the park body and ack from another
         // thread — the dispatch thread is blocked in parkBlocking while
@@ -96,7 +95,7 @@ class DlqRetryTest {
 
     private UnboundedOperativeInstance instantiate(
             Class<? extends UnboundedOperative> operativeClass, String factoryId) {
-        UnboundedOperativeRegistry.registerUnbounded(operativeClass);
+        UnboundedOperativeClassRegistry.registerClass(operativeClass);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         return UnboundedOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }

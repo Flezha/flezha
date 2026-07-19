@@ -78,6 +78,67 @@ class OldApiNotImportableTest {
                 .isFalse();
     }
 
+    @Test
+    @DisplayName("user code importing RunnerBuilder fails to compile")
+    void importingRunnerBuilderFails() {
+        assertDoesNotCompile(
+                """
+                package nowhere;
+                import com.flezha.sdk.RunnerBuilder;
+                public final class UsesLegacyApi {
+                    void foo(RunnerBuilder b) { }
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("user code importing the public registry facades fails to compile")
+    void importingRegistryFacadesFails() {
+        assertDoesNotCompile(
+                """
+                package nowhere;
+                import com.flezha.sdk.operative.UnboundedOperativeRegistry;
+                public final class UsesLegacyApi {
+                    void foo() { UnboundedOperativeRegistry.factoryIds(); }
+                }
+                """);
+        assertDoesNotCompile(
+                """
+                package nowhere;
+                import com.flezha.sdk.bounded.BoundedOperativeRegistry;
+                public final class UsesLegacyApi {
+                    void foo() { BoundedOperativeRegistry.factoryIds(); }
+                }
+                """);
+    }
+
+    @Test
+    @DisplayName("user code calling Flezha.newRunner fails to compile")
+    void callingNewRunnerFails() {
+        assertDoesNotCompile(
+                """
+                package nowhere;
+                import com.flezha.sdk.Flezha;
+                public final class UsesLegacyApi {
+                    void foo() { Flezha.newRunner("ns"); }
+                }
+                """);
+    }
+
+    private static void assertDoesNotCompile(String src) {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        boolean ok = compiler.getTask(
+                        new PrintWriter(err),
+                        null,
+                        null,
+                        List.of("-proc:none"),
+                        null,
+                        List.of(new SourceFile("UsesLegacyApi.java", src)))
+                .call();
+        assertThat(ok).as("deleted API must not resolve; source:\n" + src).isFalse();
+    }
+
     private static final class SourceFile extends SimpleJavaFileObject {
         private final String code;
 

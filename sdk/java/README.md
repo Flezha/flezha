@@ -48,8 +48,8 @@ public final class EchoOperative implements UnboundedOperative {
 }
 
 public static void main(String[] args) throws Exception {
-    Flezha.newRunner(args[0])                        // args[0] = the namespace
-            .defineUnbounded(EchoOperative.class)    // declare before start()/run()
+    Flezha.createRunner(args[0])                     // args[0] = the namespace
+            .defineUnbounded(EchoOperative.class)    // legal before AND after start()
             .run();                                  // connect + block until shutdown
 }
 ```
@@ -59,7 +59,7 @@ binary. Embedding into a larger app? `start()` returns a `FlezhaRunner`
 handle (`AutoCloseable`) and keeps your thread:
 
 ```java
-try (FlezhaRunner runner = Flezha.newRunner(ns).defineUnbounded(EchoOperative.class).start()) {
+try (FlezhaRunner runner = Flezha.createRunner(ns).defineUnbounded(EchoOperative.class).start()) {
     // ... your app; runner.awaitTermination() to block, Flezha.currentRunner() from anywhere
 }
 ```
@@ -99,7 +99,7 @@ public final class GreetBounded implements BoundedOperative {
 }
 
 public static void main(String[] args) throws Exception {
-    Flezha.newRunner(args[0])                          // args[0] = the namespace
+    Flezha.createRunner(args[0])                       // args[0] = the namespace
             .defineUnbounded(EchoOperative.class)
             .defineBounded(GreetBounded.class)
             .run();
@@ -117,7 +117,7 @@ flz operative start echo1 echo -n my_app
 flz operative start greet1 greet -n my_app --kind bounded --init_values '{"name":"world"}'
 ```
 
-The argument to `newRunner` is the **namespace**, and it is the join key: the
+The argument to `createRunner` is the **namespace**, and it is the join key: the
 `-n` above must match it, or the controller has no runner to place the
 operative on. It is a logical grouping, not a transport address — every runner
 on a node dials the same control socket regardless of namespace.

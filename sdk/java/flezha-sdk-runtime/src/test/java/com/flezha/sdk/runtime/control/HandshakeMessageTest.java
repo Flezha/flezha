@@ -3,9 +3,7 @@ package com.flezha.sdk.runtime.control;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.flezha.sdk.operative.UnboundedOperativeRegistry;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -19,17 +17,23 @@ class HandshakeMessageTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
-    @BeforeEach
-    @AfterEach
-    void reset() {
-        UnboundedOperativeRegistry.reset();
-    }
-
     @Test
     void handshakePresentsANonEmptyStableId() throws Exception {
-        String json = mapper.writeValueAsString(HandshakeMessage.from("ns"));
+        String json = mapper.writeValueAsString(HandshakeMessage.from("ns", List.of("factory_a")));
         assertThat(json).contains("\"stable_id\":\"");
         assertThat(json).doesNotContain("\"stable_id\":\"\"");
         assertThat(json).doesNotContain("previous_runner_id");
+    }
+
+    @Test
+    void handshakeCarriesTheSuppliedFactorySetVerbatim() throws Exception {
+        String json = mapper.writeValueAsString(HandshakeMessage.from("ns", List.of("a", "b")));
+        assertThat(json).contains("\"factory_ids\":[\"a\",\"b\"]");
+    }
+
+    @Test
+    void anEmptyFactorySetIsLegal() throws Exception {
+        String json = mapper.writeValueAsString(HandshakeMessage.from("ns", List.of()));
+        assertThat(json).contains("\"factory_ids\":[]");
     }
 }
