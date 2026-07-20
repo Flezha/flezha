@@ -4,14 +4,18 @@ import java.util.List;
 import java.util.function.BiConsumer;
 
 /**
- * Mutation chokepoint threaded into {@code Operation.run}. Reads go through
- * {@link #get()}; mutations go through {@link #apply(Change)}. There is no
- * setter — to mutate state outside {@code apply}, the user must declare a
- * Change type. That's the structural enforcement.
+ * Mutation seam threaded into {@code Operation.run}. Reads go through
+ * {@link #get()}; the recorded, replayable mutation path is {@link #apply(Change)}.
  *
- * <p>Constructed by the runtime; the package-private constructor forecloses
- * user instantiation outside the {@code com.flezha.sdk.state} package and the
- * test harness package, both of which the runtime privileges.
+ * <p><b>Enforcement is by convention, not structure.</b> {@link #get()} returns
+ * the live State object, so {@code state.get().field = x} compiles and runs — and
+ * is never journaled as a Change, so it is lost on any restore (which rebuilds
+ * state from a snapshot plus the change log). Rust forecloses this at compile
+ * time by implementing {@code Deref} and deliberately not {@code DerefMut}; Java
+ * cannot, because {@code get()} must return a readable object. The detection
+ * available in place of enforcement is
+ * {@code OperationTestHarness.replayEquals()} — an opt-in determinism gate meant
+ * to run in CI. See {@code docs/java_state_persistence.md}.
  */
 public final class StateHandle<State, ChangeT extends Change> {
 
@@ -26,10 +30,10 @@ public final class StateHandle<State, ChangeT extends Change> {
     }
 
     /**
-     * Package-private factory used by the runtime and the test harness — both
-     * sit inside the same {@code com.flezha.sdk.state} package via
-     * trampoline classes that re-export this constructor. Java has no
-     * {@code package(crate)} equivalent; this is the closest analog.
+     * Factory used by the runtime dispatcher, the bounded driver, and the test
+     * harness — all in other packages and modules, so this is necessarily
+     * {@code public}. Java has no {@code package(crate)} equivalent, so user code
+     * is asked not to construct handles but is not structurally prevented from it.
      */
     public static <S, C extends Change> StateHandle<S, C> create(
             S state, List<C> buffer, BiConsumer<S, C> applyChangeFn) {

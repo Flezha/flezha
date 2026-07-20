@@ -117,11 +117,9 @@ public final class UnboundedOperativeInstance implements Operative {
             OperationDescriptor desc = topology.operations().get(operationId);
             List<SegmentSlot> slots;
             Map<String, Integer> keyMap = new HashMap<>();
-            boolean changeful = desc.changeType() != NoChange.class;
+            boolean changeful = changefulOf(desc);
             int mailboxCapacity = desc.mailboxCapacity();
-            OverflowPolicy policy = desc.inputChannelId().isPresent()
-                    ? topology.channel(desc.inputChannelId().getAsInt()).overflowPolicy()
-                    : OverflowPolicy.BLOCK;
+            OverflowPolicy policy = overflowPolicyFor(topology, desc);
 
             boolean dynamicMode =
                     desc.operationKeyOverridden() && desc.segmentKeys().isEmpty();
@@ -137,8 +135,14 @@ public final class UnboundedOperativeInstance implements Operative {
                         new OperationDispatcher(ctx, pool, shell, topology, operationId, operationInstance);
                 @SuppressWarnings({"unchecked", "rawtypes"})
                 Object initial = ((Operation) operationInstance).initState(Optional.empty(), Optional.empty());
-                SegmentSlot slot =
-                        new SegmentSlot(dispatcher, operationId, Optional.empty(), changeful, mailboxCapacity, policy);
+                SegmentSlot slot = new SegmentSlot(
+                        dispatcher,
+                        operationInstance,
+                        operationId,
+                        Optional.empty(),
+                        changeful,
+                        mailboxCapacity,
+                        policy);
                 slot.state().set(initial);
                 registerWithFlusher(
                         instanceId,
@@ -153,6 +157,9 @@ public final class UnboundedOperativeInstance implements Operative {
                 dispatchers.add(dispatcher);
             } else {
                 slots = new ArrayList<>(desc.segmentKeys().size());
+                // The dispatcher's instance serves only the pre-Segment routing
+                // calls (segmentFor / operationKey / eventTime); each Segment runs
+                // on its own instance below.
                 Operation<?, ?, ?, ?, ?, ?> dispatcherOperationInstance = instantiate(desc.operationClass());
                 OperationDispatcher dispatcher =
                         new OperationDispatcher(ctx, pool, shell, topology, operationId, dispatcherOperationInstance);
@@ -163,7 +170,13 @@ public final class UnboundedOperativeInstance implements Operative {
                     @SuppressWarnings({"unchecked", "rawtypes"})
                     Object initial = ((Operation) operationInstance).initState(Optional.of(key), Optional.empty());
                     SegmentSlot slot = new SegmentSlot(
-                            dispatcher, operationId, Optional.of(key), changeful, mailboxCapacity, policy);
+                            dispatcher,
+                            operationInstance,
+                            operationId,
+                            Optional.of(key),
+                            changeful,
+                            mailboxCapacity,
+                            policy);
                     slot.state().set(initial);
                     registerWithFlusher(
                             instanceId,
@@ -255,18 +268,19 @@ public final class UnboundedOperativeInstance implements Operative {
             List<SegmentSlot> slots = segments.get(operationId);
             OperationDescriptor desc = topology.operation(operationId);
             OperationDispatcher dispatcher = dispatchers.get(operationId);
-            Operation<?, ?, ?, ?, ?, ?> operationInstance = dispatcher.operationInstance();
+            // A fresh instance per dynamic Segment — the dispatcher's own instance
+            // is reserved for routing and must not be the run target for every key.
+            Operation<?, ?, ?, ?, ?, ?> operationInstance = instantiate(desc.operationClass());
 
             int idx = slots.size();
             SegmentSlot slot = new SegmentSlot(
                     dispatcher,
+                    operationInstance,
                     operationId,
                     Optional.of(key),
-                    desc.changeType() != com.flezha.sdk.state.NoChange.class,
+                    changefulOf(desc),
                     desc.mailboxCapacity(),
-                    desc.inputChannelId().isPresent()
-                            ? topology.channel(desc.inputChannelId().getAsInt()).overflowPolicy()
-                            : OverflowPolicy.BLOCK);
+                    overflowPolicyFor(topology, desc));
             slot.state().set(operationInstance.initState(Optional.of(key), Optional.empty()));
             slots.add(slot);
             keyMap.put(key, idx);
@@ -306,6 +320,18 @@ public final class UnboundedOperativeInstance implements Operative {
                 operationInstance.schemaVersion(),
                 codec);
         SegmentFlusher.getOrStart().register(segmentId, entry, desc.changeType());
+    }
+
+    /** Whether an Operation persists state (declares a non-{@code NoChange} Change). */
+    private static boolean changefulOf(OperationDescriptor desc) {
+        return desc.changeType() != NoChange.class;
+    }
+
+    /** A Segment's mailbox overflow policy: the input channel's, or {@code BLOCK} when unwired. */
+    private static OverflowPolicy overflowPolicyFor(UnboundedOperativeTopology topology, OperationDescriptor desc) {
+        return desc.inputChannelId().isPresent()
+                ? topology.channel(desc.inputChannelId().getAsInt()).overflowPolicy()
+                : OverflowPolicy.BLOCK;
     }
 
     private static Operation<?, ?, ?, ?, ?, ?> instantiate(

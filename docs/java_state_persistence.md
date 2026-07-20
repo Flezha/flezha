@@ -51,10 +51,47 @@ registration and flusher dispatch.
 ### StateHandle
 
 `StateHandle<State, Change>` replaces the raw `State` parameter on
-`Operation.run`. Reads go through `state.get()`; mutations go through
-`state.apply(change)`. The handle does not expose a setter — to mutate state
-outside `apply`, the user must declare a Change type. That's the structural
-enforcement of the persistence contract.
+`Operation.run`. Reads go through `state.get()`; the recorded, replayable
+mutation path is `state.apply(change)`.
+
+**Enforcement is by convention, not structure.** `state.get()` returns the live
+`State` object, so `state.get().field = x` compiles and runs. That write is
+never journaled as a Change, so it is **captured by graceful shutdown and live
+migration** (both snapshot the live object) and **lost by any restore**, which
+rebuilds state from a snapshot plus the change log. It therefore survives dev,
+staging, and every test, and disappears exactly when persistence is supposed to
+save it — under an unplanned crash.
+
+Rust forecloses this at compile time: its `StateHandle` implements `Deref` and
+deliberately not `DerefMut`, so a direct field mutation does not compile (see
+`docs/operative_state_persistence.md`). Java cannot match that — `get()` must
+return a readable object, and there is no borrow checker to withhold `&mut`.
+This is the same class of Rust asymmetry the Java SDK already documents for
+erasure vs `EventTimeFrom` (`Operation.eventTime`): the guarantee is enforced
+structurally in Rust and by a weaker mechanism in Java.
+
+The detection Java provides in place of enforcement is
+`OperationTestHarness.replayEquals()` — an **opt-in** determinism gate that
+replays the recorded change log against a fresh baseline and reports a mismatch
+when the live state diverges from the change-only replay. A bypassed mutation
+is exactly what it catches. Run it in CI against your own Operations.
+
+#### State-mutation enforcement, per SDK
+
+The authoring contract records the enforcement level each SDK actually achieves,
+rather than each claiming the strongest one (see
+`openspec/specs/sdk-authoring-contract`):
+
+| SDK    | Enforcement level | Mechanism |
+| ------ | ----------------- | --------- |
+| Rust   | Structural (compile-time) | `StateHandle: Deref` without `DerefMut`; `init_state` returns state by value |
+| Python | Runtime-rejected | direct attribute assignment on durable state raises, naming the attribute |
+| Java   | Documented-only + opt-in detection | convention; `OperationTestHarness.replayEquals()` catches a bypass |
+
+Java does **not** add a runtime guard: withholding the object (a defensive copy
+or proxy on every `get()`) would be a hot-path cost imposed on every read to
+defend against a compile-time-shaped problem, and `get()` must still hand back
+something readable. The asymmetry is deliberate and documented, not an omission.
 
 ### Change and CoalesceKey
 

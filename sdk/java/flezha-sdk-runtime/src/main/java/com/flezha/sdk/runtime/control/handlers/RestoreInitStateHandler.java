@@ -132,7 +132,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static long restoreSlot(Located located, byte[] snapshot, byte[] changeLog, HeaderTemplate headerTemplate) {
         SegmentSlot slot = located.slot();
-        Operation operation = slot.dispatcher().operationInstance();
+        Operation operation = slot.operationInstance();
         KryoCodec codec = new KryoCodec(located.instance().kryoTypes());
 
         slot.stateLock().lock();

@@ -204,3 +204,26 @@ Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rus
 - **WHEN** the sealed operative instance enum is renamed
 - **THEN** its variants MAY remain asymmetric (a rich unbounded instance vs an id-only bounded instance), and the `Computation` base SHALL NOT require inventing a common instance type
 
+### Requirement: Each SDK SHALL name the state-mutation enforcement level it actually provides
+
+The authoring contract SHALL record, per SDK, the state-mutation enforcement level that SDK actually provides, so that an asymmetry between SDKs is a deliberate documented choice rather than an accident of each language's ergonomics.
+
+The contract is written once and implemented per language, but the languages do not offer equal enforcement. Rust forecloses direct State mutation at compile time by withholding `DerefMut`. Java cannot — its handle must return a readable object — and today provides only convention plus opt-in test-time detection, while documenting the Rust guarantee. Python is closing the same hole by rejecting direct attribute assignment. Three different enforcement levels honestly stated is correct; three identical claims of which one is true is not.
+
+#### Scenario: The contract records a level per SDK
+
+- **WHEN** the authoring contract describes how a State mutation outside the declared Change path is prevented
+- **THEN** it SHALL name the enforcement level for each SDK separately
+- **AND** SHALL NOT state a single guarantee that only some SDKs meet
+
+#### Scenario: A weaker level names its available detection
+
+- **GIVEN** an SDK whose enforcement is weaker than compile-time refusal
+- **WHEN** the contract records that SDK's level
+- **THEN** it SHALL name the detection available in place of enforcement, and whether that detection is opt-in
+
+#### Scenario: A new SDK must declare its level
+
+- **WHEN** a new SDK is added to the contract
+- **THEN** it SHALL declare its state-mutation enforcement level rather than inheriting the strongest one by default
+

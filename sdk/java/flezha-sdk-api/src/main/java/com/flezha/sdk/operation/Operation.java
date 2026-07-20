@@ -94,9 +94,13 @@ public interface Operation<
         return change.coalesceKey();
     }
 
-    /** WAL size threshold before the controller solicits a snapshot. Default: 64 MiB per Segment. */
+    /**
+     * Per-Segment WAL size threshold before the controller solicits a snapshot.
+     * Default 8 MiB, in lockstep with the Rust SDK's {@code compact_after_bytes}
+     * and the controller's {@code :default_compact_after_bytes}.
+     */
     default long compactAfterBytes() {
-        return 64L * 1024 * 1024;
+        return 8L * 1024 * 1024;
     }
 
     /** Schema version for additive Change evolution. Default: 1. */

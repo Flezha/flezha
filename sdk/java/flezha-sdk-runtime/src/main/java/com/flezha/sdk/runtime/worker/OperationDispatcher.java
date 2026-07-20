@@ -39,9 +39,13 @@ import org.slf4j.LoggerFactory;
  * {@code outputChannelId} at build time so {@code ctx.emit(...)} pays no
  * channel-name lookup on the hot path.
  *
- * <p>One {@link OperationDispatcher} per Operation×Segment (held by
- * {@link SegmentSlot#dispatcher()}). The Operation instance is held inside
- * this dispatcher to keep mutable per-Operation scratch (if any) per-segment.
+ * <p>One {@link OperationDispatcher} per Operation, shared across every Segment
+ * that Operation owns (each {@link SegmentSlot} references it via
+ * {@link SegmentSlot#dispatcher()}). The Operation instance held here serves
+ * only the pre-Segment routing calls — {@code segmentFor}, {@code operationKey},
+ * {@code eventTime}. Each Segment runs {@code run} / {@code applyChange} on its
+ * OWN instance ({@link SegmentSlot#operationInstance()}), so mutable Operation
+ * fields are per-Segment scratch, matching the Rust SDK.
  */
 public final class OperationDispatcher {
 
@@ -100,8 +104,15 @@ public final class OperationDispatcher {
     /** Serializes Changes into an effect record's opaque change bytes (tier only). */
     private final KryoCodec codec;
 
+    /**
+     * The dispatcher-level instance, shared across every Segment this Operation
+     * owns. It serves only the pre-Segment routing / declaration calls
+     * ({@code segmentFor}, {@code operationKey}, {@code eventTime},
+     * {@code kryoTypes}); {@code run} / {@code applyChange} run on the Segment's
+     * own instance ({@link SegmentSlot#operationInstance()}).
+     */
     @SuppressWarnings("rawtypes")
-    private final Operation operationInstance;
+    private final Operation routingInstance;
 
     @SuppressWarnings("unchecked")
     public OperationDispatcher(
@@ -110,7 +121,7 @@ public final class OperationDispatcher {
             @Nonnull UnboundedOperativeInstance instance,
             @Nonnull UnboundedOperativeTopology topology,
             int operationId,
-            @Nonnull Operation<?, ?, ?, ?, ?, ?> operationInstance) {
+            @Nonnull Operation<?, ?, ?, ?, ?, ?> routingInstance) {
         this.ctx = ctx;
         this.pool = pool;
         this.instance = new WeakReference<>(instance);
@@ -126,14 +137,14 @@ public final class OperationDispatcher {
                 inputChannelId.isPresent() ? topology.channel(inputChannelId.getAsInt()) : null;
         this.retryPolicy = inputChannel == null ? RetryPolicy.DEFAULT : inputChannel.retry();
         this.inputChannelName = inputChannel == null ? "<unwired>" : inputChannel.name();
-        this.operationInstance = operationInstance;
+        this.routingInstance = routingInstance;
         this.dynamic = operationDescriptor.operationKeyOverridden()
                 && operationDescriptor.segmentKeys().isEmpty();
         this.tier = topology.effectivelyOnce();
         this.checkpointAck = topology.checkpointAck();
         this.correctionWindowMs = topology.correctionWindowMs();
         this.beyondWindowPolicy = topology.beyondWindowPolicy();
-        this.codec = new KryoCodec(operationInstance.kryoTypes());
+        this.codec = new KryoCodec(routingInstance.kryoTypes());
     }
 
     public int operationId() {
@@ -147,17 +158,6 @@ public final class OperationDispatcher {
      */
     public boolean tier() {
         return tier;
-    }
-
-    /**
-     * The per-Segment {@link Operation} instance held by this dispatcher. Used by
-     * the warm-restore path to call {@code initState} / {@code applyChange} when
-     * rebuilding a Segment's state from the controller's change-log.
-     */
-    @Nonnull
-    @SuppressWarnings("rawtypes")
-    public Operation operationInstance() {
-        return operationInstance;
     }
 
     public OperationDescriptor descriptor() {
@@ -197,7 +197,7 @@ public final class OperationDispatcher {
         // Dynamic mode: one Segment per key the input stream actually carries,
         // created on first sight rather than declared up front.
         if (dynamic) {
-            Optional<String> key = operationInstance.operationKey(value);
+            Optional<String> key = routingInstance.operationKey(value);
             if (key.isEmpty()) {
                 LOG.warn(
                         "operation `{}`: dynamic operationKey() returned empty; dropping input",
@@ -213,7 +213,7 @@ public final class OperationDispatcher {
             return;
         }
         // Operation.Input is erased at this boundary; topology wiring guarantees value's runtime type matches.
-        List<String> keys = operationInstance.segmentFor(value);
+        List<String> keys = routingInstance.segmentFor(value);
         Map<String, Integer> keyToIdx = ri.segmentKeyToIdx().get(operationId);
         for (String key : keys) {
             Integer idx = keyToIdx.get(key);
@@ -230,7 +230,7 @@ public final class OperationDispatcher {
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void enqueue(SegmentSlot slot, Object value, long primaryStreamId, OptionalLong offset, boolean replay) {
         if (correctionWindowMs > 0) {
-            long eventTime = operationInstance.eventTime(value);
+            long eventTime = routingInstance.eventTime(value);
             if (slot.bufferIfSliceOpen(
                     new SegmentSlot.PendingInput(value, primaryStreamId, offset, eventTime, replay))) {
                 return;
@@ -335,7 +335,7 @@ public final class OperationDispatcher {
     private long evaluateClock(Object input, long invocationSeq) {
         Class<?> clock = operationDescriptor.clockType();
         if (clock == com.flezha.sdk.state.EventTimeFrom.class) {
-            return operationInstance.eventTime(input);
+            return routingInstance.eventTime(input);
         }
         if (clock == com.flezha.sdk.state.LogicalClock.class) {
             return invocationSeq;
@@ -347,6 +347,10 @@ public final class OperationDispatcher {
     private void runOnce(SegmentSlot slot, Object input, long primaryStreamId, OptionalLong offset) {
         slot.stateLock().lock();
         try {
+            // run / applyChange execute on the Segment's OWN instance, so a
+            // mutable field on a user's Operation is per-Segment scratch — the
+            // dispatcher's shared instance serves only pre-Segment routing.
+            Operation segmentOperation = slot.operationInstance();
             Object state = slot.state().get();
             UnboundedOperativeInstance ri = instance.get();
             SegmentId segmentId =
@@ -366,7 +370,7 @@ public final class OperationDispatcher {
             // and its consumed offset, so the controller persists all three in
             // one WAL record under one fsync.
             BiConsumer<Object, Change> applyChangeFn = (s, c) -> {
-                operationInstance.applyChange(s, c);
+                segmentOperation.applyChange(s, c);
             };
             List<Change> bufferView;
             if (tier) {
@@ -392,7 +396,7 @@ public final class OperationDispatcher {
                 String error;
                 boolean retryable;
                 try {
-                    operationInstance.run(input, handle, ctxImpl);
+                    segmentOperation.run(input, handle, ctxImpl);
                     break;
                 } catch (OperationException e) {
                     error = e.getMessage();

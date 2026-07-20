@@ -1,6 +1,7 @@
 package com.flezha.sdk.runtime.segment;
 
 import com.flezha.sdk.channel.OverflowPolicy;
+import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.runtime.state.EffectRecord;
 import com.flezha.sdk.runtime.worker.OperationDispatcher;
 import com.flezha.sdk.state.Change;
@@ -30,6 +31,11 @@ public final class SegmentSlot {
     private final AtomicReference<Object> state = new AtomicReference<>();
     private final SegmentMailbox<Object> mailbox;
     private final OperationDispatcher dispatcher;
+
+    /** This Segment's own Operation instance — see {@link #operationInstance()}. */
+    @SuppressWarnings("rawtypes")
+    private final Operation operationInstance;
+
     private final int operationId;
     private final Optional<String> operationKey;
     private final boolean changeful;
@@ -49,26 +55,15 @@ public final class SegmentSlot {
     private final AtomicLong lastTouchedMs = new AtomicLong(System.currentTimeMillis());
 
     public SegmentSlot(
-            @Nonnull OperationDispatcher dispatcher, int operationId, @Nonnull Optional<String> operationKey) {
-        this(dispatcher, operationId, operationKey, false, 1024, OverflowPolicy.BLOCK);
-    }
-
-    public SegmentSlot(
             @Nonnull OperationDispatcher dispatcher,
-            int operationId,
-            @Nonnull Optional<String> operationKey,
-            boolean changeful) {
-        this(dispatcher, operationId, operationKey, changeful, 1024, OverflowPolicy.BLOCK);
-    }
-
-    public SegmentSlot(
-            @Nonnull OperationDispatcher dispatcher,
+            @Nonnull Operation<?, ?, ?, ?, ?, ?> operationInstance,
             int operationId,
             @Nonnull Optional<String> operationKey,
             boolean changeful,
             int mailboxCapacity,
             @Nonnull OverflowPolicy overflowPolicy) {
         this.dispatcher = dispatcher;
+        this.operationInstance = operationInstance;
         this.operationId = operationId;
         this.operationKey = operationKey;
         this.changeful = changeful;
@@ -93,6 +88,19 @@ public final class SegmentSlot {
     @Nonnull
     public OperationDispatcher dispatcher() {
         return dispatcher;
+    }
+
+    /**
+     * This Segment's own {@link Operation} instance. {@code run} and
+     * {@code applyChange} are invoked on it, so a mutable field on a user's
+     * Operation is per-Segment scratch — never a shared, unsynchronised channel
+     * across Segment keys. Mirrors the Rust SDK, which holds one Operation per
+     * Segment alongside that Segment's State.
+     */
+    @Nonnull
+    @SuppressWarnings("rawtypes")
+    public Operation operationInstance() {
+        return operationInstance;
     }
 
     public int operationId() {

@@ -15,9 +15,10 @@ import org.junit.jupiter.api.Test;
 class OperationDefaultsTest {
 
     @Test
-    void compactAfterBytesDefaultsTo64Mib() {
+    void compactAfterBytesDefaultsTo8Mib() {
         StatelessOperation operation = new StatelessOperation();
-        assertThat(operation.compactAfterBytes()).isEqualTo(67108864L);
+        // 8 MiB, in lockstep with Rust and the controller's default.
+        assertThat(operation.compactAfterBytes()).isEqualTo(8388608L);
     }
 
     @Test

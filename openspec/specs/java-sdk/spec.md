@@ -898,3 +898,62 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 - **AND** after that runner's `.close()` completes, `Flezha.currentRunner()` SHALL return `Optional.empty()` again
 - **AND** a runner created via `Flezha.createRunner(...)` but never started SHALL NOT appear in `currentRunner()`
 
+### Requirement: Each Segment SHALL run on its own Operation instance
+
+Each Segment SHALL invoke `run` on its own Operation instance, as the Rust SDK does by holding one Operation instance per Segment alongside that Segment's State, so that a class authored against either SDK means the same thing.
+
+Today `UnboundedOperativeInstance` builds one Operation per `OperationDispatcher` and `OperationDispatcher` invokes `run` on that single object for every Segment it owns — static-key, keyless, and dynamic alike. The per-Segment instances it also constructs are used only for `initState` and a `schemaVersion()` read. No instance-level lock guards `run`; the per-Segment `stateLock` and `changeBufferLock` are distinct objects per Segment and serialise nothing between Segments, which drain concurrently on the worker pool. Any mutable field on a user's Operation is therefore a shared, unsynchronised channel across Segment keys.
+
+#### Scenario: Instance state does not leak between Segment keys
+
+- **GIVEN** an Operation declaring two Segment keys, whose implementation writes to a mutable instance field during `run`
+- **WHEN** input is dispatched to both Segments
+- **THEN** neither Segment SHALL observe the value written by the other
+
+#### Scenario: Concurrent Segments do not race on one instance
+
+- **GIVEN** an Operation with multiple Segments draining concurrently on the worker pool
+- **WHEN** each Segment's `run` writes to a mutable instance field
+- **THEN** the writes SHALL NOT race, because each Segment holds its own instance
+
+#### Scenario: Dynamic Segments each receive an instance
+
+- **GIVEN** a dynamic-mode Operation that creates Segments lazily per key
+- **WHEN** a Segment is created for a newly-seen key
+- **THEN** that Segment SHALL run on its own Operation instance
+
+#### Scenario: The dispatcher's documentation matches its behaviour
+
+- **WHEN** the dispatcher documents the lifetime of the Operation instance it holds
+- **THEN** the documented lifetime SHALL be the implemented lifetime
+
+### Requirement: The Java SDK SHALL document its actual state-mutation enforcement level
+
+The Java SDK SHALL describe the state-mutation enforcement it actually provides, and SHALL document its asymmetry with Rust the way it already documents its other Rust asymmetries.
+
+`StateHandle.get()` returns the live State object, so `state.get().field = x` compiles, runs, and is never journaled as a Change. The Rust SDK forecloses this structurally by implementing `Deref` and deliberately not `DerefMut`. The Java class javadoc and `docs/java_state_persistence.md` both assert that Java's lack of a setter is "the structural enforcement" — which it is not, because `get()` hands back the object.
+
+#### Scenario: Documentation does not claim enforcement that does not exist
+
+- **WHEN** Java SDK documentation describes how state mutation outside `apply` is prevented
+- **THEN** it SHALL NOT assert structural enforcement unless a direct field mutation is actually prevented
+
+#### Scenario: The asymmetry with Rust is stated
+
+- **WHEN** a user consults the Java state-persistence documentation
+- **THEN** it SHALL state that Rust forecloses direct mutation at compile time and that Java does not, and SHALL name the detection available instead
+
+#### Scenario: A bypassed mutation's actual fate is described
+
+- **WHEN** the documentation describes the consequence of mutating state outside `apply`
+- **THEN** it SHALL state that the mutation is captured by graceful shutdown and live migration but lost by any restore, which rebuilds from snapshot plus change log
+
+### Requirement: Factory visibility SHALL match its documentation
+
+A factory or constructor's declared visibility SHALL match the visibility its documentation claims. `StateHandle.create(...)` is declared `public static` while its own javadoc calls it a "package-private factory" and the class javadoc claims a package-private constructor "forecloses user instantiation". No such enforcement exists.
+
+#### Scenario: Declared visibility matches documented visibility
+
+- **WHEN** a factory or constructor documents its visibility
+- **THEN** the declared modifier SHALL match, or the documentation SHALL be corrected to describe the real visibility
+
