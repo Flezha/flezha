@@ -640,9 +640,7 @@ defmodule Flezha.Service.HubManager do
       redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
       partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
-      migration_strategy: %ProcessHub.Strategy.Migration.HotSwap{
-        handover: true
-      },
+      migration_strategy: migration_strategy(),
       registry_backend: registry_backend_config(hub_id),
       auto_recovery: auto_recovery_config(hub_id),
       # Operative startup involves multiple GenServer hops and socket communication
@@ -675,6 +673,28 @@ defmodule Flezha.Service.HubManager do
       false -> :ets
       _ -> {:dets, [path: registry_path(hub_id)]}
     end
+  end
+
+  @doc false
+  def migration_strategy do
+    %ProcessHub.Strategy.Migration.HotSwap{
+      handover: true,
+      consent_settings: consent_settings()
+    }
+  end
+
+  # `max_defer_ms` nil = derive from the shutdown budget, so a deferring
+  # operative can never outlive the graceful-shutdown window.
+  @doc false
+  def consent_settings do
+    opts = Application.get_env(:flezha, :migration_consent, [])
+
+    %ProcessHub.Strategy.Migration.MigrationConsent{
+      consent_timeout: Keyword.get(opts, :consent_timeout_ms, 5_000),
+      retry_interval: Keyword.get(opts, :retry_interval_ms, 2_000),
+      max_defer_time:
+        Keyword.get(opts, :max_defer_ms) || Flezha.Shutdown.Coordinator.configured_timeout_ms()
+    }
   end
 
   defp registry_path(hub_id) do

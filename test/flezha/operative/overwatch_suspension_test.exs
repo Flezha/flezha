@@ -290,4 +290,98 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     assert {:reply, :ok, _} = Overwatch.handle_call({:rewind, 1}, self(), state(inst))
   end
+
+  describe "migration_consent/1 (processhub-deferred-migration)" do
+    test "a pending correction defers" do
+      inst = instance_id()
+
+      st =
+        state(inst,
+          durable_bounded: false,
+          corrections: %{{inst, "op", "k"} => 100}
+        )
+
+      assert Overwatch.migration_consent(st) == :defer
+    end
+
+    test "an unsuspended durable bounded defers; a suspended one consents" do
+      inst = instance_id()
+      assert Overwatch.migration_consent(state(inst)) == :defer
+      assert Overwatch.migration_consent(state(inst, suspended: true)) == :ready
+    end
+
+    test "an effectively-once instance with pending outbox defers, drained consents" do
+      inst = instance_id()
+      st = state(inst, durable_bounded: false, effectively_once: true)
+
+      stub(Flezha.State.Supervisor, :live_writers, fn _class -> [self()] end)
+
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout -> %{pending: 3} end)
+      assert Overwatch.migration_consent(st) == :defer
+
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout -> %{pending: 0} end)
+      assert Overwatch.migration_consent(st) == :ready
+    end
+
+    test "an outbox-query failure fails open to :ready" do
+      inst = instance_id()
+      st = state(inst, durable_bounded: false, effectively_once: true)
+
+      stub(Flezha.State.Supervisor, :live_writers, fn _class -> [self()] end)
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout -> exit(:timeout) end)
+
+      assert Overwatch.migration_consent(st) == :ready
+    end
+
+    test "an idle unbounded instance consents immediately" do
+      inst = instance_id()
+      assert Overwatch.migration_consent(state(inst, durable_bounded: false)) == :ready
+    end
+  end
+
+  describe "migration_ready barriers (processhub-deferred-migration)" do
+    test "suspension signals migration_ready; :not_deferred leaves the park intact" do
+      inst = instance_id()
+      test_pid = self()
+      stub(Flezha.Runner.ControlUnit, :stop_operative_async, fn _, _ -> :ok end)
+      stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
+
+      stub(ProcessHub.Service.Migration, :migration_ready, fn hub_id, child_id ->
+        send(test_pid, {:migration_ready, hub_id, child_id})
+        {:error, :not_deferred}
+      end)
+
+      {:noreply, suspended} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+
+      assert_receive {:migration_ready, hub_id, ^inst}
+      assert hub_id == Flezha.Service.Identificator.hub("default")
+      assert suspended.suspended
+    end
+
+    test "the last correction draining signals migration_ready; a remaining one does not" do
+      inst = instance_id()
+      test_pid = self()
+
+      stub(ProcessHub.Service.Migration, :migration_ready, fn _hub_id, child_id ->
+        send(test_pid, {:migration_ready, child_id})
+        {:error, :not_deferred}
+      end)
+
+      # A stale debounce timer for a segment no longer pending: the pop leaves
+      # `corrections` empty, which is the completion condition.
+      st = state(inst, durable_bounded: false, corrections: %{})
+      {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "op", "k"}}, st)
+      assert_receive {:migration_ready, ^inst}
+
+      # Another segment still pending: not complete, no signal.
+      busy =
+        state(inst,
+          durable_bounded: false,
+          corrections: %{{inst, "op", "other"} => 5}
+        )
+
+      {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "op", "gone"}}, busy)
+      refute_receive {:migration_ready, ^inst}, 50
+    end
+  end
 end

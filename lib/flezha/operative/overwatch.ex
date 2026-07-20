@@ -26,6 +26,7 @@ defmodule Flezha.Operative.Overwatch do
 
   use GenServer
   use ProcessHub.Strategy.Migration.HotSwap
+  use ProcessHub.Strategy.Migration.MigrationConsent
 
   use Flezha.Plugin.Host,
     extensions: [
@@ -917,6 +918,8 @@ defmodule Flezha.Operative.Overwatch do
       }
     )
 
+    # A committed iteration boundary is the migration-safe barrier.
+    signal_migration_ready(state)
     evict_runner(state, journal && journal.wake_deadline_ms)
   end
 
@@ -1651,7 +1654,9 @@ defmodule Flezha.Operative.Overwatch do
     # At most one correction per Segment is ever in flight, by construction: the
     # transaction runs to completion inside this handler, so a request arriving
     # during it simply waits in the mailbox and debounces into the next one.
-    {:noreply, if(target, do: run_correction(state, segment_id, target), else: state)}
+    state = if target, do: run_correction(state, segment_id, target), else: state
+    if state.corrections == %{}, do: signal_migration_ready(state)
+    {:noreply, state}
   end
 
   @impl true
@@ -1825,6 +1830,53 @@ defmodule Flezha.Operative.Overwatch do
         init_values: handover_state.init_values,
         arrived_via_hotswap?: true
     }
+  end
+
+  # Busy classification for ProcessHub's migration consent: defer while a
+  # correction is pending, while a durable bounded is off an iteration
+  # boundary (suspension IS the safe barrier), or while the effectively-once
+  # outbox still owes output that would strand on this node. The synchronous
+  # correction transaction needs no clause — mid-run this process cannot
+  # answer, and consent's no-reply timeout defers it.
+  @impl ProcessHub.Strategy.Migration.MigrationConsent
+  def migration_consent(%__MODULE__{} = state) do
+    cond do
+      state.corrections != %{} -> :defer
+      state.durable_bounded and not state.suspended -> :defer
+      state.effectively_once and outbox_pending?(state) -> :defer
+      true -> :ready
+    end
+  end
+
+  # Bounded-time and fail-open: a query failure yields `:ready` — worst case
+  # is pre-consent behaviour, never a wedged migration.
+  defp outbox_pending?(%__MODULE__{} = state) do
+    operative_class(state)
+    |> Flezha.State.Supervisor.live_writers()
+    |> Enum.any?(fn pid ->
+      match?(%{pending: p} when p > 0, Flezha.State.WalWriter.outbox_status(pid, 1_000))
+    end)
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
+  end
+
+  # A deferred migration re-queries consent on its own retry tick; this only
+  # makes the move prompt. Any failure — hub down mid-shutdown, nothing
+  # deferred — is a no-op.
+  defp signal_migration_ready(%__MODULE__{} = state) do
+    _ =
+      ProcessHub.Service.Migration.migration_ready(
+        Identificator.hub(state.namespace),
+        state.id
+      )
+
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   # Time a known-blocking operation and surface a `[Overwatch] op_slow` warning

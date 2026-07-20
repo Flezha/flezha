@@ -26,9 +26,7 @@ defmodule Flezha.Observability.LoggerHandlerTest do
     on_exit(fn -> Registry.unregister_sink(sink_name) end)
 
     # Make sure logger emits warnings (test config has level: :error)
-    prev_level = Logger.level()
-    Logger.configure(level: :warning)
-    on_exit(fn -> Logger.configure(level: prev_level) end)
+    on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
 
     {:ok, sink_name: sink_name, counter_ref: ref}
   end

@@ -45,7 +45,6 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     test "skips quiesce + drain, runs only finalise, returns :ok" do
       stub(HubManager, :get_running_namespaces, fn -> [] end)
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
-      stub(HubManager, :get_hub_nodes, fn _ns, _ -> [] end)
       stub(FsyncBatcher, :flush_all, fn -> :ok end)
       stub(TransportServer, :stop_all, fn -> :ok end)
 
@@ -71,7 +70,6 @@ defmodule Flezha.Shutdown.CoordinatorTest do
     test "runs through all phases cleanly" do
       stub(HubManager, :get_running_namespaces, fn -> [] end)
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
-      stub(HubManager, :get_hub_nodes, fn _ns, _ -> [] end)
       stub(FsyncBatcher, :flush_all, fn -> :ok end)
       stub(TransportServer, :stop_all, fn -> :ok end)
 
@@ -108,7 +106,6 @@ defmodule Flezha.Shutdown.CoordinatorTest do
       end)
 
       stub(HubManager, :stop_hub_manager, fn -> :ok end)
-      stub(HubManager, :get_hub_nodes, fn _ns, _ -> [] end)
       stub(FsyncBatcher, :flush_all, fn -> :ok end)
       stub(TransportServer, :stop_all, fn -> :ok end)
 
@@ -128,6 +125,127 @@ defmodule Flezha.Shutdown.CoordinatorTest do
 
       assert :ok = Task.await(caller_a, 5_000)
       assert :ok = Task.await(caller_b, 5_000)
+    end
+  end
+
+  describe "drain via Migration.drain/2 (processhub-deferred-migration)" do
+    defp stub_local_operatives() do
+      stub(HubManager, :get_running_namespaces, fn -> ["default"] end)
+      stub(ProcessHub, :is_alive?, fn _hub -> true end)
+
+      # First call (capture) reports the hosted operative; later calls (the
+      # post-drain locally-empty wait) fall through to the stub: gone.
+      expect(ProcessHub, :process_list, fn _hub, :local -> [{"op-1", self()}] end)
+      stub(ProcessHub, :process_list, fn _hub, :local -> [] end)
+
+      stub(FsyncBatcher, :flush_all, fn -> :ok end)
+      stub(TransportServer, :stop_all, fn -> :ok end)
+    end
+
+    test "the hub drains before its supervisor stops" do
+      test_pid = self()
+      stub_local_operatives()
+
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, opts ->
+        assert Keyword.fetch!(opts, :timeout) > 0
+        send(test_pid, :drain_called)
+        {:ok, %{migrated: 1, forced: 0}}
+      end)
+
+      stub(HubManager, :stop_hub_manager, fn ->
+        send(test_pid, :hub_stopped)
+        :ok
+      end)
+
+      assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
+
+      assert_receive msg_a, 2_000
+      assert_receive msg_b, 2_000
+      assert [msg_a, msg_b] == [:drain_called, :hub_stopped]
+    end
+
+    test "solo node (:no_target_nodes) skips migration and completes clean" do
+      stub_local_operatives()
+      stub(HubManager, :stop_hub_manager, fn -> :ok end)
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:error, :no_target_nodes} end)
+
+      events = attach_telemetry()
+      assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
+      detach_telemetry(events)
+      received = drain_telemetry()
+
+      assert Enum.any?(received, fn {ev, m, _} ->
+               ev == [:flezha, :shutdown, :drain_progress] and m.migrated == 0 and
+                 m.forced == 0 and m.remaining_hubs == 0 and is_integer(m.elapsed_ms)
+             end)
+
+      assert Enum.any?(received, fn {ev, _, meta} ->
+               ev == [:flezha, :shutdown, :complete] and meta.outcome == :clean
+             end)
+    end
+
+    test "a drain precondition failure degrades instead of wedging" do
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      stub_local_operatives()
+      stub(HubManager, :stop_hub_manager, fn -> :ok end)
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts -> {:error, :locked} end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
+        end)
+
+      assert log =~ "degraded (:locked)"
+    end
+
+    test "forced migrations are counted and logged, outcome stays clean" do
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+      stub_local_operatives()
+      stub(HubManager, :stop_hub_manager, fn -> :ok end)
+
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
+        {:ok, %{migrated: 1, forced: 2}}
+      end)
+
+      events = attach_telemetry()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert :ok = Coordinator.shutdown(:cli, timeout_ms: 5_000)
+        end)
+
+      detach_telemetry(events)
+      received = drain_telemetry()
+
+      assert log =~ "force-migrated 2"
+
+      assert Enum.any?(received, fn {ev, m, _} ->
+               ev == [:flezha, :shutdown, :drain_progress] and m.migrated == 1 and m.forced == 2
+             end)
+
+      assert Enum.any?(received, fn {ev, _, meta} ->
+               ev == [:flezha, :shutdown, :complete] and meta.outcome == :clean
+             end)
+    end
+
+    test "a drain exceeding the budget times out to {:partial, still_local}" do
+      test_pid = self()
+      stub_local_operatives()
+
+      stub(ProcessHub.Service.Migration, :drain, fn _hub, _opts ->
+        Process.sleep(2_000)
+        {:ok, %{migrated: 1, forced: 0}}
+      end)
+
+      stub(HubManager, :stop_hub_manager, fn ->
+        send(test_pid, :hub_stopped)
+        :ok
+      end)
+
+      assert {:partial, ["op-1"]} = Coordinator.shutdown(:cli, timeout_ms: 300)
+
+      # The timeout path still stops the hub before finalise.
+      assert_receive :hub_stopped, 1_000
     end
   end
 

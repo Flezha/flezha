@@ -96,6 +96,17 @@ defmodule Flezha.State.Supervisor do
   end
 
   @doc """
+  Pids of every live Segment writer for `operative_class`. The 3-tuple key
+  pattern excludes the class's `{class, :input_log}` registration.
+  """
+  @spec live_writers(String.t()) :: [pid()]
+  def live_writers(operative_class) do
+    Elixir.Registry.select(@registry, [
+      {{{operative_class, :_, :_}, :"$1", :_}, [], [:"$1"]}
+    ])
+  end
+
+  @doc """
   Process-registry name used by `WalWriter` to register itself by
   `segment_id`. Started alongside this supervisor.
   """

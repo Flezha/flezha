@@ -7,11 +7,14 @@ defmodule Flezha.Shutdown.Coordinator do
     so `Flezha.Service.OperativeManager.start_operative/2` returns
     `{:error, :shutting_down}` and `Flezha.Runner.FleetManager`
     rejects new runner connect attempts.
-  - **Drain** captures the locally-hosted Operative set, dispatches
-    ProcessHub `cluster_leave` (via `HubManager.stop_hub_manager/0`),
-    then polls peer registry dumps until every captured Operative is
-    visible on at least one peer (or the bounded timeout elapses).
-    Solo nodes (no peers) skip the migration wait.
+  - **Drain** migrates locally-hosted Operatives to peers while they
+    are still alive: `ProcessHub.Service.Migration.drain/2` per running
+    namespace hub redistributes each child through the migration-consent
+    gate (live HotSwap handover) and force-migrates what still defers at
+    the deadline. The hub supervisor stops only after the drains return.
+    Solo nodes (`{:error, :no_target_nodes}`) skip the migration wait;
+    other drain preconditions degrade to the same path rather than
+    wedging shutdown.
   - **Finalise** flushes `Flezha.State.FsyncBatcher` and stops
     transports so file descriptors/sockets are torn down before the
     application supervision tree's normal shutdown takes over.
@@ -34,9 +37,15 @@ defmodule Flezha.Shutdown.Coordinator do
 
   @ets_table __MODULE__.State
 
-  @poll_ms 500
-  @log_throttle_ms 1_000
   @finalise_call_timeout_ms 5_000
+  # Slack reserved off the drain budget so finalise still runs inside the
+  # overall bound; also the floor so `Migration.drain/2` always gets a
+  # positive deadline.
+  @drain_budget_slack_ms 1_000
+  # A force pass fires AT the drain deadline and its handover is async, so
+  # this window is carved out of the drain timeout to let it land before the
+  # hub stops.
+  @forced_handover_grace_ms 2_000
 
   defstruct phase: :idle,
             reason: nil,
@@ -49,7 +58,6 @@ defmodule Flezha.Shutdown.Coordinator do
             still_local: [],
             outcome: nil,
             signal_handler_status: :ok,
-            last_progress_log_ms: 0,
             timeout_timer: nil
 
   # ---------- Public API ----------
@@ -166,10 +174,7 @@ defmodule Flezha.Shutdown.Coordinator do
     cond do
       Keyword.get(opts, :force, false) ->
         Logger.info("[shutdown] forced (skipping drain); phase=finalise")
-        state = transition(state, :finalising, now)
-        emit_telemetry(:phase_started, %{}, %{phase: :finalise})
-        send(self(), :do_finalise)
-        {:noreply, state}
+        {:noreply, enter_finalise(state, now)}
 
       true ->
         Logger.info("[shutdown] phase=quiesce reason=#{inspect(reason)}")
@@ -227,92 +232,41 @@ defmodule Flezha.Shutdown.Coordinator do
     state = transition(state, :draining, now)
     state = %{state | captured_local: captured}
 
-    namespaces = Map.keys(captured)
-    peer_map = capture_peer_map(namespaces)
-
-    # Dispatch ProcessHub `cluster_leave` by stopping the local hub
-    # supervisor. ProcessHub's coordinator `terminate/2` notifies
-    # peers so they can claim our Operatives via the configured migration
-    # strategy (HotSwap with handover).
-    safe_stop_hub_manager()
-
-    state = %{state | last_progress_log_ms: now}
-
-    cond do
-      captured == %{} ->
-        # Nothing was running locally; drain trivially complete.
-        send(self(), :drain_complete)
-        {:noreply, state}
-
-      Enum.all?(namespaces, fn ns -> Map.get(peer_map, ns, []) == [] end) ->
-        # No peers across any namespace — nothing to migrate to.
-        Logger.info(
-          "[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot"
-        )
-
-        # Local Operatives already terminated by stop_hub_manager above;
-        # WAL fsync flush happens in the finalise phase.
-        send(self(), :drain_complete)
-        {:noreply, %{state | still_local: []}}
-
-      true ->
-        Process.send_after(self(), {:drain_poll, peer_map}, @poll_ms)
-        {:noreply, state}
+    if captured == %{} do
+      # Nothing was running locally; drain trivially complete.
+      send(self(), {:drain_done, %{migrated: 0, forced: 0}})
+      {:noreply, state}
+    else
+      # `Migration.drain/2` blocks up to its deadline, so it runs off the
+      # coordinator loop; the `:phase_timeout` timer is the backstop if the
+      # runner dies without reporting.
+      start_drain_runner(self(), Map.keys(captured), drain_budget(state, now), now)
+      {:noreply, state}
     end
   end
 
-  def handle_info({:drain_poll, peer_map}, %__MODULE__{phase: :draining} = state) do
-    now = monotonic_ms()
-    elapsed = now - state.phase_start_ms
+  def handle_info(
+        {:drain_done, %{migrated: migrated, forced: forced}},
+        %__MODULE__{phase: :draining} = state
+      ) do
+    Logger.info("[shutdown] drain migrated=#{migrated} forced=#{forced}")
 
-    {still_local, migrated, remaining} = drain_progress(state.captured_local, peer_map)
+    # The children were claimed by peers (or degraded to next-boot WAL
+    # restore) while still alive; only now does the hub supervisor stop.
+    safe_finalise_step(:stop_hub_manager, &HubManager.stop_hub_manager/0)
 
-    emit_telemetry(
-      :drain_progress,
-      %{migrated: migrated, remaining: remaining, elapsed_ms: elapsed},
-      %{}
-    )
-
-    state =
-      if now - state.last_progress_log_ms >= @log_throttle_ms do
-        Logger.info(
-          "[shutdown] drain_progress migrated=#{migrated} remaining=#{remaining} elapsed_ms=#{elapsed}"
-        )
-
-        %{state | last_progress_log_ms: now}
-      else
-        state
-      end
-
-    cond do
-      remaining == 0 ->
-        send(self(), :drain_complete)
-        {:noreply, %{state | still_local: []}}
-
-      true ->
-        Process.send_after(self(), {:drain_poll, peer_map}, @poll_ms)
-        {:noreply, %{state | still_local: still_local}}
-    end
-  end
-
-  def handle_info({:drain_poll, _peer_map}, state) do
-    # Phase advanced (timeout or force) — discard stale poll.
-    {:noreply, state}
-  end
-
-  def handle_info(:drain_complete, %__MODULE__{phase: :draining} = state) do
     now = monotonic_ms()
     duration_ms = now - state.phase_start_ms
     emit_telemetry(:phase_completed, %{duration_ms: duration_ms}, %{phase: :drain})
 
     Logger.info("[shutdown] phase=finalise")
-    emit_telemetry(:phase_started, %{}, %{phase: :finalise})
-    state = transition(state, :finalising, now)
-    send(self(), :do_finalise)
-    {:noreply, state}
+    {:noreply, enter_finalise(state, now)}
   end
 
-  def handle_info(:drain_complete, state), do: {:noreply, state}
+  def handle_info({:drain_done, _}, state) do
+    # Phase advanced (timeout or force) — discard the stale report.
+    {:noreply, state}
+  end
 
   def handle_info(:do_finalise, %__MODULE__{phase: :finalising} = state) do
     now = monotonic_ms()
@@ -335,12 +289,14 @@ defmodule Flezha.Shutdown.Coordinator do
 
     emit_telemetry(:timeout, %{}, %{phase: external_phase(phase), still_local: still_local})
 
+    # The drain runner is abandoned, not awaited: its late `:drain_done`
+    # lands in the stale clause. The hub still has to stop before finalise.
+    if phase == :draining do
+      safe_finalise_step(:stop_hub_manager, &HubManager.stop_hub_manager/0)
+    end
+
     Logger.info("[shutdown] phase=finalise")
-    emit_telemetry(:phase_started, %{}, %{phase: :finalise})
-    state = transition(state, :finalising, monotonic_ms())
-    state = %{state | still_local: still_local}
-    send(self(), :do_finalise)
-    {:noreply, state}
+    {:noreply, enter_finalise(%{state | still_local: still_local}, monotonic_ms())}
   end
 
   def handle_info(:phase_timeout, state), do: {:noreply, state}
@@ -352,6 +308,13 @@ defmodule Flezha.Shutdown.Coordinator do
   defp transition(state, new_phase, now) do
     :ets.insert(@ets_table, {:phase, new_phase})
     %{state | phase: new_phase, phase_start_ms: now}
+  end
+
+  defp enter_finalise(state, now) do
+    emit_telemetry(:phase_started, %{}, %{phase: :finalise})
+    state = transition(state, :finalising, now)
+    send(self(), :do_finalise)
+    state
   end
 
   defp arm_timeout(state) do
@@ -421,88 +384,126 @@ defmodule Flezha.Shutdown.Coordinator do
     end)
   end
 
-  defp capture_peer_map(namespaces) do
-    Enum.into(namespaces, %{}, fn ns ->
-      peers = HubManager.get_hub_nodes(ns, false)
-      {ns, peers}
-    end)
-  end
-
-  defp drain_progress(captured_local, peer_map) do
-    {still_local, migrated, remaining} =
-      Enum.reduce(captured_local, {[], 0, 0}, fn {ns, operative_ids}, {still, mig, rem} ->
-        peers = Map.get(peer_map, ns, [])
-        hub_id = Identificator.hub(ns)
-        peer_dumps = fetch_peer_dumps(peers, hub_id)
-
-        {ns_still, ns_mig, ns_rem} =
-          Enum.reduce(operative_ids, {[], 0, 0}, fn operative_id, {s, m, r} ->
-            if operative_visible_on_peer?(operative_id, peer_dumps) do
-              {s, m + 1, r}
-            else
-              {[operative_id | s], m, r + 1}
-            end
-          end)
-
-        {[{ns, ns_still} | still], mig + ns_mig, rem + ns_rem}
-      end)
-
-    flat_still = Enum.flat_map(still_local, fn {_ns, ids} -> ids end)
-    {flat_still, migrated, remaining}
-  end
-
-  defp fetch_peer_dumps([], _hub_id), do: []
-
-  defp fetch_peer_dumps(peers, hub_id) do
-    peers
-    |> Task.async_stream(
-      fn node ->
-        case :rpc.call(node, ProcessHub, :registry_dump, [hub_id], 2_000) do
-          dump when is_map(dump) -> {node, dump}
-          _ -> nil
-        end
-      end,
-      max_concurrency: length(peers),
-      timeout: 2_100,
-      on_timeout: :kill_task
+  defp drain_budget(state, now) do
+    max(
+      state.timeout_ms - (now - state.start_ms) - @drain_budget_slack_ms,
+      @drain_budget_slack_ms
     )
-    |> Enum.flat_map(fn
-      {:ok, nil} -> []
-      {:ok, entry} -> [entry]
-      {:exit, _} -> []
-    end)
   end
 
-  defp operative_visible_on_peer?(operative_id, peer_dumps) do
-    Enum.any?(peer_dumps, fn {node, dump} ->
-      case Map.get(dump, operative_id) do
-        nil ->
-          false
+  # Runs the per-hub drains off the coordinator loop; one `:drain_progress`
+  # per completed hub, one `{:drain_done, totals}` at the end. Unlinked on
+  # purpose — a crash here is covered by the `:phase_timeout` backstop.
+  defp start_drain_runner(coordinator, namespaces, budget, phase_start_ms) do
+    spawn(fn ->
+      total = length(namespaces)
 
-        entry ->
-          node_pids =
-            case entry do
-              {_cspec, np} -> np
-              {_cspec, np, _meta} -> np
-              _ -> []
+      stream =
+        Task.async_stream(
+          namespaces,
+          fn ns -> drain_hub(ns, budget) end,
+          max_concurrency: total,
+          timeout: budget + 2_000,
+          on_timeout: :kill_task
+        )
+
+      {migrated, forced} =
+        namespaces
+        |> Enum.zip(stream)
+        |> Enum.with_index(1)
+        |> Enum.reduce({0, 0}, fn {{ns, task_result}, idx}, {m_acc, f_acc} ->
+          # A task killed by the async_stream timeout degrades like any
+          # other drain error.
+          result =
+            case task_result do
+              {:ok, drain_result} -> drain_result
+              {:exit, reason} -> {:error, {:task_exit, reason}}
             end
 
-          Enum.any?(node_pids, fn
-            {n, _pid} when n == node -> true
-            _ -> false
-          end)
-      end
+          {m, f} = fold_drain_outcome(ns, result)
+
+          emit_telemetry(
+            :drain_progress,
+            %{
+              migrated: m,
+              forced: f,
+              remaining_hubs: total - idx,
+              elapsed_ms: monotonic_ms() - phase_start_ms
+            },
+            %{namespace: ns}
+          )
+
+          {m_acc + m, f_acc + f}
+        end)
+
+      send(coordinator, {:drain_done, %{migrated: migrated, forced: forced}})
     end)
   end
 
-  defp safe_stop_hub_manager() do
-    try do
-      HubManager.stop_hub_manager()
-    catch
-      :exit, reason ->
-        Logger.warning("[shutdown] stop_hub_manager exit: #{inspect(reason)}")
-        :ok
+  defp drain_hub(ns, budget) do
+    hub_id = Identificator.hub(ns)
+    deadline = monotonic_ms() + budget
+
+    if ProcessHub.is_alive?(hub_id) do
+      drain_timeout = max(budget - @forced_handover_grace_ms, 1_000)
+      result = ProcessHub.Service.Migration.drain(hub_id, timeout: drain_timeout)
+
+      # `drain/2` returns once the deferred list is empty, but the migration
+      # start requests are async and HotSwap stops a local child only AFTER
+      # the remote start succeeded. Locally-empty is the completion signal;
+      # stopping the hub earlier kills mid-flight handovers.
+      with {:ok, _} <- result, do: await_local_children_gone(hub_id, deadline)
+
+      result
+    else
+      {:error, :no_target_nodes}
     end
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp await_local_children_gone(hub_id, deadline) do
+    cond do
+      ProcessHub.process_list(hub_id, :local) == [] ->
+        :ok
+
+      monotonic_ms() >= deadline ->
+        :deadline
+
+      true ->
+        Process.sleep(100)
+        await_local_children_gone(hub_id, deadline)
+    end
+  catch
+    _kind, _reason -> :ok
+  end
+
+  # One hub's drain verdict → `{migrated, forced}`. Every error degrades to
+  # the no-peer path: the operatives terminate with the hub supervisor and
+  # the next boot restores them from on-disk WAL/snapshot — never a wedge.
+  defp fold_drain_outcome(ns, {:ok, %{migrated: migrated, forced: forced}}) do
+    if forced > 0 do
+      Logger.warning("[shutdown] drain ns=#{ns} force-migrated #{forced} deferred operative(s)")
+    end
+
+    {migrated, forced}
+  end
+
+  defp fold_drain_outcome(_ns, {:error, :no_target_nodes}) do
+    Logger.info(
+      "[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot"
+    )
+
+    {0, 0}
+  end
+
+  defp fold_drain_outcome(ns, {:error, reason}) do
+    Logger.warning(
+      "[shutdown] drain ns=#{ns} degraded (#{inspect(reason)}); " <>
+        "local operatives terminate and restore on next boot"
+    )
+
+    {0, 0}
   end
 
   defp safe_close_audit_writer() do
@@ -529,7 +530,7 @@ defmodule Flezha.Shutdown.Coordinator do
     safe_finalise_step(:transport, fn -> TransportServer.stop_all() end)
   end
 
-  defp safe_finalise_step(label, fun, _timeout \\ @finalise_call_timeout_ms) do
+  defp safe_finalise_step(label, fun) do
     try do
       fun.()
     catch
@@ -539,7 +540,10 @@ defmodule Flezha.Shutdown.Coordinator do
     end
   end
 
-  defp configured_timeout_ms() do
+  # The one home of the shutdown-budget default — `HubManager.consent_settings/0`
+  # derives `max_defer_time` from it so the two never drift.
+  @doc false
+  def configured_timeout_ms() do
     Application.get_env(:flezha, :graceful_shutdown_timeout_ms, 60_000)
   end
 

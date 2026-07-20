@@ -122,9 +122,7 @@ defmodule Flezha.Diagnostics.MemoryReporterTest do
     test "emits the reading line at :info so it reaches Loki" do
       # Test config pins the primary level to :error; lower it so the :info
       # line is emitted, then restore.
-      previous = Logger.level()
-      Logger.configure(level: :info)
-      on_exit(fn -> Logger.configure(level: previous) end)
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:info))
 
       {:ok, pid} = GenServer.start_link(MemoryReporter, %{interval_ms: 10_000})
 

@@ -17,9 +17,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
   alias Flezha.Runner.ControlUnit
 
   setup do
-    prev = Logger.level()
-    Logger.configure(level: :warning)
-    on_exit(fn -> Logger.configure(level: prev) end)
+    on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
   end
 
   test "heartbeat unblocks the stuck caller when a control reply is unacked past the threshold" do

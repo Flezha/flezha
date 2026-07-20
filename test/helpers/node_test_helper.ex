@@ -67,6 +67,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # Peer nodes only need UDS transport (avoids QUIC port conflicts).
     :erpc.call(node_name, Application, :put_env, [:flezha, :transports, [:uds]])
 
+    # A test that fails mid-way must not leak the peer BEAM; `stop_peer_node`
+    # already checks liveness, so an explicit stop makes this a no-op.
+    on_exit(fn ->
+      if Process.alive?(peer_pid), do: catch_exit(:peer.stop(peer_pid))
+    end)
+
     # Start the flezha application on the peer node.
     :erpc.call(node_name, Application, :ensure_all_started, [:flezha], 10000)
 
@@ -231,6 +237,19 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     Flezha.Service.EventManager.rem_handler(:runner_disconnected_event)
 
     :ok
+  end
+
+  @doc """
+  Set the primary `Logger` level for one test, returning a zero-arity restore
+  closure for the caller's `on_exit` (same caller-owned-cleanup convention as
+  `Flezha.State.TestHelpers.override_env/2`). Needed whenever a test asserts
+  on log output below the test config's `:error` gate.
+  """
+  @spec override_log_level(Logger.level()) :: (-> :ok)
+  def override_log_level(level) do
+    previous = Logger.level()
+    Logger.configure(level: level)
+    fn -> Logger.configure(level: previous) end
   end
 
   @doc """

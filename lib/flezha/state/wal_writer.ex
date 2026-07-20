@@ -225,8 +225,9 @@ defmodule Flezha.State.WalWriter do
   def last_persisted_seq(server), do: GenServer.call(server, :last_persisted_seq)
 
   @doc "Live effectively-once outbox status (`flz state outbox`)."
-  @spec outbox_status(GenServer.server()) :: map()
-  def outbox_status(server), do: GenServer.call(server, :outbox_status)
+  @spec outbox_status(GenServer.server(), timeout()) :: map()
+  def outbox_status(server, timeout \\ 5_000),
+    do: GenServer.call(server, :outbox_status, timeout)
 
   @spec stall_status(GenServer.server()) :: stall_status()
   def stall_status(server), do: GenServer.call(server, :stall_status)

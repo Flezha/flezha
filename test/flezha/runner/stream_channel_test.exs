@@ -31,7 +31,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :telemetry.attach(
         handler_id,
         [:flezha, :state, :output_stall],
-        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.operative_instance}) end,
+        stall_forwarder(test_pid),
         nil
       )
 
@@ -53,7 +53,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :telemetry.attach(
         handler_id,
         [:flezha, :state, :output_stall],
-        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.operative_instance}) end,
+        stall_forwarder(test_pid),
         nil
       )
 
@@ -144,7 +144,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :telemetry.attach(
         id,
         [:flezha, :state, :output_stall],
-        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.operative_instance}) end,
+        stall_forwarder(test_pid),
         nil
       )
 
@@ -258,7 +258,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :telemetry.attach(
         hid,
         [:flezha, :state, :output_stall],
-        fn _e, _m, md, _ -> send(test_pid, {:output_stall, md.operative_instance}) end,
+        stall_forwarder(test_pid),
         nil
       )
 
@@ -293,4 +293,16 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
   defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
   defp restore_env(key, value), do: Application.put_env(:flezha, key, value)
+
+  # The output_stall event is global: real channels elsewhere in the suite can
+  # flag leftovers of other tests' operatives mid-refute-window. Forward only
+  # this file's instances so the refutes cannot be contaminated.
+  @tracked_instances ["operative_a", "operative_b", "cont_op", "bnd_op"]
+  defp stall_forwarder(test_pid) do
+    fn _e, _m, md, _ ->
+      if md.operative_instance in @tracked_instances do
+        send(test_pid, {:output_stall, md.operative_instance})
+      end
+    end
+  end
 end

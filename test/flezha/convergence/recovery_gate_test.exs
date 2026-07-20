@@ -50,9 +50,7 @@ defmodule Flezha.Convergence.RecoveryGateTest do
       ns = "rg_timeout_#{System.unique_integer([:positive])}"
       Snapshot.observe_recovery(Identificator.hub(ns), :timeout)
 
-      prev_level = Logger.level()
-      Logger.configure(level: :warning)
-      on_exit(fn -> Logger.configure(level: prev_level) end)
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->

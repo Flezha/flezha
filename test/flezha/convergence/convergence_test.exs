@@ -354,9 +354,7 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "on timeout, probes the wedged target's mailbox depth and current function" do
-      prev_level = Logger.level()
-      Logger.configure(level: :warning)
-      on_exit(fn -> Logger.configure(level: prev_level) end)
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
 
       {:ok, pid} = GenServer.start_link(__MODULE__.WedgeServer, nil)
 
@@ -391,9 +389,7 @@ defmodule Flezha.ConvergenceTest do
       # Regression: `Process.info/2` raises `ArgumentError` on a remote pid.
       # That raise is an :error, not an :exit, so the catch in bounded/3 never
       # covered it — it propagated out of Convergence.Loop and took the node down.
-      prev_level = Logger.level()
-      Logger.configure(level: :warning)
-      on_exit(fn -> Logger.configure(level: prev_level) end)
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
 
       args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
 

@@ -826,9 +826,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end
 
     test ":block + cast emits one-shot warning and drops via :block_in_cast_unsupported" do
-      previous_level = Logger.level()
-      Logger.configure(level: :warning)
-      on_exit(fn -> Logger.configure(level: previous_level) end)
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
 
       blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
 

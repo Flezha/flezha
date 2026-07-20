@@ -12,9 +12,13 @@ The controller-graceful-shutdown capability defines how the Flezha controller (B
 
 **Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}` and `Flezha.Runner.FleetManager` rejects new runner connect attempts with a structured error. Already-running Operatives and already-connected runners SHALL NOT be affected by this phase.
 
-**Drain** SHALL dispatch `ProcessHub` `cluster_leave` for every running namespace's hub by calling `Flezha.Service.HubManager.stop_hub_manager()` (which causes ProcessHub's `terminate/2` to dispatch `@event_cluster_leave` to peers) and SHALL synchronously poll `ProcessHub.registry_dump/1` across peers every `500 ms` until **every Operative that was locally hosted at quiesce time** is registered as locally hosted on at least one peer (HotSwap migration complete) or until the local Operative has terminated AND the leaving node has no peers (no migration target — local termination flushes WAL state to disk for restart survival). Each poll SHALL emit `[:flezha, :shutdown, :drain_progress]` with `%{migrated: integer(), remaining: integer(), elapsed_ms: integer()}`.
+**Drain** SHALL migrate locally hosted Operatives to peers **while they are still alive** by calling `ProcessHub.Service.Migration.drain(hub_id, timeout: remaining_budget)` for every running namespace's hub, concurrently via a bounded `Task.async_stream` over the namespace list, where `remaining_budget` is the configured shutdown timeout minus elapsed time (floored at a small positive minimum). `drain/2` redistributes each local child through the migration-consent gate (live HotSwap handover) and force-migrates whatever is still deferred at its deadline. Per-hub outcomes SHALL be folded as follows:
 
-Registry dumps from all peers SHALL be fetched **concurrently** within each poll cycle using a bounded `Task.async_stream` over the peer node list. Each peer RPC call SHALL have an individual timeout of `2_000 ms`. A peer that does not respond within its timeout SHALL be excluded from that poll cycle's dump (treated as no contribution, same as the existing fallback). The wall-clock cost of one drain poll cycle SHALL NOT exceed the per-peer RPC timeout regardless of the number of peers.
+- `{:ok, %{migrated: m, forced: f}}` — counted into the drain outcome; `f > 0` SHALL be logged at WARNING but does not change the overall result.
+- `{:error, :no_target_nodes}` — the solo-node path: log `[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot` and proceed (local Operatives terminate when the hub supervisor stops; WAL fsync flushes in finalise).
+- `{:error, :partitioned | :locked | :draining}` — log at WARNING with the reason and degrade that hub to the no-peer behaviour; shutdown SHALL NOT wedge on a drain precondition.
+
+Only **after** every hub's drain call has returned (or the shutdown timeout fired) SHALL the coordinator call `Flezha.Service.HubManager.stop_hub_manager()` to stop the hub supervisor. The coordinator SHALL emit `[:flezha, :shutdown, :drain_progress]` once per completed hub with `%{migrated: integer(), forced: integer(), remaining_hubs: integer(), elapsed_ms: integer()}`.
 
 **Finalise** SHALL synchronously complete all pending I/O steps: flush `Flezha.State.FsyncBatcher`, close the `Flezha.Observability.AuditLog.Writer` (if running), and stop transports via `Flezha.Transport.Server`. Each step SHALL be wrapped in a shared `safe_finalise_step(label, fun, timeout_ms)` private helper that catches `:exit` and logs a warning with `label` rather than crashing the coordinator. After finalise returns, normal supervision-tree shutdown completes the rest.
 
@@ -22,38 +26,47 @@ The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` 
 
 `Coordinator.shutdown/2` SHALL be idempotent: the first call drives the state machine; subsequent calls during `:quiescing | :draining | :finalising` SHALL log `[shutdown] already in progress (phase=<phase>), joining`, register the caller as a waiter, and return the same outcome to all waiters.
 
-#### Scenario: Three-phase clean shutdown on a node with peers
+#### Scenario: Three-phase clean shutdown on a node with peers performs live handover
 
-- **GIVEN** a controller hosting two Operatives (`operative-a` and `operative-b`) with HotSwap targets available on a peer node `controller-2`
+- **GIVEN** a controller hosting two Operatives (`operative-a` and `operative-b`) with a peer node `controller-2` in the namespace hub
 - **WHEN** an operator calls `Flezha.Shutdown.Coordinator.shutdown(:cli, [])`
-- **THEN** the coordinator logs `[shutdown] phase=quiesce`, transitions through `quiesce → drain → finalise`, polls `ProcessHub.registry_dump/1` until both Operatives appear under `controller-2` in the registry dump (and not under the leaving node), emits `:drain_progress` events along the way, logs `[shutdown] complete duration_ms=<T> outcome=clean`, and returns `:ok`
+- **THEN** the coordinator logs `[shutdown] phase=quiesce`, transitions through `quiesce → drain → finalise`, calls `Migration.drain/2` on the namespace hub **before** stopping the hub supervisor, both Operatives migrate to `controller-2` through live HotSwap handover (their processes were alive when handover state was prepared), a `:drain_progress` event reports `%{migrated: 2, forced: 0, ...}`, the hub supervisor stops only afterwards, and the call returns `:ok`
 
-#### Scenario: Drain timeout escalates to finalise with partial outcome
+#### Scenario: Busy operative defers, then migrates within the drain window
 
-- **GIVEN** a controller hosting 50 Operatives whose HotSwap throughput is below the configured timeout budget (e.g. `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=5000`)
-- **WHEN** the coordinator's drain phase exceeds the timeout
-- **THEN** the coordinator logs `[shutdown] timeout phase=drain still_local=<N>` at ERROR, emits `[:flezha, :shutdown, :timeout]` with `%{still_local: [operative_ids…]}`, runs the finalise phase, and returns `{:partial, [operative_ids…]}` to its caller
+- **GIVEN** a draining controller hosting a durable bounded Operative that is mid-iteration when drain begins
+- **WHEN** the consent query runs
+- **THEN** the Operative defers, remains alive and locally hosted, and after it suspends at its next committed iteration boundary the drain's consent retry migrates it to a peer — counted in `migrated`, not `forced`
+
+#### Scenario: Deferred operative still busy at the drain deadline is force-migrated
+
+- **GIVEN** a draining controller whose remaining budget expires while one Operative still defers
+- **WHEN** `Migration.drain/2` reaches its `:timeout` deadline
+- **THEN** the Operative is force-migrated through the best-effort handover path, the per-hub `:drain_progress` event reports it under `forced`, a WARNING is logged, and shutdown proceeds to finalise
 
 #### Scenario: No-peer node skips migration wait
 
 - **GIVEN** a controller running solo (no other nodes connected to its ProcessHub)
 - **WHEN** `Coordinator.shutdown(:sigterm)` is invoked
-- **THEN** the coordinator detects zero peers, skips the migration-wait portion of drain, logs `[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot`, terminates locally hosted Operatives so their WAL fsyncs flush, runs finalise, and returns `:ok`
+- **THEN** `Migration.drain/2` returns `{:error, :no_target_nodes}`, the coordinator logs `[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot`, stops the hub supervisor so locally hosted Operatives terminate and their WAL fsyncs flush in finalise, and returns `:ok`
+
+#### Scenario: Drain precondition failure degrades instead of wedging
+
+- **GIVEN** a namespace hub whose drain call returns `{:error, :locked}` (pending distribution work at shutdown time)
+- **WHEN** the drain phase folds that hub's outcome
+- **THEN** the coordinator logs the reason at WARNING, treats that hub like the no-peer path, stops the hub supervisor, and completes shutdown within the configured timeout
+
+#### Scenario: Drain timeout escalates to finalise with partial outcome
+
+- **GIVEN** a controller hosting 50 Operatives whose migration throughput is below the configured timeout budget (e.g. `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS=5000`)
+- **WHEN** the coordinator's drain phase exceeds the overall shutdown timeout
+- **THEN** the coordinator logs `[shutdown] timeout phase=drain still_local=<N>` at ERROR, emits `[:flezha, :shutdown, :timeout]` with `%{still_local: [operative_ids…]}`, runs the finalise phase, and returns `{:partial, [operative_ids…]}` to its caller
 
 #### Scenario: Idempotent re-entry — second `shutdown/1` joins the in-flight one
 
 - **GIVEN** a coordinator already in `:draining` from a prior `Coordinator.shutdown(:sigterm)`
 - **WHEN** an operator runs `flz controller stop` (which calls `Coordinator.shutdown(:cli)`) before the first call returns
 - **THEN** the second call logs `[shutdown] already in progress (phase=drain), joining`, registers as a waiter, and receives the same final outcome (`:ok` or `{:partial, …}`) as the first caller
-
-#### Scenario: Slow peer does not stall drain poll cycle
-
-- **GIVEN** a controller draining with 3 peers where one peer (`controller-3`) is unresponsive
-- **WHEN** a drain poll cycle runs
-- **THEN** the RPC calls to all 3 peers are issued concurrently
-- **AND** `controller-3`'s call times out after 2 s without blocking the calls to `controller-1` and `controller-2`
-- **AND** the poll cycle completes within ≈2 s total (not ≈6 s as with serial calls)
-- **AND** `controller-3` is excluded from that cycle's dump, same as if it returned an error
 
 #### Scenario: Finalise step crash does not abort shutdown
 

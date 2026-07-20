@@ -26,23 +26,28 @@ the same outcome.
    - `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}`.
    - `Flezha.Runner.FleetManager` rejects new runner connect attempts.
    - Already-running Operatives and connected runners are NOT touched.
-2. **Drain** — captures the locally-hosted Operative set per namespace,
-   then calls `Flezha.Service.HubManager.stop_hub_manager/0` so
-   ProcessHub's coordinator dispatches `cluster_leave` to peers
-   (their migration strategies — `HotSwap{handover: true}` —
-   take ownership). Polls peer registry dumps every 500 ms until each
-   captured Operative is visible on at least one peer node, or the bounded
-   timeout elapses.
-   - **Peer RPC is concurrent.** Each 500 ms poll calls all known peer
-     nodes in parallel via `Task.async_stream` (2 s timeout per node,
-     `:kill_task` on timeout). A single slow or unreachable peer does not
-     serialize the drain loop against the rest.
-   - **HotSwap race window.** ProcessHub's `HotSwap` strategy auto-migrates
-     operatives ~500 ms after `cluster_leave`. The drain poller uses the peer
-     registry dump to confirm an operative has landed, but there is a brief window
-     where HotSwap migration is in flight and the operative is not yet visible on
-     any peer. The 500 ms poll cadence is intentionally longer than the HotSwap
-     propagation time to let this settle; the drain timeout covers the tail.
+2. **Drain** — migrates locally-hosted Operatives to peers **while they
+   are still alive**: one `ProcessHub.Service.Migration.drain/2` call per
+   running namespace hub (concurrent via `Task.async_stream`). Each drain
+   removes the node from the distribution cluster-wide and redistributes
+   every local child through the migration-consent gate (live
+   `HotSwap{handover: true}` handover — see "Migration consent" below);
+   children still deferring at the drain deadline are force-migrated
+   through the best-effort handover path. The hub supervisor stops only
+   **after** the drains complete.
+   - **Locally-empty is the completion signal.** `drain/2` returns once
+     the deferred list is empty, but migration start requests are async
+     and HotSwap stops a local child only after the remote start
+     succeeded — so the coordinator additionally waits (bounded) until
+     the hub has no local children before stopping it. A 2 s grace window
+     is carved out of the drain timeout so a deadline force pass can
+     still land its handover.
+   - **Outcome fold per hub**: `{:ok, %{migrated, forced}}` counts into
+     the drain summary (`forced > 0` logs a WARNING);
+     `{:error, :no_target_nodes}` is the solo-node path (skip migration,
+     WAL restores on next boot); any other precondition error
+     (`:partitioned | :locked | :draining`) degrades to the same path
+     with a WARNING — shutdown never wedges on a drain precondition.
    - **No-peer case**: solo nodes skip the migration wait; local
      termination flushes WAL state to disk for restart-survival via
      `auto-restore-on-boot`.
@@ -54,6 +59,36 @@ The whole sequence is bounded by
 `:flezha, :graceful_shutdown_timeout_ms`. On timeout: ERROR log,
 `[:flezha, :shutdown, :timeout]` telemetry event, advance to
 finalise, return `{:partial, [operative_ids…]}`.
+
+## Migration consent — busy Operatives defer their move
+
+Every ProcessHub redistribution (node join, convergence rebind, the
+drain above) asks each Overwatch for consent before migrating it
+(`ProcessHub.Strategy.Migration.MigrationConsent`). The Overwatch
+answers `:defer` while moving it would tear mid-critical work:
+
+| Busy signal                            | Safe barrier (signals `migration_ready/2`)        |
+| -------------------------------------- | ------------------------------------------------- |
+| Late-input correction pending          | Correction transaction completes                  |
+| Durable bounded, not suspended         | Suspension at a committed iteration boundary      |
+| Effectively-once outbox not flushed    | Consent re-query on the next retry tick           |
+
+A deferring child is parked in the hub's deferred list, re-queried
+every `retry_interval`, and force-migrated (best-effort handover +
+journal/WAL recovery on the target) after `max_defer_time`. The
+synchronous correction transaction needs no special handling: the
+Overwatch cannot answer mid-run, and a consent no-reply defers it.
+A query failure fails open to `:ready` — worst case is pre-consent
+behaviour, never a wedged migration.
+
+| Knob                                        | Default                          | Env                                  |
+| ------------------------------------------- | -------------------------------- | ------------------------------------ |
+| `:migration_consent, :consent_timeout_ms`   | `5000`                           | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` |
+| `:migration_consent, :retry_interval_ms`    | `2000`                           | `FLEZHA_MIGRATION_RETRY_INTERVAL_MS`  |
+| `:migration_consent, :max_defer_ms`         | `graceful_shutdown_timeout_ms`   | `FLEZHA_MIGRATION_MAX_DEFER_MS`       |
+
+`max_defer_ms` defaults to the shutdown budget so a deferring
+Operative can never outlive the shutdown window.
 
 ## Configuration
 
@@ -122,7 +157,7 @@ Exit codes:
 | `:requested`       | `%{}`                                                      | `%{reason, timestamp_ms}`                      |
 | `:phase_started`   | `%{}`                                                      | `%{phase: :quiesce \| :drain \| :finalise}`    |
 | `:phase_completed` | `%{duration_ms}`                                           | `%{phase}`                                     |
-| `:drain_progress`  | `%{migrated, remaining, elapsed_ms}`                       | `%{}`                                          |
+| `:drain_progress`  | `%{migrated, forced, remaining_hubs, elapsed_ms}` (one per completed hub) | `%{namespace}`                  |
 | `:timeout`         | `%{}`                                                      | `%{phase, still_local: [operative_ids…]}`      |
 | `:complete`        | `%{duration_ms}`                                           | `%{outcome: :clean \| :partial \| :forced, reason}` |
 
@@ -132,7 +167,7 @@ Exit codes:
 [shutdown] received SIGTERM
 [shutdown] phase=quiesce reason=:sigterm
 [shutdown] phase=drain locally_hosted=2
-[shutdown] drain_progress migrated=1 remaining=1 elapsed_ms=523
+[shutdown] drain migrated=2 forced=0
 [shutdown] phase=finalise
 [shutdown] complete duration_ms=842 outcome=clean
 ```

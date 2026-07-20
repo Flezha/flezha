@@ -211,6 +211,25 @@ config :flezha,
     System.get_env("FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS", "60000") |> String.to_integer(),
 
   # ------------------------------------------------------------------------------------------------
+  # Migration consent (processhub-deferred-migration).
+  #
+  # Gates ProcessHub redistribution behind the Overwatch busy check: a
+  # mid-critical-work operative defers its migration and is retried every
+  # `retry_interval_ms` until ready, force-migrated after `max_defer_ms`.
+  # `max_defer_ms` nil = derive from `graceful_shutdown_timeout_ms`.
+  migration_consent: [
+    consent_timeout_ms:
+      System.get_env("FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS", "5000") |> String.to_integer(),
+    retry_interval_ms:
+      System.get_env("FLEZHA_MIGRATION_RETRY_INTERVAL_MS", "2000") |> String.to_integer(),
+    max_defer_ms:
+      case System.get_env("FLEZHA_MIGRATION_MAX_DEFER_MS") do
+        nil -> nil
+        val -> String.to_integer(val)
+      end
+  ],
+
+  # ------------------------------------------------------------------------------------------------
   # Observability foundation (platform-observability-foundation).
   #
   # `enabled` is the master flag — when false the supervisor starts no

@@ -374,6 +374,136 @@ defmodule FlezhaTest do
     assert new_overwatch_state.init_values === old_overwatch_state.init_values
   end
 
+  @tag :drain_migration
+  test "graceful shutdown drains an operative to a peer through live handover" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node1)
+
+    operative_id = start_operative_on_peer(peer_node, "drain_mig")
+    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "before_drain", %{})
+
+    assert :ok = shutdown_peer(peer_node, 30_000)
+
+    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m, _meta}, 10_000
+    assert m.migrated >= 1
+    assert m.forced == 0
+
+    {:ok, ow_state} = OperativeManager.get_overwatch_state(@default_namespace, operative_id)
+
+    assert ow_state.arrived_via_hotswap?,
+           "expected live HotSwap handover, not a WAL cold restore"
+
+    {:ok, json_state} = OperativeManager.get_segment_state(@default_namespace, operative_id)
+    state = Flezha.Service.Payloader.json_to_map(json_state)
+    assert "before_drain" in get_in(state, ["store_input_operation", "text_inputs"])
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  @tag :drain_migration_forced
+  test "a deferring operative is force-migrated at the drain deadline without wedging" do
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:drain_node2)
+
+    operative_id = start_operative_on_peer(peer_node, "drain_forced")
+    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "seed", %{})
+
+    # Hold the busy signal: a correction that never leaves its debounce
+    # window, so `migration_consent/1` answers :defer for the whole drain.
+    :ok =
+      :erpc.call(peer_node, Application, :put_env, [:flezha, :correction_debounce_ms, 600_000])
+
+    hub_id = Identificator.hub(@default_namespace)
+
+    {^operative_id, ow_pid} =
+      :erpc.call(peer_node, ProcessHub, :process_list, [hub_id, :local])
+      |> Enum.find(fn {id, _pid} -> id == operative_id end)
+
+    GenServer.cast(
+      ow_pid,
+      {:correction_request, {operative_id, "store_input_operation", "poke"}, 1}
+    )
+
+    # Sync barrier: the cast is folded into state before the drain begins.
+    _ = :sys.get_state(ow_pid)
+
+    test_pid = self()
+
+    :erpc.call(peer_node, ProcessHub, :register_hook_handlers, [
+      hub_id,
+      ProcessHub.Constant.Hook.migration_deferred(),
+      [
+        %ProcessHub.Service.HookManager{
+          id: "deferred_wait",
+          m: Process,
+          f: :send,
+          a: [test_pid, :deferred, []]
+        }
+      ]
+    ])
+
+    assert :ok = shutdown_peer(peer_node, 6_000)
+
+    assert_receive :deferred, 1_000
+    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m, _meta}, 5_000
+    assert m.forced >= 1
+
+    # Forced onto this node through the best-effort handover: state carried,
+    # protocol still live.
+    {:ok, ow_state} = OperativeManager.get_overwatch_state(@default_namespace, operative_id)
+    assert ow_state.arrived_via_hotswap?
+
+    OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "after_force", %{})
+    {:ok, json_state} = OperativeManager.get_segment_state(@default_namespace, operative_id)
+    state = Flezha.Service.Payloader.json_to_map(json_state)
+    assert "seed" in get_in(state, ["store_input_operation", "text_inputs"])
+    assert "after_force" in get_in(state, ["store_input_operation", "text_inputs"])
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  # Attach the peer's drain telemetry (relayed here as messages), then drive
+  # its graceful shutdown to completion.
+  defp shutdown_peer(peer_node, timeout_ms) do
+    :erpc.call(peer_node, :telemetry_test, :attach_event_handlers, [
+      self(),
+      [[:flezha, :shutdown, :drain_progress]]
+    ])
+
+    :erpc.call(
+      peer_node,
+      Flezha.Shutdown.Coordinator,
+      :shutdown,
+      [:cli, [timeout_ms: timeout_ms]],
+      timeout_ms + 15_000
+    )
+  end
+
+  # The consistent-hash ring decides placement by id, so probe candidate ids
+  # until one lands on the peer; the rejects are stopped again. Placement can
+  # only reach the peer after it has joined the hub cluster, hence the wait.
+  defp start_operative_on_peer(peer_node, prefix) do
+    NodeTestHelper.wait_until(
+      fn -> peer_node in HubManager.get_hub_nodes(@default_namespace, false) end,
+      10_000
+    ) || flunk("peer #{inspect(peer_node)} never joined the hub cluster")
+
+    Enum.reduce_while(1..20, nil, fn i, _acc ->
+      id = "#{prefix}_#{i}"
+
+      {:ok, %{node: pnode}} =
+        id
+        |> OperativeFixture.get(@test_store_input_factory)
+        |> OperativeFixture.start()
+        |> OperativeFixture.attach_output_msg()
+
+      if pnode == peer_node do
+        {:halt, id}
+      else
+        OperativeFixture.stop(id)
+        {:cont, nil}
+      end
+    end) || flunk("no operative landed on #{inspect(peer_node)} in 20 attempts")
+  end
+
   @tag :runner_disconnect
   test "runner disconnect" do
     namespace = @temp_namespace
