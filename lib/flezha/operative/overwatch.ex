@@ -798,9 +798,9 @@ defmodule Flezha.Operative.Overwatch do
   #     instance's `inbox.wal` and stamped `flz.inbox_offset`, which the SDK
   #     threads into the iteration commit as the consumed offset. A duplicate
   #     dedup id in the undelivered window is absorbed (`nil` — nothing is
-  #     forwarded), and an append that fails is NOT forwarded either: the
-  #     contract is append-before-forward, so a lost frame the sender can retry
-  #     beats an undurable one it believes was accepted.
+  #     forwarded), and an append that fails answers `:refused` and is NOT
+  #     forwarded either: the contract is append-before-forward, so a lost frame
+  #     the sender can retry beats an undurable one it believes was accepted.
   #
   # Every other operative passes through untouched (cost-free default).
   @doc false
@@ -832,7 +832,7 @@ defmodule Flezha.Operative.Overwatch do
             "input NOT forwarded (append-before-forward)"
         )
 
-        nil
+        :refused
     end
   end
 
@@ -1033,9 +1033,10 @@ defmodule Flezha.Operative.Overwatch do
 
   # Ingest one inbound message: type it, run the `:on_input` plugin chain, count
   # it, and make it durable. The single pre-delivery path — every `:io_in` entry
-  # point (call, cast, suspended) runs exactly this, and the payload it answers
-  # is the one to forward (`nil` ⇒ filtered by a plugin, absorbed as a duplicate,
-  # or refused by the durable log, so there is nothing to send).
+  # point (call, cast, confirming, suspended) runs exactly this, and the payload
+  # it answers is the one to forward. `nil` ⇒ filtered by a plugin or absorbed as
+  # a duplicate; `:refused` ⇒ the durable log rejected the append. Neither is
+  # forwarded; only the confirming entry point tells them apart.
   defp ingest(%__MODULE__{} = state, message, metadata) do
     metadata = Map.put_new(metadata, "input_type", state.default_input_type)
     payload = run_io(state, :on_input, message, metadata)
@@ -1048,6 +1049,57 @@ defmodule Flezha.Operative.Overwatch do
   defp ingest_suspended(%__MODULE__{} = state, message, metadata) do
     _ = ingest(state, message, metadata)
     rehydrate(state)
+  end
+
+  # The one ingest-and-report path behind both blocking entry points: `{:io_in,
+  # _, _}`, which reports coarsely, and `{:ingest, _, _}`, which reports the
+  # verdict. A parked operative is refused by the callers before it reaches here
+  # — each owes its own reply for that.
+  defp confirming_ingest(%__MODULE__{suspended: true} = state, message, metadata) do
+    {{:ok, :suspended}, ingest_suspended(state, message, metadata)}
+  end
+
+  defp confirming_ingest(%__MODULE__{} = state, message, metadata) do
+    verdict =
+      case ingest(state, message, metadata) do
+        nil -> {:ok, :absorbed}
+        :refused -> {:error, :refused}
+        payload -> confirm_forward(state, payload)
+      end
+
+    {verdict, state}
+  end
+
+  # A durable target has already journaled the payload, so an unbound stream is
+  # not a delivery failure — the bind delivers it. A target with no durable log
+  # has nowhere to hold it, so the sender is told to retry.
+  defp confirm_forward(%__MODULE__{} = state, payload) do
+    case forward_input(state, payload) do
+      :ok -> :ok
+      {:error, :no_stream} -> if durable_input?(state), do: :ok, else: {:error, :not_ready}
+    end
+  end
+
+  defp durable_input?(%__MODULE__{effectively_once: eo, durable_bounded: db}), do: eo or db
+
+  # Forward an ingested payload to the bound stream channel. Counts an
+  # unbound-stream drop instead of discarding the channel's `{:error, :no_stream}`
+  # reply, so the reconciler-detected stall is observable (the probe rebinds the
+  # stream).
+  defp forward_input(%__MODULE__{channel: nil} = state, _payload) do
+    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: state.id})
+    {:error, :no_stream}
+  end
+
+  defp forward_input(%__MODULE__{} = state, payload) do
+    case GenServer.call(state.channel, {:io_in, state.id, payload}) do
+      {:error, :no_stream} ->
+        :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: state.id})
+        {:error, :no_stream}
+
+      _ ->
+        :ok
+    end
   end
 
   @typedoc """
@@ -1445,11 +1497,9 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, state.effectively_once, state}
   end
 
-  @impl true
-  def handle_call({:io_in, message, metadata}, _from, %__MODULE__{suspended: true} = state) do
-    {:reply, :ok, ingest_suspended(state, message, metadata)}
-  end
-
+  # Blocking ingest for source adapters, which act on "accepted" vs "parked" and
+  # nothing finer — the same path as the confirming entry point below, reported
+  # coarsely.
   @impl true
   def handle_call({:io_in, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
       when reason != nil do
@@ -1458,24 +1508,24 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_call({:io_in, message, metadata}, _from, state) do
-    case ingest(state, message, metadata) do
-      nil ->
-        :ok
-
-      payload ->
-        # Count an unbound-stream drop instead of discarding the channel's
-        # `{:error, :no_stream}` reply, so the reconciler-detected stall is
-        # observable (the probe rebinds the stream).
-        case GenServer.call(state.channel, {:io_in, state.id, payload}) do
-          {:error, :no_stream} ->
-            :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: state.id})
-
-          _ ->
-            :ok
-        end
-    end
-
+    {_verdict, state} = confirming_ingest(state, message, metadata)
     {:reply, :ok, state}
+  end
+
+  # Confirming ingest (`operative-to-operative-messaging`): the same single
+  # pre-delivery path as the `{:io_in, _, _}` cast, answering what happened so a
+  # forwarding sink can tell "done" from "retry". The cast keeps its
+  # fire-and-forget shape, including its silent drop for a parked operative.
+  @impl true
+  def handle_call({:ingest, _message, _metadata}, _from, %__MODULE__{init_error: reason} = state)
+      when reason != nil do
+    {:reply, {:error, :not_ready}, state}
+  end
+
+  @impl true
+  def handle_call({:ingest, message, metadata}, _from, state) do
+    {verdict, state} = confirming_ingest(state, message, metadata)
+    {:reply, verdict, state}
   end
 
   @impl true
@@ -1539,16 +1589,20 @@ defmodule Flezha.Operative.Overwatch do
   @impl true
   def handle_cast({:io_in, _message, _metadata}, %__MODULE__{init_error: reason} = state)
       when reason != nil do
-    # Parked: silently drop ingress casts. Prepared plugins do not emit
-    # `:io_in`, so the only sources are upstream operatives in a chain.
+    # Parked: silently drop ingress casts. A sender that needs the payload held
+    # rather than dropped uses the confirming entry point, which answers
+    # `{:error, :not_ready}` here instead.
     {:noreply, state}
   end
 
   @impl true
   def handle_cast({:io_in, message, metadata}, state) do
     case ingest(state, message, metadata) do
-      nil -> :ok
-      payload -> GenServer.cast(state.channel, {:io_in, state.id, payload})
+      {_message, _metadata} = payload ->
+        GenServer.cast(state.channel, {:io_in, state.id, payload})
+
+      _ ->
+        :ok
     end
 
     {:noreply, state}

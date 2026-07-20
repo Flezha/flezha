@@ -59,7 +59,15 @@ defmodule Flezha.Observability.TelemetryBridge do
       {:flezha_dlq, :dlq_dropped_by_retention_total, :metric},
     [:flezha, :dlq, :usage] => {:flezha_dlq, :dlq_usage, :metric},
     [:flezha, :dlq, :operator_drop] => {:flezha_dlq, :operator_drop, :event},
-    [:flezha, :dlq, :operator_replay] => {:flezha_dlq, :operator_replay, :event}
+    [:flezha, :dlq, :operator_replay] => {:flezha_dlq, :operator_replay, :event},
+    [:flezha, :plugin, :operative_forward, :delivered] =>
+      {:flezha_operative_forward, :delivered, :metric},
+    [:flezha, :plugin, :operative_forward, :retry] =>
+      {:flezha_operative_forward, :retry, :metric},
+    [:flezha, :plugin, :operative_forward, :queue_depth] =>
+      {:flezha_operative_forward, :queue_depth, :metric},
+    [:flezha, :plugin, :operative_forward, :saturated] =>
+      {:flezha_operative_forward, :saturated, :event}
   }
 
   # ---------- Public API ----------

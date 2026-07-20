@@ -81,6 +81,53 @@ Flezha.Plugin.Extension.Table.phase(table, plugin_id)
 
 `:unknown` indicates the plugin is not registered on the table.
 
+## Host identity injected into `init_provider/1`
+
+The host merges its own identity into the opts map, **last**, so stored config
+cannot spoof it:
+
+| Key | Value |
+| --- | --- |
+| `:source_namespace` | the namespace of the operative the plugin is being enabled on |
+| `:source_operative_id` | that operative's id |
+
+A provider whose destination is another operative needs these to refuse a
+self-target or a cross-namespace target at enable time —
+`OperativeForward` is the current user. Providers that don't care simply ignore
+them. (The parallel rule for `activate/1` is `activation_env`, merged the same
+way and for the same reason.)
+
+## Shared helpers for queue-holding workers
+
+Providers that buffer records and flush them to a slow destination —
+`Postgres.SinkWorker`, `OperativeForward.ForwardWorker` — share one supervision
+core and one set of policy helpers rather than each rolling its own.
+
+| Helper | Purpose |
+| --- | --- |
+| `Flezha.Plugin.Provider.WorkerSup` | Registry + DynamicSupervisor per provider family, with ensure / reap / stop. Wrap it with your key shape and reuse policy. |
+| `ProviderBehaviour.retry_backoff_ms/3` | The retry ladder: `base × 2^(attempt-1)`, capped. `attempt` counts from 1. |
+| `ProviderBehaviour.saturated?/1` | Has the queue reached `:queue_max`? One definition, so the enqueue path and the release path cannot drift. |
+| `ProviderBehaviour.park_or_reply/2` | Reply `:ok`, or park the enqueueing caller once the queue is full — the "delay, never loss" overflow policy. |
+| `ProviderBehaviour.release_waiters/1` | Wake parked callers once the queue drains back under the bound. Counterpart to `park_or_reply/2`. |
+
+The last three assume the worker state carries `:buffer_len`, `:queue_max`, and
+`:waiters`. Not every sink wants this policy: the Kafka producer bounds its queue
+too but offers configurable **drop** modes on overflow, so it keeps its own
+overflow handling.
+
+Two rules worth stating, both learned the hard way:
+
+- **Never deliver from the worker's own `handle_call`.** A worker blocked on a
+  downstream call stops servicing enqueues, which back-pressures into the source
+  Overwatch. When the destination is another operative that also forwards, that
+  is a four-way deadlock. `ForwardWorker` spawns a monitored process per
+  in-flight item for exactly this reason.
+- **Pick your `restart` deliberately.** Disabling a plugin kills its owned pid
+  with `:shutdown`. A `:permanent` child is restarted by the DynamicSupervisor
+  and outlives the disable; a `:transient` one stays down. `ForwardWorker` is
+  `:transient` because "disabled" must mean "stopped delivering".
+
 ## Teardown
 
 `Flezha.Plugin.Extension.Table.teardown_all/1` handles both phases

@@ -52,6 +52,7 @@ defmodule Flezha.Application do
           Flezha.Plugin.Provider.Kafka.WorkerRegistry,
           Flezha.Plugin.Provider.Kafka.ProducerSup,
           Flezha.Plugin.Provider.Postgres.SinkSup,
+          Flezha.Plugin.Provider.OperativeForward.ForwardSup,
           Flezha.Service.PortPilot,
           {Task.Supervisor, name: Flezha.Operative.MessageHandlerTaskSup}
         ] ++

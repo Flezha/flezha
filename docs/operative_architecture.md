@@ -876,6 +876,9 @@ than crashing the supervisor:
   the operative is degraded.
 - `:io_in` calls reply `{:error, :startup_failed}`.
 - `:io_in` casts are silently dropped.
+- `:ingest` calls reply `{:error, :not_ready}`, so a forwarding sink
+  **retains and retries** rather than losing the payload (see
+  "Ingest entry points" below).
 - A periodic `:retry_startup` timer (default 60 s) re-attempts the
   full cold-start sequence; on success `init_error` clears and the
   timer is not re-armed.
@@ -885,6 +888,52 @@ providers never open upstream connections, no `:io_in` casts arrive
 from plugins, and the controller's process memory holds steady at the
 idle baseline. This is the structural fix for the memory cascade
 observed in the 2026-05-15 live incident.
+
+### Ingest entry points
+
+Every inbound payload runs exactly one pre-delivery path — the `:on_input`
+extension chain, then `journal_input/2` (the durable input log for the
+effectively-once tier, the durable inbox for a durable bounded instance). Three
+entry points drive it, differing only in what they report back:
+
+| Entry point | Caller | Reports |
+|---|---|---|
+| `cast {:io_in, msg, md}` | plugins, source adapters, `OperativeManager.send_io/4` | nothing (fire-and-forget) |
+| `call {:io_in, msg, md}` | source adapters in blocking-ingest mode (e.g. the WebSocket provider) | `:ok`, or `{:error, :startup_failed}` when parked |
+| `call {:ingest, msg, md}` | `OperativeManager.send_io_confirming/5` — the operative-forward plugin | a typed verdict |
+
+The blocking `:io_in` call exists because the effectively-once tier parks
+ingestion at zero source credit, which only back-pressures a source that awaits
+the reply. It reports coarsely: adapters act on "accepted" vs "parked" and
+nothing finer.
+
+The confirming `:ingest` call reports what actually happened, because its caller
+is a retry loop that must distinguish "done" from "try again":
+
+| Verdict | Meaning |
+|---|---|
+| `:ok` | forwarded to the bound runner, or durably journaled |
+| `{:ok, :absorbed}` | filtered by an `:on_input` plugin, or absorbed as a duplicate |
+| `{:ok, :suspended}` | durable in the inbox; delivered when the instance rehydrates |
+| `{:error, :not_ready}` | parked with an `init_error`, or unbound with no durable log |
+| `{:error, :refused}` | the durable log rejected the append |
+
+`{:error, :not_found}` (no pid for `(namespace, operative_id)`) is minted by
+`OperativeManager`, not by the Overwatch.
+
+Two subtleties worth knowing:
+
+- **"Filtered" and "duplicate" are successes.** Both mean the receiver decided
+  the payload needs no further delivery. Retrying either is wasted work at best,
+  and an infinite loop at worst — a deterministic filter filters the retry too.
+- **An unbound stream is not uniformly an error.** For a target with a durable
+  log the payload is already journaled and the bind will deliver it, so the
+  verdict is `:ok`. Reporting `not_ready` there would make the sender retry a
+  payload the receiver already holds — which for an effectively-once target
+  appends at a *new* offset, manufacturing a duplicate rather than absorbing one.
+
+See [`operative_forward_plugin.md`](operative_forward_plugin.md) for the plugin
+that consumes these verdicts.
 
 For investigating sustained BEAM memory growth under steady load, see
 [`docs/operator/memory-drift.md`](operator/memory-drift.md) — the

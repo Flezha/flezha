@@ -104,6 +104,10 @@ extension chain, then `journal_input/2` — and answers what happened.
 | `{:error, :not_found}` | no pid registered for `(namespace, operative_id)` | retry |
 | `{:error, :refused}` | the durable log refused the append | retry |
 
+The verdicts, and the three Overwatch ingest entry points they belong to, are
+specified in
+[`operative_architecture.md`](operative_architecture.md) "Ingest entry points".
+
 "Filtered" and "duplicate" are successes because both mean the receiver has
 decided the payload needs no further delivery. Retrying either is at best wasted
 work and at worst an infinite loop, since a deterministic filter filters the
@@ -176,3 +180,13 @@ healing it.
 
 Disabling the plugin stops the worker for good — it is a `:transient` child, so
 the host's shutdown of the owned pid is final rather than a restart.
+
+## Implementation notes
+
+The worker is built from the seams every queue-holding provider shares —
+`WorkerSup` for supervision, `ProviderBehaviour.park_or_reply/2` /
+`release_waiters/1` for the overflow policy, `retry_backoff_ms/3` for the
+ladder. See [`plugin_lifecycle.md`](plugin_lifecycle.md) "Shared helpers for
+queue-holding workers" before writing another sink of this shape; the two rules
+recorded there (never deliver from the worker's own `handle_call`, and pick
+`restart` deliberately) are both load-bearing here.

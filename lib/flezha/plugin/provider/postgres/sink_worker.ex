@@ -13,6 +13,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   buffer passes `:queue_max`, propagating backpressure into the Overwatch.
   """
 
+  alias Flezha.Plugin.ProviderBehaviour
+
   use GenServer
 
   require Logger
@@ -176,11 +178,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
           state
       end
 
-    if state.buffer_len >= state.queue_max do
-      {:noreply, %{state | waiters: [from | state.waiters]}}
-    else
-      {:reply, :ok, state}
-    end
+    ProviderBehaviour.park_or_reply(state, from)
   end
 
   def handle_call(:stats, _from, state) do
@@ -244,7 +242,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
             last_commit_ms: System.monotonic_time(:millisecond)
         }
 
-        state = release_waiters(state)
+        state = ProviderBehaviour.release_waiters(state)
         flush(state)
 
       {:error, reason} ->
@@ -252,7 +250,11 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
         log_failure(state, "flush failed (attempt #{failures})", reason)
 
         backoff =
-          min(state.retry_backoff_ms * Integer.pow(2, failures - 1), state.retry_max_backoff_ms)
+          ProviderBehaviour.retry_backoff_ms(
+            state.retry_backoff_ms,
+            state.retry_max_backoff_ms,
+            failures
+          )
 
         %{
           state
@@ -323,17 +325,6 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
       Enum.map(records, & &1.epoch),
       Enum.map(records, & &1.payload)
     ]
-  end
-
-  defp release_waiters(%{waiters: []} = state), do: state
-
-  defp release_waiters(state) do
-    if state.buffer_len < state.queue_max do
-      Enum.each(state.waiters, &GenServer.reply(&1, :ok))
-      %{state | waiters: []}
-    else
-      state
-    end
   end
 
   # ---------- record decoding ----------

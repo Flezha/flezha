@@ -317,6 +317,35 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
+  @typedoc """
+  What became of a payload handed to `send_io_confirming/5`. The three `:ok`
+  shapes are terminal — the receiver has decided the payload needs no further
+  delivery — and every error is retryable by the sender.
+  """
+  @type ingest_verdict ::
+          :ok
+          | {:ok, :absorbed}
+          | {:ok, :suspended}
+          | {:error, :not_ready | :not_found | :refused}
+
+  @doc """
+  Confirming counterpart to `send_io/4`: runs the target's single pre-delivery
+  ingest path and answers what happened, so a forwarding sink can tell a
+  terminal outcome from one worth retrying. An unresolvable target is
+  `{:error, :not_found}` — also retryable, since the operative may not be
+  started yet.
+  """
+  @spec send_io_confirming(String.t(), String.t(), binary(), map(), timeout()) :: ingest_verdict()
+  def send_io_confirming(operative_id, namespace, message, metadata, timeout \\ 5_000) do
+    case get_operative_pid(namespace, operative_id) do
+      {:ok, operative_pid} ->
+        GenServer.call(operative_pid, {:ingest, message, metadata}, timeout)
+
+      _err ->
+        {:error, :not_found}
+    end
+  end
+
   def create_snapshot(namespace, operative_id) do
     case get_operative_pid(namespace, operative_id) do
       {:ok, operative_pid} ->

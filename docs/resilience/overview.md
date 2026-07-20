@@ -324,6 +324,17 @@ repeats a crash produces.
 Bounded operatives do not use the DLQ — their escape is AbortAll + saga
 compensation (§6).
 
+The same machinery carries **operative-to-operative** delivery
+(`lib/flezha/plugin/provider/operative_forward.ex`), which adds no new identity
+scheme, dedup store, or durable ledger. The sender's outbox already stamps
+identity; the plugin's worker retries until the target confirms; the target's
+`journal_input/2` already absorbs duplicates. The guarantee is therefore
+**derived, not configured** — a source with a transactional outbox gets
+effectively-once across the hop, one without gets at-least-once — and there is
+deliberately no delivery-mode option to misconfigure. In-flight queued items do
+not survive a controller restart, identically to the Kafka and Postgres sink
+buffers; see `data_durability.md` "Operative to operative".
+
 See [`data_durability.md`](data_durability.md) for the semantics and the operator
 playbook, and [`../architecture/unbounded_profile.md`](../architecture/unbounded_profile.md)
 for the model and diagrams.
@@ -341,6 +352,8 @@ for the model and diagrams.
 | Whole cluster cold boot | Recovered from DETS | n/a |
 | Bounded operative runner SIGKILL (durable) | None past last WAL fsync — restores + re-runs the chain | At-least-once |
 | Bounded operative runner SIGKILL (persistence opted out) | Full — re-runs from the top | At-least-once |
+| Operative-to-operative hop, target down or parked | None — retained and retried until confirmed | Effectively-once if the source has an outbox, else at-least-once |
+| Operative-to-operative hop, controller dies mid-queue | n/a | Queued-but-unconfirmed items lost (same as the Kafka / Postgres sink buffers) |
 
 For the full scenario matrix and operator playbook see
 [`data_durability.md`](data_durability.md); for the bounded operative model

@@ -60,6 +60,52 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   def parse_bool("false", _field), do: {:ok, false}
   def parse_bool(value, field), do: {:error, "Invalid value for #{field}: #{inspect(value)}"}
 
+  @doc """
+  The sink retry ladder shared by every provider that holds a bounded queue and
+  retries a failing flush: `base × 2^(attempt-1)`, capped at `max`. `attempt`
+  counts from 1 (the first retry).
+  """
+  @spec retry_backoff_ms(pos_integer(), pos_integer(), pos_integer()) :: pos_integer()
+  def retry_backoff_ms(base, max, attempt) when attempt >= 1 do
+    min(base * Integer.pow(2, attempt - 1), max)
+  end
+
+  @doc "Has the worker's queue reached its bound?"
+  @spec saturated?(struct()) :: boolean()
+  def saturated?(state), do: state.buffer_len >= state.queue_max
+
+  @doc """
+  Reply to an enqueueing caller, or park it — the "delay, never loss" overflow
+  policy shared by the sink workers that bound their queue and back-pressure
+  instead of dropping. Pairs with `release_waiters/1`; the worker state must
+  carry `:buffer_len`, `:queue_max`, and `:waiters`.
+  """
+  @spec park_or_reply(struct(), GenServer.from()) ::
+          {:reply, :ok, struct()} | {:noreply, struct()}
+  def park_or_reply(state, from) do
+    if saturated?(state) do
+      {:noreply, %{state | waiters: [from | state.waiters]}}
+    else
+      {:reply, :ok, state}
+    end
+  end
+
+  @doc """
+  Release every parked enqueue caller once the queue has drained back under
+  `:queue_max`. Counterpart to `park_or_reply/2`.
+  """
+  @spec release_waiters(struct()) :: struct()
+  def release_waiters(%{waiters: []} = state), do: state
+
+  def release_waiters(state) do
+    if not saturated?(state) do
+      Enum.each(state.waiters, &GenServer.reply(&1, :ok))
+      %{state | waiters: []}
+    else
+      state
+    end
+  end
+
   @doc "Raising variants for `init_provider/1`, where opts are pre-validated."
   def coerce_int(v) when is_integer(v), do: v
   def coerce_int(v) when is_binary(v), do: String.to_integer(v)

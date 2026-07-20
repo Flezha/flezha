@@ -593,7 +593,7 @@ defmodule Flezha.Plugin.Extension.Table do
         {:error, {:module_not_loaded, provider}}
 
       function_exported?(provider, :init_provider, 1) ->
-        case provider.init_provider(opts || %{}) do
+        case provider.init_provider(with_host_identity(opts || %{}, plugin)) do
           {:ok, new_opts} -> {:ok, %Plugin{plugin | opts: new_opts}, nil}
           {:ok, new_opts, pid} when is_pid(pid) -> {:ok, %Plugin{plugin | opts: new_opts}, pid}
           {:ok, new_opts, nil} -> {:ok, %Plugin{plugin | opts: new_opts}, nil}
@@ -604,6 +604,14 @@ defmodule Flezha.Plugin.Extension.Table do
       true ->
         {:ok, plugin, nil}
     end
+  end
+
+  # The host operative's own identity, merged last so stored opts cannot spoof
+  # it — the same rule `bulk_activate/2` applies to `activation_env`. A provider
+  # whose destination is another operative needs it to refuse a self-target or a
+  # cross-namespace target at enable time.
+  defp with_host_identity(opts, %Plugin{namespace: ns, operative_id: operative_id}) do
+    Map.merge(opts, %{source_namespace: ns, source_operative_id: operative_id})
   end
 
   defp track_owned_pid(table, _plugin_id, nil), do: table
