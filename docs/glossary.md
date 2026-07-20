@@ -53,6 +53,17 @@ contains Segments.**
   points (input from outside), internal (Operation → Operation), or sink (output
   back to the Controller / pipe to another Operative).
 
+- **Operative-to-operative messaging** — one Operative's output delivered into
+  another Operative's **input stream**, configured as the first-party
+  `OperativeForward` plugin on the source (same namespace only; self-targeting
+  refused, longer cycles allowed). Delivery is asynchronous and retried until the
+  target confirms, so no Overwatch ever blocks on another. The guarantee is
+  *derived, never configured*: a source with a transactional outbox gets
+  effectively-once across the hop, one without gets at-least-once. Distinct from
+  **`:on_message`**, which is synchronous request/reply into the SDK factory's
+  `handle_message` callback rather than data flow into the input stream. See
+  [`operative_forward_plugin.md`](operative_forward_plugin.md).
+
 - **Dead-letter queue (DLQ)** — the Controller's durable store for poison
   payloads: inputs an Unbounded Operation failed on every retry
   (`app_data/dlq/{operative_class}/{operation_id}/`). A payload is parked

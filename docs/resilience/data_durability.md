@@ -306,6 +306,55 @@ opted-out class keeps the memory-only inbox (input in flight at a crash is
 lost — that is what opting out buys). See
 [`bounded_operative.md`](bounded_operative.md) "Durable loop and suspension".
 
+## Operative to operative: the cross-hop delivery guarantee
+
+`Flezha.Plugin.Provider.OperativeForward` delivers one operative's output into
+another operative's input stream. It introduces **no** new identity scheme,
+dedup store, durable ledger, or wire format: the guarantee is assembled from
+three parts that already exist.
+
+1. The source's transactional outbox stamps `flz.seq` / `flz.key` / `flz.epoch`
+   and makes the record durable.
+2. The plugin's worker retries until the target confirms.
+3. The target's `journal_input/2` absorbs a repeat of `flz.msg_id` (else payload
+   hash) inside its undelivered window, and is offset-addressed for the
+   effectively-once tier.
+
+**The guarantee is derived, never configured.** There is no delivery-mode
+option, because what a sender gets follows from what it already declares:
+
+| Source operative | What it gets across the hop |
+|---|---|
+| effectively-once unbounded | effectively-once |
+| durable bounded | effectively-once |
+| plain unbounded (no outbox) | at-least-once, best effort — no de-duplication |
+
+An acknowledgement is only worth having if the sender can act on it, and acting
+means re-sending from a durable record. A source with no outbox has nothing to
+re-send from, so an ack mode would sell it a guarantee that cannot be honoured.
+
+**Limitation — in-flight items do not survive a controller restart.** Verified
+against both outbox drivers, and the answer is the same for each:
+
+- durable bounded: `OpJournal.flush_entry/3` casts `{:io_out, ...}` to the
+  Overwatch and *then* appends the `outbox_flushed` marker. Once that marker
+  lands the entry is no longer owed, so `flush_pending/2` will not re-drive it.
+- effectively-once unbounded: `WalWriter.dispatch_outbox_entries/2` casts, then
+  advances `outbox_flushed_seq` and persists it. A restore re-drives only
+  entries *above* that persisted seq.
+
+Neither cursor is gated on a sink acknowledging anything, so a payload sitting
+in the forward worker's in-memory queue when the controller dies is lost. The
+window runs from the marker/cursor advance to the confirming delivery, bounded
+by the retry backoff.
+
+This is the same posture as every other sink — the Kafka producer's buffer and
+the Postgres sink's buffer are lost identically. Diverging here would mean a
+second durable ledger beside the outbox that already exists.
+
+See [`../operative_forward_plugin.md`](../operative_forward_plugin.md) for the
+verdicts, refusals, and telemetry.
+
 ## Dead-letter queue: poison payloads park, never drop
 
 A permanently-failing (poison) payload in an Unbounded operative is never

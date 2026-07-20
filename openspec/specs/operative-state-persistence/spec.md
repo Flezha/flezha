@@ -528,7 +528,7 @@ If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Segment's
 
 `Flezha.Operative.Overwatch.init/1` accepts a `stale_runner_id` argument that originates from the durable operative-binding record replayed at boot. This value SHALL be treated as advisory only — it identifies the runner the operative was bound to BEFORE the current controller process started. The Overwatch SHALL re-resolve the live `runner_id` via `OperativeManager.assign_runner/2` inside `handle_continue({:bind_runner, …}, _)` and SHALL NOT issue any control-plane calls (`AddOperative`, `:ping_runner`, `start_operative_sdk`) against the persisted value directly.
 
-When the re-resolved `runner_id` differs from `stale_runner_id`, the Overwatch SHALL log an `info`-level rebind line naming both ids and proceed. When the re-resolved `runner_id` equals `stale_runner_id`, the Overwatch SHALL still proceed via the normal startup path — equality with the persisted value does NOT bypass the end-to-end ping (see `executor-controller-connection-healing`).
+When the re-resolved `runner_id` differs from `stale_runner_id`, the Overwatch SHALL log an `info`-level rebind line naming both ids and proceed. When the re-resolved `runner_id` equals `stale_runner_id`, the Overwatch SHALL still proceed via the normal startup path — equality with the persisted value does NOT bypass the end-to-end ping (see `runner-controller-connection-healing`).
 
 No on-disk format change accompanies this requirement; the binding record's `runner_id` field SHALL continue to be written and read with the same wire layout. The clarification is purely about the runtime semantics of the field.
 

@@ -129,6 +129,15 @@ transmits an `OperationMessage` command on the control channel and awaits
 the `OperationMessageResponse`. An empty `error` field maps to
 `{:ok, payload_bytes}`; a non-empty `error` maps to `{:error, error_string}`.
 
+### Not to be confused with operative-to-operative messaging
+
+`:on_message` is a **synchronous side-channel query** whose destination is the
+SDK factory's `handle_message` callback. To make one operative **feed** another
+— asynchronous data flow into the target's durable *input stream* — use
+`Flezha.Plugin.Provider.OperativeForward` instead. Different destinations,
+different durability, complementary rather than competing:
+[`operative_forward_plugin.md`](operative_forward_plugin.md).
+
 ## SDK factory contract
 
 The SDK side exposes an optional `handle_message` hook on the factory

@@ -1,7 +1,7 @@
-# executor-identity-and-session Specification
+# runner-identity-and-session Specification
 
 ## Purpose
-TBD - created by archiving change unify-executor-liveness-and-identity. Update Purpose after archive.
+Splits Runner identity into two values with distinct lifetimes: a **stable identity** owned and persisted by the SDK, presented on every connect and used by the Controller as the operative-binding key; and an ephemeral **session token** minted per accepted connection, used as the Registry-naming and data-stream routing key with nothing durable bound to it. This separation is what lets a reconnect re-point existing bindings instead of minting-evicting-reissuing, and it removes the concurrent-connect race by routing data streams per owning connection rather than through a shared "current runner" scalar.
 ## Requirements
 ### Requirement: Runner identity is two layers — durable stable identity and ephemeral session token
 

@@ -1,7 +1,7 @@
 # Runner Identity & Session
 
 Runner identity is **two layers** with distinct lifetimes (capability
-`executor-identity-and-session`). Separating them removes the mint-evict-reissue
+`runner-identity-and-session`). Separating them removes the mint-evict-reissue
 dance the old single `runner_id` forced on every restart, and is what gives a
 restarted runner **binding continuity** — its operatives follow it onto the new
 connection instead of being lost or re-issued.

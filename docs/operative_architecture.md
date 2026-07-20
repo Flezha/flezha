@@ -859,7 +859,7 @@ bound and the SDK reply path is intact. On timeout the Overwatch
 invokes `Flezha.Runner.FleetManager.reset_control_channel/1` to
 clear the `ControlChannel`'s `stream_ref` — the SDK's next data
 stream then claims it via the existing rebind path in
-`executor-controller-connection-healing`.
+`runner-controller-connection-healing`.
 
 The ping is gated by `:overwatch_ping_enabled` (default `true`); SDKs
 that haven't picked up the `Ping` handler can be accommodated by

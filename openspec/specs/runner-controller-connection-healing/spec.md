@@ -1,7 +1,7 @@
-# executor-controller-connection-healing Specification
+# runner-controller-connection-healing Specification
 
 ## Purpose
-TBD - created by archiving change heal-connections-on-restart. Update Purpose after archive.
+Defines how a Runner↔Controller connection heals itself without operator intervention. Covers automatic data-stream recovery across a Controller restart, identity-preserving reconnect (bindings are re-pointed at the new session rather than minted fresh and evicted — see capability `runner-identity-and-session`), and stale stream-mapping cleanup on disconnect so a reconnecting session binds cleanly. The goal is that a Controller restart costs no Runner restart, no `kubectl rollout restart` cascade, and no manual `flz operative start`.
 ## Requirements
 ### Requirement: Runner → Controller data streams SHALL automatically heal across a Controller restart
 
@@ -9,7 +9,7 @@ When the Controller process restarts and a Runner's reconnect loop succeeds agai
 
 The mechanism has two halves:
 
-1. **Stream rebind.** `Flezha.Runner.StreamChannel` SHALL clear its `stream_ref` to `nil` synchronously inside its `handle_info({:flz_closed, _stream_ref, _reason}, state)` clause. A `StreamChannel` whose `stream_ref` is `nil` is "rebindable". `Flezha.Socket.StreamAcceptor` (UDS path) and `Flezha.Transport.Server` (QUIC path) SHALL, when accepting a new data stream for a `runner_id`, look up rebindable channels for that `runner_id` BEFORE spawning a fresh channel, and bind the new `stream_ref` via an atomic `GenServer.call(channel, {:bind, new_ref})` that returns `:ok` only if the channel was nil-ref at call time. On `:already_bound` the acceptor SHALL try the next candidate; if none, spawn fresh.
+1. **Stream rebind.** `Flezha.Runner.StreamChannel` SHALL clear its `stream_ref` to `nil` synchronously inside its `handle_info({:flz_closed, _stream_ref, _reason}, state)` clause. A `StreamChannel` whose `stream_ref` is `nil` is "rebindable". `Flezha.Runner.StreamAcceptor` (UDS path) and `Flezha.Transport.Server` (QUIC path) SHALL, when accepting a new data stream for a `runner_id`, look up rebindable channels for that `runner_id` BEFORE spawning a fresh channel, and bind the new `stream_ref` via an atomic `GenServer.call(channel, {:bind, new_ref})` that returns `:ok` only if the channel was nil-ref at call time. On `:already_bound` the acceptor SHALL try the next candidate; if none, spawn fresh.
 2. **AddOperative reissue.** `Flezha.Runner.FleetManager.runner_connect/3` SHALL, AFTER the existing `try_migrate_runner` call, enumerate every Operative currently registered in ProcessHub for this `node()` + this namespace whose `assigned_runner` matches the connecting Runner's profile (declared factories overlap the Operative's `factory_id`) AND was NOT already handled by `try_migrate_runner`. For each match, FleetManager SHALL re-issue `AddOperative` to the new Runner via the existing `Overwatch.runner_migrate` → `start_operative_sdk` path, so the Runner rebuilds its local Operative registry and triggers fresh data-stream opens.
 
 The Rust SDK's `command_add_operative` handler SHALL be idempotent: an `AddOperative` for a `operative_id` already in the local registry SHALL be a no-op (logged, not raised).
@@ -395,7 +395,7 @@ QUIC SHALL enforce the same window via an explicit `max_idle_timeout` (no longer
 
 ### Requirement: Controller resolves a reconnect by swapping the binding, not minting-and-evicting
 
-On any runner reconnect the controller SHALL resolve identity by the runner's presented **stable identity** (see capability `executor-identity-and-session`) and SHALL re-point that stable identity's existing operative bindings at the new session, rather than minting a fresh durable id and evicting the previous one. The controller SHALL NOT perform an unconditional `previous_runner_id` pre-eviction, and the in-process-reconnect operative reissue SHALL actually re-bind operatives (it SHALL NOT be a no-op stub). On disconnect, each operative's stale stream mapping SHALL be cleared (`HubManager.hook_remove_pid/2`) so the reconnecting session's fresh streams bind cleanly to nil-ref `StreamChannel`s.
+On any runner reconnect the controller SHALL resolve identity by the runner's presented **stable identity** (see capability `runner-identity-and-session`) and SHALL re-point that stable identity's existing operative bindings at the new session, rather than minting a fresh durable id and evicting the previous one. The controller SHALL NOT perform an unconditional `previous_runner_id` pre-eviction, and the in-process-reconnect operative reissue SHALL actually re-bind operatives (it SHALL NOT be a no-op stub). On disconnect, each operative's stale stream mapping SHALL be cleared (`HubManager.hook_remove_pid/2`) so the reconnecting session's fresh streams bind cleanly to nil-ref `StreamChannel`s.
 
 #### Scenario: fresh-process restart preserves bindings without a pre-evict
 

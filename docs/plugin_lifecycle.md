@@ -69,6 +69,7 @@ every restart.
 | `Plugin.Provider.Websocket` | normalises opts, validates URI | opens the Fresh WS connection and runs the subscribe handshake |
 | `Plugin.Provider.Kafka.Producer` | starts a local `ProducerSup` worker | not needed — broker connection is lazy on first publish |
 | `Plugin.Provider.Filter` | validates filter rules | not needed — work runs on `:on_input` / `:on_output` |
+| `Plugin.Provider.OperativeForward` | refuses a self / cross-namespace target, starts a `ForwardSup` worker | not needed — delivery is driven by `:on_output` |
 | `Plugin.Provider.BeamMsgForward`, `MessageForward`, `MonitoredIoForward`, `StdOut`, `Metrics` | stores config | not needed — naturally quiescent until input arrives |
 
 ## Phase introspection
