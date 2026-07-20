@@ -17,6 +17,7 @@ public final class SegmentCounters {
 
     private static final AtomicLong DISPATCHES = new AtomicLong();
     private static final AtomicLong BLOCKED_PARKS = new AtomicLong();
+    private static final AtomicLong RESTORE_DISCARDED_INPUTS = new AtomicLong();
 
     private SegmentCounters() {}
 
@@ -36,5 +37,18 @@ public final class SegmentCounters {
 
     public static long blockedParkEpisodes() {
         return BLOCKED_PARKS.get();
+    }
+
+    /**
+     * A restore dropped {@code n} queued inputs. Correct only where the
+     * controller re-forwards them from a durable log, so a climbing value is
+     * the operator's one handle on how much a rebind threw away.
+     */
+    public static void noteRestoreDiscarded(int n) {
+        RESTORE_DISCARDED_INPUTS.addAndGet(n);
+    }
+
+    public static long restoreDiscardedInputs() {
+        return RESTORE_DISCARDED_INPUTS.get();
     }
 }

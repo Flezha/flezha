@@ -371,6 +371,40 @@ the runner's next delta appends contiguously. A stuck pull is bounded
 by the compaction-timeout sweep. A gap on a *populated* WAL remains a
 protocol violation (`{:error, {:gap, ...}}`).
 
+## What a restore does to input already queued
+
+A `RestoreInitState` lands on a Segment that may be holding inputs in its
+mailbox — a rebind does not stop the runner, and `AddOperative` is
+idempotent, so the live instance and its queue survive into the restore.
+What happens to that queue depends on whether the Controller can hand it
+back:
+
+* **Classes whose inputs are journaled before forwarding** — the
+  effectively-once tier (input log) and durable bounded instances (op
+  inbox) — have their mailbox **cleared**. The queue is a subset of the
+  durable log the Controller re-forwards, so keeping it would double-apply
+  it and, during a correction, re-order it behind the replayed slice.
+* **Every other class** — including a plain stateful unbounded operative,
+  the default configuration — keeps its queue. `Overwatch.journal_input/2`
+  passes those inputs through un-journaled (see
+  `docs/resilience/data_durability.md`), so the mailbox is the only copy
+  they have and discarding them is loss with nothing to recover from.
+
+Both SDKs implement this rule
+(`SegmentSlot::discard_queued_input_on_restore` /
+`SegmentSlot.discardQueuedInputOnRestore`). Discards are counted and
+shipped as `restore_discarded_inputs` in `data_heartbeat` metadata, and
+each one logs the Segment it emptied.
+
+The replay buffer, replay flags, and any open checkpoint interval are
+cleared on **every** class: those belong to a past the restore replaced.
+
+Known race, independent of the above: a dispatch already in flight when
+the restore lands has its Change stamped with a seq that the
+`change_seq` re-arm then re-issues, and the WAL dedups the collision
+(`seq <= last_persisted_seq`). It costs at most the one in-flight Change,
+and fires with an empty mailbox too.
+
 ## Runner-restart realign is owner-bound
 
 Within one runner's lifetime the per-Segment seq is monotonic, so a

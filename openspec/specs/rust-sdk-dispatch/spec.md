@@ -447,3 +447,40 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 - **WHEN** user code calls `.remove_unbounded::<X>()` and X's factory id is not in the runner's declared set
 - **THEN** the call SHALL return `Err(FlezhaError::NotDefined { .. })`
 
+### Requirement: A restore SHALL NOT silently discard un-recoverable queued input
+
+A restore SHALL discard a Segment's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
+
+`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Overwatch.journal_input/2` journals for the effectively-once tier and for durable bounded instances, and passes every other operative through untouched. A plain stateful unbounded operative, which is the default configuration, has no such log.
+
+#### Scenario: Journaled input may be discarded
+- **GIVEN** a Segment whose class journals its inputs before forwarding
+- **WHEN** a restore rebuilds that Segment
+- **THEN** the queued input MAY be discarded, because the Controller re-forwards it from the durable log
+
+#### Scenario: Un-journaled input is not silently destroyed
+- **GIVEN** a Segment whose class does not journal its inputs
+- **WHEN** a restore rebuilds that Segment
+- **THEN** its queued input SHALL NOT be silently discarded
+
+#### Scenario: The replay buffer and open interval clears are unchanged
+- **WHEN** a restore rebuilds a Segment
+- **THEN** the replay buffer, replay flags, and any open checkpoint interval SHALL continue to be cleared as they are today, on every class
+
+### Requirement: Input discarded by a restore SHALL be counted
+
+`Mailbox::clear` is a bare drain loop with no counter, telemetry, or log line, so a discard leaves no trace and the loss can only be inferred by reading the code. Any input discarded on the restore path SHALL be observable.
+
+#### Scenario: A discard emits a count
+- **WHEN** a restore discards queued input for a Segment
+- **THEN** the number of discarded items SHALL be recorded and exposed, naming the Segment
+
+### Requirement: The two SDKs SHALL agree on restore-time mailbox handling
+
+The Rust SDK clears the mailbox on restore; the Java SDK does not, clearing only its staged changes. Neither behaviour is documented as the intended one. Both SDKs SHALL implement the same documented behaviour.
+
+#### Scenario: Equivalent restores behave equivalently
+- **GIVEN** equivalent Segments of the same class on a Rust runner and a Java runner, each with queued input
+- **WHEN** each is restored
+- **THEN** the fate of the queued input SHALL be the same on both
+

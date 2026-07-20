@@ -781,3 +781,39 @@ treated as "re-drive from the last known value" (never as "skip ahead").
 - **THEN** the controller re-drives all effect-record outputs above the cursor
   and never advances the cursor past undelivered entries
 
+### Requirement: The restore contract SHALL state the fate of queued input
+
+The restore contract SHALL state what happens to a Segment's queued input, and
+SHALL make the answer depend on whether the Controller will re-forward it.
+
+The `RestoreInitState` requirement describes how a Segment's state is rebuilt
+but says nothing about the input a live Segment already holds queued when the
+restore lands. The SDKs consequently disagree — the Rust SDK discards it, the
+Java SDK preserves it — with neither behaviour documented as intended.
+
+The Controller re-forwards input only for classes whose inputs it journals
+before forwarding: the effectively-once tier, whose inputs land in the input
+log, and durable bounded instances, whose inputs land in the op inbox.
+`Overwatch.journal_input/2` passes every other operative through un-journaled,
+including a plain stateful unbounded operative — the default configuration,
+since persistence defaults to enabled and the tier is an explicit opt-in.
+
+#### Scenario: The contract distinguishes journaled from un-journaled classes
+
+- **WHEN** the restore contract is consulted for the fate of queued input
+- **THEN** it SHALL give different answers for a class whose inputs are
+  journaled and a class whose inputs are not
+
+#### Scenario: Un-journaled queued input survives a restore
+
+- **GIVEN** a live Segment of a class whose inputs the Controller does not
+  journal, holding queued input
+- **WHEN** the Controller drives a `RestoreInitState` handshake for that Segment
+- **THEN** the queued input SHALL NOT be silently lost
+
+#### Scenario: A restore-time discard is observable to an operator
+
+- **WHEN** a restore discards queued input
+- **THEN** the discard SHALL be counted and exposed, naming the Segment, rather
+  than leaving no trace
+

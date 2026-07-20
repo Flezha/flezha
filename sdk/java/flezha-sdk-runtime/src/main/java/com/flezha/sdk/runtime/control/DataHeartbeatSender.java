@@ -82,7 +82,9 @@ public final class DataHeartbeatSender {
                         "blocked_parks",
                         Long.toString(SegmentCounters.blockedParkEpisodes()),
                         "credit_parked",
-                        Long.toString(com.flezha.sdk.runtime.state.CreditWindow.creditParked())));
+                        Long.toString(com.flezha.sdk.runtime.state.CreditWindow.creditParked()),
+                        "restore_discarded_inputs",
+                        Long.toString(SegmentCounters.restoreDiscardedInputs())));
         for (long sid : ctx.streamRegistry().secondaries()) {
             if (sid > 0) {
                 try {

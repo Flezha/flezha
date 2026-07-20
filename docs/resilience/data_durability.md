@@ -95,6 +95,14 @@ verified by `OperationTestHarness::replay_emits_equal`. In the default
 tier `flz.seq` is **not** an exact append-only dedup handle
 (no-state-change invocations can collide on it).
 
+Nothing at the controller journals a default-tier input, which is also what
+decides the fate of input still queued in a Segment's mailbox when a rebind
+restores it: with no log to re-forward from, that queue is the only copy the
+input has, so the restore keeps it. Under the tier — where the input log *is*
+that copy — the restore clears it instead. See
+`docs/resilience/state_persistence.md` "What a restore does to input already
+queued".
+
 The SDK cannot mint `flz.epoch` — the epoch belongs to the controller's
 durable outbox lineage — so a keyed record without the tier carries
 `flz.segment`, `flz.seq` and `flz.key` and no epoch. A conforming sink reads

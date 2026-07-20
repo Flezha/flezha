@@ -213,15 +213,7 @@ public final class SegmentSlot {
      */
     @Nonnull
     public List<PendingInput> closeReplaySlice() {
-        List<PendingInput> pending;
-        synchronized (replayBuffer) {
-            if (!replaySliceOpen) {
-                return List.of();
-            }
-            pending = new ArrayList<>(replayBuffer);
-            replayBuffer.clear();
-            replaySliceOpen = false;
-        }
+        List<PendingInput> pending = takeSlice();
         List<PendingInput> ordered = new ArrayList<>(pending.size());
         pending.stream()
                 .filter(PendingInput::replay)
@@ -229,6 +221,61 @@ public final class SegmentSlot {
                 .forEach(ordered::add);
         pending.stream().filter(p -> !p.replay()).forEach(ordered::add);
         return ordered;
+    }
+
+    /**
+     * Restore-time disposition of queued input: drop it only where the
+     * controller will hand it back. It journals inputs before forwarding for
+     * the effectively-once tier (input log) and for durable bounded instances
+     * (op inbox), and for nothing else — so a plain stateful Operative's
+     * mailbox is the only copy its input has, and clearing it is data loss.
+     * Where the log does exist, keeping the queue would double-apply it and,
+     * during a correction, re-order it behind the replayed slice.
+     *
+     * @return the number of items discarded, counted into
+     *     {@link SegmentCounters#noteRestoreDiscarded(int)}
+     */
+    public int discardQueuedInputOnRestore() {
+        if (!dispatcher.tier()) {
+            return 0;
+        }
+        int discarded = mailbox.clear();
+        SegmentCounters.noteRestoreDiscarded(discarded);
+        return discarded;
+    }
+
+    /**
+     * Drop a half-filled correction slice: it belongs to a past the restore
+     * replaced, and releasing it later would order its inputs behind the very
+     * replay meant to re-order them. Unlike the mailbox this applies to every
+     * class — a slice only ever exists for one the controller re-forwards.
+     */
+    public void discardReplaySlice() {
+        takeSlice();
+    }
+
+    /**
+     * Drop an open checkpoint interval's staged changes. A restore re-seats the
+     * Segment on a past in which they were never applied, and the controller
+     * re-forwards the inputs that produced them.
+     */
+    public void discardStagedInterval() {
+        synchronized (changeBufferLock) {
+            stagedChanges.clear();
+        }
+    }
+
+    /** Close the slice and hand back its members, or empty if none was open. */
+    private List<PendingInput> takeSlice() {
+        synchronized (replayBuffer) {
+            if (!replaySliceOpen) {
+                return List.of();
+            }
+            List<PendingInput> pending = new ArrayList<>(replayBuffer);
+            replayBuffer.clear();
+            replaySliceOpen = false;
+            return pending;
+        }
     }
 
     /** Mark this Segment as active; resets its idle clock. */

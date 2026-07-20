@@ -20,6 +20,8 @@ import com.google.protobuf.ByteString;
 import java.util.Arrays;
 import java.util.List;
 import javax.annotation.Nonnull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Handles the controller's {@code RestoreInitState} command: a warm restart of
@@ -45,6 +47,8 @@ import javax.annotation.Nonnull;
  * by {@code MigrationDeserialization}), mirroring the Rust SDK.
  */
 public final class RestoreInitStateHandler implements CommandHandler {
+
+    private static final Logger LOG = LoggerFactory.getLogger(RestoreInitStateHandler.class);
 
     @Override
     @Nonnull
@@ -137,12 +141,22 @@ public final class RestoreInitStateHandler implements CommandHandler {
                     operation, codec, slot.operationKey(), snapshot, changeLog, headerTemplate);
             slot.state().set(rebuilt.state());
             slot.changeSeq().set(rebuilt.terminalSeq() + 1);
-            // Discard any open checkpoint interval: it belongs to a past that no
-            // longer exists. Its inputs were never acknowledged, so the
-            // controller re-forwards them and the interval is rebuilt from
-            // scratch — keeping it would double-apply them.
-            synchronized (slot.changeBufferLock()) {
-                slot.stagedChanges().clear();
+            // A restore re-seats the Segment on a different past. An open
+            // checkpoint interval's changes were never acknowledged, so the
+            // restored state does not contain them and the re-forwarded inputs
+            // produce them again; a half-filled correction slice belongs to a
+            // slice that was abandoned. Both go, on every class.
+            slot.discardStagedInterval();
+            slot.discardReplaySlice();
+            // The mailbox goes only where the controller re-forwards it; the
+            // slot owns that rule.
+            int discarded = slot.discardQueuedInputOnRestore();
+            if (discarded > 0) {
+                LOG.info(
+                        "restore discarded {} queued input(s) for segment {} — the controller"
+                                + " re-forwards them from the durable input log",
+                        discarded,
+                        located.segmentId().encoded());
             }
             return rebuilt.terminalSeq();
         } finally {
@@ -165,10 +179,9 @@ public final class RestoreInitStateHandler implements CommandHandler {
                             .operations()
                             .get(slot.operationId())
                             .name();
-                    byte[] identity = SegmentId.of(instance.instanceId(), operationName, slot.operationKey())
-                            .encodedBytes();
-                    if (Arrays.equals(identity, segmentId)) {
-                        return new Located(instance, slot);
+                    SegmentId identity = SegmentId.of(instance.instanceId(), operationName, slot.operationKey());
+                    if (Arrays.equals(identity.encodedBytes(), segmentId)) {
+                        return new Located(instance, slot, identity);
                     }
                 }
             }
@@ -197,7 +210,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
         return null;
     }
 
-    private record Located(UnboundedOperativeInstance instance, SegmentSlot slot) {}
+    private record Located(UnboundedOperativeInstance instance, SegmentSlot slot, SegmentId segmentId) {}
 
     private record BoundedLocated(BoundedOperativeInstance instance, BoundedSegment segment) {}
 }

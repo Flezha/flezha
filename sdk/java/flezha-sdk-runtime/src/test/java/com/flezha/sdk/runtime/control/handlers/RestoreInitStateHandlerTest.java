@@ -14,6 +14,7 @@ import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.segment.SegmentCounters;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
@@ -48,6 +49,8 @@ class RestoreInitStateHandlerTest {
     private static final String FACTORY = "restore_counter";
     private static final String OPERATION = "restore_counter_operation";
     private static final String INSTANCE = "inst-A";
+    private static final String TIER_FACTORY = "restore_counter_tier";
+    private static final String TIER_INSTANCE = "inst-tier";
 
     @BeforeEach
     @AfterEach
@@ -165,6 +168,65 @@ class RestoreInitStateHandlerTest {
         assertThat(((CounterOperation.State) slot(ctx).state().get()).value).isZero();
     }
 
+    /**
+     * Spec "Journaled input may be discarded" / "Un-journaled input is not
+     * silently destroyed": the restore-time mailbox clear is conditional on the
+     * controller re-forwarding what it drops. It journals inputs before
+     * forwarding for the effectively-once tier and for nothing else, so a plain
+     * stateful class's queue is the only copy its input has.
+     */
+    @Test
+    void restoreDiscardsQueuedInputOnlyWhereTheControllerReForwardsIt() {
+        RunnerContext ctx = newContextWithUnboundedOperative();
+        UnboundedOperativeClassRegistry.registerClass(TierUnboundedOperative.class);
+        CommandRequest addTier = CommandRequest.newBuilder()
+                .setReferenceId("r")
+                .setAddOperative(AddOperative.newBuilder()
+                        .setOperativeId(TIER_INSTANCE)
+                        .setFactoryId(TIER_FACTORY)
+                        .build())
+                .build();
+        new AddOperativeHandler().handle(ctx, addTier, new ArrayList<>());
+
+        SegmentSlot plain = slot(ctx);
+        SegmentSlot tier = ctx.operativeInstanceRegistry()
+                .getUnboundedOperative(TIER_INSTANCE)
+                .segments()
+                .get(0)
+                .get(0);
+        plain.mailbox().push("queued");
+        tier.mailbox().push("queued");
+
+        long before = SegmentCounters.restoreDiscardedInputs();
+        restore(ctx, INSTANCE);
+        restore(ctx, TIER_INSTANCE);
+
+        assertThat(plain.mailbox().isEmpty())
+                .as("a journal-less class's queued input exists nowhere else — dropping it is data loss")
+                .isFalse();
+        assertThat(tier.mailbox().isEmpty())
+                .as("a tier input is durable in the input log the controller re-forwards;"
+                        + " keeping it would double-apply it")
+                .isTrue();
+        assertThat(SegmentCounters.restoreDiscardedInputs() - before)
+                .as("every discard must be counted, or the loss leaves no trace")
+                .isEqualTo(1L);
+    }
+
+    /** Drive an empty-change-log restore of {@code instanceId}'s only Segment. */
+    private static void restore(RunnerContext ctx, String instanceId) {
+        byte[] segmentId = SegmentId.of(instanceId, OPERATION, Optional.empty()).encodedBytes();
+        CommandRequest req = CommandRequest.newBuilder()
+                .setReferenceId("r")
+                .setRestoreInitState(RestoreInitState.newBuilder()
+                        .setSegmentId(ByteString.copyFrom(segmentId))
+                        .build())
+                .build();
+        List<String> errors = new ArrayList<>();
+        new RestoreInitStateHandler().handle(ctx, req, errors);
+        assertThat(errors).isEmpty();
+    }
+
     private static RunnerContext newContextWithUnboundedOperative() {
         UnboundedOperativeClassRegistry.registerClass(CounterUnboundedOperative.class);
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
@@ -207,6 +269,20 @@ class RestoreInitStateHandlerTest {
     }
 
     // --- Test operative: single changeful Operation whose State holds a running total. ---
+
+    /** Same Operation, effectively-once tier: the controller journals its inputs. */
+    public static final class TierUnboundedOperative implements UnboundedOperative {
+        @Override
+        public String factoryId() {
+            return TIER_FACTORY;
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.effectivelyOnce();
+            c.input(String.class, "input").into(CounterOperation.class);
+        }
+    }
 
     public static final class CounterUnboundedOperative implements UnboundedOperative {
         @Override

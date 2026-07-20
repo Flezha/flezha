@@ -141,6 +141,15 @@ public final class OperationDispatcher {
     }
 
     /**
+     * Whether this Operative opted into the effectively-once output tier — the
+     * fact that also decides whether the Controller journals its inputs, and so
+     * whether a restore may discard the ones still queued.
+     */
+    public boolean tier() {
+        return tier;
+    }
+
+    /**
      * The per-Segment {@link Operation} instance held by this dispatcher. Used by
      * the warm-restore path to call {@code initState} / {@code applyChange} when
      * rebuilding a Segment's state from the controller's change-log.

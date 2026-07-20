@@ -100,6 +100,23 @@ public final class SegmentMailbox<T> {
         return queue.poll();
     }
 
+    /**
+     * Discard every queued item, returning how many were dropped and freeing
+     * any {@link OverflowPolicy#BLOCK} producer parked on space.
+     *
+     * <p>Used by the restore path, and only for a class whose inputs the
+     * controller journals before forwarding — it re-forwards them, so the queue
+     * is a subset of the durable log. See
+     * {@link SegmentSlot#discardQueuedInputOnRestore()}.
+     */
+    public int clear() {
+        int discarded = 0;
+        while (queue.poll() != null) {
+            discarded++;
+        }
+        return discarded;
+    }
+
     public boolean isEmpty() {
         return queue.isEmpty();
     }
