@@ -1115,7 +1115,8 @@ defmodule Flezha.Operative.Overwatch do
           checkpoint_ack: boolean(),
           compensable_ops: [non_neg_integer()] | nil,
           leaf_ops: [non_neg_integer()] | nil,
-          correction_window_ms: pos_integer() | nil
+          correction_window_ms: pos_integer() | nil,
+          compact_after_bytes: pos_integer() | nil
         }
 
   @doc """
@@ -1135,7 +1136,8 @@ defmodule Flezha.Operative.Overwatch do
       checkpoint_ack: Map.get(metadata, "ack_granularity") == "checkpoint",
       compensable_ops: parse_ops(Map.get(metadata, "compensable_ops")),
       leaf_ops: parse_ops(Map.get(metadata, "leaf_ops")),
-      correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms"))
+      correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms")),
+      compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes"))
     }
   end
 
@@ -1958,29 +1960,18 @@ defmodule Flezha.Operative.Overwatch do
   defp op_warn_ms,
     do: Application.get_env(:flezha, :overwatch_op_warn_ms, 2_000)
 
+  # A wedged control unit (waiting on a reply the dead transport will never
+  # deliver) must surface as a clean error, never an exit that crashes this
+  # operative — `ControlUnit.send_control_await/2` catches the exit; here we add
+  # the operative-facing "not available yet" message for a control unit that has
+  # not been started, which the callers log/park on.
   defp send_control(runner_id, command) do
-    control_unit = Identificator.control_unit(runner_id)
-
-    case GenServer.whereis(control_unit) do
+    case GenServer.whereis(Identificator.control_unit(runner_id)) do
       nil ->
-        {
-          :error,
-          "control unit not available for runner #{runner_id} with payload"
-        }
+        {:error, "control unit not available for runner #{runner_id} with payload"}
 
       _ ->
-        # A wedged control unit (waiting on a reply the dead transport will
-        # never deliver) must surface as a clean error, never an exit that
-        # crashes this operative. The controller-side idle watchdog reaps the
-        # corpse; here we just heal/park instead of crash-looping.
-        try do
-          GenServer.call(
-            Identificator.control_unit(runner_id),
-            {:send_control, command}
-          )
-        catch
-          :exit, reason -> {:error, {:control_unit_exit, reason}}
-        end
+        ControlUnit.send_control_await(runner_id, command)
     end
   end
 
@@ -2120,29 +2111,88 @@ defmodule Flezha.Operative.Overwatch do
     end)
   end
 
+  # Bound on the CompactSegmentResponse round-trip. Generous because the SDK
+  # serializes the whole Segment State under its lock before replying.
+  @compact_response_timeout_ms 30_000
+
   @doc """
   Ship a `CompactSegment` command to the SDK. The SDK responds with a
   `segment_state_snapshot` data frame (handled by
   `Flezha.Runner.StreamChannel`) followed by a
-  `CompactSegmentResponse` control reply.
+  `CompactSegmentResponse` control reply. The reply is inspected off-process:
+  a `{snapshot_seq: 0, snapshot_bytes_size: 0}` answer against a non-empty WAL
+  is recorded as a failed handshake rather than a completion.
   """
   @spec dispatch_compact_segment(binary(), {binary(), binary(), binary()}) ::
-          {:ok, reference()} | {:error, term()}
+          {:ok, term()} | {:error, term()}
   def dispatch_compact_segment(runner_id, {rc, sh, pk} = segment_id) do
     segment_id_bytes = Wire.encode_segment_id(rc, sh, pk)
 
     command =
       {:compact_segment, %RunnerCommands.CompactSegment{segment_id: segment_id_bytes}}
 
-    case ControlChannel.send_control(runner_id, command) do
-      {:ok, _ref} = ok ->
-        # Bound the handshake: a snapshot that never arrives is timed out
-        # by the Watchdog rather than left to wedge persistence.
-        Flezha.State.Watchdog.compaction_started(segment_id)
-        ok
+    case GenServer.whereis(Identificator.control_unit(runner_id)) do
+      nil ->
+        # No request/reply layer available (isolated unit tests): fire the
+        # command directly. Stub detection still rides the timeout → backoff →
+        # give-up path, so the missing inspection is not a coverage gap.
+        case ControlChannel.send_control(runner_id, command) do
+          {:ok, _ref} = ok ->
+            Flezha.State.Watchdog.compaction_started(segment_id, runner_id)
+            ok
 
-      other ->
-        other
+          other ->
+            other
+        end
+
+      _ ->
+        # Bound the handshake: a snapshot that never arrives is timed out by the
+        # Watchdog rather than left to wedge persistence.
+        Flezha.State.Watchdog.compaction_started(segment_id, runner_id)
+
+        # Inspect the confirming CompactSegmentResponse off the caller's process:
+        # serializing a large State under the segment lock can be slow, and
+        # blocking the Watchdog sweep / WalWriter baseline pull on the round-trip
+        # would stall unrelated segments. The `ControlUnit` request/reply sends
+        # ONE command (via `send_control` internally) and awaits the reply. The
+        # snapshot itself rides the data stream (driving `compaction_completed`);
+        # this only catches a stub reply — a snapshot the SDK never ships —
+        # sooner than the timeout sweep would.
+        spawn(fn -> inspect_compact_response(runner_id, segment_id, command) end)
+        {:ok, :dispatched}
+    end
+  end
+
+  # A `CompactSegmentResponse{snapshot_seq: 0, snapshot_bytes_size: 0}` means the
+  # SDK produced no snapshot. Against a non-empty WAL that is a FAILED handshake
+  # (a stub build, or a Segment the runner cannot address), never a completion —
+  # record it so the strike/backoff path runs instead of waiting out the timeout.
+  # Against an empty WAL there was genuinely nothing to snapshot, so it is not an
+  # error.
+  defp inspect_compact_response(runner_id, {rc, sh, pk} = segment_id, command) do
+    with {:ok, raw_data} <-
+           ControlUnit.send_control_await(runner_id, command, @compact_response_timeout_ms),
+         {:ok, %RunnerCommands.CompactSegmentResponse{snapshot_seq: 0, snapshot_bytes_size: 0}} <-
+           RunnerCommands.CompactSegmentResponse.decode(raw_data),
+         true <- Restore.has_persisted_state?(segment_id) do
+      :telemetry.execute(
+        [:flezha, :state, :compaction_failed],
+        %{},
+        %{operative: rc, operation: sh, key: pk, runner: runner_id, reason: :no_snapshot}
+      )
+
+      Flezha.State.Watchdog.compaction_failed(segment_id)
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "[Overwatch] compact_segment response inspection failed " <>
+            "segment=#{inspect(segment_id)}: #{inspect(reason)}"
+        )
+
+      _ ->
+        # A real snapshot (non-zero seq/size) or an empty-WAL no-op: the
+        # data-stream frame path handles completion.
+        :ok
     end
   end
 

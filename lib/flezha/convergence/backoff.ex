@@ -38,6 +38,19 @@ defmodule Flezha.Convergence.Backoff do
   end
 
   @doc """
+  Consecutive failures recorded for `key` (0 when none, or after an `:ok`
+  reset). Lets a caller read a give-up threshold off the existing attempt
+  count rather than tracking a second counter.
+  """
+  @spec attempt(t(), key()) :: non_neg_integer()
+  def attempt(%__MODULE__{entries: entries}, key) do
+    case Map.get(entries, key) do
+      nil -> 0
+      {attempt, _next} -> attempt
+    end
+  end
+
+  @doc """
   Record the result of executing the op keyed by `key`. `:ok` resets the
   entry; `:error` advances the attempt count and arms the next cooldown.
   """

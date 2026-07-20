@@ -484,3 +484,34 @@ The Rust SDK clears the mailbox on restore; the Java SDK does not, clearing only
 - **WHEN** each is restored
 - **THEN** the fate of the queued input SHALL be the same on both
 
+### Requirement: The Rust SDK SHALL emit a segment_state_snapshot on CompactSegment
+
+`sdk/rust/src/command/compact.rs` currently ignores its runner argument and answers a hardcoded `CompactSegmentResponse{snapshot_seq: 0, snapshot_bytes_size: 0}` without shipping any frame, and pushes nothing onto `errors` — so the failure presents to the Controller as a successful handshake. The handler SHALL locate the addressed Segment, capture its state, ship a `segment_state_snapshot` data frame, and answer with the seq it actually captured.
+
+The snapshot body SHALL be encoded with the same codec the restore path decodes — postcard, per `segment/restore.rs`. The JSON serializer used for graceful shutdown and live migration SHALL NOT be used for the snapshot body.
+
+The frame SHALL carry a payload-id constant defined alongside the sink's other payload-ids, and SHALL be shipped through the existing reliable sink rather than a separate transport path.
+
+#### Scenario: A live Segment produces a snapshot at its current seq
+
+- **GIVEN** a live Segment with persisted Changes and a current `change_seq`
+- **WHEN** the SDK receives `CompactSegment` addressing that Segment
+- **THEN** the SDK SHALL ship one `segment_state_snapshot` frame carrying the Segment's serialized state stamped with a seq the Segment has reached
+- **AND** SHALL answer `CompactSegmentResponse` reporting that same seq and the body's byte size
+
+#### Scenario: The snapshot body round-trips through the restore path
+
+- **GIVEN** a snapshot produced by the SDK for a Segment
+- **WHEN** that snapshot is later shipped back to the SDK as `RestoreInitState.snapshot_bytes`
+- **THEN** the restore path SHALL decode it without error and SHALL reconstruct the state the Segment held when the snapshot was taken
+
+#### Scenario: The seq and the state are captured together
+
+- **WHEN** the SDK captures state and seq for a snapshot
+- **THEN** the pair SHALL be captured such that the Controller may truncate the WAL up to that seq without discarding a record the snapshot does not already contain
+
+#### Scenario: An unaddressable Segment reports an error
+
+- **WHEN** the SDK receives `CompactSegment` for a `segment_id` matching no live Segment
+- **THEN** the handler SHALL report an error rather than answering as though compaction succeeded
+

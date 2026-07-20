@@ -45,6 +45,7 @@ defmodule Flezha.State.WatchdogTest do
     out_id = {__MODULE__, :output_stall, System.unique_integer([:positive])}
     comp_id = {__MODULE__, :compaction_timeout, System.unique_integer([:positive])}
     trig_id = {__MODULE__, :compaction_trigger, System.unique_integer([:positive])}
+    give_id = {__MODULE__, :compaction_gave_up, System.unique_integer([:positive])}
 
     :telemetry.attach(
       out_id,
@@ -67,6 +68,13 @@ defmodule Flezha.State.WatchdogTest do
       nil
     )
 
+    :telemetry.attach(
+      give_id,
+      [:flezha, :state, :compaction_gave_up],
+      fn _e, meas, meta, _ -> send(parent, {:compaction_gave_up, meas, meta}) end,
+      nil
+    )
+
     prev_bytes = Application.get_env(:flezha, :default_compact_after_bytes)
     prev_age = Application.get_env(:flezha, :compact_after_age_ms)
 
@@ -74,6 +82,7 @@ defmodule Flezha.State.WatchdogTest do
       :telemetry.detach(out_id)
       :telemetry.detach(comp_id)
       :telemetry.detach(trig_id)
+      :telemetry.detach(give_id)
       Application.delete_env(:flezha, :state_resync_fun)
       Application.delete_env(:flezha, :default_output_stall_timeout_ms)
       Application.delete_env(:flezha, :compaction_timeout_ms)
@@ -133,10 +142,10 @@ defmodule Flezha.State.WatchdogTest do
     refute_receive {:resync_called, ^segment_id, _}, 200
   end
 
-  test "a stalled compaction times out, resyncs, and stays retriable" do
+  test "a stalled compaction times out and stays retriable, without resyncing a live segment below give-up" do
     {_, _, key} = segment_id = TestHelpers.sample_segment_id("comp_" <> uniq())
 
-    Watchdog.compaction_started(segment_id)
+    Watchdog.compaction_started(segment_id, "exec-comp")
     Process.sleep(@compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
@@ -144,21 +153,40 @@ defmodule Flezha.State.WatchdogTest do
     # Scoped to this test's segment KEY, not its operative: the Watchdog is a
     # singleton and every test here shares the class "TestOperative", so a sweep
     # also sees compactions a sibling test left pending.
-    assert_receive {:compaction_timeout, %{waited_ms: ms}, %{key: ^key}}, 1_000
+    assert_receive {:compaction_timeout, %{waited_ms: ms}, %{key: ^key, attempt: 1}}, 1_000
     assert ms >= @compaction_ms
-    assert_receive {:resync_called, ^segment_id, opts}, 1_000
-    assert opts[:reason] == :compaction_timeout
+    # Below the give-up threshold a still-live, still-correct Segment is NOT
+    # force-resynced — the backoff-gated trigger sweep is the retry.
+    refute_receive {:resync_called, ^segment_id, _}, 200
 
-    # Entry was cleared on timeout — a second sweep does not re-fire, and
-    # compaction is eligible to retry on a later trigger.
+    # Entry was cleared on timeout — a second sweep does not re-fire.
     :ok = Watchdog.sweep_now()
     refute_receive {:compaction_timeout, _, %{key: ^key}}, 200
+  end
+
+  test "repeated compaction failures back off and give up loudly with a real resync" do
+    {_, _, key} = segment_id = TestHelpers.sample_segment_id("giveup_" <> uniq())
+
+    # Drive four timeouts (compaction_started bypasses the backoff-gated trigger
+    # sweep, so this reaches the give-up threshold without waiting out cooldowns).
+    for _ <- 1..4 do
+      Watchdog.compaction_started(segment_id, "exec-giveup")
+      Process.sleep(@compaction_ms * 2)
+      :ok = Watchdog.sweep_now()
+    end
+
+    # The fourth crossing alarms loudly and dispatches a real resync carrying the
+    # runner_id the WalWriter status held — the fix for the old silent no-op.
+    assert_receive {:compaction_gave_up, %{attempts: 4}, %{key: ^key}}, 1_000
+    assert_receive {:resync_called, ^segment_id, opts}, 1_000
+    assert opts[:reason] == :compaction_gave_up
+    assert opts[:runner_id] == "exec-giveup"
   end
 
   test "a compaction that completes before the bound never times out" do
     segment_id = TestHelpers.sample_segment_id("compok_" <> uniq())
 
-    Watchdog.compaction_started(segment_id)
+    Watchdog.compaction_started(segment_id, "exec-ok")
     Watchdog.compaction_completed(segment_id)
     Process.sleep(@compaction_ms * 2)
 

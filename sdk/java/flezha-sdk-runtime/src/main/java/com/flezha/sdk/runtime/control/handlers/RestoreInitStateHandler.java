@@ -7,6 +7,7 @@ import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner.BoundedSegment;
 import com.flezha.sdk.runtime.control.CommandHandler;
+import com.flezha.sdk.runtime.control.handlers.SegmentLocator.Located;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.Operative;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
@@ -14,7 +15,6 @@ import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.ChangeLogReader;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
-import com.flezha.sdk.runtime.state.SegmentId;
 import com.flezha.sdk.runtime.state.SegmentStateRestore;
 import com.google.protobuf.ByteString;
 import java.util.Arrays;
@@ -75,7 +75,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
         HeaderTemplate headerTemplate = new HeaderTemplate();
         long terminalSeq = 0L;
 
-        Located located = findSlot(ctx, segmentId);
+        Located located = SegmentLocator.findUnbounded(ctx, segmentId);
         if (located != null) {
             try {
                 terminalSeq = restoreSlot(located, snapshot, changeLog, headerTemplate);
@@ -165,31 +165,6 @@ public final class RestoreInitStateHandler implements CommandHandler {
     }
 
     /**
-     * Scan every live unbounded operative's segments for the slot whose binary
-     * identity equals {@code segmentId}. The identity is built the same way the
-     * flusher frames {@code segment_id}, so a byte-equal match is exact.
-     */
-    private static Located findSlot(RunnerContext ctx, byte[] segmentId) {
-        for (UnboundedOperativeInstance instance :
-                ctx.operativeInstanceRegistry().operativeSnapshot().values()) {
-            List<List<SegmentSlot>> segments = instance.segments();
-            for (List<SegmentSlot> operationSegments : segments) {
-                for (SegmentSlot slot : operationSegments) {
-                    String operationName = instance.topology()
-                            .operations()
-                            .get(slot.operationId())
-                            .name();
-                    SegmentId identity = SegmentId.of(instance.instanceId(), operationName, slot.operationKey());
-                    if (Arrays.equals(identity.encodedBytes(), segmentId)) {
-                        return new Located(instance, slot, identity);
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
      * Scan live bounded instances for the Segment whose wire identity equals
      * {@code segmentId}. The unbounded {@link #findSlot} scan does not see
      * bounded Segments (they live on the {@link BoundedOperativeInstance}, in the
@@ -209,8 +184,6 @@ public final class RestoreInitStateHandler implements CommandHandler {
         }
         return null;
     }
-
-    private record Located(UnboundedOperativeInstance instance, SegmentSlot slot, SegmentId segmentId) {}
 
     private record BoundedLocated(BoundedOperativeInstance instance, BoundedSegment segment) {}
 }

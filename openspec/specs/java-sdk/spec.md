@@ -957,3 +957,55 @@ A factory or constructor's declared visibility SHALL match the visibility its do
 - **WHEN** a factory or constructor documents its visibility
 - **THEN** the declared modifier SHALL match, or the documentation SHALL be corrected to describe the real visibility
 
+### Requirement: The Java SDK SHALL emit a segment_state_snapshot on CompactSegment
+
+`CompactSegmentHandler` currently returns `new byte[0]` on its success path — a zero-length body where the Controller expects a `CompactSegmentResponse` — with a comment describing unwritten work. Its "not yet implemented" error is reachable only from a `catch (ReflectiveOperationException)` branch that does not fire in normal operation. The handler SHALL locate the addressed Segment, capture its state, ship a `segment_state_snapshot` data frame, and answer a well-formed `CompactSegmentResponse` reporting the captured seq and byte size.
+
+The snapshot body SHALL be encoded with the same codec the restore path decodes — Kryo, per `SegmentStateRestore.rebuild`. The Jackson JSON serializer used for graceful shutdown and live migration SHALL NOT be used for the snapshot body.
+
+#### Scenario: A live Segment produces a snapshot at its current seq
+
+- **GIVEN** a live Segment with persisted Changes and a current change-seq
+- **WHEN** the SDK receives `CompactSegment` addressing that Segment
+- **THEN** the SDK SHALL ship one `segment_state_snapshot` frame carrying the Segment's serialized state stamped with a seq the Segment has reached
+- **AND** SHALL answer a well-formed `CompactSegmentResponse` reporting that seq and the body's byte size
+
+#### Scenario: The response is never a zero-length body
+
+- **WHEN** the Java `CompactSegment` handler completes, successfully or otherwise
+- **THEN** it SHALL answer either a well-formed `CompactSegmentResponse` or a reported error
+- **AND** SHALL NOT answer a zero-length byte array on the success path
+
+#### Scenario: The snapshot body round-trips through the restore path
+
+- **GIVEN** a snapshot produced by the Java SDK for a Segment
+- **WHEN** that snapshot is later shipped back as `RestoreInitState.snapshot_bytes`
+- **THEN** `SegmentStateRestore` SHALL decode it without error and SHALL reconstruct the state the Segment held when the snapshot was taken
+
+### Requirement: The snapshot frame SHALL be stamped with its payload-id
+
+`NativeTransport.sendSegmentStateSnapshot` has zero callers and forwards to `streamWrite` without stamping any payload-id, despite a javadoc claiming it "wraps `streamWrite` with the `segment_state_snapshot` payload-id" — payload-id stamping happens in the sink layer, which that method bypasses. A snapshot frame SHALL reach the wire carrying the payload-id the Controller routes on.
+
+#### Scenario: The frame is routable by the Controller
+
+- **WHEN** the Java SDK ships a snapshot frame
+- **THEN** the frame SHALL carry the `segment_state_snapshot` payload-id
+- **AND** the Controller SHALL route it to its snapshot-write path
+
+#### Scenario: No transport helper claims stamping it does not perform
+
+- **WHEN** a transport helper's documentation states that it stamps a payload-id
+- **THEN** it SHALL stamp that payload-id, or the documentation SHALL be corrected and the unused helper removed
+
+### Requirement: The Java SDK SHALL ship its declared compact_after_bytes to the Controller
+
+The Java SDK SHALL place its Operation's declared `compactAfterBytes` value into the `AddOperative` metadata the Controller reads, so the per-Operation threshold is resolvable. Today the value reaches `OperationDescriptor` and stops — `compact_after_bytes` appears nowhere in the Java SDK's metadata construction, so a user's override changes nothing.
+
+The **default value** itself is owned by `java-state-guard-and-dead-knobs`, which aligns it with Rust and the Controller and runs first. This requirement covers only the transport of whatever value is declared.
+
+#### Scenario: A declared override reaches the Controller
+
+- **WHEN** a Java Operation declares a `compactAfterBytes` different from the default
+- **THEN** the SDK SHALL ship that value in the `AddOperative` metadata
+- **AND** the Controller SHALL resolve it as that Operation's size threshold
+

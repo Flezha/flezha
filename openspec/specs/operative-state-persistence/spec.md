@@ -591,12 +591,20 @@ This bounds the duration of any silent persistence/output freeze to at most one 
 
 When the Controller ships `CompactSegment{segment_id}` to the SDK, it SHALL bound the wait for the corresponding `segment_state_snapshot` response with a timeout. If the snapshot does not arrive within the bound, the Controller SHALL emit `[:flezha, :state, :compaction_timeout]` telemetry, SHALL NOT leave the Segment's WAL append blocked, and SHALL recover via resync. Compaction SHALL be retriable on a later trigger; a single failed/slow compaction SHALL NOT permanently stop WAL growth or output for the Segment.
 
+The recovery step SHALL actually execute: a recovery invocation that cannot dispatch — for example because it lacks the `runner_id` needed to address the runner — SHALL NOT be silently discarded by its caller. Retries SHALL be bounded per the strike-and-give-up requirement above rather than repeating at the sweep interval without limit.
+
 #### Scenario: A stalled compaction times out instead of freezing the WAL
 - **GIVEN** a Segment for which the Controller has shipped `CompactSegment`
 - **WHEN** no `segment_state_snapshot` response arrives within the compaction timeout
 - **THEN** the Controller SHALL emit `[:flezha, :state, :compaction_timeout]`
 - **AND** WAL append for the Segment SHALL NOT remain blocked (no "large WAL, no snapshot, frozen" state)
 - **AND** persistence SHALL recover via resync and compaction SHALL be eligible to retry later
+
+#### Scenario: The recovery step is not a silent no-op
+- **GIVEN** a compaction timeout for a Segment whose owning runner is known to the Controller
+- **WHEN** the timeout handler runs
+- **THEN** the recovery it invokes SHALL either dispatch, or record its inability to dispatch
+- **AND** the handler SHALL NOT discard the recovery result
 
 ### Requirement: State path resolution SHALL be single-source and coherent
 
@@ -816,4 +824,85 @@ since persistence defaults to enabled and the tier is an explicit opt-in.
 - **WHEN** a restore discards queued input
 - **THEN** the discard SHALL be counted and exposed, naming the Segment, rather
   than leaving no trace
+
+### Requirement: The compaction handshake SHALL be verified end to end against a real SDK
+
+The existing compaction requirements describe an SDK obligation that no SDK has ever implemented, and the test suite has never involved a real SDK on this path — controller-side tests stub `:state_resync_fun` or `ControlChannel.send_control` and assert on telemetry alone. The system SHALL carry end-to-end coverage, on each SDK arm, that fails when the SDK does not produce a snapshot.
+
+The coverage SHALL assert against observable durable state — a snapshot file existing and the WAL shrinking — and SHALL NOT be satisfied by telemetry assertions alone.
+
+#### Scenario: A triggered compaction produces a durable snapshot and truncates the WAL
+
+- **GIVEN** a live runner hosting a Segment whose Operation has a non-`NoChange` Change type, with persistence enabled and a WAL containing records
+- **WHEN** the Controller ships `CompactSegment` for that Segment and the SDK answers
+- **THEN** a snapshot file SHALL exist for that Segment under its state directory
+- **AND** the Segment's WAL size SHALL be strictly smaller than it was before the handshake
+- **AND** `[:flezha, :state, :compaction_completed]` SHALL have been observed for that Segment
+
+#### Scenario: A stub SDK response fails the coverage
+
+- **GIVEN** an SDK build whose `CompactSegment` handler answers `snapshot_seq = 0` without shipping a `segment_state_snapshot` frame
+- **WHEN** the end-to-end compaction coverage runs against it
+- **THEN** the coverage SHALL fail
+
+#### Scenario: The cold-controller baseline-seed pull becomes reachable
+
+- **GIVEN** the archived `snapshot-baseline-durability` change, whose cold-controller "pull a full-state baseline via `CompactSegment`" path was inert because no SDK ever answered the handshake with a snapshot
+- **WHEN** a cold controller with an empty WAL for a live runner's Segment issues `CompactSegment` (via `Recovery.dispatch_resync`'s empty-WAL branch)
+- **THEN** the SDK SHALL now answer with a real `segment_state_snapshot`, so the baseline-seed scenario that change asserts becomes reachable for the first time
+- **AND** this change's requirements — not an amendment to the archived change — are the current authority for that handshake (the archived change is left as the historical record)
+
+### Requirement: The Controller SHALL inspect CompactSegmentResponse
+
+`Overwatch.dispatch_compact_segment/2` currently treats a successful `send_control` as compaction having started and never reads the response body. The Controller SHALL inspect `CompactSegmentResponse` and SHALL treat a response that reports no snapshot for a Segment with a non-empty WAL as a failure of the handshake, not as its completion.
+
+#### Scenario: Zero snapshot_seq against a non-empty WAL is an error
+
+- **GIVEN** a Segment whose WAL contains at least one record
+- **WHEN** the SDK answers `CompactSegmentResponse{snapshot_seq: 0, snapshot_bytes_size: 0}`
+- **THEN** the Controller SHALL record the handshake as failed, SHALL emit failure telemetry naming the Segment, and SHALL NOT mark the compaction as started or completed
+
+#### Scenario: Zero snapshot_seq against an empty WAL is not an error
+
+- **GIVEN** a Segment whose WAL contains no records
+- **WHEN** the SDK answers `CompactSegmentResponse{snapshot_seq: 0}`
+- **THEN** the Controller SHALL NOT treat the response as a failure
+
+### Requirement: A failing compaction SHALL be bounded by strikes and give up loudly
+
+`Watchdog.flag_compaction_timeout/2` currently calls `Recovery.resync/2` without a `runner_id`, so `do_resync/2` returns `{:error, :no_runner_id}` and the caller discards it — the timeout handler is a silent no-op, and the Segment is dropped from the in-flight map so the next sweep re-triggers it indefinitely. Repeated compaction failure for a Segment SHALL be counted, SHALL back off between attempts, and SHALL escalate to a loud, operator-visible give-up rather than retrying at the sweep interval forever.
+
+#### Scenario: Repeated failures back off rather than retrying at sweep cadence
+
+- **GIVEN** a Segment whose compaction handshake fails or times out
+- **WHEN** the failure repeats
+- **THEN** the interval between successive `CompactSegment` dispatches for that Segment SHALL increase
+- **AND** the Controller SHALL NOT dispatch `CompactSegment` for that Segment once per sweep indefinitely
+
+#### Scenario: Give-up is observable
+
+- **GIVEN** a Segment whose compaction has failed past the strike threshold
+- **WHEN** the threshold is crossed
+- **THEN** the Controller SHALL emit give-up telemetry naming the Segment and the failure count, at a severity an operator can alert on
+
+#### Scenario: A recovery attempt that cannot dispatch is not silently discarded
+
+- **WHEN** a compaction failure path invokes recovery without the information needed to dispatch it
+- **THEN** the outcome SHALL be logged or counted; it SHALL NOT be discarded
+
+### Requirement: The per-Operation compact_after_bytes threshold SHALL be reachable
+
+`PersistenceResolver.compact_after_bytes/2` names its first parameter `_operation_id` and discards it, so the per-Operation threshold the existing compaction requirement mandates cannot be resolved by any caller — the global default always wins. The resolver SHALL consult the per-Operation value, and every caller SHALL pass the arguments needed to resolve it.
+
+#### Scenario: A declared per-Operation threshold governs its own Segments
+
+- **GIVEN** an Operation that declares a `compact_after_bytes` different from the global default, shipped in the `AddOperative` metadata
+- **WHEN** the Watchdog evaluates the size trigger for a Segment of that Operation
+- **THEN** the declared value SHALL be used, not the global default
+
+#### Scenario: An undeclared Operation falls back to the global default
+
+- **GIVEN** an Operation that declares no `compact_after_bytes`
+- **WHEN** the Watchdog evaluates the size trigger
+- **THEN** the global `:default_compact_after_bytes` SHALL be used
 

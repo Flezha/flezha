@@ -140,7 +140,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
         checkpoint_ack: true,
         compensable_ops: [0, 2],
         leaf_ops: [1, 2],
-        correction_window_ms: 60_000
+        correction_window_ms: 60_000,
+        compact_after_bytes: 4_194_304
       })
 
     assert ClassRegistry.effectively_once?(class)
@@ -148,6 +149,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     assert ClassRegistry.compensable_ops(class) == [0, 2]
     assert ClassRegistry.leaf_ops(class) == [1, 2]
     assert ClassRegistry.correction_window_ms(class) == 60_000
+    assert ClassRegistry.compact_after_bytes(class) == 4_194_304
 
     # A class that rebinds having dropped its declarations must not read the
     # previous bind's — every sidecar goes with the claim.
@@ -157,7 +159,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
         checkpoint_ack: false,
         compensable_ops: nil,
         leaf_ops: nil,
-        correction_window_ms: nil
+        correction_window_ms: nil,
+        compact_after_bytes: nil
       })
 
     refute ClassRegistry.effectively_once?(class)
@@ -165,6 +168,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     refute ClassRegistry.compensable_ops(class)
     refute ClassRegistry.leaf_ops(class)
     refute ClassRegistry.correction_window_ms(class)
+    refute ClassRegistry.compact_after_bytes(class)
   end
 
   describe "correction window declaration" do

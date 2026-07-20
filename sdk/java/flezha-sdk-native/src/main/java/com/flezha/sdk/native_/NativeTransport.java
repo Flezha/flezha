@@ -152,13 +152,4 @@ public final class NativeTransport {
     public static int sendSegmentStateChange(long handle, long streamId, @Nonnull byte[] frame) {
         return streamWrite(handle, streamId, frame);
     }
-
-    /**
-     * Send a per-Segment state-snapshot frame on the controller's control channel.
-     * Wraps {@link #streamWrite(long, long, byte[])} with the
-     * {@code segment_state_snapshot} payload-id.
-     */
-    public static int sendSegmentStateSnapshot(long handle, long streamId, @Nonnull byte[] frame) {
-        return streamWrite(handle, streamId, frame);
-    }
 }

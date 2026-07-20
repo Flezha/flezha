@@ -67,6 +67,35 @@ defmodule Flezha.State.PersistenceResolverTest do
       assert PersistenceResolver.compact_after_bytes("op", %{"compact_after_bytes" => 456}) == 456
       assert PersistenceResolver.compact_after_bytes("op", %{compact_after_bytes: 789}) == 789
     end
+
+    # The Watchdog calls `compact_after_bytes(operative_class)` with NO metadata
+    # argument (it holds only the class), so the SDK-declared value must be
+    # consulted through `ClassRegistry`. The metadata-passing tests above mask
+    # that path; these exercise it the way production does.
+    test "the SDK-declared value (persisted in ClassRegistry) governs the Watchdog's one-arg call" do
+      Application.put_env(:flezha, :default_compact_after_bytes, 8 * 1024 * 1024)
+      Flezha.Operative.ClassRegistry.put_compact_after_bytes("sdk_bytes_class", 4 * 1024 * 1024)
+      on_exit(fn -> Flezha.Operative.ClassRegistry.delete("sdk_bytes_class") end)
+
+      assert PersistenceResolver.compact_after_bytes("sdk_bytes_class") == 4 * 1024 * 1024
+    end
+
+    test "an operator override wins over the SDK-declared value" do
+      Flezha.Operative.ClassRegistry.put_compact_after_bytes("ovr_bytes_class", 4 * 1024 * 1024)
+      Application.put_env(:flezha, :compact_after_bytes, %{"ovr_bytes_class" => 1024})
+
+      on_exit(fn ->
+        Flezha.Operative.ClassRegistry.delete("ovr_bytes_class")
+        Application.delete_env(:flezha, :compact_after_bytes)
+      end)
+
+      assert PersistenceResolver.compact_after_bytes("ovr_bytes_class") == 1024
+    end
+
+    test "an undeclared class falls back to the global default" do
+      Application.put_env(:flezha, :default_compact_after_bytes, 777)
+      assert PersistenceResolver.compact_after_bytes("undeclared_bytes_class") == 777
+    end
   end
 
   describe "compact_after_age_ms/0" do

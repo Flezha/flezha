@@ -123,9 +123,29 @@ defmodule Flezha.State.PersistenceResolver do
     )
   end
 
+  @doc """
+  The per-Segment WAL size at which the Watchdog triggers a compaction, per
+  operative class. Precedence (moduledoc): operator override map
+  `:compact_after_bytes` → the SDK-declared value the class shipped in its
+  `AddOperative` metadata (persisted in `ClassRegistry`, resolved here the way
+  `compact_after_age_ms/2` resolves a declared correction window) →
+  instance-metadata argument → global `:default_compact_after_bytes` (8 MiB).
+
+  The SDK declaration is consulted through `ClassRegistry` rather than the
+  `metadata` argument, because the Watchdog — the only caller — resolves this
+  with only the class in hand.
+  """
   @spec compact_after_bytes(binary(), map()) :: pos_integer()
-  def compact_after_bytes(_operation_id, metadata \\ %{}) do
-    case Map.get(metadata, "compact_after_bytes", Map.get(metadata, :compact_after_bytes)) do
+  def compact_after_bytes(operative_class, metadata \\ %{}) when is_binary(operative_class) do
+    resolve(:compact_after_bytes, :compact_after_bytes, operative_class, metadata,
+      valid: &(is_integer(&1) and &1 > 0),
+      default: fn -> class_or_global_compact_after_bytes(operative_class) end
+    )
+  end
+
+  # SDK-declared threshold (durable in ClassRegistry) → global default.
+  defp class_or_global_compact_after_bytes(operative_class) do
+    case ClassRegistry.compact_after_bytes(operative_class) do
       v when is_integer(v) and v > 0 ->
         v
 

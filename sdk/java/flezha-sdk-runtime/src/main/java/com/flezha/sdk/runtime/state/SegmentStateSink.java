@@ -62,6 +62,17 @@ public final class SegmentStateSink {
     public static final String PAYLOAD_ID_COMPENSATION_DONE = "compensation_done";
 
     /**
+     * Data-stream payload-id for a per-Segment state snapshot (compaction, SDK
+     * -&gt; controller): the Kryo-encoded {@code Self.State} captured at a
+     * {@code changeSeq} the Segment has reached, same frame layout as
+     * {@code segment_state_change}. The controller writes the snapshot file,
+     * truncates the WAL up to that seq, and clears the in-flight compaction.
+     * Rides the same reliable sink so a snapshot produced mid-reconnect is not
+     * lost. Matches the Rust SDK's {@code SEGMENT_STATE_SNAPSHOT_PAYLOAD_ID}.
+     */
+    public static final String SEGMENT_STATE_SNAPSHOT_PAYLOAD_ID = "segment_state_snapshot";
+
+    /**
      * Low-level writer wrapping the current secondary stream. The installed
      * writer stamps {@code payloadId} on the payloader envelope, so the same
      * reliable sink carries {@code segment_state_change} and the saga

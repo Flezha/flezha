@@ -40,6 +40,7 @@ defmodule Flezha.Operative.ClassRegistry do
   @leaf_sidecar "leaf_ops"
   @checkpoint_sidecar "checkpoint_ack"
   @correction_sidecar "correction_window_ms"
+  @compact_bytes_sidecar "compact_after_bytes"
 
   # Every per-class SDK declaration, keyed `{operative_class, key}` in the ETS
   # table. `delete/1` evicts them all, so a class that rebinds without a
@@ -49,7 +50,8 @@ defmodule Flezha.Operative.ClassRegistry do
     :checkpoint_ack,
     :compensable_ops,
     :leaf_ops,
-    :correction_window_ms
+    :correction_window_ms,
+    :compact_after_bytes
   ]
 
   # ---------- table lifecycle ----------
@@ -106,6 +108,20 @@ defmodule Flezha.Operative.ClassRegistry do
     put_compensable_ops(operative_class, declarations.compensable_ops)
     put_leaf_ops(operative_class, declarations.leaf_ops)
     put_correction_window(operative_class, declarations.correction_window_ms)
+    put_compact_after_bytes(operative_class, declarations.compact_after_bytes)
+  end
+
+  @doc """
+  Record `operative_class`'s declared per-Segment WAL compaction size threshold
+  in bytes, or `nil` when it declares none (then the global default governs).
+
+  Durable in the same sidecar shape as the correction window, because the
+  Watchdog's compaction-size sweep resolves it with no runner to ask and may run
+  while the instance is suspended.
+  """
+  @spec put_compact_after_bytes(binary(), pos_integer() | nil) :: :ok
+  def put_compact_after_bytes(operative_class, bytes) when is_binary(operative_class) do
+    put_declaration(operative_class, :compact_after_bytes, @compact_bytes_sidecar, bytes)
   end
 
   @doc """
@@ -275,6 +291,16 @@ defmodule Flezha.Operative.ClassRegistry do
   @spec correction_window_ms(binary()) :: pos_integer() | nil
   def correction_window_ms(operative_class) when is_binary(operative_class) do
     declaration(operative_class, :correction_window_ms, @correction_sidecar, &parse_window/1)
+  end
+
+  @doc """
+  Resolve `operative_class`'s declared compaction size threshold in bytes:
+  ETS → durable sidecar → `nil` (the class declared none — the global default
+  then governs). Reuses the positive-integer sidecar codec.
+  """
+  @spec compact_after_bytes(binary()) :: pos_integer() | nil
+  def compact_after_bytes(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :compact_after_bytes, @compact_bytes_sidecar, &parse_window/1)
   end
 
   # ---------- internals ----------

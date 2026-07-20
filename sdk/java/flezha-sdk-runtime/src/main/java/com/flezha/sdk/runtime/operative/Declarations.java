@@ -27,6 +27,9 @@ import javax.annotation.Nonnull;
  */
 public final class Declarations {
 
+    /** The SDK/controller-aligned default; emitting it would be redundant. */
+    private static final long DEFAULT_COMPACT_AFTER_BYTES = 8L * 1024 * 1024;
+
     private Declarations() {}
 
     /** Encode an unbounded class's declarations. Empty bytes when it declares nothing. */
@@ -48,6 +51,18 @@ public final class Declarations {
         if (topology.correctionWindowMs() > 0) {
             metadata.put("correction_window_ms", String.valueOf(topology.correctionWindowMs()));
             metadata.put("beyond_window_policy", topology.beyondWindowPolicy().wireName());
+        }
+        // The Watchdog resolves the WAL size trigger per operative_class, so ship
+        // the most conservative (smallest) declared threshold across this
+        // operative's operations — an override on any one must not be ignored.
+        // Only when it differs from the shared default, keeping an unchanged
+        // class's reply byte-identical.
+        long compactAfterBytes = topology.operations().stream()
+                .mapToLong(OperationDescriptor::compactAfterBytes)
+                .min()
+                .orElse(DEFAULT_COMPACT_AFTER_BYTES);
+        if (compactAfterBytes != DEFAULT_COMPACT_AFTER_BYTES) {
+            metadata.put("compact_after_bytes", String.valueOf(compactAfterBytes));
         }
         return encode(metadata);
     }

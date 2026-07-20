@@ -108,6 +108,20 @@ public final class SegmentFlusher {
         }
     }
 
+    /**
+     * Drain one registered Segment's pending Changes now. Compaction calls this
+     * (under the slot's {@code stateLock}, so no run can refill the buffer)
+     * before capturing the snapshot, so the serialized state equals the WAL the
+     * controller holds and the snapshot's seq cannot tear against it. No-op if
+     * the Segment is unregistered ({@code NoChange}, or torn down).
+     */
+    public void flushSegment(@Nonnull SegmentId segmentId) {
+        FlusherEntry entry = segments.get(segmentId.encoded());
+        if (entry != null) {
+            flushEntry(entry);
+        }
+    }
+
     private void loop() {
         while (!shutdown) {
             try {

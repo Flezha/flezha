@@ -114,9 +114,13 @@ Compaction is triggered automatically by the `Flezha.State.Watchdog`
 sweep on **size or age** (plus manually via `flz state rotate`):
 
 * **Size** — un-snapshotted WAL bytes past the resolved
-  `compact_after_bytes` (default **8 MiB**; per-Operation override via
-  the SDK's `compact_after_bytes()`, global via
-  `:flezha, :default_compact_after_bytes`).
+  `compact_after_bytes` (default **8 MiB**). The SDK's declared
+  `compact_after_bytes()` rides the `AddOperative` metadata (the smallest
+  across the operative's operations, when it differs from the default),
+  is persisted in `ClassRegistry`, and is resolved per operative class by
+  `PersistenceResolver.compact_after_bytes/2` ahead of the global
+  `:flezha, :default_compact_after_bytes`; an operator
+  `:compact_after_bytes => %{class => bytes}` map overrides both.
 * **Age** — the oldest un-snapshotted WAL record is older than
   `:flezha, :compact_after_age_ms` (default 300 000 ms; `0` disables),
   so low-throughput Operations still get periodic baselines.
@@ -128,21 +132,49 @@ share the Watchdog's in-flight `compactions` map as the re-enqueue guard
 
 1. Runner (or compaction trigger) requests a snapshot — controller ships
    `CompactSegment` to the SDK over the control channel.
-2. SDK clones `Self::State` under the sticky CAS, postcard-serializes
-   it, ships the bytes back via `segment_state_snapshot`.
+2. The SDK locates the addressed live Segment, **drains any pending changes
+   first** (so its in-memory state equals the shipped WAL), serializes
+   `Self::State` under the state lock — **postcard** in Rust, **Kryo** in Java,
+   the same codec the restore path decodes, never the JSON migration
+   serializer — and ships the bytes via `segment_state_snapshot` stamped with
+   the highest change seq the snapshot already folds. It answers
+   `CompactSegmentResponse{snapshot_seq, snapshot_bytes_size}`.
 3. `StreamChannel` decodes the frame and calls
    `Flezha.State.Snapshot.write_snapshot/4`:
    - opens `<key>.snap.{seq}.tmp`
    - writes `<<header::binary, snapshot_bytes::binary, crc32::32-big>>`
    - `:file.sync/1` + `:file.close/1`
    - `:file.rename/2` to `<key>.snap.{seq}`
-   - `WalWriter.truncate_up_to/2` removes records `≤ seq`.
+   - `WalWriter.truncate_up_to/2` keeps records with `seq > snapshot_seq`
+     (drops `≤ snapshot_seq`). Because the SDK drained before capturing the
+     seq, no record the snapshot lacks is dropped, and the next append (at
+     `snapshot_seq + 1`) is past the re-established baseline — never a
+     dedup-drop.
 
 Crash safety: the rename is atomic; a crash mid-write leaves a stale
 `.tmp` (filtered out by `Registry.scan_dir/1`). A crash between rename
 and truncate is also safe — applying the snapshot then folding the
 already-folded WAL records is idempotent (umbrella commitment on
 `apply_change`).
+
+### The compaction failure path
+
+`Overwatch.dispatch_compact_segment/2` inspects the `CompactSegmentResponse`:
+a `{snapshot_seq: 0, snapshot_bytes_size: 0}` answer against a **non-empty**
+WAL is a failed handshake (never a completion), reported as
+`[:flezha, :state, :compaction_failed]`. A snapshot that never arrives is
+bounded by `:flezha, :compaction_timeout_ms` (default 30 s).
+
+Repeated failure for a Segment is not retried at the sweep interval forever:
+the Watchdog holds one `Flezha.Convergence.Backoff` keyed
+`{:compaction, segment_id}` (schedule 5 s → 30 s → 60 s → 300 s). Below the
+give-up threshold a still-live, still-correct Segment is **not** resynced (a
+re-restore fixes nothing and risks availability); the backoff-gated trigger
+sweep is the retry. At the give-up threshold the WAL has grown across every
+rung, so the Watchdog emits `[:flezha, :state, :compaction_gave_up]` (an
+operator-alertable alarm naming the Segment and attempt count) **and**
+dispatches a real resync with the `runner_id` the `WalWriter` status carries.
+Completion (`compaction_completed`) resets the strike.
 
 ## Retention sweeper
 

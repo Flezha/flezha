@@ -2,20 +2,25 @@ package com.flezha.test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
+import com.flezha.sdk.proto.CompactSegment;
+import com.flezha.sdk.proto.CompactSegmentResponse;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
+import com.flezha.sdk.runtime.control.handlers.CompactSegmentHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
 import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.state.SegmentFlusher;
 import com.flezha.sdk.runtime.state.SegmentId;
+import com.flezha.sdk.runtime.state.SegmentStateRestore;
 import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.testing.OperationTestHarness;
@@ -134,6 +139,104 @@ class JavaStatePersistenceTest {
         assertThat(((CounterOperation.State) slot.state().get()).value).isEqualTo((long) n);
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo((long) (n - 1));
         assertThat(slot.changeSeq().get()).isEqualTo((long) n);
+    }
+
+    @Test
+    @SuppressWarnings("rawtypes")
+    void compactSegmentShipsASnapshotThatRoundTripsThroughRestore() throws Exception {
+        // The producing half of compaction: a live Segment seeded to N must ship
+        // a `segment_state_snapshot` whose Kryo body rebuilds to N through the
+        // exact restore path, stamped with the highest seq it folds (N-1).
+        UnboundedOperativeClassRegistry.registerClass(StatefulCounterUnboundedOperative.class);
+        FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
+        RunnerContext ctx = new RunnerContext("ns", cfg, 0L);
+        ctx.setWorkerPool(Executors.newFixedThreadPool(1));
+        String instanceId = "compact-1";
+        new AddOperativeHandler()
+                .handle(
+                        ctx,
+                        CommandRequest.newBuilder()
+                                .setReferenceId("r")
+                                .setAddOperative(AddOperative.newBuilder()
+                                        .setOperativeId(instanceId)
+                                        .setFactoryId("stateful_counter")
+                                        .build())
+                                .build(),
+                        new ArrayList<>());
+
+        // Seed the Segment's state to N via the restore path (re-arms changeSeq to N).
+        KryoCodec codec = new KryoCodec(List.of(CounterOperation.State.class, CounterChange.class));
+        HeaderTemplate template = new HeaderTemplate();
+        int n = 5;
+        ByteArrayOutputStream log = new ByteArrayOutputStream();
+        for (long seq = 0; seq < n; seq++) {
+            byte[] body = codec.serialize(new CounterChange(1L));
+            log.writeBytes(walRecord(seq, template.stamp(1, body), body));
+        }
+        byte[] segmentId =
+                SegmentId.of(instanceId, "int_input_adapter", Optional.empty()).encodedBytes();
+        new RestoreInitStateHandler()
+                .handle(
+                        ctx,
+                        CommandRequest.newBuilder()
+                                .setReferenceId("r")
+                                .setRestoreInitState(RestoreInitState.newBuilder()
+                                        .setSegmentId(ByteString.copyFrom(segmentId))
+                                        .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
+                                        .build())
+                                .build(),
+                        new ArrayList<>());
+
+        // Capture the snapshot frame the compaction ships through the reliable sink.
+        List<byte[]> snapshots = new ArrayList<>();
+        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+            if (payloadId.equals(SegmentStateSink.SEGMENT_STATE_SNAPSHOT_PAYLOAD_ID)) {
+                snapshots.add(frame);
+            }
+            return true;
+        });
+
+        byte[] resp = new CompactSegmentHandler()
+                .handle(
+                        ctx,
+                        CommandRequest.newBuilder()
+                                .setReferenceId("r")
+                                .setCompactSegment(CompactSegment.newBuilder()
+                                        .setSegmentId(ByteString.copyFrom(segmentId))
+                                        .build())
+                                .build(),
+                        new ArrayList<>());
+
+        CompactSegmentResponse response = CompactSegmentResponse.parseFrom(resp);
+        assertThat(response.getSnapshotSeq()).isEqualTo((long) (n - 1));
+        assertThat(response.getSnapshotBytesSize()).isGreaterThan(0L);
+        assertThat(snapshots).hasSize(1);
+
+        byte[] body = snapshotBody(snapshots.get(0));
+        assertThat(response.getSnapshotBytesSize()).isEqualTo((long) body.length);
+
+        SegmentSlot slot = ctx.operativeInstanceRegistry()
+                .getUnboundedOperative(instanceId)
+                .segments()
+                .get(0)
+                .get(0);
+        Operation operation = slot.operationInstance();
+        SegmentStateRestore.Rebuilt rebuilt =
+                SegmentStateRestore.rebuild(operation, codec, Optional.empty(), body, new byte[0], template);
+        assertThat(((CounterOperation.State) rebuilt.state()).value).isEqualTo((long) n);
+    }
+
+    /** Extract the header-less body from a segment_state_change/snapshot wire frame. */
+    private static byte[] snapshotBody(byte[] frame) {
+        int pidLen = ((frame[0] & 0xFF) << 8) | (frame[1] & 0xFF);
+        int bodyLenOff = 2 + pidLen + 8 + 16;
+        int bodyLen = ((frame[bodyLenOff] & 0xFF) << 24)
+                | ((frame[bodyLenOff + 1] & 0xFF) << 16)
+                | ((frame[bodyLenOff + 2] & 0xFF) << 8)
+                | (frame[bodyLenOff + 3] & 0xFF);
+        byte[] body = new byte[bodyLen];
+        System.arraycopy(frame, bodyLenOff + 4, body, 0, bodyLen);
+        return body;
     }
 
     /** Synthesize one controller-format WAL record (matches WalWriter.encode_record). */

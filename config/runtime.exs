@@ -256,8 +256,12 @@ config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Per-Segment state persistence — compaction triggers (snapshot-baseline-durability).
   #
-  # Size: a Segment whose un-snapshotted WAL exceeds this is compacted
-  # (per-Operation override via the SDK's `compact_after_bytes()`).
+  # Size: a Segment whose un-snapshotted WAL exceeds this is compacted.
+  # This is the global default; a class that declares `compact_after_bytes()`
+  # in its SDK ships it in the `AddOperative` metadata, and the Watchdog
+  # resolves that per-class value (via `ClassRegistry`) ahead of this default.
+  # An operator `:compact_after_bytes => %{class => bytes}` override wins over
+  # both.
   # Age: a Segment whose oldest un-snapshotted WAL record is older than
   # this is compacted even if it never reaches the size threshold, so
   # low-throughput Operations still get periodic baselines. `0` disables

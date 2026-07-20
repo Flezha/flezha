@@ -1,7 +1,7 @@
 defmodule Flezha.Runner.StreamChannel do
   alias Flezha.Runner.ControlChannel
+  alias Flezha.Runner.ControlUnit
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.Service.Identificator
   alias Flezha.State.CreditLedger
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Wire, as: StateWire
@@ -624,15 +624,11 @@ defmodule Flezha.Runner.StreamChannel do
       }
 
       outcome =
-        try do
-          GenServer.call(
-            Identificator.control_unit(runner_id),
-            {:send_control, {:credit_window_init, init}},
-            @credit_handshake_timeout_ms
-          )
-        catch
-          :exit, _ -> {:error, :no_reply}
-        end
+        ControlUnit.send_control_await(
+          runner_id,
+          {:credit_window_init, init},
+          @credit_handshake_timeout_ms
+        )
 
       case outcome do
         {:ok, raw_data} ->

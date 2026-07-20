@@ -27,7 +27,8 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
                checkpoint_ack: false,
                compensable_ops: nil,
                leaf_ops: nil,
-               correction_window_ms: nil
+               correction_window_ms: nil,
+               compact_after_bytes: nil
              }
     end
   end
@@ -38,8 +39,17 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
              checkpoint_ack: false,
              compensable_ops: nil,
              leaf_ops: nil,
-             correction_window_ms: nil
+             correction_window_ms: nil,
+             compact_after_bytes: nil
            }
+  end
+
+  test "a declared compact_after_bytes resolves from the metadata; absent or invalid is nil" do
+    assert declarations(%{"compact_after_bytes" => "4194304"}).compact_after_bytes == 4_194_304
+    # A class that declares nothing lets the global default govern.
+    assert declarations(%{"other" => "x"}).compact_after_bytes == nil
+    assert declarations(%{"compact_after_bytes" => "0"}).compact_after_bytes == nil
+    assert declarations(%{"compact_after_bytes" => "nope"}).compact_after_bytes == nil
   end
 
   test "a correction window resolves from the metadata; absent or invalid is nil" do

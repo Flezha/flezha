@@ -37,10 +37,20 @@ defmodule Flezha.State.Watchdog do
 
   require Logger
 
+  alias Flezha.Convergence.Backoff
   alias Flezha.Operative.{ClassRegistry, Overwatch}
   alias Flezha.State.{PersistenceResolver, Recovery, Registry, Supervisor, WalWriter}
 
-  defstruct compactions: %{}, last_resync: %{}, catastrophic: %{}
+  # Consecutive compaction failures at which the miss stops being treated as
+  # transient. The backoff schedule has four rungs (5s/30s/60s/300s); crossing
+  # the last is the give-up boundary — a loud, operator-alertable alarm.
+  @compaction_give_up_attempts 4
+
+  # `compactions` maps `segment_id => {started_at_ms, runner_id}`: the in-flight
+  # handshake plus the runner that owns it, so the timeout path can recover.
+  # `backoff` is the shared per-`{:compaction, segment_id}` strike/cooldown table
+  # that keeps a repeatedly-failing Segment from re-triggering every sweep.
+  defstruct compactions: %{}, last_resync: %{}, catastrophic: %{}, backoff: Backoff.new()
 
   # ---------- Public API ----------
 
@@ -69,15 +79,26 @@ defmodule Flezha.State.Watchdog do
   handshake is bounded by `compaction_timeout_ms`. No-op when the
   Watchdog is not running (e.g. isolated unit tests).
   """
-  @spec compaction_started(tuple()) :: :ok
-  def compaction_started(segment_id) do
-    GenServer.cast(__MODULE__, {:compaction_started, segment_id})
+  @spec compaction_started(tuple(), binary()) :: :ok
+  def compaction_started(segment_id, runner_id) do
+    GenServer.cast(__MODULE__, {:compaction_started, segment_id, runner_id})
   end
 
   @doc "Clear a tracked compaction once its snapshot response arrives."
   @spec compaction_completed(tuple()) :: :ok
   def compaction_completed(segment_id) do
     GenServer.cast(__MODULE__, {:compaction_completed, segment_id})
+  end
+
+  @doc """
+  Record a compaction the SDK reported as failed — a `snapshot_seq = 0`
+  response against a non-empty WAL (a stub build or an unaddressable Segment).
+  Advances the backoff strike and alarms at the give-up threshold, so a stub is
+  caught without waiting out the timeout sweep.
+  """
+  @spec compaction_failed(tuple()) :: :ok
+  def compaction_failed(segment_id) do
+    GenServer.cast(__MODULE__, {:compaction_failed, segment_id})
   end
 
   # ---------- GenServer ----------
@@ -102,17 +123,42 @@ defmodule Flezha.State.Watchdog do
   end
 
   @impl true
-  def handle_cast({:compaction_started, segment_id}, state) do
+  def handle_cast({:compaction_started, segment_id, runner_id}, state) do
     if PersistenceResolver.compaction_timeout_ms() > 0 do
       now = :erlang.monotonic_time(:millisecond)
-      {:noreply, %{state | compactions: Map.put(state.compactions, segment_id, now)}}
+      {:noreply, %{state | compactions: Map.put(state.compactions, segment_id, {now, runner_id})}}
     else
       {:noreply, state}
     end
   end
 
-  def handle_cast({:compaction_completed, segment_id}, state) do
-    {:noreply, %{state | compactions: Map.delete(state.compactions, segment_id)}}
+  def handle_cast({:compaction_completed, {rc, sh, pk} = segment_id}, state) do
+    :telemetry.execute(
+      [:flezha, :state, :compaction_completed],
+      %{},
+      %{operative: rc, operation: sh, key: pk}
+    )
+
+    now = :erlang.monotonic_time(:millisecond)
+
+    {:noreply,
+     %{
+       state
+       | compactions: Map.delete(state.compactions, segment_id),
+         backoff: Backoff.update(state.backoff, {:compaction, segment_id}, :ok, now)
+     }}
+  end
+
+  def handle_cast({:compaction_failed, segment_id}, state) do
+    now = :erlang.monotonic_time(:millisecond)
+    backoff = Backoff.update(state.backoff, {:compaction, segment_id}, :error, now)
+    attempt = Backoff.attempt(backoff, {:compaction, segment_id})
+    # A reported failure no resync can fix (the SDK shipped no snapshot). Alarm
+    # at the threshold; the backoff-gated trigger sweep is the retry.
+    maybe_give_up(segment_id, attempt)
+
+    {:noreply,
+     %{state | compactions: Map.delete(state.compactions, segment_id), backoff: backoff}}
   end
 
   @impl true
@@ -141,10 +187,11 @@ defmodule Flezha.State.Watchdog do
     segment_statuses()
     |> Enum.reduce(state, fn {{rc, sh, _pk} = segment_id, status}, acc ->
       with false <- Map.has_key?(acc.compactions, segment_id),
+           true <- Backoff.eligible?(acc.backoff, {:compaction, segment_id}, now),
            runner_id when is_binary(runner_id) <- status.owning_runner,
            trigger when trigger != nil <- compaction_trigger(status, now, rc, sh) do
         flag_compaction_trigger(segment_id, runner_id, status, trigger)
-        %{acc | compactions: Map.put(acc.compactions, segment_id, now)}
+        %{acc | compactions: Map.put(acc.compactions, segment_id, {now, runner_id})}
       else
         _ -> acc
       end
@@ -155,11 +202,11 @@ defmodule Flezha.State.Watchdog do
   # compact away the history inside its own window), so it is read here rather
   # than hoisted out of the loop. The size floor already resolved per segment,
   # so this adds no new cost class.
-  defp compaction_trigger(status, now, operative_class, operation_id) do
+  defp compaction_trigger(status, now, operative_class, _operation_id) do
     age_ms = PersistenceResolver.compact_after_age_ms(operative_class)
 
     cond do
-      status.wal_size_bytes >= PersistenceResolver.compact_after_bytes(operation_id) ->
+      status.wal_size_bytes >= PersistenceResolver.compact_after_bytes(operative_class) ->
         :size
 
       age_ms > 0 and is_integer(status.oldest_unsnapshotted_at) and
@@ -306,27 +353,84 @@ defmodule Flezha.State.Watchdog do
       state
     else
       {expired, kept} =
-        Enum.split_with(state.compactions, fn {_pid, started_at} ->
+        Enum.split_with(state.compactions, fn {_pid, {started_at, _runner_id}} ->
           now - started_at >= timeout
         end)
 
-      Enum.each(expired, fn {pid, started_at} ->
-        flag_compaction_timeout(pid, now - started_at)
-      end)
+      backoff =
+        Enum.reduce(expired, state.backoff, fn {pid, {started_at, runner_id}}, acc ->
+          acc = Backoff.update(acc, {:compaction, pid}, :error, now)
 
-      %{state | compactions: Map.new(kept)}
+          flag_compaction_timeout(
+            pid,
+            now - started_at,
+            runner_id,
+            Backoff.attempt(acc, {:compaction, pid})
+          )
+
+          acc
+        end)
+
+      %{state | compactions: Map.new(kept), backoff: backoff}
     end
   end
 
-  defp flag_compaction_timeout({rc, sh, pk} = pid, waited_ms) do
+  defp flag_compaction_timeout({rc, sh, pk} = pid, waited_ms, runner_id, attempt) do
     :telemetry.execute(
       [:flezha, :state, :compaction_timeout],
       %{waited_ms: waited_ms},
-      %{operative: rc, operation: sh, key: pk}
+      %{operative: rc, operation: sh, key: pk, runner: runner_id, attempt: attempt}
     )
 
-    _ = Recovery.resync(pid, reason: :compaction_timeout)
+    maybe_give_up(pid, attempt, runner_id)
     :ok
+  end
+
+  # Below the give-up threshold the backoff-gated trigger sweep is the retry — a
+  # still-live, still-correct Segment is NOT resynced (re-restoring a healthy
+  # Segment fixes nothing and risks availability). At the threshold the WAL has
+  # grown across every backoff rung, so the loud alarm fires; and when a
+  # `runner_id` is known (the timeout path carries one; the stub-response path
+  # does not), it ALSO dispatches a real resync — the fix for the previously
+  # silent `_ = Recovery.resync/2` no-op whose `{:error, :no_runner_id}` was
+  # discarded.
+  defp maybe_give_up({rc, sh, pk} = pid, attempt, runner_id \\ nil) do
+    if attempt >= @compaction_give_up_attempts do
+      emit_give_up(pid, attempt)
+      if runner_id, do: resync_on_give_up(pid, runner_id)
+    else
+      Logger.debug(
+        "[watchdog] compaction unresolved operative=#{rc} operation=#{sh} key=#{pk} " <>
+          "attempt=#{attempt}; retry gated by backoff"
+      )
+    end
+  end
+
+  defp resync_on_give_up({rc, sh, pk} = pid, runner_id) do
+    case Recovery.resync(pid, reason: :compaction_gave_up, runner_id: runner_id) do
+      {:ok, _} ->
+        :ok
+
+      other ->
+        Logger.warning(
+          "[watchdog] compaction give-up resync failed operative=#{rc} operation=#{sh} " <>
+            "key=#{pk}: #{inspect(other)}"
+        )
+    end
+  end
+
+  defp emit_give_up({rc, sh, pk}, attempt) do
+    Logger.error(
+      "[watchdog] compaction GAVE UP after #{attempt} failed attempts operative=#{rc} " <>
+        "operation=#{sh} key=#{pk}; the Segment's WAL is not being reclaimed — investigate " <>
+        "the runner's snapshot path"
+    )
+
+    :telemetry.execute(
+      [:flezha, :state, :compaction_gave_up],
+      %{attempts: attempt},
+      %{operative: rc, operation: sh, key: pk}
+    )
   end
 
   # A writer mid-rewrite or terminating must not crash the sweep.

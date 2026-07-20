@@ -71,14 +71,26 @@ defmodule Flezha.Runner.ControlUnit do
       payload: payload
     }
 
-    case GenServer.call(
-           Identificator.control_unit(runner_id),
-           {:send_control, {:operation_message, command}}
-         ) do
+    case send_control_await(runner_id, {:operation_message, command}) do
       {:ok, raw_data} -> decode_operation_message_response(raw_data)
       {:error, _} = err -> err
     end
+  end
+
+  @doc """
+  Send a control `command` (a `{tag, %RunnerCommands.*{}}` pair) to the runner's
+  ControlUnit and await the SDK's reply as raw bytes — the single request/reply
+  seam every control round-trip decodes on top of. Returns `{:ok, raw_data}`
+  (the `CommandResponse.raw_data` the caller decodes) or `{:error, reason}` on a
+  timeout, transport failure, or dead ControlUnit. `send_operation_message/3`,
+  the credit-window handshake, and the compaction response inspection all use
+  it.
+  """
+  @spec send_control_await(binary(), tuple(), timeout()) :: {:ok, binary()} | {:error, term()}
+  def send_control_await(runner_id, command, timeout \\ 5_000) when is_binary(runner_id) do
+    GenServer.call(Identificator.control_unit(runner_id), {:send_control, command}, timeout)
   catch
+    :exit, {:timeout, _} -> {:error, :timeout}
     :exit, reason -> {:error, {:control_unit_exit, reason}}
   end
 
