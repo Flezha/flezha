@@ -20,6 +20,7 @@ config :flezha,
     "operative_stdout" => Flezha.Plugin.Provider.StdOut,
     "operative_io_filter" => Flezha.Plugin.Provider.Filter,
     "monitored_io_forward" => Flezha.Plugin.Provider.MonitoredIOForward,
+    "operative_forward" => Flezha.Plugin.Provider.OperativeForward,
     # `:on_message` provider that forwards a `{:flezha_request, key, payload,
     # reply_to, ref}` envelope to the SDK-side operative via the
     # `OperationMessage` control command. Attach at operative start with a

@@ -84,6 +84,13 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
 
   ## ---------- enable-time refusals (tasks 3.1 – 3.5) ----------
 
+  test "the provider is reachable by name, so the CLI can attach it" do
+    # The only registry the CLI resolves a `--plugins` / `flz plugin enable`
+    # provider id through; absent here, every non-Elixir caller is locked out.
+    assert Flezha.Service.ConfigManager.get_enabled_plugins()["operative_forward"] ==
+             OperativeForward
+  end
+
   test "a missing target is refused, naming the option" do
     assert {:error, message} =
              OperativeForward.init_provider(%{
