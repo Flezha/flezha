@@ -211,7 +211,7 @@ start_beam() {
 
   # `flz` is a release artifact at `_build/dev/rel/flezha/bin/flz`.
   # `mix release` does NOT build it — see `copy_cli_commands` in
-  # `mix.exs`, which only copies a pre-built `cli/target/debug/flz`
+  # `mix.exs`, which only copies a pre-built `target/debug/flz`
   # into the release. The host's copy of that file is the one
   # exposed inside the container via the `../../:/flezha` bind mount,
   # and on a host with a newer GLIBC than the toolchain image (e.g.
@@ -223,7 +223,7 @@ start_beam() {
   # made. Cargo writes to the workspace target dir at /flezha/target,
   # which the dev compose mounts as the named volume
   # `flezha_cargo_target` — so this never touches the host's
-  # `cli/target/`.
+  # `target/`.
   note "ensuring 'flz' release is built"
   if ! "${COMPOSE[@]}" exec -T controller sh -c \
     'cd /flezha && export MIX_ENV=dev && \

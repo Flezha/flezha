@@ -14,7 +14,7 @@ build:
 
 # Rust + Elixir (prod release)
 build-release:
-	cargo build --release -p flz_nif -p cli
+	cargo build --release -p flz_nif -p flz
 	MIX_ENV=prod mix deps.get --only prod
 	MIX_ENV=prod mix release --overwrite
 

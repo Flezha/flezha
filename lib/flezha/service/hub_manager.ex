@@ -138,6 +138,19 @@ defmodule Flezha.Service.HubManager do
     :ok
   end
 
+  @doc """
+  Reclaim a namespace hub, but only when it holds no registered operatives.
+  Tearing down a hub that still holds durably-suspended operatives would kill
+  their Overwatches and wipe the durable registry, stranding a parked fleet
+  across a runner restart — so runner cleanup and cross-node migration reclaim
+  through this guard. The explicit `stop_hub/1` teardown (operator
+  `stop_namespace`) is intentionally unguarded.
+  """
+  def stop_hub_if_vacant(namespace) do
+    unless registered_operatives?(namespace), do: stop_hub(namespace)
+    :ok
+  end
+
   defp wipe_registry_dir(hub_id) do
     root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
     File.rm_rf(Path.join(root, Atom.to_string(hub_id)))
@@ -182,47 +195,36 @@ defmodule Flezha.Service.HubManager do
 
   defp extract_namespace_from_hub(_), do: nil
 
-  def get_registry(namespace) do
+  # The one guarded seam for reading a namespace's hub: run `fun` with the
+  # resolved hub_id when the hub is alive, else return `on_dead`. Every hub
+  # reader goes through this so none can forget the liveness check — the class
+  # of bug where `get_pid/2` alone omitted it and raised on a torn-down hub.
+  defp with_live_hub(namespace, on_dead, fun) do
     hub_id = Identificator.hub(namespace)
+    if ProcessHub.is_alive?(hub_id), do: fun.(hub_id), else: on_dead
+  end
 
-    case ProcessHub.is_alive?(hub_id) do
-      true ->
-        {:ok, ProcessHub.registry_dump(hub_id)}
-
-      false ->
-        {:error, "hub not alive"}
-    end
+  def get_registry(namespace) do
+    with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
+      {:ok, ProcessHub.registry_dump(hub_id)}
+    end)
   end
 
   def get_hub_nodes(namespace, include_local \\ false) do
-    opts =
-      case include_local do
-        true ->
-          [:include_local]
-
-        false ->
-          []
-      end
-
-    hub_id = Identificator.hub(namespace)
-
-    if ProcessHub.is_alive?(hub_id) do
-      ProcessHub.nodes(hub_id, opts)
-    else
-      []
-    end
+    opts = if include_local, do: [:include_local], else: []
+    with_live_hub(namespace, [], fn hub_id -> ProcessHub.nodes(hub_id, opts) end)
   end
 
   def get_pid(namespace, operative_id) do
-    hub_id = Identificator.hub(namespace)
+    with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
+      case ProcessHub.get_pids(hub_id, operative_id) do
+        [] ->
+          {:error, "no pid found"}
 
-    case ProcessHub.get_pids(hub_id, operative_id) do
-      [] ->
-        {:error, "no pid found"}
-
-      pids ->
-        {:ok, List.first(pids)}
-    end
+        pids ->
+          {:ok, List.first(pids)}
+      end
+    end)
   end
 
   @doc """
@@ -266,9 +268,7 @@ defmodule Flezha.Service.HubManager do
   def live_pid(_), do: nil
 
   def get_all_operatives(namespace) do
-    hub_id = Identificator.hub(namespace)
-
-    if ProcessHub.is_alive?(hub_id) do
+    with_live_hub(namespace, [], fn hub_id ->
       ProcessHub.process_list(hub_id, :global)
       |> Enum.flat_map(fn {operative_id, node_pids} ->
         case live_pid(node_pids) do
@@ -276,9 +276,7 @@ defmodule Flezha.Service.HubManager do
           operative_pid -> [{operative_id, operative_pid}]
         end
       end)
-    else
-      []
-    end
+    end)
   end
 
   @doc """
@@ -321,9 +319,7 @@ defmodule Flezha.Service.HubManager do
           %{id: term(), health: atom(), runner: term(), factory: term(), node: term()}
         ]
   def operative_rows(namespace) do
-    hub_id = Identificator.hub(namespace)
-
-    if ProcessHub.is_alive?(hub_id) do
+    with_live_hub(namespace, [], fn hub_id ->
       hub_id
       |> ProcessRegistry.dump()
       |> Enum.map(fn {operative_id, entry} ->
@@ -338,9 +334,7 @@ defmodule Flezha.Service.HubManager do
         }
       end)
       |> Enum.sort_by(&inspect(&1.id))
-    else
-      []
-    end
+    end)
   end
 
   # The declared factory from a registry entry's cspec start-args — the same
@@ -414,24 +408,18 @@ defmodule Flezha.Service.HubManager do
   end
 
   def operative_set_runner(namespace, operative_id, runner_id) do
-    hub_id = Identificator.hub(namespace)
+    with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
+      # propagate: true — every node's registry must agree on the owning
+      # runner or hook_insert_pid gates frames on a stale tag elsewhere.
+      ProcessRegistry.update(
+        hub_id,
+        operative_id,
+        RegistryUpdate.set_runner_tag(runner_id),
+        propagate: true
+      )
 
-    case ProcessHub.is_alive?(hub_id) do
-      true ->
-        # propagate: true — every node's registry must agree on the owning
-        # runner or hook_insert_pid gates frames on a stale tag elsewhere.
-        ProcessRegistry.update(
-          hub_id,
-          operative_id,
-          RegistryUpdate.set_runner_tag(runner_id),
-          propagate: true
-        )
-
-        :ok
-
-      false ->
-        {:error, "hub not alive"}
-    end
+      :ok
+    end)
   end
 
   def hook_insert_pid(runner_id, %{child_id: operative_id} = hook_data) do
@@ -530,24 +518,18 @@ defmodule Flezha.Service.HubManager do
   @spec operative_plugins(String.t(), String.t()) ::
           {:ok, [{binary(), Plugin.t()}]} | {:error, term()}
   def operative_plugins(namespace, operative_id) do
-    hub_id = Identificator.hub(namespace)
+    with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
+      case ProcessRegistry.lookup(hub_id, operative_id) do
+        nil ->
+          {:error, "operative not found"}
 
-    case ProcessHub.is_alive?(hub_id) do
-      false ->
-        {:error, "hub not alive"}
+        {%{start: {_m, _f, [arg]}}, _node_pids} ->
+          {:ok, normalize_plugins(extract_plugins(arg))}
 
-      true ->
-        case ProcessRegistry.lookup(hub_id, operative_id) do
-          nil ->
-            {:error, "operative not found"}
-
-          {%{start: {_m, _f, [arg]}}, _node_pids} ->
-            {:ok, normalize_plugins(extract_plugins(arg))}
-
-          {%{start: {_m, _f, [arg]}}, _node_pids, _metadata} ->
-            {:ok, normalize_plugins(extract_plugins(arg))}
-        end
-    end
+        {%{start: {_m, _f, [arg]}}, _node_pids, _metadata} ->
+          {:ok, normalize_plugins(extract_plugins(arg))}
+      end
+    end)
   end
 
   @doc """
@@ -755,6 +737,15 @@ defmodule Flezha.Service.HubManager do
     ProcessRegistry.dump(hub_id) |> Map.keys() |> Enum.filter(&is_binary/1)
   catch
     :exit, _ -> []
+  end
+
+  @doc """
+  True when the namespace's hub still holds registered operatives (running or
+  durably suspended). Runner cleanup / migration consult this so a hub is never
+  torn down while it holds parked operatives that must stay addressable.
+  """
+  def registered_operatives?(namespace) do
+    Identificator.hub(namespace) |> durable_operative_keys() != []
   end
 
   # On-disk registry.dets for a hub that has not started yet.

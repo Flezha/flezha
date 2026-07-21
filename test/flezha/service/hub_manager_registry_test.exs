@@ -12,9 +12,9 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Convergence.Snapshot
+  import FlezhaTest.Helper.HubRegistryTestHelper
+
   alias Flezha.Service.HubManager
-  alias Flezha.Service.Identificator
-  alias ProcessHub.Service.ProcessRegistry
 
   @namespace "mn_registry_test"
 
@@ -185,26 +185,4 @@ defmodule Flezha.Service.HubManagerRegistryTest do
 
   defp restore_env(key, nil), do: Application.delete_env(:flezha, key)
   defp restore_env(key, val), do: Application.put_env(:flezha, key, val)
-
-  defp ensure_hub(ns) do
-    case HubManager.start_hub(ns) do
-      {:ok, pid} -> {:ok, pid}
-      {:ok, pid, _info} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
-      other -> other
-    end
-  end
-
-  # Inject a synthetic registry entry with an explicit `node_pids` list so we can
-  # reproduce a multi-node operative without spinning up a real peer node + runner.
-  defp inject_operative(ns, operative_id, node_pids) do
-    hub_id = Identificator.hub(ns)
-
-    child_spec = %{
-      id: operative_id,
-      start: {Flezha.Operative.Overwatch, :start_link, [{ns, operative_id}]}
-    }
-
-    :ok = ProcessRegistry.bulk_insert(hub_id, %{operative_id => {child_spec, node_pids, %{}}})
-  end
 end

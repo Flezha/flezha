@@ -81,9 +81,9 @@ COPY rel ./rel
 COPY protobufs ./protobufs
 COPY lib ./lib
 
-RUN mkdir -p priv/native cli/target/release
+RUN mkdir -p priv/native target/release
 COPY --from=rust-build /artifacts/flz_nif.so ./priv/native/flz_nif.so
-COPY --from=rust-build /artifacts/flz         ./cli/target/release/flz
+COPY --from=rust-build /artifacts/flz         ./target/release/flz
 
 RUN --mount=type=cache,target=/root/.hex \
     --mount=type=cache,target=/root/.mix \

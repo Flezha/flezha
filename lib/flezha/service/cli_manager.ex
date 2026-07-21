@@ -282,6 +282,43 @@ defmodule Flezha.Service.CliManager do
     IO.puts("Error rewinding operative: #{inspect(reason)}")
   end
 
+  @doc """
+  Inject a payload into an operative's input stream (the SDK-facing `send_io`
+  route), blocking for the confirming verdict so a parked or absent target is
+  reported rather than silently dropped. `channel` is optional (`""` = none).
+  """
+  def operative_send(namespace, operative_id, message, channel) do
+    metadata = if channel in [nil, ""], do: %{}, else: %{"channel" => channel}
+
+    case OperativeManager.send_io_confirming(
+           operative_id,
+           normalize_namespace(namespace),
+           message,
+           metadata
+         ) do
+      :ok ->
+        IO.puts("Delivered to '#{operative_id}'.")
+
+      {:ok, :absorbed} ->
+        IO.puts("Absorbed (duplicate) by '#{operative_id}'.")
+
+      {:ok, :suspended} ->
+        IO.puts("Journaled for suspended '#{operative_id}' — delivers on wake.")
+
+      {:error, :not_ready} ->
+        IO.puts("Error: operative '#{operative_id}' is not ready to accept input.")
+        System.halt(1)
+
+      {:error, :not_found} ->
+        IO.puts("Error: operative '#{operative_id}' not found.")
+        System.halt(1)
+
+      {:error, :refused} ->
+        IO.puts("Error: input refused — durable append failed for '#{operative_id}'.")
+        System.halt(1)
+    end
+  end
+
   @doc "Get operative state."
   def segment_state(namespace, operative_id) do
     namespace_display = normalize_namespace(namespace)

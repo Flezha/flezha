@@ -165,6 +165,13 @@ runner resources** but is still addressable, and `flz operative info` reports
 it `suspended`. The convergence loop leaves it alone: it is unbound by design,
 not broken.
 
+The namespace hub **outlives its runner** as long as it holds registered
+operatives: runner cleanup and cross-node migration skip `stop_hub` while any
+suspended instance remains in the registry (only an explicit namespace teardown
+tears it down). So killing or restarting the sole runner of a parked fleet does
+not strand it — the hub, the Overwatches and the durable registry survive, and
+the instances rehydrate onto the next runner that binds.
+
 A new inbox append — or the journaled wake deadline, which the controller
 delivers as a synthetic empty-payload inbox entry (`flz.wake = timer`, for
 classes declaring `wake_after()`) — rehydrates it through the **normal bind

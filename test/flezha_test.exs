@@ -689,8 +689,11 @@ defmodule FlezhaTest do
     # Reset the runner keepalive to its default value.
     Application.put_env(:flezha, :runner_keepalive, "30000")
 
-    # Make sure the hub is stopped.
-    assert HubManager.hub_alive?(namespace) === false
+    # Cleanup reaps the dead runner ref but must NOT tear the hub down while it
+    # still holds the 15 registered operatives — they stay addressable and
+    # reseat onto the next runner (bounded-operative.md, hub-outlives-runner).
+    assert HubManager.registered_operatives?(namespace)
+    assert HubManager.hub_alive?(namespace) === true
   end
 
   @tag :runner_disconnect_migrate_hub

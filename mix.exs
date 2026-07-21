@@ -129,7 +129,7 @@ defmodule Flezha.MixProject do
         _ -> "debug"
       end
 
-    File.cp!("cli/target/#{env}/flz", Path.join(release.path, "bin/flz"))
+    File.cp!("target/#{env}/flz", Path.join(release.path, "bin/flz"))
     File.rename!(Path.join(release.path, "bin/flezha"), Path.join(release.path, "bin/flzvm"))
 
     release

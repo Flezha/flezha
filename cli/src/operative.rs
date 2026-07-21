@@ -16,12 +16,13 @@ pub fn handle_operative_command(args: &[String]) {
         "list" => handle_list(args),
         "info" => handle_info(args),
         "io_listen" => handle_io_listen(args),
+        "send" => handle_send(args),
         "rewind" => handle_rewind(args),
         "replay" => handle_replay(args),
         "help" | "--help" | "-h" => print_operative_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', 'io_listen', 'rewind', 'replay', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', 'io_listen', 'send', 'rewind', 'replay', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -169,6 +170,58 @@ fn handle_stop(args: &[String]) {
         Ok(status) if status.success() => println!("Operative stopped successfully."),
         Ok(_) => eprintln!("Unknown status returned."),
         Err(e) => eprintln!("Failed to stop operative: {}", e),
+    }
+}
+
+/// `flz operative send <operative_id> --text <payload> [--channel <ch>]` —
+/// inject a payload into an operative's input stream (the SDK-facing
+/// `send_io` route). Blocks for the confirming verdict so a parked or absent
+/// target is reported rather than silently dropped.
+fn handle_send(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!(
+            "Error: Invalid number of arguments. \
+             Usage: flz operative send <operative_id> --text <payload> [--channel <ch>] [-n <namespace>]"
+        );
+        exit(1);
+    }
+
+    let operative_id = &args[1];
+    let namespace = get_namespace(&args[2..]);
+
+    let text = match extract_param(&args[2..], "--text", "-t") {
+        Some(value) => value,
+        None => {
+            eprintln!("Error: --text <payload> is required.");
+            exit(1);
+        }
+    };
+
+    let channel = extract_param(&args[2..], "--channel", "-c").unwrap_or_default();
+
+    // Escape embedded quotes so the payload/channel survive being wrapped in
+    // quotes inside the Elixir RPC expression (same as handle_start).
+    let escaped_text = text.replace('"', "\\\"");
+    let escaped_channel = channel.replace('"', "\\\"");
+
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.operative_send(\"{}\", \"{}\", \"{}\", \"{}\")",
+        namespace, operative_id, escaped_text, escaped_channel,
+    );
+
+    let status = Command::new(get_flezha_command())
+        .arg("rpc")
+        .arg(rpc_command)
+        .status();
+
+    match status {
+        Ok(status) if status.success() => {}
+        // operative_send halts non-zero on error verdicts (not_found / not_ready / refused).
+        Ok(_) => exit(1),
+        Err(e) => {
+            eprintln!("Failed to send input to operative: {}", e);
+            exit(1);
+        }
     }
 }
 
@@ -424,11 +477,13 @@ fn print_operative_help() {
     println!("    list        List operatives");
     println!("    info        Get operative info");
     println!("    io_listen   Listen to operative I/O");
+    println!("    send        Send a payload to an operative's input stream");
     println!("    rewind      Rewind a bounded loop to a committed iteration");
     println!("    replay      Re-run a Segment's retained inputs from a point in the past");
     println!("    help        Show this help message");
     println!();
     println!("EXAMPLES:");
+    println!("    flz operative send orchestrator --text '{{\"task\":\"refactor\"}}'");
     println!("    flz operative rewind chat-1 --to-iteration 3");
     println!("    flz operative replay candles/aggregate/BTC --from 1720000000000");
     println!();

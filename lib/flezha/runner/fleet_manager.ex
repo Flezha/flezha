@@ -399,8 +399,9 @@ defmodule Flezha.Runner.FleetManager do
             {_status, timestamp} = state.runner_namespaces[namespace][runner_id]
 
             if timestamp + keep_alive <= now do
-              HubManager.get_registry(namespace)
-              HubManager.stop_hub(namespace)
+              # Reap the dead runner ref regardless; the hub is reclaimed only
+              # when it holds no (suspended) operatives.
+              HubManager.stop_hub_if_vacant(namespace)
               runner_id
             else
               nil
@@ -636,8 +637,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   defp hub_migrate(_state, namespace, _runner_id) do
-    HubManager.stop_hub(namespace)
-
+    HubManager.stop_hub_if_vacant(namespace)
     %{}
   end
 
