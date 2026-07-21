@@ -241,7 +241,8 @@ public final class BoundedOperativeRunner {
         // undo is outstanding. Finish the remaining hooks — skipping already-done
         // ones — rather than re-running the forward chain, which would redo
         // already-undone work. Empty ⇒ a fresh run / crash mid-forward, re-run below.
-        List<StageRecord> resumed = reconstructCompletedFromIntents(instance, chain, stageSegments);
+        int resumeIter = resumeIter(instance);
+        List<StageRecord> resumed = reconstructCompletedFromIntents(instance, chain, stageSegments, resumeIter);
         if (!resumed.isEmpty()) {
             runCompensation(
                     ctx,
@@ -252,7 +253,8 @@ public final class BoundedOperativeRunner {
                     resumed,
                     spec.rollbackMode(),
                     instance,
-                    spec.persistenceEnabled());
+                    spec.persistenceEnabled(),
+                    resumeIter);
             return new Outcome("error", "resumed compensation after crash", EMPTY);
         }
 
@@ -276,7 +278,8 @@ public final class BoundedOperativeRunner {
             return new Outcome("error", undoError, EMPTY);
         }
 
-        IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageSegments, batch);
+        // ONCE is a single pass, so its one and only iteration is 0.
+        IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageSegments, batch, 0);
         if (it.abnormal() == null) {
             return new Outcome("ok", "", EMPTY);
         }
@@ -289,8 +292,18 @@ public final class BoundedOperativeRunner {
                 it.completed(),
                 spec.rollbackMode(),
                 instance,
-                spec.persistenceEnabled());
+                spec.persistenceEnabled(),
+                0);
         return it.abnormal();
+    }
+
+    /**
+     * The iteration a resumed instance runs next: the one AFTER the last the
+     * journal recorded committed, or 0 on a cold start. The single definition
+     * both the loop and the crash-resume compensation read.
+     */
+    private static int resumeIter(BoundedOperativeInstance instance) {
+        return instance.opJournal().map(j -> j.getIter() + 1).orElse(0);
     }
 
     /**
@@ -343,7 +356,7 @@ public final class BoundedOperativeRunner {
             for (int i = 0; i < stageSegments.get(stageIdx).size(); i++) {
                 ran.add(new SegmentRun(i, List.of()));
             }
-            completed.add(new StageRecord(stageIdx, ran));
+            completed.add(new StageRecord(stageIdx, op.getIter(), ran));
         }
         if (completed.isEmpty()) {
             return null;
@@ -379,7 +392,7 @@ public final class BoundedOperativeRunner {
             // hookless op. Without it that op is never drained from `rewind_undo`
             // and every later restore re-offers it forever.
             if (spec.persistenceEnabled()) {
-                shipCompensationOutbox(ctx, instanceId, sink.staged());
+                shipCompensationOutbox(ctx, instanceId, record.iter(), sink.staged());
             }
         }
         return null;
@@ -422,7 +435,7 @@ public final class BoundedOperativeRunner {
             List<Object> firstSeed) {
         String instanceId = instance.instanceId();
         // Resume at the iteration AFTER the last committed one.
-        int iter = instance.opJournal().map(j -> j.getIter() + 1).orElse(0);
+        int iter = resumeIter(instance);
         List<Object> seed = firstSeed;
 
         while (!instance.isCancelled()) {
@@ -436,7 +449,7 @@ public final class BoundedOperativeRunner {
                 seed.add(wrapEntry(entry, item));
             }
 
-            IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageSegments, seed);
+            IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageSegments, seed, iter);
             if (it.abnormal() != null) {
                 runCompensation(
                         ctx,
@@ -447,7 +460,8 @@ public final class BoundedOperativeRunner {
                         it.completed(),
                         spec.rollbackMode(),
                         instance,
-                        spec.persistenceEnabled());
+                        spec.persistenceEnabled(),
+                        iter);
                 return it.abnormal();
             }
 
@@ -556,7 +570,8 @@ public final class BoundedOperativeRunner {
             UnboundedOperativeTopology topology,
             List<Integer> chain,
             List<List<BoundedSegment>> stageSegments,
-            List<Object> seedBatch) {
+            List<Object> seedBatch,
+            int iter) {
         String instanceId = instance.instanceId();
 
         // Each operation is fed by ITS producer, not by "whatever ran last". With a
@@ -639,7 +654,7 @@ public final class BoundedOperativeRunner {
                                 spec.persistenceEnabled());
                     }
                 }
-                completed.add(new StageRecord(stageIdx, stageOut.segments()));
+                completed.add(new StageRecord(stageIdx, iter, stageOut.segments()));
 
                 // Op barrier: journal this operation's completion + handoff and
                 // block until it is durable. A durable structured class only.
@@ -649,6 +664,7 @@ public final class BoundedOperativeRunner {
                             topology,
                             instanceId,
                             stageIdx,
+                            iter,
                             segs,
                             stageOut.segments(),
                             batch,
@@ -687,7 +703,8 @@ public final class BoundedOperativeRunner {
             List<StageRecord> completed,
             RollbackMode rollbackMode,
             BoundedOperativeInstance instance,
-            boolean persistenceEnabled) {
+            boolean persistenceEnabled,
+            int iter) {
         // v1 runs a single pass, so there are no committed iterations to keep;
         // the structured-loop follow-up threads them in and planCompensation
         // already honours the mode difference.
@@ -721,7 +738,7 @@ public final class BoundedOperativeRunner {
         }
 
         if (persistenceEnabled && !sink.staged().isEmpty()) {
-            shipCompensationOutbox(ctx, instanceId, sink.staged());
+            shipCompensationOutbox(ctx, instanceId, iter, sink.staged());
         }
     }
 
@@ -755,9 +772,12 @@ public final class BoundedOperativeRunner {
     }
 
     /** Journal the undo's staged output under a {@code compensating} OpCommit. */
-    private static void shipCompensationOutbox(RunnerContext ctx, String instanceId, List<StagedOutput> staged) {
+    private static void shipCompensationOutbox(
+            RunnerContext ctx, String instanceId, int iter, List<StagedOutput> staged) {
+        // Stamped for the same reason the forward barrier is: the undo of
+        // iteration N is a distinct journal entry from the undo of iteration N-1.
         OpCommit.Builder commit =
-                OpCommit.newBuilder().setOperativeId(instanceId).setCompensating(true);
+                OpCommit.newBuilder().setOperativeId(instanceId).setIter(iter).setCompensating(true);
         int seq = 0;
         for (StagedOutput out : staged) {
             commit.addOutbox(OpOutboxItem.newBuilder()
@@ -792,7 +812,10 @@ public final class BoundedOperativeRunner {
      * chain order; {@link BoundedCompensation#planCompensation} reverses them.
      */
     private static List<StageRecord> reconstructCompletedFromIntents(
-            BoundedOperativeInstance instance, List<Integer> chain, List<List<BoundedSegment>> stageSegments) {
+            BoundedOperativeInstance instance,
+            List<Integer> chain,
+            List<List<BoundedSegment>> stageSegments,
+            int iter) {
         List<StageRecord> completed = new ArrayList<>();
         for (int stageIdx = 0; stageIdx < chain.size(); stageIdx++) {
             List<BoundedSegment> slots = stageSegments.get(stageIdx);
@@ -803,7 +826,7 @@ public final class BoundedOperativeRunner {
                 }
             }
             if (!segs.isEmpty()) {
-                completed.add(new StageRecord(stageIdx, segs));
+                completed.add(new StageRecord(stageIdx, iter, segs));
             }
         }
         return completed;
@@ -1316,14 +1339,19 @@ public final class BoundedOperativeRunner {
             UnboundedOperativeTopology topology,
             String instanceId,
             int opIdx,
+            int iter,
             List<BoundedSegment> segs,
             List<SegmentRun> ran,
             List<Object> handoffBatch,
             Optional<ChannelDescriptor> handoffChannel,
             List<OpOutboxItem> outbox) {
 
+        // The enclosing iteration is part of the entry's journal identity: the
+        // controller keys an outbox-flush marker by (type, op_idx, iter), so an
+        // unstamped commit on a later iteration reads as already-flushed and its
+        // staged output is never delivered.
         OpCommit.Builder commit =
-                OpCommit.newBuilder().setOperativeId(instanceId).setOpIdx(opIdx);
+                OpCommit.newBuilder().setOperativeId(instanceId).setOpIdx(opIdx).setIter(iter);
         // The transactional outbox: this op's plugin output becomes durable in
         // the SAME journal record as the op itself. The controller flushes it
         // after the fsync, so a crash either loses both or neither.

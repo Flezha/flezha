@@ -92,3 +92,5 @@ stash/*
 /incident_log.md
 # Local-only dev scratch: notes, brainstorms, ad-hoc files. Whole dir ignored.
 /local_dev/
+# Agent coding-fleet prototype: own git repo, extracted to flezha-agents when its shape settles.
+/examples/coding-fleet/

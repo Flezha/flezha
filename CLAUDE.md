@@ -237,6 +237,22 @@
 - **`data_heartbeat` now carries `dispatches` + `blocked_parks`** (was
   `credit_parked` only). This was a LIVE operational gap: a wedged Java runner
   looked healthy to the controller's `StallClassifier`.
+- **GOTCHA — `OpCommit.iter` MUST be stamped; Java silently did not.**
+  `commitOpBoundary` set only `operative_id`/`op_idx`, so every `op_committed`
+  landed at `iter=0` while `iter_committed` advanced normally. The controller
+  keys an entry's flush marker by `{type, op_idx, iter}`
+  (`OpJournal.pending_entries/1`), so on a loop's SECOND and later iterations the
+  commit collided with iteration 0's already-written `outbox_flushed` and its
+  staged output was **journaled but never delivered** — silent, and invisible to
+  every test that ran one iteration. Rust always stamped it (`driver.rs`, both the
+  forward and `compensating` builds). Java now stamps both, `StageRecord` gained
+  `iter` (Rust parity), and `resumeIter/1` is the single definition of "the
+  iteration a resumed instance runs next". Pinned by
+  `BoundedKindTest.perInputLoopCommitsPerIterationThenParks`, which asserts
+  `opCommitIters() == [0, 1]` — it fails with `[0, 0]` against the old code.
+  Symptom to recognise: a `PER_INPUT`/`CHAINED` Java operative emits fine on its
+  first turn and is silent forever after, with `flz state journal` showing an
+  `op_committed` carrying an outbox and no following `outbox_flushed`.
 
 ## Checkpoint ack-granularity (`effectively-once-checkpoint-granularity`)
 

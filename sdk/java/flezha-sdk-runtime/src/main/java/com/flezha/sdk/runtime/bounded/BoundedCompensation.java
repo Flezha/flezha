@@ -36,9 +36,11 @@ final class BoundedCompensation {
     /**
      * A completed operation in the chain, recorded so it can be rolled back.
      * {@code stageIdx} indexes both the chain and the driver's per-stage
-     * segment table.
+     * segment table; {@code iter} is the enclosing loop iteration, which keys the
+     * journal entry this stage commits under (a segment that ran in two
+     * iterations must be undone once per iteration).
      */
-    record StageRecord(int stageIdx, List<SegmentRun> segments) {}
+    record StageRecord(int stageIdx, int iter, List<SegmentRun> segments) {}
 
     /**
      * Resolve the rollback order for an abnormal termination.

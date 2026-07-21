@@ -11,7 +11,9 @@ import org.junit.jupiter.api.Test;
 class BoundedCompensationTest {
 
     private static BoundedCompensation.StageRecord stage(int idx) {
-        return new BoundedCompensation.StageRecord(idx, List.of());
+        // The planner orders by stage, never by iteration — 0 keeps these cases
+        // reading as the single-iteration passes they are.
+        return new BoundedCompensation.StageRecord(idx, 0, List.of());
     }
 
     private static List<Integer> order(List<BoundedCompensation.StageRecord> plan) {

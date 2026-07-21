@@ -650,6 +650,12 @@ class BoundedKindTest {
         // One iteration commit per inbox item.
         assertThat(cap.committedIterations()).containsExactly(0, 1);
 
+        // Each op commit is stamped with the iteration that enclosed it. The
+        // controller keys an entry's outbox-flush marker by (type, op_idx, iter),
+        // so leaving this at 0 makes turn-b's commit read as already-flushed and
+        // its staged output is never delivered.
+        assertThat(cap.opCommitIters()).containsExactly(0, 1);
+
         // A park is SUSPENSION, not completion: emitting BoundedCompleted would
         // tear the instance down and lose the iteration it parked at.
         assertThat(cap.hasCompletion()).isFalse();
@@ -1477,6 +1483,21 @@ class BoundedKindTest {
                     CommandRequest request = CommandRequest.parseFrom(f.message());
                     if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT) {
                         out.add(request.getOpCommit().getOpIdx());
+                    }
+                }
+            }
+            return out;
+        }
+
+        /** The enclosing iteration each forward op commit carried, in commit order. */
+        List<Integer> opCommitIters() throws Exception {
+            List<Integer> out = new ArrayList<>();
+            for (byte[] raw : framesOn(CONTROL_STREAM)) {
+                for (Frame f : new FrameParser().feed(raw)) {
+                    CommandRequest request = CommandRequest.parseFrom(f.message());
+                    if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT
+                            && !request.getOpCommit().getCompensating()) {
+                        out.add(request.getOpCommit().getIter());
                     }
                 }
             }
