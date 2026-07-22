@@ -4,26 +4,61 @@
 
 ### Changed (BREAKING)
 
-- New guarded SDK entry point in both SDKs (`runner-lifecycle-singleton-api`).
-  `Flezha.newInstance(namespace)` (Java) / `flezha_runner::new(namespace)`
-  (Rust) and the `Flezha.registerUnbounded`/`registerBounded` /
+- New guarded SDK entry point in both SDKs (`runner-lifecycle-singleton-api`,
+  superseded before release by `sdk-runner-entrypoint-redesign` — the shipping
+  surface is the one described here). `Flezha.newInstance(namespace)` (Java) /
+  `flezha_runner::new(namespace)` (Rust) and the
+  `Flezha.registerUnbounded`/`registerBounded` /
   `register_unbounded::<R>()`/`register_bounded::<T>()` registration surface
-  are removed with no back-compat shim. The replacement is a builder:
-  `Flezha.newRunner(ns).defineUnbounded(A.class).run()` (Java) /
-  `Flezha::new_runner(ns)?.define_unbounded::<A>()?.run()?` (Rust).
-  At most one runner may be started per process — a second
-  `start()`/`run()` fails loudly (`IllegalStateException` /
-  `RunnerStartError::AlreadyRunning`) naming the running namespace instead of
-  silently corrupting the process-global identity/sink/credit state; after
-  `close()`/`Drop` a new runner may start. `start()` returns a
-  `FlezhaRunner` handle (embedding), `run()` = `start()` +
-  `awaitTermination()` (standalone binaries — the
+  are removed with no back-compat shim. The replacement is a runner handle —
+  no builder, no freeze step:
+  `Flezha.createRunner(ns).defineUnbounded(A.class).run()` (Java) /
+  `Flezha::create_runner(ns)?.define_unbounded::<A>()?.run()?` (Rust).
+  `RunnerBuilder` and both Java registry facades
+  (`UnboundedOperativeRegistry`/`BoundedOperativeRegistry`) are gone.
+  The declared set is per-runner and starts empty each generation;
+  `define_*`/`remove_*` (`removeUnbounded`/`removeBounded` /
+  `remove_unbounded::<R>()`/`remove_bounded::<T>()`) are legal before and
+  after `start()`, a post-start change shipping the full factory set as a
+  fire-and-forget `UpdateFactories`. A removal refuses while live instances
+  of the factory exist (`OperativeTypeInUseException` /
+  `FlezhaError::OperativeTypeInUse`). Starting with zero declared classes is
+  legal.
+  The singleton slot is claimed at `start()`, not at create: any number of
+  unstarted runners may exist, and a second `start()`/`run()` fails loudly
+  (`IllegalStateException` / `FlezhaError::AlreadyRunning`) naming the running
+  namespace instead of silently corrupting the process-global
+  identity/sink/credit state; after `close()`/`Drop` a new runner may start.
+  `create_runner` is what returns the `FlezhaRunner` handle — `start()`
+  returns `Result<&Self, FlezhaError>` (bind it: a chained
+  `…create_runner(ns)?.start()?` drops the temporary at statement end),
+  `run()` = `start()` + `awaitTermination()` (standalone binaries — the
   `Thread.currentThread().join()` / stdin-loop keep-alive hacks are gone),
   and `Flezha.currentRunner()` / `Flezha::current_runner()` exposes the
-  active runner. Rust declaration and connect failures are now typed
-  `Result`s (`TopologyBuildError` / `BuildBoundedError` /
-  `RunnerStartError`) instead of panics, mirroring Java's exceptions.
+  active runner. Rust declaration, connect, and lifecycle failures are now
+  ONE typed `Result` error, `FlezhaError` (wrapping `TopologyBuildError` /
+  `BuildBoundedError`), instead of panics and the removed
+  `RunnerStartError`/`RunnerError`; the per-issue topology enum is
+  `TopologyIssue`. Java's annotation processor generates
+  `GeneratedUnboundedOperatives.defineAll(FlezhaRunner)`.
   Naming rules for future SDK surface: `docs/sdk_naming_conventions.md`.
+
+### Fixed
+
+- A durable bounded operative whose operations hold **no per-Segment state**
+  went silent after its first turn. The op-journal is instance-scoped but rode
+  `RestoreInitState.op_journal`, a per-Segment frame — and such a class has no
+  Segment WAL, so the controller shipped no restore at all. Every wake resumed
+  at iteration 0, and each turn's commit collided with iteration 0's
+  `outbox_flushed` marker (the flush marker is keyed `{type, op_idx, iter}`),
+  so its staged output was journaled and never delivered. Only the first turn
+  of such an operative was ever emitted; it bit any instance that parked
+  between turns, on both SDKs.
+  `OpJournalState` moves from `RestoreInitState` (field 6, removed) to
+  `AddOperative` (field 6, added) — instance-scoped state on the bind, beside
+  `resume_segment_count`, delivered once per bind instead of once per persisted
+  Segment and before the driver spawns. No compatibility shim: an SDK and a
+  controller must be upgraded together.
 
 ### Changed
 

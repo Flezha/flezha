@@ -34,9 +34,11 @@ decisions, and capability spec deltas, see
 
 - **Unbounded Operative class** — the type-level declaration. One
   Unbounded Operative class declares its channels and the Operations
-  that produce/consume them, exactly once per process via
-  `RunnerBuilder::define_unbounded::<R>()`. The topology is frozen at declaration
-  and shared (`Arc`) by every instance of that class.
+  that produce/consume them, once per runner via
+  `FlezhaRunner::define_unbounded::<R>()` (legal before and after `start()`;
+  `remove_unbounded::<R>()` is its inverse). The topology is built and
+  validated at the declaring call site and shared (`Arc`) by every instance
+  of that class.
 
 - **Operative instance** — the live runtime object spawned on
   `AddOperative`. Each instance has its own per-Segment state
@@ -66,7 +68,7 @@ decisions, and capability spec deltas, see
   controller).
 
 - **Runner** — the work-stealing pool that drains mailboxes. One pool
-  per runner (`RunnerBuilder::start()`); size controlled by `FLEZHA_WORKER_POOL_SIZE`.
+  per runner (`FlezhaRunner::start()`); size controlled by `FLEZHA_WORKER_POOL_SIZE`.
 
 ### Operative kind and capabilities (controller-side)
 
@@ -118,7 +120,7 @@ impl flezha_runner::BoundedOperative for Greet {
         Ok(())
     }
 }
-flezha_runner::Flezha::new_runner("my_app")?.define_bounded::<Greet>()?.run()?;
+flezha_runner::Flezha::create_runner("my_app")?.define_bounded::<Greet>()?.run()?;
 ```
 
 Authoring (Java SDK): a distinct `com.flezha.sdk.bounded.BoundedOperative` interface, declared
@@ -131,7 +133,7 @@ public final class GreetBounded implements BoundedOperative {
         ctx.emit("hello " + args);
     }
 }
-Flezha.newRunner("my_app").defineBounded(GreetBounded.class).run();
+Flezha.createRunner("my_app").defineBounded(GreetBounded.class).run();
 ```
 
 The Java runtime mirrors the Rust shape: a sealed `Operative` (provisional name)
@@ -166,10 +168,37 @@ use flezha_runner::{
 };
 ```
 
-`RunnerBuilder::define_unbounded::<R: UnboundedOperative>()` is called once per
-Unbounded Operative class on the builder `Flezha::new_runner(namespace)`
+`FlezhaRunner::define_unbounded::<R: UnboundedOperative>()` declares one
+Unbounded Operative class on the runner `Flezha::create_runner(namespace)`
 returns; `.start()` / `.run()` boots the SDK; the controller later spawns
-instances by calling `flz operative start <factory_id>`.
+instances by calling `flz operative start <factory_id>`. A second `define_*`
+of the same factory id on the same runner is refused
+(`FlezhaError::DuplicateFactoryId` / `IllegalArgumentException`) — that
+refusal is what "declared once" means, and it is scoped to the runner's
+declared set, which starts empty for every runner even though the underlying
+class registry is process-global.
+
+Starting with zero declared classes is legal, and `define_*` / `remove_*`
+stay callable after `start()`, with three caveats worth knowing:
+
+- `remove_*` on a started runner **refuses while live instances of that
+  factory exist** (`FlezhaError::OperativeTypeInUse` /
+  `OperativeTypeInUseException`); the type stays defined.
+- A post-start change ships the runner's full factory set as an
+  `UpdateFactories` control request, which is **fire-and-forget — there is no
+  ack**. The reconnect init frame, serialized from the same per-runner set at
+  send time, is the resync of record.
+- A parked/suspended durable bounded instance is absent from the SDK's
+  live-instance registry, so the removal check cannot see it and `remove_*`
+  succeeds; rehydration then fails placement. See
+  `docs/resilience/bounded_operative.md`.
+
+Calling `define_*` / `remove_*` after `start()` requires binding the runner:
+in Rust a chained `Flezha::create_runner(ns)?.…start()?` drops the temporary
+at the end of the statement, so write `let runner = …start()?;` (`run()` is
+immune — it blocks until shutdown, which is why the samples below chain it).
+The authoritative surface is the rustdoc on `sdk/rust/src/lib.rs`; nothing
+doctests the snippets in this file.
 
 ## Authoring sugar (default path)
 
@@ -295,7 +324,7 @@ impl UnboundedOperative for MarketOperative {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    Flezha::new_runner("market_ns")?
+    Flezha::create_runner("market_ns")?
         .define_unbounded::<MarketOperative>()?
         .run()?;
     // The controller's `flz operative start <market>` spawns an instance.
@@ -312,7 +341,8 @@ The Java SDK is a port of the same model. Idiomatic differences:
   accessors so the runtime can verify wiring at registration time
   (Java's type erasure means most type bounds the Rust trait system
   enforces at compile time become runtime-checked
-  `OperativeConfigurationException`s thrown by `RunnerBuilder.defineUnbounded(...)`).
+  `UnboundedOperativeConfigurationException`s thrown by
+  `FlezhaRunner.defineUnbounded(...)`).
 - `segmentForOverridden()` / `operationKeyOverridden()` boolean default
   methods replace Rust's `const SEGMENT_FOR_OVERRIDDEN: bool` /
   `const OPERATION_KEY_OVERRIDDEN: bool` sentinels.
@@ -374,7 +404,7 @@ public final class MarketOperative implements UnboundedOperative {
 
 public final class App {
     public static void main(String[] args) throws Exception {
-        Flezha.newRunner("market_ns")
+        Flezha.createRunner("market_ns")
                 .defineUnbounded(MarketOperative.class)
                 .run();
         // Controller's `flz operative start <market>` spawns an instance.
@@ -391,7 +421,9 @@ class declares a `run` method (`Output run(Input)` or
 `Output run(Input, StateHandle<State, Change>)`); the processor generates
 `<ClassName>Operation` (the five `*Type()` getters, `name`, `initState`,
 `applyChange`), a single-operation operative when `sink` is set, and a
-`GeneratedOperatives.registerAll()` aggregator so the author makes one startup call.
+`GeneratedUnboundedOperatives.defineAll(FlezhaRunner)` aggregator so the author
+declares every sugared operative on the runner in one startup call — it takes
+the runner because the declared set is per-runner, not process-global.
 `@State` generates `<ClassName>Change` plus a `<ClassName>Handle` carrying a
 `set<Field>` / `push<Field>` mutator per field; a stateful `run` takes that
 handle and journals with `state.push<Field>(v)` — no change type named, the
@@ -657,7 +689,7 @@ smaStream                        // SmaOp's output handle, from `.into(SmaOp.cla
 
 The Java surface mirrors Rust: `kind` stays `INTER_OPERATION`, the channel
 descriptor carries `Optional<PluginSink> pluginSink`, duplicates raise
-`OperativeConfigurationException.duplicatePluginSink(channel)` at
+`UnboundedOperativeConfigurationException.duplicatePluginSink(channel)` at
 registration time, and a serializer that throws
 surfaces as `OperationException.PluginSerializerFailure` (Java's structured-throw
 analog of Rust's `OperationError::PluginSerializerPanic`). Wire frames produced
