@@ -153,10 +153,12 @@ public final class BoundedOperativeInstance implements Operative {
      * regardless), and never stalls on a corrupt record.
      */
     /**
-     * The op-journal the controller shipped on {@code RestoreInitState}. Present
-     * only on a crash-resume of a durable structured class; it is what lets the
-     * driver SKIP already-committed operations instead of re-running the chain
-     * from the top.
+     * The op-journal the controller shipped on {@code AddOperative} — the bind
+     * itself, because the journal is instance-scoped and a class with no
+     * per-Segment state receives no restore. Present only on a resume of a
+     * durable structured class; it is what lets the driver enter the right
+     * iteration and SKIP already-committed operations instead of re-running the
+     * chain from the top.
      */
     @Nonnull
     public java.util.Optional<com.flezha.sdk.proto.OpJournalState> opJournal() {

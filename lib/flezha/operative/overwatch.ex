@@ -185,8 +185,7 @@ defmodule Flezha.Operative.Overwatch do
 
     with {:ok, state} <- prepare_initial_plugins(state, plugins),
          {:ok, state, operative} <- resolve_init_state(state, operative),
-         operative =
-           with_resume_segment_count(operative, state.builder.kind, operative_class(state)),
+         operative = with_resume_state(operative, state.builder.kind, operative_class(state)),
          {:ok, final_runner_id, add_operative_raw, state} <-
            start_operative_sdk_with_retry(state, operative) do
       # The class's SDK-side declarations ride the AddOperative response; resolve
@@ -776,11 +775,18 @@ defmodule Flezha.Operative.Overwatch do
 
   def resume_segment_count(_kind, _operative_class), do: 0
 
-  # Stamp `resume_segment_count/2` onto the operative's opts so `control_unit`
-  # can set the `AddOperative` field.
-  defp with_resume_segment_count(operative, kind, operative_class) do
-    count = resume_segment_count(kind, operative_class)
-    %{operative | opts: Keyword.put(operative.opts, :resume_segment_count, count)}
+  # Stamp everything a resuming bind carries onto the operative's opts so
+  # `control_unit` can set the `AddOperative` fields: how many Segment restores
+  # to wait for, and the op-journal the driver resumes its iteration from. Only
+  # a bounded instance has a journal, and the kind check is what keeps an
+  # unbounded bind from reading for a file that cannot exist.
+  defp with_resume_state(operative, kind, operative_class) do
+    opts =
+      operative.opts
+      |> Keyword.put(:resume_segment_count, resume_segment_count(kind, operative_class))
+      |> Keyword.put(:op_journal, if(kind == :bounded, do: op_journal_state(operative_class)))
+
+    %{operative | opts: opts}
   end
 
   # The operative-class identity used for per-Segment state (defaults to the
@@ -2049,17 +2055,26 @@ defmodule Flezha.Operative.Overwatch do
             snapshot_bytes: payload.snapshot_bytes,
             change_log_bytes: payload.change_log_bytes,
             has_compensation_intent: markers.intent,
-            has_compensation_done: markers.done,
-            op_journal: op_journal_state(rc)
+            has_compensation_done: markers.done
           }}}
     end
   end
 
-  # Bounded op-journal crash-resume: ship the instance's committed op state
-  # alongside the compensation markers (same restore exchange, no second
-  # round-trip). `nil` (field absent) when the instance has no journal —
-  # unbounded operatives, opted-out classes, pre-upgrade instances.
-  defp op_journal_state(instance_id) do
+  @doc """
+  Bounded op-journal crash-resume: the instance's committed op state, threaded
+  onto `AddOperative.op_journal` so the resumed driver skips the journaled
+  operations, seeds the next one from the journaled handoff, and enters the
+  iteration after the last committed one.
+
+  It rides the bind rather than a per-Segment `RestoreInitState` because it is
+  instance-scoped: a durable bounded class with no per-Segment state ships no
+  restore at all, and would otherwise resume at iteration 0 on every wake.
+
+  `nil` when the instance has no journal — a fresh spawn, an unbounded
+  operative, an opted-out class.
+  """
+  @spec op_journal_state(binary()) :: RunnerCommands.OpJournalState.t() | nil
+  def op_journal_state(instance_id) do
     case Flezha.State.OpJournal.restore_state(instance_id) do
       nil ->
         nil

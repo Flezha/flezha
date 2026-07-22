@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The bounded-op-journal capability is the controller-side durable op-progress store for durable structured bounded operatives: one append-only `op.journal` per instance on the shared WalWriter/FsyncBatcher substrate, recording each completed operation and its serialized inter-op handoff batch. At every operation barrier the SDK ships an `OpCommit` control-channel request and blocks until the controller has fsynced the `op_committed` entry and replied — the durable point later changes gate staged output flushes and iteration commits on. On crash-resume the journal state rides the existing restore exchange so committed operations are skipped (not redone) and the first uncommitted operation is re-seeded from the journaled handoff; compensation-in-flight resume takes precedence unchanged. Inter-operation channels of durable structured classes carry a symmetric byte codec so the handoff is journal-able; the journal shares the instance's file lifecycle (retention, delete, reset) and is inspectable via `flz state journal`. Opted-out classes (`PERSISTENCE_ENABLED = false`) write no journal and keep the re-run-from-top contract.
+The bounded-op-journal capability is the controller-side durable op-progress store for durable structured bounded operatives: one append-only `op.journal` per instance on the shared WalWriter/FsyncBatcher substrate, recording each completed operation and its serialized inter-op handoff batch. At every operation barrier the SDK ships an `OpCommit` control-channel request and blocks until the controller has fsynced the `op_committed` entry and replied — the durable point later changes gate staged output flushes and iteration commits on. On crash-resume the journal state rides the bind itself (`AddOperative.op_journal`) — it is instance-scoped, and a class with no per-Segment state receives no per-Segment restore at all — so committed operations are skipped (not redone) and the first uncommitted operation is re-seeded from the journaled handoff; compensation-in-flight resume takes precedence unchanged. Inter-operation channels of durable structured classes carry a symmetric byte codec so the handoff is journal-able; the journal shares the instance's file lifecycle (retention, delete, reset) and is inspectable via `flz state journal`. Opted-out classes (`PERSISTENCE_ENABLED = false`) write no journal and keep the re-run-from-top contract.
 
 ## Requirements
 
@@ -77,8 +77,10 @@ with a typed error directing the author to keep bulk data in Segment state.
 ### Requirement: Crash-resume skips journaled operations and re-seeds from the journaled handoff
 
 On respawn of a durable structured bounded instance, the controller SHALL ship
-the journal state (committed op indexes and the latest journaled handoff) to the
-SDK in the existing restore exchange. When no compensation is in flight, the
+the journal state (the resume iteration, committed op indexes, and the latest
+journaled handoff) to the SDK **on the bind** (`AddOperative.op_journal`), which
+is instance-scoped and therefore reaches a class that has no per-Segment state
+and so receives no `RestoreInitState`. When no compensation is in flight, the
 driver SHALL skip every operation recorded `op_committed` and SHALL seed the
 first uncommitted operation's input batch from the journaled handoff instead of
 the entry channel. Compensation-in-flight resume (existing behavior) SHALL take
@@ -94,6 +96,11 @@ SHALL keep the re-run-from-top behavior.
 
 - **WHEN** a chain crashes while operation A is still running (no `op_committed` entry)
 - **THEN** on respawn the chain SHALL re-run from operation A seeded from the entry channel (at-least-once)
+
+#### Scenario: An instance with no per-Segment state still resumes at its iteration
+
+- **WHEN** a durable looping instance whose operations hold no per-Segment state (no Segment WAL, so no `RestoreInitState` is shipped) parks and is rehydrated
+- **THEN** the driver SHALL enter the iteration after the last committed one, and that iteration's staged output SHALL be delivered rather than colliding with an earlier iteration's flush marker
 
 #### Scenario: Compensation-in-flight still wins
 

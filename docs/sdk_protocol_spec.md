@@ -1265,14 +1265,22 @@ message RestoreInitState {
     bytes change_log_bytes       = 3;
     bool  has_compensation_intent = 4;  // saga crash-resume markers
     bool  has_compensation_done   = 5;
-    OpJournalState op_journal    = 6;   // bounded op-journal crash-resume
 }
 ```
 
+The op-journal is **not** here — it is instance-scoped and rides
+`AddOperative.op_journal` (below). A durable bounded class with no
+per-Segment state has no Segment WAL, so it receives no
+`RestoreInitState` at all; a journal delivered on this frame would never
+arrive and the driver would resume at iteration 0 on every bind.
+
+### Control command `AddOperative.op_journal` (controller → SDK)
+
 `op_journal` (absent unless the instance has a non-empty op-journal)
 carries the committed op indexes so a resumed durable structured bounded
-driver skips the operations already committed in the in-flight iteration,
-plus two handoff views:
+driver skips the operations already committed in the in-flight iteration
+and enters the iteration after the last committed one, plus two handoff
+views:
 
 ```protobuf
 message OpEdgeHandoff {
@@ -1529,7 +1537,7 @@ mid-run channel loss: the run terminates and crash-resume re-drives
 from the last committed op (the un-acked op re-runs — at-least-once).
 
 On crash-resume the journal state ships back on
-`RestoreInitState.op_journal` (`OpJournalState`): committed operations
+`AddOperative.op_journal` (`OpJournalState`): committed operations
 are skipped and the first uncommitted operation's input batch is seeded
 from the journaled handoff via the channel codec's decode half. Inspect
 a journal with `flz state journal <operative/instance>`.
@@ -1625,7 +1633,7 @@ contract as `OpCommitResponse`. The driver enters iteration `iter + 1`
 only on success, so a crash re-runs at most the whole in-flight
 iteration — never a committed one.
 
-On crash-resume `RestoreInitState.op_journal` carries `iter` (the
+On crash-resume `AddOperative.op_journal` carries `iter` (the
 iteration to resume at: the one after the highest journaled
 `iter_committed`), `committed_op_idxs` (the operations already committed
 *inside* that still-in-flight iteration, which are skipped),

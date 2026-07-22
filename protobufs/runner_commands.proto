@@ -76,6 +76,14 @@ message AddOperative {
     // landed, so a resumed run reads persisted state instead of cold-starting.
     // 0 for a fresh spawn, an unbounded operative, or an opted-out bounded one.
     uint32 resume_segment_count = 5;
+    // Bounded op-journal crash-resume (bounded-op-journal): the instance's
+    // committed op indexes + latest journaled handoff. Instance-scoped, so it
+    // rides the bind itself rather than a per-Segment restore — a durable
+    // bounded class with no per-Segment state ships no RestoreInitState at all,
+    // and would otherwise resume at iteration 0 on every wake.
+    // Absent when the instance has no journal (fresh spawn, opted-out class,
+    // unbounded operative) — the driver then keeps the re-run-from-top behaviour.
+    OpJournalState op_journal = 6;
 }
 
 // SDK -> Controller, as the CommandResponse raw_data of AddOperative.
@@ -332,13 +340,6 @@ message RestoreInitState {
     // unbounded operative or a bounded one that never compensated.
     bool has_compensation_intent = 4;
     bool has_compensation_done = 5;
-    // Bounded op-journal crash-resume (bounded-op-journal): the instance's
-    // committed op indexes + latest journaled handoff, shipped in the same
-    // restore exchange as the compensation markers (no second round-trip).
-    // Absent when the instance has no journal (fresh spawn, opted-out class,
-    // unbounded operative, pre-upgrade instance) — the driver then keeps the
-    // re-run-from-top behaviour.
-    OpJournalState op_journal = 6;
 }
 
 // SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`

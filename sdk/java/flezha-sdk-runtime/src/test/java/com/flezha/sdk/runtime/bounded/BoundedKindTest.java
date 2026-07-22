@@ -662,6 +662,36 @@ class BoundedKindTest {
     }
 
     @Test
+    @DisplayName(
+            "a resuming bind carries the op-journal, so a class with NO per-Segment state resumes at its iteration")
+    void resumingBindCarriesTheOpJournalWithoutAnySegmentRestore() throws Exception {
+        BoundedOperativeClassRegistry.registerClass(LoopingBoundedOperative.class);
+        Captured cap = new Captured();
+        RunnerContext ctx = newCtx(cap);
+
+        // The journal is instance-scoped, so it rides the bind. A class with no
+        // per-Segment state gets NO RestoreInitState at all (resumeSegmentCount
+        // 0) — deliver it on the restore frame instead and this loop resumes at
+        // iteration 0 on every wake, colliding with iteration 0's outbox-flush
+        // marker and silently dropping every turn after the first.
+        OpJournalState journal = OpJournalState.newBuilder().setIter(1).build();
+        new AddOperativeHandler()
+                .handle(
+                        ctx,
+                        addBoundedResumable("test-looping-bounded", "loop-resumed", "seed", 0, journal),
+                        new ArrayList<>());
+
+        BoundedOperativeInstance instance =
+                (BoundedOperativeInstance) ctx.operativeInstanceRegistry().get("loop-resumed");
+        instance.offerInbox("turn-c".getBytes(UTF8));
+
+        assertThat(cap.awaitPark()).isTrue();
+        // The iteration AFTER the last journaled one — never 0 again.
+        assertThat(cap.committedIterations()).containsExactly(2);
+        assertThat(cap.opCommitIters()).containsExactly(2);
+    }
+
+    @Test
     @DisplayName("a loop on run-sugar is refused (there is no chain to iterate)")
     void loopOnRunSugarIsRefused() {
         assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(LoopingSugarOperative.class))
@@ -879,22 +909,22 @@ class BoundedKindTest {
         RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
-        new AddOperativeHandler()
-                .handle(ctx, addBoundedResumable("test-rewind-saga", "rewind-1", "x", 1), new ArrayList<>());
-
         // The controller's rewind marker says ops 0 (compensable) and 1 (HOOKLESS)
-        // of a rewound iteration are still owed an undo.
+        // of a rewound iteration are still owed an undo. It rides the bind.
         OpJournalState journal = OpJournalState.newBuilder()
                 .addRewindUndo(OpCommittedOp.newBuilder().setOpIdx(0).setIter(1).build())
                 .addRewindUndo(OpCommittedOp.newBuilder().setOpIdx(1).setIter(1).build())
                 .build();
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedResumable("test-rewind-saga", "rewind-1", "x", 1, journal), new ArrayList<>());
+
+        // The restore frame still releases the driver's resume gate.
         byte[] segId =
                 SegmentId.of("rewind-1", "rewind_reserve", Optional.empty()).encodedBytes();
         CommandRequest restore = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
                         .setSegmentId(ByteString.copyFrom(segId))
-                        .setOpJournal(journal)
                         .build())
                 .build();
         new RestoreInitStateHandler().handle(ctx, restore, new ArrayList<>());
@@ -1230,15 +1260,24 @@ class BoundedKindTest {
 
     private static CommandRequest addBoundedResumable(
             String factoryId, String operativeId, String args, int resumeSegmentCount) {
+        return addBoundedResumable(factoryId, operativeId, args, resumeSegmentCount, null);
+    }
+
+    /** The same, carrying the op-journal the controller ships on a resuming bind. */
+    private static CommandRequest addBoundedResumable(
+            String factoryId, String operativeId, String args, int resumeSegmentCount, OpJournalState journal) {
+        AddOperative.Builder add = AddOperative.newBuilder()
+                .setOperativeId(operativeId)
+                .setFactoryId(factoryId)
+                .setInitValues(args)
+                .setKind("bounded")
+                .setResumeSegmentCount(resumeSegmentCount);
+        if (journal != null) {
+            add.setOpJournal(journal);
+        }
         return CommandRequest.newBuilder()
                 .setReferenceId("ref")
-                .setAddOperative(AddOperative.newBuilder()
-                        .setOperativeId(operativeId)
-                        .setFactoryId(factoryId)
-                        .setInitValues(args)
-                        .setKind("bounded")
-                        .setResumeSegmentCount(resumeSegmentCount)
-                        .build())
+                .setAddOperative(add.build())
                 .build();
     }
 
@@ -2334,9 +2373,6 @@ class BoundedKindTest {
         RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
-        new AddOperativeHandler()
-                .handle(ctx, addBoundedResumable("test-diamond-bounded", "diamond-r", "x", 1), new ArrayList<>());
-
         var topology =
                 BoundedSpec.build(DiamondBoundedOperative.class).topology().orElseThrow();
         var encode = (java.util.function.Function<String, com.google.protobuf.ByteString>) value -> {
@@ -2371,12 +2407,18 @@ class BoundedKindTest {
                                 .build())
                         .build())
                 .build();
+        new AddOperativeHandler()
+                .handle(
+                        ctx,
+                        addBoundedResumable("test-diamond-bounded", "diamond-r", "x", 1, journal),
+                        new ArrayList<>());
+
+        // The restore frame still releases the driver's resume gate.
         byte[] segId = SegmentId.of("diamond-r", "diam_a", Optional.empty()).encodedBytes();
         CommandRequest restore = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
                         .setSegmentId(ByteString.copyFrom(segId))
-                        .setOpJournal(journal)
                         .build())
                 .build();
         new RestoreInitStateHandler().handle(ctx, restore, new ArrayList<>());

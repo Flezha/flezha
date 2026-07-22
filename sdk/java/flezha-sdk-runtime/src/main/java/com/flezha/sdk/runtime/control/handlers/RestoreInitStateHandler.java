@@ -58,16 +58,6 @@ public final class RestoreInitStateHandler implements CommandHandler {
             return new byte[0];
         }
         RestoreInitState req = request.getRestoreInitState();
-        // The op-journal rides the restore for a durable structured bounded
-        // class. Stash it on the instance BEFORE releasing the resume gate: the
-        // driver reads it to skip already-committed operations, and a driver that
-        // started without it would re-run the chain from the top.
-        if (req.hasOpJournal()) {
-            BoundedLocated owner = findBoundedSegment(ctx, req.getSegmentId().toByteArray());
-            if (owner != null) {
-                owner.instance().setOpJournal(req.getOpJournal());
-            }
-        }
         byte[] segmentId = req.getSegmentId().toByteArray();
         byte[] snapshot = req.getSnapshotBytes().toByteArray();
         byte[] changeLog = req.getChangeLogBytes().toByteArray();

@@ -293,7 +293,7 @@ defmodule Flezha.State.OpJournal do
 
   @doc """
   Fold the journal into the crash-resume state shipped on
-  `RestoreInitState.op_journal` (`nil` when the instance has no journal).
+  `AddOperative.op_journal` (`nil` when the instance has no journal).
 
   The resume point is the iteration **after** the highest `iter_committed`:
   `committed_op_idxs` are the operations already committed inside that

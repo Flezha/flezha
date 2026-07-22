@@ -515,3 +515,21 @@ The frame SHALL carry a payload-id constant defined alongside the sink's other p
 - **WHEN** the SDK receives `CompactSegment` for a `segment_id` matching no live Segment
 - **THEN** the handler SHALL report an error rather than answering as though compaction succeeded
 
+### Requirement: The Rust SDK SHALL take the op-journal from the bind
+
+`start_bounded_resumable` SHALL accept the instance's op-journal alongside the
+restore count and SHALL pass it to `BoundedInstance::new`, so the resume state is
+present before the driver is spawned. The `RestoreInitState` handler SHALL NOT
+carry the journal — that frame is per-Segment and is not shipped for a class with
+no persisted Segment.
+
+#### Scenario: A resuming bind with no Segment restores still resumes at its iteration
+
+- **GIVEN** a durable bounded class whose operations hold no per-Segment state, so no `RestoreInitState` is shipped
+- **WHEN** the controller binds it with `AddOperative.op_journal`
+- **THEN** the driver SHALL enter the journaled iteration and skip the operations committed in it
+
+#### Scenario: A fresh bind carries no journal
+
+- **WHEN** `AddOperative` arrives with no `op_journal`
+- **THEN** `op_journal_resume()` SHALL be `None` and the chain SHALL run from the top

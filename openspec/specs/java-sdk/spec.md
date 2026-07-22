@@ -632,7 +632,7 @@ The Java SDK SHALL implement the `bounded-op-journal` capability. At every op ba
 
 Inter-op channels of a durable structured bounded class SHALL declare a codec; a missing codec SHALL fail registration with `MissingInterOpCodec` naming the channel. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top.
 
-On resume, the SDK SHALL read the journal state shipped on `RestoreInitState.op_journal`, SHALL **skip** ops already recorded as committed, and SHALL seed the next op's batch from the journaled handoff via the channel codec.
+On resume, the SDK SHALL read the journal state shipped on `AddOperative.op_journal`, SHALL **skip** ops already recorded as committed, and SHALL seed the next op's batch from the journaled handoff via the channel codec.
 
 #### Scenario: A committed op is skipped on resume, not re-run
 

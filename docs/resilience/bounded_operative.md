@@ -357,12 +357,17 @@ resumes **at the first operation not recorded in the op-journal**
 `OpCommit` (op index, segments that ran, the inter-op handoff serialized through
 the channel's byte codec) and blocks until the controller has fsynced the
 `op_committed` entry into the instance's `op.journal`. On resume the journal
-state rides `RestoreInitState.op_journal`; committed operations are **skipped,
-not redone**, and the first uncommitted operation's batch is **seeded from the
-journaled handoff** instead of the entry channel. Only the operation that was
-mid-flight when the crash landed re-runs (Model A idempotent re-run applies to
-it alone). The `run`-sugar form (no segments), opted-out classes, pre-journal
-instances, and the Java SDK (parity follow-up) re-run from the top. A
+state rides `AddOperative.op_journal` — the **bind**, not a per-Segment
+restore, because the journal is instance-scoped: a class whose operations hold
+no per-Segment state has no Segment WAL and so receives no `RestoreInitState`
+at all, and a journal delivered there would never arrive (every wake would
+resume at iteration 0, and each turn's staged output would collide with
+iteration 0's `outbox_flushed` marker and never be delivered). Committed
+operations are **skipped, not redone**, and the first uncommitted operation's
+batch is **seeded from the journaled handoff** instead of the entry channel.
+Only the operation that was mid-flight when the crash landed re-runs (Model A
+idempotent re-run applies to it alone). The `run`-sugar form (no segments) and
+opted-out classes re-run from the top. A
 **restore-before-run gate** (`AddOperative.resume_segment_count`, the count of
 persisted Segments) holds the first operation until that many `RestoreInitState`
 frames land, so the chain never runs on empty state before the restore arrives.

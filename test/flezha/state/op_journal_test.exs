@@ -2,18 +2,13 @@ defmodule FlezhaTest.State.OpJournalTest do
   @moduledoc """
   `bounded-op-journal` controller store: entry codec round-trip, torn-tail
   recovery, oversize rejection, reserved-type tolerance, lifecycle (path
-  helper, invisibility to the Segment scanners, delete), and the bind-time
-  restore ship-back of the journal state on `RestoreInitState`.
+  helper, invisibility to the Segment scanners, delete), and the resume state
+  the bind ships back on `AddOperative.op_journal`.
   """
   use ExUnit.Case, async: false
 
-  import Mimic
-
-  alias Flezha.Runner.ControlChannel
   alias Flezha.Operative.Overwatch
   alias Flezha.State.{OpJournal, Registry, TestHelpers, WalWriter, Wire}
-
-  setup :verify_on_exit!
 
   setup do
     root = TestHelpers.tmp_app_data_dir()
@@ -415,14 +410,11 @@ defmodule FlezhaTest.State.OpJournalTest do
     refute File.exists?(Registry.journal_path(inst))
   end
 
-  test "bind-time restore ships the journal state on RestoreInitState" do
+  # No Segment WAL is seeded: the journal is instance-scoped and rides the bind,
+  # so it must assemble for a class that has no per-Segment state at all — the
+  # case that ships no `RestoreInitState` and would otherwise resume at 0.
+  test "the bind ships the journal state on AddOperative" do
     inst = instance_id()
-    seg = {inst, "OpA", "s0"}
-
-    wal = Registry.wal_path(seg)
-    File.mkdir_p!(Path.dirname(wal))
-    File.write!(wal, TestHelpers.build_wal_record(1, <<>>))
-
     seg_id = seg_identity(inst, "OpA", "s0")
 
     # Iteration 0 committed one operation and finished; iteration 1 has one
@@ -431,16 +423,7 @@ defmodule FlezhaTest.State.OpJournalTest do
     :ok = OpJournal.append_iter_committed(inst, 0, 3, [{2, "carry"}])
     :ok = OpJournal.append_op_committed(inst, 0, 1, [seg_id], [{2, "h"}])
 
-    test_pid = self()
-
-    expect(ControlChannel, :send_control, fn "exec-opj", command ->
-      send(test_pid, {:captured, command})
-      {:ok, make_ref()}
-    end)
-
-    Overwatch.dispatch_restore_init_state("exec-opj", seg)
-
-    assert_receive {:captured, {:restore_init_state, cmd}}
+    journal = Overwatch.op_journal_state(inst)
 
     assert %RunnerCommands.OpJournalState{
              committed_op_idxs: [0],
@@ -458,34 +441,18 @@ defmodule FlezhaTest.State.OpJournalTest do
              consumed_offset: 3,
              parked: false,
              wake_deadline_ms: 0
-           } = cmd.op_journal
+           } = journal
 
     # Every forward op commit, with its iteration — the driver's compensation
     # input. Shipping this empty is how a rollback silently undoes nothing.
     assert [
              %RunnerCommands.OpCommittedOp{op_idx: 0, iter: 0, segments_ran: [^seg_id]},
              %RunnerCommands.OpCommittedOp{op_idx: 0, iter: 1, segments_ran: [^seg_id]}
-           ] = cmd.op_journal.committed_ops
+           ] = journal.committed_ops
   end
 
   test "an instance without a journal ships no journal state" do
-    inst = instance_id()
-    seg = {inst, "OpA", "s0"}
-    wal = Registry.wal_path(seg)
-    File.mkdir_p!(Path.dirname(wal))
-    File.write!(wal, TestHelpers.build_wal_record(1, <<>>))
-
-    test_pid = self()
-
-    expect(ControlChannel, :send_control, fn "exec-nojournal", command ->
-      send(test_pid, {:captured, command})
-      {:ok, make_ref()}
-    end)
-
-    Overwatch.dispatch_restore_init_state("exec-nojournal", seg)
-
-    assert_receive {:captured, {:restore_init_state, cmd}}
-    assert cmd.op_journal == nil
+    assert Overwatch.op_journal_state(instance_id()) == nil
   end
 
   # ---------- bounded-loop-rewind ----------

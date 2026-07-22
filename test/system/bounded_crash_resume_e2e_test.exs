@@ -717,6 +717,50 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
       assert replies(collector, 2) == ["reply:one", "reply:two"]
     end
+
+    # The same park/rehydrate cycle for a class with NO per-Segment state. It has
+    # no Segment WAL, so the controller ships no `RestoreInitState` on the
+    # rehydrating bind — the op-journal reaches the driver only because it rides
+    # `AddOperative`. Delivered on the restore frame instead, turn two commits at
+    # iteration 0 again, collides with iteration 0's `outbox_flushed`, and its
+    # reply is journaled but never delivered.
+    test "a loop with no per-Segment state resumes at its iteration and still delivers", ctx do
+      collector = spawn_link(fn -> collect_loop([]) end)
+      namespace = unique("bounded_loop_stateless")
+      operative_id = unique("stateless_loop_bounded")
+      id_path = unique_id_path()
+
+      on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+      {_port, _exec} =
+        boot_runner(namespace, ctx, id_path,
+          release?: true,
+          extra_env: [{"FLEZHA_BOUNDED_PARK_IDLE_MS", "700"}]
+        )
+
+      start_bounded(namespace, operative_id, "stateless_loop_bounded",
+        plugins: [forward_sink("chat_sink", collector)]
+      )
+
+      send_turn(namespace, operative_id, "one")
+      assert wait_until(fn -> committed_iters(operative_id) == [0] end, 30_000)
+
+      # The park is what makes the next turn a fresh bind.
+      assert wait_until(fn -> suspended?(namespace, operative_id) end, 20_000),
+             "the idle stateless loop never parked"
+
+      # Nothing on disk to restore — the journal is the only thing carried over.
+      assert Flezha.Operative.Overwatch.resume_segment_count(:bounded, operative_id) == 0
+
+      send_turn(namespace, operative_id, "two")
+
+      assert wait_until(fn -> committed_iters(operative_id) == [0, 1] end, 60_000),
+             "the rehydrated turn did not commit as iteration 1: " <>
+               inspect(committed_iters(operative_id))
+
+      # The point of the test: the second turn's staged output was delivered.
+      assert replies(collector, 2) == ["reply:one", "reply:two"]
+    end
   end
 
   describe "loop rewind (rust/uds)" do

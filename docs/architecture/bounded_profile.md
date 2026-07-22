@@ -339,14 +339,17 @@ sequenceDiagram
 
     USER->>CTRL: a new message
     CTRL->>CTRL: 💾 append to inbox.wal (offset + dedup) — before forwarding
-    CTRL->>EX2: rehydrate — bind, restore the segments, ship the journal state
+    CTRL->>EX2: rehydrate — bind, carrying the journal state, then restore the segments
     CTRL->>EX2: deliver the undelivered inbox tail
     EX2->>EX2: iteration N+1
     Note over CTRL,EX2: a durable timer is the same model — the trigger is the clock, not a message
 ```
 
 Rehydration is **the ordinary bind path**. Crash-resume, migration, and un-park all converge on
-it, so there is one code path and one set of bugs. The wake timer wakes the operative by
+it, so there is one code path and one set of bugs. The journal rides that bind
+(`AddOperative.op_journal`) rather than a per-Segment restore, because it is instance-scoped: an
+operative whose operations hold no per-Segment state has nothing to restore, and would otherwise
+rehydrate at iteration 0 every time. The wake timer wakes the operative by
 appending an empty item to its own inbox, which means two racing wake sources — a message and a
 timer — collapse into one rehydration by construction.
 

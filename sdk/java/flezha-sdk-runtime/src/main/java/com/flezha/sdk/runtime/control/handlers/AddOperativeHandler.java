@@ -62,6 +62,14 @@ public final class AddOperativeHandler implements CommandHandler {
                 return new byte[0];
             }
             BoundedOperativeInstance instance = new BoundedOperativeInstance(operativeId, factoryId);
+            // The op-journal is instance-scoped, so it rides the bind rather
+            // than a per-Segment restore — a durable class with no per-Segment
+            // state ships no restore at all. Stashed before the spawn below: the
+            // driver reads it to resume at the right iteration and to skip
+            // already-committed operations.
+            if (cmd.hasOpJournal()) {
+                instance.setOpJournal(cmd.getOpJournal());
+            }
             // Build + wire the per-Segment table (structured only) BEFORE
             // registering and spawning, so the Controller's RestoreInitState
             // frames (which follow this ACK) reach live Segments and the driver
