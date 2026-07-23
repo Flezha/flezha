@@ -469,14 +469,21 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Test
-        @DisplayName("a second entry channel is refused")
-        void secondEntryRefused() {
-            assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build("g9", c -> {
-                        c.input(String.class, "in_a").into(GraphStage1.class);
-                        c.input(String.class, "in_b").into(GraphStage2.class);
-                    }))
-                    .isInstanceOf(UnboundedOperativeConfigurationException.class)
-                    .hasMessageContaining("exactly one entry");
+        @DisplayName("multiple entry channels build")
+        void multipleEntryChannelsBuild() {
+            // One operative may declare several entry channels — one per
+            // external source (e.g. a market pipeline reading a trade feed and
+            // an order-book feed). The controller routes each frame to its
+            // entry by metadata["channel"]. Both entries and subgraphs resolve.
+            var t = UnboundedOperativeTopologyBuilder.build("g9", c -> {
+                c.input(String.class, "in_a").into(GraphStage1.class);
+                c.input(String.class, "in_b").into(GraphStage2.class);
+            });
+            var entries = t.channels().stream()
+                    .filter(ch -> ch.kind() == ChannelKind.ENTRY)
+                    .map(ch -> ch.name())
+                    .toList();
+            assertThat(entries).containsExactlyInAnyOrder("in_a", "in_b");
         }
 
         @Test

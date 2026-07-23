@@ -151,18 +151,7 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
     }
 
     /**
-     * Raised when an operative declares more than one entry channel. The
-     * graph is fed by exactly one entry. Carries the Rust error name
-     * {@code MultipleEntryChannels}.
-     */
-    public static UnboundedOperativeConfigurationException multipleEntryChannels(String first, String second) {
-        return new UnboundedOperativeConfigurationException(
-                "MultipleEntryChannels: operative declares more than one entry channel (`" + first + "` and `" + second
-                        + "`); the graph is fed by exactly one entry");
-    }
-
-    /**
-     * Raised when an operation is not reachable from the entry channel.
+     * Raised when an operation is not reachable from any entry channel.
      * Carries the Rust error name {@code UnreachableOperation}.
      */
     public static UnboundedOperativeConfigurationException unreachableOperation(String operation) {

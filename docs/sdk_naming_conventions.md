@@ -85,8 +85,10 @@ is only justified when the concept itself is novel.
 ### 9. Graph authoring is producer-first: `input` → `into` → `output`
 
 Topology declaration reads in flow order on a **stream handle**
-(`sdk-graph-authoring`): `input` declares the one entry channel (its name is
-explicit — it is the operative's external address), `.into(Op)` wires a
+(`sdk-graph-authoring`): `input` declares an entry channel (its name is
+explicit — an external address of the operative; an operative may declare
+several, one per external source, and the controller routes each inbound frame
+to its entry by `metadata["channel"]`), `.into(Op)` wires a
 consumer and returns *that operation's* output stream, and the plugin-bound
 terminal is `output(name)` — destination-neutral (the operative declares a
 named exit; the controller decides what happens there). The hybrid tap is

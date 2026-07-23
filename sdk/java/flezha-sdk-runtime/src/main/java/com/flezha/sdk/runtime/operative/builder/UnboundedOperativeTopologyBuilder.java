@@ -40,8 +40,9 @@ import javax.annotation.Nonnull;
  *       handle and named by the node's identity; {@code .named(...)}
  *       overrides. Derived, overridden, and entry names share one namespace
  *       whose duplicate check runs at build time.</li>
- *   <li>Graph shape: one entry channel feeding the graph, every node
- *       reachable from it, no cycles. Fan-out and fan-in are both legal.</li>
+ *   <li>Graph shape: one or more entry channels feeding the graph, every node
+ *       reachable from some entry, no cycles. Fan-out and fan-in are both
+ *       legal.</li>
  *   <li>Typed entries decode at the entry edge (passthrough {@code byte[]},
  *       UTF-8 {@code String}, Jackson JSON otherwise, or a custom parser); a
  *       failing parse on a parsed entry rides the channel's retry→DLQ
@@ -168,11 +169,11 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
             }
         }
 
-        // Shared graph-shape rule (`sdk-graph-authoring`): one entry channel
-        // feeding the graph, every node reachable from it, no cycles. Runs in
-        // the VALIDATION phase — the accumulated errors throw before the
-        // descriptor-materialization loop, so a refusal added after that point
-        // would never fire.
+        // Shared graph-shape rule (`sdk-graph-authoring`): one or more entry
+        // channels feeding the graph, every node reachable from some entry, no
+        // cycles. Runs in the VALIDATION phase — the accumulated errors throw
+        // before the descriptor-materialization loop, so a refusal added after
+        // that point would never fire.
         if (!operations.isEmpty()) {
             validateGraphShape();
         }
@@ -318,21 +319,13 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     // ---- Graph-shape validation ---------------------------------------------
 
     private void validateGraphShape() {
-        // Exactly one entry channel feeds the graph.
-        String firstEntry = null;
-        for (ChannelEntry c : channels) {
-            if (c.kind != ChannelKind.ENTRY) {
-                continue;
-            }
-            if (firstEntry == null) {
-                firstEntry = c.name;
-            } else {
-                errors.add(UnboundedOperativeConfigurationException.multipleEntryChannels(firstEntry, c.name)
-                        .getMessage());
-                break;
-            }
-        }
-
+        // One OR MORE entry channels feed the graph — a single operative may
+        // ingest several external sources (e.g. a market pipeline reading a
+        // trade feed and an order-book feed on distinct channels); the
+        // controller routes each frame to its entry by metadata["channel"],
+        // falling back to the first entry when unset. Every node must be
+        // reachable from some entry, and the graph must be acyclic.
+        //
         // The shared graph-shape walk (GraphShape, one mechanism for this
         // validation and the bounded execution order): a leftover Kahn node
         // is on a cycle; unreachable is reported only when acyclic (a cycle

@@ -62,6 +62,16 @@
 
 ### Changed
 
+- An operative may now declare **more than one entry channel** (both SDKs). The
+  `sdk-graph-authoring` graph-shape rule is relaxed from "exactly one entry" to
+  "one or more entries, every node reachable from some entry"; the
+  `MultipleEntryChannels` topology error is removed. The runtime already routed
+  each inbound frame to its entry by `metadata["channel"]` (falling back to the
+  first-declared entry), so this only lifts the build-time refusal — enabling a
+  single operative to ingest several external sources (e.g. a market pipeline
+  reading a trade feed and an order-book feed on distinct channels). Bounded
+  operatives keep their single-entry linear-chain rule.
+
 - Plugin subscriptions added via `flz plugin enable` now survive any
   Overwatch (re)start automatically. The ProcessHub child-spec is the
   source of truth for an operative's enabled plugins; the runtime
