@@ -26,16 +26,19 @@ controller ships it to the new runner on Segment stream attach.
    layout, no-op on subsequent runs.
 2. `Flezha.Service.HubManager` starts each per-namespace ProcessHub
    with `registry_backend: {:dets, [path: ...]}` and
-   `auto_recovery: [recovery_window_ms: ..., replay_timeout_ms: ...]`.
+   `auto_recovery: [marker_path: ..., recovery_timeout_ms: ...]`.
 3. `Flezha.Boot.RecoveryHooks.register/1` installs thin telemetry
    forwarders for ProcessHub's `pre_recovery_replay` and
    `post_recovery_replay` hooks so the recovery lifecycle is visible
    on the observability bus.
-4. ProcessHub's coordinator runs the recovery state machine
-   (`:recovery_pending → :recovering | :normal`). If any peer
-   transitions to `:normal` within `recovery_window_ms`, this node
-   skips replay; otherwise it dispatches `start_children` for the
-   persistent-registry rows.
+4. ProcessHub's coordinator runs the recovery state machine, gated on
+   the marker file at `marker_path`. Marker present → straight to
+   `:normal`, no replay. Marker absent → `:recovering`, dispatching
+   `start_children` for the persistent-registry cspecs under a
+   `recovery_timeout_ms` ceiling, then `:normal`. Every transition to
+   `:normal` (re)writes the marker; nothing deletes it at shutdown, so
+   replay is armed only by `ProcessHub.Service.Recovery.prepare_recovery/1`
+   or by losing the volume the marker lives on.
 5. Each Operative's `Overwatch.init/1` reads `operative.opts[:plugins]`
    straight from the cspec (the persistent registry already restored
    it) and rebuilds `state.extensions`. Then `start_operative_sdk` and
@@ -50,15 +53,15 @@ controller ships it to the new runner on Segment stream attach.
 
 | Scenario | Replay? | Result |
 |---|---|---|
-| Cluster-wide cold boot (all controllers down, all return) | Yes (every node) | Each node calls `start_children` for its persistent rows. ProcessHub's hash ring picks the canonical owner; idempotent on duplicate `child_id`. Plugins re-subscribed via `Overwatch.init/1`; Segment state shipped via `dispatch_restore_init_state/2` on stream-attach. |
-| Single-controller restart into healthy cluster | No (returning node) | Returning node sees a `:normal` peer within the window, skips replay. ProcessHub has already redistributed its work; the durable registry on disk does not trample peer state. |
+| Cluster-wide cold boot (all controllers down, all return) | Only where the marker was cleared first | Each such node calls `start_children` for its persistent rows. ProcessHub's hash ring picks the canonical owner; idempotent on duplicate `child_id`. Plugins re-subscribed via `Overwatch.init/1`; Segment state shipped via `dispatch_restore_init_state/2` on stream-attach. A cold boot with markers intact comes back empty until an operator arms replay. |
+| Single-controller restart into healthy cluster | No | The marker survived on disk, so the returning node goes straight to `:normal`. ProcessHub has already redistributed its work; the durable registry on disk does not trample peer state. |
 | Rolling k8s rollout | No | Same as single-controller, repeated per pod. No stampede. |
-| Single-node deployment | Yes | Window elapses with no peer; `:recovering`; replay; `:normal`. |
+| Single-node deployment | Only with the marker cleared | No peer can hand the rows back, so a restart is empty until the marker is removed while the node is down; then `:recovering`; replay; `:normal`. |
 | Runner pod restart with `runner_id` rotation | N/A | Controller never went down. New `runner_id` is assigned via the existing flow; flat WAL layout means state is found and shipped via `RestoreInitState`. Zero data loss. |
 | HotSwap migration (operative moves A → B) | N/A | `prepare_handover_state` ships in-memory state in-band; `dispatch_restore_init_state/2` does NOT fire (handover delivers state). State files on A are not deleted (retention sweeper handles long-term orphans). |
 | HotSwap mid-flight crash on destination | N/A | Source state files preserved. ProcessHub retries the migration. |
 | Network partition during boot | Yes (suspect) | Brief duplicate-start window during heal; ProcessHub's `Divergence` strategy resolves. Documented limitation. Operators in fragile environments can `FLEZHA_AUTO_RESTORE_ENABLED=false`. |
-| Quorum loss (3-node cluster, 2 die) | No (returning) | Survivor authoritative; returning nodes reconcile against ProcessHub placement. |
+| Quorum loss (3-node cluster, 2 die) | No (returning) | Returning nodes keep their markers, so they skip replay; survivor authoritative and they reconcile against ProcessHub placement. |
 | Subset-rejoin (cluster down, only some nodes return) | Yes | **Single tolerated data-loss case** — rows held only on the non-rejoining nodes are lost. |
 | Mixed-version rolling upgrade | Per-node | Forward+backward-compatible row schema. |
 | Registry corruption | Empty replay | DETS rotates to `corrupt-<monotonic>`; boot continues empty. |
@@ -82,8 +85,8 @@ flz boot import-legacy-snapshot /path/to/snap.flz [--force]
 | Env var | Application key | Default | Purpose |
 |---|---|---|---|
 | `FLEZHA_AUTO_RESTORE_ENABLED` | `:flezha, :auto_restore_enabled` | `true` | Kill-switch. When `false`, the auto-recovery hooks do not register; durable registry mutations still happen. |
-| `FLEZHA_RECOVERY_WINDOW_MS` | `:flezha, :recovery_window_ms` | `10_000` | How long a returning node waits for a `:normal` peer before replaying. |
-| `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `:flezha, :boot_replay_timeout_ms` | `60_000` | Cap on how long ProcessHub takes to drain the replay before declaring `:normal`. |
+| `FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS` | `:flezha, :process_hub_recovery_timeout_ms` | `30_000` | Ceiling on ProcessHub's `:recovering` state — the replay and the cluster-event queue gate. |
+| `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `:flezha, :boot_replay_timeout_ms` | `60_000` | How long boot waits for every hub to leave `:recovery_pending`, and how long a connecting runner waits for that during cluster formation. Not passed to ProcessHub — its replay cap is `FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS`. |
 | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | `:flezha, :process_hub_registry_root` | `app_data/process_hub` | Parent dir for each per-namespace `<hub_id>/registry.dets`. |
 
 ## Kill-switch and rollback

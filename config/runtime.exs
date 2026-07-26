@@ -434,8 +434,6 @@ if config_env() != :test do
     process_hub_recovery_timeout_ms:
       System.get_env("FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS", "30000")
       |> String.to_integer(),
-    recovery_window_ms:
-      System.get_env("FLEZHA_RECOVERY_WINDOW_MS", "10000") |> String.to_integer(),
     boot_replay_timeout_ms:
       System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
     auto_restore_enabled: System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],

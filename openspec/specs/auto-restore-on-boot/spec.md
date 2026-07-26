@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks to coordinate replay with FleetManager readiness, and wires per-Segment WAL/snapshot restoration into the data-stream attach path. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
+The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks that surface the replay lifecycle to observability, and wires per-Segment WAL/snapshot restoration into the data-stream attach path. Registry-dependent services gate on recovery completion rather than on the replay hooks. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
 ## Requirements
 ### Requirement: Configure ProcessHub for durable registry and auto-recovery per namespace
 
@@ -10,9 +10,9 @@ The auto-restore-on-boot capability provides automatic, operator-free recovery o
 
 The DETS path SHALL resolve to `app_data/process_hub/<hub_id>/registry.dets` by default, with the root configurable via `:flezha, :process_hub_registry_root` (env var `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`).
 
-The recovery configuration SHALL be `[recovery_window_ms: <flezha_recovery_window_ms>, replay_timeout_ms: <flezha_boot_replay_timeout_ms>]` where the values come from runtime config: `:flezha, :recovery_window_ms` (default `10_000`) and `:flezha, :boot_replay_timeout_ms` (default `60_000`).
+The recovery configuration SHALL carry only the keys `ProcessHub.Service.Recovery.parse_config/1` reads — `[marker_path: <resolved marker path>, recovery_timeout_ms: <flezha_process_hub_recovery_timeout_ms>]` — so no key advertises a control ProcessHub ignores. The timeout comes from runtime config `:flezha, :process_hub_recovery_timeout_ms` (default `30_000`).
 
-The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` without replay or peer handshake.
+The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` without consulting the marker or replaying.
 
 The atom in the registry-backend tuple MUST resolve to a real backend module via `ProcessHub.Initializer.resolve_registry_backend/1` — currently exactly `:dets` (→ `ProcessHub.Service.Storage.Dets`) or `:ets` (→ `ProcessHub.Service.Storage.Ets`). Backend identifiers that route to non-existent modules SHALL NOT appear in `lib/flezha/service/hub_manager.ex`'s `registry_backend_config/1`. In particular, `:durable_ets` was observed as a regression in the commit immediately following `b0a00e7 Implement auto-restore-on-boot`: `ProcessHub.Initializer.resolve_registry_backend/1`'s `{module, opts}` fall-through clause treated `:durable_ets` as a module name and crashed `setup_storage/2` on first runner connect with `(UndefinedFunctionError) function :durable_ets.open/2 is undefined (module :durable_ets is not available)`, killing every fresh controller boot. If a future upstream `process_hub` ships an actual `Storage.DurableEts` backend (DETS-on-disk + ETS-fast-reads), this requirement MUST be amended to allow `:durable_ets` only AFTER `deps/process_hub/lib/process_hub/service/storage/durable_ets.ex` exists AND `ProcessHub.Initializer.resolve_registry_backend/1` carries an explicit `{:durable_ets, opts}` clause.
 
@@ -20,7 +20,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 
 - **GIVEN** an application boots with default Flezha config
 - **WHEN** `HubManager` constructs the ProcessHub child spec for namespace `"default"`
-- **THEN** the spec contains `registry_backend: {:dets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}` and `auto_recovery: [recovery_window_ms: 10_000, replay_timeout_ms: 60_000]`
+- **THEN** the spec contains `registry_backend: {:dets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}` and `auto_recovery: [marker_path: "app_data/process_hub/<hub_id>/cluster.healthy", recovery_timeout_ms: 30_000]`
 
 #### Scenario: Kill-switch disables auto-recovery
 
@@ -44,39 +44,23 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 - **AND** the controller does not crash, the BEAM does not exit, and the agent stays Ready
 - **AND** a subsequent `bin/flz operative list` returns exit 0 (empty list on first boot)
 
-### Requirement: `pre_recovery_replay` hook handler waits for FleetManager readiness
-
-`Flezha.Boot.RecoveryHooks` SHALL register a synchronous hook handler for ProcessHub's `pre_recovery_replay` hook on every namespace hub. The handler SHALL:
-
-1. Receive the hook event when ProcessHub is about to start replaying its persistent registry.
-2. Poll `Flezha.Runner.FleetManager` for at least one active runner whose advertised factories cover the union of `factory_id` values referenced by the hub's persistent registry rows.
-3. Block (with bounded sleep) for up to `:flezha, :pre_replay_fleet_wait_ms` (default `30_000`).
-4. Return regardless of result (replay proceeds; missing-factory rows will become pending in the existing `start_children` flow).
-5. Log INFO `[boot] pre_recovery_replay: waiting for runners for factories <X, Y, Z>` on entry and `[boot] pre_recovery_replay: ready (or timeout)` on exit.
-
-If the kill-switch `:flezha, :auto_restore_enabled` is `false`, the hook handler SHALL NOT be registered (because `auto_recovery: false` means the hook never fires anyway).
-
-#### Scenario: Handler blocks until at least one matching runner connects
-
-- **GIVEN** ProcessHub's persistent registry contains 3 children using factory `crypto_trades`; no runner is connected yet; coordinator enters `:recovering`
-- **WHEN** ProcessHub fires `pre_recovery_replay` synchronously
-- **THEN** Flezha's handler blocks; a runner advertising `crypto_trades` connects 2 s later
-- **AND** the handler observes the runner and returns; ProcessHub's replay proceeds with the eligible factory
-
-#### Scenario: Handler times out and replay proceeds anyway
-
-- **GIVEN** the persistent registry's factories are all unsupported (no matching runners) and `pre_replay_fleet_wait_ms = 5_000`
-- **WHEN** the handler times out at t=5s
-- **THEN** the handler returns; ProcessHub's replay proceeds; each child's `start_children` raises in the existing `child_data_alter` hook with `"No active compute engines available"`; ProcessHub's existing per-child error handling captures this; the `recovery_replay_completed` telemetry shows `failed: N`
-
 ### Requirement: `post_recovery_replay` hook emits Flezha-side telemetry
 
-`Flezha.Boot.RecoveryHooks` SHALL register an async `post_recovery_replay` handler that emits `[:flezha, :boot, :recovery_complete]` telemetry with `%{hub_id: id, namespace: ns, replay_outcome: term}` metadata. Used by Phoenix LiveDashboard, Prometheus scrapers, and any external observability tooling.
+`Flezha.Boot.RecoveryHooks` SHALL register hook handlers on every namespace hub for both replay-lifecycle hooks, and both SHALL be thin forwarders that return promptly — ProcessHub blocks the coordinator on the synchronous `pre_recovery_replay` handler, so any work there stalls the recovery gate.
+
+The `post_recovery_replay` handler SHALL emit `[:flezha, :boot, :recovery_complete]` telemetry with `%{hub_id: id, namespace: ns, replay_outcome: term}` metadata. The `pre_recovery_replay` handler SHALL emit `[:flezha, :boot, :pre_recovery_replay]` and return. Used by Phoenix LiveDashboard, Prometheus scrapers, and any external observability tooling.
+
+When the kill-switch `:flezha, :auto_restore_enabled` is `false`, ProcessHub does not fire these hooks, so registration SHALL be a no-op.
 
 #### Scenario: Telemetry fires after replay
 
 - **WHEN** ProcessHub fires `post_recovery_replay` for a namespace hub
 - **THEN** Flezha emits `[:flezha, :boot, :recovery_complete]` with the namespace and ProcessHub's replay outcome; subscribed handlers receive the event
+
+#### Scenario: The synchronous handler does not hold the recovery gate
+
+- **WHEN** ProcessHub fires `pre_recovery_replay` synchronously with no runner connected
+- **THEN** the handler emits `[:flezha, :boot, :pre_recovery_replay]` and returns without polling FleetManager, and replay proceeds
 
 ### Requirement: Cspec-write-first ordering for plugin mutations on top of persistent registry
 

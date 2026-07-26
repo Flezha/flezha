@@ -251,11 +251,11 @@ back this:
 1. **ProcessHub durable registry** (`app_data/process_hub/<hub_id>/registry.dets`)
    — every operative child-spec, including `opts[:plugins]`, is persisted
    to disk through ProcessHub's `registry_backend: {:dets, ...}`. On
-   boot, ProcessHub's coordinator runs the `:recovery_pending →
-   :recovering | :normal` state machine: it exchanges modes with peers,
-   skips replay if any peer is already `:normal` (avoiding stale-trample),
-   otherwise replays the persisted registry under
-   `:flezha, :recovery_window_ms` (default 10 s).
+   boot, ProcessHub's coordinator gates the `:recovery_pending →
+   :recovering | :normal` state machine on the `cluster.healthy` marker
+   beside the DETS file: marker present → straight to `:normal`; marker
+   absent → replay the persisted registry under
+   `:flezha, :process_hub_recovery_timeout_ms` (default 30 s).
 2. **Per-Segment WAL/snapshot** (`app_data/state/<operative_class>/<operation_id>/`)
    — change-by-change progress for every Segment. When an operative's
    first Segment stream reattaches after restart, the controller

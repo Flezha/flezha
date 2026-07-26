@@ -23,12 +23,18 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   multi-node operative is reproduced without a real peer node + runner.
   """
   def inject_operative(ns, operative_id, node_pids) do
-    hub_id = Identificator.hub(ns)
-
-    child_spec = %{
+    inject_operative(ns, operative_id, node_pids, %{
       id: operative_id,
       start: {Flezha.Operative.Overwatch, :start_link, [{ns, operative_id}]}
-    }
+    })
+  end
+
+  @doc """
+  Inject a synthetic registry entry carrying an explicit `child_spec`, for tests
+  that need a start-args shape other than the default Overwatch one.
+  """
+  def inject_operative(ns, operative_id, node_pids, child_spec) do
+    hub_id = Identificator.hub(ns)
 
     :ok = ProcessRegistry.bulk_insert(hub_id, %{operative_id => {child_spec, node_pids, %{}}})
   end

@@ -289,56 +289,29 @@ defmodule Flezha.Service.HubManagerTest do
     end
   end
 
-  describe "hook_insert_pid/2 fan-out filter (consume-recovery-mode-and-self-heal §2.8)" do
-    test "skips the push when metadata.tag does not match the registered runner_id" do
-      # The handler is registered with runner_id="e1"; the insertion
-      # carries metadata.tag="e2", i.e. ProcessHub bound the operative to
-      # a different runner session. The pre-change code would have
-      # pushed the pid update to e1's stream channels anyway — that
-      # was the EVIDENCE1 §2 data-plane drain. The new code returns
-      # without inspecting `node_pids` at all.
+  describe "hook_insert_pid/2 routing" do
+    test "an unknown runner's missing stream supervisors do not crash the caller" do
+      # This runs inside the `child_registered` hook, where an exit aborts the
+      # registry write that dispatched it.
+      hook_data = %{child_id: "r1", node_pids: [{node(), self()}]}
 
-      hook_data = %{
-        child_id: "r1",
-        node_pids: [{node(), self()}],
-        metadata: %{tag: "e2"}
-      }
-
-      # The runner_id supervisor names are not present in this test
-      # (no real runner running), so a fall-through would crash on
-      # `Supervisor.which_children`. A clean :ok signals the filter
-      # short-circuited correctly.
-      assert HubManager.hook_insert_pid("e1", hook_data) == nil
+      assert HubManager.hook_insert_pid("no_such_runner", hook_data) == :ok
     end
 
-    test "accepts the push when metadata.tag matches the registered runner_id" do
-      # When the tag matches and node_pids contains an entry on the
-      # local node, the handler would proceed to fan to stream
-      # channels. Those supervisors are absent in this unit test so
-      # the call still raises — but we can isolate the filter decision
-      # by passing an empty node_pids list, which the function handles
-      # cleanly without touching the supervisor tree.
-      hook_data = %{
-        child_id: "r1",
-        node_pids: [],
-        metadata: %{tag: "e1"}
-      }
+    test "no local pid means nothing to route" do
+      assert HubManager.hook_insert_pid("e1", %{child_id: "r1", node_pids: []}) == nil
 
-      assert HubManager.hook_insert_pid("e1", hook_data) == nil
+      remote = %{child_id: "r1", node_pids: [{:other@node, self()}]}
+      assert HubManager.hook_insert_pid("e1", remote) == nil
     end
 
-    test "accepts the push when metadata is absent (legacy / pre-Phase-2 registry rows)" do
-      # Defensive: registry entries without a tag must not break the
-      # dispatcher. The pre-Phase-2 path used `node_pids` only; the
-      # filter must fall through when `metadata.tag` is missing so old
-      # entries that survived a rolling upgrade still get routed.
-      hook_data = %{
-        child_id: "r1",
-        node_pids: [],
-        metadata: %{}
-      }
+    test "a tag left on the hook data does not gate the route" do
+      # ProcessHub never passes `:metadata` to `child_registered`, so a tag gate
+      # here would be dead code pretending to protect the data plane. The route
+      # is operative -> local pid, which any runner's channel resolves alike.
+      hook_data = %{child_id: "r1", node_pids: [{node(), self()}], metadata: %{tag: "e2"}}
 
-      assert HubManager.hook_insert_pid("e1", hook_data) == nil
+      assert HubManager.hook_insert_pid("no_such_runner", hook_data) == :ok
     end
   end
 

@@ -916,8 +916,8 @@
   is out of scope — cross-node WAL replication is a future-work non-goal).
 - **HubManager wiring**: `Flezha.Service.HubManager.process_hub/1`
   passes `registry_backend: {:dets, [path: ...]}` and `auto_recovery:
-  [marker_path: marker_path(hub_id), replay_timeout_ms,
-  recovery_timeout_ms]` (the marker path is now folded into the single
+  [marker_path: marker_path(hub_id), recovery_timeout_ms]`
+  (the marker path is now folded into the single
   `:auto_recovery` option) to every `ProcessHub.child_spec/1`. After each `start_hub/1` it calls
   `Flezha.Boot.RecoveryHooks.register/1` to install
   `pre_recovery_replay` (thin telemetry forwarder; the upstream

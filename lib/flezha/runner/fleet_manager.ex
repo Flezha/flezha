@@ -19,6 +19,7 @@ defmodule Flezha.Runner.FleetManager do
   # the periodic cleanup tick.
   @superseded_table :flezha_superseded_sessions
   @superseded_ttl_ms 600_000
+  @lookup_timeout_ms 5_000
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -59,8 +60,10 @@ defmodule Flezha.Runner.FleetManager do
     end
   end
 
-  def active_runners(namespace) do
-    GenServer.call(__MODULE__, {:active_runners, namespace})
+  # Pollers pass a short timeout so a FleetManager busy inside `runner_connect/3`
+  # costs them one attempt rather than their whole deadline.
+  def active_runners(namespace, timeout \\ @lookup_timeout_ms) do
+    GenServer.call(__MODULE__, {:active_runners, namespace}, timeout)
   end
 
   @doc """
@@ -107,8 +110,8 @@ defmodule Flezha.Runner.FleetManager do
   on the foreign node and generates a `enqueue: operative X not found`
   warning on every input.
   """
-  def runners_for_factory(namespace, factory_id) do
-    GenServer.call(__MODULE__, {:runners_for_factory, namespace, factory_id})
+  def runners_for_factory(namespace, factory_id, timeout \\ @lookup_timeout_ms) do
+    GenServer.call(__MODULE__, {:runners_for_factory, namespace, factory_id}, timeout)
   end
 
   def disconnect_runner(namespace, runner_id) do

@@ -143,6 +143,12 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       # registry backend (no DETS file under the shared tmp root, so the
       # unstarted-hub on-disk branch stays out of these assertions). Then flip
       # the flag on — the detection only runs when auto-restore is enabled.
+      # `durable_registry_pending?/0` reads EVERY running hub, so an unbound row
+      # left by an earlier file answers for this one. Retire those hubs first.
+      Enum.each(HubManager.get_running_namespaces(), fn ns ->
+        if ns != @pending_ns, do: HubManager.stop_hub(ns)
+      end)
+
       {:ok, _} = ensure_hub(@pending_ns)
 
       prev_restore = Application.get_env(:flezha, :auto_restore_enabled)

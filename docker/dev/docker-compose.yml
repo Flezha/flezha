@@ -27,7 +27,8 @@ services:
         soft: 65536
         hard: 65536
     healthcheck:
-      test: ["CMD", "sh", "-c", "pgrep -f 'beam.smp\\|tail' > /dev/null"]
+      # pgrep matches ERE: `\|` would be a literal pipe and never match.
+      test: ["CMD", "sh", "-c", "pgrep -f 'beam.smp|tail' > /dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3

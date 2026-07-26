@@ -57,6 +57,34 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     struct!(base, overrides)
   end
 
+  # fails when: an un-parked instance rebinds onto a runner but publishes neither
+  # the registry tag nor the runner's route to its pid, so every frame it produces
+  # hits `stream_channel.ex`'s `[] -> :ok` drop while it still reads as healthy.
+  test "un-parking publishes the registry tag and the runner route" do
+    inst = instance_id()
+    test_pid = self()
+
+    stub(Flezha.Service.HubManager, :operative_set_runner, fn ns, ^inst, runner ->
+      send(test_pid, {:tag_published, ns, runner})
+      :ok
+    end)
+
+    stub(Flezha.Service.HubManager, :hook_insert_local_pid, fn runner, ^inst, pid ->
+      send(test_pid, {:route_published, runner, pid})
+      :ok
+    end)
+
+    parked = state(inst, migrate_task: %{ref: make_ref(), pid: self(), mode: :unpark})
+    recovered = %{parked | runner_id: "ex_woken", suspended: false}
+
+    {:noreply, unparked} =
+      Overwatch.handle_info({:migrate_task_result, self(), {:unparked, recovered}}, parked)
+
+    assert unparked.migrate_task == nil
+    assert_receive {:tag_published, "default", "ex_woken"}
+    assert_receive {:route_published, "ex_woken", ^test_pid}
+  end
+
   test "park evicts the instance from its runner and keeps it registered" do
     inst = instance_id()
     test_pid = self()

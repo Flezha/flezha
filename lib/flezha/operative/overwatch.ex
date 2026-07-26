@@ -142,35 +142,73 @@ defmodule Flezha.Operative.Overwatch do
     # Wait for an active runner in this namespace advertising
     # `operative.factory_id`. The DETS-baked runner_id is usually stale
     # after a restart (Identificator.unique_id/1 generates a fresh id
-    # per connect), so we re-resolve via OperativeManager.assign_runner/3
-    # — the same lookup HubManager.alter_child_data/2 performs.
+    # per connect), so we re-resolve via OperativeManager.await_runner/5
+    # — the same bounded lookup HubManager.alter_child_data/2 performs.
     case with_op_span(:await_runner, operative.id, fn ->
-           await_active_runner(
+           OperativeManager.await_runner(
              state.namespace,
              operative.factory_id,
              operative.id,
-             runner_wait_ms()
+             runner_wait_ms(),
+             &runner_ready?/1
            )
          end) do
       {:ok, runner_id} ->
-        if runner_id != stale_runner_id do
-          Logger.info(
-            "[Overwatch] operative #{operative.id} rebound from stale runner #{inspect(stale_runner_id)} to live #{inspect(runner_id)}"
-          )
-        end
-
         case complete_init(state, runner_id, operative) do
-          {:ok, new_state} -> {:noreply, new_state}
-          {:error, reason, parked} -> {:noreply, park(parked, reason)}
+          # `complete_init` re-resolves the runner on every start attempt, so the
+          # binding to publish is the one it ended on, not the one awaited.
+          {:ok, new_state} ->
+            {:noreply, publish_rebind(new_state, stale_runner_id)}
+
+          {:error, reason, parked} ->
+            {:noreply, park(parked, reason)}
         end
 
-      {:error, :timeout} ->
+      # `:unavailable` (FleetManager never answered) defers exactly like
+      # `:timeout` — the operative has no runner either way — but must be
+      # distinguishable in the log, since only one of the two blames the fleet.
+      {:error, reason} ->
         Logger.warning(
-          "[Overwatch] no active runner in namespace #{inspect(state.namespace)} for factory #{inspect(operative.factory_id)} within #{runner_wait_ms()} ms; deferring operative #{operative.id} startup"
+          "[Overwatch] no active runner in namespace #{inspect(state.namespace)} for factory #{inspect(operative.factory_id)} within #{runner_wait_ms()} ms (#{reason}); deferring operative #{operative.id} startup"
         )
 
         {:stop, :runner_not_ready, state}
     end
+  end
+
+  defp publish_rebind(%__MODULE__{runner_id: runner_id} = state, runner_id), do: state
+
+  # Binding to a runner other than the recorded one leaves the durable row naming
+  # the old one and the live runner's StreamChannels with no route to this pid, so
+  # every output frame is dropped while the operative still reads as healthy.
+  defp publish_rebind(%__MODULE__{} = state, stale_runner_id) do
+    Logger.info(
+      "[Overwatch] operative #{state.id} rebound from stale runner " <>
+        "#{inspect(stale_runner_id)} to live #{inspect(state.runner_id)}"
+    )
+
+    publish_binding(state)
+  end
+
+  # Registry tag + the live runner's `operative_mapping` route. Same pair
+  # `Convergence.Heal.rebind_operative/3` publishes; must run in the Overwatch
+  # process, because the route points at `self()`. Both halves read the bound
+  # state, so neither can name a runner this process is not on.
+  defp publish_binding(%__MODULE__{id: operative_id, runner_id: runner_id} = state) do
+    case HubManager.operative_set_runner(state.namespace, operative_id, runner_id) do
+      :ok ->
+        :ok
+
+      err ->
+        Logger.warning(
+          "[Overwatch] could not publish binding of #{operative_id} to #{inspect(runner_id)}: " <>
+            "#{inspect(err)}"
+        )
+    end
+
+    _ = HubManager.hook_insert_local_pid(runner_id, operative_id, self())
+
+    state
   end
 
   # `owner` is the Overwatch process itself. It is passed explicitly because the
@@ -383,44 +421,8 @@ defmodule Flezha.Operative.Overwatch do
   defp runner_wait_ms,
     do: Application.get_env(:flezha, :overwatch_runner_wait_ms, 30_000)
 
-  # Poll `OperativeManager.assign_runner/3` until it returns a live
-  # runner id whose CU is registered in Flezha.Service.Identificator,
-  # or the deadline elapses. Returns `{:ok, runner_id}` or
-  # `{:error, :timeout}`.
-  defp await_active_runner(namespace, factory_id, operative_id, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_await_active_runner(namespace, factory_id, operative_id, deadline)
-  end
-
-  defp do_await_active_runner(namespace, factory_id, operative_id, deadline) do
-    case OperativeManager.assign_runner(namespace, factory_id, operative_id) do
-      runner_id when is_binary(runner_id) ->
-        if runner_ready?(runner_id) do
-          {:ok, runner_id}
-        else
-          retry_or_timeout(namespace, factory_id, operative_id, deadline)
-        end
-
-      _ ->
-        retry_or_timeout(namespace, factory_id, operative_id, deadline)
-    end
-  end
-
-  defp retry_or_timeout(namespace, factory_id, operative_id, deadline) do
-    now = System.monotonic_time(:millisecond)
-
-    cond do
-      now >= deadline ->
-        {:error, :timeout}
-
-      true ->
-        Process.sleep(50)
-        do_await_active_runner(namespace, factory_id, operative_id, deadline)
-    end
-  end
-
   # The runner's control unit GenServer registers itself in
-  # `Flezha.Service.Identificator` as the LAST step of its supervision
+  # `Flezha.Service.Identificator` as the first child of its supervision
   # tree (`RunnerSupervisor.init/1` → `ControlUnit.start_link/1`).
   # Registration alone is NOT sufficient: a SIGKILL'd runner can leave
   # the cu registered as a zombie (the `{:flz_closed}` disconnect never
@@ -428,14 +430,12 @@ defmodule Flezha.Operative.Overwatch do
   # `:overwatch_ping_enabled` is on. Skipped in the unit suites that drive
   # synthetic runners with no real SDK behind the cu.
   defp runner_ready?(runner_id) do
-    case Registry.lookup(Identificator, "#{runner_id}_cu") do
-      [{_pid, _}] ->
-        if Application.get_env(:flezha, :overwatch_ping_enabled, true),
-          do: ping_runner(runner_id) == :ok,
-          else: true
-
-      _ ->
-        false
+    if OperativeManager.runner_registered?(runner_id) do
+      if Application.get_env(:flezha, :overwatch_ping_enabled, true),
+        do: ping_runner(runner_id) == :ok,
+        else: true
+    else
+      false
     end
   end
 
@@ -1808,6 +1808,24 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, %{state | extensions: table}}
   end
 
+  # Dispatched from inside the registry write, so this runs after it: whoever
+  # wrote last, the row ends up naming the runner this process is bound to.
+  @impl true
+  def handle_info(
+        {:reassert_binding, operative_id},
+        %__MODULE__{id: operative_id, runner_id: runner_id} = state
+      )
+      when is_binary(runner_id) do
+    if HubManager.operative_runner_tag(state.namespace, operative_id) != runner_id do
+      _ = HubManager.operative_set_runner(state.namespace, operative_id, runner_id)
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:reassert_binding, _operative_id}, state), do: {:noreply, state}
+
   @impl true
   def handle_info(
         {:flezha_request, handler_key, payload, reply_to, ref},
@@ -2267,8 +2285,13 @@ defmodule Flezha.Operative.Overwatch do
     {task.ref, task.pid}
   end
 
+  # `complete_init` ran inside the un-park task, whose `self()` is not this
+  # process, so the binding is published here — the one point every un-park
+  # caller funnels through, `rehydrate/1` included.
   defp apply_migrate_result(state, {:unparked, recovered}) do
     Logger.info("[Overwatch] operative #{state.id} un-parked onto runner #{recovered.runner_id}")
+
+    publish_binding(recovered)
 
     %{recovered | migrate_task: nil}
   end

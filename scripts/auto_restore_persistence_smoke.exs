@@ -10,8 +10,6 @@
 
 Application.put_env(:flezha, :process_hub_registry_root, "/tmp/flezha_smoke_persistence")
 Application.put_env(:flezha, :auto_restore_enabled, true)
-Application.put_env(:flezha, :recovery_window_ms, 1000)
-Application.put_env(:flezha, :pre_replay_fleet_wait_ms, 1000)
 
 File.rm_rf!("/tmp/flezha_smoke_persistence")
 

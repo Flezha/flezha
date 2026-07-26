@@ -14,6 +14,13 @@ defmodule Flezha.Service.HubManager do
   alias Flezha.Convergence.{RecoveryGate, SafeCall, Snapshot}
 
   @default_await_timeout_ms 60_000
+  # Bounds one whole start request: WorkerQueue kills it at this deadline and
+  # `Stream.run/1` discards the exit, so an overrun silently drops the batch's
+  # registry update. Every wait on the child-start path must fit inside it.
+  @cross_node_request_timeout_ms 10_000
+  # 20% of the request bound, leaving the rest for the operative starts the
+  # bound was sized for. Overrunning it is not fatal — see `unplaceable_runner/5`.
+  @runner_assign_wait_ms 2_000
 
   def start_link(_) do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
@@ -409,81 +416,84 @@ defmodule Flezha.Service.HubManager do
 
   def operative_set_runner(namespace, operative_id, runner_id) do
     with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
-      # propagate: true — every node's registry must agree on the owning
-      # runner or hook_insert_pid gates frames on a stale tag elsewhere.
+      # propagate: true — `runner_operatives/2` is a local-table tag query, so a
+      # peer handling this runner's disconnect misses the operative otherwise.
+      # Returned, not discarded: a "No child found" is the whole signal that a
+      # binding never reached the durable row.
       ProcessRegistry.update(
         hub_id,
         operative_id,
         RegistryUpdate.set_runner_tag(runner_id),
         propagate: true
       )
-
-      :ok
     end)
   end
 
+  # The route is operative_id -> local Overwatch pid, so seeding it into a
+  # non-owning runner's channels is inert: any runner's channel resolves the
+  # same process, and only the owner ever emits frames for this operative.
   def hook_insert_pid(runner_id, %{child_id: operative_id} = hook_data) do
-    node_pids = Map.get(hook_data, :node_pids, [])
-    metadata = Map.get(hook_data, :metadata, %{})
-    assigned_ce = Map.get(metadata, :tag)
+    curr_node = node()
 
-    # Only the runner whose session id matches the registry entry's
-    # `metadata.tag` (a.k.a `assigned_ce`) should receive this operative's
-    # frames. Pushing the pid list to every registered runner makes the
-    # non-owning runner's SDK drop each frame (`operative instance not found`),
-    # draining the data plane.
-    cond do
-      is_binary(assigned_ce) and assigned_ce != runner_id ->
-        # This insertion is for a different runner; this handler is
-        # registered for `runner_id` only.
+    updated_pids =
+      Map.get(hook_data, :node_pids, [])
+      |> Enum.filter(fn {node, _pid} -> node === curr_node end)
+      |> Enum.map(fn {_, pid} -> pid end)
+
+    case updated_pids do
+      [] ->
         nil
 
-      true ->
-        curr_node = node()
-
-        updated_pids =
-          Enum.filter(node_pids, fn {node, _pid} -> node === curr_node end)
-          |> Enum.map(fn {_, pid} -> pid end)
-
-        case updated_pids do
-          [] ->
-            nil
+      _ ->
+        # A wedged or not-yet-started StreamChannel must not crash the caller:
+        # this runs inside the `child_registered` hook, where an exit aborts
+        # the registry write that dispatched it.
+        Enum.each(stream_channels_for_runner(runner_id), fn
+          {_, pid, _, _} when is_pid(pid) ->
+            _ = SafeCall.bounded(pid, {:operative_pid_update, operative_id, updated_pids}, 1_000)
 
           _ ->
-            stream_channels =
-              Supervisor.which_children(Identificator.stream_sup_primary(runner_id)) ++
-                Supervisor.which_children(Identificator.stream_sup_secondary(runner_id))
-
-            # A wedged StreamChannel must not crash the caller.
-            Enum.each(stream_channels, fn
-              {_, pid, _, _} when is_pid(pid) ->
-                _ =
-                  SafeCall.bounded(
-                    pid,
-                    {:operative_pid_update, operative_id, updated_pids},
-                    1_000
-                  )
-
-              _ ->
-                :ok
-            end)
-        end
+            :ok
+        end)
     end
   end
 
   @doc """
+  Hub-wide `child_registered` handler: tells each local Overwatch that its
+  durable row was just rewritten.
+
+  A start request writes the row after its children are already running, so the
+  `metadata.tag` it carries can name a runner an Overwatch has since rebound
+  away from. Dispatching from inside the write orders the re-assert after it
+  instead of racing it.
+  """
+  def hook_reassert_binding(_hub_id, %{child_id: operative_id} = hook_data) do
+    local = node()
+
+    Enum.each(Map.get(hook_data, :node_pids, []), fn
+      {^local, pid} when is_pid(pid) -> send(pid, {:reassert_binding, operative_id})
+      _ -> :ok
+    end)
+  end
+
+  @doc "The owning runner recorded on `operative_id`'s durable row, or `nil`."
+  def operative_runner_tag(namespace, operative_id) do
+    with_live_hub(namespace, nil, fn hub_id ->
+      case ProcessRegistry.lookup(hub_id, operative_id, with_metadata: true) do
+        {_cspec, _node_pids, metadata} when is_map(metadata) -> Map.get(metadata, :tag)
+        _ -> nil
+      end
+    end)
+  end
+
+  @doc """
   Convenience over `hook_insert_pid/2` for the common case: seed one operative's
-  local `pid` into `runner_id`'s pre-spawned StreamChannels so inbound
-  data-plane frames route to it. Tags the insertion with `runner_id` as the
-  owner (the `metadata.tag` gate). Used by the convergence rebind and the
-  reconnect binding swap.
+  local `pid` into `runner_id`'s pre-spawned StreamChannels so data-plane frames
+  route to it. Used by the convergence rebind, the reconnect binding swap, and
+  the Overwatch's own bind.
   """
   def hook_insert_local_pid(runner_id, operative_id, pid) when is_pid(pid) do
-    hook_insert_pid(runner_id, %{
-      child_id: operative_id,
-      node_pids: [{node(), pid}],
-      metadata: %{tag: runner_id}
-    })
+    hook_insert_pid(runner_id, %{child_id: operative_id, node_pids: [{node(), pid}]})
   end
 
   @doc """
@@ -574,35 +584,107 @@ defmodule Flezha.Service.HubManager do
   end
 
   def alter_child_data(_hub_id, %{child_spec: cs} = child_data) do
-    %{start: {m, f, [arg]}} = cs
+    case start_args(cs) do
+      {:ok, parsed} -> place_child(child_data, cs, parsed)
+      :error -> unparsable_child(child_data, cs)
+    end
+  end
 
-    {namespace, operative} =
-      case arg do
-        {namespace, operative} ->
-          {namespace, operative}
+  defp start_args(%{start: {_m, _f, [{namespace, %{} = operative}]}}),
+    do: {:ok, {namespace, nil, operative}}
 
-        {namespace, _existing_runner, operative} ->
-          {namespace, operative}
-      end
+  defp start_args(%{start: {_m, _f, [{namespace, recorded_runner, %{} = operative}]}}),
+    do: {:ok, {namespace, recorded_runner, operative}}
 
+  defp start_args(_), do: :error
+
+  # Failing this one child in `start_child` beats raising, which would kill the
+  # request before `update_registry` and strand every sibling row in the batch.
+  defp unparsable_child(child_data, cs) do
+    Logger.error(
+      "[hub_manager] unrecognised start args for child #{inspect(Map.get(cs, :id))}; " <>
+        "leaving it unaltered: #{inspect(Map.get(cs, :start))}"
+    )
+
+    child_data
+  end
+
+  defp place_child(child_data, %{start: {m, f, _args}}, {namespace, recorded_runner, operative}) do
     operative_id = Map.get(operative, :id)
     factory_id = Map.get(operative, :factory_id)
-    assigned_runner = OperativeManager.assign_runner(namespace, factory_id, operative_id)
+
+    # Recovery replay races the `FleetManager.runner_connect/3` that triggered
+    # it: the connecting runner is not placeable until that handler returns, so
+    # the first `nil` here is not final.
+    assigned_runner =
+      case OperativeManager.await_runner(
+             namespace,
+             factory_id,
+             operative_id,
+             batch_runner_wait_ms(),
+             &OperativeManager.runner_registered?/1
+           ) do
+        {:ok, runner_id} ->
+          runner_id
+
+        {:error, reason} ->
+          unplaceable_runner(recorded_runner, namespace, factory_id, operative_id, reason)
+      end
 
     Logger.info(
       "[hub_manager] alter_child_data operative=#{inspect(operative_id)} " <>
         "factory=#{inspect(factory_id)} assigned_ce=#{inspect(assigned_runner)}"
     )
 
-    if is_nil(assigned_runner) do
-      raise "No active compute engines available in namespace #{namespace} for factory #{inspect(factory_id)}"
-    end
-
     new_args = [{namespace, assigned_runner, operative}]
 
     child_data
     |> put_in([:child_spec, :start], {m, f, new_args})
     |> put_in([:metadata, :tag], assigned_runner)
+  end
+
+  # A first start has no recorded runner and a caller waiting on the result, so
+  # it still fails loudly.
+  defp unplaceable_runner(nil, namespace, factory_id, _operative_id, reason) do
+    raise "No active compute engines available in namespace #{namespace} " <>
+            "for factory #{inspect(factory_id)} (#{reason})"
+  end
+
+  # A replayed cspec already names the runner it was bound to. Keeping it starts
+  # the operative, so its registry row gets a live pid and both Overwatch's own
+  # bounded wait and the convergence loop can still rebind it. Raising here
+  # instead kills the whole start request before `update_registry`, stranding
+  # every row in the batch on a dead pid where no reconciler can see it.
+  defp unplaceable_runner(recorded_runner, namespace, _factory_id, operative_id, reason) do
+    Logger.warning(
+      "[hub_manager] no placeable runner for #{operative_id} in #{namespace} (#{reason}); " <>
+        "starting on recorded runner #{inspect(recorded_runner)} pending rebind"
+    )
+
+    recorded_runner
+  end
+
+  @batch_runner_wait_key :flezha_alter_child_data_deadline
+
+  # One start request alters every child in sequence and runs `update_registry`
+  # only after the last one, so the wait is shared across the batch: a per-child
+  # budget would multiply past `cross_node_request_timeout` and the request
+  # would be killed with its registry update undone.
+  #
+  # The process IS the request: `StartChildrenRequest.start_children/3` is the
+  # sole dispatch site, under `WorkerQueue`'s `Task.async_stream`, which gives a
+  # fresh unpooled process per request that dies with it. That is what scopes
+  # the deadline — no wall-clock guard, which could only ever hand a second
+  # request the first one's spent budget.
+  defp batch_runner_wait_ms do
+    now = System.monotonic_time(:millisecond)
+
+    deadline =
+      Process.get(@batch_runner_wait_key) ||
+        now + Application.get_env(:flezha, :hub_runner_assign_wait_ms, @runner_assign_wait_ms)
+
+    Process.put(@batch_runner_wait_key, deadline)
+    max(deadline - now, 0)
   end
 
   @impl true
@@ -627,7 +709,7 @@ defmodule Flezha.Service.HubManager do
       auto_recovery: auto_recovery_config(hub_id),
       # Operative startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
-      cross_node_request_timeout: 10_000,
+      cross_node_request_timeout: @cross_node_request_timeout_ms,
       hooks:
         Map.merge(
           %{
@@ -636,6 +718,14 @@ defmodule Flezha.Service.HubManager do
                 id: ProcessHub.Constant.Hook.child_data_alter(),
                 m: __MODULE__,
                 f: :alter_child_data,
+                a: [hub_id, :_]
+              }
+            ],
+            Hook.child_registered() => [
+              %HookManager{
+                id: :flezha_binding_reassert,
+                m: __MODULE__,
+                f: :hook_reassert_binding,
                 a: [hub_id, :_]
               }
             ]
@@ -775,7 +865,6 @@ defmodule Flezha.Service.HubManager do
       _ ->
         [
           marker_path: marker_path(hub_id),
-          replay_timeout_ms: Application.get_env(:flezha, :boot_replay_timeout_ms, 60_000),
           recovery_timeout_ms:
             Application.get_env(:flezha, :process_hub_recovery_timeout_ms, 30_000)
         ]

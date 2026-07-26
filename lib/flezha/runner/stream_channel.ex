@@ -298,9 +298,9 @@ defmodule Flezha.Runner.StreamChannel do
         GenServer.cast(pid, {:io_out, message, metadata})
 
       [first | _] = pids ->
-        # Defensive: the HubManager `hook_insert_pid/2` filter should
-        # guarantee a single-pid list for any operative, but if a
-        # regression slips that through we must NOT fan out frames to
+        # Defensive: `hook_insert_pid/2` seeds one registry row's local-node
+        # pids, so the list is single by construction — but if a regression
+        # slips a longer one through we must NOT fan out frames to
         # every pid — that is the EVIDENCE1 §2 data-plane drain that
         # produced 22 frames/s on unchosen runners. Route to the
         # first pid only and surface the misuse via telemetry.
