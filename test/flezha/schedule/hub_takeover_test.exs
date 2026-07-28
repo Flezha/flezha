@@ -9,7 +9,7 @@ defmodule Flezha.Schedule.HubTakeoverTest do
   @moduletag :multi_node
   @moduletag :capture_log
 
-  alias Flezha.Schedule.{Hub, Store}
+  alias Flezha.Schedule.Hub
   alias Flezha.Service.HubManager
   alias FlezhaTest.Helper.NodeTestHelper
   alias FlezhaTest.Helper.ScheduleTestHelper, as: Helper
@@ -24,69 +24,46 @@ defmodule Flezha.Schedule.HubTakeoverTest do
   end
 
   defp add_all() do
-    Enum.map(@names, fn name ->
-      {:ok, entry} = Store.add(Helper.entry_fields(%{name: name, cron: "0 0 1 1 *"}))
-      entry
-    end)
+    Enum.map(@names, &Helper.add_quiet/1)
   end
 
   # Hub discovery runs on a 10s interval, so the two hubs are not peers the
   # instant both are up. Asserting before they join would place every child
   # locally and make the takeover vacuous.
   defp await_hub_cluster(peer_node, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_await_hub_cluster(peer_node, deadline)
-  end
-
-  defp do_await_hub_cluster(peer_node, deadline) do
-    nodes = ProcessHub.nodes(HubManager.schedule_hub_id(), [:include_local])
-
-    cond do
-      peer_node in nodes ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        flunk("schedule hub cluster did not include #{inspect(peer_node)}: #{inspect(nodes)}")
-
-      true ->
-        Process.sleep(200)
-        do_await_hub_cluster(peer_node, deadline)
-    end
+    Helper.await_until(
+      timeout_ms,
+      fn -> "#{inspect(peer_node)} to join the schedule hub" end,
+      fn ->
+        if peer_node in ProcessHub.nodes(HubManager.schedule_hub_id(), [:include_local]),
+          do: {:ok, :ok},
+          else: :retry
+      end
+    )
   end
 
   defp placements() do
     HubManager.schedule_hub_id()
     |> ProcessHub.process_list(:global)
-    |> Map.new(fn {name, node_pids} -> {name, node_pids} end)
+    |> Map.new()
   end
 
   defp await_all_on(node, timeout_ms) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    do_await_all_on(node, deadline)
-  end
+    describe = fn -> "every schedule on #{inspect(node)}: #{inspect(placements())}" end
 
-  defp do_await_all_on(node, deadline) do
-    current = placements()
+    Helper.await_until(timeout_ms, describe, fn ->
+      current = placements()
 
-    settled? =
-      Enum.all?(@names, fn name ->
-        case Map.get(current, name) do
-          [{^node, pid}] -> Process.alive?(pid)
-          _ -> false
-        end
-      end)
+      settled? =
+        Enum.all?(@names, fn name ->
+          case Map.get(current, name) do
+            [{^node, pid}] -> Process.alive?(pid)
+            _ -> false
+          end
+        end)
 
-    cond do
-      settled? ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        flunk("schedules did not settle on #{inspect(node)}: #{inspect(current)}")
-
-      true ->
-        Process.sleep(100)
-        do_await_all_on(node, deadline)
-    end
+      if settled?, do: {:ok, :ok}, else: :retry
+    end)
   end
 
   test "exactly one process per schedule across two nodes, and the survivor takes over" do

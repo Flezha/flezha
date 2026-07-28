@@ -20,11 +20,6 @@ defmodule Flezha.Schedule.JobTest do
     cron
   end
 
-  # A cron far enough out that nothing fires during a test.
-  defp quiet_entry(overrides \\ %{}) do
-    Helper.entry(Map.merge(%{cron: "0 0 1 1 *"}, Map.new(overrides)))
-  end
-
   defp warning_level do
     prev = Logger.level()
     Logger.configure(level: :warning)
@@ -74,7 +69,7 @@ defmodule Flezha.Schedule.JobTest do
 
   describe "the job process" do
     test "arms a timer for the next slot" do
-      pid = start_supervised!({Job, quiet_entry()})
+      pid = start_supervised!({Job, Helper.quiet_entry()})
       state = :sys.get_state(pid)
 
       assert state.target.month == 1
@@ -107,7 +102,7 @@ defmodule Flezha.Schedule.JobTest do
         {:ok, %{operative_id: builder.id}}
       end)
 
-      pid = start_supervised!({Job, quiet_entry()})
+      pid = start_supervised!({Job, Helper.quiet_entry()})
       send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
 
       assert_receive {:spawned, "job@2026-07-27T08:01:00Z"}, 2_000
@@ -123,7 +118,7 @@ defmodule Flezha.Schedule.JobTest do
         {:ok, %{operative_id: builder.id}}
       end)
 
-      pid = start_supervised!({Job, quiet_entry()})
+      pid = start_supervised!({Job, Helper.quiet_entry()})
       future = DateTime.add(DateTime.utc_now(), 3_600, :second)
       send(pid, {:fire, future})
 
@@ -137,7 +132,7 @@ defmodule Flezha.Schedule.JobTest do
         {:error, %{operative_id: builder.id, node: node(), reason: "operative id already in use"}}
       end)
 
-      pid = start_supervised!({Job, quiet_entry()})
+      pid = start_supervised!({Job, Helper.quiet_entry()})
       send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
 
       assert %{timer: timer} = :sys.get_state(pid)
@@ -150,7 +145,7 @@ defmodule Flezha.Schedule.JobTest do
         {:error, %{operative_id: "x", node: node(), reason: "Factory with id fac does not exist"}}
       end)
 
-      pid = start_supervised!({Job, quiet_entry()})
+      pid = start_supervised!({Job, Helper.quiet_entry()})
 
       log =
         capture_log(fn ->

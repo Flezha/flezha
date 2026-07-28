@@ -7,8 +7,13 @@ defmodule Flezha.Schedule.Hub do
   no-ops, and `Singularity` leaves exactly one `Flezha.Schedule.Job` running
   cluster-wide. Nothing here is durable — the store is.
 
-  Every entry point is gated on hub liveness, so a controller with the hub
-  down (or `:schedules[:application_managed]` false) still serves the CLI.
+  Every entry point is gated on hub liveness (through the one
+  `HubManager.with_live_hub_id/3` guard), so a controller with the hub down —
+  or `:schedules[:application_managed]` false — still serves the CLI.
+
+  A writer must pair a store mutation with the matching call here. The
+  asymmetry matters: a missed `assert/1` self-heals on the next re-assert
+  sweep, a missed `retract/1` leaves a job firing with no row behind it.
   """
 
   use GenServer
@@ -64,15 +69,14 @@ defmodule Flezha.Schedule.Hub do
   @spec retract(String.t()) :: :ok
   def retract(name) do
     with_live_hub(:ok, fn hub_id ->
-      hub_id
-      |> ProcessHub.stop_child(name, awaitable: true, await_timeout: @retract_timeout_ms)
-      |> ProcessHub.Future.await()
-      |> case do
-        {:error, reason} ->
-          Logger.warning("[schedule] retracting #{name} failed: #{inspect(reason)}")
-
-        _ ->
-          :ok
+      # The verdict is logged, never returned: the durable row is already gone,
+      # so the caller has nothing to decide on. The sweep only ever asserts, so
+      # a failed retract leaves a job with no store row — hence the log.
+      with {:error, reason} <-
+             hub_id
+             |> ProcessHub.stop_child(name, awaitable: true, await_timeout: @retract_timeout_ms)
+             |> ProcessHub.Future.await() do
+        Logger.warning("[schedule] retracting #{name} failed: #{inspect(reason)}")
       end
 
       :ok
@@ -147,7 +151,6 @@ defmodule Flezha.Schedule.Hub do
   end
 
   defp with_live_hub(on_dead, fun) do
-    hub_id = HubManager.schedule_hub_id()
-    if ProcessHub.is_alive?(hub_id), do: fun.(hub_id), else: on_dead
+    HubManager.with_live_hub_id(HubManager.schedule_hub_id(), on_dead, fun)
   end
 end

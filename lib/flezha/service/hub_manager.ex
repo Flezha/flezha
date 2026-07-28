@@ -240,13 +240,21 @@ defmodule Flezha.Service.HubManager do
 
   defp extract_namespace_from_hub(_), do: nil
 
-  # The one guarded seam for reading a namespace's hub: run `fun` with the
-  # resolved hub_id when the hub is alive, else return `on_dead`. Every hub
-  # reader goes through this so none can forget the liveness check — the class
-  # of bug where `get_pid/2` alone omitted it and raised on a torn-down hub.
-  defp with_live_hub(namespace, on_dead, fun) do
-    hub_id = Identificator.hub(namespace)
+  @doc """
+  Run `fun` with `hub_id` when that hub is alive, else return `on_dead`.
+
+  The one guarded seam for reading ANY hub — the namespace hubs via
+  `with_live_hub/3` below, the schedule hub via `Flezha.Schedule.Hub`. Every
+  hub reader goes through it so none can forget the liveness check: the class
+  of bug where `get_pid/2` alone omitted it and raised on a torn-down hub.
+  """
+  @spec with_live_hub_id(atom(), term(), (atom() -> term())) :: term()
+  def with_live_hub_id(hub_id, on_dead, fun) when is_atom(hub_id) do
     if ProcessHub.is_alive?(hub_id), do: fun.(hub_id), else: on_dead
+  end
+
+  defp with_live_hub(namespace, on_dead, fun) do
+    with_live_hub_id(Identificator.hub(namespace), on_dead, fun)
   end
 
   def get_registry(namespace) do
@@ -727,9 +735,9 @@ defmodule Flezha.Service.HubManager do
 
   @impl true
   def init(_init_arg) do
-    # Dynamic supervisor for the per-namespace hubs; recovery-state
-    # caching moved to `Flezha.Convergence.Snapshot` (started earlier in
-    # the application tree).
+    # Dynamic supervisor for every hub: the per-namespace ones plus the
+    # schedule hub. Recovery-state caching moved to
+    # `Flezha.Convergence.Snapshot` (started earlier in the application tree).
     Supervisor.init([], strategy: :one_for_one)
   end
 

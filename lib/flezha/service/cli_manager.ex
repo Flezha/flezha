@@ -3340,7 +3340,7 @@ defmodule Flezha.Service.CliManager do
               e.timezone,
               e.factory_id,
               e.namespace,
-              schedule_node(placement, e.name),
+              label_or(Map.get(placement, e.name), "-"),
               schedule_next_fire(e)
             ])
           )
@@ -3416,13 +3416,6 @@ defmodule Flezha.Service.CliManager do
       DateTime.to_iso8601(next)
     else
       _ -> "never"
-    end
-  end
-
-  defp schedule_node(placement, name) do
-    case Map.fetch(placement, name) do
-      {:ok, node} -> Atom.to_string(node)
-      :error -> "-"
     end
   end
 

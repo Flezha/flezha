@@ -4,7 +4,7 @@ defmodule Flezha.Schedule.HubTest do
 
   @moduletag :capture_log
 
-  alias Flezha.Schedule.{Hub, Job, Store}
+  alias Flezha.Schedule.{Hub, Job}
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.ScheduleTestHelper, as: Helper
@@ -23,19 +23,13 @@ defmodule Flezha.Schedule.HubTest do
     :ok
   end
 
-  # Far-future so no job fires mid-test.
-  defp add(name) do
-    {:ok, entry} = Store.add(Helper.entry_fields(%{name: name, cron: "0 0 1 1 *"}))
-    entry
-  end
-
   describe "with the hub running" do
     setup do
       Helper.schedule_hub_setup()
     end
 
     test "assert/1 starts exactly one job for the schedule" do
-      entry = add("digest")
+      entry = Helper.add_quiet("digest")
       :ok = Hub.assert(entry)
 
       assert [pid] = Helper.await_registered("digest")
@@ -43,7 +37,7 @@ defmodule Flezha.Schedule.HubTest do
     end
 
     test "a duplicate start is refused by the hub — this is the arbitration" do
-      entry = add("digest")
+      entry = Helper.add_quiet("digest")
       :ok = Hub.assert(entry)
       Helper.await_registered("digest")
 
@@ -53,7 +47,7 @@ defmodule Flezha.Schedule.HubTest do
     end
 
     test "asserting twice leaves the same single job" do
-      entry = add("digest")
+      entry = Helper.add_quiet("digest")
       :ok = Hub.assert(entry)
       [pid] = Helper.await_registered("digest")
 
@@ -62,8 +56,8 @@ defmodule Flezha.Schedule.HubTest do
     end
 
     test "assert_all/0 registers every stored definition" do
-      add("digest")
-      add("rollup")
+      Helper.add_quiet("digest")
+      Helper.add_quiet("rollup")
 
       :ok = Hub.assert_all()
 
@@ -72,7 +66,7 @@ defmodule Flezha.Schedule.HubTest do
     end
 
     test "retract/1 stops the job and clears the registry row" do
-      entry = add("digest")
+      entry = Helper.add_quiet("digest")
       :ok = Hub.assert(entry)
       Helper.await_registered("digest")
 
@@ -82,7 +76,7 @@ defmodule Flezha.Schedule.HubTest do
     end
 
     test "placement/0 reports the node running each schedule" do
-      entry = add("digest")
+      entry = Helper.add_quiet("digest")
       :ok = Hub.assert(entry)
       Helper.await_registered("digest")
 
@@ -96,7 +90,7 @@ defmodule Flezha.Schedule.HubTest do
     end
 
     test "the schedule hub writes nothing under the process-hub registry root" do
-      add("digest") |> Hub.assert()
+      Helper.add_quiet("digest") |> Hub.assert()
       Helper.await_registered("digest")
 
       root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
@@ -107,7 +101,7 @@ defmodule Flezha.Schedule.HubTest do
 
   describe "with the hub down" do
     test "assert/1 and retract/1 no-op" do
-      entry = add("digest")
+      entry = Helper.add_quiet("digest")
 
       assert :ok = Hub.assert(entry)
       assert :ok = Hub.retract("digest")
