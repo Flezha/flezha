@@ -9,6 +9,7 @@ mod operative;
 mod plugin;
 mod reset;
 mod runner;
+mod schedule;
 mod state;
 mod utils;
 
@@ -36,6 +37,7 @@ fn main() {
         "observe" => observe::handle_observe_command(&args[2..]),
         "audit" => audit::handle_audit_command(&args[2..]),
         "dlq" => dlq::handle_dlq_command(&args[2..]),
+        "schedule" => schedule::handle_schedule_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("Error: Unknown command '{}'", args[1]);
@@ -64,6 +66,7 @@ fn print_help() {
     println!("    observe        Observability foundation inspection (sources, sinks, tail)");
     println!("    audit          Durable audit log inspection (list, read, tail, stats, rotate)");
     println!("    dlq            Dead-letter queue: inspect, replay, or drop parked payloads");
+    println!("    schedule       Cron-scheduled bounded operative spawns (add, list, remove, run)");
     println!("    help           Show this help message");
     println!();
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");

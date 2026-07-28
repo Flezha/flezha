@@ -4,6 +4,24 @@
 
 ### Changed (BREAKING)
 
+- Scheduled bounded spawns are now driven by **one schedule process per
+  schedule, hosted in a dedicated `:flz_schedules` ProcessHub**, replacing the
+  per-controller polling evaluator (`single-owner-schedule-processes`). The
+  hub's `Singularity` redundancy makes exactly one process exist cluster-wide
+  per schedule name, so a slot fires once without leader election and without
+  cross-node state sync: every controller asserts the definitions its own
+  node-local store holds and duplicate assertions no-op. This closes the
+  documented multi-controller double-fire hole. `Flezha.Schedule.Evaluator`
+  is removed; the schedule entry's `last_slot` watermark is gone (a process
+  holding an armed timer *is* the watermark) and with it
+  `FLEZHA_SCHEDULE_TICK_MS`. **A `schedules.dets` written by an earlier build
+  must be deleted (`rm app_data/schedules/schedules.dets`) and its schedules
+  re-added** — the row shape changed and no migration is provided.
+  `flz schedule list` gains a `NODE` column. On start a schedule process
+  fires the single most recent slot inside `FLEZHA_SCHEDULE_MISFIRE_GRACE_MS`
+  to cover restart and migration gaps; older slots are still never
+  back-filled.
+
 - New guarded SDK entry point in both SDKs (`runner-lifecycle-singleton-api`,
   superseded before release by `sdk-runner-entrypoint-redesign` — the shipping
   surface is the one described here). `Flezha.newInstance(namespace)` (Java) /
@@ -94,6 +112,27 @@
   plugin. No automatic migration job is shipped.
 
 ### Added
+
+- Controller-native cron scheduling of bounded operatives
+  (`add-scheduled-operative-spawns`). `flz schedule add <name> --cron
+  "<expr>" --tz <iana> --factory <factory_id> [--namespace ns]
+  [--init_values json]` registers a durable schedule (node-local DETS at
+  `app_data/schedules/schedules.dets`; names are capped at 11 bytes so the
+  composed instance id fits the 32-byte operative id limit); `list` /
+  `remove` / `run <name>` complete the family. A per-controller evaluator
+  (`Flezha.Schedule.Evaluator`) fires each matching slot through the
+  standard bounded start path with deterministic instance id
+  `<name>@<slot-iso>` — a duplicate fire attempt no-ops on the id, which is
+  the cluster-wide exactly-once guard. Slots are evaluated in the entry's
+  IANA time zone (new `tz` dependency): a spring-forward gap slot skips, a
+  fall-back ambiguous slot fires once at the first occurrence. Slots older
+  than `FLEZHA_SCHEDULE_MISFIRE_GRACE_MS` (default 120 s) at evaluation —
+  e.g. missed while the controller was down — are skipped and logged with
+  their timestamps, never back-filled; a still-running previous slot never
+  blocks the next one (ids differ; bound runtime via `max_duration`). Only
+  bounded operatives are schedulable. Telemetry: `[:flezha, :schedule,
+  :fired | :skipped | :spawn_failed]`. Operator guide in
+  [`docs/operations/schedules.md`](docs/operations/schedules.md).
 
 - Hardened first-party Kafka producer plugin
   (`Flezha.Plugin.Provider.Kafka.Producer`). The previous thin

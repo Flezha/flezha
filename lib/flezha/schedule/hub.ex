@@ -1,0 +1,153 @@
+defmodule Flezha.Schedule.Hub do
+  @moduledoc """
+  Owner of the `:flz_schedules` hub and the assert/retract seam onto it.
+
+  The hub is a transient uniqueness arbiter: every controller asserts the
+  schedules its node-local `Flezha.Schedule.Store` holds, a duplicate child id
+  no-ops, and `Singularity` leaves exactly one `Flezha.Schedule.Job` running
+  cluster-wide. Nothing here is durable — the store is.
+
+  Every entry point is gated on hub liveness, so a controller with the hub
+  down (or `:schedules[:application_managed]` false) still serves the CLI.
+  """
+
+  use GenServer
+
+  require Logger
+
+  alias Flezha.Cluster.Orchestrator
+  alias Flezha.Schedule.{Job, Store}
+  alias Flezha.Service.HubManager
+
+  @hub_retry_ms 5_000
+  # Covers the residual case only: definitions asserted while the hub was down
+  # or mid-formation. ProcessHub itself re-places children on nodedown.
+  @reassert_interval_ms 60_000
+  @retract_timeout_ms 5_000
+
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @doc """
+  Register `entry`'s job. Fire-and-forget: an id already claimed cluster-wide
+  IS the arbitration, not an error.
+  """
+  @spec assert(Store.entry()) :: :ok
+  def assert(entry) do
+    with_live_hub(:ok, fn hub_id ->
+      case ProcessHub.start_child(hub_id, Job.child_spec(entry)) do
+        {:ok, _} ->
+          :ok
+
+        {:error, {:already_started, _ids}} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("[schedule] asserting #{entry.name} failed: #{inspect(reason)}")
+          :ok
+      end
+    end)
+  end
+
+  @doc "Assert every schedule this node holds."
+  @spec assert_all() :: :ok
+  def assert_all() do
+    Enum.each(Store.list(), &assert/1)
+  end
+
+  @doc """
+  Stop `name`'s job cluster-wide. Waits, unlike `assert/1`: `flz schedule
+  remove` must be effective on return, else the job keeps its armed timer and
+  fires one more slot after the row is gone.
+  """
+  @spec retract(String.t()) :: :ok
+  def retract(name) do
+    with_live_hub(:ok, fn hub_id ->
+      hub_id
+      |> ProcessHub.stop_child(name, awaitable: true, await_timeout: @retract_timeout_ms)
+      |> ProcessHub.Future.await()
+      |> case do
+        {:error, reason} ->
+          Logger.warning("[schedule] retracting #{name} failed: #{inspect(reason)}")
+
+        _ ->
+          :ok
+      end
+
+      :ok
+    end)
+  end
+
+  @doc "Which node runs each registered schedule."
+  @spec placement() :: %{optional(String.t()) => node()}
+  def placement() do
+    with_live_hub(%{}, fn hub_id ->
+      hub_id
+      |> ProcessHub.process_list(:global)
+      |> Enum.reduce(%{}, fn {name, node_pids}, acc ->
+        case HubManager.live_node(node_pids) do
+          nil -> acc
+          node -> Map.put(acc, name, node)
+        end
+      end)
+    end)
+  end
+
+  ## ----- GenServer -----
+
+  @impl true
+  def init(_opts) do
+    {:ok, %{}, {:continue, :bootstrap}}
+  end
+
+  @impl true
+  def handle_continue(:bootstrap, state) do
+    # Off the boot path on purpose: `await_cluster_ready/0` blocks for up to
+    # the formation timeout, and creating the hub on a not-yet-clustered node
+    # would diverge it from its peers.
+    _ = Orchestrator.await_cluster_ready()
+    {:noreply, start_hub(state)}
+  end
+
+  @impl true
+  def handle_info(:retry_hub, state) do
+    {:noreply, start_hub(state)}
+  end
+
+  def handle_info(:reassert, state) do
+    assert_all()
+    {:noreply, schedule_reassert(state)}
+  end
+
+  ## ----- private -----
+
+  defp start_hub(state) do
+    case HubManager.start_schedule_hub() do
+      {:ok, _pid} ->
+        assert_all()
+        schedule_reassert(state)
+
+      {:error, reason} ->
+        :telemetry.execute([:flezha, :schedule, :hub_start_failed], %{count: 1}, %{
+          reason: inspect(reason)
+        })
+
+        # Never crash: this owner sits under the application's one_for_one
+        # supervisor, so a restart loop would take the controller down.
+        Logger.error("[schedule] schedule hub failed to start: #{inspect(reason)}; retrying")
+        Process.send_after(self(), :retry_hub, @hub_retry_ms)
+        state
+    end
+  end
+
+  defp schedule_reassert(state) do
+    Process.send_after(self(), :reassert, @reassert_interval_ms)
+    state
+  end
+
+  defp with_live_hub(on_dead, fun) do
+    hub_id = HubManager.schedule_hub_id()
+    if ProcessHub.is_alive?(hub_id), do: fun.(hub_id), else: on_dead
+  end
+end

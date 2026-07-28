@@ -359,6 +359,15 @@ config :flezha,
     token_ttl_default_seconds: 86_400,
     sdk_token_ttl_seconds: 2_592_000,
     namespaces: %{}
+  ],
+  # Scheduled bounded spawns. One job process per schedule in the
+  # `:flz_schedules` hub; on start it fires the single most recent slot inside
+  # `misfire_grace_ms` (covering restart and migration gaps) and drops older
+  # ones — missed slots are never back-filled.
+  schedules: [
+    dir: System.get_env("FLEZHA_SCHEDULE_DIR", "app_data/schedules"),
+    misfire_grace_ms:
+      String.to_integer(System.get_env("FLEZHA_SCHEDULE_MISFIRE_GRACE_MS", "120000"))
   ]
 
 # ------------------------------------------------------------------------------------------------

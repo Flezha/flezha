@@ -21,6 +21,10 @@ defmodule Flezha.Service.HubManager do
   # 20% of the request bound, leaving the rest for the operative starts the
   # bound was sized for. Overrunning it is not fatal — see `unplaceable_runner/5`.
   @runner_assign_wait_ms 2_000
+  # Deliberately off the `<namespace>_hub` convention: `hub_id?/1` filters it
+  # out, so every operative-oriented walker (Convergence, RecoveryGate,
+  # ShutdownCoordinator, the CLI, metrics) ignores it.
+  @schedule_hub_id :flz_schedules
 
   def start_link(_) do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
@@ -142,6 +146,40 @@ defmodule Flezha.Service.HubManager do
     # Cold-boot recovery is unaffected — that path never calls
     # `stop_hub/1`.
     _ = wipe_registry_dir(hub_id)
+    :ok
+  end
+
+  @doc "Hub id of the cron-schedule hub."
+  @spec schedule_hub_id() :: atom()
+  def schedule_hub_id(), do: @schedule_hub_id
+
+  @doc """
+  Start the cron-schedule hub. Idempotent: an already-started hub answers
+  `{:ok, pid}` too, so a restarted owner just re-asserts.
+  """
+  @spec start_schedule_hub() :: {:ok, pid()} | {:error, term()}
+  def start_schedule_hub() do
+    case Supervisor.start_child(__MODULE__, schedule_hub()) do
+      {:ok, pid} -> schedule_hub_started(pid)
+      {:ok, pid, _info} -> schedule_hub_started(pid)
+      {:error, {:already_started, pid}} -> schedule_hub_started(pid)
+      other -> other
+    end
+  end
+
+  defp schedule_hub_started(pid) do
+    wait_until_hub_alive(@schedule_hub_id)
+    {:ok, pid}
+  end
+
+  @doc """
+  Stop the cron-schedule hub. No registry wipe: its backend is `:ets`, so it
+  leaves nothing on disk.
+  """
+  @spec stop_schedule_hub() :: :ok
+  def stop_schedule_hub() do
+    Supervisor.terminate_child(__MODULE__, @schedule_hub_id)
+    Supervisor.delete_child(__MODULE__, @schedule_hub_id)
     :ok
   end
 
@@ -732,6 +770,35 @@ defmodule Flezha.Service.HubManager do
           },
           Snapshot.hook_handlers(hub_id)
         )
+    })
+  end
+
+  # Transient uniqueness arbiter for cron schedules: `Singularity` gives one
+  # schedule process cluster-wide per name. Durability belongs to
+  # `Flezha.Schedule.Store`, so the registry is `:ets` and `auto_recovery` is
+  # off — nothing lands under `:process_hub_registry_root`, which keeps
+  # `unstarted_hub_has_registry?/0` (and thus `/healthz`) clean.
+  #
+  # No `child_data_alter` hook: `place_child/3` would raise looking for a
+  # factory a schedule does not have. No `child_registered` hook either —
+  # schedules have no runner binding to reassert.
+  #
+  # `ColdSwap` over the namespace hubs' `HotSwap`: HotSwap keeps the old
+  # process alive until the new one registers, which for a cron timer means
+  # two armed timers for one schedule. Terminate-then-start makes "at most one
+  # armed timer cluster-wide" structural; the resulting gap is what the job's
+  # misfire-grace look-back on init repairs.
+  defp schedule_hub() do
+    ProcessHub.child_spec(%ProcessHub{
+      hub_id: @schedule_hub_id,
+      synchronization_strategy: %ProcessHub.Strategy.Synchronization.PubSub{},
+      redundancy_strategy: %ProcessHub.Strategy.Redundancy.Singularity{},
+      partition_tolerance_strategy: %ProcessHub.Strategy.PartitionTolerance.Divergence{},
+      distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
+      migration_strategy: %ProcessHub.Strategy.Migration.ColdSwap{},
+      registry_backend: :ets,
+      auto_recovery: false,
+      hooks: %{}
     })
   end
 

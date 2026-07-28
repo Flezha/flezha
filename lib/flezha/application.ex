@@ -64,6 +64,7 @@ defmodule Flezha.Application do
           Flezha.Dlq.Store
         ] ++
         convergence_loop_children() ++
+        schedule_children() ++
         healthz_children() ++
         memory_reporter_children()
 
@@ -154,6 +155,19 @@ defmodule Flezha.Application do
   defp convergence_loop_children do
     if Application.get_env(:flezha, :convergence_health_enabled, true) do
       [Flezha.Convergence.Loop]
+    else
+      []
+    end
+  end
+
+  # Like authz: omitted when `:schedules, :application_managed` is `false`
+  # so tests can bring up isolated Store/Hub singletons against a per-test
+  # tmp dir. The Hub owner starts the `:flz_schedules` hub off the boot path.
+  defp schedule_children do
+    cfg = Application.get_env(:flezha, :schedules, [])
+
+    if Keyword.get(cfg, :application_managed, true) do
+      [Flezha.Schedule.Store, Flezha.Schedule.Hub]
     else
       []
     end

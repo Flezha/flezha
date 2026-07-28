@@ -8,6 +8,9 @@
 # `:memory_drift` is the long-running load harness in
 # `test/load/memory_drift_test.exs`; it also requires
 # `MIX_RUN_MEMORY_DRIFT=1`.
+# `:multi_node` boots a peer BEAM and stops it mid-suite, which disturbs the
+# shared cluster state the boot-time runners and the concurrently-running
+# namespace tests depend on. Run with `mix test --include multi_node`.
 ExUnit.start(
   exclude: [
     :system,
@@ -16,7 +19,8 @@ ExUnit.start(
     :postgres_integration,
     :testnet,
     :memory_drift,
-    :credit_soak
+    :credit_soak,
+    :multi_node
   ]
 )
 
@@ -49,3 +53,4 @@ Mimic.copy(Flezha.State.Watchdog)
 Mimic.copy(Flezha.State.Retention)
 Mimic.copy(Flezha.State.Registry)
 Mimic.copy(Flezha.State.OpInbox)
+Mimic.copy(Flezha.Schedule.Hub)

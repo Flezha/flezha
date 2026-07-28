@@ -110,7 +110,10 @@ defmodule Flezha.MixProject do
       {:phoenix_pubsub, "~> 2.1"},
       # Hoisted to a top-level dep (already transitively present via
       # :mint_web_socket) so the OTLP exporter calls Mint directly.
-      {:mint, "~> 1.7"}
+      {:mint, "~> 1.7"},
+      # IANA time zone database for the schedule evaluator (pure Elixir,
+      # zero runtime deps; passed explicitly as Tz.TimeZoneDatabase).
+      {:tz, "~> 0.28"}
     ]
   end
 

@@ -3284,4 +3284,176 @@ defmodule Flezha.Service.CliManager do
     IO.puts(:stderr, "error: #{inspect(reason)}")
     System.halt(1)
   end
+
+  # ---------- Scheduled spawns (add-scheduled-operative-spawns) ----------
+
+  def schedule_add(
+        name,
+        cron_expr,
+        timezone,
+        factory_id,
+        namespace \\ "",
+        init_values \\ "",
+        kind \\ "bounded"
+      ) do
+    ns = normalize_namespace(namespace)
+
+    with :ok <- schedule_bounded_only(kind),
+         {:ok, init_map} <- schedule_decode_init(init_values),
+         {:ok, entry} <-
+           Flezha.Schedule.Store.add(%{
+             name: name,
+             cron: cron_expr,
+             timezone: timezone,
+             factory_id: factory_id,
+             namespace: ns,
+             init_values: init_map
+           }) do
+      schedule_warn_absent_factory(ns, factory_id)
+      _ = Flezha.Schedule.Hub.assert(entry)
+
+      IO.puts(
+        "Schedule #{name} added (#{cron_expr} #{timezone}); next fire #{schedule_next_fire(entry)}"
+      )
+    else
+      {:error, reason} -> render_schedule_error(reason)
+    end
+  end
+
+  def schedule_list() do
+    case Flezha.Schedule.Store.list() do
+      [] ->
+        IO.puts("no schedules")
+
+      entries ->
+        placement = Flezha.Schedule.Hub.placement()
+
+        IO.puts(
+          schedule_row(["NAME", "CRON", "TZ", "FACTORY", "NAMESPACE", "NODE", "NEXT FIRE (UTC)"])
+        )
+
+        Enum.each(entries, fn e ->
+          IO.puts(
+            schedule_row([
+              e.name,
+              e.cron,
+              e.timezone,
+              e.factory_id,
+              e.namespace,
+              schedule_node(placement, e.name),
+              schedule_next_fire(e)
+            ])
+          )
+        end)
+    end
+  end
+
+  def schedule_remove(name) do
+    # Store first: retracting first would let the periodic re-assert sweep
+    # resurrect the job before the row is gone.
+    case Flezha.Schedule.Store.remove(name) do
+      :ok ->
+        _ = Flezha.Schedule.Hub.retract(name)
+        IO.puts("Schedule #{name} removed")
+
+      {:error, :not_found} ->
+        render_schedule_error({:not_found, name})
+    end
+  end
+
+  # Deliberately hub-free: a manual fire works on any node whether or not the
+  # schedule hub is up.
+  def schedule_run(name) do
+    with {:ok, entry} <- schedule_entry(name),
+         instance_id = "#{name}@manual-#{System.system_time(:second)}",
+         {:ok, %{operative_id: id}} <-
+           Flezha.Schedule.Job.spawn_instance(entry, instance_id) do
+      IO.puts("Spawned #{id}")
+    else
+      :duplicate -> IO.puts("instance already running; no-op")
+      {:error, reason} -> render_schedule_error(reason)
+    end
+  end
+
+  defp schedule_entry(name) do
+    case Flezha.Schedule.Store.get(name) do
+      {:ok, entry} -> {:ok, entry}
+      :error -> {:error, {:not_found, name}}
+    end
+  end
+
+  defp schedule_bounded_only(kind) when kind in ["", "bounded"], do: :ok
+  defp schedule_bounded_only(kind), do: {:error, {:unschedulable_kind, kind}}
+
+  defp schedule_decode_init(""), do: {:ok, %{}}
+
+  defp schedule_decode_init(json) do
+    case Jason.decode(json) do
+      {:ok, map} when is_map(map) -> {:ok, map}
+      _ -> {:error, {:invalid_init_values, json}}
+    end
+  end
+
+  # Warn-only: the factory's runner may simply not have connected yet.
+  defp schedule_warn_absent_factory(namespace, factory_id) do
+    case Flezha.Runner.FleetManager.runners_for_factory(namespace, factory_id) do
+      [] ->
+        IO.puts(
+          "warning: factory #{factory_id} has no live runner in namespace #{namespace}; " <>
+            "firings will fail until one connects"
+        )
+
+      _ ->
+        :ok
+    end
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp schedule_next_fire(entry) do
+    with {:ok, cron} <- Flezha.Schedule.Cron.parse(entry.cron),
+         {:ok, next} <- Flezha.Schedule.Cron.next_fire(cron, entry.timezone, DateTime.utc_now()) do
+      DateTime.to_iso8601(next)
+    else
+      _ -> "never"
+    end
+  end
+
+  defp schedule_node(placement, name) do
+    case Map.fetch(placement, name) do
+      {:ok, node} -> Atom.to_string(node)
+      :error -> "-"
+    end
+  end
+
+  # First six columns padded; the last is printed raw.
+  defp schedule_row(cells) do
+    {padded, [last]} = Enum.split(cells, 6)
+
+    Enum.zip_with(padded, [24, 18, 20, 24, 14, 22], &String.pad_trailing/2)
+    |> Enum.join()
+    |> Kernel.<>(last)
+  end
+
+  defp render_schedule_error(reason) do
+    IO.puts(:stderr, "error: " <> schedule_error_message(reason))
+    System.halt(1)
+  end
+
+  defp schedule_error_message({:not_found, name}), do: "schedule #{name} not found"
+  defp schedule_error_message({:invalid_cron, msg}), do: "invalid --cron: #{msg}"
+
+  defp schedule_error_message({:invalid_timezone, tz}),
+    do: "invalid --tz: #{inspect(tz)} is not an IANA time zone"
+
+  defp schedule_error_message({:invalid_name, msg}), do: "invalid schedule name: #{msg}"
+
+  defp schedule_error_message({:invalid_init_values, _}),
+    do: "--init_values must be a JSON object"
+
+  defp schedule_error_message({:unschedulable_kind, kind}),
+    do: "only bounded operatives are schedulable (got kind #{kind})"
+
+  defp schedule_error_message(:already_exists), do: "a schedule with that name already exists"
+  defp schedule_error_message(reason), do: inspect(reason)
 end

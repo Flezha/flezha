@@ -74,6 +74,14 @@ config :flezha,
     sdk_token_ttl_seconds: 2_592_000,
     namespaces: %{}
   ],
+  # Schedule Store/Hub are per-test singletons against a tmp dir — the global
+  # tree must not start defaults (same posture as authn_authz), and no test
+  # gets a stray `:flz_schedules` hub it did not ask for.
+  schedules: [
+    application_managed: false,
+    dir: "app_data/schedules",
+    misfire_grace_ms: 120_000
+  ],
   observability_export: [
     prometheus_enabled: false,
     prometheus_port: 9568,
