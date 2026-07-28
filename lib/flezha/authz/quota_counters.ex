@@ -35,18 +35,10 @@ defmodule Flezha.AuthZ.QuotaCounters do
   @doc "Get the current counter for `(namespace, kind)`. Returns 0 when absent."
   @spec get(binary(), atom()) :: non_neg_integer()
   def get(namespace, kind) when is_binary(namespace) and is_atom(kind) do
-    case :ets.whereis(@cache) do
-      :undefined ->
-        0
-
-      _ ->
-        case :ets.lookup(@cache, {namespace, kind}) do
-          [{_, value}] when is_integer(value) -> value
-          _ -> 0
-        end
+    case Store.cache_lookup(@cache, {namespace, kind}) do
+      {:ok, value} when is_integer(value) -> value
+      _ -> 0
     end
-  rescue
-    _ -> 0
   end
 
   @doc "Increment the counter by `delta` (default 1)."
@@ -88,18 +80,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   @impl true
   def init(_opts) do
-    file_path = path()
-    :ok = Store.ensure_auth_dir!(Path.dirname(file_path))
-
-    case Store.open(@table, file_path) do
-      {:ok, _} ->
-        :ok = ensure_cache!()
-        :ok = warm_cache_from_dets()
-        {:ok, %{path: file_path}}
-
-      {:error, reason} ->
-        {:stop, {:dets_open_failed, file_path, reason}}
-    end
+    Store.init_cached(@table, @cache, path())
   end
 
   @impl true
@@ -109,10 +90,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
   @impl true
   def handle_call({:set, namespace, kind, value}, _from, state) do
-    key = {namespace, kind}
-    :ok = :dets.insert(@table, {key, value})
-    :ok = :dets.sync(@table)
-    :ets.insert(@cache, {key, value})
+    :ok = Store.put(@table, @cache, {namespace, kind}, value)
     {:reply, :ok, state}
   end
 
@@ -146,29 +124,8 @@ defmodule Flezha.AuthZ.QuotaCounters do
 
     new = max(current + delta, 0)
 
-    :ok = :dets.insert(@table, {key, new})
-    :ok = :dets.sync(@table)
-    :ets.insert(@cache, {key, new})
+    :ok = Store.put(@table, @cache, key, new)
 
     state
-  end
-
-  defp ensure_cache!() do
-    case :ets.whereis(@cache) do
-      :undefined ->
-        :ets.new(@cache, [:set, :public, :named_table, read_concurrency: true])
-
-      _ ->
-        :ets.delete_all_objects(@cache)
-    end
-
-    :ok
-  end
-
-  defp warm_cache_from_dets() do
-    :dets.match_object(@table, {:_, :_})
-    |> Enum.each(fn {key, value} -> :ets.insert(@cache, {key, value}) end)
-
-    :ok
   end
 end

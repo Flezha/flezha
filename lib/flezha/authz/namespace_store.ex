@@ -50,28 +50,10 @@ defmodule Flezha.AuthZ.NamespaceStore do
   end
 
   @spec get(binary()) :: {:ok, entry()} | :error
-  def get(name) when is_binary(name) do
-    case :ets.whereis(@cache) do
-      :undefined ->
-        :error
-
-      _ ->
-        case :ets.lookup(@cache, name) do
-          [{^name, entry}] -> {:ok, entry}
-          _ -> :error
-        end
-    end
-  rescue
-    _ -> :error
-  end
+  def get(name) when is_binary(name), do: Store.cache_lookup(@cache, name)
 
   @spec list() :: [entry()]
-  def list() do
-    case :ets.whereis(@cache) do
-      :undefined -> []
-      _ -> :ets.tab2list(@cache) |> Enum.map(fn {_n, e} -> e end)
-    end
-  end
+  def list(), do: Store.cache_values(@cache)
 
   @spec set_quotas(binary(), map()) :: {:ok, entry()} | {:error, term()}
   def set_quotas(name, overrides) when is_binary(name) and is_map(overrides) do
@@ -88,60 +70,36 @@ defmodule Flezha.AuthZ.NamespaceStore do
 
   @impl true
   def init(_opts) do
-    file_path = path()
-    :ok = Store.ensure_auth_dir!(Path.dirname(file_path))
-
-    case Store.open(@table, file_path) do
-      {:ok, _} ->
-        :ok = ensure_cache!()
-        :ok = warm_cache_from_dets()
-        :ok = seed_system_namespace_if_absent()
-        {:ok, %{path: file_path}}
-
-      {:error, reason} ->
-        {:stop, {:dets_open_failed, file_path, reason}}
+    with {:ok, state} <- Store.init_cached(@table, @cache, path()) do
+      :ok = seed_system_namespace_if_absent()
+      {:ok, state}
     end
   end
 
   @impl true
   def handle_call({:create, name, quotas, by}, _from, state) do
-    case :dets.lookup(@table, name) do
-      [{^name, _existing}] ->
-        {:reply, {:error, :already_exists}, state}
+    entry = %{
+      name: name,
+      quotas: quotas,
+      created_at: System.system_time(:second),
+      created_by_principal: by
+    }
 
-      [] ->
-        entry = %{
-          name: name,
-          quotas: quotas,
-          created_at: System.system_time(:second),
-          created_by_principal: by
-        }
-
-        :ok = :dets.insert(@table, {name, entry})
-        :ok = :dets.sync(@table)
-        :ets.insert(@cache, {name, entry})
-        {:reply, {:ok, entry}, state}
+    case Store.put_new(@table, @cache, name, entry) do
+      :ok -> {:reply, {:ok, entry}, state}
+      {:error, :already_exists} = err -> {:reply, err, state}
     end
   end
 
   def handle_call({:delete, name}, _from, state) do
-    :ok = :dets.delete(@table, name)
-    :ok = :dets.sync(@table)
-    :ets.delete(@cache, name)
+    :ok = Store.delete(@table, @cache, name)
     {:reply, :ok, state}
   end
 
   def handle_call({:set_quotas, name, quotas}, _from, state) do
-    case :dets.lookup(@table, name) do
-      [{^name, entry}] ->
-        updated = %{entry | quotas: quotas}
-        :ok = :dets.insert(@table, {name, updated})
-        :ok = :dets.sync(@table)
-        :ets.insert(@cache, {name, updated})
-        {:reply, {:ok, updated}, state}
-
-      [] ->
-        {:reply, {:error, :not_found}, state}
+    case Store.update(@table, @cache, name, &%{&1 | quotas: quotas}) do
+      {:ok, updated} -> {:reply, {:ok, updated}, state}
+      {:error, :not_found} = err -> {:reply, err, state}
     end
   end
 
@@ -152,25 +110,6 @@ defmodule Flezha.AuthZ.NamespaceStore do
   end
 
   ## ----- private -----
-
-  defp ensure_cache!() do
-    case :ets.whereis(@cache) do
-      :undefined ->
-        :ets.new(@cache, [:set, :public, :named_table, read_concurrency: true])
-
-      _ ->
-        :ets.delete_all_objects(@cache)
-    end
-
-    :ok
-  end
-
-  defp warm_cache_from_dets() do
-    :dets.match_object(@table, {:_, :_})
-    |> Enum.each(fn {name, entry} -> :ets.insert(@cache, {name, entry}) end)
-
-    :ok
-  end
 
   defp seed_system_namespace_if_absent() do
     system = Namespace.system_name()
@@ -186,10 +125,7 @@ defmodule Flezha.AuthZ.NamespaceStore do
           created_by_principal: nil
         }
 
-        :ok = :dets.insert(@table, {system, entry})
-        :ok = :dets.sync(@table)
-        :ets.insert(@cache, {system, entry})
-        :ok
+        :ok = Store.put(@table, @cache, system, entry)
 
       _ ->
         :ok

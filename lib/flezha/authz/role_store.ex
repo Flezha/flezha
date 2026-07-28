@@ -42,20 +42,7 @@ defmodule Flezha.AuthZ.RoleStore do
   @spec lookup(binary() | nil) :: {:ok, binding()} | :error
   def lookup(nil), do: :error
 
-  def lookup(principal) when is_binary(principal) do
-    case :ets.whereis(@cache) do
-      :undefined ->
-        :error
-
-      _ ->
-        case :ets.lookup(@cache, principal) do
-          [{^principal, binding}] -> {:ok, binding}
-          _ -> :error
-        end
-    end
-  rescue
-    _ -> :error
-  end
+  def lookup(principal) when is_binary(principal), do: Store.cache_lookup(@cache, principal)
 
   @doc """
   Bind `principal` to `(namespace, role)`. Overwrites any existing
@@ -79,16 +66,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   @doc "List every binding currently in the store."
   @spec list() :: [binding()]
-  def list() do
-    case :ets.whereis(@cache) do
-      :undefined ->
-        []
-
-      _ ->
-        :ets.tab2list(@cache)
-        |> Enum.map(fn {_p, binding} -> binding end)
-    end
-  end
+  def list(), do: Store.cache_values(@cache)
 
   @doc "Bindings belonging to `principal` (zero or one)."
   @spec list_for_principal(binary()) :: [binding()]
@@ -121,18 +99,7 @@ defmodule Flezha.AuthZ.RoleStore do
 
   @impl true
   def init(_opts) do
-    file_path = path()
-    :ok = Store.ensure_auth_dir!(Path.dirname(file_path))
-
-    case Store.open(@table, file_path) do
-      {:ok, _} ->
-        :ok = ensure_cache!()
-        :ok = warm_cache_from_dets()
-        {:ok, %{path: file_path}}
-
-      {:error, reason} ->
-        {:stop, {:dets_open_failed, file_path, reason}}
-    end
+    Store.init_cached(@table, @cache, path())
   end
 
   @impl true
@@ -145,45 +112,18 @@ defmodule Flezha.AuthZ.RoleStore do
       bound_by: bound_by
     }
 
-    :ok = :dets.insert(@table, {principal, binding})
-    :ok = :dets.sync(@table)
-    :ets.insert(@cache, {principal, binding})
+    :ok = Store.put(@table, @cache, principal, binding)
     {:reply, :ok, state}
   end
 
   def handle_call({:unbind, principal}, _from, state) do
-    :ok = :dets.delete(@table, principal)
-    :ok = :dets.sync(@table)
-    :ets.delete(@cache, principal)
+    :ok = Store.delete(@table, @cache, principal)
     {:reply, :ok, state}
   end
 
   @impl true
   def terminate(_reason, _state) do
     _ = :dets.close(@table)
-    :ok
-  end
-
-  ## ----- private -----
-
-  defp ensure_cache!() do
-    case :ets.whereis(@cache) do
-      :undefined ->
-        :ets.new(@cache, [:set, :public, :named_table, read_concurrency: true])
-
-      _ ->
-        :ets.delete_all_objects(@cache)
-    end
-
-    :ok
-  end
-
-  defp warm_cache_from_dets() do
-    :dets.match_object(@table, {:_, :_})
-    |> Enum.each(fn {principal, binding} ->
-      :ets.insert(@cache, {principal, binding})
-    end)
-
     :ok
   end
 end

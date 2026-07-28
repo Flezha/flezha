@@ -31,18 +31,10 @@ defmodule Flezha.AuthZ.AuthState do
   @doc "True when the durable flag is set."
   @spec enabled?() :: boolean()
   def enabled?() do
-    case :ets.whereis(@table) do
-      :undefined ->
-        false
-
-      _ ->
-        case :ets.lookup(@table, @key) do
-          [{@key, value}] when is_boolean(value) -> value
-          _ -> false
-        end
+    case Store.cache_lookup(@table, @key) do
+      {:ok, value} when is_boolean(value) -> value
+      _ -> false
     end
-  rescue
-    _ -> false
   end
 
   @doc """
@@ -70,63 +62,24 @@ defmodule Flezha.AuthZ.AuthState do
 
   @impl true
   def init(_opts) do
-    file_path = path()
-    :ok = Store.ensure_auth_dir!(Path.dirname(file_path))
-
-    case Store.open(@table, file_path) do
-      {:ok, _} ->
-        :ok = ensure_ets!()
-        :ok = load_into_cache()
-        {:ok, %{path: file_path}}
-
-      {:error, reason} ->
-        {:stop, {:dets_open_failed, file_path, reason}}
-    end
+    # The ETS cache shares the DETS table's name (separate namespaces).
+    Store.init_cached(@table, @table, path())
   end
 
   @impl true
   def handle_call(:set_enabled, _from, state) do
-    :ok = :dets.insert(@table, {@key, true})
-    :ok = :dets.sync(@table)
-    :ets.insert(@table, {@key, true})
+    :ok = Store.put(@table, @table, @key, true)
     {:reply, :ok, state}
   end
 
   def handle_call(:reset, _from, state) do
-    :ok = :dets.insert(@table, {@key, false})
-    :ok = :dets.sync(@table)
-    :ets.insert(@table, {@key, false})
+    :ok = Store.put(@table, @table, @key, false)
     {:reply, :ok, state}
   end
 
   @impl true
   def terminate(_reason, _state) do
     _ = :dets.close(@table)
-    :ok
-  end
-
-  ## ----- private -----
-
-  defp ensure_ets!() do
-    case :ets.whereis(@table) do
-      :undefined ->
-        :ets.new(@table, [:set, :public, :named_table, read_concurrency: true])
-
-      _ ->
-        :ok
-    end
-
-    :ok
-  end
-
-  defp load_into_cache() do
-    value =
-      case :dets.lookup(@table, @key) do
-        [{@key, v}] when is_boolean(v) -> v
-        _ -> false
-      end
-
-    :ets.insert(@table, {@key, value})
     :ok
   end
 end

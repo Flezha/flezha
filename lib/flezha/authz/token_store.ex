@@ -186,16 +186,7 @@ defmodule Flezha.AuthZ.TokenStore do
 
   @impl true
   def init(_opts) do
-    file_path = path()
-    :ok = Store.ensure_auth_dir!(Path.dirname(file_path))
-
-    case Store.open(@table, file_path) do
-      {:ok, _} ->
-        {:ok, %{path: file_path}}
-
-      {:error, reason} ->
-        {:stop, {:dets_open_failed, file_path, reason}}
-    end
+    Store.init_table(@table, path())
   end
 
   @impl true
@@ -216,11 +207,7 @@ defmodule Flezha.AuthZ.TokenStore do
           {:error, :not_found}
 
         [{hash, entry}] ->
-          updated = %{entry | revoked_at: System.system_time(:second)}
-          :ok = :dets.insert(@table, {hash, updated})
-          :ok = :dets.sync(@table)
-          emit_revoked(updated, Keyword.get(opts, :revoked_by_principal))
-          {:ok, updated}
+          revoke_entry(hash, entry, Keyword.get(opts, :revoked_by_principal))
 
         _ ->
           {:error, :ambiguous}
@@ -233,11 +220,7 @@ defmodule Flezha.AuthZ.TokenStore do
     reply =
       case :dets.lookup(@table, hash) do
         [{^hash, entry}] ->
-          updated = %{entry | revoked_at: System.system_time(:second)}
-          :ok = :dets.insert(@table, {hash, updated})
-          :ok = :dets.sync(@table)
-          emit_revoked(updated, nil)
-          {:ok, updated}
+          revoke_entry(hash, entry, nil)
 
         _ ->
           {:error, :not_found}
@@ -253,6 +236,15 @@ defmodule Flezha.AuthZ.TokenStore do
   end
 
   ## ----- private -----
+
+  # Mark the row revoked, sync, and emit the audit event.
+  defp revoke_entry(hash, entry, revoked_by) do
+    updated = %{entry | revoked_at: System.system_time(:second)}
+    :ok = :dets.insert(@table, {hash, updated})
+    :ok = :dets.sync(@table)
+    emit_revoked(updated, revoked_by)
+    {:ok, updated}
+  end
 
   defp generate_token() do
     raw = :crypto.strong_rand_bytes(@raw_bytes)
