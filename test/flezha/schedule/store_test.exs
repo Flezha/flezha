@@ -33,6 +33,20 @@ defmodule Flezha.Schedule.StoreTest do
     assert {:error, :not_found} = Store.remove("digest")
   end
 
+  test "the plugin spec round-trips verbatim and defaults to none" do
+    spec =
+      ~s([{"id":"reports","provider":"operative_kafka_producer","subscriptions":["on_output"]}])
+
+    assert {:ok, entry} = Store.add(fields(%{plugins: spec}))
+    assert entry.plugins == spec
+    assert {:ok, stored} = Store.get("digest")
+    assert stored.plugins == spec
+
+    assert :ok = Store.remove("digest")
+    assert {:ok, bare} = Store.add(fields())
+    assert bare.plugins == "[]"
+  end
+
   test "a duplicate name is rejected" do
     assert {:ok, _} = Store.add(fields())
     assert {:error, :already_exists} = Store.add(fields())
@@ -52,6 +66,11 @@ defmodule Flezha.Schedule.StoreTest do
     assert msg =~ "at most 11 bytes"
     assert {:error, {:invalid_factory, _}} = Store.add(fields(%{factory_id: ""}))
     assert {:error, {:invalid_init_values, _}} = Store.add(fields(%{init_values: "nope"}))
+
+    assert {:error, {:invalid_plugins, _}} =
+             Store.add(fields(%{plugins: "{\"not\":\"an array\"}"}))
+
+    assert {:error, {:invalid_plugins, _}} = Store.add(fields(%{plugins: "not json"}))
 
     assert Store.list() == []
   end

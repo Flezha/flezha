@@ -5,7 +5,7 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 ## Requirements
 ### Requirement: The controller SHALL maintain a durable registry of cron schedules for bounded spawns
 
-`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init_values json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only `kind: bounded` SHALL be schedulable; scheduling an unbounded factory SHALL be rejected at `add`. Cron syntax, timezone, and kind SHALL be validated at `add`.
+`flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id> [--namespace ns] [--init_values json] [--plugins json]` SHALL create a durable schedule entry; `flz schedule list` SHALL show entries (with next fire time) and `flz schedule remove <name>` SHALL delete them. Entries SHALL persist across controller restarts and warm restarts. Only `kind: bounded` SHALL be schedulable; scheduling an unbounded factory SHALL be rejected at `add`. Cron syntax, timezone, kind, and the plugin spec SHALL be validated at `add`. The plugin spec SHALL use the same JSON array `flz operative start --plugins` accepts and SHALL be stored verbatim; an entry stored without one SHALL fire with no plugins.
 
 #### Scenario: Schedule survives restart
 
@@ -17,9 +17,24 @@ TBD - created by archiving change add-scheduled-operative-spawns. Update Purpose
 - **WHEN** `schedule add` is issued with a malformed cron expression or unknown timezone
 - **THEN** the command SHALL fail with a message naming the invalid field and no entry SHALL be stored
 
+#### Scenario: Unusable plugin spec rejected at add time
+
+- **WHEN** `schedule add --plugins` is issued with JSON that is not an array, names an unknown provider, or carries a malformed subscription
+- **THEN** the command SHALL fail naming the fault and no entry SHALL be stored
+
 ### Requirement: Each slot SHALL fire exactly once cluster-wide via the standard bounded spawn path
 
-At each matching slot (evaluated in the entry's IANA timezone by a single schedule process that exists on exactly one node cluster-wide, hosted in the dedicated `:flz_schedules` hub), the controller SHALL spawn a fresh bounded instance with deterministic id `<name>@<slot>` and the stored `init_values`, through the same start path as `flz operative start` (quota, plugins, teardown, retention inherited). A duplicate fire attempt for the same slot SHALL no-op on the deterministic id. DST: nonexistent local times skip; ambiguous local times fire once.
+At each matching slot (evaluated in the entry's IANA timezone by a single schedule process that exists on exactly one node cluster-wide, hosted in the dedicated `:flz_schedules` hub), the controller SHALL spawn a fresh bounded instance with deterministic id `<name>@<slot>` and the stored `init_values`, through the same start path as `flz operative start` (quota, plugins, teardown, retention inherited). The entry's stored plugin spec SHALL be decoded at each firing and attached at spawn, with the fire's namespace and instance id stamped on every plugin and each plugin's id prefixed by the instance id so concurrent slots never share one. A firing whose plugin spec cannot be decoded SHALL NOT spawn an instance and SHALL be logged and reported on telemetry as a spawn failure. A duplicate fire attempt for the same slot SHALL no-op on the deterministic id. DST: nonexistent local times skip; ambiguous local times fire once.
+
+#### Scenario: A fired instance produces output through its scheduled plugins
+
+- **WHEN** a schedule carrying a producer plugin spec fires
+- **THEN** the spawned instance SHALL have that plugin attached from the start of its run, with `operative_id` equal to the slot's instance id
+
+#### Scenario: A spec that no longer decodes does not fire a plugin-less run
+
+- **WHEN** a slot fires while the spec's provider is no longer enabled
+- **THEN** no instance SHALL be started and the failure SHALL be logged and emitted on the spawn-failure telemetry event
 
 #### Scenario: One instance per slot despite duplicate fire attempts
 

@@ -49,7 +49,8 @@ defmodule FlezhaTest.Helper.ScheduleTestHelper do
         timezone: "Etc/UTC",
         factory_id: "fac",
         namespace: "default",
-        init_values: %{"a" => 1}
+        init_values: %{"a" => 1},
+        plugins: "[]"
       },
       Map.new(overrides)
     )

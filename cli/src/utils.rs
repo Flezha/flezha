@@ -119,6 +119,13 @@ pub fn extract_param(args: &[String], long_key: &str, short_key: &str) -> Option
     None
 }
 
+/// Escape a value for interpolation into the quoted Elixir string literals of
+/// an RPC expression. Every `run_rpc` argument that can carry JSON or free text
+/// goes through this — one escaper, so no call site invents its own.
+pub fn escape_rpc_arg(value: &str) -> String {
+    value.replace('"', "\\\"")
+}
+
 pub fn get_json(slice: &[String], long_key: &str, short_key: &str) -> String {
     let mut json = String::from("");
 

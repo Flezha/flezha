@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::process::{exit, Command};
 
-use crate::utils::{extract_param, get_flezha_command, get_json, get_namespace, get_output_format};
+use crate::utils::{
+    escape_rpc_arg, extract_param, get_flezha_command, get_json, get_namespace, get_output_format,
+};
 
 pub fn handle_operative_command(args: &[String]) {
     if args.is_empty() {
@@ -63,9 +65,9 @@ fn handle_start(args: &[String]) {
     let command = get_flezha_command();
     let namespace = get_namespace(&args[3..]);
 
-    let escaped_init_values = init_values.replace("\"", "\\\"");
-    let escaped_opts_json = opts_json.replace("\"", "\\\"");
-    let escaped_plugins_json = plugins_json.replace("\"", "\\\"");
+    let escaped_init_values = escape_rpc_arg(&init_values);
+    let escaped_opts_json = escape_rpc_arg(&opts_json);
+    let escaped_plugins_json = escape_rpc_arg(&plugins_json);
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_start(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
@@ -102,7 +104,7 @@ fn handle_start(args: &[String]) {
 ///   (non-empty strings) and a non-empty `subscriptions` array. Deeper
 ///   validation (provider registration lookup, subscription-opts shape)
 ///   happens on the Elixir side where the registry is authoritative.
-fn parse_plugins_json(raw: &str) -> Result<String, String> {
+pub(crate) fn parse_plugins_json(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed == "{}" {
         return Ok("[]".to_string());
@@ -201,8 +203,8 @@ fn handle_send(args: &[String]) {
 
     // Escape embedded quotes so the payload/channel survive being wrapped in
     // quotes inside the Elixir RPC expression (same as handle_start).
-    let escaped_text = text.replace('"', "\\\"");
-    let escaped_channel = channel.replace('"', "\\\"");
+    let escaped_text = escape_rpc_arg(&text);
+    let escaped_channel = escape_rpc_arg(&channel);
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_send(\"{}\", \"{}\", \"{}\", \"{}\")",

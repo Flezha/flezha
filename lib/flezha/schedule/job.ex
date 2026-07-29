@@ -19,6 +19,7 @@ defmodule Flezha.Schedule.Job do
   require Logger
 
   alias Flezha.Operative.Builder
+  alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.{Cron, Store}
   alias Flezha.Service.OperativeManager
 
@@ -40,15 +41,37 @@ defmodule Flezha.Schedule.Job do
   @doc """
   Spawn one instance for `entry` with `instance_id` through the standard
   bounded start path. Also serves `flz schedule run` (manual fire).
+
+  The entry's plugin spec is decoded per firing (provider ids resolve against
+  the running controller) and attached AT SPAWN — a bounded instance finishes
+  in milliseconds, so a plugin attached afterwards would miss the whole run.
   """
   @spec spawn_instance(Store.entry(), String.t()) ::
           {:ok, map()} | :duplicate | {:error, term()}
   def spawn_instance(entry, instance_id) do
+    # A run without its output channel spends and reports nothing, which is
+    # worse than a visibly skipped slot — so an undecodable spec starts nothing.
+    case instance_plugins(entry, instance_id) do
+      {:ok, plugins} -> start(entry, instance_id, plugins)
+      {:error, reason} -> failed(entry, instance_id, reason, "plugin spec did not decode")
+    end
+  end
+
+  # Plugin ids are namespaced by the instance id: slot ids differ, so two
+  # overlapping runs must not claim one plugin id.
+  defp instance_plugins(entry, instance_id) do
+    with {:ok, plugins} <- SpecDecoder.decode(entry.plugins, entry.namespace, instance_id) do
+      {:ok, Enum.map(plugins, &%{&1 | id: "#{instance_id}_#{&1.id}"})}
+    end
+  end
+
+  defp start(entry, instance_id, plugins) do
     builder = %Builder{
       id: instance_id,
       factory_id: entry.factory_id,
       kind: :bounded,
-      init_values: entry.init_values
+      init_values: entry.init_values,
+      opts: if(plugins == [], do: [], else: [plugins: plugins])
     }
 
     case OperativeManager.start_operative(entry.namespace, builder) do
@@ -65,15 +88,20 @@ defmodule Flezha.Schedule.Job do
         Logger.debug("[schedule] duplicate fire for #{instance_id} — no-op")
         :duplicate
 
-      {:error, reason} = err ->
-        :telemetry.execute([:flezha, :schedule, :spawn_failed], %{count: 1}, %{
-          schedule: entry.name,
-          instance_id: instance_id
-        })
-
-        Logger.error("[schedule] spawn of #{instance_id} failed: #{inspect(reason)}")
-        err
+      {:error, reason} ->
+        failed(entry, instance_id, reason, "spawn failed")
     end
+  end
+
+  # The one place a slot that produced no instance is reported.
+  defp failed(entry, instance_id, reason, what) do
+    :telemetry.execute([:flezha, :schedule, :spawn_failed], %{count: 1}, %{
+      schedule: entry.name,
+      instance_id: instance_id
+    })
+
+    Logger.error("[schedule] #{instance_id} not started: #{what}: #{inspect(reason)}")
+    {:error, reason}
   end
 
   @doc false

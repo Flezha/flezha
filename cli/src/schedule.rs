@@ -1,4 +1,5 @@
-use crate::utils::{extract_param, get_json, get_namespace, run_rpc};
+use crate::operative::parse_plugins_json;
+use crate::utils::{escape_rpc_arg, extract_param, get_json, get_namespace, run_rpc};
 use std::process::exit;
 
 pub fn handle_schedule_command(args: &[String]) {
@@ -24,7 +25,7 @@ pub fn handle_schedule_command(args: &[String]) {
 }
 
 fn handle_add(args: &[String]) {
-    let usage = "Usage: flz schedule add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id> [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>] [--kind bounded]";
+    let usage = "Usage: flz schedule add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id> [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>] [--plugins <json> | -p <json>] [--kind bounded]";
 
     let name = match args.first() {
         Some(name) if !name.starts_with('-') => name.clone(),
@@ -40,11 +41,19 @@ fn handle_add(args: &[String]) {
     let kind = extract_param(args, "--kind", "--kind").unwrap_or_else(|| "bounded".to_string());
     let namespace = get_namespace(args);
     let init_values = get_json(args, "--init_values", "-iv");
-    let escaped_init_values = init_values.replace('"', "\\\"");
+    let escaped_init_values = escape_rpc_arg(&init_values);
+    let plugins = match parse_plugins_json(&get_json(args, "--plugins", "-p")) {
+        Ok(canonical) => canonical,
+        Err(reason) => {
+            eprintln!("Error: invalid --plugins JSON: {}", reason);
+            exit(1);
+        }
+    };
+    let escaped_plugins = escape_rpc_arg(&plugins);
 
     run_rpc(format!(
-        "Flezha.Service.CliManager.schedule_add(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
-        name, cron, tz, factory, namespace, escaped_init_values, kind,
+        "Flezha.Service.CliManager.schedule_add(\"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\", \"{}\")",
+        name, cron, tz, factory, namespace, escaped_init_values, kind, escaped_plugins,
     ));
 }
 
@@ -81,15 +90,21 @@ fn print_schedule_help() {
     println!();
     println!("SUBCOMMANDS:");
     println!("    add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id>");
-    println!("        [--namespace <ns>] [--init_values <json>] [--kind bounded]");
-    println!("                 Add a durable schedule (bounded operatives only)");
+    println!(
+        "        [--namespace <ns>] [--init_values <json>] [--plugins <json>] [--kind bounded]"
+    );
+    println!("                 Add a durable schedule (bounded operatives only).");
+    println!("                 --plugins takes the same array as `operative start --plugins`;");
+    println!("                 each firing prefixes the plugin ids with its instance id.");
     println!("    list         List schedules with their next fire time");
     println!("    remove <name>  Remove a schedule");
     println!("    run <name>     Fire one instance immediately with the stored config");
     println!("    help         Show this help message");
     println!();
     println!("EXAMPLES:");
-    println!("    flz schedule add digest --cron \"0 8 * * *\" --tz Europe/Tallinn --factory ai_digest");
+    println!(
+        "    flz schedule add digest --cron \"0 8 * * *\" --tz Europe/Tallinn --factory ai_digest"
+    );
     println!("    flz schedule list");
     println!("    flz schedule run digest");
 }

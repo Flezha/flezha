@@ -12,7 +12,7 @@ inherited).
 ```
 flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
                  [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>]
-                 [--kind bounded]
+                 [--plugins <json> | -p <json>] [--kind bounded]
 flz schedule list
 flz schedule remove <name>
 flz schedule run <name>
@@ -28,12 +28,45 @@ flz schedule run <name>
   hub (its owner has not asserted it yet, or the hub is down on this node).
 - `run` fires one instance immediately with the stored configuration, under
   a manual id (`<name>@manual-<unix-ts>`) distinct from cron slots.
+- `--plugins` takes the same JSON array as `flz operative start --plugins`
+  and is validated against the enabled providers at `add` time. See
+  [Output plugins](#output-plugins) — a bounded job that produces anything
+  needs it.
 
 Example:
 
 ```
 flz schedule add digest --cron "0 8,20 * * *" --tz Europe/Tallinn --factory ai_digest
 ```
+
+## Output plugins
+
+A bounded instance runs to completion in milliseconds, so its plugins must be
+attached **at spawn**; enabling one afterwards misses the whole run. A
+schedule without `--plugins` therefore fires a job with no output channel —
+it executes and everything it emits is dropped.
+
+```
+flz schedule add digest --cron "0 8,20 * * *" --tz Europe/Tallinn \
+  --factory ai_digest --init_values '{"window_hours":12}' \
+  --plugins '[{"id":"ai_reports","provider":"operative_kafka_producer",
+               "subscriptions":["on_output"],
+               "opts":{"channel":"report_out","hosts":"kafka:9092",
+                       "topic":"ai.reports.v1","required_acks":"-1"}}]'
+```
+
+- The spec is stored verbatim and **decoded at every firing**, against the
+  providers the running controller has enabled — a decoded provider module is
+  runtime state and is never frozen into the registry.
+- Each firing stamps its own namespace and instance id on every plugin, and
+  **prefixes the plugin id with the instance id**: the `ai_reports` above
+  becomes `digest@2026-07-27T05:00:00Z_ai_reports`. Overlapping slots
+  therefore never claim one plugin id, and you never have to encode the slot
+  yourself.
+- If the spec no longer decodes at fire time (say the provider was disabled),
+  **no instance is started**: the slot is logged and reported on
+  `[:flezha, :schedule, :spawn_failed]`. A run that spends its work and drops
+  the result is worse than a visibly skipped slot.
 
 ## Cron expressions
 

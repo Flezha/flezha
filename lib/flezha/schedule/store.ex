@@ -13,6 +13,7 @@ defmodule Flezha.Schedule.Store do
   use Flezha.Constant
 
   alias Flezha.AuthZ.Store, as: DetsStore
+  alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.Cron
 
   # Distinct from the `:flz_schedules` hub id, which names an ETS table.
@@ -33,6 +34,7 @@ defmodule Flezha.Schedule.Store do
           required(:factory_id) => binary(),
           required(:namespace) => binary(),
           required(:init_values) => map(),
+          required(:plugins) => binary(),
           required(:created_at) => binary()
         }
 
@@ -44,7 +46,8 @@ defmodule Flezha.Schedule.Store do
 
   @doc """
   Validate and durably add a schedule. `fields` must carry `:name`,
-  `:cron`, `:timezone`, `:factory_id`, `:namespace` and `:init_values`.
+  `:cron`, `:timezone`, `:factory_id`, `:namespace` and `:init_values`;
+  `:plugins` (the raw `--plugins` JSON array) is optional.
   """
   @spec add(map()) :: {:ok, entry()} | {:error, term()}
   def add(fields) when is_map(fields) do
@@ -52,7 +55,8 @@ defmodule Flezha.Schedule.Store do
          {:ok, _} <- validate_cron(fields[:cron]),
          :ok <- validate_timezone(fields[:timezone]),
          :ok <- validate_factory_id(fields[:factory_id]),
-         :ok <- validate_init_values(fields[:init_values]) do
+         :ok <- validate_init_values(fields[:init_values]),
+         {:ok, plugins} <- validate_plugins(fields[:plugins]) do
       entry = %{
         name: fields[:name],
         cron: fields[:cron],
@@ -60,6 +64,7 @@ defmodule Flezha.Schedule.Store do
         factory_id: fields[:factory_id],
         namespace: fields[:namespace],
         init_values: fields[:init_values],
+        plugins: plugins,
         created_at: DateTime.to_iso8601(DateTime.utc_now())
       }
 
@@ -164,4 +169,21 @@ defmodule Flezha.Schedule.Store do
 
   defp validate_init_values(_),
     do: {:error, {:invalid_init_values, "init_values must be a JSON object"}}
+
+  # Structural only: provider ids are resolved at every firing against the
+  # controller that is actually running, so a decoded plugin must never be
+  # frozen into a DETS row. `CliManager.schedule_add/8` does the full
+  # provider-resolving check before calling `add/1`.
+  defp validate_plugins(json) when json in [nil, ""], do: {:ok, "[]"}
+
+  defp validate_plugins(json) when is_binary(json) do
+    if SpecDecoder.valid_json_array?(json) do
+      {:ok, json}
+    else
+      {:error, {:invalid_plugins, "plugins must be a JSON array of plugin specs"}}
+    end
+  end
+
+  defp validate_plugins(_),
+    do: {:error, {:invalid_plugins, "plugins must be a JSON array of plugin specs"}}
 end

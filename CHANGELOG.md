@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+
+- `flz schedule add --plugins <json>` — a schedule entry can now carry the
+  same plugin-spec array `flz operative start --plugins` accepts
+  (`schedule-entries-carry-plugins`). The spec is validated against the
+  enabled providers at `add` time, stored verbatim, and decoded at every
+  firing; each firing stamps its namespace and instance id on every plugin
+  and prefixes the plugin id with the instance id so overlapping slots never
+  collide. Without this a cron-fired bounded job had no output channel at all
+  — a bounded instance finishes in milliseconds, so plugins must be attached
+  at spawn. A spec that fails to decode at fire time starts nothing and is
+  reported on `[:flezha, :schedule, :spawn_failed]` rather than firing a run
+  whose output is dropped. The schedule row gained a field, so the
+  delete-`schedules.dets`-and-re-add note below applies to this change too.
+
 ### Changed (BREAKING)
 
 - Scheduled bounded spawns are now driven by **one schedule process per

@@ -20,6 +20,15 @@ defmodule Flezha.Schedule.JobTest do
     cron
   end
 
+  # Forward every spawn's builder to the test process; `builder.id` is the
+  # instance id, so no call site needs its own stub shape.
+  defp stub_spawn(test_pid) do
+    stub(OperativeManager, :start_operative, fn "default", builder ->
+      send(test_pid, {:spawned, builder})
+      {:ok, %{operative_id: builder.id}}
+    end)
+  end
+
   defp warning_level do
     prev = Logger.level()
     Logger.configure(level: :warning)
@@ -97,15 +106,12 @@ defmodule Flezha.Schedule.JobTest do
     test "a due slot fires and re-arms" do
       test_pid = self()
 
-      stub(OperativeManager, :start_operative, fn "default", builder ->
-        send(test_pid, {:spawned, builder.id})
-        {:ok, %{operative_id: builder.id}}
-      end)
+      stub_spawn(test_pid)
 
       pid = start_supervised!({Job, Helper.quiet_entry()})
       send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
 
-      assert_receive {:spawned, "job@2026-07-27T08:01:00Z"}, 2_000
+      assert_receive {:spawned, %{id: "job@2026-07-27T08:01:00Z"}}, 2_000
       assert %{timer: timer} = :sys.get_state(pid)
       assert is_reference(timer)
     end
@@ -113,10 +119,7 @@ defmodule Flezha.Schedule.JobTest do
     test "an early wake re-arms instead of firing ahead of the slot" do
       test_pid = self()
 
-      stub(OperativeManager, :start_operative, fn "default", builder ->
-        send(test_pid, {:spawned, builder.id})
-        {:ok, %{operative_id: builder.id}}
-      end)
+      stub_spawn(test_pid)
 
       pid = start_supervised!({Job, Helper.quiet_entry()})
       future = DateTime.add(DateTime.utc_now(), 3_600, :second)
@@ -153,7 +156,61 @@ defmodule Flezha.Schedule.JobTest do
           _ = :sys.get_state(pid)
         end)
 
-      assert log =~ "spawn of job@2026-07-27T08:01:00Z failed"
+      assert log =~ "job@2026-07-27T08:01:00Z not started: spawn failed"
+      assert Process.alive?(pid)
+    end
+
+    test "the entry's plugin spec is attached at spawn with the slot's identity" do
+      test_pid = self()
+
+      stub_spawn(test_pid)
+
+      spec =
+        ~s([{"id":"reports","provider":"operative_kafka_producer",) <>
+          ~s("subscriptions":["on_output"],"opts":{"topic":"ai.reports.v1"}}])
+
+      pid = start_supervised!({Job, Helper.quiet_entry(%{plugins: spec})})
+      send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
+
+      assert_receive {:spawned, builder}, 2_000
+      assert [plugin] = builder.opts[:plugins]
+      # Prefixed by the instance id so two overlapping slots never collide.
+      assert plugin.id == "job@2026-07-27T08:01:00Z_reports"
+      assert plugin.operative_id == "job@2026-07-27T08:01:00Z"
+      assert plugin.namespace == "default"
+      assert plugin.provider == Flezha.Plugin.Provider.Kafka.Producer
+      assert plugin.subscriptions == [{:on_output, []}]
+      assert plugin.opts == %{topic: "ai.reports.v1"}
+    end
+
+    test "an entry with no plugin spec spawns with no plugins opt" do
+      test_pid = self()
+
+      stub_spawn(test_pid)
+
+      pid = start_supervised!({Job, Helper.quiet_entry()})
+      send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
+
+      assert_receive {:spawned, builder}, 2_000
+      assert builder.opts == []
+    end
+
+    test "a spec that no longer decodes starts nothing rather than a mute run" do
+      stub(OperativeManager, :start_operative, fn _ns, _builder ->
+        flunk("an undecodable plugin spec must not reach the start path")
+      end)
+
+      spec = ~s([{"id":"reports","provider":"retired_provider","subscriptions":["on_output"]}])
+      pid = start_supervised!({Job, Helper.quiet_entry(%{plugins: spec})})
+
+      log =
+        capture_log(fn ->
+          send(pid, {:fire, ~U[2026-07-27 08:01:00Z]})
+          _ = :sys.get_state(pid)
+        end)
+
+      assert log =~ "plugin spec did not decode"
+      assert log =~ "retired_provider"
       assert Process.alive?(pid)
     end
 
