@@ -42,10 +42,6 @@ defmodule Flezha.Shutdown.Coordinator do
   # overall bound; also the floor so `Migration.drain/2` always gets a
   # positive deadline.
   @drain_budget_slack_ms 1_000
-  # A force pass fires AT the drain deadline and its handover is async, so
-  # this window is carved out of the drain timeout to let it land before the
-  # hub stops.
-  @forced_handover_grace_ms 2_000
 
   defstruct phase: :idle,
             reason: nil,
@@ -440,43 +436,7 @@ defmodule Flezha.Shutdown.Coordinator do
     end)
   end
 
-  defp drain_hub(ns, budget) do
-    hub_id = Identificator.hub(ns)
-    deadline = monotonic_ms() + budget
-
-    if ProcessHub.is_alive?(hub_id) do
-      drain_timeout = max(budget - @forced_handover_grace_ms, 1_000)
-      result = ProcessHub.Service.Migration.drain(hub_id, timeout: drain_timeout)
-
-      # `drain/2` returns once the deferred list is empty, but the migration
-      # start requests are async and HotSwap stops a local child only AFTER
-      # the remote start succeeded. Locally-empty is the completion signal;
-      # stopping the hub earlier kills mid-flight handovers.
-      with {:ok, _} <- result, do: await_local_children_gone(hub_id, deadline)
-
-      result
-    else
-      {:error, :no_target_nodes}
-    end
-  catch
-    kind, reason -> {:error, {kind, reason}}
-  end
-
-  defp await_local_children_gone(hub_id, deadline) do
-    cond do
-      ProcessHub.process_list(hub_id, :local) == [] ->
-        :ok
-
-      monotonic_ms() >= deadline ->
-        :deadline
-
-      true ->
-        Process.sleep(100)
-        await_local_children_gone(hub_id, deadline)
-    end
-  catch
-    _kind, _reason -> :ok
-  end
+  defp drain_hub(ns, budget), do: HubManager.drain_hub(ns, budget_ms: budget)
 
   # One hub's drain verdict → `{migrated, forced}`. Every error degrades to
   # the no-peer path: the operatives terminate with the hub supervisor and

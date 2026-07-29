@@ -817,13 +817,21 @@ defmodule FlezhaTest do
 
     MessageTestHelper.flush(:hook_pstartup_recv)
 
-    # Make sure the states have been migrated.
-    for {operative_id, _info} <- operative_infos do
-      {:ok, json_state} = OperativeManager.get_segment_state(namespace, operative_id)
-
-      assert json_state ===
-               "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
-    end
+    # The tag converges when the registry row moves; the destination Overwatch
+    # still has to finish binding and take the handover before it can answer for
+    # its Segments. Poll that out — migrated-with-state is an eventual property,
+    # and reading it at the first converged tag races the bind.
+    assert eventually(
+             fn ->
+               Enum.all?(operative_infos, fn {operative_id, _info} ->
+                 OperativeManager.get_segment_state(namespace, operative_id) ===
+                   {:ok,
+                    "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"}
+               end)
+             end,
+             15_000
+           ),
+           "operative states did not survive the cross-controller migration"
 
     assert length(HubManager.get_hub_nodes(namespace, true)) === 1
 

@@ -191,19 +191,65 @@ defmodule Flezha.State.Registry do
   end
 
   @doc """
+  Every on-disk path that belongs to one Segment (WAL, all snapshots, the
+  outbox-dedup file, both compensation markers). Paths are returned whether or
+  not the file exists — the one definition of "this Segment's durable set",
+  shared by the hard-delete path and the cross-controller transfer.
+  """
+  @spec segment_files(segment_id()) :: [binary()]
+  def segment_files({_, _, _} = pid) do
+    [
+      wal_path(pid),
+      outbox_dedup_path(pid),
+      compensation_marker_path(pid, :intent),
+      compensation_marker_path(pid, :done)
+    ] ++ Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end)
+  end
+
+  @doc """
+  Resolve one basename from `segment_files/1` back to its full path, or `nil`
+  when the Segment's layout does not produce that name.
+
+  The `nil` is a guard, not a convenience: the cross-controller transfer takes
+  the name off the wire, and joining it onto `state_dir/1` would let a peer
+  address any path on the node. Snapshots are rebuilt from the seq in the name
+  rather than matched, since a node can legitimately be asked for a snapshot it
+  does not hold yet.
+  """
+  @spec segment_file_path(segment_id(), binary()) :: binary() | nil
+  def segment_file_path({_, _, segment_key} = pid, name) when is_binary(name) do
+    Enum.find(segment_files(pid), &(Path.basename(&1) == name)) ||
+      snapshot_file_path(pid, segment_key, name)
+  end
+
+  defp snapshot_file_path(pid, segment_key, name) do
+    with ["", seq_str] <-
+           String.split(name, encode_segment_key(segment_key) <> ".snap.", parts: 2),
+         {seq, ""} <- Integer.parse(seq_str) do
+      snapshot_path(pid, seq)
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Segment ids under one Operative class. `all_segments/0` walks the whole tree,
+  so this is the per-Operative view every caller actually wants.
+  """
+  @spec segments_of(binary()) :: [segment_id()]
+  def segments_of(operative_class) when is_binary(operative_class) do
+    all_segments() |> Enum.filter(fn {class, _, _} -> class == operative_class end)
+  end
+
+  @doc """
   Remove every on-disk file for one Segment (WAL, all snapshots, the
   outbox-dedup file). Idempotent: missing files are ignored. Used by the
   dynamic-mode hard-delete path (`Flezha.State.Supervisor.delete_segment/1`).
   """
   @spec delete_files(segment_id()) :: :ok
   def delete_files({operative_class, _, _} = pid) do
-    [
-      wal_path(pid),
-      outbox_dedup_path(pid),
-      compensation_marker_path(pid, :intent),
-      compensation_marker_path(pid, :done)
-    ]
-    |> Enum.concat(Enum.map(snapshot_paths(pid), fn {_seq, path} -> path end))
+    pid
+    |> segment_files()
     |> Enum.each(&File.rm/1)
 
     # Prune now-empty parent dirs so deleted state stops counting as durable

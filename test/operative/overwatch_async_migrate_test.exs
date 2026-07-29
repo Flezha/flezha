@@ -11,6 +11,8 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   use ExUnit.Case, async: false
 
   alias Flezha.Operative.Builder
+  alias Flezha.Operative.Overwatch
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.OperativeManager
 
   @namespace "default"
@@ -133,6 +135,67 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
     # Second migrate must be rejected as :busy.
     assert {:error, :busy} =
              GenServer.call(overwatch_pid, {:runner_migrate, "second"}, 1_000)
+  end
+
+  # fails when: the running-migrate branch commits the binding before the runner
+  # answers. A cross-node heal target is unreachable by construction (the runner
+  # registry is node-local), so the failed attempt would leave the operative
+  # naming a LIVE runner it cannot reach — `Convergence.Diff` then reads it as
+  # bound-and-healthy, drops it from `misbound_operatives`, and the wedge becomes
+  # permanently invisible.
+  test "a failed running-migrate leaves the binding untouched" do
+    Application.put_env(:flezha, :overwatch_ping_fn, fn _ -> {:error, :no_control_unit} end)
+
+    state = running_state()
+
+    assert {:reply, {:error, {:ping_failed, :no_control_unit}}, unchanged} =
+             Overwatch.handle_call({:runner_migrate, "runner_b"}, {self(), make_ref()}, state)
+
+    assert unchanged.runner_id == "runner_a"
+    assert unchanged.channel == :chan_a
+  end
+
+  # The success half — the binding IS committed once the runner answers — is
+  # covered end-to-end against a real runner by `flezha_test.exs` "runner
+  # disconnect migrate op".
+
+  # fails when: `alter_handover_state` marks `arrived_via_hotswap?` even for a
+  # handover that carried nothing. The flag suppresses the per-Segment WAL
+  # restore at bind time AND the explicit `kick_restore` repair, so a migration
+  # away from a DEAD runner — where the state source is gone and the handover is
+  # empty by construction — starts fresh and can never be replayed back.
+  test "an empty handover does not suppress the WAL restore" do
+    handover = %{
+      id: "handover_guard",
+      namespace: @namespace,
+      factory_id: @factory,
+      init_values: %{},
+      plugins: []
+    }
+
+    state = running_state()
+
+    # The struct has no reachable control unit, so the deserialization dispatch
+    # logs an error it is designed to tolerate; the flag is the assertion.
+    ExUnit.CaptureLog.capture_log(fn ->
+      refute Overwatch.alter_handover_state(state, {handover, nil}).arrived_via_hotswap?
+      refute Overwatch.alter_handover_state(state, {handover, <<>>}).arrived_via_hotswap?
+      assert Overwatch.alter_handover_state(state, {handover, "sdk-state"}).arrived_via_hotswap?
+    end)
+  end
+
+  defp running_state() do
+    id = "migrate_bind_guard"
+
+    %Overwatch{
+      id: id,
+      namespace: @namespace,
+      runner_id: "runner_a",
+      factory_id: @factory,
+      channel: :chan_a,
+      builder: %Builder{id: id, factory_id: @factory, opts: []},
+      extensions: Table.new(Overwatch.__extensions_catalog__())
+    }
   end
 
   defp eventually(fun, timeout \\ 2_000) do

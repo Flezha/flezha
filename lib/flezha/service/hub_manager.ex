@@ -25,6 +25,12 @@ defmodule Flezha.Service.HubManager do
   # out, so every operative-oriented walker (Convergence, RecoveryGate,
   # ShutdownCoordinator, the CLI, metrics) ignores it.
   @schedule_hub_id :flz_schedules
+  # Default ceiling on one `drain_hub/2`. The graceful-shutdown path passes its
+  # own per-hub slice of the shutdown budget instead.
+  @drain_budget_ms 60_000
+  # A force pass fires AT the drain deadline and its handover is async, so this
+  # window is carved out of the drain timeout to let it land.
+  @forced_handover_grace_ms 2_000
 
   def start_link(_) do
     Supervisor.start_link(__MODULE__, [], name: __MODULE__)
@@ -194,6 +200,52 @@ defmodule Flezha.Service.HubManager do
   def stop_hub_if_vacant(namespace) do
     unless registered_operatives?(namespace), do: stop_hub(namespace)
     :ok
+  end
+
+  @doc """
+  Migrate every locally-hosted operative of `namespace` to a peer controller
+  through the migration-consent gate (live HotSwap handover), then wait for the
+  local children to actually be gone.
+
+  The wait is load-bearing: `Migration.drain/2` returns once the deferred list
+  is empty, but the migration start requests are async and HotSwap stops a
+  local child only AFTER the remote start succeeds. Locally-empty is the
+  completion signal — acting on `drain/2`'s return alone kills mid-flight
+  handovers. `:budget_ms` bounds the whole call; `:handover_grace_ms` is carved
+  off it so the deadline force pass can land before the caller moves on.
+
+  The one drain seam: graceful shutdown and the last-runner migration both
+  reach ProcessHub through here.
+  """
+  @spec drain_hub(binary(), keyword()) :: {:ok, map()} | {:error, term()} | :deadline
+  def drain_hub(namespace, opts \\ []) do
+    budget = Keyword.get(opts, :budget_ms, @drain_budget_ms)
+    grace = Keyword.get(opts, :handover_grace_ms, @forced_handover_grace_ms)
+    deadline = System.monotonic_time(:millisecond) + budget
+
+    with_live_hub(namespace, {:error, :no_target_nodes}, fn hub_id ->
+      result = ProcessHub.Service.Migration.drain(hub_id, timeout: max(budget - grace, 1_000))
+      with {:ok, _} <- result, do: await_local_children_gone(hub_id, deadline)
+      result
+    end)
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp await_local_children_gone(hub_id, deadline) do
+    cond do
+      ProcessHub.process_list(hub_id, :local) == [] ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        :deadline
+
+      true ->
+        Process.sleep(100)
+        await_local_children_gone(hub_id, deadline)
+    end
+  catch
+    _kind, _reason -> :ok
   end
 
   defp wipe_registry_dir(hub_id) do

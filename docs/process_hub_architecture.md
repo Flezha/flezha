@@ -154,9 +154,20 @@ lives in `FleetManager` (`lib/flezha/runner/fleet_manager.ex`):
   `Overwatch.runner_migrate` → `start_operative_sdk` → `AddOperative`
   protobuf to the surviving runner).
 - Branch B — no runners here, but other controllers serve this namespace:
-  `hub_migrate` tears down the local namespace hub. ProcessHub redistributes
-  its slice to peer controllers. Returning runner gets new work next time
-  ProcessHub places something on it.
+  `hub_migrate` **drains** the local namespace hub
+  (`HubManager.drain_hub/2` → `ProcessHub.Service.Migration.drain/2`), so each
+  operative leaves through the migration-consent gate with a live HotSwap
+  handover rather than being killed with the hub. Because the runner that would
+  have serialized the state is the one that just died, the handover is empty and
+  the destination pulls the Segment files from this node
+  (`Flezha.State.WalTransfer`) — `state_root` is node-local and never assumed
+  shared. The hub is reclaimed afterwards only if it ends up vacant. The drain
+  runs off the FleetManager loop, since it blocks to its deadline, on a
+  deliberately **short** budget (5 s, against graceful shutdown's 60 s): a drain
+  holds this node out of the namespace's distribution for its whole duration, so
+  a long one would leave a runner that reconnects seconds later facing its own
+  node still drained. Whatever does not migrate inside the window simply stays,
+  visible and misbound, for the convergence loop.
 - Branch C — last runner in the namespace cluster: mark `:inactive` with a
   timestamp. If the runner reconnects within `runner_keepalive`
   (default 30 s, env var `FLEZHA_OPERATOR_KEEPALIVE`),

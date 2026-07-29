@@ -70,6 +70,36 @@ Configurable root via `:flezha, :state_root` (default `app_data/state`).
 | `Flezha.State.Retention` | Periodic sweeper enforcing `time_travel_retention_hours`. |
 | `Flezha.State.Restore` | Assembles `RestoreInitState` payload (snapshot + tail WAL). |
 | `Flezha.State.TimeTravel` | Point-in-time query engine backing `flz state at`. |
+| `Flezha.State.WalTransfer` | Cross-controller, destination-pulled copy of one Segment's durable files at migration time. See below. |
+
+## Cross-controller transfer
+
+`state_root` is **node-local and never assumed shared**. That makes an
+operative's durable state a pin to the controller whose disk holds it, and a
+migration to another controller has to move the files or lose them.
+
+A HotSwap handover normally carries the state in-band — but
+`Overwatch.prepare_handover_state/1` sources it from the **runner**, so the one
+migration triggered by a runner's death (`hub_migrate`, when a controller loses
+its last runner for a namespace) necessarily ships an empty payload. That is
+where `Flezha.State.WalTransfer` runs: the handover stamps `source_node`, and an
+empty payload makes the destination pull every Segment of the operative from
+that node before driving the ordinary replay.
+
+The transfer is **destination-driven** — the source only answers reads
+(`segments/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source that
+dies mid-transfer fails the pull rather than stranding a partial file. Each file
+is written to a `.transferring` sibling, fsynced, then atomically renamed;
+any failure removes the artefact and leaves that Segment cold rather than
+half-restored. A requested name is resolved against
+`Registry.segment_files/1`, never joined onto the state directory, so a peer
+cannot read arbitrary paths off the node. Telemetry:
+`[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
+
+Source files are left in place; the Retention sweeper reaps orphans.
+
+This is **one-shot at migration time, not replication**. A controller that dies
+together with its disk takes its operatives' state with it.
 
 ## WAL record format
 

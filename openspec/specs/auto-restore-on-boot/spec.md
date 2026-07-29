@@ -101,75 +101,79 @@ This works identically across: ProcessHub-driven cold-boot replay, fresh `flz op
 
 #### Scenario: HotSwap-arrived Segment skips dispatch
 
-- **GIVEN** a Operative arrives via HotSwap; `arrived_via_hotswap? = true`
+- **GIVEN** a Operative arrives via HotSwap carrying a non-empty serialized state; `arrived_via_hotswap? = true`
 - **WHEN** the Segment's data stream attaches
 - **THEN** `dispatch_restore_init_state/2` SHALL NOT fire; the in-band handover state is the basis for going-forward processing
 
-### Requirement: Pull-on-attach recovers WAL when ProcessHub places a Segment on a node without local state
+#### Scenario: HotSwap-arrived Segment with an EMPTY handover does not skip dispatch
 
-When `dispatch_restore_init_state/2` fires for a Segment AND `Restore.assemble_payload/1` returns an empty payload AND the cspec indicates a previously-running operative (i.e. ProcessHub's persistent registry held this row before today's controller boot), the controller SHALL attempt a one-shot WAL/snapshot transfer from peer controllers before falling through to cold-start `operative-init-state`.
+- **GIVEN** a Operative migrates while its source runner is already gone, so `prepare_handover_state/1` has no runner to serialize from and ships an empty payload
+- **WHEN** `alter_handover_state/2` runs on the destination
+- **THEN** `arrived_via_hotswap?` SHALL remain `false` — an empty handover carries nothing to double-apply, and the on-disk state is the only surviving copy
+- **AND** neither the bind-time restore nor the `kick_restore` repair SHALL be suppressed
 
-Protocol:
+### Requirement: A migration whose handover is empty SHALL pull the source controller's Segment files
 
-1. Broadcast `Flezha.Boot.WalTransfer.query/1` Erlang-RPC to all peer controllers serving the same namespace, with the segment key `{operative_class, operation_id, segment_key}`.
-2. Each peer responds (timeout `:flezha, :wal_transfer_query_timeout_ms`, default `2_000`) with `:none` or `{:ok, %{last_persisted_seq: N, snapshot_seq: M, file_sizes: %{}}}`.
-3. Select the highest-`last_persisted_seq` peer (lexicographic tiebreaker on node name); if all peers respond `:none`, log INFO and proceed with cold start.
-4. Stream the selected peer's `app_data/state/{operative_class}/{operation_id}/{segment_key}.{wal,snap.<latest>,outbox.dedup}` files via `WalTransfer.stream/2`. Write to `.transferring` files first, fsync, atomic rename.
-5. On peer-disconnect-mid-stream, retry against the next-best peer once; on second failure, delete `.transferring` files, log WARN, fall through to cold start.
-6. After successful transfer, re-invoke `Restore.assemble_payload/1` and continue the dispatch flow.
-7. Telemetry: `[:flezha, :boot, :wal_pulled]` on success; `[:flezha, :boot, :wal_pull_failed]` on failure.
+`state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operative's state from its **runner**, so a migration triggered by that runner's death necessarily ships an empty payload — and the source controller's disk then holds the only surviving copy.
 
-Pull-on-attach SHALL fire AT MOST ONCE per Segment per cluster lifecycle. Once local WAL exists, future restarts skip the peer query.
+`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every Segment of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then drive the ordinary per-Segment replay (`{:kick_restore, runner_id}`).
 
-#### Scenario: Cold-boot redistribution drift recovered by pull-on-attach
+The pull SHALL be:
 
-- **GIVEN** a 3-controller cluster; staggered graceful shutdowns; all return together; ProcessHub places operative `X` (which migrated A→B→C) back on its hash-original owner A
-- **WHEN** ProcessHub recovers, A's coordinator transitions to `:normal`, the SDK opens X's Segment stream, and `dispatch_restore_init_state/2` fires
-- **AND** A's local WAL is older than C's
-- **THEN** A broadcasts the WAL-availability query; C responds with the highest seq; A pulls C's WAL files via streaming RPC
-- **AND** A's local WAL after pull matches C's pre-shutdown state byte-for-byte
+1. **Destination-driven.** The source only answers reads (`segments/1`, `manifest/1`, `read_chunk/3` over `:erpc`), so a source that dies mid-transfer fails the pull instead of stranding a partial file on the destination.
+2. **Atomic per file.** Chunks are written to a `.transferring` sibling, fsynced, then renamed onto the destination path. Any failure removes the artefact and leaves that Segment cold — never half-restored.
+3. **Scoped by the Segment's own file set.** A requested name is resolved against `Flezha.State.Registry.segment_files/1`, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
+4. **Off the Overwatch loop**, since the copy is bounded by file size.
+5. **Non-fatal.** A Segment that cannot be pulled is skipped; the operative keeps the Segments that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
 
-#### Scenario: Pull retries once on peer disconnect
+Source-side files SHALL NOT be deleted at migration completion; the Retention sweeper reaps orphans.
 
-- **GIVEN** A starts pulling 500 MB WAL from C; C crashes at 200 MB
-- **WHEN** the streaming RPC errors with `:nodedown`
-- **THEN** A retries the query; B responds with the next-best `last_persisted_seq`; A pulls from B
-- **AND** if B also fails, A logs WARN, deletes `.transferring` files, and falls through to cold start
+This is one-shot transfer at migration time, NOT replication: a controller that dies together with its disk takes its operatives' state with it.
 
-#### Scenario: All peers respond `:none` — fall through to cold start
+#### Scenario: Controller loses all runners — operatives migrate with their state
 
-- **GIVEN** the WAL files do not exist on any controller
-- **WHEN** pull-on-attach broadcasts the query
-- **THEN** all peers respond `:none`; the controller logs INFO and proceeds with `operative-init-state` cold-start chain
+- **GIVEN** controller A hosting operative `p1` with Segment state on A's local disk; peer controller B with a runner for `p1`'s factory
+- **WHEN** A's last runner disconnects and `hub_migrate` drains the namespace hub
+- **THEN** `p1` migrates to B through the consent gate
+- **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Segment files from A and replays them
+- **AND** `p1` resumes on B with its pre-migration state; A's files remain on A until Retention sweeps them
 
-### Requirement: HotSwap migration also transfers WAL files (WAL-follows-operative)
+#### Scenario: A peer cannot read outside the Segment's file set
 
-When a HotSwap migration completes on the destination controller (`Overwatch.alter_handover_state/2` fires), the destination SHALL pull the source's WAL/snapshot files via `WalTransfer.stream/2` for each Segment, in parallel with consuming the in-memory handover state.
+- **GIVEN** a destination requesting file name `../../../etc/passwd` for a Segment
+- **WHEN** `read_chunk/3` runs on the source
+- **THEN** it SHALL return `{:error, :not_in_manifest}` and read nothing
 
-Source-side WAL files SHALL NOT be deleted at HotSwap completion. The destination's `WalWriter` opens the pulled WAL file and continues appending from `last_persisted_seq + 1` going forward. Source orphans are reaped by the existing Retention sweeper.
+#### Scenario: A failed pull leaves no partial file
 
-If the WAL transfer fails, the destination SHALL log ERROR with the segment_id and start with a fresh empty WAL — the in-memory handover state is authoritative; write-ahead-logging resumes from a clean slate.
+- **GIVEN** a transfer that errors part-way through a file
+- **WHEN** the destination handles the error
+- **THEN** the `.transferring` artefact SHALL be removed and the destination path SHALL NOT exist
 
-#### Scenario: HotSwap pulls WAL alongside in-memory handover
+### Requirement: `hub_migrate` SHALL drain the hub so operatives leave with handover
 
-- **GIVEN** operative `p1` running on A; HotSwap to B
-- **WHEN** B's `alter_handover_state/2` consumes A's in-memory state
-- **THEN** B also streams A's WAL files into B's local `app_data/state/...`
-- **AND** B's WalWriter continues appending records starting at `seq = last_persisted_seq + 1`
-- **AND** A's WAL files remain on A's disk until Retention sweeps them
+`Flezha.Runner.FleetManager`'s `hub_migrate` path (`do_handle_runner_disconnect/2`, reached when this controller has no runner left for the namespace but peers do) SHALL migrate each child operative to a peer controller through a ProcessHub leave that honors `migration_strategy: HotSwap{handover: true}` — NOT via direct hub teardown, which would kill the Overwatches without a handover and orphan their state.
 
-### Requirement: `hub_migrate` SHALL invoke ProcessHub clean-leave to preserve state
+`ProcessHub.Service.Migration.drain/2` is that function: it removes the node from the distribution cluster-wide, migrates every local child through the migration-consent gate with live handover, force-migrates whatever still defers at the deadline, and dispatches `pre_node_leave`. It is reached through the single seam `Flezha.Service.HubManager.drain_hub/2`, shared with graceful shutdown.
 
-`Flezha.Runner.FleetManager`'s `hub_migrate` path (Branch B/C in `do_handle_runner_disconnect/2`) SHALL invoke `ProcessHub.leave/2` (or whichever ProcessHub-provided leave function honors `migration_strategy: HotSwap{handover: true}`) such that each child operative migrates to a peer controller via state-preserving handover, NOT via direct hub teardown that would orphan state on the leaving node.
+`drain_hub/2` SHALL wait for the local children to actually be gone before its caller proceeds: `drain/2` returns once the deferred list is empty, but the migration start requests are async and HotSwap stops a local child only AFTER the remote start succeeds — stopping the hub on `drain/2`'s return alone kills mid-flight handovers.
 
-This is a verify-and-fix requirement: if the current implementation already invokes `ProcessHub.leave/2`, add a regression test. If it bypasses the migration strategy, change the implementation to honor it.
+The drain SHALL run off the `FleetManager` loop, since it blocks to its deadline and the disconnecting runner's call is waiting on that process. The hub is reclaimed afterwards only if it is vacant (`stop_hub_if_vacant/1`), so a fleet that could not migrate stays addressable.
 
-#### Scenario: Controller loses all runners — operatives migrate with state to peers
+Its budget SHALL be short relative to graceful shutdown's. A drain holds this node out of the namespace's distribution for its whole duration, and this path is opportunistic — a runner may reconnect here seconds later, and the namespace may be torn down and restarted underneath. Whatever does not migrate inside the window stays put, visible and misbound, for the convergence loop; a long budget buys nothing and widens the window in which a returning runner finds its own node still drained.
 
-- **GIVEN** controller A with operative `p1` (state at seq=500); peer controller B with capacity for `p1`'s factory
-- **WHEN** A's runners all disconnect; FleetManager enters Branch B and invokes `hub_migrate`
-- **THEN** ProcessHub HotSwaps `p1` from A to B with handover; B's `alter_handover_state/2` receives the in-memory state; B's WalTransfer pulls the WAL from A
-- **AND** `p1` resumes on B with terminal seq=500; no data loss
+#### Scenario: A returning runner is not blocked by a stale drain
+
+- **GIVEN** controller A drained its namespace hub after losing its last runner
+- **WHEN** a runner reconnects to A shortly afterwards
+- **THEN** the drain's hold on A's place in the distribution SHALL already have lapsed, rather than persisting for a shutdown-length budget
+
+#### Scenario: Drain precedes hub teardown
+
+- **GIVEN** controller A whose last runner for a namespace disconnects, with peer controller B in the hub cluster
+- **WHEN** `hub_migrate` runs
+- **THEN** the namespace hub SHALL be drained first, and only then reclaimed if it holds no registered operatives
+- **AND** the `FleetManager` call handling the disconnect SHALL NOT block on the drain
 
 ### Requirement: State-directory cleanup ONLY on explicit operative stop
 

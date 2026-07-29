@@ -639,8 +639,30 @@ defmodule Flezha.Runner.FleetManager do
     Map.delete(state.runner_namespaces[namespace] || %{}, runner_id)
   end
 
+  # This controller has no runner left for the namespace but peers do, so its
+  # operatives cannot run here — they must move to a controller that can host
+  # them. The drain migrates each one through the consent gate with live
+  # handover; the destination pulls the durable files it cannot otherwise reach
+  # (`Flezha.State.WalTransfer`), since `state_root` is node-local.
+  #
+  # Off-process: the drain blocks to its deadline and this runs inside the
+  # FleetManager call that the disconnecting runner is waiting on.
+  #
+  # Deliberately a SHORT budget, unlike graceful shutdown's. A drain takes this
+  # node out of the namespace's distribution for its whole duration, and this
+  # path is opportunistic: a runner may reconnect here seconds later, and the
+  # namespace may even be torn down and restarted underneath. Whatever does not
+  # migrate inside the window simply stays, visible and misbound, for the
+  # convergence loop — so a long budget buys nothing and widens the window in
+  # which a returning runner finds its own node still drained.
+  @migrate_drain_budget_ms 5_000
+
   defp hub_migrate(_state, namespace, _runner_id) do
-    HubManager.stop_hub_if_vacant(namespace)
+    spawn(fn ->
+      _ = HubManager.drain_hub(namespace, budget_ms: @migrate_drain_budget_ms)
+      HubManager.stop_hub_if_vacant(namespace)
+    end)
+
     %{}
   end
 

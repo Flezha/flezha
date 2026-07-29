@@ -13,7 +13,17 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{InputLog, OpInbox, OpJournal, PersistenceResolver, Restore, Wire}
+
+  alias Flezha.State.{
+    InputLog,
+    OpInbox,
+    OpJournal,
+    PersistenceResolver,
+    Restore,
+    WalTransfer,
+    Wire
+  }
+
   alias Flezha.Transport.LivenessCounters
 
   # Defaults for the bounded-retry governor introduced by
@@ -492,7 +502,7 @@ defmodule Flezha.Operative.Overwatch do
   defp restorable_segments(kind, operative_class) do
     if PersistenceResolver.persistent_state?(kind, operative_class) do
       operative_class
-      |> enumerate_persisted_segments()
+      |> Flezha.State.Registry.segments_of()
       |> Enum.filter(&Restore.has_persisted_state?/1)
     else
       []
@@ -750,11 +760,6 @@ defmodule Flezha.Operative.Overwatch do
   def kick_restore_for_bound_runner(overwatch_pid, runner_id)
       when is_pid(overwatch_pid) and is_binary(runner_id) do
     GenServer.cast(overwatch_pid, {:kick_restore, runner_id})
-  end
-
-  defp enumerate_persisted_segments(operative_class) do
-    Flezha.State.Registry.all_segments()
-    |> Enum.filter(fn {rc, _, _} -> rc == operative_class end)
   end
 
   @doc """
@@ -1483,11 +1488,13 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, :ok, %{state | migrate_task: %{ref: ref, pid: pid, mode: :unpark}}}
   end
 
+  # The binding is committed only once the runner has answered. Committing it
+  # first leaves a failed migrate naming a runner this process cannot reach —
+  # the operative then reads as bound to a LIVE runner, so `Convergence.Diff`
+  # stops classifying it misbound and the divergence hides itself permanently.
   def handle_call({:runner_migrate, new_runner_id}, _from, %__MODULE__{} = state) do
-    state = bind_to_runner(state, state.id, new_runner_id)
-
     case attempt_ping_and_start(migrate_operative(state), new_runner_id) do
-      {:ok, _} -> {:reply, :ok, state}
+      {:ok, _} -> {:reply, :ok, bind_to_runner(state, state.id, new_runner_id)}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
@@ -1868,7 +1875,11 @@ defmodule Flezha.Operative.Overwatch do
       namespace: state.namespace,
       factory_id: state.factory_id,
       init_values: state.init_values,
-      plugins: Table.serializable_plugins(state.extensions)
+      plugins: Table.serializable_plugins(state.extensions),
+      # Where this operative's durable files are. `serialize_data` is nil
+      # whenever the source runner is already gone, and then the disk is the
+      # only surviving state — the destination pulls it from here.
+      source_node: node()
     }
 
     {handover, serialize_data}
@@ -1904,13 +1915,53 @@ defmodule Flezha.Operative.Overwatch do
     table = Table.teardown_all(state.extensions)
     rehydrated = Table.rehydrate(table, Map.get(handover_state, :plugins, []))
 
-    %__MODULE__{
-      state
-      | extensions: Table.bulk_activate(rehydrated, activation_env(state)),
-        init_values: handover_state.init_values,
-        arrived_via_hotswap?: true
-    }
+    migrated =
+      %__MODULE__{
+        state
+        | extensions: Table.bulk_activate(rehydrated, activation_env(state)),
+          init_values: handover_state.init_values,
+          # Only a handover that actually carried state suppresses the WAL
+          # restore. An empty one carries nothing to double-apply, so the
+          # operative must fall through to its on-disk state — otherwise a
+          # migration away from a dead runner starts fresh AND locks the
+          # replay out, including the explicit `kick_restore` repair.
+          arrived_via_hotswap?: serialized_state != <<>>
+      }
+
+    if migrated.arrived_via_hotswap?,
+      do: migrated,
+      else: adopt_source_state(migrated, Map.get(handover_state, :source_node))
   end
+
+  # An empty handover means the source runner was already gone, so the source
+  # controller's DISK holds the only surviving state — and `state_root` is
+  # node-local, never assumed shared. Pull it before replaying, off-process:
+  # this runs inside ProcessHub's migration call and the copy is bounded by
+  # file size, not by anything this process should block on.
+  defp adopt_source_state(
+         %__MODULE__{runner_id: runner_id} = state,
+         source_node
+       )
+       when is_atom(source_node) and source_node != nil and is_binary(runner_id) do
+    operative_class = operative_class(state)
+    overwatch = self()
+
+    spawn(fn ->
+      if WalTransfer.pull_operative(source_node, operative_class) > 0 do
+        # The sanctioned restore trigger — the same one the convergence heal
+        # reaches through `State.Recovery.resync_for_overwatch/2`. Its
+        # `arrived_via_hotswap?` gate is false here precisely because the
+        # handover was empty.
+        kick_restore_for_bound_runner(overwatch, runner_id)
+      end
+    end)
+
+    state
+  end
+
+  # No source to pull from, or nothing bound yet to replay onto — the ordinary
+  # bind-time restore covers the latter once a runner is resolved.
+  defp adopt_source_state(%__MODULE__{} = state, _source_node), do: state
 
   # Busy classification for ProcessHub's migration consent: defer while a
   # correction is pending, while a durable bounded is off an iteration

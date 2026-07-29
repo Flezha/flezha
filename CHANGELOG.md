@@ -63,6 +63,29 @@
 
 ### Fixed
 
+- A controller that lost **every runner** for a namespace could neither keep its
+  operatives nor move them, and the healing machinery hid the damage
+  (`fix-last-runner-migration-state-loss`). Three defects compounded:
+  `hub_migrate` had been reduced to a vacancy check that no-ops exactly when the
+  hub still holds operatives — i.e. whenever there is something to migrate;
+  `:runner_migrate` committed the binding *before* the runner answered, so a
+  failed heal left the operative naming a **live but unreachable** runner, which
+  made `Convergence.Diff` stop classifying it misbound and emptied the delta
+  permanently; and because a handover serializes its state from the **runner**,
+  a migration caused by that runner's death shipped an empty payload while still
+  marking `arrived_via_hotswap?`, which suppressed the WAL restore *and* the
+  explicit repair path. The binding is now committed only on success, the flag
+  only when the handover carried state, and `hub_migrate` drains the hub
+  (`HubManager.drain_hub/2`, the seam graceful shutdown already used) so
+  operatives leave through a live HotSwap handover. New
+  `Flezha.State.WalTransfer` moves what the handover cannot: a
+  destination-pulled, chunked `:erpc` copy of the Segment's durable files,
+  written to a `.transferring` sibling that is fsynced and atomically renamed,
+  with names resolved through the Segment's own file set so a peer cannot read
+  arbitrary paths. `state_root` stays node-local and is never assumed shared.
+  One-shot at migration time, not replication — a controller that dies together
+  with its disk still takes its state with it.
+
 - A durable bounded operative whose operations hold **no per-Segment state**
   went silent after its first turn. The op-journal is instance-scoped but rode
   `RestoreInitState.op_journal`, a per-Segment frame — and such a class has no
