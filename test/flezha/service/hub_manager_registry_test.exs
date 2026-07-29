@@ -14,6 +14,7 @@ defmodule Flezha.Service.HubManagerRegistryTest do
   alias Flezha.Convergence.Snapshot
   import FlezhaTest.Helper.HubRegistryTestHelper
 
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
 
   @namespace "mn_registry_test"
@@ -144,9 +145,26 @@ defmodule Flezha.Service.HubManagerRegistryTest do
       # unstarted-hub on-disk branch stays out of these assertions). Then flip
       # the flag on — the detection only runs when auto-restore is enabled.
       # `durable_registry_pending?/0` reads EVERY running hub, so an unbound row
-      # left by an earlier file answers for this one. Retire those hubs first.
-      Enum.each(HubManager.get_running_namespaces(), fn ns ->
-        if ns != @pending_ns, do: HubManager.stop_hub(ns)
+      # left by an earlier file answers for this one. Retire those hubs first —
+      # and bring them back afterwards: `default` is shared suite-wide, and
+      # leaving it down makes every later `start_operative` fail
+      # `Validator.valid_namespace/1` with "no runners in namespace default".
+      retired =
+        HubManager.get_running_namespaces()
+        |> Enum.reject(&(&1 == @pending_ns))
+
+      Enum.each(retired, &HubManager.stop_hub/1)
+
+      # Restoring the hub is not enough: each runner's `child_registered` hook
+      # was registered against the hub we just stopped, and without it a fresh
+      # hub never seeds the StreamChannels' operative routes — so every later
+      # data-plane test (state reads, migration, drain handover) silently gets
+      # no frames back.
+      on_exit(fn ->
+        Enum.each(retired, fn ns ->
+          ensure_hub(ns)
+          Enum.each(FleetManager.active_runners(ns), &HubManager.register_handler(ns, &1))
+        end)
       end)
 
       {:ok, _} = ensure_hub(@pending_ns)
