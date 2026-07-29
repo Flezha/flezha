@@ -60,6 +60,46 @@ public interface OperationCtx {
     void checkpoint();
 
     /**
+     * Ask the controller for a bounded instance: start {@code factoryId} under
+     * {@code instanceId} if that id is free, otherwise apply {@code ifRunning}
+     * ({@link IfRunning#DELIVER} feeds the running instance,
+     * {@link IfRunning#ERROR} reports {@link SpawnException.AlreadyRunning}).
+     * {@code payload} is the instance's first input on a spawn, one more input
+     * on a delivery.
+     *
+     * <p>Returns immediately. The request cannot fault this operation: a
+     * refusal, an unreachable controller, or an unknown factory surfaces only
+     * through the returned {@link SpawnHandle} — or, if the handle is never
+     * inspected, as one warning line.
+     *
+     * <p>Concurrent requests for one {@code instanceId} race-resolve
+     * controller-side: exactly one spawns and every other payload is delivered
+     * to it.
+     *
+     * <p>Spawning is a side effect of <b>live</b> processing. Replayed input — a
+     * crash-resume or a late-input correction re-running this invocation —
+     * issues no request and answers {@link SpawnOutcome#SKIPPED_ON_REPLAY}, so a
+     * replay never doubles the workers a run created.
+     */
+    @Nonnull
+    default SpawnHandle spawnBounded(
+            @Nonnull String instanceId,
+            @Nonnull String factoryId,
+            @Nonnull byte[] payload,
+            @Nonnull IfRunning ifRunning) {
+        return SpawnRequests.request(instanceId, factoryId, payload, ifRunning, replaying());
+    }
+
+    /**
+     * Whether this invocation is re-running already-processed input. Runtime
+     * detail: the dispatcher overrides it, and it is what makes
+     * {@link #spawnBounded} a live-processing-only side effect.
+     */
+    default boolean replaying() {
+        return false;
+    }
+
+    /**
      * Emit on a channel declared {@code .keyed()}, supplying the output's
      * natural key. The runtime stamps {@code flz.key} (alongside
      * {@code flz.segment} and {@code flz.seq}) on the plugin frame, which is

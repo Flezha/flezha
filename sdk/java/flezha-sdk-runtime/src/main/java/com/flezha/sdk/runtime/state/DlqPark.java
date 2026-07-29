@@ -137,7 +137,7 @@ public final class DlqPark {
 
         // Register before the first send: the ack can then never outrun the
         // waiter, which is what lets the shared registry stay race-free.
-        CompletableFuture<Void> ack = AckRegistry.register(body.parkId());
+        CompletableFuture<String> ack = AckRegistry.register(body.parkId());
         long resends = 0;
         while (true) {
             SegmentStateSink.send(PAYLOAD_ID_PARK, frame);

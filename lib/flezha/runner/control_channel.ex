@@ -236,6 +236,10 @@ defmodule Flezha.Runner.ControlChannel do
         handle_update_factories(state, update)
         {:noreply, state}
 
+      {:spawn_bounded_request, %{} = request, reference_id} ->
+        handle_spawn_bounded(state, request, reference_id)
+        {:noreply, state}
+
       :not_sdk_initiated ->
         GenServer.cast(state.control_unit, {:handle_payload, message})
         {:noreply, state}
@@ -246,6 +250,21 @@ defmodule Flezha.Runner.ControlChannel do
   @impl true
   def handle_info({:flz_closed, _stream_id, _reason}, state) do
     handle_connection_closed(state)
+  end
+
+  # The spawn resolution ran off-process; write its reply on this channel, which
+  # is the one process allowed to write control frames.
+  @impl true
+  def handle_info({:spawn_bounded_result, reference_id, outcome, error}, state) do
+    emit_control_request(
+      state,
+      reference_id,
+      {:spawn_bounded_response,
+       %RunnerCommands.SpawnBoundedResponse{outcome: outcome, error: error}},
+      "spawn-bounded response #{outcome}"
+    )
+
+    {:noreply, state}
   end
 
   # Retry a journaled outbox whose operative was not bound when the flush was
@@ -353,7 +372,8 @@ defmodule Flezha.Runner.ControlChannel do
     :op_commit,
     :iter_commit,
     :iter_park,
-    :update_factories
+    :update_factories,
+    :spawn_bounded_request
   ]
 
   defp decode_sdk_initiated(message) do
@@ -718,6 +738,63 @@ defmodule Flezha.Runner.ControlChannel do
       end
     end)
   end
+
+  # An operation asked for a bounded instance (`ctx.spawn_bounded`). The
+  # namespace is this channel's — never the requester's claim — so a request
+  # cannot reach another namespace.
+  #
+  # Off this process: the resolution starts an operative, which drives
+  # `AddOperative` and waits for its response on THIS control stream; running it
+  # inline would deadlock the reader (same reason as the bounded-completed
+  # teardown). The reply is written back through `handle_info/2` so control
+  # writes stay on this process.
+  defp handle_spawn_bounded(state, request, reference_id) do
+    %RunnerCommands.SpawnBoundedRequest{
+      instance_id: instance_id,
+      factory_id: factory_id,
+      payload: payload,
+      if_running: if_running
+    } = request
+
+    namespace = state.namespace
+    channel = self()
+
+    Task.start(fn ->
+      outcome =
+        OperativeManager.spawn_or_deliver(
+          namespace,
+          instance_id,
+          factory_id,
+          payload,
+          if_running(if_running)
+        )
+
+      {name, error} = spawn_reply(outcome)
+
+      :telemetry.execute(
+        [:flezha, :operative, :requested_spawn],
+        %{count: 1},
+        %{
+          namespace: namespace,
+          instance_id: instance_id,
+          factory_id: factory_id,
+          outcome: name
+        }
+      )
+
+      send(channel, {:spawn_bounded_result, reference_id, Atom.to_string(name), error})
+    end)
+  end
+
+  # An unrecognised policy reads as the default: a requester on a newer SDK
+  # must never have its payload silently refused by an older controller.
+  defp if_running("error"), do: :error
+  defp if_running(_), do: :deliver
+
+  # `{:refused, reason}` is the only outcome carrying detail; the rest are their
+  # own name with nothing attached.
+  defp spawn_reply({:refused, reason}), do: {:refused, reason}
+  defp spawn_reply(outcome), do: {outcome, ""}
 
   # Full-set replacement of this runner's declared factory list after a
   # post-start define/remove (sdk-runner-entrypoint-redesign). Fire-and-forget

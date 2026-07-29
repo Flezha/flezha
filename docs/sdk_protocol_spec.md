@@ -1711,6 +1711,48 @@ operatives bound to that runner (the suspended-instance removal hole —
 see `docs/resilience/bounded_operative.md`), FleetManager logs a warning
 naming the namespace, runner, factory id, and affected operatives.
 
+### Control command `SpawnBoundedRequest` (SDK → controller)
+
+```protobuf
+message SpawnBoundedRequest {
+    string instance_id = 1;
+    string factory_id  = 2;
+    bytes  payload     = 3;
+    string if_running  = 4;  // "deliver" (default) | "error"
+}
+```
+
+An operation asked for a bounded instance (`ctx.spawn_bounded` /
+`ctx.spawnBounded`, `add-operation-requested-spawn`). The controller spawns
+`factory_id` under `instance_id` when that id is free — with `payload` as the
+instance's first input — and otherwise applies `if_running`: `deliver` feeds
+`payload` to the running instance's inbox, `error` refuses. An unrecognised
+value reads as `deliver`, so a newer SDK's policy is never silently upgraded
+into a refusal by an older controller.
+
+**The namespace is not carried.** The controller takes it from the control
+channel the request arrived on, which is what makes cross-namespace spawning
+impossible by construction rather than by validation.
+
+Resolution runs off the control channel (it starts an operative, which drives
+`AddOperative` and awaits its response on that same stream). Concurrent
+requests for one `(namespace, instance_id)` race-resolve at the operative
+registry: exactly one start wins and every loser converts to a delivery.
+
+### Control command `SpawnBoundedResponse` (controller → SDK)
+
+```protobuf
+message SpawnBoundedResponse {
+    string outcome = 1;  // spawned | delivered | already_running
+                         // | factory_unknown | refused
+    string error   = 2;  // detail for `refused`; empty otherwise
+}
+```
+
+Carries the originating request's `reference_id` so the SDK wakes that
+requester's result handle. The reply never faults the requesting operation —
+it only resolves its handle; an unobserved handle logs the failure once.
+
 ### Data frame metadata: durable-inbox offset (`flz.inbox_offset`)
 
 Post-start input for a **durable bounded** instance is appended to the

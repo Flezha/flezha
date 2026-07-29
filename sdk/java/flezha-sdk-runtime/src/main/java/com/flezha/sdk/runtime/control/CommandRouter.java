@@ -116,6 +116,18 @@ public final class CommandRouter {
             case ITER_COMMIT_RESPONSE:
                 AckRegistry.complete(request.getReferenceId());
                 return;
+            case SPAWN_BOUNDED_RESPONSE:
+                // Operation-requested spawn resolved: wake the requester's
+                // SpawnHandle with the outcome the controller settled on.
+                com.flezha.sdk.proto.SpawnBoundedResponse spawn = request.getSpawnBoundedResponse();
+                if (spawn.getError().isEmpty()) {
+                    AckRegistry.complete(request.getReferenceId(), spawn.getOutcome());
+                } else {
+                    AckRegistry.fail(
+                            request.getReferenceId(),
+                            new com.flezha.sdk.operation.SpawnException.Refused(spawn.getError()));
+                }
+                return;
             case RUNNER_SHUTDOWN_NOTIFICATION:
                 LOG.warn(
                         "Received unexpected RunnerShutdownNotification (ref={}); ignoring — "

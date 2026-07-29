@@ -96,10 +96,10 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
     capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
 
-    expect(OperativeManager, :start_operative, fn "default", builder ->
-      assert builder.id =~ ~r/^digest@manual-\d+$/
-      assert builder.kind == :bounded
-      {:ok, %{operative_id: builder.id}}
+    expect(OperativeManager, :start_bounded, fn "default", id, factory_id, _init, _opts ->
+      assert id =~ ~r/^digest@manual-\d+$/
+      assert factory_id == "ai_digest"
+      {:ok, %{operative_id: id}}
     end)
 
     output = capture_io(fn -> CliManager.schedule_run("digest") end)

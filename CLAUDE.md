@@ -1,5 +1,60 @@
 # Flezha repo notes
 
+## Operation-requested spawn (`add-operation-requested-spawn`)
+
+- **`ctx.spawn_bounded` / `ctx.spawnBounded`** — spawn-or-deliver a bounded
+  instance from inside any operation, in the requester's own namespace. Free id
+  ⇒ spawn with the payload as the first input; taken id ⇒ deliver
+  (`IfRunning::Deliver`) or `already_running` (`Error`).
+- **The namespace is NOT on the wire.** `SpawnBoundedRequest{instance_id,
+  factory_id, payload, if_running}` (tag 34) + `SpawnBoundedResponse{outcome,
+  error}` (tag 35). The controller takes the namespace from the ControlChannel
+  the frame arrived on — cross-namespace spawning is impossible by
+  construction, not by validation.
+- **GOTCHA — the first-frame guarantee is `:seed_input`, not a follow-up send.**
+  The payload rides the Builder's `opts[:seed_input]` and is ingested by
+  `Overwatch.seed_input/2` INSIDE the bind `handle_continue`, so no other
+  mailbox message (including a concurrent requester's delivery) can be ingested
+  ahead of it. A start-then-send would lose that race. `fresh_inbox?/1` skips
+  the seed when a durable instance's inbox already holds entries — that is a
+  restart, not a spawn, and the cspec (which carries the seed) is replayed on
+  controller boot.
+- **`OperativeManager.start_bounded/5`** is the ONE place the registry's
+  duplicate-id refusal (`"operative id already in use"` → `:duplicate`) is
+  recognised; `Schedule.Job` and `spawn_or_deliver/5` both go through it.
+  `spawn_or_deliver/5` = existence check (`exist?/2`) → factory check
+  (`FleetManager.runners_for_factory`) → `start_bounded` → race-loser falls
+  back to `send_io_confirming` (the existing confirming ingest).
+- **GOTCHA — resolution must NOT run on the ControlChannel process.** It starts
+  an operative, which drives `AddOperative` and waits for the response on that
+  same control stream. `handle_spawn_bounded/3` runs in a `Task` and sends
+  `{:spawn_bounded_result, ...}` back so the reply frame is still written by the
+  channel process (same reason as the bounded-completed teardown).
+- **Failure isolation**: the SDK call returns a handle; refusals never reach
+  `run`. Rust drops an unobserved handle into ONE process-wide reaper thread
+  (`spawn.rs`); Java logs from the reply callback unless `await`/`tryResult`
+  claimed the handle first. Java additionally always logs the pre-resolved
+  `Unavailable` (no control plane) — documented asymmetry.
+- **`shutdown::AckResult` is now `Result<String, String>`** (was
+  `Result<(), String>`): the Ok payload carries the reply's outcome, empty for
+  bare acks. Java's `AckRegistry` future is `CompletableFuture<String>` with
+  `complete/2` + `fail/2`. One rendezvous, no second registry.
+- **`runner::coordinator_try_send`** reports whether the message reached a
+  coordinator; `coordinator_send` delegates to it. A stale trigger (closed
+  runner) now resolves a spawn as `Unavailable` instead of waiting out 30 s.
+- **Replay issues nothing** — `OperationCtx::during_replay` (Rust, set from
+  `SegmentPayload.replay`) / `OperationCtx.replaying()` (Java, threaded through
+  `InputEnvelope`) ⇒ `SkippedOnReplay`.
+- **Tests**: `test/flezha/service/operative_manager_spawn_test.exs` (ETS
+  `insert_new` stands in for the registry's atomic claim, so the concurrent
+  burst exercises the real race), `control_channel_spawn_bounded_test.exs`,
+  Rust `operation::tests::spawn`, Java `SpawnHandleTest` + `SpawnRequesterTest`.
+  GOTCHA: the Rust coordinator trigger is process-global — every test that
+  installs one takes `runner::env_test_guard()`.
+- **Docs**: `docs/operation_requested_spawn.md`, `docs/sdk_protocol_spec.md`,
+  `docs/resilience/bounded_operative.md`. Examples:
+  `sdk/rust/examples/spawn_bounded_worker.rs`, Java `E08_SpawnBoundedWorker`.
+
 ## Operative-to-operative messaging (`operative-to-operative-messaging`)
 
 - **The route already existed; only a VERDICT was missing.**

@@ -6,6 +6,7 @@ import com.flezha.sdk.native_.FlezhaNativeException;
 import com.flezha.sdk.native_.FlezhaStatus;
 import com.flezha.sdk.native_.NativeEventDispatcher;
 import com.flezha.sdk.native_.NativeTransport;
+import com.flezha.sdk.operation.SpawnRequests;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.bounded.BoundedSpec;
@@ -16,6 +17,7 @@ import com.flezha.sdk.runtime.control.DataHeartbeatSender;
 import com.flezha.sdk.runtime.control.FactorySync;
 import com.flezha.sdk.runtime.control.GracefulShutdown;
 import com.flezha.sdk.runtime.control.KeepaliveSender;
+import com.flezha.sdk.runtime.control.SpawnRequester;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
@@ -75,6 +77,9 @@ public final class FlezhaImpl implements RunnerHandle {
         this.dataHeartbeatSender = dataHeartbeatSender;
         this.shutdownRef = shutdownRef;
         this.factorySync = new FactorySync(ctx);
+        // The api layer cannot see the wire, so the control-plane requester
+        // behind `ctx.spawnBounded` is installed here and dropped on close.
+        SpawnRequests.install(new SpawnRequester(ctx));
         this.onTerminated = onTerminated;
     }
 
@@ -366,6 +371,7 @@ public final class FlezhaImpl implements RunnerHandle {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
+        SpawnRequests.uninstall();
         keepaliveSender.stop();
         dataHeartbeatSender.stop();
         reconnectCoordinator.shutdown();

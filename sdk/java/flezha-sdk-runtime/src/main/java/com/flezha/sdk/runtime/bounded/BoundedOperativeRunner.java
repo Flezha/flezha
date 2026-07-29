@@ -1288,7 +1288,7 @@ public final class BoundedOperativeRunner {
      * @return an error message, or {@code null} once the commit is durable
      */
     private static String shipAndAwait(RunnerContext ctx, String referenceId, CommandRequest request, String what) {
-        CompletableFuture<Void> ack = AckRegistry.register(referenceId);
+        CompletableFuture<String> ack = AckRegistry.register(referenceId);
         int writeStatus = sendControl(ctx, request);
         if (writeStatus != 0) {
             AckRegistry.forget(referenceId);

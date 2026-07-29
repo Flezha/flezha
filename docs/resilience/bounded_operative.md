@@ -99,8 +99,11 @@ segments, so there are **no synthetic sentinels**.
 
 ## Lifecycle: exit triggers, inbox, one teardown
 
-A bounded operative is spawned on demand with `args` and terminates on the first
-of:
+A bounded operative is spawned on demand with `args` — from the CLI
+(`flz operative start`), from a schedule (`flz schedule`), or from inside the
+cluster by a running operation (`ctx.spawn_bounded`; see
+`docs/operation_requested_spawn.md`, which spawns-or-delivers on one instance id
+and inherits everything below unchanged) — and terminates on the first of:
 
 1. **chain quiescence** — the last operation completed;
 2. **`ctx.complete(result)`** — explicit completion with a result payload;

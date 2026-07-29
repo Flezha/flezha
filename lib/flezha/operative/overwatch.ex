@@ -146,7 +146,30 @@ defmodule Flezha.Operative.Overwatch do
     else
       do_bind_runner(state, stale_runner_id, operative)
     end
+    |> seed_input(operative)
   end
+
+  # An operation-requested spawn's payload, ingested as the instance's first
+  # input. It runs inside the bind continue, which is what makes it first: no
+  # other message in the mailbox — including a concurrent requester's delivery —
+  # can be ingested ahead of it. A durable instance whose inbox already holds
+  # entries is a restart rather than a spawn; its payload is journaled, so
+  # re-seeding it would duplicate.
+  defp seed_input({:noreply, %__MODULE__{} = state} = result, operative) do
+    payload = Keyword.get(operative.opts, :seed_input)
+
+    if is_binary(payload) and is_nil(state.init_error) and fresh_inbox?(state) do
+      {_verdict, state} = confirming_ingest(state, payload, %{})
+      {:noreply, state}
+    else
+      result
+    end
+  end
+
+  defp seed_input(result, _operative), do: result
+
+  defp fresh_inbox?(%__MODULE__{durable_bounded: true, id: id}), do: OpInbox.last_offset(id) == 0
+  defp fresh_inbox?(%__MODULE__{}), do: true
 
   defp do_bind_runner(%__MODULE__{} = state, stale_runner_id, operative) do
     # Wait for an active runner in this namespace advertising

@@ -24,7 +24,7 @@ defmodule Flezha.Observability.ExportTest do
 
   describe "PrometheusRegistry" do
     setup do
-      {:ok, _pid} = PrometheusRegistry.start_link([])
+      start_supervised!(PrometheusRegistry)
       :ok
     end
 
@@ -189,8 +189,8 @@ defmodule Flezha.Observability.ExportTest do
 
   describe "PrometheusSink + PrometheusHttp end-to-end" do
     setup do
-      {:ok, _pid_r} = PrometheusRegistry.start_link([])
-      {:ok, _pid_s} = PrometheusSink.start_link([])
+      start_supervised!(PrometheusRegistry)
+      start_supervised!(PrometheusSink)
       # Bind to ephemeral port via :prometheus_port: 0
       Application.put_env(
         :flezha,

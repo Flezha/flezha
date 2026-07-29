@@ -26,7 +26,7 @@ public final class AckRegistry {
 
     private static final Logger LOG = LoggerFactory.getLogger(AckRegistry.class);
 
-    private static final Map<String, CompletableFuture<Void>> PENDING = new ConcurrentHashMap<>();
+    private static final Map<String, CompletableFuture<String>> PENDING = new ConcurrentHashMap<>();
 
     private AckRegistry() {}
 
@@ -35,8 +35,8 @@ public final class AckRegistry {
      * solicits it. Pair with {@link #forget} on any path that abandons the wait.
      */
     @Nonnull
-    public static CompletableFuture<Void> register(@Nonnull String correlationId) {
-        CompletableFuture<Void> future = new CompletableFuture<>();
+    public static CompletableFuture<String> register(@Nonnull String correlationId) {
+        CompletableFuture<String> future = new CompletableFuture<>();
         PENDING.put(correlationId, future);
         return future;
     }
@@ -47,12 +47,35 @@ public final class AckRegistry {
      * means the waiter already gave up; it is dropped, not an error.
      */
     public static void complete(@Nonnull String correlationId) {
-        CompletableFuture<Void> future = PENDING.remove(correlationId);
+        complete(correlationId, "");
+    }
+
+    /**
+     * Complete the wait with what the reply reported beyond "it worked" — the
+     * resolved outcome of a {@code SpawnBoundedResponse}. Bare acks carry an
+     * empty value.
+     */
+    public static void complete(@Nonnull String correlationId, @Nonnull String value) {
+        CompletableFuture<String> future = take(correlationId);
+        if (future != null) {
+            future.complete(value);
+        }
+    }
+
+    /** Complete the wait with the failure the reply reported. */
+    public static void fail(@Nonnull String correlationId, @Nonnull Throwable error) {
+        CompletableFuture<String> future = take(correlationId);
+        if (future != null) {
+            future.completeExceptionally(error);
+        }
+    }
+
+    private static CompletableFuture<String> take(String correlationId) {
+        CompletableFuture<String> future = PENDING.remove(correlationId);
         if (future == null) {
             LOG.debug("ack for unknown correlation id {} — the waiter timed out or never registered", correlationId);
-            return;
         }
-        future.complete(null);
+        return future;
     }
 
     /** Abandon a registered wait (write failed, or the caller gave up). */
@@ -66,7 +89,7 @@ public final class AckRegistry {
      * wait is interrupted (the thread's interrupt flag is restored).
      */
     public static boolean await(
-            @Nonnull String correlationId, @Nonnull CompletableFuture<Void> future, long timeoutMs) {
+            @Nonnull String correlationId, @Nonnull CompletableFuture<String> future, long timeoutMs) {
         try {
             future.get(timeoutMs, TimeUnit.MILLISECONDS);
             return true;

@@ -9,16 +9,15 @@ defmodule Flezha.Schedule.Job do
   the misfire-grace look-back on start repairs by firing the single most
   recent slot inside the window. Older slots are never back-filled.
 
-  Firing goes through the standard bounded start path with deterministic
-  instance id `<name>@<slot-iso>`; "operative id already in use" is the
-  duplicate-fire no-op.
+  Firing goes through the shared bounded start path
+  (`OperativeManager.start_bounded/5`) with deterministic instance id
+  `<name>@<slot-iso>`; its `:duplicate` answer is the duplicate-fire no-op.
   """
 
   use GenServer
 
   require Logger
 
-  alias Flezha.Operative.Builder
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Schedule.{Cron, Store}
   alias Flezha.Service.OperativeManager
@@ -66,15 +65,15 @@ defmodule Flezha.Schedule.Job do
   end
 
   defp start(entry, instance_id, plugins) do
-    builder = %Builder{
-      id: instance_id,
-      factory_id: entry.factory_id,
-      kind: :bounded,
-      init_values: entry.init_values,
-      opts: if(plugins == [], do: [], else: [plugins: plugins])
-    }
+    opts = if plugins == [], do: [], else: [plugins: plugins]
 
-    case OperativeManager.start_operative(entry.namespace, builder) do
+    case OperativeManager.start_bounded(
+           entry.namespace,
+           instance_id,
+           entry.factory_id,
+           entry.init_values,
+           opts
+         ) do
       {:ok, _} = ok ->
         :telemetry.execute([:flezha, :schedule, :fired], %{count: 1}, %{
           schedule: entry.name,
@@ -84,7 +83,7 @@ defmodule Flezha.Schedule.Job do
         Logger.info("[schedule] fired #{instance_id} (factory #{entry.factory_id})")
         ok
 
-      {:error, %{reason: "operative id already in use"}} ->
+      :duplicate ->
         Logger.debug("[schedule] duplicate fire for #{instance_id} — no-op")
         :duplicate
 

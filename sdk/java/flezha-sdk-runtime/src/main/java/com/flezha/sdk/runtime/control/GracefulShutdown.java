@@ -107,7 +107,7 @@ public final class GracefulShutdown {
             return;
         }
 
-        List<CompletableFuture<Void>> waits = new ArrayList<>(operatives.size());
+        List<CompletableFuture<String>> waits = new ArrayList<>(operatives.size());
 
         for (Map.Entry<String, UnboundedOperativeInstance> entry : operatives.entrySet()) {
             String operativeId = entry.getKey();
@@ -134,7 +134,7 @@ public final class GracefulShutdown {
 
             byte[] frameBytes = FrameEncoder.build(SHUTDOWN_PAYLOAD_ID, request.toByteArray(), Map.of());
 
-            CompletableFuture<Void> ackFuture = AckRegistry.register(referenceId);
+            CompletableFuture<String> ackFuture = AckRegistry.register(referenceId);
 
             int writeStatus = writer.write(controlStreamId, frameBytes);
             if (writeStatus != 0) {
@@ -144,7 +144,7 @@ public final class GracefulShutdown {
             }
 
             String pidForLog = operativeId;
-            CompletableFuture<Void> bounded = ackFuture
+            CompletableFuture<String> bounded = ackFuture
                     .orTimeout(ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                     .exceptionally(throwable -> {
                         if (throwable instanceof TimeoutException || throwable.getCause() instanceof TimeoutException) {

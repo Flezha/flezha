@@ -248,7 +248,7 @@ public final class OperationDispatcher {
             // dispatch time would race every burst.
             slot.observeEventTime(eventTime);
         }
-        admit(slot, new InputEnvelope(value, primaryStreamId, offset));
+        admit(slot, new InputEnvelope(value, primaryStreamId, offset, replay));
     }
 
     private void admit(SegmentSlot slot, InputEnvelope envelope) {
@@ -285,7 +285,7 @@ public final class OperationDispatcher {
         // what makes it late), and lowering the mark would make a genuinely late
         // input read as on-time.
         slot.observeEventTime(p.eventTime());
-        admit(slot, new InputEnvelope(p.input(), p.primaryStreamId(), p.offset()));
+        admit(slot, new InputEnvelope(p.input(), p.primaryStreamId(), p.offset(), p.replay()));
     }
 
     /** Close any open slice on every Segment of this Operation. */
@@ -305,7 +305,7 @@ public final class OperationDispatcher {
                 Object item = slot.mailbox().pop();
                 while (item != null) {
                     InputEnvelope env = (InputEnvelope) item;
-                    runOnce(slot, env.input, env.primaryStreamId, env.offset);
+                    runOnce(slot, env.input, env.primaryStreamId, env.offset, env.replay);
                     item = slot.mailbox().pop();
                 }
                 slot.mailbox().releaseInflight();
@@ -344,7 +344,7 @@ public final class OperationDispatcher {
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private void runOnce(SegmentSlot slot, Object input, long primaryStreamId, OptionalLong offset) {
+    private void runOnce(SegmentSlot slot, Object input, long primaryStreamId, OptionalLong offset, boolean replay) {
         slot.stateLock().lock();
         try {
             // run / applyChange execute on the Segment's OWN instance, so a
@@ -360,7 +360,7 @@ public final class OperationDispatcher {
             // is the replay-stable half of ctx.stableId().
             long invocationSeq = slot.changeSeq().get();
             long clockValue = evaluateClock(input, invocationSeq);
-            EmitContext ctxImpl = new EmitContext(primaryStreamId, slot, segmentId, clockValue, invocationSeq);
+            EmitContext ctxImpl = new EmitContext(primaryStreamId, slot, segmentId, clockValue, invocationSeq, replay);
             // Build a StateHandle that records Changes onto the Segment's
             // flush buffer under the bufferLock. The runtime's flusher owns
             // the buffer's drain cadence; here we just append.
@@ -530,7 +530,7 @@ public final class OperationDispatcher {
         }
     }
 
-    private record InputEnvelope(Object input, long primaryStreamId, OptionalLong offset) {}
+    private record InputEnvelope(Object input, long primaryStreamId, OptionalLong offset, boolean replay) {}
 
     /**
      * Per-invocation {@link OperationCtx}. Single allocation per Operation.run call.
@@ -558,12 +558,27 @@ public final class OperationDispatcher {
         /** Set by {@code ctx.checkpoint()}: this invocation closes the interval. */
         private boolean checkpointed;
 
+        /** Re-running already-processed input: {@code ctx.spawnBounded} issues nothing. */
+        private final boolean replay;
+
         @Override
         public void checkpoint() {
             checkpointed = true;
         }
 
-        EmitContext(long primaryStreamId, SegmentSlot slot, SegmentId segmentId, long now, long invocationSeq) {
+        @Override
+        public boolean replaying() {
+            return replay;
+        }
+
+        EmitContext(
+                long primaryStreamId,
+                SegmentSlot slot,
+                SegmentId segmentId,
+                long now,
+                long invocationSeq,
+                boolean replay) {
+            this.replay = replay;
             this.primaryStreamId = primaryStreamId;
             this.slot = slot;
             this.segmentId = segmentId;

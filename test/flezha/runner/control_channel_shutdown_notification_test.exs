@@ -139,17 +139,7 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
   end
 
   defp assert_ack_for(framed_payload, expected_operative_id, expected_reference_id) do
-    # The Payloader frame format defined in lib/flezha/service/payloader.ex
-    # (32-byte padded id, 4-byte payload size, 4-byte message size, message,
-    # 2-byte metadata size, metadata) is what Native.send_data normally
-    # ferries; we peel it open here to decode the inner CommandRequest.
-    <<_payload_id::binary-size(32), _payload_size::32, message_size::32, rest::binary>> =
-      framed_payload
-
-    <<message::binary-size(^message_size), _metadata_size::16, _metadata::binary>> = rest
-
-    {:ok, %RunnerCommands.CommandRequest{} = req} =
-      RunnerCommands.CommandRequest.decode(message)
+    req = FlezhaTest.Helper.ControlFrameTestHelper.decode_request(framed_payload)
 
     assert req.reference_id == expected_reference_id
 

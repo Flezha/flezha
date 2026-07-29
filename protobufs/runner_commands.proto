@@ -43,6 +43,8 @@ message CommandRequest {
         IterCommitResponse iter_commit_response = 31;
         IterPark iter_park = 32;
         UpdateFactories update_factories = 33;
+        SpawnBoundedRequest spawn_bounded_request = 34;
+        SpawnBoundedResponse spawn_bounded_response = 35;
     }
 }
 
@@ -500,4 +502,33 @@ message UpdateFactories {
 // the protobuf decoder (degrading to no cooperative stop).
 message BoundedStop {
     string operative_id = 1;
+}
+
+// SDK -> Controller. An operation asked for a bounded instance
+// (`ctx.spawn_bounded`): spawn `factory_id` under `instance_id` if that id is
+// free, otherwise apply `if_running`. The namespace is NOT carried — the
+// Controller takes it from the control channel the request arrived on, which
+// is what makes cross-namespace spawning impossible by construction rather
+// than by validation. `payload` becomes the instance's first inbox frame on a
+// spawn, or one more inbox frame on a delivery; empty means "spawn only".
+// `if_running` is "deliver" (default; empty reads as deliver) or "error".
+// Rides the "control_command" payload_id like the other SDK-initiated
+// variants; old Controllers ignore it via Protox unknown-field handling, so
+// the requester simply times out.
+message SpawnBoundedRequest {
+    string instance_id = 1;
+    string factory_id = 2;
+    bytes payload = 3;
+    string if_running = 4;
+}
+
+// Controller -> SDK reply to SpawnBoundedRequest, carrying the originating
+// request's reference_id so the SDK wakes the requester's result handle.
+// `outcome` is one of `spawned | delivered | already_running |
+// factory_unknown | refused`; `error` details a `refused` (quota, shutdown,
+// start failure) and is empty otherwise. The reply never faults the
+// requesting operation — it only resolves its handle.
+message SpawnBoundedResponse {
+    string outcome = 1;
+    string error = 2;
 }

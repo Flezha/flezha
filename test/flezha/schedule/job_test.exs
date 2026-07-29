@@ -20,13 +20,17 @@ defmodule Flezha.Schedule.JobTest do
     cron
   end
 
-  # Forward every spawn's builder to the test process; `builder.id` is the
-  # instance id, so no call site needs its own stub shape.
+  # Forward every spawn's arguments to the test process, so no call site needs
+  # its own stub shape.
   defp stub_spawn(test_pid) do
-    stub(OperativeManager, :start_operative, fn "default", builder ->
-      send(test_pid, {:spawned, builder})
-      {:ok, %{operative_id: builder.id}}
+    stub(OperativeManager, :start_bounded, fn "default", id, factory_id, init_values, opts ->
+      send(test_pid, {:spawned, spawn_args(id, factory_id, init_values, opts)})
+      {:ok, %{operative_id: id}}
     end)
+  end
+
+  defp spawn_args(id, factory_id, init_values, opts) do
+    %{id: id, factory_id: factory_id, init_values: init_values, opts: opts}
   end
 
   defp warning_level do
@@ -89,15 +93,14 @@ defmodule Flezha.Schedule.JobTest do
     test "fires a slot inside the grace window on start, through the bounded path" do
       test_pid = self()
 
-      expect(OperativeManager, :start_operative, fn "default", builder ->
-        send(test_pid, {:spawned, builder})
-        {:ok, %{operative_id: builder.id}}
+      expect(OperativeManager, :start_bounded, fn "default", id, factory_id, init_values, opts ->
+        send(test_pid, {:spawned, spawn_args(id, factory_id, init_values, opts)})
+        {:ok, %{operative_id: id}}
       end)
 
       start_supervised!({Job, Helper.entry()})
 
       assert_receive {:spawned, builder}, 2_000
-      assert builder.kind == :bounded
       assert builder.factory_id == "fac"
       assert builder.init_values == %{"a" => 1}
       assert builder.id =~ ~r/^job@\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/
@@ -131,8 +134,8 @@ defmodule Flezha.Schedule.JobTest do
     end
 
     test "a duplicate fire no-ops on the deterministic id and stays armed" do
-      stub(OperativeManager, :start_operative, fn "default", builder ->
-        {:error, %{operative_id: builder.id, node: node(), reason: "operative id already in use"}}
+      stub(OperativeManager, :start_bounded, fn "default", _id, _factory, _init, _opts ->
+        :duplicate
       end)
 
       pid = start_supervised!({Job, Helper.quiet_entry()})
@@ -144,7 +147,7 @@ defmodule Flezha.Schedule.JobTest do
     end
 
     test "a failed spawn is logged and not retried" do
-      stub(OperativeManager, :start_operative, fn "default", _builder ->
+      stub(OperativeManager, :start_bounded, fn "default", _id, _factory, _init, _opts ->
         {:error, %{operative_id: "x", node: node(), reason: "Factory with id fac does not exist"}}
       end)
 
@@ -196,7 +199,7 @@ defmodule Flezha.Schedule.JobTest do
     end
 
     test "a spec that no longer decodes starts nothing rather than a mute run" do
-      stub(OperativeManager, :start_operative, fn _ns, _builder ->
+      stub(OperativeManager, :start_bounded, fn _ns, _id, _factory, _init, _opts ->
         flunk("an undecodable plugin spec must not reach the start path")
       end)
 

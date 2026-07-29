@@ -346,6 +346,89 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
+  @doc """
+  Start a bounded instance of `factory_id` under `instance_id`, answering
+  `:duplicate` when that id is already claimed.
+
+  The one place the registry's duplicate-id refusal is recognised, shared by
+  every in-cluster spawner — a schedule's slot firing and an operation's
+  `spawn_or_deliver/5` — so how a collision reports is decided once.
+  """
+  @spec start_bounded(String.t(), String.t(), String.t(), map(), Keyword.t()) ::
+          {:ok, map()} | :duplicate | {:error, term()}
+  def start_bounded(namespace, instance_id, factory_id, init_values \\ %{}, opts \\ []) do
+    builder = %OperativeBuilder{
+      id: instance_id,
+      factory_id: factory_id,
+      kind: :bounded,
+      init_values: init_values,
+      opts: opts
+    }
+
+    case start_operative(namespace, builder) do
+      {:error, %{reason: "operative id already in use"}} -> :duplicate
+      other -> other
+    end
+  end
+
+  @typedoc """
+  How an operation-requested spawn resolved. `:spawned` and `:delivered` are
+  the two success shapes; the rest report why nothing was spawned.
+  """
+  @type spawn_outcome ::
+          :spawned | :delivered | :already_running | :factory_unknown | {:refused, String.t()}
+
+  @doc """
+  Spawn-or-deliver `instance_id` in `namespace` — the controller half of an
+  operation's `ctx.spawn_bounded`.
+
+  A free id spawns a bounded instance of `factory_id` carrying `payload` as its
+  first input (`:seed_input`, ingested inside the instance's bind continue, so
+  nothing can be ingested ahead of it). A taken id either receives `payload` as
+  one more input (`if_running: :deliver`) or refuses (`if_running: :error`).
+  Concurrent requests for one id race-resolve at the registry: whoever loses the
+  uniqueness check converts to the same delivery a later request would get, so
+  exactly one instance exists and every payload lands exactly once.
+  """
+  @spec spawn_or_deliver(String.t(), String.t(), String.t(), binary(), :deliver | :error) ::
+          spawn_outcome()
+  def spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running) do
+    cond do
+      exist?(namespace, instance_id) ->
+        resolve_running(namespace, instance_id, payload, if_running)
+
+      FleetManager.runners_for_factory(namespace, factory_id) == [] ->
+        :factory_unknown
+
+      true ->
+        spawn_fresh(namespace, instance_id, factory_id, payload, if_running)
+    end
+  end
+
+  defp spawn_fresh(namespace, instance_id, factory_id, payload, if_running) do
+    case start_bounded(namespace, instance_id, factory_id, %{}, seed_input: payload) do
+      {:ok, _} ->
+        :spawned
+
+      # Lost the id race: the winner spawned it, so this request becomes the
+      # delivery a request arriving a moment later would have made.
+      :duplicate ->
+        resolve_running(namespace, instance_id, payload, if_running)
+
+      {:error, reason} ->
+        {:refused, inspect(reason)}
+    end
+  end
+
+  defp resolve_running(_namespace, _instance_id, _payload, :error), do: :already_running
+
+  defp resolve_running(namespace, instance_id, payload, :deliver) do
+    case send_io_confirming(instance_id, namespace, payload, %{}) do
+      {:error, reason} -> {:refused, inspect(reason)}
+      _delivered_or_absorbed -> :delivered
+    end
+  end
+
   def create_snapshot(namespace, operative_id) do
     case get_operative_pid(namespace, operative_id) do
       {:ok, operative_pid} ->

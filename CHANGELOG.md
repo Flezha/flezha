@@ -4,6 +4,27 @@
 
 ### Added
 
+- **An operation can ask for a bounded operative**
+  (`add-operation-requested-spawn`). `ctx.spawn_bounded` (Rust) /
+  `ctx.spawnBounded` (Java) spawns-or-delivers a bounded instance on one
+  `(namespace, instance_id)` from inside any operation: a free id starts the
+  factory with the payload as its first input, a taken id receives the payload
+  as one more input (`if_running: deliver`) or refuses (`error`). Concurrent
+  requests race-resolve at the operative registry to exactly one instance.
+  Failures — quota, unknown factory, unreachable controller — resolve the
+  caller's async handle and never fault the requesting operation; an
+  uninspected handle logs the failure once. Spawning is a live-processing side
+  effect: a replayed invocation issues nothing. Until now a bounded operative
+  could only be started from outside the cluster, so every pipeline that needed
+  one grew its own external dispatcher. See
+  `docs/operation_requested_spawn.md`.
+
+  **Wire**: two additive `CommandRequest` variants, `SpawnBoundedRequest`
+  (tag 34, SDK → controller) and `SpawnBoundedResponse` (tag 35,
+  controller → SDK). Additive-tag compatibility as with every prior wire
+  change: an older controller ignores the unknown variant (the requester times
+  out), so the controller image and both SDKs are released together.
+
 - `flz schedule add --plugins <json>` — a schedule entry can now carry the
   same plugin-spec array `flz operative start --plugins` accepts
   (`schedule-entries-carry-plugins`). The spec is validated against the
