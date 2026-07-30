@@ -252,6 +252,11 @@ defmodule Flezha.Service.CliManager do
     listen_loop(plugin_id)
   end
 
+  # Subscription directives, not provider options: they are consumed by
+  # `extract_subscriptions/2` and must not reach `init_provider/1`, which for a
+  # provider with a strict allow-list refuses every key it does not own.
+  @subscription_keys ["extensions", "trigger"]
+
   @doc "Enables plugin."
   def enable_plugin(plugin_id, provider_id, plugin_flags_json, opts_json) do
     with {:ok, provider_mod} <- get_plugin_provider_mod(provider_id),
@@ -266,7 +271,7 @@ defmodule Flezha.Service.CliManager do
         provider: provider_mod,
         namespace: namespace,
         operative_id: operative_id,
-        opts: SpecDecoder.atomize_keys(plugin_flags),
+        opts: provider_opts(plugin_flags),
         subscriptions: subscriptions
       }
 
@@ -301,6 +306,17 @@ defmodule Flezha.Service.CliManager do
       trigger = Map.get(opts, "trigger") || Map.get(plugin_flags, "trigger")
       trigger_to_subscription(trigger)
     end
+  end
+
+  @doc """
+  The plugin flags a provider actually receives: everything the operator wrote
+  as `--X…` minus the subscription directives, which `extract_subscriptions/2`
+  has already consumed.
+  """
+  def provider_opts(plugin_flags) do
+    plugin_flags
+    |> Map.drop(@subscription_keys)
+    |> SpecDecoder.atomize_keys()
   end
 
   @doc false

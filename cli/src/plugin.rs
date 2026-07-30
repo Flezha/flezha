@@ -394,15 +394,19 @@ fn embed_extensions_into_json(
     let extensions_fragment = format!("\"extensions\":[{}]", entries.join(","));
 
     if base_json.trim() == "{}" {
-        format!("{{{}}}", extensions_fragment)
+        return format!("{{{}}}", extensions_fragment);
+    }
+    // Splice before the object's OWN closing brace, not before every trailing
+    // one: a JSON-valued flag written last (`--Xheaders='{"k":"v"}'`) ends the
+    // payload with `}}`, and eating both leaves a body that cannot decode.
+    let body = base_json
+        .trim_end()
+        .strip_suffix('}')
+        .expect("plugin flags always serialize to a JSON object");
+    if body.trim_end().ends_with('{') {
+        format!("{}{}}}", body, extensions_fragment)
     } else {
-        // Insert before closing `}`
-        let trimmed = base_json.trim_end_matches('}');
-        if trimmed.ends_with('{') {
-            format!("{}{}}}", trimmed, extensions_fragment)
-        } else {
-            format!("{},{}}}", trimmed, extensions_fragment)
-        }
+        format!("{},{}}}", body, extensions_fragment)
     }
 }
 
@@ -435,6 +439,21 @@ mod tests {
             "\"extensions\":[{\"name\":\"on_interval\",\"opts\":{\"interval_ms\": \"5000\"}}]"
         ));
         assert!(got.ends_with('}'));
+    }
+
+    /// fails when: a JSON-valued flag written last loses its closing brace —
+    /// the controller then rejects the whole enable with a decode error, which
+    /// is every attach that carries `--Xheaders`.
+    #[test]
+    fn embed_extensions_after_a_json_valued_flag_stays_decodable() {
+        let got = embed_extensions_into_json(
+            "{\"url\": \"http://x\", \"headers\": {\"authorization\": \"Bearer t\"}}",
+            &[("on_terminate".to_string(), vec![])],
+        );
+
+        let parsed: serde_json::Value = serde_json::from_str(&got).expect("decodable");
+        assert_eq!(parsed["headers"]["authorization"], "Bearer t");
+        assert_eq!(parsed["extensions"][0]["name"], "on_terminate");
     }
 
     #[test]

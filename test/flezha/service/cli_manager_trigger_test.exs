@@ -25,4 +25,18 @@ defmodule FlezhaTest.Service.CliManagerTriggerTest do
     assert CliManager.trigger_to_subscription("on_output") == [{:on_output, []}]
     assert CliManager.trigger_to_subscription("bogus") == [{:on_input, []}]
   end
+
+  # Fails when: a subscription directive reaches `init_provider/1` as a plugin
+  # option — a provider with a strict allow-list (http_poll) then refuses every
+  # `flz plugin enable` that names an extension or a trigger.
+  test "subscription directives are stripped from the provider's options" do
+    opts =
+      CliManager.provider_opts(%{
+        "url" => "http://x",
+        "trigger" => "on_input",
+        "extensions" => [%{"name" => "on_terminate", "opts" => %{}}]
+      })
+
+    assert opts == %{url: "http://x"}
+  end
 end
