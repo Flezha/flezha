@@ -6,6 +6,7 @@ import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
+import com.flezha.sdk.runtime.operative.ConsumerEdge;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
@@ -246,7 +247,7 @@ public final class BoundedSpec {
      * and reject anything outside the shared shape rule (no entry channel,
      * multi-consumer entry, dynamic segmentation, cycles, disconnected
      * operations). Operation ids are indices into {@code topology.operations()};
-     * a channel's {@code consumers()} are downstream operation ids.
+     * a channel's {@code consumerIds()} are downstream operation ids.
      */
     private static List<Integer> topologicalOrder(String factoryId, UnboundedOperativeTopology topology) {
         // The entry channel seeds the first operation(s) from the spawn args.
@@ -266,6 +267,27 @@ public final class BoundedSpec {
             throw new BoundedOperativeConfigurationException(
                     "bounded operative `" + factoryId + "` declares an entry channel with no consumer");
         }
+        // The seed is a bare payload naming no channel — the spawn args, or a
+        // PER_INPUT loop's inbox item — so a merge mapping on an entry edge
+        // could never be selected and every entry channel past the first would
+        // be unreadable. Refuse the shape rather than accept one that cannot
+        // run (`multi-input-operations`). Mirrors Rust's MergeFromEntryChannel.
+        for (ChannelDescriptor ch : topology.channels()) {
+            if (ch.kind() != ChannelKind.ENTRY) {
+                continue;
+            }
+            for (ConsumerEdge edge : ch.consumers()) {
+                if (edge.map().isPresent()) {
+                    throw new BoundedOperativeConfigurationException("MergeFromEntryChannel: bounded operative `"
+                            + factoryId + "` merges entry channel `" + ch.name() + "` into operation `"
+                            + topology.operations().get(edge.operation()).name()
+                            + "`; a bounded operative is seeded from its spawn args (and, for a PER_INPUT loop, its"
+                            + " inbox items) through ONE entry channel, and neither carries the channel a payload"
+                            + " arrived on — so an entry channel cannot be one merge source among several. Merge the"
+                            + " output streams of two or more of this operative's operations instead");
+                }
+            }
+        }
 
         // The shared graph-shape walk (GraphShape, the same mechanism the
         // unbounded validation runs): Kahn order makes the driver's sequential
@@ -279,13 +301,13 @@ public final class BoundedSpec {
         List<int[]> edges = new ArrayList<>();
         for (ChannelDescriptor ch : topology.channels()) {
             if (ch.producer().isPresent()) {
-                for (int consumer : ch.consumers()) {
+                for (int consumer : ch.consumerIds()) {
                     edges.add(new int[] {ch.producer().getAsInt(), consumer});
                 }
             }
         }
         com.flezha.sdk.runtime.operative.builder.GraphShape.Order shape =
-                com.flezha.sdk.runtime.operative.builder.GraphShape.order(n, edges, entry.consumers());
+                com.flezha.sdk.runtime.operative.builder.GraphShape.order(n, edges, entry.consumerIds());
         if (shape.unreachable() >= 0 && shape.onCycle() < 0) {
             throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
                     + "` declares operation `"

@@ -5,12 +5,14 @@ import com.flezha.sdk.channel.Channel;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.EntryChannel;
+import com.flezha.sdk.channel.Merge;
 import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.channel.Stream;
 import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
+import com.flezha.sdk.runtime.operative.ConsumerEdge;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
 import com.flezha.sdk.runtime.operative.PluginSink;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
@@ -125,6 +127,13 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         entry.entryParser = parser;
         entry.entryParsed = parsed;
         return new EntryChannelImpl<>(id, name);
+    }
+
+    @Override
+    @Nonnull
+    public <I> Merge<I> merge(@Nonnull Class<I> type) {
+        checkMutable();
+        return new MergeImpl<>(type);
     }
 
     @Override
@@ -335,10 +344,10 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         List<Integer> roots = new ArrayList<>();
         for (ChannelEntry ch : channels) {
             if (ch.kind == ChannelKind.ENTRY) {
-                roots.addAll(ch.consumers);
+                ch.consumers.forEach(e -> roots.add(e.operation()));
             } else if (ch.producer != null) {
-                for (int consumer : ch.consumers) {
-                    edges.add(new int[] {ch.producer, consumer});
+                for (ConsumerEdge consumer : ch.consumers) {
+                    edges.add(new int[] {ch.producer, consumer.operation()});
                 }
             }
         }
@@ -498,20 +507,54 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
      */
     private int wireConsumer(
             int channelId, Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass, String nodeName) {
+        return wireConsumer(channelId, operationClass, nodeName, null, null);
+    }
+
+    /**
+     * Wire {@code channelId} into a consumer node. A merge subscription passes
+     * the declared merged input type and the mapping that lifts this channel's
+     * payload into it; what Rust checks at the {@code .into::<Op>()} call site
+     * with an {@code Input = I} bound is checked here instead — erasure
+     * precludes the compile-time form, so the same defect is caught at
+     * registration.
+     */
+    private int wireConsumer(
+            int channelId,
+            Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass,
+            String nodeName,
+            Class<?> mergeInputType,
+            Function<Object, Object> map) {
         int operationId = registerNode(operationClass, nodeName);
         OperationEntry operation = operations.get(operationId);
         ChannelEntry channel = channels.get(channelId);
-        if (!channel.payloadType.equals(operation.inputType)) {
-            String producedBy = channel.producer == null
-                    ? "payload type"
-                    : "producer operation `" + operations.get(channel.producer).name + "` outputType() =";
+        // A merged subscription's payload is the mapping's result, not the
+        // channel's — that is exactly what the merge exists to allow.
+        Class<?> deliveredType = mergeInputType != null ? mergeInputType : channel.payloadType;
+        if (!deliveredType.equals(operation.inputType)) {
+            String producedBy = mergeInputType != null
+                    ? "merge maps into"
+                    : channel.producer == null
+                            ? "payload type"
+                            : "producer operation `" + operations.get(channel.producer).name + "` outputType() =";
             errors.add("channel `" + channel.name + "`: " + producedBy + " "
-                    + describe(channel.payloadType)
+                    + describe(deliveredType)
                     + " does not match consumer operation `" + operation.name
                     + "` inputType() = " + describe(operation.inputType));
         }
-        if (!channel.consumers.contains(operationId)) {
-            channel.consumers.add(operationId);
+        // Re-declaring an existing mapping-free edge is the fan-in / repeated
+        // `.into` case and stays a no-op. Re-declaring one where either side
+        // carries a merge mapping is refused rather than silently dropped — the
+        // edge would otherwise keep whichever mapping was declared first and
+        // deliver the wrong value forever.
+        Optional<ConsumerEdge> existing = channel.consumers.stream()
+                .filter(e -> e.operation() == operationId)
+                .findFirst();
+        if (existing.isEmpty()) {
+            channel.consumers.add(new ConsumerEdge(operationId, Optional.ofNullable(map)));
+        } else if (existing.get().map().isPresent() || map != null) {
+            errors.add(UnboundedOperativeConfigurationException.mergeSourceAlreadyWired(channel.name, operation.name)
+                    .getMessage());
+            return operationId;
         }
         // Cache input channel id on the operation. A fan-in operation keeps its
         // first input channel here; every incoming channel stays reachable via
@@ -552,7 +595,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         ChannelKind kind;
         Class<?> payloadType;
         Integer producer;
-        final List<Integer> consumers = new ArrayList<>();
+        final List<ConsumerEdge> consumers = new ArrayList<>();
         String pluginName;
         Function<Object, byte[]> pluginSerializer;
         String pluginSinkName;
@@ -685,6 +728,99 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
             return "EntryChannel(" + name + ")";
         }
     }
+
+    /**
+     * A merged subscription under construction: the source channels declared
+     * so far, each with the mapping that lifts its payload into {@code I}.
+     */
+    private final class MergeImpl<I> implements Merge<I> {
+        private final Class<I> mergedType;
+        private final List<MergeSourceEntry> sources = new ArrayList<>();
+        /**
+         * Every {@code from} the author wrote, including ones already refused.
+         * The arity check reads this so a duplicated source is reported once,
+         * as a duplicate — not also as a merge that declared too few.
+         */
+        private int declared;
+
+        MergeImpl(Class<I> mergedType) {
+            this.mergedType = mergedType;
+        }
+
+        @Override
+        @Nonnull
+        public <S> Merge<I> from(@Nonnull EntryChannel<S> source, @Nonnull Function<S, I> map) {
+            return addSource(sourceChannelId(source), map);
+        }
+
+        @Override
+        @Nonnull
+        public <S> Merge<I> from(@Nonnull Stream<S> source, @Nonnull Function<S, I> map) {
+            return addSource(sourceChannelId(source), map);
+        }
+
+        /**
+         * The channel a merge source subscribes on, whichever handle kind it
+         * is — the erasure-side stand-in for Rust's {@code MergeSource} trait,
+         * which the two public {@code from} overloads exist to cover.
+         */
+        private int sourceChannelId(Object source) {
+            if (source instanceof UnboundedOperativeTopologyBuilder.EntryChannelImpl<?> entry) {
+                return entry.channelId;
+            }
+            if (source instanceof UnboundedOperativeTopologyBuilder.StreamImpl<?> stream) {
+                return stream.channelId();
+            }
+            throw new IllegalArgumentException("merge source was not declared on this operative's builder");
+        }
+
+        @SuppressWarnings("unchecked")
+        private <S> Merge<I> addSource(int channelId, Function<S, I> map) {
+            checkMutable();
+            declared++;
+            if (sources.stream().anyMatch(src -> src.channelId() == channelId)) {
+                errors.add(UnboundedOperativeConfigurationException.duplicateMergeSource(channels.get(channelId).name)
+                        .getMessage());
+                return this;
+            }
+            sources.add(new MergeSourceEntry(channelId, value -> map.apply((S) value)));
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public <O> Stream<O> into(@Nonnull Class<? extends Operation<I, ?, O, ?, ?, ?>> operation) {
+            return wire(operation, null);
+        }
+
+        @Override
+        @Nonnull
+        public <O> Stream<O> into(
+                @Nonnull Class<? extends Operation<I, ?, O, ?, ?, ?>> operation, @Nonnull String nodeName) {
+            return wire(operation, nodeName);
+        }
+
+        private <O> Stream<O> wire(Class<? extends Operation<I, ?, O, ?, ?, ?>> operationClass, String nodeName) {
+            checkMutable();
+            // Register the consumer before its sources — as Rust's `Merge::wire`
+            // does — so the arity refusal can name it even with no source to
+            // wire it. `registerNode` resolves by identity, so wiring below
+            // returns this same node.
+            int node = registerNode(operationClass, nodeName);
+            if (declared < 2) {
+                errors.add(
+                        UnboundedOperativeConfigurationException.mergeTooFewSources(operations.get(node).name, declared)
+                                .getMessage());
+            }
+            for (MergeSourceEntry source : sources) {
+                wireConsumer(source.channelId(), operationClass, nodeName, mergedType, source.map());
+            }
+            return new StreamImpl<>(node);
+        }
+    }
+
+    /** One declared merge source: the channel and the mapping off it. */
+    private record MergeSourceEntry(int channelId, Function<Object, Object> map) {}
 
     /**
      * The operation's output stream handle: a node id into the enclosing

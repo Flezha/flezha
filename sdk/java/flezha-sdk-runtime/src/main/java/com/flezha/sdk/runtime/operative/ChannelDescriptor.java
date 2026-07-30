@@ -18,7 +18,7 @@ public final class ChannelDescriptor {
     private final String name;
     private final ChannelKind kind;
     private final OptionalInt producer;
-    private final List<Integer> consumers;
+    private final List<ConsumerEdge> consumers;
     private final Optional<String> pluginName;
     private final Class<?> payloadType;
     private final Optional<Function<byte[], Object>> entryParser;
@@ -34,7 +34,7 @@ public final class ChannelDescriptor {
             @Nonnull String name,
             @Nonnull ChannelKind kind,
             @Nonnull OptionalInt producer,
-            @Nonnull List<Integer> consumers,
+            @Nonnull List<ConsumerEdge> consumers,
             @Nonnull Optional<String> pluginName,
             @Nonnull Class<?> payloadType,
             @Nonnull Optional<Function<byte[], Object>> entryParser,
@@ -99,9 +99,19 @@ public final class ChannelDescriptor {
         return producer;
     }
 
+    /** Consumer subscriptions, each carrying its optional merge mapping. */
     @Nonnull
-    public List<Integer> consumers() {
+    public List<ConsumerEdge> consumers() {
         return consumers;
+    }
+
+    /**
+     * The consuming operation ids, mappings stripped — what the graph-shape
+     * walk and the bounded DAG builder need.
+     */
+    @Nonnull
+    public List<Integer> consumerIds() {
+        return consumers.stream().map(ConsumerEdge::operation).toList();
     }
 
     @Nonnull

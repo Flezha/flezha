@@ -519,7 +519,7 @@ class UnboundedOperativeTopologyBuilderTest {
 
         private java.util.List<String> shape(UnboundedOperativeTopology t) {
             var channels = t.channels().stream()
-                    .map(ch -> ch.name() + "|" + ch.kind() + "|" + ch.producer() + "|" + ch.consumers())
+                    .map(ch -> ch.name() + "|" + ch.kind() + "|" + ch.producer() + "|" + ch.consumerIds())
                     .toList();
             var ops = t.operations().stream().map(o -> o.name()).toList();
             var all = new java.util.ArrayList<String>(channels);

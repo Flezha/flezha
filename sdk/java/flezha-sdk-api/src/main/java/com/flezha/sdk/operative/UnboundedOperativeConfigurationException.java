@@ -141,6 +141,37 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
     }
 
     /**
+     * Raised when a {@code merge(...)} closes on fewer than two sources.
+     * Carries the Rust error name {@code MergeTooFewSources}.
+     */
+    public static UnboundedOperativeConfigurationException mergeTooFewSources(String operation, int sources) {
+        return new UnboundedOperativeConfigurationException("MergeTooFewSources: merge into operation `" + operation
+                + "` declares " + sources + " source channel(s); a merge consumes two or more — wire a single"
+                + " source with `.into(Op.class)` instead");
+    }
+
+    /**
+     * Raised when one {@code merge(...)} subscribes the same channel twice.
+     * Carries the Rust error name {@code DuplicateMergeSource}.
+     */
+    public static UnboundedOperativeConfigurationException duplicateMergeSource(String channel) {
+        return new UnboundedOperativeConfigurationException("DuplicateMergeSource: merge subscribes channel `"
+                + channel + "` twice; each merge source must be a distinct channel (one mapping per channel"
+                + " into the merged input)");
+    }
+
+    /**
+     * Raised when a merge source would re-wire a channel→operation edge that
+     * {@code into(...)} or another merge already declared. Carries the Rust
+     * error name {@code MergeSourceAlreadyWired}.
+     */
+    public static UnboundedOperativeConfigurationException mergeSourceAlreadyWired(String channel, String operation) {
+        return new UnboundedOperativeConfigurationException("MergeSourceAlreadyWired: channel `" + channel
+                + "` already feeds operation `" + operation + "`; an edge carries exactly one merge mapping or"
+                + " none, so a merge source may not re-wire an edge declared by `into` or by another merge");
+    }
+
+    /**
      * Raised when a node's output (transitively) reaches its own input.
      * Carries the Rust error name {@code Cycle}.
      */

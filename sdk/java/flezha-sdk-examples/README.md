@@ -1,6 +1,6 @@
 # Flezha Java SDK — worked examples
 
-Seven examples, in the order worth reading them. Each is a real compiled source
+Nine examples, in the order worth reading them. Each is a real compiled source
 file in this module, not a snippet — the reactor builds them, so an example that
 drifts from the SDK **breaks the build** instead of quietly lying to you.
 
@@ -17,6 +17,8 @@ mvn -f sdk/java/pom.xml test -pl flezha-sdk-examples -am
 | 05 | [`E05_BoundedSaga`](src/main/java/com/flezha/examples/E05_BoundedSaga.java) | A bounded operative: resumable, compensating transaction. |
 | 06 | [`E06_DurableChatLoop`](src/main/java/com/flezha/examples/E06_DurableChatLoop.java) | A long-lived agent: one durable turn per message, suspended in between. |
 | 07 | [`E07_TestingYourOperationTest`](src/test/java/com/flezha/examples/E07_TestingYourOperationTest.java) | Testing an Operation — and proving it is replay-safe. |
+| 08 | [`E08_SpawnBoundedWorker`](src/main/java/com/flezha/examples/E08_SpawnBoundedWorker.java) | Asking the cluster for a bounded worker from inside an Operation. |
+| 09 | [`E09_MergedInput`](src/main/java/com/flezha/examples/E09_MergedInput.java) | One Operation over two Channels: a data feed plus a live config feed. |
 
 ## The one idea worth internalising first
 
@@ -53,7 +55,8 @@ write.
 never finishes. (01–04)
 
 **Bounded** — started with arguments, runs to completion, torn down. A checkout,
-a job, a conversation. (05–06)
+a job, a conversation. (05–06, and 08 spawns one from inside an unbounded
+Operation).
 
 Then, for an unbounded operative, work down this list and stop at the first "no":
 
@@ -63,6 +66,7 @@ Then, for an unbounded operative, work down this list and stop at the first "no"
 | Would a crash between "state written" and "output sent" be a correctness bug? | `c.effectivelyOnce()` → **03** |
 | Is the state only coherent at a boundary (a closed window, a finished batch)? | `c.checkpointAck()` → **03** |
 | Do inputs arrive out of order, and does that corrupt earlier results? | `c.correctionWindow(ms)` → **04** |
+| Does it need a second feed — live config, an enrichment stream, a join? | `c.merge(I.class)` → **09** |
 
 Each of those is a declaration on the topology, and each is a promise the
 controller has to keep — so declare the ones you need, not the ones that sound
@@ -82,5 +86,10 @@ start, before a single input is served, with the same error names:
 - `checkpointAck()` without `effectivelyOnce()` → `CheckpointAckWithoutTier`.
 - A durable bounded chain with a codec-less inter-op channel → `MissingInterOpCodec`.
 - A loop on `run`-sugar → `LoopWithoutChain` (there is no chain to iterate).
+- A `merge(...)` with fewer than two sources, the same Channel twice, or a source
+  re-wiring an already-declared edge → `MergeTooFewSources` /
+  `DuplicateMergeSource` / `MergeSourceAlreadyWired`.
+- A **bounded** merge over an entry Channel → `MergeFromEntryChannel` (the
+  spawn-args seed names no Channel; merge its operations' output streams).
 
 If your operative starts, these all held.

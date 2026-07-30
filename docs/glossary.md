@@ -53,6 +53,19 @@ contains Segments.**
   points (input from outside), internal (Operation → Operation), or sink (output
   back to the Controller / pipe to another Operative).
 
+- **Merge** — a subscription of two or more Channels to ONE Operation, each
+  supplying a pure mapping from its payload into the Operation's declared sum
+  type `Input` (`c.merge::<I>().from(a, map_a).from(b, map_b).into::<Op>()`).
+  On an unbounded Operative, entry and inter-operation Channels are both valid
+  sources; a **bounded** Operative merges its operations' output streams only —
+  its spawn-args seed names no Channel, so an entry Channel there is refused at
+  definition time. Per-source FIFO is preserved and nothing is ordered across
+  sources; `segment_for` is evaluated on the mapped value; mappings run
+  identically on live delivery and WAL replay.
+  Purely a subscription-time construct — the `Operation` itself, the journal
+  format, and the Controller are all unchanged. See
+  [`multi_input_operations.md`](multi_input_operations.md).
+
 - **Operative-to-operative messaging** — one Operative's output delivered into
   another Operative's **input stream**, configured as the first-party
   `OperativeForward` plugin on the source (same namespace only; self-targeting

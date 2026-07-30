@@ -2375,38 +2375,9 @@ class BoundedKindTest {
         cap.expectCompletions(1);
         var topology =
                 BoundedSpec.build(DiamondBoundedOperative.class).topology().orElseThrow();
-        var encode = (java.util.function.Function<String, com.google.protobuf.ByteString>) value -> {
-            for (var ch : topology.channels()) {
-                // Both inter-op channels carry the same String codec; use dfan's.
-                if (ch.name().equals("dfan")) {
-                    return com.google.protobuf.ByteString.copyFrom(
-                            ch.interOpCodec().orElseThrow().encoder().apply(value));
-                }
-            }
-            throw new IllegalStateException("dfan channel missing");
-        };
-        int dfanId = channelIdByName(topology, "dfan");
-        int dbId = channelIdByName(topology, "db");
         // The journal says A (position 0) and B (position 1) committed before the
         // crash, each with its edge handoff.
-        OpJournalState journal = OpJournalState.newBuilder()
-                .addCommittedOpIdxs(0)
-                .addCommittedOpIdxs(1)
-                .addOpHandoffs(OpEdgeHandoff.newBuilder()
-                        .setOpIdx(0)
-                        .addHandoff(OpHandoffItem.newBuilder()
-                                .setChannelId(dfanId)
-                                .setPayload(encode.apply("a:x"))
-                                .build())
-                        .build())
-                .addOpHandoffs(OpEdgeHandoff.newBuilder()
-                        .setOpIdx(1)
-                        .addHandoff(OpHandoffItem.newBuilder()
-                                .setChannelId(dbId)
-                                .setPayload(encode.apply("b:a:x"))
-                                .build())
-                        .build())
-                .build();
+        OpJournalState journal = abCommittedJournal(topology, "dfan", "db");
         new AddOperativeHandler()
                 .handle(
                         ctx,
@@ -2451,6 +2422,283 @@ class BoundedKindTest {
                 .containsExactly("undo-join", "undo-c", "undo-b", "undo-a");
     }
 
+    // --- Fan-in wired as a merge (`multi-input-operations`) -------------------
+
+    @Test
+    @DisplayName("a merged fan-in maps each producer's contribution on the edge it arrived on")
+    void mergedJoinMapsEachProducersContribution() throws Exception {
+        DIAMOND_LOG.clear();
+        BoundedOperativeClassRegistry.registerClass(MergeBoundedOperative.class);
+        Captured cap = new Captured();
+        RunnerContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-merge-bounded", "merge-1", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions()).isTrue();
+
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        assertThat(cap.committedOpIdxs()).containsExactly(0, 1, 2, 3);
+        assertThat(DIAMOND_LOG)
+                .as("the join's input is neither producer's Output; each edge's mapping lifts it")
+                .containsExactly("a:x", "b:a:x", "c:a:x", "mb:b:a:x", "mc:c:a:x");
+    }
+
+    @Test
+    @DisplayName("a resumed merge lifts the journaled handoff with the same mapping the live run used")
+    void mergedJoinResumesWithMappedJournaledHandoff() throws Exception {
+        DIAMOND_LOG.clear();
+        BoundedOperativeClassRegistry.registerClass(MergeBoundedOperative.class);
+        Captured cap = new Captured();
+        RunnerContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        var topology = BoundedSpec.build(MergeBoundedOperative.class).topology().orElseThrow();
+        OpJournalState journal = abCommittedJournal(topology, "mfan", "mb");
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedResumable("test-merge-bounded", "merge-r", "x", 1, journal), new ArrayList<>());
+
+        byte[] segId = SegmentId.of("merge-r", "diam_a", Optional.empty()).encodedBytes();
+        new RestoreInitStateHandler()
+                .handle(
+                        ctx,
+                        CommandRequest.newBuilder()
+                                .setReferenceId("r")
+                                .setRestoreInitState(RestoreInitState.newBuilder()
+                                        .setSegmentId(ByteString.copyFrom(segId))
+                                        .build())
+                                .build(),
+                        new ArrayList<>());
+
+        assertThat(cap.awaitCompletions()).isTrue();
+        assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
+        assertThat(cap.committedOpIdxs()).containsExactly(2, 3);
+        assertThat(DIAMOND_LOG)
+                .as("B's journaled handoff is decoded then mapped, exactly as the live run mapped it")
+                .containsExactly("c:a:x", "mb:b:a:x", "mc:c:a:x");
+    }
+
+    @Test
+    @DisplayName("a throwing merge mapping is contained: the instance still reports and compensates")
+    void aThrowingMergeMappingIsContained() throws Exception {
+        // The mapping runs on the driver thread, outside any segment
+        // invocation. Uncontained it would unwind the driver before
+        // BoundedCompleted is emitted and strand the instance with no terminal
+        // frame — so the observable outcome is what this asserts.
+        DIAMOND_LOG.clear();
+        BoundedOperativeClassRegistry.registerClass(ThrowingMergeBoundedOperative.class);
+        Captured cap = new Captured();
+        RunnerContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        new AddOperativeHandler()
+                .handle(ctx, addBoundedOperative("test-throwing-merge-bounded", "merge-throw", "x"), new ArrayList<>());
+        assertThat(cap.awaitCompletions())
+                .as("the operative still reports — the throw did not take the driver with it")
+                .isTrue();
+
+        BoundedCompleted completion = cap.decodeCompletion();
+        assertThat(completion.getStatus()).isEqualTo("error");
+        assertThat(completion.getError()).contains("merge mapping threw");
+        assertThat(completion.getError()).contains("merge mapping blew up");
+        // The saga fires over exactly what was RECORDED as completed when the
+        // abort began: the producer whose edge threw (B) and its parent (A),
+        // reverse-topologically. Same exact list the Rust arm asserts — this is
+        // where the two would silently diverge if the release were ordered
+        // before the completion record.
+        List<String> undo =
+                DIAMOND_LOG.stream().filter(e -> e.startsWith("undo-")).toList();
+        assertThat(undo).containsExactly("undo-b", "undo-a");
+    }
+
+    @Test
+    @DisplayName("a merge mapping that throws while re-seeding from the journal is contained")
+    void aThrowingMergeMappingIsContainedOnCrashResume() throws Exception {
+        // The second mapping site: bankJournaledHandoffs maps a committed
+        // producer's JOURNALED handoff into its uncommitted consumers, on the
+        // driver thread and before any stage runs. It needs the same
+        // containment as the forward release, and it is reached only on a
+        // resume — hence the journal below rather than a plain start.
+        DIAMOND_LOG.clear();
+        BoundedOperativeClassRegistry.registerClass(ThrowingMergeBoundedOperative.class);
+        Captured cap = new Captured();
+        RunnerContext ctx = newCtx(cap);
+
+        cap.expectCompletions(1);
+        var topology = BoundedSpec.build(ThrowingMergeBoundedOperative.class)
+                .topology()
+                .orElseThrow();
+        OpJournalState journal = abCommittedJournal(topology, "tmfan", "tmb");
+        new AddOperativeHandler()
+                .handle(
+                        ctx,
+                        addBoundedResumable("test-throwing-merge-bounded", "merge-throw-r", "x", 1, journal),
+                        new ArrayList<>());
+
+        byte[] segId = SegmentId.of("merge-throw-r", "diam_a", Optional.empty()).encodedBytes();
+        new RestoreInitStateHandler()
+                .handle(
+                        ctx,
+                        CommandRequest.newBuilder()
+                                .setReferenceId("r")
+                                .setRestoreInitState(RestoreInitState.newBuilder()
+                                        .setSegmentId(ByteString.copyFrom(segId))
+                                        .build())
+                                .build(),
+                        new ArrayList<>());
+
+        assertThat(cap.awaitCompletions())
+                .as("the operative still reports — the throw did not take the driver with it")
+                .isTrue();
+        BoundedCompleted completion = cap.decodeCompletion();
+        assertThat(completion.getStatus()).isEqualTo("error");
+        assertThat(completion.getError()).contains("merge mapping threw");
+        assertThat(completion.getError()).contains("merge mapping blew up");
+        // The undo list is deliberately NOT asserted here. A resumed Java chain
+        // does not seed its completed list from the op-journal, so nothing is
+        // compensated on this path — a pre-existing gap recorded under "Known
+        // limitation" in docs/multi_input_operations.md. Pinning that value
+        // would turn the limitation into a contract and make closing it a
+        // test failure; containment and the terminal report are what this
+        // capability actually guarantees.
+    }
+
+    /** The merged fan-in whose mapping throws. */
+    public static final class ThrowingMergeBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-throwing-merge-bounded";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            var a = c.input(String.class, "in").into(DiamA.class).named("tmfan").codec();
+            var b = a.into(DiamB.class).named("tmb").codec();
+            var cc = a.into(DiamC.class).named("tmc").codec();
+            c.merge(MergedJoinInput.class)
+                    .from(b, v -> {
+                        throw new IllegalStateException("merge mapping blew up");
+                    })
+                    .from(cc, MergedJoinInput::fromC)
+                    .into(MergeJoinOp.class)
+                    .named("tmout")
+                    .output("sink");
+        }
+    }
+
+    @Test
+    @DisplayName("a bounded merge over an entry channel is refused at registration, by name")
+    void boundedMergeOverAnEntryChannelIsRefused() {
+        // The seed is a bare payload naming no channel, so the mapping could
+        // never be selected and every entry channel past the first would be
+        // unreadable. Refused at definition time instead of accepted and
+        // failing every invocation on a type mismatch.
+        assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(EntryMergeBoundedOperative.class))
+                .isInstanceOf(BoundedOperativeConfigurationException.class)
+                .hasMessageContaining("MergeFromEntryChannel")
+                .hasMessageContaining("`in`")
+                .hasMessageContaining("bounded_merge_join_op");
+    }
+
+    /** The unsupported shape: a merge whose sources are entry channels. */
+    public static final class EntryMergeBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-entry-merge-bounded";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            c.merge(MergedJoinInput.class)
+                    .from(c.input(String.class, "in"), MergedJoinInput::fromB)
+                    .from(c.input(String.class, "also"), MergedJoinInput::fromC)
+                    .into(MergeJoinOp.class);
+        }
+    }
+
+    /**
+     * The merged input of the fan-in below: both producers carry the same
+     * payload type, so only the mapping tells the join which branch a
+     * contribution came from.
+     */
+    public record MergedJoinInput(String branch, String value) {
+        static MergedJoinInput fromB(String v) {
+            return new MergedJoinInput("mb", v);
+        }
+
+        static MergedJoinInput fromC(String v) {
+            return new MergedJoinInput("mc", v);
+        }
+    }
+
+    /** The diamond's join re-authored as a merge over one sum-type input. */
+    public static final class MergeJoinOp
+            implements Operation<MergedJoinInput, Unit, String, NoChange, WallClock, Void> {
+        @Override
+        public String name() {
+            return "bounded_merge_join_op";
+        }
+
+        @Override
+        public Class<MergedJoinInput> inputType() {
+            return MergedJoinInput.class;
+        }
+
+        @Override
+        public Class<String> outputType() {
+            return String.class;
+        }
+
+        @Override
+        public Class<NoChange> changeType() {
+            return NoChange.class;
+        }
+
+        @Override
+        public Class<WallClock> clockType() {
+            return WallClock.class;
+        }
+
+        @Override
+        public Class<Void> configType() {
+            return Void.class;
+        }
+
+        @Override
+        public Unit initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+            return new Unit();
+        }
+
+        @Override
+        public void run(MergedJoinInput input, StateHandle<Unit, NoChange> state, OperationCtx ctx)
+                throws OperationException {
+            String out = input.branch() + ":" + input.value();
+            DIAMOND_LOG.add(out);
+            ctx.emit(out);
+        }
+    }
+
+    /** A→(B,C)→merge(Join): the fan-in wired as a merge. */
+    public static final class MergeBoundedOperative implements BoundedOperative {
+        @Override
+        public String factoryId() {
+            return "test-merge-bounded";
+        }
+
+        @Override
+        public void operations(ChannelBuilder c) {
+            var a = c.input(String.class, "in").into(DiamA.class).named("mfan").codec();
+            var b = a.into(DiamB.class).named("mb").codec();
+            var cc = a.into(DiamC.class).named("mc").codec();
+            c.merge(MergedJoinInput.class)
+                    .from(b, MergedJoinInput::fromB)
+                    .from(cc, MergedJoinInput::fromC)
+                    .into(MergeJoinOp.class)
+                    .named("mout")
+                    .output("sink");
+        }
+    }
+
     private static int channelIdByName(UnboundedOperativeTopology topology, String name) {
         for (int i = 0; i < topology.channels().size(); i++) {
             if (topology.channels().get(i).name().equals(name)) {
@@ -2458,6 +2706,40 @@ class BoundedKindTest {
             }
         }
         throw new IllegalStateException("channel `" + name + "` missing");
+    }
+
+    /**
+     * The journal a diamond-shaped chain leaves when A (the fan, position 0)
+     * and B (one branch, position 1) committed before the crash: each
+     * producer's edge handoff, encoded with its channel's inter-op codec. The
+     * branching resume and both merge resumes differ only in the two channel
+     * names.
+     */
+    private static OpJournalState abCommittedJournal(
+            UnboundedOperativeTopology topology, String fanChannel, String bChannel) {
+        return OpJournalState.newBuilder()
+                .addCommittedOpIdxs(0)
+                .addCommittedOpIdxs(1)
+                .addOpHandoffs(handoff(topology, 0, fanChannel, "a:x"))
+                .addOpHandoffs(handoff(topology, 1, bChannel, "b:a:x"))
+                .build();
+    }
+
+    private static OpEdgeHandoff handoff(
+            UnboundedOperativeTopology topology, int opIdx, String channelName, String value) {
+        int channelId = channelIdByName(topology, channelName);
+        byte[] payload = topology.channel(channelId)
+                .interOpCodec()
+                .orElseThrow()
+                .encoder()
+                .apply(value);
+        return OpEdgeHandoff.newBuilder()
+                .setOpIdx(opIdx)
+                .addHandoff(OpHandoffItem.newBuilder()
+                        .setChannelId(channelId)
+                        .setPayload(ByteString.copyFrom(payload))
+                        .build())
+                .build();
     }
 
     /** A→(B,C)→Join: the fan-in diamond, join plugin-terminal. */

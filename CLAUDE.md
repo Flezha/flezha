@@ -1,5 +1,129 @@
 # Flezha repo notes
 
+## Multi-input operations (`add-multi-input-operations`)
+
+- **`c.merge::<I>()` / `c.merge(I.class)`** — subscribe two or more source
+  channels to ONE operation whose `Input` is an author-declared sum type, each
+  `.from(source, map)` supplying the mapping. Entry streams and inter-op
+  streams are both sources on an UNBOUNDED operative, freely mixed (bounded
+  takes inter-op only — see below). Single-input `.into` is unchanged.
+- **The whole feature is ONE field on the consumer edge.**
+  `ChannelDescriptor.consumers` went from `Vec<OperationId>` to
+  `Vec<ConsumerEdge>` (`operation` + `Option<MergeMapFn>`); `consumer_ids()` /
+  `consumerIds()` is the id-only view the graph walks and the bounded DAG use.
+  No wire change, no controller change, no journal-format change.
+- **GOTCHA — map at the ROUTING seam, not the delivery seam.** The mapping is
+  applied in `dispatcher::route_to_consumers` (Rust) /
+  `OperationDispatcher.routeToConsumers` (Java — the wire reader and
+  `fanoutInterOperation` both go through it), which is the one path both live
+  delivery and the controller's re-forwarded replay slice travel. That is why
+  replay determinism cost zero code: frames are still journaled per source
+  channel, and the slice re-maps identically. Mapping later (inside dispatch)
+  would have forked live and replay.
+- **`segment_for` / `operation_key` see the MAPPED value** — they run after the
+  edge map, so per-source segmentation is encoded in the enum, not per edge.
+- **Bounded works over INTER-OP channels only**: `ChainCtx::edge_map` +
+  `extend_mapped` apply the edge map where the driver accumulates a producer's
+  batch into its child AND where `resumed_start` re-seeds from the journaled
+  handoff. Java mirrors both in `BoundedOperativeRunner`. Without this a merge
+  in a bounded chain would downcast-panic.
+- **GOTCHA — a merge mapping is the ONE author closure on a bounded chain that
+  runs on the DRIVER thread**, not inside a segment invocation, so it is the one
+  the existing `catch_unwind`s miss. `extend_mapped` contains it (Rust) /
+  `BoundedOperativeRunner.extendMapped` rethrows as `BoundedOperativeException`
+  (Java) into the chain's existing abort-and-compensate path; without that an
+  unwind skips `emit_bounded_completed` and the instance is stranded with no
+  terminal frame. No retry — a mapping is pure by contract, so a re-run panics
+  identically. Unbounded is already covered on the inter-op side (the producer's
+  invocation guard); an unbounded ENTRY source is unguarded, exactly as the
+  entry parser on that same wire-reader seam already is.
+- **GOTCHA — the consumer-release block must sit AFTER the intent markers, the
+  stage record and the op-commit barrier.** That ordering is load-bearing now
+  that a mapping can throw there: release-first leaves the producer whose edge
+  blew up out of `completed` AND off disk (no intent markers), so it is never
+  compensated and a crash mid-abort cannot recover it either. Java had it
+  release-first and leaked exactly that (comp log `[undo-a]` instead of
+  `[undo-b, undo-a]`); it now mirrors Rust's `run_iteration`. The abort scope is
+  "stages recorded as completed" — a Rust sibling still in flight in the same
+  level is NOT undone, which is the pre-existing mid-level abort shape (a failed
+  `commit` at the same spot behaves identically), not a merge-specific hole.
+- **The two bounded mapping sites do NOT share an undo scope.** Forward
+  accumulate: parity, the producer whose edge blew up is always unwound on both
+  SDKs (measured). Crash-resume re-seed: Rust's `drive_chain` seeds the resumed
+  iteration's `completed` from `journaled_stages`' in-flight stages
+  (`driver.rs` `resumed_stages` → `completed`), so the journaled producer IS
+  unwound; Java's `runIteration` starts `completed` empty and `continue`s past
+  journaled ops without recording them, so NOTHING is unwound. Do not write
+  "both SDKs unwind the same set" without saying which site.
+- **KNOWN LIMITATION (verified against HEAD, documented, NOT fixed) — a resumed
+  Java bounded chain compensates only what re-ran.** `runIteration` never seeds
+  `completed` from the op-journal, so any abnormal exit from a resumed chain
+  leaves the journaled-committed operations un-undone; Rust unwinds them.
+  Pre-existing and NOT merge-specific (it applies to a resumed Java chain
+  failing anywhere forward) — a merge mapping throwing at the re-seed site is
+  one way to reach it. Symptom: a Java bounded instance that crashed mid-chain,
+  resumed, then failed reports `error` having compensated fewer operations than
+  its Rust twin. Closing it is a bounded-resume semantics change, out of scope
+  here. Written up in `docs/multi_input_operations.md` "Known limitation".
+- **GOTCHA — a bounded merge over an ENTRY channel is refused, not supported.**
+  The bounded seed (`driver.rs seed_bytes`, fed by the spawn args and by
+  `PerInput` inbox items) is a bare payload naming no channel, so no mapping
+  could be selected and every entry channel past the first is unreadable —
+  `build_dag` would happily accept the shape (`entry.consumers.len() == 1`
+  holds) and every invocation would then fail the input-type check. Hence
+  `BuildBoundedError::MergeFromEntryChannel` / the same name in Java's
+  `BoundedSpec`. Unbounded is unaffected: the controller stamps
+  `metadata["channel"]` there, which is exactly what the bounded seed lacks.
+- **Refusals**: `TopologyIssue::MergeTooFewSources` / `DuplicateMergeSource` /
+  `MergeSourceAlreadyWired` (both SDKs, same names) + the bounded
+  `MergeFromEntryChannel`. Mapped-type mismatch is a COMPILE error in Rust
+  (`Operation<Input = I>` bound on `.into::<Op>()`) and a registration error in
+  Java (`wireConsumer` compares the declared merge type, not the channel
+  payload type) — the standard erasure asymmetry.
+- **GOTCHA — `attach_consumer` must not silently drop a mapping.** It dedups by
+  consumer id, so a second declaration on an existing edge used to keep the
+  first mapping (or none) and deliver the wrong value forever, with nothing
+  said. It now refuses whenever either side carries a mapping;
+  mapping-free re-declaration stays the legal fan-in / repeated-`.into` no-op.
+  A duplicated source reports ONLY `DuplicateMergeSource` — `Merge` counts
+  `declared` (every `.from` written), not surviving sources, so the arity check
+  no longer also blames the author for declaring too few.
+- **GOTCHA — a Java test's instance id IS the 32-byte wire payload-id.**
+  `factoryId + "-instance"` truncates and the frame finds no operative
+  (`dispatch: operative instance ... not found`). Use the bare factory id.
+- **GOTCHA — `mvn test -pl flezha-sdk-runtime` without `-am` resolves
+  `flezha-sdk-api` from the stale installed jar**, so a new api class throws
+  `NoClassDefFoundError`. Always `-am` after touching the api module, and
+  rebuild the committed dist jars (`mvn clean` first — the fat jar shades stale
+  `target/classes`).
+- **Tests**: `sdk/rust/tests/merged_input.rs` (its own `[[test]]` entry,
+  `required-features = ["bench-internals"]`; the three entry-merge cases share
+  one static observer and serialize on `tuned_test_guard()`),
+  `MergedInputTest.java`, `E09_MergedInputTest.java`. The bounded halves are the
+  diamond fan-in re-authored as a merge — `MergeBounded` in
+  `bounded_driver_scenarios` and `MergeBoundedOperative` in `BoundedKindTest` —
+  each run forward AND resumed from a journal, which is what covers the
+  accumulate and re-seed mapping sites; the entry-source refusal is pinned in
+  `dag_topology_is_validated` and `BoundedKindTest`. `PanickingMergeBounded` /
+  `ThrowingMergeBoundedOperative` pin the containment — both were confirmed to
+  FAIL (driver thread gone, `drain` times out / the completion latch never
+  counts down) with the guard removed, and both assert the EXACT undo list on the
+  FORWARD site (`undo-b` then `undo-a` — Rust's literals carry the output too,
+  a fixture-format difference) so a re-divergence in release ordering is caught
+  rather than assumed away. Both fixtures are ALSO driven through the
+  crash-resume re-seed site via the resume harness + a journal, asserting
+  containment and the terminal report; Rust additionally asserts the journaled
+  stages were undone in reverse, read off the compensation-DONE markers (the
+  comp log is empty there — `diamond_op!` logs per completed output and a
+  journal-rebuilt `SegmentRun` has none, a trap worth remembering). Java asserts
+  no undo list on that path — see the known limitation above.
+- **`sdk/rust/public-api.txt` is part of "done" for any SDK-surface change**
+  (`sdk/rust/README.md` "Public API workflow"). It is human-curated commentary,
+  not `cargo public-api` output, so it is hand-edited — and a CHANGED signature
+  (here `ChannelDescriptor::consumers`) must be recorded, not just additions.
+- **Docs/examples**: `docs/multi_input_operations.md`, `docs/glossary.md`
+  ("Merge"), `sdk/rust/examples/merged_input.rs`, Java `E09_MergedInput`.
+
 ## Operation-requested spawn (`add-operation-requested-spawn`)
 
 - **`ctx.spawn_bounded` / `ctx.spawnBounded`** — spawn-or-deliver a bounded

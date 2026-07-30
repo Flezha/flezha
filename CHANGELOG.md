@@ -4,6 +4,29 @@
 
 ### Added
 
+- **An operation can consume more than one channel**
+  (`add-multi-input-operations`). `c.merge::<I>()` (Rust) / `c.merge(I.class)`
+  (Java) subscribes two or more source channels to one operation whose `Input`
+  is an author-declared sum type, each subscription supplying a pure mapping
+  from its payload into that type. Entry channels and inter-operation channels
+  are both valid sources on an unbounded operative, freely mixed, so a detector
+  can take its data feed and
+  a live config channel without the operative being restarted with new
+  environment. Per-source FIFO is preserved and nothing is ordered across
+  sources; `segment_for` sees the mapped value; the mappings run identically on
+  live delivery and WAL replay, so a warm restart restores the same state.
+  Fewer than two sources, the same channel subscribed twice, or a source that
+  would re-wire an already-declared edge all fail operative definition with a
+  named topology error. A **bounded** operative merges its operations' output
+  streams — its entry channel seeds the root from the spawn args and names no
+  channel, so an entry channel as a bounded merge source is refused by name.
+  Single-input wiring is unchanged.
+
+  **No wire change and no controller change**: the merge is a subscription-time
+  construct in the SDK, frames are still journaled per source channel, and the
+  controller has no model of a channel's consumers. See
+  `docs/multi_input_operations.md`.
+
 - **An operation can ask for a bounded operative**
   (`add-operation-requested-spawn`). `ctx.spawn_bounded` (Rust) /
   `ctx.spawnBounded` (Java) spawns-or-delivers a bounded instance on one

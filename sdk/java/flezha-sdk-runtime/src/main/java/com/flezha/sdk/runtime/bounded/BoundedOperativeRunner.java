@@ -27,6 +27,7 @@ import com.flezha.sdk.runtime.control.AckRegistry;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
+import com.flezha.sdk.runtime.operative.ConsumerEdge;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.state.DlqPark;
@@ -595,7 +596,14 @@ public final class BoundedOperativeRunner {
         // handoff journaled at that barrier.
         Set<Integer> committedOps = journaledCommittedOps(instance);
         if (!committedOps.isEmpty()) {
-            bankJournaledHandoffs(instance, topology, chain, committedOps, inputs);
+            try {
+                bankJournaledHandoffs(instance, topology, chain, committedOps, inputs);
+            } catch (BoundedOperativeException e) {
+                // Outside the stage loop's own catch, so a mapping that throws
+                // while re-seeding is contained here instead of unwinding the
+                // driver.
+                return new IterationOut(new Outcome("error", messageOf(e), EMPTY), batch, completed);
+            }
         }
 
         for (int stageIdx = 0; stageIdx < chain.size(); stageIdx++) {
@@ -628,20 +636,6 @@ public final class BoundedOperativeRunner {
                         instance);
                 batch = stageOut.batch();
 
-                // Release this operation's output to EVERY consumer of its output
-                // channel: a branch feeds several, and a fan-in ACCUMULATES. Assigning
-                // instead of accumulating here is the bug branching must avoid — it
-                // silently drops one producer's contribution.
-                if (op.outputChannelId().isPresent()) {
-                    ChannelDescriptor outCh =
-                            topology.channel(op.outputChannelId().getAsInt());
-                    if (outCh != null) {
-                        for (int consumer : outCh.consumers()) {
-                            inputs.computeIfAbsent(consumer, k -> new ArrayList<>())
-                                    .addAll(batch);
-                        }
-                    }
-                }
                 // Durable saga (§4.3): record this operation's completion — one
                 // compensation-intent marker per segment that ran — so a crash
                 // mid-compensation knows what still needs undo. Only for
@@ -673,6 +667,29 @@ public final class BoundedOperativeRunner {
                     if (commitError != null) {
                         abnormal = new Outcome("error", commitError, EMPTY);
                         break;
+                    }
+                }
+
+                // Release this operation's output to EVERY consumer of its output
+                // channel: a branch feeds several, and a fan-in ACCUMULATES. Assigning
+                // instead of accumulating here is the bug branching must avoid — it
+                // silently drops one producer's contribution.
+                //
+                // Ordered AFTER the intent markers, the completion record and the
+                // op barrier — the Rust `run_iteration` ordering. A merge mapping
+                // can throw here, and the operation that produced the batch has
+                // already RUN: recording it first is what puts it in the saga's
+                // undo plan (and its intent markers on disk) instead of leaving
+                // its effects outstanding.
+                if (op.outputChannelId().isPresent()) {
+                    ChannelDescriptor outCh =
+                            topology.channel(op.outputChannelId().getAsInt());
+                    if (outCh != null) {
+                        for (ConsumerEdge edge : outCh.consumers()) {
+                            // A merged consumer receives each producer's
+                            // contribution through that edge's mapping.
+                            extendMapped(inputs.computeIfAbsent(edge.operation(), k -> new ArrayList<>()), edge, batch);
+                        }
                     }
                 }
             } catch (BoundedOperativeException e) {
@@ -1222,6 +1239,37 @@ public final class BoundedOperativeRunner {
     }
 
     /**
+     * Extend {@code dest} with a producer's released batch, lifted through the
+     * edge's merge mapping when it declares one. Shared by the forward
+     * accumulate and the journal re-seed so a resumed merge sees exactly what
+     * the live one did; an unmapped edge — every single-input chain — moves its
+     * values straight in.
+     *
+     * <p>The mapping is author code, and unlike every other author callback on
+     * a bounded chain it runs on the driver thread rather than inside a segment
+     * invocation. Left uncontained, an exception would unwind the driver before
+     * it can emit {@code BoundedCompleted} and the instance would be stranded
+     * with no terminal frame; rethrowing as {@link BoundedOperativeException}
+     * routes it into the chain's existing abort-and-compensate path. Retrying
+     * is not offered: a mapping is required to be pure, so a re-run would throw
+     * identically. Mirrors the Rust driver's {@code extend_mapped}.
+     */
+    private static void extendMapped(List<Object> dest, ConsumerEdge edge, List<Object> batch)
+            throws BoundedOperativeException {
+        if (edge.map().isEmpty()) {
+            dest.addAll(batch);
+            return;
+        }
+        try {
+            for (Object value : batch) {
+                dest.add(edge.mapValue(value));
+            }
+        } catch (RuntimeException | Error e) {
+            throw new BoundedOperativeException("merge mapping threw: " + messageOf(e));
+        }
+    }
+
+    /**
      * Bank each committed producer's journaled handoff into its uncommitted
      * consumers' input batches (the Rust {@code resumed_start} mirror). This is
      * what makes a resume a SKIP rather than a re-run — and what lets a join
@@ -1233,7 +1281,8 @@ public final class BoundedOperativeRunner {
             UnboundedOperativeTopology topology,
             List<Integer> chain,
             Set<Integer> committedPositions,
-            Map<Integer, List<Object>> inputs) {
+            Map<Integer, List<Object>> inputs)
+            throws BoundedOperativeException {
         var edges = instance.opJournal().map(j -> j.getOpHandoffsList()).orElseGet(List::of);
         for (var edge : edges) {
             int position = edge.getOpIdx();
@@ -1259,9 +1308,10 @@ public final class BoundedOperativeRunner {
                         .decoder()
                         .apply(item.getPayload().toByteArray()));
             }
-            for (int consumer : channel.consumers()) {
+            for (ConsumerEdge consumerEdge : channel.consumers()) {
+                int consumer = consumerEdge.operation();
                 if (!committedPositions.contains(chain.indexOf(consumer))) {
-                    inputs.computeIfAbsent(consumer, k -> new ArrayList<>()).addAll(decoded);
+                    extendMapped(inputs.computeIfAbsent(consumer, k -> new ArrayList<>()), consumerEdge, decoded);
                 }
             }
         }

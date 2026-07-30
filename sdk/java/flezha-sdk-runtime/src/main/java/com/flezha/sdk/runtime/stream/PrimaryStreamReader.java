@@ -157,21 +157,7 @@ public final class PrimaryStreamReader {
             }
             return;
         }
-        routeToConsumers(instance, channel, input, offset, replay);
-    }
-
-    private void routeToConsumers(
-            UnboundedOperativeInstance instance,
-            ChannelDescriptor channel,
-            Object input,
-            OptionalLong offset,
-            boolean replay) {
-        for (int consumerOperationId : channel.consumers()) {
-            OperationDispatcher dispatcher = instance.dispatcher(consumerOperationId);
-            if (dispatcher != null) {
-                dispatcher.fanoutSegments(input, streamId, offset, replay);
-            }
-        }
+        OperationDispatcher.routeToConsumers(instance, channel, input, streamId, offset, replay);
     }
 
     /**
@@ -222,7 +208,7 @@ public final class PrimaryStreamReader {
                 // A parser violating the determinism contract may succeed on a
                 // re-attempt; deliver rather than drop.
                 Object typed = parser.apply(bytes);
-                routeToConsumers(instance, channel, typed, offset, replay);
+                OperationDispatcher.routeToConsumers(instance, channel, typed, streamId, offset, replay);
                 return;
             } catch (RuntimeException e) {
                 error = describe(e);

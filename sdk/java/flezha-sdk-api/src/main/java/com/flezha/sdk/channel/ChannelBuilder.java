@@ -49,6 +49,14 @@ public interface ChannelBuilder {
     <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name, @Nonnull Function<byte[], T> parser);
 
     /**
+     * Open a <b>merged</b> subscription: one operation whose {@code Input} is
+     * the sum type {@code type}, fed by two or more source channels that each
+     * supply a mapping into it. See {@link Merge}.
+     */
+    @Nonnull
+    <I> Merge<I> merge(@Nonnull Class<I> type);
+
+    /**
      * Opt this Operative into the <b>effectively-once output tier</b>: each
      * invocation's state changes, plugin outputs and consumed input offset ship
      * as ONE {@code segment_effect_record}, which the controller persists as one

@@ -9,6 +9,7 @@ import com.flezha.sdk.operation.StableId;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
+import com.flezha.sdk.runtime.operative.ConsumerEdge;
 import com.flezha.sdk.runtime.operative.OperationDescriptor;
 import com.flezha.sdk.runtime.operative.PluginSink;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
@@ -681,17 +682,38 @@ public final class OperationDispatcher {
         }
     }
 
+    /**
+     * Route one channel value to every subscribed consumer, each through its
+     * own edge's merge mapping. The single seam a {@link ConsumerEdge} mapping
+     * is applied on: the wire-reader path (live delivery and the controller's
+     * re-forwarded replay slice, via {@code PrimaryStreamReader}) and an
+     * inter-operation emit both come through here, so the two can never drift.
+     * Mirrors the Rust SDK's {@code dispatcher::route_to_consumers}.
+     */
+    public static void routeToConsumers(
+            @Nonnull UnboundedOperativeInstance instance,
+            @Nonnull ChannelDescriptor channel,
+            @Nonnull Object value,
+            long primaryStreamId,
+            @Nonnull OptionalLong offset,
+            boolean replay) {
+        for (ConsumerEdge edge : channel.consumers()) {
+            OperationDispatcher consumer = instance.dispatcher(edge.operation());
+            if (consumer != null) {
+                consumer.fanoutSegments(edge.mapValue(value), primaryStreamId, offset, replay);
+            }
+        }
+    }
+
     private void fanoutInterOperation(ChannelDescriptor descriptor, Object value, long primaryStreamId) {
         UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
             return;
         }
-        for (int consumerOperationId : descriptor.consumers()) {
-            OperationDispatcher consumer = ri.dispatcher(consumerOperationId);
-            if (consumer != null) {
-                consumer.fanoutSegments(value, primaryStreamId, OptionalLong.empty());
-            }
-        }
+        // A value derived downstream carries no input-log offset — it was never
+        // journaled — and is never a replay member: the downstream operation
+        // receives the corrected outputs already in order.
+        routeToConsumers(ri, descriptor, value, primaryStreamId, OptionalLong.empty(), false);
     }
 
     private void emitPlugin(
