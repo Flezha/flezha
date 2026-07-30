@@ -60,21 +60,15 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   defoverridable build: 1
 
   @doc """
-  Reject unknown options rather than ignoring them. The generic `build/1`
-  silently drops any key that is not a struct field, which would let a config
-  ask for a delivery guarantee this provider deliberately does not offer and
-  read as accepted.
+  Reject unknown options rather than ignoring them, so a config asking for a
+  delivery guarantee this provider deliberately does not offer fails loudly
+  instead of reading as accepted.
   """
   @impl true
   def build(string_map) when is_map(string_map) do
-    unknown =
-      string_map
-      |> Map.keys()
-      |> Enum.filter(&(is_binary(&1) and &1 not in @known_opts))
-
-    case unknown do
-      [] -> super(string_map)
-      keys -> {:error, "unknown option(s) for operative_forward: #{Enum.join(keys, ", ")}"}
+    case ProviderBehaviour.reject_unknown(Map.keys(string_map), @known_opts, "operative_forward") do
+      :ok -> super(string_map)
+      err -> err
     end
   end
 
@@ -118,13 +112,11 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   @impl true
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
-    pid = Map.get(opts, :worker_pid) || Map.get(opts, :owned_pid)
-
-    cond do
-      not is_pid(pid) -> {:unhealthy, :no_worker}
-      not Process.alive?(pid) -> {:unhealthy, :worker_dead}
-      true -> :healthy
-    end
+    ProviderBehaviour.worker_health(
+      opts,
+      [pid: [:worker_pid, :owned_pid], absent: :no_worker, dead: :worker_dead],
+      fn _pid -> :healthy end
+    )
   end
 
   # ---------- enable-time refusals ----------

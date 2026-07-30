@@ -77,6 +77,14 @@ contains Segments.**
   `handle_message` callback rather than data flow into the input stream. See
   [`operative_forward_plugin.md`](operative_forward_plugin.md).
 
+- **HTTP poll source** — feeding an Operative's **entry channel** from an HTTP
+  resource, configured as the first-party `HttpPoll` plugin. The response body is
+  injected as an ordinary journaled entry frame only when its SHA-256 changes,
+  plus one unconditional *seed* on every (re)start — which is what converges a
+  restarted or handed-over Operative onto current content within one interval,
+  and why consumers of a polled channel must be idempotent. See
+  [`http_poll_plugin.md`](http_poll_plugin.md).
+
 - **Dead-letter queue (DLQ)** — the Controller's durable store for poison
   payloads: inputs an Unbounded Operation failed on every retry
   (`app_data/dlq/{operative_class}/{operation_id}/`). A payload is parked

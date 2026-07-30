@@ -111,13 +111,11 @@ defmodule Flezha.Plugin.Provider.Postgres do
   @impl true
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
-    pid = Map.get(opts, :sink_pid) || Map.get(opts, :owned_pid)
-
-    cond do
-      not is_pid(pid) -> {:unhealthy, :no_sink}
-      not Process.alive?(pid) -> {:unhealthy, :worker_dead}
-      true -> health_from_stats(pid, opts)
-    end
+    ProviderBehaviour.worker_health(
+      opts,
+      [pid: [:sink_pid, :owned_pid], absent: :no_sink, dead: :worker_dead],
+      &health_from_stats(&1, opts)
+    )
   end
 
   defp health_from_stats(pid, opts) do
@@ -136,10 +134,6 @@ defmodule Flezha.Plugin.Provider.Postgres do
       %{} ->
         :healthy
     end
-  catch
-    # An uncertain probe (wedged/terminating worker) is reported healthy so
-    # the reconciler never escalates on it — worker_dead covers a gone pid.
-    :exit, _ -> :healthy
   end
 
   defp stalled?(%{last_commit_age_ms: nil}, _threshold), do: true

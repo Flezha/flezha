@@ -239,13 +239,11 @@ defmodule Flezha.Plugin.Provider.Kafka do
     @impl true
     @spec health(map()) :: Flezha.Plugin.ProviderBehaviour.health_verdict()
     def health(opts) do
-      pid = Map.get(opts, :producer_pid) || Map.get(opts, :owned_pid)
-
-      cond do
-        not is_pid(pid) -> {:unhealthy, :no_producer}
-        not Process.alive?(pid) -> {:unhealthy, :worker_dead}
-        true -> health_from_stats(pid)
-      end
+      Flezha.Plugin.ProviderBehaviour.worker_health(
+        opts,
+        [pid: [:producer_pid, :owned_pid], absent: :no_producer, dead: :worker_dead],
+        &health_from_stats/1
+      )
     end
 
     defp health_from_stats(pid) do
@@ -259,11 +257,6 @@ defmodule Flezha.Plugin.Provider.Kafka do
         %{} ->
           :healthy
       end
-    catch
-      # A wedged/terminating worker read is treated as healthy so the reconciler
-      # does not escalate on an uncertain probe — the worker_dead branch covers
-      # a genuinely gone pid.
-      :exit, _ -> :healthy
     end
 
     defp convert_value(:partition, value), do: parse_int(value, "partition")

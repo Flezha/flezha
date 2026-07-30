@@ -114,6 +114,123 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   def coerce_bool("true"), do: true
   def coerce_bool("false"), do: false
 
+  @probe_timeout_ms 500
+
+  @doc """
+  The per-plugin health-probe budget. Callers that time-box a whole operative's
+  probe sweep size their allowance from this rather than from a provider's own
+  call timeout.
+  """
+  @spec probe_budget_ms() :: pos_integer()
+  def probe_budget_ms(), do: @probe_timeout_ms
+
+  @doc """
+  The pid preamble every worker-backed `health/1` shares: resolve the tracked
+  process, name its absence and its death, and otherwise delegate to the
+  provider's own verdict.
+
+  `reasons` carries `:absent` and `:dead` (the atoms this provider reports),
+  optionally `:pid`, the opts keys to resolve in order — a provider that stores
+  its worker under its own key lists that first and `:owned_pid` after — and
+  optionally `:budget_ms` (default #{@probe_timeout_ms}).
+
+  The verdict is computed off the caller and abandoned past the budget. That
+  bound is the point: `Extension.Table.health/1` runs on the convergence loop's
+  own process, and providers reach their workers with a `GenServer.call` whose
+  timeout is measured in seconds — so one wedged worker would otherwise cost
+  every tick that much. A verdict that times out, exits, or returns nonsense
+  reports healthy: the loop must never escalate on an uncertain probe, and a
+  genuinely gone process is already the `:dead` branch.
+  """
+  @spec worker_health(map(), keyword(), (pid() -> health_verdict())) :: health_verdict()
+  def worker_health(opts, reasons, verdict_fun) do
+    pid =
+      reasons
+      |> Keyword.get(:pid, [:owned_pid])
+      |> Enum.find_value(&Map.get(opts, &1))
+
+    cond do
+      not is_pid(pid) ->
+        {:unhealthy, Keyword.fetch!(reasons, :absent)}
+
+      not Process.alive?(pid) ->
+        {:unhealthy, Keyword.fetch!(reasons, :dead)}
+
+      true ->
+        bounded_verdict(verdict_fun, pid, Keyword.get(reasons, :budget_ms, @probe_timeout_ms))
+    end
+  end
+
+  defp bounded_verdict(verdict_fun, pid, budget_ms) do
+    parent = self()
+    ref = make_ref()
+
+    {child, monitor} =
+      spawn_monitor(fn -> send(parent, {ref, safe_verdict(verdict_fun, pid)}) end)
+
+    receive do
+      {^ref, verdict} ->
+        Process.demonitor(monitor, [:flush])
+        verdict
+
+      {:DOWN, ^monitor, :process, _pid, _reason} ->
+        :healthy
+    after
+      budget_ms ->
+        Process.exit(child, :kill)
+        Process.demonitor(monitor, [:flush])
+        :healthy
+    end
+  end
+
+  defp safe_verdict(verdict_fun, pid) do
+    case verdict_fun.(pid) do
+      :healthy -> :healthy
+      {:unhealthy, _reason} = unhealthy -> unhealthy
+      _ -> :healthy
+    end
+  catch
+    _, _ -> :healthy
+  end
+
+  @doc """
+  Ask a provider-owned worker for a health fact over a bare `{tag, from, ref}`
+  message, briefly. Used where the worker is not a GenServer, or where a
+  `GenServer.call` would queue behind the very backlog being diagnosed.
+
+  The worker replies `{ref, payload}`. A worker that does not answer in time is
+  reported `:timeout`, which callers read as uncertainty — see `worker_health/3`.
+  """
+  @spec ask(pid(), atom(), timeout()) :: {:ok, term()} | :timeout
+  def ask(pid, tag, timeout \\ @probe_timeout_ms) do
+    ref = make_ref()
+    send(pid, {tag, self(), ref})
+
+    receive do
+      {^ref, payload} -> {:ok, payload}
+    after
+      timeout -> :timeout
+    end
+  end
+
+  @doc """
+  Refuse options a provider does not recognise rather than ignoring them. The
+  generated `build/1` silently drops any key that is not a struct field, which
+  would let a config ask for a capability the provider deliberately does not
+  offer and read as accepted.
+  """
+  @spec reject_unknown(Enumerable.t(), [atom() | binary()], binary()) :: :ok | {:error, binary()}
+  def reject_unknown(keys, allowed, provider) do
+    case Enum.reject(keys, &(&1 in allowed)) do
+      [] ->
+        :ok
+
+      unknown ->
+        {:error,
+         "unknown option(s) for #{provider}: #{Enum.map_join(unknown, ", ", &to_string/1)}"}
+    end
+  end
+
   defmacro __using__(_opts) do
     quote do
       @behaviour Flezha.Plugin.ProviderBehaviour

@@ -21,7 +21,7 @@ defmodule Flezha.Plugin.Provider.WebsocketHealthTest do
   defp liveness_loop(frame_age, data_age) do
     receive do
       {:liveness_probe, from, ref} ->
-        send(from, {ref, frame_age, data_age})
+        send(from, {ref, {frame_age, data_age}})
         liveness_loop(frame_age, data_age)
     end
   end
@@ -68,7 +68,7 @@ defmodule Flezha.Plugin.Provider.WebsocketHealthTest do
     ref = make_ref()
 
     assert {:ok, ^state} = Websocket.handle_info({:liveness_probe, self(), ref}, state)
-    assert_receive {^ref, frame_age, data_age}
+    assert_receive {^ref, {frame_age, data_age}}
     assert frame_age >= 50
     assert data_age >= 200
   end

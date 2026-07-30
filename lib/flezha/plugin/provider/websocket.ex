@@ -228,41 +228,29 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl ProviderBehaviour
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
-    pid = Map.get(opts, :owned_pid)
     idle = Map.get(opts, :idle_timeout_ms, @default_idle_timeout_ms)
     resub = Map.get(opts, :resubscribe_after_ms, @default_resubscribe_after_ms)
 
-    cond do
-      not is_pid(pid) -> {:unhealthy, :no_connection}
-      not Process.alive?(pid) -> {:unhealthy, :not_alive}
-      true -> health_from_liveness(pid, idle, resub)
-    end
+    ProviderBehaviour.worker_health(
+      opts,
+      [absent: :no_connection, dead: :not_alive],
+      &health_from_liveness(&1, idle, resub)
+    )
   end
 
   defp health_from_liveness(pid, idle, resub) do
-    case query_liveness(pid) do
-      {:ok, frame_age, data_age} ->
+    case ProviderBehaviour.ask(pid, :liveness_probe) do
+      {:ok, {frame_age, data_age}} ->
         cond do
           idle > 0 and frame_age >= idle -> {:unhealthy, :connection_idle}
           resub > 0 and data_age >= resub -> {:unhealthy, :data_idle}
           true -> :healthy
         end
 
+      # A wedged probe reads healthy so the reconciler does not escalate on
+      # uncertainty (a genuinely dead pid is caught by `worker_health/3`).
       :timeout ->
-        # Wedged probe → healthy so the reconciler does not escalate on
-        # uncertainty (a genuinely dead pid is caught by Process.alive?/1).
         :healthy
-    end
-  end
-
-  defp query_liveness(pid) do
-    ref = make_ref()
-    send(pid, {:liveness_probe, self(), ref})
-
-    receive do
-      {^ref, frame_age, data_age} -> {:ok, frame_age, data_age}
-    after
-      500 -> :timeout
     end
   end
 
@@ -479,7 +467,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   @impl Fresh
   def handle_info({:liveness_probe, from, ref}, state) do
     now = :erlang.monotonic_time(:millisecond)
-    send(from, {ref, now - state.last_frame_at, now - state.last_data_frame_at})
+    send(from, {ref, {now - state.last_frame_at, now - state.last_data_frame_at}})
     {:ok, state}
   end
 

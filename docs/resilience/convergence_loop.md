@@ -164,6 +164,10 @@ self-report, collected per tick by `Probe` through `Extension.Table.health/1`:
   :worker_dead | :no_producer}` on a sustained produce stall or dead worker.
 - `operative_websocket` → `{:unhealthy, :no_connection | :not_alive |
   :connection_idle | :data_idle}` on a dead or silent upstream connection.
+- `operative_http_poll` → `{:unhealthy, :no_poller | :poller_dead |
+  {:poll_failing, reason}}` after `failure_threshold` consecutive failed polls.
+  Requests run off the poller process, so the verdict is available for exactly
+  the hanging endpoint that would otherwise starve the probe.
 - An uncertain probe (timeout, raise, no `health/1` export, Overwatch on a
   different node) reports healthy — the loop never escalates on uncertainty.
 

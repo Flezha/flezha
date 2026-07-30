@@ -4,6 +4,39 @@
 
 ### Added
 
+- **An operative can be fed from an HTTP resource**
+  (`add-http-poll-source-provider`). The built-in `operative_http_poll` source
+  provider (`Flezha.Plugin.Provider.HttpPoll`) polls a URL on an interval and
+  injects the response body as an ordinary journaled entry frame — but only when
+  the body's SHA-256 changes, so a steady endpoint costs one request per interval
+  and zero frames. The first successful poll after the plugin starts always
+  injects, which converges an operative that has just been started, recovered, or
+  handed over onto current content within one interval; consumers of a polled
+  channel must therefore treat its frames idempotently. Until now runtime
+  configuration could reach a running operative only by restarting it with new
+  `init_values` or by an operator hand-pushing `flz operative send`.
+
+  Delivery uses the operative's confirming ingest and the hash advances only once
+  the operative has taken the payload, so a frame dropped by a parked operative
+  or an unbound stream is re-offered on the next poll instead of being lost until
+  the endpoint next changes. Timeouts, connection errors, statuses outside 2xx
+  (redirects included — they are not followed, since `:httpc` would replay the
+  configured headers to an unvalidated host and downgrade TLS), an oversized
+  body, a non-UTF-8 body, and a refused ingest all inject nothing, retain the
+  last delivered hash and ETag, and count toward the standard provider health
+  contract; the next success clears the run and delivers the change the outage
+  hid. `ETag`/`If-None-Match` is passed through for bandwidth, with the local hash
+  still the injection gate. The size cap aborts the transfer as the body arrives,
+  so it bounds controller memory and not merely what the operative receives.
+  HTTPS is verified against the system CA store. Attach refuses a non-http
+  scheme, a hostless URL, credentials embedded in the URL, a sub-second interval,
+  a timeout that could outlast its own interval, a non-positive tunable, a body
+  cap above the ceiling, and any unknown option — the last on `init_provider/1`,
+  the path a `--plugins` spec actually takes.
+
+  **Controller-only**: no SDK, wire, or journal change. See
+  `docs/http_poll_plugin.md`.
+
 - **An operation can consume more than one channel**
   (`add-multi-input-operations`). `c.merge::<I>()` (Rust) / `c.merge(I.class)`
   (Java) subscribes two or more source channels to one operation whose `Input`

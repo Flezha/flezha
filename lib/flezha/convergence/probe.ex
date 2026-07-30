@@ -13,9 +13,10 @@ defmodule Flezha.Convergence.Probe do
   alias Flezha.Service.HubManager
 
   @operative_call_timeout_ms 1_000
-  # Headroom above the Overwatch call for provider health probes (the
-  # websocket liveness probe blocks up to 500 ms per wedged connection).
-  @health_probe_budget_ms 1_500
+  # Headroom above the Overwatch call for provider health probes. Each plugin's
+  # probe is individually bounded by `ProviderBehaviour.worker_health/3`, and an
+  # operative's plugins are probed in series, so allow for a few wedged ones.
+  @health_probe_budget_ms Flezha.Plugin.ProviderBehaviour.probe_budget_ms() * 3
 
   @type reality :: %{
           operatives: %{{binary(), binary()} => map()},
