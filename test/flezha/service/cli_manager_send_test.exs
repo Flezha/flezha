@@ -4,7 +4,7 @@ defmodule Flezha.Service.CliManagerSendTest do
   the confirming verdict from `OperativeManager.send_io_confirming/5` is reported
   and an optional channel is threaded into the `:io_in` metadata. The verdict
   logic itself is covered in `overwatch_confirming_ingest_test`. The error
-  verdicts additionally `System.halt/1` for a non-zero CLI exit, so only the
+  verdicts additionally `exit(:cli_error)` for a non-zero CLI exit, so only the
   success verdicts are asserted in-process; an error exit is exercised by a live
   CLI run in the change's verification.
   """

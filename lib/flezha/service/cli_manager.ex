@@ -43,7 +43,7 @@ defmodule Flezha.Service.CliManager do
         )
 
       {:error, reason} ->
-        IO.puts("Error starting operative: #{inspect(reason)}")
+        cli_error!("Error starting operative: #{inspect(reason)}")
     end
   end
 
@@ -58,7 +58,7 @@ defmodule Flezha.Service.CliManager do
 
     case OperativeManager.start_operative(normalize_namespace(namespace), operative) do
       {:ok, _} -> IO.puts("Operative has been started")
-      {:error, reason} -> IO.puts("Error starting operative: #{inspect(reason)}")
+      {:error, reason} -> cli_error!("Error starting operative: #{inspect(reason)}")
     end
   end
 
@@ -91,7 +91,7 @@ defmodule Flezha.Service.CliManager do
         )
 
       {:error, reason} ->
-        IO.puts("Error stopping operative: #{inspect(reason)}")
+        cli_error!("Error stopping operative: #{inspect(reason)}")
     end
   end
 
@@ -108,7 +108,7 @@ defmodule Flezha.Service.CliManager do
   def operative_rewind(namespace, operative_id, to_iter) do
     case OperativeManager.get_operative_pid(normalize_namespace(namespace), operative_id) do
       {:ok, pid} -> print_rewind(operative_id, to_iter, Overwatch.rewind(pid, to_iter))
-      _ -> IO.puts("Error: operative '#{operative_id}' not found")
+      _ -> cli_error!("Error: operative '#{operative_id}' not found")
     end
   end
 
@@ -120,18 +120,18 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp print_rewind(_operative_id, _to_iter, {:error, {:uncommitted_iteration, []}}) do
-    IO.puts("Error: this operative has no committed iterations to rewind to")
+    cli_error!("Error: this operative has no committed iterations to rewind to")
   end
 
   defp print_rewind(_operative_id, to_iter, {:error, {:uncommitted_iteration, committed}}) do
-    IO.puts(
+    cli_error!(
       "Error: iteration #{to_iter} has not committed. " <>
         "Committed iterations: #{Enum.min(committed)}..#{Enum.max(committed)}"
     )
   end
 
   defp print_rewind(_operative_id, _to_iter, {:error, {:uncovered, channels}}) do
-    IO.puts(
+    cli_error!(
       "Error: refusing to rewind — these channels were written by an unwound " <>
         "operation that declares no `compensate` hook, so the output cannot be " <>
         "undone: #{Enum.join(channels, ", ")}"
@@ -139,7 +139,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp print_rewind(_operative_id, _to_iter, {:error, reason}) do
-    IO.puts("Error rewinding operative: #{inspect(reason)}")
+    cli_error!("Error rewinding operative: #{inspect(reason)}")
   end
 
   @doc """
@@ -166,16 +166,13 @@ defmodule Flezha.Service.CliManager do
         IO.puts("Journaled for suspended '#{operative_id}' — delivers on wake.")
 
       {:error, :not_ready} ->
-        IO.puts("Error: operative '#{operative_id}' is not ready to accept input.")
-        System.halt(1)
+        cli_error!("Error: operative '#{operative_id}' is not ready to accept input.")
 
       {:error, :not_found} ->
-        IO.puts("Error: operative '#{operative_id}' not found.")
-        System.halt(1)
+        cli_error!("Error: operative '#{operative_id}' not found.")
 
       {:error, :refused} ->
-        IO.puts("Error: input refused — durable append failed for '#{operative_id}'.")
-        System.halt(1)
+        cli_error!("Error: input refused — durable append failed for '#{operative_id}'.")
     end
   end
 
@@ -199,18 +196,16 @@ defmodule Flezha.Service.CliManager do
         IO.puts("Operative '#{operative_id}' not found in namespace '#{namespace_display}'.")
 
       {:error, {:unsupported_for_kind, :persistent_state}} ->
-        IO.puts(
+        cli_error!(
           "Operative '#{operative_id}' in namespace '#{namespace_display}' has no per-segment state: " <>
             "its kind does not support state introspection."
         )
 
-        System.halt(1)
-
       {:error, reason} when is_binary(reason) ->
-        IO.puts("Error getting operative state: #{reason}")
+        cli_error!("Error getting operative state: #{reason}")
 
       {:error, reason} ->
-        IO.puts("Error getting operative state: #{inspect(reason)}")
+        cli_error!("Error getting operative state: #{inspect(reason)}")
 
       other ->
         IO.puts("Unexpected result: #{inspect(other)}")
@@ -277,10 +272,10 @@ defmodule Flezha.Service.CliManager do
 
       case PluginManager.enable_plugin(plugin_id, plugin) do
         {:ok, _msg} -> IO.puts("Plugin #{plugin_id} enabled successfully.")
-        {:error, reason} -> IO.puts("Error enabling plugin: #{inspect(reason)}.")
+        {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")
       end
     else
-      {:error, reason} -> IO.puts("Error enabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")
     end
   end
 
@@ -631,13 +626,11 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp set_prepare_recovery_exit_code(result) do
-    # Matches the System.halt/1 exit-code convention used by `boot_await/0`,
-    # `boot_import_legacy_snapshot/2`, and the controller verbs. See
-    # `Flezha.Service.CliManager` for the codebase-wide pattern.
+    # Non-zero CLI exit via the rpc-safe exit(:cli_error) — the codebase-wide
+    # pattern; see cli_error!/1.
     case result do
       {:ok, _} -> :ok
-      {:partial, _, _} -> System.halt(1)
-      {:error, _} -> System.halt(2)
+      _ -> exit(:cli_error)
     end
   end
 
@@ -924,7 +917,7 @@ defmodule Flezha.Service.CliManager do
   def disable_plugin(plugin_id) do
     case PluginManager.disable_plugin(plugin_id) do
       {:ok, _msg} -> IO.puts("Plugin #{plugin_id} disabled successfully.")
-      {:error, reason} -> IO.puts("Error disabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> cli_error!("Error disabling plugin: #{inspect(reason)}.")
     end
   end
 
@@ -939,7 +932,7 @@ defmodule Flezha.Service.CliManager do
         )
 
       {:error, reason} ->
-        IO.puts("Error installing plugin: #{inspect(reason)}.")
+        cli_error!("Error installing plugin: #{inspect(reason)}.")
     end
   end
 
@@ -950,7 +943,7 @@ defmodule Flezha.Service.CliManager do
         IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
 
       {:error, reason} ->
-        IO.puts("Error upgrading plugin: #{inspect(reason)}.")
+        cli_error!("Error upgrading plugin: #{inspect(reason)}.")
     end
   end
 
@@ -958,7 +951,7 @@ defmodule Flezha.Service.CliManager do
   def uninstall_plugin(plugin_id, _opts_json) do
     case Flezha.Plugin.Installer.uninstall(plugin_id) do
       :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
-      {:error, reason} -> IO.puts("Error uninstalling plugin: #{inspect(reason)}.")
+      {:error, reason} -> cli_error!("Error uninstalling plugin: #{inspect(reason)}.")
     end
   end
 
@@ -966,7 +959,7 @@ defmodule Flezha.Service.CliManager do
   def installer_enable_plugin(plugin_id, _opts_json) do
     case Flezha.Plugin.Installer.enable(plugin_id) do
       :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
-      {:error, reason} -> IO.puts("Error enabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")
     end
   end
 
@@ -974,7 +967,7 @@ defmodule Flezha.Service.CliManager do
   def installer_disable_plugin(plugin_id, _opts_json) do
     case Flezha.Plugin.Installer.disable(plugin_id) do
       :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
-      {:error, reason} -> IO.puts("Error disabling plugin: #{inspect(reason)}.")
+      {:error, reason} -> cli_error!("Error disabling plugin: #{inspect(reason)}.")
     end
   end
 
@@ -1071,11 +1064,11 @@ defmodule Flezha.Service.CliManager do
             )
 
           e ->
-            IO.puts("Error getting help for plugin '#{provider_id}': #{Exception.message(e)}")
+            cli_error!("Error getting help for plugin '#{provider_id}': #{Exception.message(e)}")
         end
 
       {:error, reason} ->
-        IO.puts("Error: #{reason}")
+        cli_error!("Error: #{reason}")
     end
   end
 
@@ -1203,7 +1196,7 @@ defmodule Flezha.Service.CliManager do
           IO.puts(:stderr, "boot await: #{ns}: #{inspect(reason)}")
         end)
 
-        System.halt(1)
+        exit(:cli_error)
     end
   end
 
@@ -1221,8 +1214,7 @@ defmodule Flezha.Service.CliManager do
       run_legacy_import(payload)
     else
       {:error, reason} ->
-        IO.puts(:stderr, "boot import-legacy-snapshot: #{inspect(reason)}")
-        System.halt(1)
+        cli_error!("boot import-legacy-snapshot: #{inspect(reason)}", :stderr)
     end
   end
 
@@ -1335,17 +1327,14 @@ defmodule Flezha.Service.CliManager do
             print_state_at(segment_id, target, result, output_format)
 
           {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
-            IO.puts(
-              :stderr,
-              "state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})"
+            cli_error!(
+              "state at: #{kind}: #{msg} (earliest_available=#{inspect(earliest)})",
+              :stderr
             )
-
-            System.halt(1)
         end
 
       {:error, reason} ->
-        IO.puts(:stderr, "state at: #{reason}")
-        System.halt(1)
+        cli_error!("state at: #{reason}", :stderr)
     end
   end
 
@@ -1382,18 +1371,15 @@ defmodule Flezha.Service.CliManager do
                 IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
 
               {:error, reason} ->
-                IO.puts(:stderr, "state rotate: #{inspect(reason)}")
-                System.halt(1)
+                cli_error!("state rotate: #{inspect(reason)}", :stderr)
             end
 
           {:error, reason} ->
-            IO.puts(:stderr, "state rotate: #{reason}")
-            System.halt(1)
+            cli_error!("state rotate: #{reason}", :stderr)
         end
 
       {:error, reason} ->
-        IO.puts(:stderr, "state rotate: #{reason}")
-        System.halt(1)
+        cli_error!("state rotate: #{reason}", :stderr)
     end
   end
 
@@ -1415,12 +1401,10 @@ defmodule Flezha.Service.CliManager do
         IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
 
       _ ->
-        IO.puts(
-          :stderr,
-          "state delete: expected <operative>/<operation>/<segment_key>; got #{path_string}"
+        cli_error!(
+          "state delete: expected <operative>/<operation>/<segment_key>; got #{path_string}",
+          :stderr
         )
-
-        System.halt(1)
     end
   end
 
@@ -1458,8 +1442,7 @@ defmodule Flezha.Service.CliManager do
         IO.puts("input_watermark    #{watermark || "none"}")
 
       {:error, reason} ->
-        IO.puts(:stderr, "state outbox: #{reason}")
-        System.halt(1)
+        cli_error!("state outbox: #{reason}", :stderr)
     end
   end
 
@@ -1485,17 +1468,14 @@ defmodule Flezha.Service.CliManager do
       )
     else
       {:error, %{kind: :outside_retention, earliest_available: earliest}} ->
-        IO.puts(
-          :stderr,
+        cli_error!(
           "replay: outside_retention — the earliest replayable point for " <>
-            "#{path_string} is seq #{inspect(earliest)}"
+            "#{path_string} is seq #{inspect(earliest)}",
+          :stderr
         )
 
-        System.halt(1)
-
       {:error, reason} ->
-        IO.puts(:stderr, "replay: #{inspect(reason)}")
-        System.halt(1)
+        cli_error!("replay: #{inspect(reason)}", :stderr)
     end
   end
 
@@ -1754,8 +1734,7 @@ defmodule Flezha.Service.CliManager do
         )
 
       _ ->
-        IO.puts(:stderr, "state retention: hours must be a non-negative integer")
-        System.halt(1)
+        cli_error!("state retention: hours must be a non-negative integer", :stderr)
     end
   end
 
@@ -2431,22 +2410,18 @@ defmodule Flezha.Service.CliManager do
   defp inspect_or_pass(v), do: inspect(v)
 
   defp render_error(:pubsub_sink_disabled) do
-    IO.puts(
-      :stderr,
-      "error: pubsub sink is disabled; enable :observability, :pubsub_sink_enabled to use `flz observe tail`"
+    cli_error!(
+      "error: pubsub sink is disabled; enable :observability, :pubsub_sink_enabled to use `flz observe tail`",
+      :stderr
     )
-
-    System.halt(2)
   end
 
   defp render_error(:observability_disabled) do
-    IO.puts(:stderr, "error: observability is disabled")
-    System.halt(3)
+    cli_error!("error: observability is disabled", :stderr)
   end
 
   defp render_error(reason) do
-    IO.puts(:stderr, "error: #{inspect(reason)}")
-    System.halt(1)
+    cli_error!("error: #{inspect(reason)}", :stderr)
   end
 
   defp cli_context(opts) do
@@ -2934,32 +2909,26 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp render_audit_error(:audit_log_disabled) do
-    IO.puts(
-      :stderr,
-      "error: audit log is disabled; set FLEZHA_AUDIT_ENABLED=true or :audit_log, :enabled: true in config"
+    cli_error!(
+      "error: audit log is disabled; set FLEZHA_AUDIT_ENABLED=true or :audit_log, :enabled: true in config",
+      :stderr
     )
-
-    System.halt(2)
   end
 
   defp render_audit_error(:observability_disabled) do
-    IO.puts(:stderr, "error: observability is disabled")
-    System.halt(3)
+    cli_error!("error: observability is disabled", :stderr)
   end
 
   defp render_audit_error(:invalid_caller_context) do
-    IO.puts(:stderr, "error: invalid caller context")
-    System.halt(1)
+    cli_error!("error: invalid caller context", :stderr)
   end
 
   defp render_audit_error(:file_not_found) do
-    IO.puts(:stderr, "error: file not found")
-    System.halt(1)
+    cli_error!("error: file not found", :stderr)
   end
 
   defp render_audit_error(reason) do
-    IO.puts(:stderr, "error: #{inspect(reason)}")
-    System.halt(1)
+    cli_error!("error: #{inspect(reason)}", :stderr)
   end
 
   # ---------- Dead-letter queue (platform-dead-letter-queue) ----------
@@ -3127,32 +3096,26 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp render_dlq_error(:not_found) do
-    IO.puts(:stderr, "error: DLQ entry not found")
-    System.halt(1)
+    cli_error!("error: DLQ entry not found", :stderr)
   end
 
   defp render_dlq_error(:bad_entry_ref) do
-    IO.puts(:stderr, "error: expected <operative>/<operation>/<entry-id>")
-    System.halt(1)
+    cli_error!("error: expected <operative>/<operation>/<entry-id>", :stderr)
   end
 
   defp render_dlq_error(:payload_not_replayable) do
-    IO.puts(
-      :stderr,
-      "error: entry carries no payload bytes (inter-operation input); inspect or drop it"
+    cli_error!(
+      "error: entry carries no payload bytes (inter-operation input); inspect or drop it",
+      :stderr
     )
-
-    System.halt(1)
   end
 
   defp render_dlq_error(:operative_not_running) do
-    IO.puts(:stderr, "error: the entry's operative is not running; start it before replaying")
-    System.halt(1)
+    cli_error!("error: the entry's operative is not running; start it before replaying", :stderr)
   end
 
   defp render_dlq_error(reason) do
-    IO.puts(:stderr, "error: #{inspect(reason)}")
-    System.halt(1)
+    cli_error!("error: #{inspect(reason)}", :stderr)
   end
 
   # ---------- Scheduled spawns (add-scheduled-operative-spawns) ----------
@@ -3312,8 +3275,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp render_schedule_error(reason) do
-    IO.puts(:stderr, "error: " <> schedule_error_message(reason))
-    System.halt(1)
+    cli_error!("error: " <> schedule_error_message(reason), :stderr)
   end
 
   defp schedule_error_message({:not_found, name}), do: "schedule #{name} not found"
@@ -3346,4 +3308,18 @@ defmodule Flezha.Service.CliManager do
 
   defp schedule_error_message(:already_exists), do: "a schedule with that name already exists"
   defp schedule_error_message(reason), do: inspect(reason)
+
+  # Fail the surrounding `flzvm rpc` evaluation: print the message, then exit
+  # only this rpc process. Never System.halt here — every CliManager call runs
+  # ON the controller node via rpc, so halting would stop the controller
+  # itself; :rpc turns the exit into {:badrpc, ...}, which the release script
+  # converts into a non-zero local exit code for the calling script.
+  # `device` mirrors each call site's historical stream (legacy operative and
+  # plugin verbs print errors to stdout; the newer state/observe/audit/dlq and
+  # schedule verbs print to stderr) — the stream is observable behavior.
+  @spec cli_error!(String.t(), :stdio | :stderr) :: no_return()
+  defp cli_error!(message, device \\ :stdio) do
+    IO.puts(device, message)
+    exit(:cli_error)
+  end
 end
