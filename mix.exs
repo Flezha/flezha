@@ -120,7 +120,7 @@ defmodule Flezha.MixProject do
   defp process_hub_dep do
     case System.get_env("FLEZHA_PROCESS_HUB_PATH") do
       path when is_binary(path) and path != "" -> [path: path]
-      _ -> "~> 0.6.0"
+      _ -> "~> 0.6.1"
     end
   end
 
