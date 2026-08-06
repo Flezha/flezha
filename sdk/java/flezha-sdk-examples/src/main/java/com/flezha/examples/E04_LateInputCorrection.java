@@ -2,10 +2,10 @@ package com.flezha.examples;
 
 import com.flezha.sdk.channel.BeyondWindowPolicy;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.EventTimeFrom;
@@ -22,7 +22,7 @@ import java.util.Optional;
  * which quietly corrupts the earlier window.
  *
  * <p>Declare a {@code correctionWindow} and the controller instead <b>rewinds</b>
- * the Segment to a baseline before that event time and replays the affected slice
+ * the Entity to a baseline before that event time and replays the affected slice
  * in event-time order. Your {@code run} is invoked again for those inputs, in the
  * order they should have arrived, and the corrected output overwrites the stale
  * output — which is why every channel must be keyed.
@@ -55,7 +55,7 @@ public final class E04_LateInputCorrection {
     }
 
     /** Input format: {@code <epochMillis>:<price>}. */
-    public static final class CandleOperation implements Operation<String, Candle, String, Tick, EventTimeFrom, Void> {
+    public static final class CandleProcedure implements Procedure<String, Candle, String, Tick, EventTimeFrom, Void> {
 
         @Override
         public String name() {
@@ -120,12 +120,12 @@ public final class E04_LateInputCorrection {
         }
 
         @Override
-        public Candle initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Candle initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Candle();
         }
 
         @Override
-        public void run(String input, StateHandle<Candle, Tick> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Candle, Tick> state, ProcedureCtx ctx) throws ProcedureException {
             state.apply(new Tick(Long.parseLong(input.split(":", 2)[1])));
 
             // ctx.now() is the EVENT time here, not the wall clock. On a correction
@@ -150,8 +150,8 @@ public final class E04_LateInputCorrection {
             c.effectivelyOnce();
             c.correctionWindow(5 * 60_000L);
             c.beyondWindowPolicy(BeyondWindowPolicy.PROCESS_AS_ARRIVAL);
-            var sCandleOperation = c.input(String.class, "trades").into(CandleOperation.class);
-            sCandleOperation.named("candles").keyed().output("postgres_sink");
+            var sCandleProcedure = c.input(String.class, "trades").into(CandleProcedure.class);
+            sCandleProcedure.named("candles").keyed().output("postgres_sink");
         }
     }
 

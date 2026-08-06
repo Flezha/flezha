@@ -24,7 +24,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>{@code init_values} (the JSON string from {@code AddOperative.init_values})
  * is staged on a thread-local read by
- * {@link com.flezha.sdk.operation.Operation#initState} for any Operation×Segment that
+ * {@link com.flezha.sdk.procedure.Procedure#initState} for any Procedure×Entity that
  * needs to seed initial state.
  *
  * <p>Idempotent on reconnect: the controller re-issues {@code AddOperative} for
@@ -62,29 +62,29 @@ public final class AddOperativeHandler implements CommandHandler {
                 return new byte[0];
             }
             BoundedOperativeInstance instance = new BoundedOperativeInstance(operativeId, factoryId);
-            // The op-journal is instance-scoped, so it rides the bind rather
-            // than a per-Segment restore — a durable class with no per-Segment
+            // The proc-journal is instance-scoped, so it rides the bind rather
+            // than a per-Entity restore — a durable class with no per-Entity
             // state ships no restore at all. Stashed before the spawn below: the
             // driver reads it to resume at the right iteration and to skip
-            // already-committed operations.
-            if (cmd.hasOpJournal()) {
-                instance.setOpJournal(cmd.getOpJournal());
+            // already-committed procedures.
+            if (cmd.hasProcJournal()) {
+                instance.setProcJournal(cmd.getProcJournal());
             }
-            // Build + wire the per-Segment table (structured only) BEFORE
+            // Build + wire the per-Entity table (structured only) BEFORE
             // registering and spawning, so the Controller's RestoreInitState
-            // frames (which follow this ACK) reach live Segments and the driver
-            // holds its first Operation on the resume gate until
-            // resume_segment_count restores have landed. Registering before spawn
+            // frames (which follow this ACK) reach live Entities and the driver
+            // holds its first Procedure on the resume gate until
+            // resume_entity_count restores have landed. Registering before spawn
             // also keeps a duplicate AddOperative idempotent and never loses an
-            // immediate inbox / BoundedStop. Run-sugar has no Segments.
+            // immediate inbox / BoundedStop. Run-sugar has no Entities.
             if (spec.isRunSugar()) {
-                instance.wireStageSegments(List.of(), 0);
+                instance.wireStageEntities(List.of(), 0);
             } else {
                 UnboundedOperativeTopology boundedTopology = spec.topology().orElseThrow();
-                instance.wireStageSegments(
-                        BoundedOperativeRunner.buildAllStageSegments(
+                instance.wireStageEntities(
+                        BoundedOperativeRunner.buildAllStageEntities(
                                 boundedTopology, operativeId, spec.chain(), spec.persistenceEnabled()),
-                        cmd.getResumeSegmentCount());
+                        cmd.getResumeEntityCount());
             }
             registry.add(instance);
             BoundedOperativeRunner.spawn(ctx, instance, spec, initValues);

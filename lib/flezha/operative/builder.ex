@@ -11,7 +11,7 @@ defmodule Flezha.Operative.Builder do
       type (used by the Overwatch's `:io_in` handler when metadata omits it).
     * `:plugins` — list of `%Flezha.Plugin{}` to subscribe at operative start.
     * `:seed_input` — binary delivered as the instance's first input during its
-      bind (an operation-requested spawn's payload; see
+      bind (a procedure-requested spawn's payload; see
       `Flezha.Service.OperativeManager.spawn_or_deliver/5`).
     * `:operative_class` — optional string overriding the operative class identifier
       used as the on-disk persistence key under

@@ -3,9 +3,9 @@ package com.flezha.sdk.runtime.control;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.flezha.sdk.operation.SpawnException;
-import com.flezha.sdk.operation.SpawnHandle;
-import com.flezha.sdk.operation.SpawnOutcome;
+import com.flezha.sdk.procedure.SpawnException;
+import com.flezha.sdk.procedure.SpawnHandle;
+import com.flezha.sdk.procedure.SpawnOutcome;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
@@ -21,7 +21,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link SpawnRequester} ships an operation's {@code ctx.spawnBounded} as a
+ * {@link SpawnRequester} ships a procedure's {@code ctx.spawnBounded} as a
  * framed {@code SpawnBoundedRequest} on the control stream and resolves its
  * handle from the controller's reply. Driven against a capturing
  * {@link SpawnRequester.FrameWriter}, mirroring {@link FactorySyncTest}.

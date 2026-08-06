@@ -88,8 +88,8 @@ Topology declaration reads in flow order on a **stream handle**
 (`sdk-graph-authoring`): `input` declares an entry channel (its name is
 explicit — an external address of the operative; an operative may declare
 several, one per external source, and the controller routes each inbound frame
-to its entry by `metadata["channel"]`), `.into(Op)` wires a
-consumer and returns *that operation's* output stream, and the plugin-bound
+to its entry by `metadata["channel"]`), `.into(Proc)` wires a
+consumer and returns *that procedure's* output stream, and the plugin-bound
 terminal is `output(name)` — destination-neutral (the operative declares a
 named exit; the controller decides what happens there). The hybrid tap is
 `alsoOutput(name[, serializer])` (Rust: `also_output` / `also_output_with`),
@@ -100,7 +100,7 @@ channel-centric surface:
 | retired                              | current                              |
 | ------------------------------------ | ------------------------------------ |
 | `channel(T.class, "name")` / `channel::<T>("name")` | *(gone — the producer's `Output` types the stream; `.named("name")` overrides the derived name)* |
-| `.from(Op)` / `.from::<Op>()`        | *(gone — the stream handle already knows its producer)* |
+| `.from(Proc)` / `.from::<Proc>()`        | *(gone — the stream handle already knows its producer)* |
 | `toPlugin(name)` / `to_plugin(name)` | `output(name)`                       |
 | `alsoToPluginWith(name, f)` / `also_to_plugin_with(name, f)` | `alsoOutput(name, f)` / `also_output_with(name, f)` |
 | —                                    | `alsoOutput(name)` / `also_output(name)` (default serializer) |
@@ -111,13 +111,13 @@ Branching is handle reuse (hold the handle in a variable, wire it twice) or
 the equivalent `branch(arm1, arm2, ...)` sugar; fan-in is two streams naming
 one consumer.
 
-### 10. A node is named by its class unless `into(Op, "node_name")` names it
+### 10. A node is named by its class unless `into(Proc, "node_name")` names it
 
-Node identity = the operation's `name()`, unless an explicit node name is
+Node identity = the procedure's `name()`, unless an explicit node name is
 given at wiring time (`into(Filter.class, "spam_filter")` in Java,
 `into_named::<Filter>("spam_filter")` in Rust — rule 4's per-language
 spelling). The node name replaces `name()` for everything identity feeds:
-per-segment state directories, journal entries, the derived channel name, and
+per-entity state directories, journal entries, the derived channel name, and
 diagnostics. Two unnamed mentions of one class are the same node (which is how
 fan-in is spelled); node identities are unique per operative. Channel names
 auto-derive from the producer node's identity, so renaming a language class

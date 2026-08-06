@@ -2,7 +2,7 @@ package com.flezha.sdk.state;
 
 /**
  * {@link Clock} serving the event time carried by the input itself: an
- * Operation declaring it MUST override {@code Operation.eventTime(Input)},
+ * Procedure declaring it MUST override {@code Procedure.eventTime(Input)},
  * and {@code ctx.now()} returns what that extractor reports.
  *
  * <p>Rust binds the extractor at compile time

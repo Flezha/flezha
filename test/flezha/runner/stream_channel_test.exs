@@ -271,18 +271,18 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       refute_receive {:output_stall, "bnd_op"}, 100
     end
 
-    test "delete_segment_state is ignored for a bounded (non-dynamic) class", %{pid: pid} do
+    test "delete_entity_state is ignored for a bounded (non-dynamic) class", %{pid: pid} do
       class = "bnd_del_#{System.unique_integer([:positive])}"
       Flezha.Operative.ClassRegistry.put(class, :bounded)
       on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
 
-      seg = {class, "op", "seg"}
+      seg = {class, "proc", "seg"}
       wal = Flezha.State.Registry.wal_path(seg)
       File.mkdir_p!(Path.dirname(wal))
       File.write!(wal, "dummy")
 
-      frame = Flezha.State.Wire.encode_segment_id(class, "op", "seg")
-      send(pid, {:flz_data, :ref_z, "delete_segment_state", frame, %{}})
+      frame = Flezha.State.Wire.encode_entity_id(class, "proc", "seg")
+      send(pid, {:flz_data, :ref_z, "delete_entity_state", frame, %{}})
       # Flush the frame through the channel; the (gated) delete must not spawn.
       _ = GenServer.call(pid, :stream_ref_status)
       Process.sleep(50)

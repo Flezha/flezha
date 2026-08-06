@@ -2,7 +2,7 @@
 
 > **Note:** the `Flezha.Operative.InitState.Providers.Sibling` provider has
 > been **removed**. Restart-survival is no longer an init-state concern: a
-> Segment's state is restored from its own WAL and snapshot on bind, and the
+> Entity's state is restored from its own WAL and snapshot on bind, and the
 > operative set is replayed from the durable registry on a cold boot — see
 > [`resilience/state_persistence.md`](resilience/state_persistence.md) and
 > [`resilience/auto_restore_on_boot.md`](resilience/auto_restore_on_boot.md).

@@ -14,7 +14,7 @@ The system has three layers:
 - **Detection** — watchdog sweeps, control-channel liveness, seq-gap detection,
   convergence probes
 - **Recovery** — convergence loop rebind/plugin-restart/evict, Overwatch retry,
-  SDK reconnect, ProcessHub cold-boot recovery, segment resync
+  SDK reconnect, ProcessHub cold-boot recovery, entity resync
 
 ---
 
@@ -35,8 +35,8 @@ Intent → Probe → Diff → Planner → Heal
 | `Convergence.Intent` | Reads the ProcessHub registry to know what operatives and plugins _should_ exist |
 | `Convergence.Probe` | Reads live reality (active runners, operative states, hub recovery); pure observer |
 | `Convergence.Diff` | Pure function comparing intent vs reality → delta (unbound/misbound operatives, missing/extra plugins) |
-| `Convergence.Planner` | Turns the delta into an ordered, backoff-filtered list of ops (cap: 20/tick) |
-| `Convergence.Heal` | Executes ops via four idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `evict_runner` |
+| `Convergence.Planner` | Turns the delta into an ordered, backoff-filtered list of procs (cap: 20/tick) |
+| `Convergence.Heal` | Executes procs via four idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `evict_runner` |
 | `Convergence.Backoff` | Per-`{primitive, target}` exponential cooldown: 5 s → 30 s → 60 s → 300 s |
 | `Convergence.Snapshot` | ETS table holding the latest published health summary; read by `/healthz`, CLI, and telemetry |
 | `Convergence.RecoveryGate` | Classifies which namespaces are ready for healing based on per-hub recovery state; `:timeout` hubs are included rather than blocking all healing |
@@ -49,7 +49,7 @@ Intent → Probe → Diff → Planner → Heal
 - The entire tick body is wrapped in `try/rescue`; an uncaught error becomes a
   skipped tick, not a Loop crash.
 - If `active_runners` returns `:unknown` (a read failure), the diff suppresses
-  destructive ops for that namespace — it is not treated as "all runners gone."
+  destructive procs for that namespace — it is not treated as "all runners gone."
 - Tick events (`:output_stall`, `:runner_connected`) shorten detection latency
   by triggering an immediate tick; they do not bypass the pipeline.
 
@@ -80,19 +80,19 @@ fires, so a hard restart restores state from disk rather than losing it.
 
 | Module | Role |
 |--------|------|
-| `State.WalWriter` | Appends every state change to a per-segment WAL file |
+| `State.WalWriter` | Appends every state change to a per-entity WAL file |
 | `State.FsyncBatcher` | Coalesces all WAL writers' fsync calls into one batch every 5 ms |
 | `State.Snapshot` | Crash-safe atomic snapshots: write `.tmp` → fsync → rename |
-| `State.Outbox` | Persists the last-sent seq per segment as a dedup marker |
+| `State.Outbox` | Persists the last-sent seq per entity as a dedup marker |
 | `State.Restore` | Assembles snapshot + tail-WAL bytes to send to a reconnecting runner |
-| `State.Recovery` | Re-runs the `RestoreInitState` handshake when a segment is detected as desync'd |
+| `State.Recovery` | Re-runs the `RestoreInitState` handshake when an entity is detected as desync'd |
 | `State.Retention` | Sweeper pruning old snapshots and WAL records beyond the retention window |
 | `State.TimeTravel` | Point-in-time query: replay WAL up to a target seq or timestamp |
-| `State.Watchdog` | Detects a segment still receiving changes but whose seq stopped advancing |
+| `State.Watchdog` | Detects an entity still receiving changes but whose seq stopped advancing |
 | `State.PersistenceResolver` | Resolves per-operative persistence config from runner override → operative metadata → global default |
 
 **Back-pressure:** when a WAL writer's pending bytes exceed the high-watermark
-(default 16 MiB), it sends a `SegmentMailboxStatus{status: "full"}` command to
+(default 16 MiB), it sends an `EntityMailboxStatus{status: "full"}` command to
 the SDK. The SDK's overflow policy (block/drop/replace) activates until the
 low-watermark is crossed.
 
@@ -110,13 +110,13 @@ correction) are covered in §14.
 
 `lib/flezha/state/watchdog.ex`
 
-Sweeps every 10 s. For each persistence-enabled segment it checks:
+Sweeps every 10 s. For each persistence-enabled entity it checks:
 
 1. **Output staleness** — still receiving changes but seq has not advanced within
    `output_stall_timeout_ms` (default 60 s) → emits
    `[:flezha, :state, :output_stall]` and triggers `State.Recovery.resync/2`.
-   A genuinely idle segment (no changes arriving) is never flagged.
-2. **Compaction timeout** — a `CompactSegment` whose snapshot has not arrived
+   A genuinely idle entity (no changes arriving) is never flagged.
+2. **Compaction timeout** — a `CompactEntity` whose snapshot has not arrived
    within `compaction_timeout_ms` (default 30 s) → emits
    `[:flezha, :state, :compaction_timeout]` and triggers resync.
 
@@ -156,11 +156,11 @@ authoritative. See [`process_hub_recovery_model.md`](process_hub_recovery_model.
 **Bounded-kind operatives (durable crash-resume).** A `:bounded` operative is
 **durable by default** (opt-out per class) and crash-resumes on the shared WAL
 substrate: on a runner/controller restart it restores its committed
-per-Segment state via the bind-time restore path and **re-runs its operation
+per-Entity state via the bind-time restore path and **re-runs its procedure
 chain** (Model A idempotent re-run — a step may repeat, so steps are idempotent
 by author contract; the `run`-sugar form re-runs from the top). A restore-before-run
-gate (`AddOperative.resume_segment_count`) holds the first operation until the
-persisted Segments are restored, so it never runs on empty state. Saga
+gate (`AddOperative.resume_entity_count`) holds the first procedure until the
+persisted Entities are restored, so it never runs on empty state. Saga
 compensation is likewise crash-safe — compensation-intent / -done markers ride
 the restore, so a crash mid-rollback resumes the remaining hooks and skips the
 already-done ones. A completed operative is deregistered, but its final state + a
@@ -226,7 +226,7 @@ formation timeout elapses, so it still boots without hanging.
 | Module | Role |
 |--------|------|
 | `FleetManager` | Accepts new runner connections, mints a per-connection **session token**, runs the reconnect **binding swap** keyed on the runner's durable **stable identity**, rejects connects during shutdown, and dispatches `:runner_connected_event` (immediate convergence tick) |
-| `StreamChannel` | Per-stream GenServer forwarding operative output to the runner socket; detects seq gaps and triggers segment resync |
+| `StreamChannel` | Per-stream GenServer forwarding operative output to the runner socket; detects seq gaps and triggers entity resync |
 | `ControlChannel` | Reads protobuf commands from the runner's control socket; stamps `last_seen` on every inbound frame and runs the **control-plane session-liveness watchdog** (sustained silence → connection close) |
 
 Runner identity is two layers — a durable, SDK-owned **stable identity** (the
@@ -247,8 +247,8 @@ control-plane watchdog in [`transport_liveness.md`](transport_liveness.md).
 | `shutdown.rs` | On SIGTERM/drop, serializes every running operative's final state and sends it to the controller so the next runner starts from the true last state |
 | `runner/control_unit.rs` | Opens the control channel with full-jitter exponential backoff retry (cap 30 s) and reconnects automatically on disconnect or ack-timeout |
 | `runner/persistent_id.rs` | Creates + persists the runner's durable **stable identity** (`<namespace>-<profile_hash8>-<rand6>`) so a restarted process re-presents it and the controller swaps its bindings onto the new session; degrades to a fresh per-boot id when the path is unwritable |
-| `segment/flusher.rs` | Background thread draining each segment's change buffer on a 5 ms linger and sending framed WAL records to the controller |
-| `segment/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected segment resumes from exactly its last state |
+| `entity/flusher.rs` | Background thread draining each entity's change buffer on a 5 ms linger and sending framed WAL records to the controller |
+| `entity/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected entity resumes from exactly its last state |
 | `runner/mailbox.rs` | Bounded lock-free per-operative mailbox with configurable overflow policy (block/drop/replace) so a slow operative cannot back-pressure the whole runner |
 
 **Control-channel liveness** (`flz_transport/src/transport/liveness.rs`, shared
@@ -316,9 +316,9 @@ repeats a crash produces.
 
 | Mechanism | Role |
 |--------|------|
-| Durable input log | Offset-addressable journal per operative class. Retention truncates below the minimum durable consumed-offset across its Segments. |
-| `Flezha.Dlq.Store` | A payload that fails every retry is **parked durably** and its Segment advances — the minimum watermark keeps moving, and nothing is silently dropped. `flz dlq list \| show \| replay \| drop`. |
-| Late-input correction | An event arriving behind the high-water mark but inside a declared window rewinds the Segment to a baseline, replays the slice in event-time order, and republishes under a bumped epoch — the keyed sink overwrites the stale rows. |
+| Durable input log | Offset-addressable journal per operative class. Retention truncates below the minimum durable consumed-offset across its Entities. |
+| `Flezha.Dlq.Store` | A payload that fails every retry is **parked durably** and its Entity advances — the minimum watermark keeps moving, and nothing is silently dropped. `flz dlq list \| show \| replay \| drop`. |
+| Late-input correction | An event arriving behind the high-water mark but inside a declared window rewinds the Entity to a baseline, replays the slice in event-time order, and republishes under a bumped epoch — the keyed sink overwrites the stale rows. |
 | Checkpoint ack-granularity | An operative that folds many inputs into one coherent state push acknowledges at `ctx.checkpoint()` rather than per input. |
 
 Bounded operatives do not use the DLQ — their escape is AbortAll + saga

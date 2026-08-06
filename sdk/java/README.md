@@ -11,12 +11,12 @@ worked, compiled examples from "hello world" to a durable suspended agent.
 
 ## Quickstart
 
-Three pieces: an **Operation** (the unit of work), an **Operative** (the topology
-wiring Operations to Channels), and **registration** before boot.
+Three pieces: a **Procedure** (the unit of work), an **Operative** (the topology
+wiring Procedures to Channels), and **registration** before boot.
 
 ```java
-public final class EchoOperation
-        implements Operation<String, EchoOperation.Empty, String, NoChange, WallClock, Void> {
+public final class EchoProcedure
+        implements Procedure<String, EchoProcedure.Empty, String, NoChange, WallClock, Void> {
     public record Empty() {}
 
     @Override public String name() { return "echo"; }
@@ -32,8 +32,8 @@ public final class EchoOperation
         return new Empty();
     }
 
-    @Override public void run(String input, StateHandle<Empty, NoChange> state, OperationCtx ctx)
-            throws OperationException {
+    @Override public void run(String input, StateHandle<Empty, NoChange> state, ProcedureCtx ctx)
+            throws ProcedureException {
         ctx.emit("echo: " + input);
     }
 }
@@ -43,8 +43,8 @@ public final class EchoOperative implements UnboundedOperative {
 
     @Override public void channels(ChannelBuilder c) {
         // Producer-first: `.into` wires a consumer and returns THAT
-        // operation's output stream; `output` closes it plugin-bound.
-        c.input(String.class, "in").into(EchoOperation.class).named("out").output("my_sink");
+        // procedure's output stream; `output` closes it plugin-bound.
+        c.input(String.class, "in").into(EchoProcedure.class).named("out").output("my_sink");
     }
 }
 
@@ -72,7 +72,7 @@ At most one runner runs per JVM: a second `start()` throws
 ## Authoring a topology
 
 Graphs read in flow order (`sdk-graph-authoring`): the channel between two
-operations carries the producer's declared output type — no type token, no
+procedures carries the producer's declared output type — no type token, no
 channel name unless you want one (`.named(...)` overrides the name derived
 from the producer's identity; entry names are explicit — they are the
 operative's external address). A typed entry decodes at the edge (Jackson
@@ -147,7 +147,7 @@ public final class RiskOperative implements UnboundedOperative {
                 .named("orders.validated")   // overrides the derived name
                 .alsoOutput("audit");        // tap: default JSON to `audit`
 
-        // One class, two nodes: each keeps its own per-segment state under
+        // One class, two nodes: each keeps its own per-entity state under
         // its node identity (state dirs, journals, diagnostics). Both arms
         // name the same (unnamed) Merge class, so their verdicts fan IN —
         // either arm's `.into(Merge.class)` returns the one join's handle.
@@ -170,7 +170,7 @@ channel you chose to `.named(...)`.
 ### A structured bounded DAG
 
 Bounded operatives author on the same builder. A durable class journals each
-op barrier, so inter-op channels declare `.codec()`; a fan-in node runs once,
+proc barrier, so inter-proc channels declare `.codec()`; a fan-in node runs once,
 after **all** its producers committed, with the accumulated batch — and on an
 abnormal exit the saga unwinds reverse-topologically (the join before either
 producer, the shared root last):
@@ -179,9 +179,9 @@ producer, the shared root last):
 public final class SettleBounded implements BoundedOperative {
     @Override public String factoryId() { return "settle"; }
 
-    @Override public int retryAttempts() { return 3; } // segment ladder before the saga
+    @Override public int retryAttempts() { return 3; } // entity ladder before the saga
 
-    @Override public void operations(ChannelBuilder c) {
+    @Override public void procedures(ChannelBuilder c) {
         // The diamond: Reserve fans out to Charge and Ledger, whose outputs
         // accumulate into one Reconcile join.
         var reserved = c.input(SettleJob.class, "in")
@@ -205,21 +205,21 @@ still runs exactly once. Cycles are refused at registration; a chained loop
 (`LoopMode.CHAINED`) additionally requires the graph to converge on a single
 codec'd terminal.
 
-Parameterized operations use the `Config` type parameter with `fromConfig` —
+Parameterized procedures use the `Config` type parameter with `fromConfig` —
 the sanctioned path for one class serving several configurations:
 
 ```java
 public record SmaConfig(int window) {}
 
-public final class Sma implements Operation<Double, SmaState, Double, NoChange, WallClock, SmaConfig> {
+public final class Sma implements Procedure<Double, SmaState, Double, NoChange, WallClock, SmaConfig> {
     private int window;
 
     @Override public Class<SmaConfig> configType() { return SmaConfig.class; }
 
     @Override public Sma fromConfig(SmaConfig cfg) {
-        Sma op = new Sma();
-        op.window = cfg.window();
-        return op;
+        Sma proc = new Sma();
+        proc.window = cfg.window();
+        return proc;
     }
     // ... name()/inputType()/outputType()/initState()/run() as usual
 }
@@ -228,7 +228,7 @@ public final class Sma implements Operation<Double, SmaState, Double, NoChange, 
 ## Running a runner
 
 The controller owns placement, durability and restarts — but it is Elixir, and
-your Operations are Java. It cannot run your code inside its own process. So your
+your Procedures are Java. It cannot run your code inside its own process. So your
 process is where the compute lives, and `start()`/`run()` is what turns your JVM
 into it: the call dials the controller, advertises the factory ids you declared,
 and then waits.
@@ -310,9 +310,9 @@ log, a correction re-runs `run`, a crashed step is retried. So `run` must be a
 | `System.currentTimeMillis()` | `ctx.now()` |
 | `UUID.randomUUID()` | `ctx.stableId()` |
 
-An Operation that reads ambient time or randomness rebuilds *differently* than it
+A Procedure that reads ambient time or randomness rebuilds *differently* than it
 ran, and nothing warns you — the state quietly diverges after a crash. Guard it
-with `OperationTestHarness.replayEquals()` (state) **and** `replayEmitsEqual()`
+with `ProcedureTestHarness.replayEquals()` (state) **and** `replayEmitsEqual()`
 (output); the second catches what the first cannot.
 
 ## Capabilities
@@ -322,12 +322,12 @@ with `OperationTestHarness.replayEquals()` (state) **and** `replayEmitsEqual()`
 | Durable state | `Change` type + `state.apply(...)` | State survives restart, rebuilt from a change log. |
 | Effectively-once output | `c.effectivelyOnce()` + `.keyed()` channels | State, output and consumed offset become durable in ONE record. A crash cannot advance the offset while losing the output. |
 | Checkpointed intervals | `c.checkpointAck()` + `ctx.checkpoint()` | The offset is withheld until the state is coherent, so a half-built window is never persisted. |
-| Late-input correction | `c.correctionWindow(ms)` | A late input rewinds the Segment and replays the slice in event-time order, repairing the earlier result. |
+| Late-input correction | `c.correctionWindow(ms)` | A late input rewinds the Entity and replays the slice in event-time order, repairing the earlier result. |
 | Dead-letter queue | `.retryMax(n)` on the channel | A poison payload is retried, then parked durably — never silently dropped. |
-| Dynamic segmentation | `operationKey(input)` | One Segment per key the stream actually carries, created on first sight. |
-| Bounded transaction | `implements BoundedOperative` + `operations(...)` | Resumable chain: a committed step is skipped on resume, not re-run. Failure unwinds via `compensate`. |
+| Dynamic entity mode | `entityKey(input)` | One Entity per key the stream actually carries, created on first sight. |
+| Bounded transaction | `implements BoundedOperative` + `procedures(...)` | Resumable chain: a committed step is skipped on resume, not re-run. Failure unwinds via `compensate`. |
 | Durable loop / suspension | `loopMode()` + `wakeAfter()` | One durable iteration per message; parks when idle, holding its journal. |
-| Segment retry | `retryAttempts()` / `retryBackoff()` | Only the failing segment re-runs; a failed attempt's output is dropped, not double-emitted. |
+| Entity retry | `retryAttempts()` / `retryBackoff()` | Only the failing entity re-runs; a failed attempt's output is dropped, not double-emitted. |
 
 Each is a declaration the controller must honour, so declare what you need rather
 than what sounds reassuring — a `correctionWindow` sizes the controller's input-log
@@ -337,11 +337,11 @@ retention, and a tier without keyed sinks is refused at registration.
 
 | Module | Purpose |
 |---|---|
-| `flezha-sdk-api` | Public API: `Flezha`, `UnboundedOperative`, `BoundedOperative`, `Operation`, `OperationCtx`, `StableId`, channel builders, clocks. No native dependency. |
+| `flezha-sdk-api` | Public API: `Flezha`, `UnboundedOperative`, `BoundedOperative`, `Procedure`, `ProcedureCtx`, `StableId`, channel builders, clocks. No native dependency. |
 | `flezha-sdk-protobuf` | Generated from `protobufs/runner_commands.proto`. |
 | `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, state persistence, bounded driver. |
 | `flezha-sdk-native` | JNI bindings + bundled per-OS `libflz_transport`. |
-| `flezha-sdk-testing` | `OperationTestHarness` — add with `<scope>test</scope>`. |
+| `flezha-sdk-testing` | `ProcedureTestHarness` — add with `<scope>test</scope>`. |
 | `flezha-sdk-examples` | Worked examples. Compiled by the build, so they cannot rot. |
 | `flezha-sdk` | Fat-jar aggregator — the published artifact. |
 
@@ -380,7 +380,7 @@ mix test.java_sdk                               # from repo root: full Java matr
 | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/key.pem` | Server mode only. |
 | `FLEZHA_SOCKET_FILES_PATH` | `app_data/sockets` | UDS only. |
 | `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | Durable stable identity. Unwritable ⇒ a fresh id per boot and lost bindings. |
-| `FLEZHA_WORKER_POOL_SIZE` | `availableProcessors()` | Shared runner draining every Segment mailbox. |
+| `FLEZHA_WORKER_POOL_SIZE` | `availableProcessors()` | Shared runner draining every Entity mailbox. |
 | `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Where `libflz_transport` is extracted. Set it on containers where `/tmp` is `noexec`. |
 | `FLEZHA_BOUNDED_PARK_IDLE_MS` | `5000` | Idle hysteresis before a looping bounded operative parks. |
 

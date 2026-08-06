@@ -3,7 +3,7 @@ import Config
 config :flezha,
   testnet_enabled: true,
   concurrent_channel_count: 1,
-  # Control-plane liveness watchdog (unify-executor-liveness-and-identity).
+  # Control-plane liveness watchdog (runner-controller-connection-healing).
   # The window MUST stay comfortably above the SDK keepalive cadence (15 s):
   # the long-lived default-namespace test runners only re-arm `last_seen` via
   # their keepalive ping, so a small global window would falsely evict them and

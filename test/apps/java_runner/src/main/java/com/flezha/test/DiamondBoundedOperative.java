@@ -2,8 +2,8 @@ package com.flezha.test;
 
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import java.nio.charset.StandardCharsets;
@@ -32,7 +32,7 @@ public final class DiamondBoundedOperative implements BoundedOperative {
     }
 
     @Override
-    public void operations(ChannelBuilder c) {
+    public void procedures(ChannelBuilder c) {
         // Held handle wired twice = fan-out; two streams naming DiamJoin
         // (unnamed, same class) = the fan-in.
         var fan = c.input(String.class, "in")
@@ -85,8 +85,8 @@ public final class DiamondBoundedOperative implements BoundedOperative {
         }
 
         @Override
-        public void run(String input, StateHandle<SeenState, Insert> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String input, StateHandle<SeenState, Insert> state, ProcedureCtx ctx)
+                throws ProcedureException {
             BoundedE2eGate.blockUntilReleased();
             state.apply(new Insert(name()));
             ctx.emit("b:" + input);
@@ -101,8 +101,8 @@ public final class DiamondBoundedOperative implements BoundedOperative {
         }
 
         @Override
-        public void run(String input, StateHandle<SeenState, Insert> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String input, StateHandle<SeenState, Insert> state, ProcedureCtx ctx)
+                throws ProcedureException {
             state.apply(new Insert(name()));
             ctx.emit("c:" + input);
         }
@@ -116,8 +116,8 @@ public final class DiamondBoundedOperative implements BoundedOperative {
         }
 
         @Override
-        public void run(String input, StateHandle<State, NoChange> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String input, StateHandle<State, NoChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
             ctx.emit("j:" + input);
         }
     }

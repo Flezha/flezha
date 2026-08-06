@@ -30,10 +30,18 @@ defmodule Flezha.Service.CliManagerRewindTest do
     end
   end
 
-  # Error verdicts exit(:cli_error) for the CLI exit code (see cli_error!/1);
-  # catch it so the printed report stays assertable.
-  defp rewind(inst, to_iter),
-    do: capture_io(fn -> catch_exit(CliManager.operative_rewind("default", inst, to_iter)) end)
+  # Error verdicts exit(:cli_error) for the CLI exit code (see cli_error!/1) while
+  # a successful rewind returns normally; swallow the exit either way so the
+  # printed report stays assertable.
+  defp rewind(inst, to_iter) do
+    capture_io(fn ->
+      try do
+        CliManager.operative_rewind("default", inst, to_iter)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+  end
 
   test "a rewind that goes through reports where the loop resumes" do
     inst = instance_id()

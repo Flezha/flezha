@@ -1,7 +1,7 @@
 defmodule Flezha.State.InputLogTest do
   @moduledoc """
   §2.4 `durable-input-log`: offset monotonicity across appends and restarts,
-  torn-tail discard, watermark truncation that respects the slowest Segment,
+  torn-tail discard, watermark truncation that respects the slowest Entity,
   frozen-watermark telemetry, and the tier-off cost-free default (no
   journaling work, no file).
   """
@@ -74,11 +74,11 @@ defmodule Flezha.State.InputLogTest do
     assert offset == 3
   end
 
-  test "truncation removes only offsets below the slowest segment", %{class: class} do
+  test "truncation removes only offsets below the slowest entity", %{class: class} do
     for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
 
-    InputLog.record_consumed(class, {class, "op", "a"}, 8)
-    InputLog.record_consumed(class, {class, "op", "b"}, 4)
+    InputLog.record_consumed(class, {class, "proc", "a"}, 8)
+    InputLog.record_consumed(class, {class, "proc", "b"}, 4)
     assert InputLog.watermark(class) == 4
 
     :ok = InputLog.sweep(class)
@@ -106,7 +106,7 @@ defmodule Flezha.State.InputLogTest do
 
     test "a consumed record is held until it also ages out of the window", %{class: class} do
       for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
-      InputLog.record_consumed(class, {class, "op", "a"}, 9)
+      InputLog.record_consumed(class, {class, "proc", "a"}, 9)
 
       # A correction replays CONSUMED inputs, so the watermark alone must not be
       # allowed to reclaim them. An hour-long window holds everything just written.
@@ -127,8 +127,8 @@ defmodule Flezha.State.InputLogTest do
 
     test "the window never reclaims past the watermark", %{class: class} do
       for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
-      # A lagging Segment has only consumed up to 4.
-      InputLog.record_consumed(class, {class, "op", "b"}, 4)
+      # A lagging Entity has only consumed up to 4.
+      InputLog.record_consumed(class, {class, "proc", "b"}, 4)
 
       # Every record has aged out, but an unconsumed input must never be dropped:
       # the floor is min(watermark, aged_out), not the age bound alone.
@@ -151,7 +151,7 @@ defmodule Flezha.State.InputLogTest do
 
   test "a frozen watermark past the size threshold emits telemetry", %{class: class} do
     for i <- 0..9, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
-    InputLog.record_consumed(class, {class, "op", "slow"}, 1)
+    InputLog.record_consumed(class, {class, "proc", "slow"}, 1)
 
     ref = make_ref()
     parent = self()
@@ -177,7 +177,7 @@ defmodule Flezha.State.InputLogTest do
     assert_receive {^ref, %{size_bytes: size}, meta}
     assert size > 0
     assert meta.operative == class
-    assert meta.lagging_segment == {class, "op", "slow"}
+    assert meta.lagging_entity == {class, "proc", "slow"}
   end
 
   test "tier-off operative journals nothing and forwards untouched", %{class: class} do
@@ -224,7 +224,7 @@ defmodule Flezha.State.InputLogTest do
 
     test "re-forwards only the tail above the min watermark, offsets intact", %{class: class} do
       for i <- 0..4, do: {:ok, _} = InputLog.append(class, "m#{i}", %{"input_type" => "2"})
-      InputLog.record_consumed(class, {class, "op", "a"}, 2)
+      InputLog.record_consumed(class, {class, "proc", "a"}, 2)
 
       {:ok, channel} = FakeChannel.start_link(self())
 
@@ -280,7 +280,7 @@ defmodule Flezha.State.InputLogTest do
 
       # The watermark advance past offset 0 drains its bytes and mints
       # credit (batched by the low watermark) — the parked append resumes.
-      InputLog.record_consumed(class, {class, "op", "a"}, 0)
+      InputLog.record_consumed(class, {class, "proc", "a"}, 0)
 
       assert {:ok, 1} = Task.await(parked, 2_000)
     end
@@ -294,11 +294,11 @@ defmodule Flezha.State.InputLogTest do
 
       # The healthy operative's ledger is independent: appends keep flowing.
       {:ok, 0} = InputLog.append(healthy, "h0", %{})
-      InputLog.record_consumed(healthy, {healthy, "op", "a"}, 0)
+      InputLog.record_consumed(healthy, {healthy, "proc", "a"}, 0)
       {:ok, 1} = InputLog.append(healthy, "h1", %{})
 
       # Unpark the starved one so no waiter leaks past the test.
-      InputLog.record_consumed(class, {class, "op", "a"}, 0)
+      InputLog.record_consumed(class, {class, "proc", "a"}, 0)
       assert {:ok, 1} = Task.await(starved, 2_000)
     end
   end
@@ -346,7 +346,7 @@ defmodule Flezha.State.InputLogTest do
 
       {:ok, 0} = InputLog.append(class, "i0", %{})
       {:ok, 1} = InputLog.append(class, "i1", %{})
-      InputLog.record_consumed(class, {class, "op", "a"}, 1)
+      InputLog.record_consumed(class, {class, "proc", "a"}, 1)
 
       # Everything is consumed, so the watermark alone would truncate it all —
       # but it is newer than the derived 10-minute window, so it stays.
@@ -369,10 +369,10 @@ defmodule Flezha.State.InputLogTest do
       refute File.exists?(Registry.input_log_path(class))
     end
 
-    test "a live log yields its tail and each Segment's own consumed offset" do
+    test "a live log yields its tail and each Entity's own consumed offset" do
       class = "cursors-#{System.unique_integer([:positive])}"
-      seg_a = {class, "op", "a"}
-      seg_b = {class, "op", "b"}
+      seg_a = {class, "proc", "a"}
+      seg_b = {class, "proc", "b"}
 
       {:ok, 0} = InputLog.append(class, "i0", %{})
       {:ok, 1} = InputLog.append(class, "i1", %{})
@@ -383,8 +383,8 @@ defmodule Flezha.State.InputLogTest do
 
       assert %{tail: 2, consumed: consumed} = InputLog.cursors(class)
 
-      # Per Segment, NOT the min across them — the classifier needs to name the
-      # Segment that is actually lagging, which the min cannot do.
+      # Per Entity, NOT the min across them — the classifier needs to name the
+      # Entity that is actually lagging, which the min cannot do.
       assert consumed[seg_a] == 2
       assert consumed[seg_b] == 1
 
@@ -392,7 +392,7 @@ defmodule Flezha.State.InputLogTest do
       assert InputLog.watermark(class) == 1
     end
 
-    test "a Segment that has reported nothing is absent from consumed" do
+    test "an Entity that has reported nothing is absent from consumed" do
       class = "cursors-quiet-#{System.unique_integer([:positive])}"
       {:ok, 0} = InputLog.append(class, "i0", %{})
 

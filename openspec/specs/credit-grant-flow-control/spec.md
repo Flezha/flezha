@@ -5,17 +5,17 @@ TBD - created by archiving change credit-grant-flow-control. Update Purpose afte
 ## Requirements
 ### Requirement: Credit window is negotiated at stream attach
 
-The controller SHALL offer credit-grant flow control to every SDK session at state-stream attach via a `CreditWindowInit{stream_id, window_bytes, low_watermark_bytes}` control-channel frame. A session that acknowledges the handshake is a credit-speaking session; a session that does not acknowledge (a pre-credit SDK) SHALL receive the legacy `SegmentMailboxStatus` behaviour unchanged. The window SHALL be configurable per Operative (`:credit_window_bytes`), defaulting to `wal_high_watermark_bytes`.
+The controller SHALL offer credit-grant flow control to every SDK session at state-stream attach via a `CreditWindowInit{stream_id, window_bytes, low_watermark_bytes}` control-channel frame. A session that acknowledges the handshake is a credit-speaking session; a session that does not acknowledge (a pre-credit SDK) SHALL receive the legacy `EntityMailboxStatus` behaviour unchanged. The window SHALL be configurable per Operative (`:credit_window_bytes`), defaulting to `wal_high_watermark_bytes`.
 
 #### Scenario: Credit-speaking session established
 
 - **WHEN** an SDK that supports credit attaches its state stream and acknowledges `CreditWindowInit`
-- **THEN** the controller marks the session credit-speaking, stops shipping `SegmentMailboxStatus` frames to it, and enforces the byte ledger on that stream
+- **THEN** the controller marks the session credit-speaking, stops shipping `EntityMailboxStatus` frames to it, and enforces the byte ledger on that stream
 
 #### Scenario: Pre-credit SDK keeps legacy behaviour
 
 - **WHEN** an SDK attaches and does not acknowledge `CreditWindowInit`
-- **THEN** the controller applies the legacy soft-watermark `SegmentMailboxStatus` protocol and hard-bound shedding, byte-for-byte as before this change
+- **THEN** the controller applies the legacy soft-watermark `EntityMailboxStatus` protocol and hard-bound shedding, byte-for-byte as before this change
 
 #### Scenario: Kill switch disables the handshake
 
@@ -47,11 +47,11 @@ Credit SHALL be minted only when appended bytes become durable: on fsync complet
 
 ### Requirement: A sender out of credit parks, never drops
 
-When an SDK's credit window is insufficient for the next state-change frame, the SDK SHALL park the producing Segment's emit path until a grant arrives. The park SHALL NOT block the control channel (heartbeats and control traffic keep flowing), SHALL NOT drop or reorder the pending frame, and SHALL be observable: the SDK SHALL bump a `credit_parked` liveness counter visible to the existing liveness self-report so a credit-parked runner is classifiable as parked rather than silently frozen. Both the Rust and Java SDKs SHALL implement identical park semantics.
+When an SDK's credit window is insufficient for the next state-change frame, the SDK SHALL park the producing Entity's emit path until a grant arrives. The park SHALL NOT block the control channel (heartbeats and control traffic keep flowing), SHALL NOT drop or reorder the pending frame, and SHALL be observable: the SDK SHALL bump a `credit_parked` liveness counter visible to the existing liveness self-report so a credit-parked runner is classifiable as parked rather than silently frozen. Both the Rust and Java SDKs SHALL implement identical park semantics.
 
 #### Scenario: Exhausted window parks the producer
 
-- **WHEN** a Segment produces state changes faster than fsync mints credit and the window reaches zero
+- **WHEN** an Entity produces state changes faster than fsync mints credit and the window reaches zero
 - **THEN** the producer parks on the next send, no frame is dropped, and processing resumes when the next `CreditGrant` arrives
 
 #### Scenario: Park is visible to liveness
@@ -61,7 +61,7 @@ When an SDK's credit window is insufficient for the next state-change frame, the
 
 #### Scenario: Control channel unaffected by a parked data path
 
-- **WHEN** a Segment's emit path is parked on credit
+- **WHEN** an Entity's emit path is parked on credit
 - **THEN** control-channel heartbeats from that runner continue uninterrupted
 
 ### Requirement: Credit overrun is a counted anomaly, not a load response
@@ -73,13 +73,13 @@ A state-change frame arriving on a credit-speaking stream whose ledger is at or 
 - **WHEN** a credit-speaking SDK sends a frame while its ledger is exhausted
 - **THEN** the frame is shed, `credit_overrun_total` increments, a warning names the session, and the seq-gap resync path repairs the gap
 
-### Requirement: Per-Segment receiver queues prevent head-of-line blocking
+### Requirement: Per-Entity receiver queues prevent head-of-line blocking
 
-After stream demux the controller SHALL queue state changes per Segment, so one Segment with a slow WAL cannot stall appends of sibling Segments sharing the stream. A slow Segment consumes its share of the shared window only; siblings continue while window credit remains.
+After stream demux the controller SHALL queue state changes per Entity, so one Entity with a slow WAL cannot stall appends of sibling Entities sharing the stream. A slow Entity consumes its share of the shared window only; siblings continue while window credit remains.
 
-#### Scenario: Slow segment does not stall siblings
+#### Scenario: Slow entity does not stall siblings
 
-- **WHEN** Segment k1's WAL drains slowly while sibling k2's WAL is healthy, both on one stream with remaining credit
+- **WHEN** Entity k1's WAL drains slowly while sibling k2's WAL is healthy, both on one stream with remaining credit
 - **THEN** k2's appends continue to be written and fsynced while k1's queue grows within the window bound
 
 ### Requirement: Reconnect resets the ledger
@@ -97,7 +97,7 @@ When an Operative runs with the effectively-once tier's durable input-log, the c
 
 #### Scenario: Frozen watermark parks the source
 
-- **WHEN** one Segment stops advancing its consumed offset so the Operative's min-watermark freezes while ingestion continues
+- **WHEN** one Entity stops advancing its consumed offset so the Operative's min-watermark freezes while ingestion continues
 - **THEN** the source credit ledger drains to zero and the source adapter parks, bounding input-log growth, until the watermark advances again
 
 #### Scenario: Tier off means no source ledger

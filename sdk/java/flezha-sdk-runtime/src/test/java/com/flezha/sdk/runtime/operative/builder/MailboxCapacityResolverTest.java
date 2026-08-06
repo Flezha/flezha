@@ -14,14 +14,14 @@ import org.junit.jupiter.api.Test;
 class MailboxCapacityResolverTest {
 
     @Test
-    @DisplayName("explicit override on the Operation wins over env value")
-    void overrideOnOperationTakesPrecedence() {
+    @DisplayName("explicit override on the Procedure wins over env value")
+    void overrideOnProcedureTakesPrecedence() {
         int cap = MailboxCapacityResolver.resolveInner("ohlc", 4096, true, "2048");
         assertThat(cap).isEqualTo(4096);
     }
 
     @Test
-    @DisplayName("env value is used when the Operation does not override")
+    @DisplayName("env value is used when the Procedure does not override")
     void envWinsOverDefault() {
         int cap = MailboxCapacityResolver.resolveInner("ohlc", 1024, false, "2048");
         assertThat(cap).isEqualTo(2048);
@@ -79,7 +79,7 @@ class MailboxCapacityResolverTest {
     @DisplayName("capacity = MAX_MAILBOX_CAPACITY is allowed")
     void maxIsAllowed() {
         int cap = MailboxCapacityResolver.resolveInner(
-                "max_operation", MailboxCapacityResolver.MAX_MAILBOX_CAPACITY, true, null);
+                "max_procedure", MailboxCapacityResolver.MAX_MAILBOX_CAPACITY, true, null);
         assertThat(cap).isEqualTo(MailboxCapacityResolver.MAX_MAILBOX_CAPACITY);
     }
 }

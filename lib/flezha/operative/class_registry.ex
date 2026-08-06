@@ -7,7 +7,7 @@ defmodule Flezha.Operative.ClassRegistry do
   `Flezha.Runner.StreamChannel`, and `Flezha.State.TimeTravel` are keyed
   purely by `operative_class` strings and never carry a `kind`. This registry
   is the seam that lets those paths gate the unbounded-only capabilities
-  (`time_travel?`, `dynamic_segments?`, `output_stall_watch?`) through
+  (`time_travel?`, `dynamic_entities?`, `output_stall_watch?`) through
   `Flezha.Operative.Kind.capable?/2`.
 
   `get/1` resolves in three steps:
@@ -36,8 +36,8 @@ defmodule Flezha.Operative.ClassRegistry do
   @default_kind :unbounded
   @sidecar "kind"
   @tier_sidecar "effectively_once"
-  @compensable_sidecar "compensable_ops"
-  @leaf_sidecar "leaf_ops"
+  @compensable_sidecar "compensable_procs"
+  @leaf_sidecar "leaf_procs"
   @checkpoint_sidecar "checkpoint_ack"
   @correction_sidecar "correction_window_ms"
   @compact_bytes_sidecar "compact_after_bytes"
@@ -48,8 +48,8 @@ defmodule Flezha.Operative.ClassRegistry do
   @declaration_keys [
     :effectively_once,
     :checkpoint_ack,
-    :compensable_ops,
-    :leaf_ops,
+    :compensable_procs,
+    :leaf_procs,
     :correction_window_ms,
     :compact_after_bytes
   ]
@@ -105,14 +105,14 @@ defmodule Flezha.Operative.ClassRegistry do
   def put_declarations(operative_class, declarations) when is_binary(operative_class) do
     put_effectively_once(operative_class, declarations.effectively_once)
     put_checkpoint_ack(operative_class, declarations.checkpoint_ack)
-    put_compensable_ops(operative_class, declarations.compensable_ops)
-    put_leaf_ops(operative_class, declarations.leaf_ops)
+    put_compensable_ops(operative_class, declarations.compensable_procs)
+    put_leaf_ops(operative_class, declarations.leaf_procs)
     put_correction_window(operative_class, declarations.correction_window_ms)
     put_compact_after_bytes(operative_class, declarations.compact_after_bytes)
   end
 
   @doc """
-  Record `operative_class`'s declared per-Segment WAL compaction size threshold
+  Record `operative_class`'s declared per-Entity WAL compaction size threshold
   in bytes, or `nil` when it declares none (then the global default governs).
 
   Durable in the same sidecar shape as the correction window, because the
@@ -161,7 +161,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   @doc """
-  Record which of `operative_class`'s chain operations declare a `compensate`
+  Record which of `operative_class`'s chain procedures declare a `compensate`
   hook, as declared by the SDK in the `AddOperative` response metadata. `nil`
   clears it (a class that declares nothing).
 
@@ -170,38 +170,38 @@ defmodule Flezha.Operative.ClassRegistry do
   to ask.
   """
   @spec put_compensable_ops(binary(), [non_neg_integer()] | nil) :: :ok
-  def put_compensable_ops(operative_class, ops) when is_binary(operative_class) do
-    put_declaration(operative_class, :compensable_ops, @compensable_sidecar, ops)
+  def put_compensable_ops(operative_class, procs) when is_binary(operative_class) do
+    put_declaration(operative_class, :compensable_procs, @compensable_sidecar, procs)
   end
 
   @doc """
-  Record which of `operative_class`'s tree operations are **leaves** — the set
+  Record which of `operative_class`'s tree procedures are **leaves** — the set
   whose commits mean the operative is done (`bounded-branching`). Same ETS +
   durable-sidecar shape as the compensable set, and read on the same evidence:
   the journal answers "complete?" with no runner to ask.
   """
   @spec put_leaf_ops(binary(), [non_neg_integer()] | nil) :: :ok
-  def put_leaf_ops(operative_class, ops) when is_binary(operative_class) do
-    put_declaration(operative_class, :leaf_ops, @leaf_sidecar, ops)
+  def put_leaf_ops(operative_class, procs) when is_binary(operative_class) do
+    put_declaration(operative_class, :leaf_procs, @leaf_sidecar, procs)
   end
 
   @doc """
-  Resolve which of `operative_class`'s chain operations declare a `compensate`
+  Resolve which of `operative_class`'s chain procedures declare a `compensate`
   hook: ETS → durable sidecar → `nil` (the class declared nothing).
   """
-  @spec compensable_ops(binary()) :: [non_neg_integer()] | nil
-  def compensable_ops(operative_class) when is_binary(operative_class) do
-    declaration(operative_class, :compensable_ops, @compensable_sidecar, &parse_ops/1)
+  @spec compensable_procs(binary()) :: [non_neg_integer()] | nil
+  def compensable_procs(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :compensable_procs, @compensable_sidecar, &parse_ops/1)
   end
 
   @doc """
-  Resolve `operative_class`'s leaf operations: ETS → durable sidecar → `nil`
+  Resolve `operative_class`'s leaf procedures: ETS → durable sidecar → `nil`
   (the class declared nothing — run-sugar, unbounded, or an SDK without the
   declaration).
   """
-  @spec leaf_ops(binary()) :: [non_neg_integer()] | nil
-  def leaf_ops(operative_class) when is_binary(operative_class) do
-    declaration(operative_class, :leaf_ops, @leaf_sidecar, &parse_ops/1)
+  @spec leaf_procs(binary()) :: [non_neg_integer()] | nil
+  def leaf_procs(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :leaf_procs, @leaf_sidecar, &parse_ops/1)
   end
 
   @doc """
@@ -310,7 +310,7 @@ defmodule Flezha.Operative.ClassRegistry do
   # unchanged, and one that drops the declaration reverts on the next bind).
   # ONE shape for every SDK declaration: an ETS entry plus a durable sidecar that
   # outlives the process. An undeclared capability — `false` for a flag, `nil` for
-  # an operation set — CLEARS both, so a class that rebinds having dropped a
+  # a procedure set — CLEARS both, so a class that rebinds having dropped a
   # declaration can never read the previous bind's, and a flag-off class's on-disk
   # layout stays exactly as it was before the flag existed. The only
   # per-capability code is the codec pair.
@@ -331,7 +331,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   # ETS → durable sidecar → `nil` (undeclared). `decode` turns the sidecar's text
-  # back into the declared value; an empty operation set decodes to `[]`, which is
+  # back into the declared value; an empty procedure set decodes to `[]`, which is
   # meaningful ("a tree, none of it selected") and is NOT undeclared.
   defp declaration(operative_class, key, sidecar, decode) do
     case ets_lookup({operative_class, key}) do
@@ -347,7 +347,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   defp encode_declaration(true), do: "true"
-  defp encode_declaration(ops) when is_list(ops), do: Enum.join(ops, ",")
+  defp encode_declaration(procs) when is_list(procs), do: Enum.join(procs, ",")
   defp encode_declaration(ms) when is_integer(ms), do: Integer.to_string(ms)
 
   defp parse_ops(""), do: []

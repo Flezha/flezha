@@ -36,7 +36,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   @moduletag timeout: 300_000
 
   @factory "tier_store"
-  @operation "tier_store_operation"
+  @procedure "tier_store_procedure"
 
   setup_all do
     if System.get_env("POSTGRES_INTEGRATION") != "1" do
@@ -58,8 +58,8 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
     namespace = unique("eff_once_pg")
     operative_id = unique("tier_store")
     id_path = unique_id_path()
-    segment_id = {operative_id, @operation, ""}
-    segment_label = "#{operative_id}/#{@operation}/"
+    entity_id = {operative_id, @procedure, ""}
+    entity_label = "#{operative_id}/#{@procedure}/"
 
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
@@ -123,7 +123,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
            "journaled inputs were not replayed after the runner kill"
 
     # --- Phase 3: controller state-layer crash with a staled cursor ----------
-    stale_cursor_and_crash_writers(operative_id, segment_id)
+    stale_cursor_and_crash_writers(operative_id, entity_id)
     force_fresh_rebind(namespace, operative_id)
 
     send_inputs(operative_id, namespace, ["k1:c"])
@@ -139,19 +139,19 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
 
     # Every row carries the durable identity under the tier's live epoch;
     # the re-drive (staled cursor ⇒ full outbox replay) regressed nothing.
-    live_epoch = Outbox.read(segment_id).epoch
+    live_epoch = Outbox.read(entity_id).epoch
     rows = row_identities(db)
     assert rows != []
 
-    for [key, segment, seq, epoch] <- rows do
-      assert segment == segment_label, "row #{key} missing its segment stamp"
+    for [key, entity, seq, epoch] <- rows do
+      assert entity == entity_label, "row #{key} missing its entity stamp"
       assert seq =~ ~r/^\d+\.\d+$/, "row #{key} missing its outbox seq"
       assert epoch <= live_epoch, "row #{key} carries an epoch from the future"
     end
 
     # The progress watermark committed transactionally with the rows: same
-    # segment, at/above every row's (epoch, seq), never past the live epoch.
-    assert [[^segment_label, last_seq, progress_epoch]] = progress(db)
+    # entity, at/above every row's (epoch, seq), never past the live epoch.
+    assert [[^entity_label, last_seq, progress_epoch]] = progress(db)
     assert progress_epoch <= live_epoch
 
     max_row = rows |> Enum.map(fn [_, _, seq, epoch] -> {epoch, seq_key(seq)} end) |> Enum.max()
@@ -176,8 +176,8 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   end
 
   defp row_identities(db) do
-    Enum.map(rows(db), fn [key, segment, seq, epoch, _payload, _at] ->
-      [key, segment, seq, epoch]
+    Enum.map(rows(db), fn [key, entity, seq, epoch, _payload, _at] ->
+      [key, entity, seq, epoch]
     end)
   end
 

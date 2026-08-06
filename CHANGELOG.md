@@ -37,20 +37,20 @@
   **Controller-only**: no SDK, wire, or journal change. See
   `docs/http_poll_plugin.md`.
 
-- **An operation can consume more than one channel**
-  (`add-multi-input-operations`). `c.merge::<I>()` (Rust) / `c.merge(I.class)`
-  (Java) subscribes two or more source channels to one operation whose `Input`
+- **A procedure can consume more than one channel**
+  (`add-multi-input-procedures`). `c.merge::<I>()` (Rust) / `c.merge(I.class)`
+  (Java) subscribes two or more source channels to one procedure whose `Input`
   is an author-declared sum type, each subscription supplying a pure mapping
-  from its payload into that type. Entry channels and inter-operation channels
+  from its payload into that type. Entry channels and inter-procedure channels
   are both valid sources on an unbounded operative, freely mixed, so a detector
   can take its data feed and
   a live config channel without the operative being restarted with new
   environment. Per-source FIFO is preserved and nothing is ordered across
-  sources; `segment_for` sees the mapped value; the mappings run identically on
+  sources; `entities_for` sees the mapped value; the mappings run identically on
   live delivery and WAL replay, so a warm restart restores the same state.
   Fewer than two sources, the same channel subscribed twice, or a source that
   would re-wire an already-declared edge all fail operative definition with a
-  named topology error. A **bounded** operative merges its operations' output
+  named topology error. A **bounded** operative merges its procedures' output
   streams — its entry channel seeds the root from the spawn args and names no
   channel, so an entry channel as a bounded merge source is refused by name.
   Single-input wiring is unchanged.
@@ -58,22 +58,22 @@
   **No wire change and no controller change**: the merge is a subscription-time
   construct in the SDK, frames are still journaled per source channel, and the
   controller has no model of a channel's consumers. See
-  `docs/multi_input_operations.md`.
+  `docs/multi_input_procedures.md`.
 
-- **An operation can ask for a bounded operative**
-  (`add-operation-requested-spawn`). `ctx.spawn_bounded` (Rust) /
+- **A procedure can ask for a bounded operative**
+  (`add-procedure-requested-spawn`). `ctx.spawn_bounded` (Rust) /
   `ctx.spawnBounded` (Java) spawns-or-delivers a bounded instance on one
-  `(namespace, instance_id)` from inside any operation: a free id starts the
+  `(namespace, instance_id)` from inside any procedure: a free id starts the
   factory with the payload as its first input, a taken id receives the payload
   as one more input (`if_running: deliver`) or refuses (`error`). Concurrent
   requests race-resolve at the operative registry to exactly one instance.
   Failures — quota, unknown factory, unreachable controller — resolve the
-  caller's async handle and never fault the requesting operation; an
+  caller's async handle and never fault the requesting procedure; an
   uninspected handle logs the failure once. Spawning is a live-processing side
   effect: a replayed invocation issues nothing. Until now a bounded operative
   could only be started from outside the cluster, so every pipeline that needed
   one grew its own external dispatcher. See
-  `docs/operation_requested_spawn.md`.
+  `docs/procedure_requested_spawn.md`.
 
   **Wire**: two additive `CommandRequest` variants, `SpawnBoundedRequest`
   (tag 34, SDK → controller) and `SpawnBoundedResponse` (tag 35,
@@ -171,26 +171,26 @@
   (`HubManager.drain_hub/2`, the seam graceful shutdown already used) so
   operatives leave through a live HotSwap handover. New
   `Flezha.State.WalTransfer` moves what the handover cannot: a
-  destination-pulled, chunked `:erpc` copy of the Segment's durable files,
+  destination-pulled, chunked `:erpc` copy of the Entity's durable files,
   written to a `.transferring` sibling that is fsynced and atomically renamed,
-  with names resolved through the Segment's own file set so a peer cannot read
+  with names resolved through the Entity's own file set so a peer cannot read
   arbitrary paths. `state_root` stays node-local and is never assumed shared.
   One-shot at migration time, not replication — a controller that dies together
   with its disk still takes its state with it.
 
-- A durable bounded operative whose operations hold **no per-Segment state**
-  went silent after its first turn. The op-journal is instance-scoped but rode
-  `RestoreInitState.op_journal`, a per-Segment frame — and such a class has no
-  Segment WAL, so the controller shipped no restore at all. Every wake resumed
+- A durable bounded operative whose procedures hold **no per-Entity state**
+  went silent after its first turn. The proc-journal is instance-scoped but rode
+  `RestoreInitState.proc_journal`, a per-Entity frame — and such a class has no
+  Entity WAL, so the controller shipped no restore at all. Every wake resumed
   at iteration 0, and each turn's commit collided with iteration 0's
-  `outbox_flushed` marker (the flush marker is keyed `{type, op_idx, iter}`),
+  `outbox_flushed` marker (the flush marker is keyed `{type, proc_idx, iter}`),
   so its staged output was journaled and never delivered. Only the first turn
   of such an operative was ever emitted; it bit any instance that parked
   between turns, on both SDKs.
-  `OpJournalState` moves from `RestoreInitState` (field 6, removed) to
+  `ProcJournalState` moves from `RestoreInitState` (field 6, removed) to
   `AddOperative` (field 6, added) — instance-scoped state on the bind, beside
-  `resume_segment_count`, delivered once per bind instead of once per persisted
-  Segment and before the driver spawns. No compatibility shim: an SDK and a
+  `resume_entity_count`, delivered once per bind instead of once per persisted
+  Entity and before the driver spawns. No compatibility shim: an SDK and a
   controller must be upgraded together.
 
 ### Changed
@@ -221,7 +221,7 @@
   Operatives whose plugins were enabled dynamically before this
   upgrade have an empty `opts[:plugins]` in the cspec. They keep
   working as long as no Overwatch (re)start happens before the next
-  `flz plugin enable` / `flz plugin disable` op, which canonicalises
+  `flz plugin enable` / `flz plugin disable` proc, which canonicalises
   the cspec. Runners who want to canonicalise immediately can run
   `flz plugin disable <id> && flz plugin enable <id>` for each
   plugin. No automatic migration job is shipped.
@@ -339,7 +339,7 @@ along with the SYSMODE coordinator GenServer that drove it.
 - New top-level CLI commands `flz cluster snapshot <file>` and
   `flz cluster restore <file>` for explicit, runner-driven cluster-wide
   state capture and restore. Both commands accept `--namespace NS` for
-  per-namespace operations; default behaviour without the flag is
+  per-namespace procedures; default behaviour without the flag is
   cluster-wide. (Both verbs were later removed; `flz boot
   import-legacy-snapshot` reads the format they produced.)
 - `Flezha.Cluster.Snapshot` and `Flezha.Cluster.Snapshot.Coordinator`
@@ -348,10 +348,10 @@ along with the SYSMODE coordinator GenServer that drove it.
 - `Flezha.Cluster.Snapshot.PluginRecoverability` predicate that decides
   which plugins survive a snapshot/restore cycle.
 - `Flezha.Operative.Builder` now recognises `:initial_state_binary` in
-  opts; `Flezha.Operative.Overwatch` sends a new `SegmentApplyState`
+  opts; `Flezha.Operative.Overwatch` sends a new `EntityApplyState`
   control command to the compute engine before the first input is
   forwarded so a re-spawned operative begins with primed state.
-- New protobuf message `SegmentApplyState` and corresponding handler
+- New protobuf message `EntityApplyState` and corresponding handler
   in the Rust and Java SDKs. Default impl returns the canonical
   `apply_state_not_supported` error so older SDK builds are detectable;
   the agent logs once per operative on apply failure.

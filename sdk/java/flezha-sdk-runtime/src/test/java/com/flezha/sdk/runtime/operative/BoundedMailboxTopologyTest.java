@@ -5,9 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.OverflowPolicy;
-import com.flezha.sdk.operation.OperationCtx;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Topology-level tests for the bounded-mailbox surface added by the
  * Rust→Java parity port: {@code OverflowPolicy} + {@code .onFull(...)} +
- * {@code Operation.mailboxCapacity()} + {@code FLEZHA_MAILBOX_CAPACITY} env
+ * {@code Procedure.mailboxCapacity()} + {@code FLEZHA_MAILBOX_CAPACITY} env
  * resolution + the two range-validation exception factories.
  */
 class BoundedMailboxTopologyTest {
@@ -30,20 +30,20 @@ class BoundedMailboxTopologyTest {
     }
 
     @Test
-    @DisplayName("default policy: entry channels DROP_NEWEST, inter-operation BLOCK")
+    @DisplayName("default policy: entry channels DROP_NEWEST, inter-procedure BLOCK")
     void defaultPoliciesByKind() {
         UnboundedOperativeTopology topology = UnboundedOperativeTopologyBuilder.build(new TwoStageUnboundedOperative());
         // Channel index 0 is the entry channel "input"; index 1 is the
-        // inter-operation channel "mid".
+        // inter-procedure channel "mid".
         assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_NEWEST);
         assertThat(topology.channels().get(1).overflowPolicy()).isEqualTo(OverflowPolicy.BLOCK);
     }
 
     @Test
-    @DisplayName("onFull(DROP_OLDEST) overrides the per-kind default on an inter-operation channel")
+    @DisplayName("onFull(DROP_OLDEST) overrides the per-kind default on an inter-procedure channel")
     void onFullOverridesDefault() {
         UnboundedOperativeTopology topology =
-                UnboundedOperativeTopologyBuilder.build(new InterOperationDropOldestUnboundedOperative());
+                UnboundedOperativeTopologyBuilder.build(new InterProcedureDropOldestUnboundedOperative());
         assertThat(topology.channels().get(1).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_OLDEST);
     }
 
@@ -56,13 +56,13 @@ class BoundedMailboxTopologyTest {
     }
 
     @Test
-    @DisplayName("Operation.mailboxCapacity() override flows into the descriptor when overridden flag is set")
-    void operationOverrideHonored() {
+    @DisplayName("Procedure.mailboxCapacity() override flows into the descriptor when overridden flag is set")
+    void procedureOverrideHonored() {
         UnboundedOperativeTopology topology =
                 UnboundedOperativeTopologyBuilder.build(new BigMailboxUnboundedOperative());
-        int operationId = topology.operationNameToId().get("big_mailbox_operation");
-        assertThat(topology.operations().get(operationId).mailboxCapacity()).isEqualTo(8192);
-        assertThat(topology.operations().get(operationId).mailboxCapacityOverridden())
+        int procedureId = topology.procedureNameToId().get("big_mailbox_procedure");
+        assertThat(topology.procedures().get(procedureId).mailboxCapacity()).isEqualTo(8192);
+        assertThat(topology.procedures().get(procedureId).mailboxCapacityOverridden())
                 .isTrue();
     }
 
@@ -70,7 +70,7 @@ class BoundedMailboxTopologyTest {
     @DisplayName("default mailbox capacity is 1024 when no override and no env var present")
     void defaultMailboxCapacity() {
         UnboundedOperativeTopology topology = UnboundedOperativeTopologyBuilder.build(new TwoStageUnboundedOperative());
-        for (OperationDescriptor desc : topology.operations()) {
+        for (ProcedureDescriptor desc : topology.procedures()) {
             assertThat(desc.mailboxCapacity()).isEqualTo(1024);
             assertThat(desc.mailboxCapacityOverridden()).isFalse();
         }
@@ -81,7 +81,7 @@ class BoundedMailboxTopologyTest {
     void zeroCapacityRejected() {
         assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new ZeroCapacityUnboundedOperative()))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
-                .hasMessageContaining("zero_capacity_operation")
+                .hasMessageContaining("zero_capacity_procedure")
                 .hasMessageContaining("mailboxCapacity = 0");
     }
 
@@ -90,13 +90,13 @@ class BoundedMailboxTopologyTest {
     void tooLargeRejected() {
         assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new HugeCapacityUnboundedOperative()))
                 .isInstanceOf(UnboundedOperativeConfigurationException.class)
-                .hasMessageContaining("huge_capacity_operation")
+                .hasMessageContaining("huge_capacity_procedure")
                 .hasMessageContaining("9999999");
     }
 
-    // ---- Test operations / operatives ----------------------------------------------------
+    // ---- Test procedures / operatives ----------------------------------------------------
 
-    public static final class A extends StatelessTestOperation<String, Object, Integer> {
+    public static final class A extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
             return "a";
@@ -113,15 +113,15 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class B extends StatelessTestOperation<Integer, Object, Void> {
+    public static final class B extends StatelessTestProcedure<Integer, Object, Void> {
         @Override
         public String name() {
             return "b";
@@ -138,12 +138,12 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
     public static final class TwoStageUnboundedOperative implements UnboundedOperative {
@@ -159,10 +159,10 @@ class BoundedMailboxTopologyTest {
         }
     }
 
-    public static final class InterOperationDropOldestUnboundedOperative implements UnboundedOperative {
+    public static final class InterProcedureDropOldestUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
-            return "interoperation_drop_oldest";
+            return "interprocedure_drop_oldest";
         }
 
         @Override
@@ -185,11 +185,11 @@ class BoundedMailboxTopologyTest {
         }
     }
 
-    // Custom Operation with an explicit mailboxCapacity() override.
-    public static final class BigMailboxOperation extends StatelessTestOperation<String, Object, Integer> {
+    // Custom Procedure with an explicit mailboxCapacity() override.
+    public static final class BigMailboxProcedure extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
-            return "big_mailbox_operation";
+            return "big_mailbox_procedure";
         }
 
         @Override
@@ -203,7 +203,7 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
@@ -218,7 +218,7 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
     public static final class BigMailboxUnboundedOperative implements UnboundedOperative {
@@ -229,14 +229,14 @@ class BoundedMailboxTopologyTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(BigMailboxOperation.class);
+            c.input(String.class, "input").into(BigMailboxProcedure.class);
         }
     }
 
-    public static final class ZeroCapacityOperation extends StatelessTestOperation<String, Object, Integer> {
+    public static final class ZeroCapacityProcedure extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
-            return "zero_capacity_operation";
+            return "zero_capacity_procedure";
         }
 
         @Override
@@ -250,7 +250,7 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
@@ -265,7 +265,7 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
     public static final class ZeroCapacityUnboundedOperative implements UnboundedOperative {
@@ -276,14 +276,14 @@ class BoundedMailboxTopologyTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(ZeroCapacityOperation.class);
+            c.input(String.class, "input").into(ZeroCapacityProcedure.class);
         }
     }
 
-    public static final class HugeCapacityOperation extends StatelessTestOperation<String, Object, Integer> {
+    public static final class HugeCapacityProcedure extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
-            return "huge_capacity_operation";
+            return "huge_capacity_procedure";
         }
 
         @Override
@@ -297,7 +297,7 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
@@ -312,7 +312,7 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
     public static final class HugeCapacityUnboundedOperative implements UnboundedOperative {
@@ -323,7 +323,7 @@ class BoundedMailboxTopologyTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(HugeCapacityOperation.class);
+            c.input(String.class, "input").into(HugeCapacityProcedure.class);
         }
     }
 }

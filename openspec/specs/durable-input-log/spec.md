@@ -39,15 +39,15 @@ resulting atomic effect record carries the same offset as its consumed-offset.
 ### Requirement: Crash-safe, replayable log records
 
 Input-log records SHALL be crc-protected appends (same durability class as the
-per-Segment WAL, fsync-batched). On restart the controller SHALL be able to read
+per-Entity WAL, fsync-batched). On restart the controller SHALL be able to read
 back any retained offset range in order; a torn tail record SHALL be discarded
 without affecting earlier records.
 
 #### Scenario: Replay after crash
 
-- **WHEN** the controller restarts after a crash and a Segment's durable
+- **WHEN** the controller restarts after a crash and an Entity's durable
   consumed-offset is 4700 while the log holds offsets up to 4720
-- **THEN** the controller re-forwards offsets 4701..4720 to the restored Segment
+- **THEN** the controller re-forwards offsets 4701..4720 to the restored Entity
   in order
 
 #### Scenario: Torn tail discarded
@@ -59,8 +59,8 @@ without affecting earlier records.
 ### Requirement: Min-watermark retention
 
 The controller SHALL track the minimum durable consumed-offset across all
-Segments of the operative (the watermark) and SHALL truncate the input-log only
-strictly below `min(watermark, now − hold_window)`. A Segment that has consumed
+Entities of the operative (the watermark) and SHALL truncate the input-log only
+strictly below `min(watermark, now − hold_window)`. An Entity that has consumed
 nothing holds the watermark at the log start.
 
 `hold_window` SHALL resolve **per operative** as the greater of the operator-configured
@@ -69,14 +69,14 @@ for an operative that declares no correction window and for which the operator h
 configured none, so a non-correcting operative truncates at its watermark exactly as it
 does with no hold window at all.
 
-#### Scenario: Truncation respects the slowest segment
+#### Scenario: Truncation respects the slowest entity
 
-- **WHEN** segment A has durably consumed to offset 4711 and segment B to 4710
+- **WHEN** entity A has durably consumed to offset 4711 and entity B to 4710
 - **THEN** truncation removes only offsets below 4710
 
 #### Scenario: A declared correction window holds the log
 
-- **WHEN** an operative declares `correction_window(60_000)`, every Segment has
+- **WHEN** an operative declares `correction_window(60_000)`, every Entity has
   consumed to offset 4711, and offset 4711 was appended 10 s ago
 - **THEN** offset 4711 is retained, because it is newer than the derived 60 s hold
   window
@@ -84,6 +84,6 @@ does with no hold window at all.
 #### Scenario: An operative with no correction window has no hold
 
 - **WHEN** an operative declares no correction window, the operator configures no hold
-  window, and every Segment has consumed to offset 4711
+  window, and every Entity has consumed to offset 4711
 - **THEN** truncation removes every offset below 4711 immediately
 

@@ -3,10 +3,10 @@ package com.flezha.sdk.runtime.worker;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
@@ -53,7 +53,7 @@ class TierDispatchTest {
         PLUGIN_WRITES.clear();
         UnboundedOperativeClassRegistry.reset();
         shipped.install();
-        OperationDispatcher.setWireWriter((handle, streamId, frame) -> {
+        ProcedureDispatcher.setWireWriter((handle, streamId, frame) -> {
             PLUGIN_WRITES.add(frame);
             return 0;
         });
@@ -65,7 +65,7 @@ class TierDispatchTest {
 
     @AfterEach
     void close() {
-        OperationDispatcher.resetWireWriter();
+        ProcedureDispatcher.resetWireWriter();
         if (ctx != null && ctx.workerPool() != null) {
             ctx.workerPool().shutdownNow();
         }
@@ -78,7 +78,7 @@ class TierDispatchTest {
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, factoryId + "-inst", ctx, ctx.workerPool());
-        instance.dispatcher(0).fanoutSegments(input, 100L, OptionalLong.of(offset));
+        instance.dispatcher(0).fanoutEntities(input, 100L, OptionalLong.of(offset));
         ctx.workerPool().shutdown();
         assertThat(ctx.workerPool().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
 
@@ -131,8 +131,8 @@ class TierDispatchTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            var sTierOp = c.input(String.class, "in").into(TierOp.class);
-            sTierOp.named("out").keyed().output("sink");
+            var sTierProc = c.input(String.class, "in").into(TierProc.class);
+            sTierProc.named("out").keyed().output("sink");
         }
     }
 
@@ -145,8 +145,8 @@ class TierDispatchTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            var sPoisonOp = c.input(String.class, "in").retryMax(1).into(PoisonOp.class);
-            sPoisonOp.named("out").keyed().output("sink");
+            var sPoisonProc = c.input(String.class, "in").retryMax(1).into(PoisonProc.class);
+            sPoisonProc.named("out").keyed().output("sink");
         }
     }
 
@@ -162,7 +162,7 @@ class TierDispatchTest {
         }
     }
 
-    abstract static class Base implements Operation<String, CountState, String, Inc, WallClock, Void> {
+    abstract static class Base implements Procedure<String, CountState, String, Inc, WallClock, Void> {
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -199,34 +199,34 @@ class TierDispatchTest {
         }
 
         @Override
-        public CountState initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public CountState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new CountState();
         }
     }
 
-    public static final class TierOp extends Base {
+    public static final class TierProc extends Base {
         @Override
         public String name() {
             return "tier_op";
         }
 
         @Override
-        public void run(String input, StateHandle<CountState, Inc> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<CountState, Inc> state, ProcedureCtx ctx) throws ProcedureException {
             state.apply(new Inc(1));
             state.apply(new Inc(2));
             ctx.emitKeyed(input, "payload");
         }
     }
 
-    public static final class PoisonOp extends Base {
+    public static final class PoisonProc extends Base {
         @Override
         public String name() {
             return "poison_op";
         }
 
         @Override
-        public void run(String input, StateHandle<CountState, Inc> state, OperationCtx ctx) throws OperationException {
-            throw new OperationException("boom");
+        public void run(String input, StateHandle<CountState, Inc> state, ProcedureCtx ctx) throws ProcedureException {
+            throw new ProcedureException("boom");
         }
     }
 }

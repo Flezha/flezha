@@ -1,10 +1,10 @@
 package com.flezha.examples;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.RestoreInitPayload;
@@ -18,7 +18,7 @@ import java.util.Optional;
  *
  * <p>State is persisted as a log of <b>Changes</b>, not as snapshots of fields.
  * You never write {@code state.count++}; you {@code state.apply(new Increment())},
- * and the runtime folds it through {@link Operation#applyChange} and journals it.
+ * and the runtime folds it through {@link Procedure#applyChange} and journals it.
  * A crash then rebuilds the state by replaying that log.
  *
  * <p>That indirection is the entire durability contract. A direct field write is
@@ -28,7 +28,7 @@ import java.util.Optional;
  * <p>Two more rules follow from it:
  *
  * <ul>
- *   <li><b>Kryo needs to know your types.</b> {@link Operation#kryoTypes()} pins
+ *   <li><b>Kryo needs to know your types.</b> {@link Procedure#kryoTypes()} pins
  *       their stable ids. Append to that list, never reorder it — the ids are
  *       positional, and reordering silently re-interprets old journals.
  *   <li><b>{@code run} must be deterministic.</b> Replay re-runs it, so reading
@@ -39,7 +39,7 @@ import java.util.Optional;
  */
 public final class E02_StatefulCounter {
 
-    /** The mutable per-Segment state. Plain fields; only {@code applyChange} writes them. */
+    /** The mutable per-Entity state. Plain fields; only {@code applyChange} writes them. */
     public static final class Counter {
         public long count;
         public long lastSeenMs;
@@ -57,7 +57,7 @@ public final class E02_StatefulCounter {
         }
     }
 
-    public static final class CountOperation implements Operation<String, Counter, String, Increment, WallClock, Void> {
+    public static final class CountProcedure implements Procedure<String, Counter, String, Increment, WallClock, Void> {
 
         @Override
         public String name() {
@@ -103,15 +103,15 @@ public final class E02_StatefulCounter {
         }
 
         @Override
-        public Counter initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Counter initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             // Cold start. On a resume the runtime restores the snapshot and folds
             // the change log on top of whatever this returns.
             return new Counter();
         }
 
         @Override
-        public void run(String input, StateHandle<Counter, Increment> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String input, StateHandle<Counter, Increment> state, ProcedureCtx ctx)
+                throws ProcedureException {
             // ctx.now(), not System.currentTimeMillis(): the runtime evaluates the
             // declared Clock once per invocation, and a replay serves the same value.
             state.apply(new Increment(ctx.now()));
@@ -128,8 +128,8 @@ public final class E02_StatefulCounter {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sCountOperation = c.input(String.class, "in").into(CountOperation.class);
-            sCountOperation.named("out").output("my_sink");
+            var sCountProcedure = c.input(String.class, "in").into(CountProcedure.class);
+            sCountProcedure.named("out").output("my_sink");
         }
     }
 

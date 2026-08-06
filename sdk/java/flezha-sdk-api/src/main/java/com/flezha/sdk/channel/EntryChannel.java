@@ -1,6 +1,6 @@
 package com.flezha.sdk.channel;
 
-import com.flezha.sdk.operation.Operation;
+import com.flezha.sdk.procedure.Procedure;
 import javax.annotation.Nonnull;
 
 /**
@@ -9,7 +9,7 @@ import javax.annotation.Nonnull;
  * Entry channels are fed by the controller, so there is no producer side.
  *
  * <p>Like {@link Stream}, this handle is only usable inside
- * {@code channels()} / {@code operations()}: using a retained handle after
+ * {@code channels()} / {@code procedures()}: using a retained handle after
  * the topology froze at registration throws {@link IllegalStateException}
  * naming the operative.
  */
@@ -18,20 +18,20 @@ public interface EntryChannel<T> {
     /**
      * Wire the entry consumer and return <b>its</b> output {@link Stream}
      * handle, so a linear pipeline is one chained expression. The runtime
-     * verifies at registration that the operation's {@code inputType()}
+     * verifies at registration that the procedure's {@code inputType()}
      * equals {@code T}; a mismatch fails registration naming both the
      * channel and both types.
      */
     @Nonnull
-    <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operation);
+    <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure);
 
     /**
      * Like {@link #into(Class)}, but the consumer is a distinct named node
-     * whose identity string is {@code nodeName} instead of the operation's
+     * whose identity string is {@code nodeName} instead of the procedure's
      * {@code name()} — see {@link Stream#into(Class, String)}.
      */
     @Nonnull
-    <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operation, @Nonnull String nodeName);
+    <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure, @Nonnull String nodeName);
 
     /**
      * Override the per-kind default {@link OverflowPolicy}. Entry channels

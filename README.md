@@ -10,9 +10,9 @@ kernel, the two operative profiles, and the diagrams. Vocabulary:
 ## Features
 - Clustered, hot-swap-migratable operatives
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
-- Per-Segment durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/resilience/state_persistence.md`](docs/resilience/state_persistence.md))
+- Per-Entity durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/resilience/state_persistence.md`](docs/resilience/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
-- Bounded operatives — an operation tree with saga compensation, a durable loop, and suspension ([`docs/architecture/bounded_profile.md`](docs/architecture/bounded_profile.md))
+- Bounded operatives — a procedure tree with saga compensation, a durable loop, and suspension ([`docs/architecture/bounded_profile.md`](docs/architecture/bounded_profile.md))
 - Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
 - First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/kafka-producer.md`](docs/kafka-producer.md))
 - Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))
@@ -230,12 +230,12 @@ _build/dev/rel/flezha/bin/flz operative state my_operative
 ### Performance Testing
 
 Use `./scripts/bench.sh` to measure throughput. Switching axes are independent:
-runtime (`rust`/`java`), transport (`uds`/`quic`), shape (`regression`/`segmenting`).
+runtime (`rust`/`java`), transport (`uds`/`quic`), shape (`regression`/`entity`).
 
 ```bash
 ./scripts/bench.sh                                # rust + uds, defaults
 ./scripts/bench.sh -r java -t quic -n 100 -m 1000 # any combination
-./scripts/bench.sh --shape segmenting --pool-sizes 1,8
+./scripts/bench.sh --shape entity --pool-sizes 1,8
 ./scripts/bench.sh --help
 ```
 
@@ -256,9 +256,9 @@ back this:
    beside the DETS file: marker present → straight to `:normal`; marker
    absent → replay the persisted registry under
    `:flezha, :process_hub_recovery_timeout_ms` (default 30 s).
-2. **Per-Segment WAL/snapshot** (`app_data/state/<operative_class>/<operation_id>/`)
-   — change-by-change progress for every Segment. When an operative's
-   first Segment stream reattaches after restart, the controller
+2. **Per-Entity WAL/snapshot** (`app_data/state/<operative_class>/<procedure_id>/`)
+   — change-by-change progress for every Entity. When an operative's
+   first Entity stream reattaches after restart, the controller
    ships the assembled WAL+snapshot via `RestoreInitState` so the SDK
    resumes at the exact pre-shutdown sequence.
 

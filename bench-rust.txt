@@ -26,7 +26,7 @@ Message processing: 24.295 ms
 Total time: 1833.953 ms
 Throughput: 411607.33 messages/second
 Average time per operative: 18.33953 ms
-23:04:12.307 module=Flezha.Service.OperativeManager function=maybe_delete_operation/1 [warning] [operative_manager] skipping state dir app_data/state/flow_test_2/dynamic_segment_operation: write in flight (.tmp / .rewriting present)
+23:04:12.307 module=Flezha.Service.OperativeManager function=maybe_delete_procedure/1 [warning] [operative_manager] skipping state dir app_data/state/flow_test_2/dynamic_entity_procedure: write in flight (.tmp / .rewriting present)
 
 Performance test completed successfully!
 Cleaning up test environment...

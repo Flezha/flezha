@@ -3,8 +3,8 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   The resuming bind's two instance-scoped fields on `AddOperative`, both stamped
   onto the operative's opts by `Overwatch.with_resume_state/3`.
 
-  `op_journal` rides the bind rather than a per-Segment `RestoreInitState`
-  because it is instance-scoped: a durable bounded class with no per-Segment
+  `proc_journal` rides the bind rather than a per-Entity `RestoreInitState`
+  because it is instance-scoped: a durable bounded class with no per-Entity
   state ships no restore at all, so a journal delivered there would never arrive
   and the driver would resume at iteration 0 on every wake.
   """
@@ -47,22 +47,22 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
     )
   end
 
-  test "a resuming bind carries the op-journal even with nothing to restore", %{
+  test "a resuming bind carries the proc-journal even with nothing to restore", %{
     runner_id: runner_id
   } do
-    journal = %RunnerCommands.OpJournalState{iter: 7, consumed_offset: 3}
-    start_operative(runner_id, resume_segment_count: 0, op_journal: journal)
+    journal = %RunnerCommands.ProcJournalState{iter: 7, consumed_offset: 3}
+    start_operative(runner_id, resume_entity_count: 0, proc_journal: journal)
 
     assert_receive {:sent, {:add_operative, add}}, 500
-    assert add.resume_segment_count == 0
-    assert add.op_journal == journal
+    assert add.resume_entity_count == 0
+    assert add.proc_journal == journal
   end
 
   test "a fresh bind carries no journal", %{runner_id: runner_id} do
     start_operative(runner_id, [])
 
     assert_receive {:sent, {:add_operative, add}}, 500
-    assert add.resume_segment_count == 0
-    assert add.op_journal == nil
+    assert add.resume_entity_count == 0
+    assert add.proc_journal == nil
   end
 end

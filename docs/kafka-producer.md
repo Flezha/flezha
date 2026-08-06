@@ -50,7 +50,7 @@ transient broker burp.
 ## Effectively-once tier: message keys, identity headers, and the exactness contract
 
 Records produced by an `effectively_once()` operative arrive with the
-durable outbox identity stamps (`flz.segment`, `flz.seq` = the outbox seq
+durable outbox identity stamps (`flz.entity`, `flz.seq` = the outbox seq
 `<record WAL seq>.<emit ordinal>`, `flz.epoch`). For those records the
 plugin:
 
@@ -58,7 +58,7 @@ plugin:
   key — stable partitioning across replays, latest-value-per-key semantics
   on compacted topics;
 * writes the full identity as the record header
-  **`flezha.dedup_key = <flz.segment>/<outbox_seq>/<epoch>`** (e.g.
+  **`flezha.dedup_key = <flz.entity>/<outbox_seq>/<epoch>`** (e.g.
   `MarketOperative/s1/k1/42.0/1`).
 
 Records without the tier stamps keep the pre-tier behaviour: the

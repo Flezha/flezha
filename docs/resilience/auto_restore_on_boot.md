@@ -10,12 +10,12 @@ from their last persisted state.
 | Layer | Path | Lifecycle owner |
 |---|---|---|
 | ProcessHub durable registry (operative specs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (configures `registry_backend: {:dets, ...}`) |
-| Per-Segment WAL + snapshots (change-by-change progress) | `app_data/state/<operative_class>/<operation_id>/<segment_key>.{wal,snap.N,outbox.dedup}` | `Flezha.State.Supervisor` and friends |
+| Per-Entity WAL + snapshots (change-by-change progress) | `app_data/state/<operative_class>/<procedure_id>/<entity_key>.{wal,snap.N,outbox.dedup}` | `Flezha.State.Supervisor` and friends |
 
 The path layout is **flat in the operative_class direction** — there is
 no `runner_id` component. A runner pod restart that rotates
 `runner_id` finds the same persisted state on disk and the
-controller ships it to the new runner on Segment stream attach.
+controller ships it to the new runner on Entity stream attach.
 
 ## Lifecycle
 
@@ -43,7 +43,7 @@ controller ships it to the new runner on Segment stream attach.
    straight from the cspec (the persistent registry already restored
    it) and rebuilds `state.extensions`. Then `start_operative_sdk` and
    `maybe_dispatch_restore_init_state/2` ship the on-disk WAL +
-   snapshot to the SDK for each Segment belonging to this operative
+   snapshot to the SDK for each Entity belonging to this operative
    class — unless the operative arrived via HotSwap, in which case the
    in-band handover state stands.
 6. `Flezha.BootLoader` waits for `ProcessHub.await_normal/2` per
@@ -53,13 +53,13 @@ controller ships it to the new runner on Segment stream attach.
 
 | Scenario | Replay? | Result |
 |---|---|---|
-| Cluster-wide cold boot (all controllers down, all return) | Only where the marker was cleared first | Each such node calls `start_children` for its persistent rows. ProcessHub's hash ring picks the canonical owner; idempotent on duplicate `child_id`. Plugins re-subscribed via `Overwatch.init/1`; Segment state shipped via `dispatch_restore_init_state/2` on stream-attach. A cold boot with markers intact comes back empty until an operator arms replay. |
+| Cluster-wide cold boot (all controllers down, all return) | Only where the marker was cleared first | Each such node calls `start_children` for its persistent rows. ProcessHub's hash ring picks the canonical owner; idempotent on duplicate `child_id`. Plugins re-subscribed via `Overwatch.init/1`; Entity state shipped via `dispatch_restore_init_state/2` on stream-attach. A cold boot with markers intact comes back empty until an operator arms replay. |
 | Single-controller restart into healthy cluster | No | The marker survived on disk, so the returning node goes straight to `:normal`. ProcessHub has already redistributed its work; the durable registry on disk does not trample peer state. |
 | Rolling k8s rollout | No | Same as single-controller, repeated per pod. No stampede. |
 | Single-node deployment | Only with the marker cleared | No peer can hand the rows back, so a restart is empty until the marker is removed while the node is down; then `:recovering`; replay; `:normal`. |
 | Runner pod restart with `runner_id` rotation | N/A | Controller never went down. New `runner_id` is assigned via the existing flow; flat WAL layout means state is found and shipped via `RestoreInitState`. Zero data loss. |
 | HotSwap migration, source runner alive (operative moves A → B) | N/A | `prepare_handover_state` serializes from the runner and ships the state in-band; `dispatch_restore_init_state/2` does NOT fire (handover delivers state). State files on A are not deleted (retention sweeper handles long-term orphans). |
-| HotSwap migration, source runner already dead (A lost its last runner) | N/A | The runner is the state source, so the handover is **empty** and `arrived_via_hotswap?` stays `false`. B pulls A's Segment files over `:erpc` (`Flezha.State.WalTransfer`) into its own `state_root` and replays them. One-shot at migration time, not replication. |
+| HotSwap migration, source runner already dead (A lost its last runner) | N/A | The runner is the state source, so the handover is **empty** and `arrived_via_hotswap?` stays `false`. B pulls A's Entity files over `:erpc` (`Flezha.State.WalTransfer`) into its own `state_root` and replays them. One-shot at migration time, not replication. |
 | HotSwap mid-flight crash on destination | N/A | Source state files preserved. ProcessHub retries the migration. |
 | Network partition during boot | Yes (suspect) | Brief duplicate-start window during heal; ProcessHub's `Divergence` strategy resolves. Documented limitation. Operators in fragile environments can `FLEZHA_AUTO_RESTORE_ENABLED=false`. |
 | Quorum loss (3-node cluster, 2 die) | No (returning) | Returning nodes keep their markers, so they skip replay; survivor authoritative and they reconcile against ProcessHub placement. |
@@ -110,6 +110,6 @@ boot).
 | `Flezha.Boot.RecoveryHooks` | Telemetry forwarders for `pre_recovery_replay` / `post_recovery_replay` lifecycle events. |
 | `Flezha.Boot.StatePathMigrator` | One-shot legacy-layout → flat-layout migration. |
 | `Flezha.Operative.Overwatch` | `arrived_via_hotswap?` gate; `maybe_dispatch_restore_init_state/2` ships `RestoreInitState` to the SDK. |
-| `Flezha.State.Registry` | Flat path resolution (`{operative_class, operation_id, segment_key}`). |
+| `Flezha.State.Registry` | Flat path resolution (`{operative_class, procedure_id, entity_key}`). |
 | `Flezha.Service.OperativeManager.stop_operative/2` | Only operator-driven path that deletes state directories. |
 | `Flezha.Service.PluginManager` | Cspec-write-first ordering: `ProcessRegistry.update/3` then runtime subscribe. |

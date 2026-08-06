@@ -2,10 +2,10 @@ package com.flezha.examples;
 
 import com.flezha.sdk.Flezha;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -13,14 +13,14 @@ import com.flezha.sdk.state.WallClock;
 import java.util.Optional;
 
 /**
- * <b>01 — the smallest thing that runs.</b> A stateless Operation that reads a
+ * <b>01 — the smallest thing that runs.</b> A stateless Procedure that reads a
  * String off an entry channel and forwards it to a plugin.
  *
  * <p>Three pieces, always:
  *
  * <ol>
- *   <li>an <b>Operation</b> — the unit of work, run per Segment;
- *   <li>an <b>Operative</b> — the topology that wires Operations to Channels;
+ *   <li>an <b>Procedure</b> — the unit of work, run per Entity;
+ *   <li>an <b>Operative</b> — the topology that wires Procedures to Channels;
  *   <li><b>declaration</b>, via {@code Flezha.createRunner(...).defineUnbounded(...)}.
  * </ol>
  *
@@ -30,11 +30,11 @@ import java.util.Optional;
  */
 public final class E01_Echo {
 
-    /** Operation<Input, State, Output, Change, Clock, Config>. */
-    public static final class EchoOperation
-            implements Operation<String, EchoOperation.Empty, String, NoChange, WallClock, Void> {
+    /** Procedure<Input, State, Output, Change, Clock, Config>. */
+    public static final class EchoProcedure
+            implements Procedure<String, EchoProcedure.Empty, String, NoChange, WallClock, Void> {
 
-        /** No state: this Operation is a pure function of its input. */
+        /** No state: this Procedure is a pure function of its input. */
         public record Empty() {}
 
         @Override
@@ -43,7 +43,7 @@ public final class E01_Echo {
         }
 
         // Java erases generics, so the runtime needs these Class handles to wire
-        // and validate the topology. Every Operation declares all five.
+        // and validate the topology. Every Procedure declares all five.
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -70,12 +70,12 @@ public final class E01_Echo {
         }
 
         @Override
-        public Empty initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Empty initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Empty();
         }
 
         @Override
-        public void run(String input, StateHandle<Empty, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Empty, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("echo: " + input);
         }
     }
@@ -88,8 +88,8 @@ public final class E01_Echo {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sEchoOperation = c.input(String.class, "in").into(EchoOperation.class);
-            sEchoOperation.named("out").output("my_sink");
+            var sEchoProcedure = c.input(String.class, "in").into(EchoProcedure.class);
+            sEchoProcedure.named("out").output("my_sink");
         }
     }
 

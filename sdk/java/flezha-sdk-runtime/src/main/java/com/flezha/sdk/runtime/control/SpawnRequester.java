@@ -1,8 +1,8 @@
 package com.flezha.sdk.runtime.control;
 
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.operation.SpawnException;
-import com.flezha.sdk.operation.SpawnRequests;
+import com.flezha.sdk.procedure.SpawnException;
+import com.flezha.sdk.procedure.SpawnRequests;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.SpawnBoundedRequest;
 import com.flezha.sdk.runtime.RunnerContext;
@@ -13,9 +13,9 @@ import java.util.concurrent.CompletableFuture;
 import javax.annotation.Nonnull;
 
 /**
- * Ships an operation's {@code ctx.spawnBounded} as a {@code SpawnBoundedRequest}
+ * Ships a procedure's {@code ctx.spawnBounded} as a {@code SpawnBoundedRequest}
  * control frame and hands back the pending reply
- * ({@code add-operation-requested-spawn}).
+ * ({@code procedure-requested-spawn}).
  *
  * <p>Registers the waiter with {@link AckRegistry} <em>before</em> writing, the
  * ordering that makes the rendezvous race-free. A failed write resolves the

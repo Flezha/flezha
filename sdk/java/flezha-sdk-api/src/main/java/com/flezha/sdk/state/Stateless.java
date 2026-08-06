@@ -1,10 +1,10 @@
 package com.flezha.sdk.state;
 
 /**
- * Empty per-segment state for stateless sugared operations. The annotation
- * processor uses this as the {@code State} type when a {@code @Operation} class's
+ * Empty per-entity state for stateless sugared procedures. The annotation
+ * processor uses this as the {@code State} type when a {@code @Procedure} class's
  * {@code run} method declares no state parameter, so a generated stateless
- * operation still satisfies the {@link com.flezha.sdk.operation.Operation} type surface
+ * procedure still satisfies the {@link com.flezha.sdk.procedure.Procedure} type surface
  * with a no-op {@code initState}.
  */
 public final class Stateless {

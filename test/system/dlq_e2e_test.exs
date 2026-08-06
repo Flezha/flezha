@@ -1,11 +1,11 @@
 defmodule FlezhaTest.System.DlqE2ETest do
   @moduledoc """
-  End-to-end proof for `platform-dead-letter-queue` against live runners.
+  End-to-end proof for `dead-letter-queue` against live runners.
 
   Tier-off (`poison_probe` / `java_poison_probe`, Rust AND Java): a poison
   payload exhausts the retry budget, parks durably (park frame →
-  fsync → `ParkPayloadAck`), the segment continues, the entry is
-  inspectable, and — after the "antidote" input fixes the operation — a
+  fsync → `ParkPayloadAck`), the entity continues, the entry is
+  inspectable, and — after the "antidote" input fixes the procedure — a
   `flz dlq replay` re-dispatches the payload through the ordinary input
   path, succeeds, and removes the entry.
 
@@ -53,16 +53,16 @@ defmodule FlezhaTest.System.DlqE2ETest do
     :ok
   end
 
-  test "tier-off poison payload parks durably, segment continues, replay works (Rust)" do
-    run_poison_probe_case(:rust, "poison_probe", "poison_probe_operation")
+  test "tier-off poison payload parks durably, entity continues, replay works (Rust)" do
+    run_poison_probe_case(:rust, "poison_probe", "poison_probe_procedure")
   end
 
   @tag :java_sdk
-  test "tier-off poison payload parks durably, segment continues, replay works (Java)" do
-    run_poison_probe_case(:java, "java_poison_probe", "java_poison_probe_operation")
+  test "tier-off poison payload parks durably, entity continues, replay works (Java)" do
+    run_poison_probe_case(:java, "java_poison_probe", "java_poison_probe_procedure")
   end
 
-  defp run_poison_probe_case(runtime, factory, operation) do
+  defp run_poison_probe_case(runtime, factory, procedure) do
     namespace = unique("dlq_#{runtime}")
     operative_id = unique("probe_#{runtime}")
     id_path = unique_id_path()
@@ -93,30 +93,30 @@ defmodule FlezhaTest.System.DlqE2ETest do
     send_inputs(operative_id, namespace, ["a"])
     assert await_output("ok:a", 30_000), "healthy payload never reached the sink"
 
-    # Poison, then a healthy payload BEHIND it: the segment may only
+    # Poison, then a healthy payload BEHIND it: the entity may only
     # process "b" after the poison payload is durably parked
     # (park-then-advance), so ok:b proves both the retries and the park.
     send_inputs(operative_id, namespace, ["poison", "b"])
-    assert await_output("ok:b", 60_000), "segment never continued past the poison payload"
+    assert await_output("ok:b", 60_000), "entity never continued past the poison payload"
 
     assert wait_until(fn -> Store.list(operative_id) != [] end, 30_000),
            "durable DLQ entry never appeared"
 
     assert [entry] = Store.list(operative_id)
-    assert entry["operation_id"] == operation
+    assert entry["procedure_id"] == procedure
     assert entry["channel"] == "input"
     assert entry["attempts"] == 3, "the default retry budget is 3 total attempts"
     assert entry["error"] =~ "poison"
     assert entry["generation"] == 1
 
-    ref = "#{entry["operative_class"]}/#{entry["operation_id"]}/#{entry["id"]}"
+    ref = "#{entry["operative_class"]}/#{entry["procedure_id"]}/#{entry["id"]}"
 
     # Entry inspectable: payload bytes round-tripped exactly.
     assert {:ok, _meta, "poison"} = Store.get(ref)
     shown = capture_io(fn -> CliManager.dlq_show(ref) end)
     assert shown =~ "poison"
 
-    # Fix the operation, then replay through the normal input path.
+    # Fix the procedure, then replay through the normal input path.
     send_inputs(operative_id, namespace, ["antidote"])
     assert await_output("ok:antidote", 30_000)
 
@@ -174,10 +174,10 @@ defmodule FlezhaTest.System.DlqE2ETest do
     assert InputLog.watermark(operative_id) == 0,
            "min-watermark advanced past an unparked poison payload"
 
-    # The park advances the segment past the poison payload: k2 processes
+    # The park advances the entity past the poison payload: k2 processes
     # and the watermark resumes to its offset — input-log retention (and
     # the source credit loop granting off it) proceed.
-    assert await_output("k2=b", 60_000), "segment never continued past the tier-on park"
+    assert await_output("k2=b", 60_000), "entity never continued past the tier-on park"
 
     assert wait_until(fn -> (InputLog.watermark(operative_id) || -1) >= 2 end, 30_000),
            "min-watermark never resumed after the park"
@@ -193,7 +193,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   # --- helpers ----------------------------------------------------------------
 
   defp entry_ref(entry),
-    do: "#{entry["operative_class"]}/#{entry["operation_id"]}/#{entry["id"]}"
+    do: "#{entry["operative_class"]}/#{entry["procedure_id"]}/#{entry["id"]}"
 
   # Wait until `expected` shows up among everything received so far,
   # without consuming the mailbox (later assertions re-scan).

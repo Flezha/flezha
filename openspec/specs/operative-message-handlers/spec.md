@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The operative-message-handlers capability enables typed request/reply messaging to a running operative from any cluster-reachable caller — including other operatives — routed by the operative's Overwatch to a per-operative handler plugin selected by an atom `handler_key`. Plugins are represented as `%Flezha.Plugin{}` entries subscribing to the `:on_message` extension point and are enabled per operative via `Flezha.Service.PluginManager.enable_plugin/2`; the first-party `Flezha.Plugin.Provider.MessageForward` provider round-trips the payload to the SDK-side operative factory via a new `OperationMessage` / `OperationMessageResponse` control-channel command pair, mirroring the existing `SegmentState` request/reply path. SDK factories expose an optional `handle_message` callback (Rust and Java) that defaults to an explicit "unsupported" error so existing factories keep working. Requests are synchronous with a caller-side timeout (caller's deadline wins; late replies are discarded), the Overwatch is isolated from handler failures, and handler registrations survive operative migration via the existing ProcessHub handover path. Authorization is open in v1; scoping (namespace/node ACLs), fire-and-forget/streaming replies, fan-out per key, and SDK-side deadline propagation are explicitly deferred.
+The operative-message-handlers capability enables typed request/reply messaging to a running operative from any cluster-reachable caller — including other operatives — routed by the operative's Overwatch to a per-operative handler plugin selected by an atom `handler_key`. Plugins are represented as `%Flezha.Plugin{}` entries subscribing to the `:on_message` extension point and are enabled per operative via `Flezha.Service.PluginManager.enable_plugin/2`; the first-party `Flezha.Plugin.Provider.MessageForward` provider round-trips the payload to the SDK-side operative factory via a new `OperativeMessage` / `OperativeMessageResponse` control-channel command pair, mirroring the existing `EntityState` request/reply path. SDK factories expose an optional `handle_message` callback (Rust and Java) that defaults to an explicit "unsupported" error so existing factories keep working. Requests are synchronous with a caller-side timeout (caller's deadline wins; late replies are discarded), the Overwatch is isolated from handler failures, and handler registrations survive operative migration via the existing ProcessHub handover path. Authorization is open in v1; scoping (namespace/node ACLs), fire-and-forget/streaming replies, fan-out per key, and SDK-side deadline propagation are explicitly deferred.
 
 ## Requirements
 
@@ -56,7 +56,7 @@ The system SHALL invoke the matched subscriber's `on_message/2` callback with a 
 
 ### Requirement: SDK round-trip via first-party MessageForward provider
 
-The system SHALL ship a first-party provider `Flezha.Plugin.Provider.MessageForward` implementing `on_message/2`. The callback MUST forward the payload to the SDK-side operative by sending a `RunnerCommands.OperationMessage { operative_id, payload }` on the control channel and waiting for a `RunnerCommands.OperationMessageResponse { payload, error }`. When `error` is empty, `on_message/2` MUST return `{:ok, response.payload}`; otherwise it MUST return `{:error, response.error}`.
+The system SHALL ship a first-party provider `Flezha.Plugin.Provider.MessageForward` implementing `on_message/2`. The callback MUST forward the payload to the SDK-side operative by sending a `RunnerCommands.OperativeMessage { operative_id, payload }` on the control channel and waiting for a `RunnerCommands.OperativeMessageResponse { payload, error }`. When `error` is empty, `on_message/2` MUST return `{:ok, response.payload}`; otherwise it MUST return `{:error, response.error}`.
 
 #### Scenario: Factory returns success payload
 - **WHEN** the SDK factory's `handle_message(payload)` returns success bytes `B`
@@ -78,37 +78,43 @@ The system SHALL provide a synchronous request path for callers to send an envel
 - **WHEN** the caller sets `timeout_ms: 200` and the handler takes 2s to reply
 - **THEN** the caller MUST observe `{:error, :timeout}` at 200ms, and the delayed reply at 2s MUST NOT crash the caller
 
-### Requirement: New control-channel command `OperationMessage`
+### Requirement: New control-channel command `OperativeMessage`
 
-The system SHALL extend `protobufs/runner_commands.proto` with two messages: `OperationMessage { string operative_id = 1; bytes payload = 2; }` and `OperationMessageResponse { bytes payload = 1; string error = 2; }`. `OperationMessage` MUST be dispatched on the existing control stream via the same send/reply primitives used by `SegmentState`.
+The system SHALL extend `protobufs/runner_commands.proto` with two messages: `OperativeMessage { string operative_id = 1; bytes payload = 2; }` and `OperativeMessageResponse { bytes payload = 1; string error = 2; }`. `OperativeMessage` MUST be dispatched on the existing control stream via the same send/reply primitives used by `EntityState`.
+
+The message is named for the Operative because it addresses one: it carries `operative_id` and no procedure or entity identifier. The former name asserted a level it never targeted.
 
 #### Scenario: Command travels on control channel
-- **WHEN** the Elixir agent sends an `OperationMessage` for operative `"proc-1"` with payload `P`
+- **WHEN** the Elixir agent sends an `OperativeMessage` for operative `"proc-1"` with payload `P`
 - **THEN** the SDK MUST receive it on the control channel with `operative_id == "proc-1"` and `payload == P`
 
 #### Scenario: Response carries empty error on success
 - **WHEN** the SDK factory successfully handles the message and returns bytes `B`
-- **THEN** the SDK MUST reply with `OperationMessageResponse { payload: B, error: "" }`
+- **THEN** the SDK MUST reply with `OperativeMessageResponse { payload: B, error: "" }`
 
 #### Scenario: Response carries error string on failure
 - **WHEN** the SDK factory returns an error `E` or the factory does not implement `handle_message`
-- **THEN** the SDK MUST reply with `OperationMessageResponse { payload: <any>, error: E }` and the agent MUST treat the response as an error regardless of `payload` contents
+- **THEN** the SDK MUST reply with `OperativeMessageResponse { payload: <any>, error: E }` and the agent MUST treat the response as an error regardless of `payload` contents
+
+#### Scenario: No retired spelling is accepted
+- **WHEN** either SDK or the Controller references the retired message name
+- **THEN** the build MUST fail, since no alias for the former name is retained
 
 ### Requirement: SDK factory `handle_message` is optional with default-error behaviour
 
-The system SHALL expose an optional `handle_message` callback on the Rust and Java SDK operative factory interfaces. Factories that do not override it MUST behave as if the default returned an explicit "unsupported" error so the agent observes a well-formed `OperationMessageResponse` with a non-empty `error`. Factories that override it MAY produce arbitrary reply bytes.
+The system SHALL expose an optional `handle_message` callback on the Rust and Java SDK operative factory interfaces. Factories that do not override it MUST behave as if the default returned an explicit "unsupported" error so the agent observes a well-formed `OperativeMessageResponse` with a non-empty `error`. Factories that override it MAY produce arbitrary reply bytes.
 
 #### Scenario: Pre-existing Rust factory continues to work
 - **WHEN** an existing Rust operative factory (no `handle_message` implementation) is loaded
-- **THEN** receiving an `OperationMessage` MUST result in an `OperationMessageResponse` with a non-empty `error` and the operative MUST remain running and healthy
+- **THEN** receiving an `OperativeMessage` MUST result in an `OperativeMessageResponse` with a non-empty `error` and the operative MUST remain running and healthy
 
 #### Scenario: Pre-existing Java factory continues to work
 - **WHEN** an existing Java operative factory (no `handleMessage` implementation) is loaded
-- **THEN** receiving an `OperationMessage` MUST result in an `OperationMessageResponse` with a non-empty `error` and the operative MUST remain running and healthy
+- **THEN** receiving an `OperativeMessage` MUST result in an `OperativeMessageResponse` with a non-empty `error` and the operative MUST remain running and healthy
 
 #### Scenario: Overriding factory returns custom bytes
 - **WHEN** a factory overrides `handle_message` to return bytes `B` for input payload `P`
-- **THEN** receiving an `OperationMessage` with payload `P` MUST result in an `OperationMessageResponse { payload: B, error: "" }`
+- **THEN** receiving an `OperativeMessage` with payload `P` MUST result in an `OperativeMessageResponse { payload: B, error: "" }`
 
 ### Requirement: Handler plugins survive operative migration
 

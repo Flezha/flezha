@@ -3,9 +3,9 @@ package com.flezha.examples;
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.LoopMode;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.RestoreInitPayload;
@@ -63,7 +63,7 @@ public final class E06_DurableChatLoop {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sReply = c.input(String.class, "message").into(Reply.class);
             sReply.named("reply").codec().output("chat_sink");
         }
@@ -81,7 +81,7 @@ public final class E06_DurableChatLoop {
         }
     }
 
-    public static final class Reply implements Operation<String, Conversation, String, Turn, WallClock, Void> {
+    public static final class Reply implements Procedure<String, Conversation, String, Turn, WallClock, Void> {
 
         @Override
         public String name() {
@@ -124,13 +124,13 @@ public final class E06_DurableChatLoop {
         }
 
         @Override
-        public Conversation initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Conversation initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Conversation();
         }
 
         @Override
-        public void run(String message, StateHandle<Conversation, Turn> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String message, StateHandle<Conversation, Turn> state, ProcedureCtx ctx)
+                throws ProcedureException {
             state.apply(new Turn("user", message));
 
             // A real agent would call a model here, with state.get().turns as its

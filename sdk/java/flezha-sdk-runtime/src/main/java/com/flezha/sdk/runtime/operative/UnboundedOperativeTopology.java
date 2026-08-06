@@ -10,10 +10,10 @@ import javax.annotation.Nonnull;
  * {@code FlezhaRunner.defineUnbounded(Class)}
  * time. Shared across every {@link UnboundedOperativeInstance} of this UnboundedOperative class.
  *
- * <p>The hot path (entry-channel input → consumer-operation segment) reads
+ * <p>The hot path (entry-channel input → consumer-procedure entity) reads
  * {@link #channels} by index after one {@link #nameToId} lookup; the
- * inter-operation {@code emit} hot path reads {@link #channels} by the
- * pre-cached {@code outputChannelId} stamped on the {@code OperationDispatcher}
+ * inter-procedure {@code emit} hot path reads {@link #channels} by the
+ * pre-cached {@code outputChannelId} stamped on the {@code ProcedureDispatcher}
  * at build time.
  */
 public final class UnboundedOperativeTopology {
@@ -21,8 +21,8 @@ public final class UnboundedOperativeTopology {
     private final String factoryId;
     private final List<ChannelDescriptor> channels;
     private final Map<String, Integer> nameToId;
-    private final List<OperationDescriptor> operations;
-    private final Map<String, Integer> operationNameToId;
+    private final List<ProcedureDescriptor> procedures;
+    private final Map<String, Integer> procedureNameToId;
     private final boolean effectivelyOnce;
     private final boolean checkpointAck;
     private final long correctionWindowMs;
@@ -32,8 +32,8 @@ public final class UnboundedOperativeTopology {
             @Nonnull String factoryId,
             @Nonnull List<ChannelDescriptor> channels,
             @Nonnull Map<String, Integer> nameToId,
-            @Nonnull List<OperationDescriptor> operations,
-            @Nonnull Map<String, Integer> operationNameToId,
+            @Nonnull List<ProcedureDescriptor> procedures,
+            @Nonnull Map<String, Integer> procedureNameToId,
             boolean effectivelyOnce,
             boolean checkpointAck,
             long correctionWindowMs,
@@ -45,8 +45,8 @@ public final class UnboundedOperativeTopology {
         this.factoryId = factoryId;
         this.channels = List.copyOf(channels);
         this.nameToId = Map.copyOf(nameToId);
-        this.operations = List.copyOf(operations);
-        this.operationNameToId = Map.copyOf(operationNameToId);
+        this.procedures = List.copyOf(procedures);
+        this.procedureNameToId = Map.copyOf(procedureNameToId);
     }
 
     /**
@@ -61,7 +61,7 @@ public final class UnboundedOperativeTopology {
     /**
      * Whether the consumed offset is acknowledged only at an explicit
      * {@code ctx.checkpoint()}. Rides the {@code ack_granularity} declaration —
-     * the controller needs it because a checkpoint Segment's silence between
+     * the controller needs it because a checkpoint Entity's silence between
      * boundaries is its steady state, not a stall.
      */
     public boolean checkpointAck() {
@@ -95,13 +95,13 @@ public final class UnboundedOperativeTopology {
     }
 
     @Nonnull
-    public List<OperationDescriptor> operations() {
-        return operations;
+    public List<ProcedureDescriptor> procedures() {
+        return procedures;
     }
 
     @Nonnull
-    public Map<String, Integer> operationNameToId() {
-        return operationNameToId;
+    public Map<String, Integer> procedureNameToId() {
+        return procedureNameToId;
     }
 
     public ChannelDescriptor channel(int id) {
@@ -111,11 +111,11 @@ public final class UnboundedOperativeTopology {
         return channels.get(id);
     }
 
-    public OperationDescriptor operation(int id) {
-        if (id < 0 || id >= operations.size()) {
+    public ProcedureDescriptor procedure(int id) {
+        if (id < 0 || id >= procedures.size()) {
             return null;
         }
-        return operations.get(id);
+        return procedures.get(id);
     }
 
     public Integer lookupChannelId(@Nonnull String name) {

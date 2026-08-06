@@ -1,36 +1,36 @@
 package com.flezha.sdk.runtime.bounded;
 
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
-import com.flezha.sdk.operation.StableId;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
+import com.flezha.sdk.procedure.StableId;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
-import com.flezha.sdk.runtime.state.SegmentId;
+import com.flezha.sdk.runtime.state.EntityId;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
 import javax.annotation.Nonnull;
 
 /**
- * {@link OperationCtx} for the bounded sequential driver. Inter-operation output
+ * {@link ProcedureCtx} for the bounded sequential driver. Inter-procedure output
  * is <strong>collected</strong> for handoff to the next stage at the barrier;
  * plugin-bound output is serialized and routed to the wire via the
- * {@link BoundedCollectSink}. Constructed fresh per operation run, so it never
+ * {@link BoundedCollectSink}. Constructed fresh per procedure run, so it never
  * threads through the unbounded push-dispatch mailbox path (the unbounded
- * {@code OperationDispatcher.EmitContext} is the reference this forks).
+ * {@code ProcedureDispatcher.EmitContext} is the reference this forks).
  *
  * <p>Bounded output carries no per-channel metadata (it rides the instance-id
  * frame, like {@code BoundedOperativeCtx.emit}), so the {@code emitWithMeta}
  * variants drop the metadata, mirroring the Rust SDK's {@code BoundedCollectAdapter}.
  */
-final class BoundedCollectAdapter implements OperationCtx {
+final class BoundedCollectAdapter implements ProcedureCtx {
 
     private final UnboundedOperativeTopology topology;
     private final Optional<ChannelDescriptor> outputChannel;
     private final BoundedCollectSink sink;
-    private final SegmentId identity;
+    private final EntityId identity;
 
-    /** The wall clock, sampled once — the adapter is constructed fresh per operation run. */
+    /** The wall clock, sampled once — the adapter is constructed fresh per procedure run. */
     private final long now = System.currentTimeMillis();
 
     private int stableIdOrdinal;
@@ -39,7 +39,7 @@ final class BoundedCollectAdapter implements OperationCtx {
             @Nonnull UnboundedOperativeTopology topology,
             @Nonnull Optional<ChannelDescriptor> outputChannel,
             @Nonnull BoundedCollectSink sink,
-            @Nonnull SegmentId identity) {
+            @Nonnull EntityId identity) {
         this.topology = topology;
         this.outputChannel = outputChannel;
         this.sink = sink;
@@ -51,7 +51,7 @@ final class BoundedCollectAdapter implements OperationCtx {
         return now;
     }
 
-    /** No-op: a bounded operative's durability boundary is the op commit, not a checkpoint. */
+    /** No-op: a bounded operative's durability boundary is the proc commit, not a checkpoint. */
     @Override
     public void checkpoint() {}
 
@@ -73,52 +73,52 @@ final class BoundedCollectAdapter implements OperationCtx {
      * SDK, which rejects keyed emits on bounded operatives for the same reason.
      */
     @Override
-    public <C> void emitKeyed(@Nonnull String key, @Nonnull C value) throws OperationException {
-        throw new OperationException.KeyNotAllowedOnNonKeyedChannel(
+    public <C> void emitKeyed(@Nonnull String key, @Nonnull C value) throws ProcedureException {
+        throw new ProcedureException.KeyNotAllowedOnNonKeyedChannel(
                 outputChannel.map(ChannelDescriptor::name).orElse("<no output channel>"));
     }
 
     @Override
     public <C> void emitKeyedWithMeta(@Nonnull String key, @Nonnull C value, @Nonnull Map<String, String> meta)
-            throws OperationException {
+            throws ProcedureException {
         emitKeyed(key, value);
     }
 
     @Override
-    public <C> void emit(@Nonnull C value) throws OperationException {
+    public <C> void emit(@Nonnull C value) throws ProcedureException {
         doEmit(outputChannel.orElse(null), value);
     }
 
     @Override
-    public <C> void emit(@Nonnull String channelName, @Nonnull C value) throws OperationException {
+    public <C> void emit(@Nonnull String channelName, @Nonnull C value) throws ProcedureException {
         doEmit(resolveChannel(channelName), value);
     }
 
     @Override
-    public <C> void emitWithMeta(@Nonnull C value, @Nonnull Map<String, String> meta) throws OperationException {
+    public <C> void emitWithMeta(@Nonnull C value, @Nonnull Map<String, String> meta) throws ProcedureException {
         doEmit(outputChannel.orElse(null), value);
     }
 
     @Override
     public <C> void emitWithMeta(@Nonnull String channelName, @Nonnull C value, @Nonnull Map<String, String> meta)
-            throws OperationException {
+            throws ProcedureException {
         doEmit(resolveChannel(channelName), value);
     }
 
-    private ChannelDescriptor resolveChannel(String name) throws OperationException {
+    private ChannelDescriptor resolveChannel(String name) throws ProcedureException {
         Integer id = topology.lookupChannelId(name);
         if (id == null) {
-            throw new OperationException.UnknownChannel(name);
+            throw new ProcedureException.UnknownChannel(name);
         }
         return topology.channel(id);
     }
 
-    private void doEmit(ChannelDescriptor descriptor, Object value) throws OperationException {
+    private void doEmit(ChannelDescriptor descriptor, Object value) throws ProcedureException {
         if (descriptor == null) {
-            throw new OperationException.UnknownChannel("<no output channel declared on this operation>");
+            throw new ProcedureException.UnknownChannel("<no output channel declared on this procedure>");
         }
         switch (descriptor.kind()) {
-            case INTER_OPERATION -> {
+            case INTER_PROCEDURE -> {
                 // Collect for the next stage; a hybrid alsoOutput(...) sink
                 // also routes a serialized copy to the plugin wire.
                 sink.collect(value);
@@ -130,23 +130,23 @@ final class BoundedCollectAdapter implements OperationCtx {
                 Function<Object, byte[]> serializer =
                         descriptor.pluginSerializer().orElse(null);
                 if (serializer == null) {
-                    throw new OperationException(
+                    throw new ProcedureException(
                             "bounded plugin channel `" + descriptor.name() + "` is missing a serializer");
                 }
                 routePlugin(serializer, value, descriptor.name());
             }
-            case ENTRY -> throw new OperationException(
-                    "cannot emit on entry channel `" + descriptor.name() + "` from an operation");
+            case ENTRY -> throw new ProcedureException(
+                    "cannot emit on entry channel `" + descriptor.name() + "` from a procedure");
         }
     }
 
     private void routePlugin(Function<Object, byte[]> serializer, Object value, String channelName)
-            throws OperationException {
+            throws ProcedureException {
         byte[] bytes;
         try {
             bytes = serializer.apply(value);
         } catch (RuntimeException | Error e) {
-            throw new OperationException.PluginSerializerFailure(channelName, e.toString(), e);
+            throw new ProcedureException.PluginSerializerFailure(channelName, e.toString(), e);
         }
         sink.emitPluginBytes(channelName, bytes);
     }

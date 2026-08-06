@@ -14,7 +14,7 @@ import javax.annotation.Nonnull;
  *
  * <p>Every structure the controller decodes from this SDK — the dead-letter
  * {@code ParkBody}, the effectively-once {@code EffectRecordBody}, the bounded
- * op-journal entries and outbox items — is encoded with these primitives. The
+ * proc-journal entries and outbox items — is encoded with these primitives. The
  * format is field-order-sensitive and has no self-describing framing, so an
  * encoder and its Rust counterpart must agree field for field.
  *

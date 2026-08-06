@@ -4,17 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
+import com.flezha.sdk.runtime.entity.EntitySlot;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
-import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.EffectRecord;
 import com.flezha.sdk.runtime.state.EffectRecordCapture;
 import com.flezha.sdk.state.Change;
@@ -37,7 +37,7 @@ import org.junit.jupiter.api.Test;
  * Checkpoint ack-granularity: the consumed offset is withheld until
  * {@code ctx.checkpoint()} closes the interval.
  *
- * <p>The interval is what a crash replays. Holding it open means the Segment
+ * <p>The interval is what a crash replays. Holding it open means the Entity
  * never persists a half-built view of state that is only coherent at a boundary;
  * the cost is that the controller must retain the interval's inputs.
  */
@@ -63,26 +63,26 @@ class CheckpointAckTest {
         }
     }
 
-    /** Dispatch inputs 0..n-1 and return the Segment, WITHOUT letting the flusher drain. */
-    private SegmentSlot feedAll(Class<? extends UnboundedOperative> cls, String factoryId, List<String> inputs)
+    /** Dispatch inputs 0..n-1 and return the Entity, WITHOUT letting the flusher drain. */
+    private EntitySlot feedAll(Class<? extends UnboundedOperative> cls, String factoryId, List<String> inputs)
             throws Exception {
         UnboundedOperativeClassRegistry.registerClass(cls);
         UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, factoryId + "-inst", ctx, ctx.workerPool());
         for (int i = 0; i < inputs.size(); i++) {
-            instance.dispatcher(0).fanoutSegments(inputs.get(i), 100L, OptionalLong.of(i));
+            instance.dispatcher(0).fanoutEntities(inputs.get(i), 100L, OptionalLong.of(i));
         }
         ctx.workerPool().shutdown();
         assertThat(ctx.workerPool().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
-        return instance.segments().get(0).get(0);
+        return instance.entities().get(0).get(0);
     }
 
     @Test
     @DisplayName("an open interval holds the consumed offset and stages its changes")
     void openIntervalHoldsTheOffset() throws Exception {
         // Three plain inputs; none says "checkpoint".
-        SegmentSlot slot = feedAll(CheckpointOperative.class, "ckpt", List.of("a", "b", "c"));
+        EntitySlot slot = feedAll(CheckpointOperative.class, "ckpt", List.of("a", "b", "c"));
 
         // Nothing acknowledgeable was produced: no shipped record carries an offset.
         assertThat(shipped.records()).noneMatch(r -> r.consumedOffset().isPresent());
@@ -96,7 +96,7 @@ class CheckpointAckTest {
     @DisplayName("checkpoint() closes the interval: one record carries the whole interval and the offset")
     void checkpointClosesTheInterval() throws Exception {
         // The 4th input (offset 3) says "commit" → close.
-        SegmentSlot slot = feedAll(CheckpointOperative.class, "ckpt", List.of("a", "b", "c", "commit"));
+        EntitySlot slot = feedAll(CheckpointOperative.class, "ckpt", List.of("a", "b", "c", "commit"));
 
         assertThat(slot.stagedChanges())
                 .as("the interval closed, so nothing stays staged")
@@ -116,7 +116,7 @@ class CheckpointAckTest {
     @Test
     @DisplayName("a park closes the interval, so the poison offset is never acked ahead of its state")
     void parkClosesTheInterval() throws Exception {
-        SegmentSlot slot = feedAll(PoisonCheckpointOperative.class, "ckpt-poison", List.of("a", "b", "poison"));
+        EntitySlot slot = feedAll(PoisonCheckpointOperative.class, "ckpt-poison", List.of("a", "b", "poison"));
 
         shipped.awaitRecords(1);
         List<EffectRecord> closing =
@@ -151,7 +151,7 @@ class CheckpointAckTest {
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
             c.checkpointAck();
-            c.input(String.class, "in").into(CheckpointOp.class);
+            c.input(String.class, "in").into(CheckpointProc.class);
         }
     }
 
@@ -165,7 +165,7 @@ class CheckpointAckTest {
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
             c.checkpointAck();
-            c.input(String.class, "in").retryMax(1).into(PoisonCheckpointOp.class);
+            c.input(String.class, "in").retryMax(1).into(PoisonCheckpointProc.class);
         }
     }
 
@@ -179,7 +179,7 @@ class CheckpointAckTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.checkpointAck();
-            c.input(String.class, "in").into(CheckpointOp.class);
+            c.input(String.class, "in").into(CheckpointProc.class);
         }
     }
 
@@ -194,7 +194,7 @@ class CheckpointAckTest {
         }
     }
 
-    abstract static class Base implements Operation<String, CountState, String, Inc, WallClock, Void> {
+    abstract static class Base implements Procedure<String, CountState, String, Inc, WallClock, Void> {
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -231,19 +231,19 @@ class CheckpointAckTest {
         }
 
         @Override
-        public CountState initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public CountState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new CountState();
         }
     }
 
-    public static final class CheckpointOp extends Base {
+    public static final class CheckpointProc extends Base {
         @Override
         public String name() {
             return "ckpt_op";
         }
 
         @Override
-        public void run(String input, StateHandle<CountState, Inc> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<CountState, Inc> state, ProcedureCtx ctx) throws ProcedureException {
             state.apply(new Inc());
             if ("commit".equals(input)) {
                 ctx.checkpoint();
@@ -251,16 +251,16 @@ class CheckpointAckTest {
         }
     }
 
-    public static final class PoisonCheckpointOp extends Base {
+    public static final class PoisonCheckpointProc extends Base {
         @Override
         public String name() {
             return "ckpt_poison_op";
         }
 
         @Override
-        public void run(String input, StateHandle<CountState, Inc> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<CountState, Inc> state, ProcedureCtx ctx) throws ProcedureException {
             if ("poison".equals(input)) {
-                throw new OperationException("boom");
+                throw new ProcedureException("boom");
             }
             state.apply(new Inc());
         }

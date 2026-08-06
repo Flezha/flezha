@@ -60,47 +60,47 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     {:ok, _} = Postgres.on_output(ctx, opts)
   end
 
-  defp stamps(segment, seq, epoch, key) do
-    %{"flz.segment" => segment, "flz.seq" => seq, "flz.epoch" => epoch, "flz.key" => key}
+  defp stamps(entity, seq, epoch, key) do
+    %{"flz.entity" => entity, "flz.seq" => seq, "flz.epoch" => epoch, "flz.key" => key}
   end
 
   # A `.keyed()` channel WITHOUT the effectively-once tier: the SDK stamps the
   # identity but cannot mint an epoch — only the controller's outbox lineage owns one.
-  defp keyed_stamps(segment, seq, key) do
-    %{"flz.segment" => segment, "flz.seq" => seq, "flz.key" => key}
+  defp keyed_stamps(entity, seq, key) do
+    %{"flz.entity" => entity, "flz.seq" => seq, "flz.key" => key}
   end
 
   test "batch of 3 records commits rows and progress atomically", %{db: db} do
     {opts, _pid} = start_provider()
-    segment = "op/tier_op/"
+    entity = "op/tier_op/"
 
-    emit(opts, "v1", stamps(segment, "1.0", "1", "k1"))
-    emit(opts, "v2", stamps(segment, "2.0", "1", "k2"))
-    emit(opts, "v3", stamps(segment, "2.1", "1", "k1"))
+    emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
+    emit(opts, "v2", stamps(entity, "2.0", "1", "k2"))
+    emit(opts, "v3", stamps(entity, "2.1", "1", "k1"))
 
     assert wait_until(fn -> length(rows(db)) == 2 end, 10_000)
 
     assert [
-             ["k1", ^segment, "2.1", 1, "v3", %DateTime{}],
-             ["k2", ^segment, "2.0", 1, "v2", %DateTime{}]
+             ["k1", ^entity, "2.1", 1, "v3", %DateTime{}],
+             ["k2", ^entity, "2.0", 1, "v2", %DateTime{}]
            ] = rows(db)
 
     # Progress committed in the same transaction as the rows.
-    assert [[^segment, "2.1", 1]] = progress(db)
+    assert [[^entity, "2.1", 1]] = progress(db)
     assert Postgres.health(opts) == :healthy
   end
 
   test "re-driven batch is a byte-identical no-op", %{db: db} do
     {opts, pid} = start_provider()
-    segment = "op/tier_op/"
+    entity = "op/tier_op/"
     batch = [{"a", "1.0", "k1"}, {"b", "2.0", "k2"}, {"c", "3.0", "k1"}]
 
     deliver = fn ->
-      for {payload, seq, key} <- batch, do: emit(opts, payload, stamps(segment, seq, "1", key))
+      for {payload, seq, key} <- batch, do: emit(opts, payload, stamps(entity, seq, "1", key))
     end
 
     deliver.()
-    assert wait_until(fn -> progress(db) == [[segment, "3.0", 1]] end, 10_000)
+    assert wait_until(fn -> progress(db) == [[entity, "3.0", 1]] end, 10_000)
     first = {rows(db), progress(db)}
 
     # Crash-between-flush-and-cursor-advance: the identical batch again.
@@ -113,13 +113,13 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   test "stale epoch cannot regress a row or the watermark", %{db: db} do
     {opts, pid} = start_provider()
-    segment = "op/tier_op/"
+    entity = "op/tier_op/"
 
-    emit(opts, "new", stamps(segment, "1.0", "2", "k1"))
-    assert wait_until(fn -> progress(db) == [[segment, "1.0", 2]] end, 10_000)
+    emit(opts, "new", stamps(entity, "1.0", "2", "k1"))
+    assert wait_until(fn -> progress(db) == [[entity, "1.0", 2]] end, 10_000)
     first = {rows(db), progress(db)}
 
-    emit(opts, "stale", stamps(segment, "9.0", "1", "k1"))
+    emit(opts, "stale", stamps(entity, "9.0", "1", "k1"))
     assert wait_until(fn -> SinkWorker.stats(pid).buffer_len == 0 end, 10_000)
 
     assert {rows(db), progress(db)} == first,
@@ -138,33 +138,33 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   test "a keyed record without the tier updates its row on every emit", %{db: db} do
     {opts, _pid} = start_provider()
-    segment = "op/keyed_op/BTC-USD"
+    entity = "op/keyed_op/BTC-USD"
 
-    emit(opts, "candle-v1", keyed_stamps(segment, "4.0", "k1"))
+    emit(opts, "candle-v1", keyed_stamps(entity, "4.0", "k1"))
     assert wait_until(fn -> rows(db) != [] end, 10_000)
 
-    emit(opts, "candle-v2", keyed_stamps(segment, "5.0", "k1"))
+    emit(opts, "candle-v2", keyed_stamps(entity, "5.0", "k1"))
 
     assert wait_until(
-             fn -> match?([["k1", ^segment, "5.0", 0, "candle-v2", _]], rows(db)) end,
+             fn -> match?([["k1", ^entity, "5.0", 0, "candle-v2", _]], rows(db)) end,
              10_000
            ),
            "a second, newer keyed emit must UPDATE the row — an absent epoch is epoch 0, " <>
              "not a reason to strip the seq and freeze the row forever"
 
-    # The identity is complete, so the Segment's sink progress advances with it.
-    assert progress(db) == [[segment, "5.0", 0]]
+    # The identity is complete, so the Entity's sink progress advances with it.
+    assert progress(db) == [[entity, "5.0", 0]]
   end
 
   test "a keyed record without the tier is still guarded against regression", %{db: db} do
     {opts, pid} = start_provider()
-    segment = "op/keyed_op/BTC-USD"
+    entity = "op/keyed_op/BTC-USD"
 
-    emit(opts, "newer", keyed_stamps(segment, "5.0", "k1"))
-    assert wait_until(fn -> progress(db) == [[segment, "5.0", 0]] end, 10_000)
+    emit(opts, "newer", keyed_stamps(entity, "5.0", "k1"))
+    assert wait_until(fn -> progress(db) == [[entity, "5.0", 0]] end, 10_000)
     first = {rows(db), progress(db)}
 
-    emit(opts, "older", keyed_stamps(segment, "4.0", "k1"))
+    emit(opts, "older", keyed_stamps(entity, "4.0", "k1"))
     assert wait_until(fn -> SinkWorker.stats(pid).buffer_len == 0 end, 10_000)
 
     assert {rows(db), progress(db)} == first,
@@ -173,16 +173,16 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   test "a tier record outranks a tier-off record for the same key", %{db: db} do
     {opts, _pid} = start_provider()
-    segment = "op/keyed_op/BTC-USD"
+    entity = "op/keyed_op/BTC-USD"
 
-    emit(opts, "tier-off", keyed_stamps(segment, "9.0", "k1"))
-    assert wait_until(fn -> progress(db) == [[segment, "9.0", 0]] end, 10_000)
+    emit(opts, "tier-off", keyed_stamps(entity, "9.0", "k1"))
+    assert wait_until(fn -> progress(db) == [[entity, "9.0", 0]] end, 10_000)
 
     # Epoch 1 beats epoch 0 whatever the seq — the operative turned the tier on.
-    emit(opts, "tier-on", stamps(segment, "1.0", "1", "k1"))
+    emit(opts, "tier-on", stamps(entity, "1.0", "1", "k1"))
 
     assert wait_until(
-             fn -> match?([["k1", ^segment, "1.0", 1, "tier-on", _]], rows(db)) end,
+             fn -> match?([["k1", ^entity, "1.0", 1, "tier-on", _]], rows(db)) end,
              10_000
            ),
            "a higher epoch must admit and overwrite regardless of seq"
@@ -190,25 +190,25 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
 
   test "a row left degenerate by the epoch gate self-heals on the next emit", %{db: db} do
     {opts, _pid} = start_provider()
-    segment = "op/keyed_op/BTC-USD"
+    entity = "op/keyed_op/BTC-USD"
 
     # The tables are created on the first flush, so seed one before writing directly.
     emit(opts, "seed", %{})
     assert wait_until(fn -> length(rows(db)) == 1 end, 10_000)
 
     # Exactly what the old classification wrote for a tier-off keyed record: the
-    # stable key, but no segment and no seq — a row nothing could ever update.
+    # stable key, but no entity and no seq — a row nothing could ever update.
     Postgrex.query!(
       db,
-      "INSERT INTO flezha_records (key, segment, seq, epoch, payload, updated_at) " <>
+      "INSERT INTO flezha_records (key, entity, seq, epoch, payload, updated_at) " <>
         "VALUES ('k1', '', '', 0, 'stale', now())",
       []
     )
 
-    emit(opts, "fresh", keyed_stamps(segment, "1.0", "k1"))
+    emit(opts, "fresh", keyed_stamps(entity, "1.0", "k1"))
 
     assert wait_until(
-             fn -> Enum.any?(rows(db), &match?(["k1", ^segment, "1.0", 0, "fresh", _], &1)) end,
+             fn -> Enum.any?(rows(db), &match?(["k1", ^entity, "1.0", 0, "fresh", _], &1)) end,
              10_000
            ),
            "a non-empty seq array outranks the empty one, so a degenerate row heals itself"
@@ -228,9 +228,9 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     refute table_exists?(db, "flezha_records"), "auto_create off must never run DDL"
 
     # Records delivered while the tables are missing are retried, not dropped.
-    segment = "op/tier_op/"
-    emit(opts, "v1", stamps(segment, "1.0", "1", "k1"))
-    emit(opts, "v2", stamps(segment, "2.0", "1", "k2"))
+    entity = "op/tier_op/"
+    emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
+    emit(opts, "v2", stamps(entity, "2.0", "1", "k2"))
 
     Process.sleep(500)
     assert SinkWorker.stats(pid).buffer_len == 2
@@ -242,7 +242,7 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     assert wait_until(fn -> length(rows(db)) == 2 end, 15_000),
            "buffered records must commit once the tables appear"
 
-    assert [[^segment, "2.0", 1]] = progress(db)
+    assert [[^entity, "2.0", 1]] = progress(db)
     assert wait_until(fn -> Postgres.health(opts) == :healthy end, 10_000)
   end
 
@@ -252,8 +252,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     {opts, pid} =
       start_provider(%{port: 59_999, unhealthy_after_ms: 1, retry_max_backoff_ms: 200})
 
-    segment = "op/tier_op/"
-    emit(opts, "v1", stamps(segment, "1.0", "1", "k1"))
+    entity = "op/tier_op/"
+    emit(opts, "v1", stamps(entity, "1.0", "1", "k1"))
 
     assert wait_until(
              fn ->

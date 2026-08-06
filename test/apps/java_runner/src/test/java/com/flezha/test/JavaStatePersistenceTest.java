@@ -2,28 +2,28 @@ package com.flezha.test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.flezha.sdk.operation.Operation;
+import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.CompactSegment;
-import com.flezha.sdk.proto.CompactSegmentResponse;
+import com.flezha.sdk.proto.CompactEntity;
+import com.flezha.sdk.proto.CompactEntityResponse;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
-import com.flezha.sdk.runtime.control.handlers.CompactSegmentHandler;
+import com.flezha.sdk.runtime.control.handlers.CompactEntityHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
-import com.flezha.sdk.runtime.segment.SegmentSlot;
+import com.flezha.sdk.runtime.entity.EntitySlot;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
-import com.flezha.sdk.runtime.state.SegmentFlusher;
-import com.flezha.sdk.runtime.state.SegmentId;
-import com.flezha.sdk.runtime.state.SegmentStateRestore;
-import com.flezha.sdk.runtime.state.SegmentStateSink;
+import com.flezha.sdk.runtime.state.EntityFlusher;
+import com.flezha.sdk.runtime.state.EntityId;
+import com.flezha.sdk.runtime.state.EntityStateRestore;
+import com.flezha.sdk.runtime.state.EntityStateSink;
 import com.flezha.sdk.state.CoalesceKey;
-import com.flezha.sdk.testing.OperationTestHarness;
+import com.flezha.sdk.testing.ProcedureTestHarness;
 import com.google.protobuf.ByteString;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -40,15 +40,15 @@ class JavaStatePersistenceTest {
 
     @BeforeEach
     void resetFlusher() {
-        SegmentFlusher.resetForTesting();
-        SegmentStateSink.resetForTesting();
+        EntityFlusher.resetForTesting();
+        EntityStateSink.resetForTesting();
         UnboundedOperativeClassRegistry.reset();
     }
 
     @Test
-    void counterOperationRecordsChangesAndReplaysDeterministically() {
-        OperationTestHarness<Long, CounterOperation.State, Void, CounterChange> h = OperationTestHarness
-                .of(new CounterOperation())
+    void counterProcedureRecordsChangesAndReplaysDeterministically() {
+        ProcedureTestHarness<Long, CounterProcedure.State, Void, CounterChange> h = ProcedureTestHarness
+                .of(new CounterProcedure())
                 .applyInputs(List.of(1L, 2L, 3L));
 
         assertThat(h.recordedChanges()).containsExactly(
@@ -68,7 +68,7 @@ class JavaStatePersistenceTest {
         TickChange b1 = new TickChange(2, 20, 7);
         TickChange b2 = new TickChange(2, 20, 9);  // latest of (2, 20)
 
-        var coalesced = SegmentFlusher.coalesce(List.of(a1, a2, a3, b1, b2));
+        var coalesced = EntityFlusher.coalesce(List.of(a1, a2, a3, b1, b2));
         assertThat(coalesced).containsExactly(a3, b2);
     }
 
@@ -109,9 +109,9 @@ class JavaStatePersistenceTest {
                                 .build(),
                         new ArrayList<>());
 
-        // StatefulCounterUnboundedOperative wires IntInputAdapterOperation (name
-        // "int_input_adapter"), whose State/Change are CounterOperation.State / CounterChange.
-        KryoCodec codec = new KryoCodec(List.of(CounterOperation.State.class, CounterChange.class));
+        // StatefulCounterUnboundedOperative wires IntInputAdapterProcedure (name
+        // "int_input_adapter"), whose State/Change are CounterProcedure.State / CounterChange.
+        KryoCodec codec = new KryoCodec(List.of(CounterProcedure.State.class, CounterChange.class));
         HeaderTemplate template = new HeaderTemplate();
         int n = 7;
         ByteArrayOutputStream log = new ByteArrayOutputStream();
@@ -120,32 +120,32 @@ class JavaStatePersistenceTest {
             log.writeBytes(walRecord(seq, template.stamp(1, body), body));
         }
 
-        byte[] segmentId =
-                SegmentId.of(instanceId, "int_input_adapter", Optional.empty()).encodedBytes();
+        byte[] entityId =
+                EntityId.of(instanceId, "int_input_adapter", Optional.empty()).encodedBytes();
         byte[] resp = new RestoreInitStateHandler()
                 .handle(
                         ctx,
                         CommandRequest.newBuilder()
                                 .setReferenceId("r")
                                 .setRestoreInitState(RestoreInitState.newBuilder()
-                                        .setSegmentId(ByteString.copyFrom(segmentId))
+                                        .setEntityId(ByteString.copyFrom(entityId))
                                         .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
                                         .build())
                                 .build(),
                         new ArrayList<>());
 
-        SegmentSlot slot =
-                ctx.operativeInstanceRegistry().getUnboundedOperative(instanceId).segments().get(0).get(0);
-        assertThat(((CounterOperation.State) slot.state().get()).value).isEqualTo((long) n);
+        EntitySlot slot =
+                ctx.operativeInstanceRegistry().getUnboundedOperative(instanceId).entities().get(0).get(0);
+        assertThat(((CounterProcedure.State) slot.state().get()).value).isEqualTo((long) n);
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo((long) (n - 1));
         assertThat(slot.changeSeq().get()).isEqualTo((long) n);
     }
 
     @Test
     @SuppressWarnings("rawtypes")
-    void compactSegmentShipsASnapshotThatRoundTripsThroughRestore() throws Exception {
-        // The producing half of compaction: a live Segment seeded to N must ship
-        // a `segment_state_snapshot` whose Kryo body rebuilds to N through the
+    void compactEntityShipsASnapshotThatRoundTripsThroughRestore() throws Exception {
+        // The producing half of compaction: a live Entity seeded to N must ship
+        // an `entity_state_snapshot` whose Kryo body rebuilds to N through the
         // exact restore path, stamped with the highest seq it folds (N-1).
         UnboundedOperativeClassRegistry.registerClass(StatefulCounterUnboundedOperative.class);
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "1"));
@@ -164,8 +164,8 @@ class JavaStatePersistenceTest {
                                 .build(),
                         new ArrayList<>());
 
-        // Seed the Segment's state to N via the restore path (re-arms changeSeq to N).
-        KryoCodec codec = new KryoCodec(List.of(CounterOperation.State.class, CounterChange.class));
+        // Seed the Entity's state to N via the restore path (re-arms changeSeq to N).
+        KryoCodec codec = new KryoCodec(List.of(CounterProcedure.State.class, CounterChange.class));
         HeaderTemplate template = new HeaderTemplate();
         int n = 5;
         ByteArrayOutputStream log = new ByteArrayOutputStream();
@@ -173,15 +173,15 @@ class JavaStatePersistenceTest {
             byte[] body = codec.serialize(new CounterChange(1L));
             log.writeBytes(walRecord(seq, template.stamp(1, body), body));
         }
-        byte[] segmentId =
-                SegmentId.of(instanceId, "int_input_adapter", Optional.empty()).encodedBytes();
+        byte[] entityId =
+                EntityId.of(instanceId, "int_input_adapter", Optional.empty()).encodedBytes();
         new RestoreInitStateHandler()
                 .handle(
                         ctx,
                         CommandRequest.newBuilder()
                                 .setReferenceId("r")
                                 .setRestoreInitState(RestoreInitState.newBuilder()
-                                        .setSegmentId(ByteString.copyFrom(segmentId))
+                                        .setEntityId(ByteString.copyFrom(entityId))
                                         .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
                                         .build())
                                 .build(),
@@ -189,25 +189,25 @@ class JavaStatePersistenceTest {
 
         // Capture the snapshot frame the compaction ships through the reliable sink.
         List<byte[]> snapshots = new ArrayList<>();
-        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
-            if (payloadId.equals(SegmentStateSink.SEGMENT_STATE_SNAPSHOT_PAYLOAD_ID)) {
+        EntityStateSink.installGlobalSink((payloadId, frame) -> {
+            if (payloadId.equals(EntityStateSink.ENTITY_STATE_SNAPSHOT_PAYLOAD_ID)) {
                 snapshots.add(frame);
             }
             return true;
         });
 
-        byte[] resp = new CompactSegmentHandler()
+        byte[] resp = new CompactEntityHandler()
                 .handle(
                         ctx,
                         CommandRequest.newBuilder()
                                 .setReferenceId("r")
-                                .setCompactSegment(CompactSegment.newBuilder()
-                                        .setSegmentId(ByteString.copyFrom(segmentId))
+                                .setCompactEntity(CompactEntity.newBuilder()
+                                        .setEntityId(ByteString.copyFrom(entityId))
                                         .build())
                                 .build(),
                         new ArrayList<>());
 
-        CompactSegmentResponse response = CompactSegmentResponse.parseFrom(resp);
+        CompactEntityResponse response = CompactEntityResponse.parseFrom(resp);
         assertThat(response.getSnapshotSeq()).isEqualTo((long) (n - 1));
         assertThat(response.getSnapshotBytesSize()).isGreaterThan(0L);
         assertThat(snapshots).hasSize(1);
@@ -215,18 +215,18 @@ class JavaStatePersistenceTest {
         byte[] body = snapshotBody(snapshots.get(0));
         assertThat(response.getSnapshotBytesSize()).isEqualTo((long) body.length);
 
-        SegmentSlot slot = ctx.operativeInstanceRegistry()
+        EntitySlot slot = ctx.operativeInstanceRegistry()
                 .getUnboundedOperative(instanceId)
-                .segments()
+                .entities()
                 .get(0)
                 .get(0);
-        Operation operation = slot.operationInstance();
-        SegmentStateRestore.Rebuilt rebuilt =
-                SegmentStateRestore.rebuild(operation, codec, Optional.empty(), body, new byte[0], template);
-        assertThat(((CounterOperation.State) rebuilt.state()).value).isEqualTo((long) n);
+        Procedure procedure = slot.procedureInstance();
+        EntityStateRestore.Rebuilt rebuilt =
+                EntityStateRestore.rebuild(procedure, codec, Optional.empty(), body, new byte[0], template);
+        assertThat(((CounterProcedure.State) rebuilt.state()).value).isEqualTo((long) n);
     }
 
-    /** Extract the header-less body from a segment_state_change/snapshot wire frame. */
+    /** Extract the header-less body from an entity_state_change/snapshot wire frame. */
     private static byte[] snapshotBody(byte[] frame) {
         int pidLen = ((frame[0] & 0xFF) << 8) | (frame[1] & 0xFF);
         int bodyLenOff = 2 + pidLen + 8 + 16;

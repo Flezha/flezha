@@ -4,15 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameParser;
-import com.flezha.sdk.runtime.operative.StatelessTestOperation;
+import com.flezha.sdk.runtime.operative.StatelessTestProcedure;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
@@ -44,8 +44,8 @@ import org.junit.jupiter.api.Test;
 class HybridChannelTest {
 
     // Shared captures across test cases. Cleared in @BeforeEach so test order
-    // does not bleed observations. Static because the UnboundedOperative/Operation pipeline
-    // re-instantiates operations reflectively (no-arg ctor), so test cases cannot
+    // does not bleed observations. Static because the UnboundedOperative/Procedure pipeline
+    // re-instantiates procedures reflectively (no-arg ctor), so test cases cannot
     // close over instance-level mutable state.
     private static final List<Integer> SINGLE_OBSERVED = new CopyOnWriteArrayList<>();
     private static final List<Integer> THREE_A = new CopyOnWriteArrayList<>();
@@ -76,7 +76,7 @@ class HybridChannelTest {
         capturedWrites.clear();
         UnboundedOperativeClassRegistry.reset();
 
-        OperationDispatcher.setWireWriter((handle, streamId, frame) -> {
+        ProcedureDispatcher.setWireWriter((handle, streamId, frame) -> {
             capturedWrites.add(frame);
             return 0;
         });
@@ -89,7 +89,7 @@ class HybridChannelTest {
 
     @AfterEach
     void close() {
-        OperationDispatcher.resetWireWriter();
+        ProcedureDispatcher.resetWireWriter();
         if (ctx != null && ctx.workerPool() != null) {
             ctx.workerPool().shutdownNow();
         }
@@ -102,9 +102,9 @@ class HybridChannelTest {
         return UnboundedOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }
 
-    private void feed(UnboundedOperativeInstance instance, String producerOperationName, Object input) {
-        int operationId = instance.topology().operationNameToId().get(producerOperationName);
-        instance.dispatcher(operationId).fanoutSegments(input, 100L);
+    private void feed(UnboundedOperativeInstance instance, String producerProcedureName, Object input) {
+        int procedureId = instance.topology().procedureNameToId().get(producerProcedureName);
+        instance.dispatcher(procedureId).fanoutEntities(input, 100L);
     }
 
     private static boolean waitFor(java.util.function.BooleanSupplier predicate, long millis) {
@@ -243,32 +243,32 @@ class HybridChannelTest {
         assertThat(frames.get(0).metadata()).containsEntry("trace_id", "abc123").containsEntry("channel", "meta_out");
     }
 
-    // ---------- emit_with_meta on pure inter-operation channel is still rejected ----------
+    // ---------- emit_with_meta on pure inter-procedure channel is still rejected ----------
 
     @Test
     @DisplayName(
-            "emitWithMeta on a pure inter-operation channel is rejected with MetadataNotAllowedOnInterOperationChannel")
-    void emitWithMetaOnPureInterOperationChannelStillRejected() {
-        UnboundedOperativeInstance instance = instantiate(PureInterOperationUnboundedOperative.class, "hybrid_pure");
+            "emitWithMeta on a pure inter-procedure channel is rejected with MetadataNotAllowedOnInterProcedureChannel")
+    void emitWithMetaOnPureInterProcedureChannelStillRejected() {
+        UnboundedOperativeInstance instance = instantiate(PureInterProcedureUnboundedOperative.class, "hybrid_pure");
         feed(instance, "hybrid_pure_producer", "1");
 
         assertThat(waitFor(() -> PURE_EMIT_OUTCOMES.size() == 1, 5_000))
                 .as("producer run did not complete")
                 .isTrue();
         String outcome = PURE_EMIT_OUTCOMES.get(0);
-        assertThat(outcome).contains("MetadataNotAllowedOnInterOperationChannel");
+        assertThat(outcome).contains("MetadataNotAllowedOnInterProcedureChannel");
         assertThat(outcome).contains("pure_out");
 
         // Consumer fan-out happens via emit, not the rejecting emitWithMeta;
-        // pure inter-operation channels still throw before fan-out, matching Rust.
+        // pure inter-procedure channels still throw before fan-out, matching Rust.
         assertThat(PURE_OBSERVED).isEmpty();
         assertThat(capturedWrites).isEmpty();
     }
 
     // =============================================================================================
-    // Test UnboundedOperative topologies + Operation impls. Each UnboundedOperative is registered exactly once per
+    // Test UnboundedOperative topologies + Procedure impls. Each UnboundedOperative is registered exactly once per
     // test; producer
-    // Operations close over the static CopyOnWriteArrayList captures above.
+    // Procedures close over the static CopyOnWriteArrayList captures above.
     // =============================================================================================
 
     // ---- 1 consumer ----
@@ -289,7 +289,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class SingleProducer extends StatelessTestOperation<String, Object, Integer> {
+    public static final class SingleProducer extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_single_producer";
@@ -306,18 +306,18 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             int n = Integer.parseInt(input);
             ctx.emit(n);
         }
     }
 
-    public static final class SingleConsumer extends StatelessTestOperation<Integer, Object, Void> {
+    public static final class SingleConsumer extends StatelessTestProcedure<Integer, Object, Void> {
         @Override
         public String name() {
             return "hybrid_single_consumer";
@@ -334,12 +334,12 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             SINGLE_OBSERVED.add(input);
         }
     }
@@ -365,7 +365,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class ThreeProducer extends StatelessTestOperation<String, Object, Integer> {
+    public static final class ThreeProducer extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_three_producer";
@@ -382,17 +382,17 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit(Integer.parseInt(input));
         }
     }
 
-    private abstract static class CapturingConsumer extends StatelessTestOperation<Integer, Object, Void> {
+    private abstract static class CapturingConsumer extends StatelessTestProcedure<Integer, Object, Void> {
         @Override
         public Class<Integer> inputType() {
             return Integer.class;
@@ -404,7 +404,7 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
     }
@@ -416,7 +416,7 @@ class HybridChannelTest {
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             THREE_A.add(input);
         }
     }
@@ -428,7 +428,7 @@ class HybridChannelTest {
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             THREE_B.add(input);
         }
     }
@@ -440,7 +440,7 @@ class HybridChannelTest {
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             THREE_C.add(input);
         }
     }
@@ -468,7 +468,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class PanicProducer extends StatelessTestOperation<String, Object, Integer> {
+    public static final class PanicProducer extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_panic_producer";
@@ -485,23 +485,23 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             int n = Integer.parseInt(input);
             try {
                 ctx.emit(n);
                 PANIC_EMIT_OUTCOMES.add("ok");
-            } catch (OperationException e) {
+            } catch (ProcedureException e) {
                 PANIC_EMIT_OUTCOMES.add(e.getMessage());
             }
         }
     }
 
-    public static final class PanicConsumer extends StatelessTestOperation<Integer, Object, Void> {
+    public static final class PanicConsumer extends StatelessTestProcedure<Integer, Object, Void> {
         @Override
         public String name() {
             return "hybrid_panic_consumer";
@@ -518,12 +518,12 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             PANIC_OBSERVED.add(input);
         }
     }
@@ -546,7 +546,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class DupProducer extends StatelessTestOperation<String, Object, Integer> {
+    public static final class DupProducer extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_dup_producer";
@@ -563,12 +563,12 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
     // ---- emitWithMeta on hybrid ----
@@ -589,7 +589,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class MetaProducer extends StatelessTestOperation<String, Object, Integer> {
+    public static final class MetaProducer extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_meta_producer";
@@ -606,12 +606,12 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             int n = Integer.parseInt(input);
             Map<String, String> meta = new HashMap<>();
             meta.put("trace_id", "abc123");
@@ -620,7 +620,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class MetaConsumer extends StatelessTestOperation<Integer, Object, Void> {
+    public static final class MetaConsumer extends StatelessTestProcedure<Integer, Object, Void> {
         @Override
         public String name() {
             return "hybrid_meta_consumer";
@@ -637,19 +637,19 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             META_OBSERVED.add(input);
         }
     }
 
-    // ---- emitWithMeta on pure inter-operation channel ----
+    // ---- emitWithMeta on pure inter-procedure channel ----
 
-    public static final class PureInterOperationUnboundedOperative implements UnboundedOperative {
+    public static final class PureInterProcedureUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "hybrid_pure";
@@ -662,7 +662,7 @@ class HybridChannelTest {
         }
     }
 
-    public static final class PureProducer extends StatelessTestOperation<String, Object, Integer> {
+    public static final class PureProducer extends StatelessTestProcedure<String, Object, Integer> {
         @Override
         public String name() {
             return "hybrid_pure_producer";
@@ -679,24 +679,24 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             Map<String, String> meta = new HashMap<>();
             meta.put("trace_id", "abc123");
             try {
                 ctx.emitWithMeta(Integer.parseInt(input), meta);
                 PURE_EMIT_OUTCOMES.add("ok");
-            } catch (OperationException e) {
+            } catch (ProcedureException e) {
                 PURE_EMIT_OUTCOMES.add(e.getClass().getSimpleName() + ":" + e.getMessage());
             }
         }
     }
 
-    public static final class PureConsumer extends StatelessTestOperation<Integer, Object, Void> {
+    public static final class PureConsumer extends StatelessTestProcedure<Integer, Object, Void> {
         @Override
         public String name() {
             return "hybrid_pure_consumer";
@@ -713,12 +713,12 @@ class HybridChannelTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(Integer input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             PURE_OBSERVED.add(input);
         }
     }

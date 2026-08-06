@@ -27,7 +27,7 @@ defmodule Flezha.PluginTest do
         Plugin.new(
           id: "kafka_p1_trades",
           provider: __MODULE__.NoopProvider,
-          opts: %{topic: "p1.trades.v1", segment: 0},
+          opts: %{topic: "p1.trades.v1", entity: 0},
           subscriptions: [{:on_output, []}],
           namespace: "default",
           operative_id: "p1"

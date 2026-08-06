@@ -178,7 +178,7 @@ config :flezha,
   runner_keepalive: System.get_env("FLEZHA_RUNNER_KEEPALIVE", "30000") |> String.to_integer(),
 
   # ------------------------------------------------------------------------------------------------
-  # Control-plane liveness watchdog (unify-executor-liveness-and-identity).
+  # Control-plane liveness watchdog (runner-controller-connection-healing).
   #
   # `Flezha.Runner.ControlChannel` stamps `last_seen` on every inbound control
   # frame — including the SDK's 15 s keepalive ping — and a jittered watchdog
@@ -254,17 +254,17 @@ config :flezha,
       System.get_env("FLEZHA_DATA_PLANE_LIVENESS", "true") in ["1", "true", "yes", "on"]
   ],
   # ------------------------------------------------------------------------------------------------
-  # Per-Segment state persistence — compaction triggers (snapshot-baseline-durability).
+  # Per-Entity state persistence — compaction triggers (snapshot-baseline-durability).
   #
-  # Size: a Segment whose un-snapshotted WAL exceeds this is compacted.
+  # Size: an Entity whose un-snapshotted WAL exceeds this is compacted.
   # This is the global default; a class that declares `compact_after_bytes()`
   # in its SDK ships it in the `AddOperative` metadata, and the Watchdog
   # resolves that per-class value (via `ClassRegistry`) ahead of this default.
   # An operator `:compact_after_bytes => %{class => bytes}` override wins over
   # both.
-  # Age: a Segment whose oldest un-snapshotted WAL record is older than
+  # Age: an Entity whose oldest un-snapshotted WAL record is older than
   # this is compacted even if it never reaches the size threshold, so
-  # low-throughput Operations still get periodic baselines. `0` disables
+  # low-throughput Procedures still get periodic baselines. `0` disables
   # the age trigger (default in :test so the sweep never surprises
   # long-lived test runners; dedicated tests opt in via put_env).
   default_compact_after_bytes:
@@ -288,11 +288,11 @@ config :flezha,
     System.get_env("FLEZHA_INPUT_LOG_HOLD_WINDOW_MS", "0") |> String.to_integer(),
   # Credit-grant flow control on the runner→controller state stream.
   # Kill switch: `false` skips the CreditWindowInit offer entirely, reverting
-  # every session to the legacy SegmentMailboxStatus + shed path.
+  # every session to the legacy EntityMailboxStatus + shed path.
   credit_flow_control_enabled:
     System.get_env("FLEZHA_CREDIT_FLOW_CONTROL", "true") in ["1", "true", "yes", "on"],
   # ------------------------------------------------------------------------------------------------
-  # Durable audit log (platform-audit-log).
+  # Durable audit log (audit-log).
   #
   # Operator opt-in: default OFF. When enabled the audit-log subsystem
   # subscribes to a configurable allow-list of `(source, name)` pairs
@@ -322,7 +322,7 @@ config :flezha,
     extra_subscriptions: []
   ],
   # ------------------------------------------------------------------------------------------------
-  # Dead-letter queue (platform-dead-letter-queue): durable store for
+  # Dead-letter queue (dead-letter-queue): durable store for
   # retry-exhausted poison payloads. Retention deletes already-parked data,
   # so the caps default generous (30 d / 4 GiB, audit-log precedent).
   dlq: [
@@ -446,7 +446,7 @@ if config_env() != :test do
     boot_replay_timeout_ms:
       System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),
     auto_restore_enabled: System.get_env("FLEZHA_AUTO_RESTORE_ENABLED", "true") in ["true", "1"],
-    # Per-Segment output-stall + compaction-timeout watchdog cadence
+    # Per-Entity output-stall + compaction-timeout watchdog cadence
     # (Flezha.State.Watchdog holds its own timer after
     # `consume-recovery-mode-and-self-heal` §4 retired the
     # Flezha.Reconciler.Loop periodic sweep that previously drove it).
@@ -454,7 +454,7 @@ if config_env() != :test do
       System.get_env("FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS", "10000") |> String.to_integer(),
     time_travel_retention_check_interval_ms:
       System.get_env("FLEZHA_RETENTION_CHECK_INTERVAL_MS", "60000") |> String.to_integer(),
-    # How long a finished bounded operative's data (retained Segment state +
+    # How long a finished bounded operative's data (retained Entity state +
     # completion record) is kept before the retention sweeper reclaims it.
     default_bounded_completed_retention_hours:
       System.get_env("FLEZHA_BOUNDED_RETENTION_HOURS", "72") |> String.to_integer(),

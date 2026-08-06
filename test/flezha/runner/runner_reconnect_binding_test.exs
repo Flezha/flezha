@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.RunnerReconnectBindingTest do
   @moduledoc """
-  Reconnect binding continuity (unify-executor-liveness-and-identity, Phase 2).
+  Reconnect binding continuity (runner-controller-connection-healing, Phase 2).
 
   A runner that restarts on the same persistence path re-presents the same
   durable STABLE IDENTITY. The controller keys operatives on the per-connection

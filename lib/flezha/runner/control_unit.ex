@@ -52,27 +52,27 @@ defmodule Flezha.Runner.ControlUnit do
     do: Application.get_env(:flezha, :overwatch_ping_timeout_ms, 2_000)
 
   @doc """
-  Sends a `OperationMessage` to the SDK-side operative via the control
-  channel and returns the decoded `OperationMessageResponse`.
+  Sends a `OperativeMessage` to the SDK-side operative via the control
+  channel and returns the decoded `OperativeMessageResponse`.
 
-  Mirrors the `SegmentState` request/reply pattern: the compute engine's
-  reply (a protobuf-encoded `OperationMessageResponse`) is delivered by
+  Mirrors the `EntityState` request/reply pattern: the compute engine's
+  reply (a protobuf-encoded `OperativeMessageResponse`) is delivered by
   `handle_payload/2` as the `raw_data` field of the outer `CommandResponse`.
   An empty `error` string is mapped to `{:ok, payload}`; a non-empty error
   becomes `{:error, error}`. Transport-layer or encoding failures surface as
   `{:error, reason}` unchanged.
   """
-  @spec send_operation_message(binary(), binary(), binary()) ::
+  @spec send_operative_message(binary(), binary(), binary()) ::
           {:ok, binary()} | {:error, term()}
-  def send_operation_message(runner_id, operative_id, payload)
+  def send_operative_message(runner_id, operative_id, payload)
       when is_binary(runner_id) and is_binary(operative_id) and is_binary(payload) do
-    command = %RunnerCommands.OperationMessage{
+    command = %RunnerCommands.OperativeMessage{
       operative_id: operative_id,
       payload: payload
     }
 
-    case send_control_await(runner_id, {:operation_message, command}) do
-      {:ok, raw_data} -> decode_operation_message_response(raw_data)
+    case send_control_await(runner_id, {:operative_message, command}) do
+      {:ok, raw_data} -> decode_operative_message_response(raw_data)
       {:error, _} = err -> err
     end
   end
@@ -82,7 +82,7 @@ defmodule Flezha.Runner.ControlUnit do
   ControlUnit and await the SDK's reply as raw bytes — the single request/reply
   seam every control round-trip decodes on top of. Returns `{:ok, raw_data}`
   (the `CommandResponse.raw_data` the caller decodes) or `{:error, reason}` on a
-  timeout, transport failure, or dead ControlUnit. `send_operation_message/3`,
+  timeout, transport failure, or dead ControlUnit. `send_operative_message/3`,
   the credit-window handshake, and the compaction response inspection all use
   it.
   """
@@ -94,12 +94,12 @@ defmodule Flezha.Runner.ControlUnit do
     :exit, reason -> {:error, {:control_unit_exit, reason}}
   end
 
-  defp decode_operation_message_response(raw_data) do
-    case RunnerCommands.OperationMessageResponse.decode(raw_data) do
-      {:ok, %RunnerCommands.OperationMessageResponse{error: "", payload: payload}} ->
+  defp decode_operative_message_response(raw_data) do
+    case RunnerCommands.OperativeMessageResponse.decode(raw_data) do
+      {:ok, %RunnerCommands.OperativeMessageResponse{error: "", payload: payload}} ->
         {:ok, payload}
 
-      {:ok, %RunnerCommands.OperationMessageResponse{error: err}} ->
+      {:ok, %RunnerCommands.OperativeMessageResponse{error: err}} ->
         {:error, err}
 
       {:error, reason} ->
@@ -166,12 +166,12 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_segment_state, operative_id}, from, state) do
+  def handle_call({:get_entity_state, operative_id}, from, state) do
     case ControlChannel.send_control(
            state.runner_id,
            {
-             :get_segment_state,
-             %RunnerCommands.SegmentState{operative_id: operative_id}
+             :get_entity_state,
+             %RunnerCommands.EntityState{operative_id: operative_id}
            }
          ) do
       {:ok, ref} ->
@@ -274,11 +274,11 @@ defmodule Flezha.Runner.ControlUnit do
       init_values: init_values,
       kind: kind,
       # Both stamped on opts by `Overwatch.with_resume_state/3`. Non-zero only
-      # for a durable bounded (re)bind: the SDK driver holds its first Operation
-      # until this many Segment restores land (crash-resume). `op_journal` is
+      # for a durable bounded (re)bind: the SDK driver holds its first Procedure
+      # until this many Entity restores land (crash-resume). `proc_journal` is
       # `nil` unless the instance has a journal to resume from.
-      resume_segment_count: Keyword.get(operative.opts, :resume_segment_count, 0),
-      op_journal: Keyword.get(operative.opts, :op_journal)
+      resume_entity_count: Keyword.get(operative.opts, :resume_entity_count, 0),
+      proc_journal: Keyword.get(operative.opts, :proc_journal)
     }
 
     case ControlChannel.send_control(state.runner_id, {:add_operative, command}) do

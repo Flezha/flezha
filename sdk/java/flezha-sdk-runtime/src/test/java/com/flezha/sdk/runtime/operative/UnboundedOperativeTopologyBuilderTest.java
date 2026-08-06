@@ -5,10 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.ChannelKind;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
@@ -35,17 +35,17 @@ class UnboundedOperativeTopologyBuilderTest {
             assertThat(topology.factoryId()).isEqualTo("single_mode");
             assertThat(topology.channels()).hasSize(1);
             assertThat(topology.channels().get(0).kind()).isEqualTo(ChannelKind.ENTRY);
-            assertThat(topology.operations()).hasSize(1);
-            assertThat(topology.operations().get(0).segmentKeys()).isEmpty();
+            assertThat(topology.procedures()).hasSize(1);
+            assertThat(topology.procedures().get(0).entityKeys()).isEmpty();
         }
 
         @Test
-        @DisplayName("static-mode operation allocates one descriptor with the declared keys")
-        void staticModeAllocatesSegments() {
+        @DisplayName("static-mode procedure allocates one descriptor with the declared keys")
+        void staticModeAllocatesEntities() {
             UnboundedOperativeTopology topology =
                     UnboundedOperativeTopologyBuilder.build(new StaticModeUnboundedOperative());
-            assertThat(topology.operations().get(0).segmentKeys()).containsExactly("a", "b", "c", "d");
-            assertThat(topology.operations().get(0).segmentForOverridden()).isTrue();
+            assertThat(topology.procedures().get(0).entityKeys()).containsExactly("a", "b", "c", "d");
+            assertThat(topology.procedures().get(0).entitiesForOverridden()).isTrue();
         }
 
         @Test
@@ -68,34 +68,34 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Test
-        @DisplayName("static-mode operation without segmentForOverridden is rejected")
-        void staticWithoutSegmentForOverriddenRejected() {
+        @DisplayName("static-mode procedure without entitiesForOverridden is rejected")
+        void staticWithoutEntitiesForOverriddenRejected() {
             assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(
-                            new MissingSegmentForOverriddenUnboundedOperative()))
+                            new MissingEntitiesForOverriddenUnboundedOperative()))
                     .isInstanceOf(UnboundedOperativeConfigurationException.class)
-                    .hasMessageContaining("segmentFor");
+                    .hasMessageContaining("entitiesFor");
         }
 
         @Test
-        @DisplayName("a dynamic-mode-only declaration builds (Segments are created per key at dispatch)")
+        @DisplayName("a dynamic-mode-only declaration builds (Entities are created per key at dispatch)")
         void dynamicModeOnlyBuilds() {
             // Formerly refused ("dynamic mode is reserved … and rejected in v1").
-            // Dynamic Operations now register and allocate their Segments lazily,
+            // Dynamic Procedures now register and allocate their Entities lazily,
             // one per key the input stream carries.
             UnboundedOperativeTopology topology =
                     UnboundedOperativeTopologyBuilder.build(new DynamicModeOnlyUnboundedOperative());
-            assertThat(topology.operations()).hasSize(1);
-            assertThat(topology.operations().get(0).operationKeyOverridden()).isTrue();
-            assertThat(topology.operations().get(0).segmentKeys()).isEmpty();
+            assertThat(topology.procedures()).hasSize(1);
+            assertThat(topology.procedures().get(0).entityKeyOverridden()).isTrue();
+            assertThat(topology.procedures().get(0).entityKeys()).isEmpty();
         }
     }
 
-    // ---- Test operatives / operations -----------------------------------------------
+    // ---- Test operatives / procedures -----------------------------------------------
 
-    public static final class SingleOperation extends StatelessTestOperation<String, Object, String> {
+    public static final class SingleProcedure extends StatelessTestProcedure<String, Object, String> {
         @Override
         public String name() {
-            return "single_operation";
+            return "single_procedure";
         }
 
         @Override
@@ -109,12 +109,12 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
     public static final class SingleModeUnboundedOperative implements UnboundedOperative {
@@ -125,14 +125,14 @@ class UnboundedOperativeTopologyBuilderTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(SingleOperation.class);
+            c.input(String.class, "input").into(SingleProcedure.class);
         }
     }
 
-    public static final class StaticOperation extends StatelessTestOperation<String, Object, String> {
+    public static final class StaticProcedure extends StatelessTestProcedure<String, Object, String> {
         @Override
         public String name() {
-            return "static_operation";
+            return "static_procedure";
         }
 
         @Override
@@ -146,27 +146,27 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public List<String> operationKeys() {
+        public List<String> entityKeys() {
             return List.of("a", "b", "c", "d");
         }
 
         @Override
-        public boolean segmentForOverridden() {
+        public boolean entitiesForOverridden() {
             return true;
         }
 
         @Override
-        public List<String> segmentFor(String input) {
+        public List<String> entitiesFor(String input) {
             return List.of(input.substring(0, 1));
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
     public static final class StaticModeUnboundedOperative implements UnboundedOperative {
@@ -177,7 +177,7 @@ class UnboundedOperativeTopologyBuilderTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(StaticOperation.class);
+            c.input(String.class, "input").into(StaticProcedure.class);
         }
     }
 
@@ -189,14 +189,14 @@ class UnboundedOperativeTopologyBuilderTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(Trade.class, "trade.raw").into(TradeOperation.class);
+            c.input(Trade.class, "trade.raw").into(TradeProcedure.class);
         }
     }
 
-    public static final class TradeOperation extends StatelessTestOperation<Trade, Object, String> {
+    public static final class TradeProcedure extends StatelessTestProcedure<Trade, Object, String> {
         @Override
         public String name() {
-            return "trade_operation";
+            return "trade_procedure";
         }
 
         @Override
@@ -210,18 +210,18 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(Trade input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(Trade input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class CandleOperation extends StatelessTestOperation<Candle, Object, String> {
+    public static final class CandleProcedure extends StatelessTestProcedure<Candle, Object, String> {
         @Override
         public String name() {
-            return "candle_operation";
+            return "candle_procedure";
         }
 
         @Override
@@ -235,15 +235,15 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(Candle input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(Candle input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class TradeProducerOperation extends StatelessTestOperation<String, Object, Trade> {
+    public static final class TradeProducerProcedure extends StatelessTestProcedure<String, Object, Trade> {
         @Override
         public String name() {
             return "trade_producer";
@@ -260,13 +260,13 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx)
-                throws OperationException {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx)
+                throws ProcedureException {}
     }
 
     public static final class TypeMismatchUnboundedOperative implements UnboundedOperative {
@@ -278,7 +278,7 @@ class UnboundedOperativeTopologyBuilderTest {
         @Override
         public void channels(ChannelBuilder c) {
             ChannelDeclMismatch.declareTradeIntoCandle(
-                    c.input(String.class, "input").into(TradeProducerOperation.class));
+                    c.input(String.class, "input").into(TradeProducerProcedure.class));
         }
     }
 
@@ -286,15 +286,15 @@ class UnboundedOperativeTopologyBuilderTest {
     private static final class ChannelDeclMismatch {
         @SuppressWarnings({"unchecked", "rawtypes"})
         static void declareTradeIntoCandle(com.flezha.sdk.channel.Stream<Trade> stream) {
-            ((com.flezha.sdk.channel.Stream) stream.named("trade.parsed")).into((Class) CandleOperation.class);
+            ((com.flezha.sdk.channel.Stream) stream.named("trade.parsed")).into((Class) CandleProcedure.class);
         }
     }
 
-    public static final class MissingSegmentForOverriddenOperation
-            extends StatelessTestOperation<String, Object, String> {
+    public static final class MissingEntitiesForOverriddenProcedure
+            extends StatelessTestProcedure<String, Object, String> {
         @Override
         public String name() {
-            return "missing_pfo_operation";
+            return "missing_pfo_procedure";
         }
 
         @Override
@@ -308,20 +308,20 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public List<String> operationKeys() {
+        public List<String> entityKeys() {
             return List.of("a", "b");
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class MissingSegmentForOverriddenUnboundedOperative implements UnboundedOperative {
+    public static final class MissingEntitiesForOverriddenUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
             return "missing_pfo_operative";
@@ -329,14 +329,14 @@ class UnboundedOperativeTopologyBuilderTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(MissingSegmentForOverriddenOperation.class);
+            c.input(String.class, "input").into(MissingEntitiesForOverriddenProcedure.class);
         }
     }
 
-    public static final class DynamicModeOnlyOperation extends StatelessTestOperation<String, Object, String> {
+    public static final class DynamicModeOnlyProcedure extends StatelessTestProcedure<String, Object, String> {
         @Override
         public String name() {
-            return "dynamic_only_operation";
+            return "dynamic_only_procedure";
         }
 
         @Override
@@ -350,22 +350,22 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public boolean operationKeyOverridden() {
+        public boolean entityKeyOverridden() {
             return true;
         }
 
         @Override
-        public Optional<String> operationKey(String input) {
+        public Optional<String> entityKey(String input) {
             return Optional.of(input);
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
     public static final class DynamicModeOnlyUnboundedOperative implements UnboundedOperative {
@@ -376,7 +376,7 @@ class UnboundedOperativeTopologyBuilderTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(DynamicModeOnlyOperation.class);
+            c.input(String.class, "input").into(DynamicModeOnlyProcedure.class);
         }
     }
 
@@ -389,12 +389,12 @@ class UnboundedOperativeTopologyBuilderTest {
         @DisplayName("branch() builds the identical topology to handle reuse")
         void branchBuildsIdenticalTopology() {
             var byHandles = UnboundedOperativeTopologyBuilder.build("g1", c -> {
-                var validated = c.input(String.class, "in").into(SingleOperation.class);
+                var validated = c.input(String.class, "in").into(SingleProcedure.class);
                 validated.into(GraphStage1.class);
                 validated.into(GraphStage2.class);
             });
             var byBranch = UnboundedOperativeTopologyBuilder.build("g2", c -> c.input(String.class, "in")
-                    .into(SingleOperation.class)
+                    .into(SingleProcedure.class)
                     .branch(b -> b.into(GraphStage1.class), b -> b.into(GraphStage2.class)));
             assertThat(shape(byBranch)).isEqualTo(shape(byHandles));
         }
@@ -403,7 +403,7 @@ class UnboundedOperativeTopologyBuilderTest {
         @DisplayName("branch() with fewer than two arms is refused")
         void branchWithOneArmRefused() {
             assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build("g3", c -> c.input(String.class, "in")
-                            .into(SingleOperation.class)
+                            .into(SingleProcedure.class)
                             .branch(b -> b.into(GraphStage1.class))))
                     .isInstanceOf(UnboundedOperativeConfigurationException.class)
                     .hasMessageContaining("at least two arms");
@@ -413,15 +413,15 @@ class UnboundedOperativeTopologyBuilderTest {
         @DisplayName("named nodes reuse one class at two positions; unnamed mentions unify into a fan-in")
         void namedNodesAndFanIn() {
             var t = UnboundedOperativeTopologyBuilder.build("g4", c -> {
-                var validated = c.input(String.class, "in").into(SingleOperation.class);
+                var validated = c.input(String.class, "in").into(SingleProcedure.class);
                 validated.into(GraphStage1.class, "fraud_filter").into(GraphMerge.class);
                 validated.into(GraphStage1.class, "spam_filter").into(GraphMerge.class);
             });
-            assertThat(t.operations().stream().map(o -> o.name()).toList())
-                    .containsExactly("single_operation", "fraud_filter", "graph_merge", "spam_filter");
+            assertThat(t.procedures().stream().map(o -> o.name()).toList())
+                    .containsExactly("single_procedure", "fraud_filter", "graph_merge", "spam_filter");
             // Derived channel names are the node identities; the merge is ONE node.
             assertThat(t.nameToId()).containsKeys("fraud_filter", "spam_filter");
-            long merges = t.operations().stream()
+            long merges = t.procedures().stream()
                     .filter(o -> o.name().equals("graph_merge"))
                     .count();
             assertThat(merges).isEqualTo(1);
@@ -431,7 +431,7 @@ class UnboundedOperativeTopologyBuilderTest {
         @DisplayName("a node identity collision is refused")
         void nodeIdentityCollisionRefused() {
             assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build("g5", c -> {
-                        var validated = c.input(String.class, "in").into(SingleOperation.class);
+                        var validated = c.input(String.class, "in").into(SingleProcedure.class);
                         validated.into(GraphStage2.class, "graph_stage1");
                         validated.into(GraphStage1.class);
                     }))
@@ -443,18 +443,18 @@ class UnboundedOperativeTopologyBuilderTest {
         @DisplayName("channel names derive from the producer identity; .named overrides; collisions are refused")
         void derivedNamesAndCollision() {
             var t = UnboundedOperativeTopologyBuilder.build("g6", c -> c.input(String.class, "in")
-                    .into(SingleOperation.class)
+                    .into(SingleProcedure.class)
                     .into(GraphStage1.class)
                     .named("orders.validated")
                     .into(GraphStage2.class));
-            assertThat(t.nameToId()).containsKeys("single_operation", "orders.validated");
+            assertThat(t.nameToId()).containsKeys("single_procedure", "orders.validated");
 
             assertThatThrownBy(() ->
-                            UnboundedOperativeTopologyBuilder.build("g7", c -> c.input(String.class, "single_operation")
-                                    .into(SingleOperation.class)
+                            UnboundedOperativeTopologyBuilder.build("g7", c -> c.input(String.class, "single_procedure")
+                                    .into(SingleProcedure.class)
                                     .into(GraphStage1.class)))
                     .isInstanceOf(UnboundedOperativeConfigurationException.class)
-                    .hasMessageContaining("single_operation");
+                    .hasMessageContaining("single_procedure");
         }
 
         @Test
@@ -491,7 +491,7 @@ class UnboundedOperativeTopologyBuilderTest {
         void customParserReplacesDefaultJson() {
             var t = UnboundedOperativeTopologyBuilder.build(
                     "g10", c -> c.input(Trade.class, "orders", bytes -> new Trade(new String(bytes), 1.0))
-                            .into(TradeOperation.class));
+                            .into(TradeProcedure.class));
             var entry = t.channels().get(0);
             assertThat(entry.entryParsed()).isTrue();
             Object decoded = entry.entryParser().orElseThrow().apply("BTC".getBytes());
@@ -502,7 +502,7 @@ class UnboundedOperativeTopologyBuilderTest {
         @DisplayName("byte[] and String entries stay passthrough (not parsers)")
         void bytesAndStringEntriesStayPassthrough() {
             var t = UnboundedOperativeTopologyBuilder.build(
-                    "g11", c -> c.input(String.class, "in").into(SingleOperation.class));
+                    "g11", c -> c.input(String.class, "in").into(SingleProcedure.class));
             assertThat(t.channels().get(0).entryParsed()).isFalse();
         }
 
@@ -511,7 +511,7 @@ class UnboundedOperativeTopologyBuilderTest {
         void handleAfterFreezeThrows() {
             var leaked = new java.util.concurrent.atomic.AtomicReference<com.flezha.sdk.channel.Stream<String>>();
             UnboundedOperativeTopologyBuilder.build(
-                    "g12", c -> leaked.set(c.input(String.class, "in").into(SingleOperation.class)));
+                    "g12", c -> leaked.set(c.input(String.class, "in").into(SingleProcedure.class)));
             assertThatThrownBy(() -> leaked.get().into(GraphStage1.class))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("g12");
@@ -521,14 +521,14 @@ class UnboundedOperativeTopologyBuilderTest {
             var channels = t.channels().stream()
                     .map(ch -> ch.name() + "|" + ch.kind() + "|" + ch.producer() + "|" + ch.consumerIds())
                     .toList();
-            var ops = t.operations().stream().map(o -> o.name()).toList();
+            var procs = t.procedures().stream().map(o -> o.name()).toList();
             var all = new java.util.ArrayList<String>(channels);
-            all.addAll(ops);
+            all.addAll(procs);
             return all;
         }
     }
 
-    public static final class GraphStage1 extends StatelessTestOperation<String, Object, String> {
+    public static final class GraphStage1 extends StatelessTestProcedure<String, Object, String> {
         @Override
         public String name() {
             return "graph_stage1";
@@ -545,15 +545,15 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class GraphStage2 extends StatelessTestOperation<String, Object, String> {
+    public static final class GraphStage2 extends StatelessTestProcedure<String, Object, String> {
         @Override
         public String name() {
             return "graph_stage2";
@@ -570,15 +570,15 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class GraphMerge extends StatelessTestOperation<String, Object, String> {
+    public static final class GraphMerge extends StatelessTestProcedure<String, Object, String> {
         @Override
         public String name() {
             return "graph_merge";
@@ -595,11 +595,11 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 }

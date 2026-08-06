@@ -27,7 +27,7 @@ fail with a typed error.
 ### Requirement: Atomic effect record — state, outputs, and offset in one durable write
 
 In tier mode the SDK SHALL ship an invocation's state change(s), plugin emits,
-and consumed input offset as ONE `segment_effect_record` on the reliable state
+and consumed input offset as ONE `entity_effect_record` on the reliable state
 sink, and the controller SHALL persist it as ONE WAL record covered by ONE fsync
 window.
 
@@ -52,7 +52,7 @@ the tier requires absorbs them.
 
 #### Scenario: State is never durable ahead of its offset
 
-- **WHEN** a checkpoint-mode Segment applies changes for offsets 4701..4710
+- **WHEN** a checkpoint-mode Entity applies changes for offsets 4701..4710
   without checkpointing
 - **THEN** no durable record contains those changes, and the durable offset
   stays at the last checkpoint
@@ -67,7 +67,7 @@ the tier requires absorbs them.
 
 For tier operatives the controller SHALL invoke the `:on_output` plugin chain for
 an output only after its effect record is fsynced. Each outbox entry SHALL carry
-the durable identity `(flz.segment, outbox_seq, epoch)` where `outbox_seq` is
+the durable identity `(flz.entity, outbox_seq, epoch)` where `outbox_seq` is
 `<record WAL seq>.<emit ordinal>`. This closes the `flz.seq` exactness boundary:
 `outbox_seq` SHALL be a sufficient handle for exact append-only dedup.
 
@@ -79,12 +79,12 @@ the durable identity `(flz.segment, outbox_seq, epoch)` where `outbox_seq` is
 #### Scenario: Durable identity on every flushed output
 
 - **WHEN** an output is dispatched to the plugin chain in tier mode
-- **THEN** its metadata carries `flz.segment`, the durable `outbox_seq`, and the
+- **THEN** its metadata carries `flz.entity`, the durable `outbox_seq`, and the
   epoch
 
 ### Requirement: Restart re-drives unflushed outbox entries
 
-The controller SHALL maintain a per-Segment `outbox_flushed_seq` cursor that
+The controller SHALL maintain a per-Entity `outbox_flushed_seq` cursor that
 never runs ahead of what was actually dispatched. On restart it SHALL re-drive
 every durable outbox entry above the cursor, in order. Re-driven entries carry
 identical identity so idempotent/dedup sinks absorb them: outputs are never lost
@@ -114,7 +114,7 @@ integration test that kills each party at every phase boundary.
 
 #### Scenario: Runner kill mid-stream
 
-- **WHEN** the runner is killed while processing and the Segment is restored
+- **WHEN** the runner is killed while processing and the Entity is restored
   and replays from its durable consumed-offset
 - **THEN** the conforming sink's final state equals the no-crash run's final
   state
@@ -128,8 +128,8 @@ integration test that kills each party at every phase boundary.
 ### Requirement: Tier applies to both operative kinds
 
 Both unbounded and bounded operatives SHALL be able to opt into the tier with
-identical per-record semantics. Bounded op-boundary staged flush (buffering
-outputs until op commit) is explicitly out of scope and SHALL NOT be implied by
+identical per-record semantics. Bounded proc-boundary staged flush (buffering
+outputs until proc commit) is explicitly out of scope and SHALL NOT be implied by
 this capability.
 
 #### Scenario: Bounded operative under the tier

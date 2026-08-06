@@ -2,9 +2,9 @@ package com.flezha.sdk.testing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -17,20 +17,20 @@ import org.junit.jupiter.api.Test;
 /**
  * {@code replayEmitsEqual} is the OUTPUT-side determinism gate.
  *
- * <p>{@code replayEquals} alone is not enough: an Operation can rebuild identical
+ * <p>{@code replayEquals} alone is not enough: a Procedure can rebuild identical
  * state on replay while emitting a different key or timestamp each run — and a
  * keyed sink's idempotence depends on exactly that not happening. This is what
- * catches an Operation reading ambient time or randomness instead of
+ * catches a Procedure reading ambient time or randomness instead of
  * {@code ctx.now()} / {@code ctx.stableId()}.
  */
 class ReplayEmitsEqualTest {
 
     @Test
-    @DisplayName("a deterministic Operation replays identical emits")
-    void deterministicOperationReplaysEqualEmits() {
+    @DisplayName("a deterministic Procedure replays identical emits")
+    void deterministicProcedureReplaysEqualEmits() {
         List<String> inputs = List.of("a", "b");
-        OperationTestHarness<String, Unit, String, NoChange> harness =
-                OperationTestHarness.of(new DeterministicOp()).withWallClock(1_700_000_000_000L);
+        ProcedureTestHarness<String, Unit, String, NoChange> harness =
+                ProcedureTestHarness.of(new DeterministicProc()).withWallClock(1_700_000_000_000L);
 
         harness.applyInputs(inputs);
 
@@ -38,11 +38,11 @@ class ReplayEmitsEqualTest {
     }
 
     @Test
-    @DisplayName("an Operation reading ambient time is caught")
-    void ambientTimeOperationIsCaught() {
+    @DisplayName("a Procedure reading ambient time is caught")
+    void ambientTimeProcedureIsCaught() {
         List<String> inputs = List.of("a");
-        OperationTestHarness<String, Unit, String, NoChange> harness =
-                OperationTestHarness.of(new AmbientTimeOp()).withWallClock(1_700_000_000_000L);
+        ProcedureTestHarness<String, Unit, String, NoChange> harness =
+                ProcedureTestHarness.of(new AmbientTimeProc()).withWallClock(1_700_000_000_000L);
 
         harness.applyInputs(inputs);
 
@@ -54,8 +54,8 @@ class ReplayEmitsEqualTest {
     @Test
     @DisplayName("a scripted clock serves one value per invocation")
     void scriptedClockAdvancesPerInvocation() {
-        OperationTestHarness<String, Unit, String, NoChange> harness =
-                OperationTestHarness.of(new DeterministicOp()).withWallClockScript(1000L, 2000L, 3000L);
+        ProcedureTestHarness<String, Unit, String, NoChange> harness =
+                ProcedureTestHarness.of(new DeterministicProc()).withWallClockScript(1000L, 2000L, 3000L);
 
         harness.applyInputs(List.of("a", "b", "c"));
 
@@ -65,8 +65,8 @@ class ReplayEmitsEqualTest {
     @Test
     @DisplayName("a keyed emit records its key")
     void keyedEmitRecordsItsKey() {
-        OperationTestHarness<String, Unit, String, NoChange> harness =
-                OperationTestHarness.of(new KeyedOp()).withWallClock(1L);
+        ProcedureTestHarness<String, Unit, String, NoChange> harness =
+                ProcedureTestHarness.of(new KeyedProc()).withWallClock(1L);
 
         harness.applyInputs(List.of("BTC"));
 
@@ -78,7 +78,7 @@ class ReplayEmitsEqualTest {
 
     public record Unit() {}
 
-    abstract static class Base implements Operation<String, Unit, String, NoChange, WallClock, Void> {
+    abstract static class Base implements Procedure<String, Unit, String, NoChange, WallClock, Void> {
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -105,45 +105,45 @@ class ReplayEmitsEqualTest {
         }
 
         @Override
-        public Unit initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Unit initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Unit();
         }
     }
 
     /** Reads time via ctx.now() — replayable. */
-    public static final class DeterministicOp extends Base {
+    public static final class DeterministicProc extends Base {
         @Override
         public String name() {
             return "deterministic_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit(input + "@" + ctx.now());
         }
     }
 
     /** Reads ambient time — NOT replayable. */
-    public static final class AmbientTimeOp extends Base {
+    public static final class AmbientTimeProc extends Base {
         @Override
         public String name() {
             return "ambient_time_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit(input + "@" + System.nanoTime());
         }
     }
 
-    public static final class KeyedOp extends Base {
+    public static final class KeyedProc extends Base {
         @Override
         public String name() {
             return "keyed_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emitKeyed(input, "payload");
         }
     }

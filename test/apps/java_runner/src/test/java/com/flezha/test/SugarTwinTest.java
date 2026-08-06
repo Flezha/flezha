@@ -6,7 +6,7 @@ import com.flezha.generated.GeneratedUnboundedOperatives;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.WallClock;
-import com.flezha.sdk.testing.OperationTestHarness;
+import com.flezha.sdk.testing.ProcedureTestHarness;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,9 +15,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Asserts the {@code @Operation} / {@code @State} / {@code @UnboundedOperative}-generated
+ * Asserts the {@code @Procedure} / {@code @State} / {@code @UnboundedOperative}-generated
  * operatives register and process input identically to the hand-written equivalents, and
- * that the 2-operation reference operative matches the cross-SDK authoring contract
+ * that the 2-procedure reference operative matches the cross-SDK authoring contract
  * (see {@code docs/sdk_authoring_contract.md} §6).
  */
 class SugarTwinTest {
@@ -29,7 +29,7 @@ class SugarTwinTest {
 
     @Test
     void sugarDoNothingEmitsBytesLikeHandWritten() {
-        var sugar = OperationTestHarness.of(new SugarDoNothingOperation());
+        var sugar = ProcedureTestHarness.of(new SugarDoNothingProcedure());
         sugar.applyInputs(List.of("alpha", "beta"));
         var emits = sugar.recordedEmits();
         assertThat(emits).hasSize(2);
@@ -39,7 +39,7 @@ class SugarTwinTest {
 
     @Test
     void sugarStoreJournalsAndEmits() {
-        var h = OperationTestHarness.of(new SugarStoreOperation());
+        var h = ProcedureTestHarness.of(new SugarStoreProcedure());
         h.applyInputs(List.of("one", "two"));
         h.expectEmits(String.class, List.of("one", "two"));
         assertThat(h.state().textInputs).containsExactly("one", "two");
@@ -47,14 +47,14 @@ class SugarTwinTest {
     }
 
     @Test
-    void sugarEntrySegmentsAndJournals() {
-        var operation = new SugarEntryOperation();
-        assertThat(operation.segmentFor("apple")).containsExactly("a");
-        assertThat(operation.segmentFor("zebra")).containsExactly("d");
-        assertThat(operation.segmentForOverridden()).isTrue();
-        assertThat(operation.operationKeys()).containsExactly("a", "b", "c", "d");
+    void sugarEntryEntitiesAndJournals() {
+        var procedure = new SugarEntryProcedure();
+        assertThat(procedure.entitiesFor("apple")).containsExactly("a");
+        assertThat(procedure.entitiesFor("zebra")).containsExactly("d");
+        assertThat(procedure.entitiesForOverridden()).isTrue();
+        assertThat(procedure.entityKeys()).containsExactly("a", "b", "c", "d");
 
-        var h = OperationTestHarness.of(operation);
+        var h = ProcedureTestHarness.of(procedure);
         h.applyInputs(List.of("apple", "avocado"));
         h.expectEmits(String.class, List.of("apple", "avocado"));
         assertThat(h.state().seen).containsExactly("apple", "avocado");
@@ -65,16 +65,16 @@ class SugarTwinTest {
     void generatedUnboundedOperativesDefine() {
         GeneratedUnboundedOperatives.defineAll(com.flezha.sdk.Flezha.createRunner("sugar_twin_ns"));
         assertThat(com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry.factoryIds())
-                .contains("java_sugar_do_nothing", "java_sugar_store", "java_sugar_static_segment");
+                .contains("java_sugar_do_nothing", "java_sugar_store", "java_sugar_static_entity");
     }
 
     @Test
     void sugarDynamicGeneratesDynamicSurface() {
-        var s = new SugarDynamicOperation();
-        assertThat(s.operationKeyOverridden()).isTrue();
-        assertThat(s.operationKeys()).isEmpty();
-        assertThat(s.operationKey("btc:1")).contains("btc");
-        assertThat(s.operationKey("drop")).isEmpty();
+        var s = new SugarDynamicProcedure();
+        assertThat(s.entityKeyOverridden()).isTrue();
+        assertThat(s.entityKeys()).isEmpty();
+        assertThat(s.entityKey("btc:1")).contains("btc");
+        assertThat(s.entityKey("drop")).isEmpty();
     }
 
     /**
@@ -83,23 +83,23 @@ class SugarTwinTest {
      */
     @Test
     void referenceOperativeMatchesContract() {
-        var entry = new SugarEntryOperation();
+        var entry = new SugarEntryProcedure();
         assertThat(entry.inputType()).isEqualTo(String.class);
         assertThat(entry.outputType()).isEqualTo(String.class);
         assertThat(entry.changeType()).isEqualTo(SugarEntryStateChange.class);
         assertThat(entry.clockType()).isEqualTo(WallClock.class);
         assertThat(entry.configType()).isEqualTo(Void.class);
-        assertThat(entry.operationKeys()).containsExactly("a", "b", "c", "d");
+        assertThat(entry.entityKeys()).containsExactly("a", "b", "c", "d");
 
-        var down = new SugarDownstreamOperation();
+        var down = new SugarDownstreamProcedure();
         assertThat(down.inputType()).isEqualTo(String.class);
         assertThat(down.outputType()).isEqualTo(byte[].class);
         assertThat(down.changeType()).isEqualTo(NoChange.class);
-        assertThat(down.operationKeys()).isEmpty();
+        assertThat(down.entityKeys()).isEmpty();
     }
 
     /**
-     * Canonical keyed-collection reference operation (`expressive-state-journaling`):
+     * Canonical keyed-collection reference procedure (`expressive-state-journaling`):
      * the `@Journal(MAP_DEQUE)` + `Optional<Output>` sugar processes input
      * identically to the hand-written twin and survives `replayEquals`.
      */
@@ -114,10 +114,10 @@ class SugarTwinTest {
                 new WindowInput("b", 20.0),
                 new WindowInput("b", 30.0));
 
-        var sugar = OperationTestHarness.of(new RollingWindowOperation());
+        var sugar = ProcedureTestHarness.of(new RollingWindowProcedure());
         sugar.applyInputs(inputs);
 
-        var twin = OperationTestHarness.of(new RollingWindowTwin());
+        var twin = ProcedureTestHarness.of(new RollingWindowTwin());
         twin.applyInputs(inputs);
 
         // Same emits (warmup gate via Optional<Output>).
@@ -146,7 +146,7 @@ class SugarTwinTest {
                 new WindowInput("x", 4.0),
                 new WindowInput("y", 9.0));
 
-        var h = OperationTestHarness.of(new KeyedCollectionsOperation());
+        var h = ProcedureTestHarness.of(new KeyedCollectionsProcedure());
         h.applyInputs(inputs);
 
         assertThat(h.state().last.get("x")).isEqualTo(4.0);
@@ -159,30 +159,30 @@ class SugarTwinTest {
     }
 
     /**
-     * {@code @InitState} maps the static segment key to per-segment state
+     * {@code @InitState} maps the static entity key to per-entity state
      * the default {@code new State()} cannot derive (window length from the
-     * segment key). Each segment then behaves per its own window, and replay
+     * entity key). Each entity then behaves per its own window, and replay
      * stays deterministic against the captured initial snapshot.
      */
     @Test
-    void operationInitMapsSegmentKeyToState() {
-        var operation = new WindowedOperation();
-        assertThat(operation.initState(Optional.of("win_2"), Optional.empty()).window).isEqualTo(2);
-        assertThat(operation.initState(Optional.of("win_3"), Optional.empty()).window).isEqualTo(3);
+    void procedureInitMapsEntityKeyToState() {
+        var procedure = new WindowedProcedure();
+        assertThat(procedure.initState(Optional.of("win_2"), Optional.empty()).window).isEqualTo(2);
+        assertThat(procedure.initState(Optional.of("win_3"), Optional.empty()).window).isEqualTo(3);
         // Cold-start / harness default (key absent) falls through to the else arm.
-        assertThat(operation.initState(Optional.empty(), Optional.empty()).window).isEqualTo(3);
+        assertThat(procedure.initState(Optional.empty(), Optional.empty()).window).isEqualTo(3);
 
         List<WindowInput> inputs =
                 List.of(new WindowInput("a", 2.0), new WindowInput("a", 4.0), new WindowInput("a", 6.0));
 
-        var w2 = OperationTestHarness.of(operation)
-                .withInitialState(operation.initState(Optional.of("win_2"), Optional.empty()));
+        var w2 = ProcedureTestHarness.of(procedure)
+                .withInitialState(procedure.initState(Optional.of("win_2"), Optional.empty()));
         w2.applyInputs(inputs);
         w2.expectEmits(Double.class, List.of(3.0, 5.0)); // means of [2,4] then [4,6]
         assertThat(w2.replayEquals()).isEmpty();
 
-        var w3 = OperationTestHarness.of(operation)
-                .withInitialState(operation.initState(Optional.of("win_3"), Optional.empty()));
+        var w3 = ProcedureTestHarness.of(procedure)
+                .withInitialState(procedure.initState(Optional.of("win_3"), Optional.empty()));
         w3.applyInputs(inputs);
         w3.expectEmits(Double.class, List.of(4.0)); // single mean of [2,4,6]
         assertThat(w3.replayEquals()).isEmpty();

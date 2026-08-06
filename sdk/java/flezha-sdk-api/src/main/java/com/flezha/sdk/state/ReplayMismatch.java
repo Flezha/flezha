@@ -1,7 +1,7 @@
 package com.flezha.sdk.state;
 
 /**
- * Diagnostic carried by {@code OperationTestHarness.replayEquals} when a replay's
+ * Diagnostic carried by {@code ProcedureTestHarness.replayEquals} when a replay's
  * Kryo bytes diverge from the original run's bytes. Users print
  * {@link #toString()} in their test failure messages.
  */

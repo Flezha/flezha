@@ -115,9 +115,9 @@ defmodule Mix.Tasks.Bench.Extension do
          responses: [
            %{
              topic: "bench",
-             segment_responses: [
+             entity_responses: [
                %{
-                 segment: 0,
+                 entity: 0,
                  error_code: 0,
                  base_offset: 0,
                  log_append_time: -1,
@@ -134,7 +134,7 @@ defmodule Mix.Tasks.Bench.Extension do
       ProducerWorker.start_link(
         plugin_id: "bench",
         topic: "bench",
-        segment: 0,
+        entity: 0,
         worker_pid: fake_kayrock,
         send_fn: send_fn,
         queue_max: 10_000,
@@ -290,7 +290,7 @@ defmodule Mix.Tasks.Bench.Extension do
     ops_per_sec = div(iterations * 1_000_000, max(micros, 1))
 
     IO.puts(
-      :io_lib.format("~-48s  ~10w ns/call    ~12w ops/sec", [
+      :io_lib.format("~-48s  ~10w ns/call    ~12w procs/sec", [
         label,
         per_call_ns,
         ops_per_sec

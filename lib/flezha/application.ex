@@ -173,7 +173,7 @@ defmodule Flezha.Application do
     end
   end
 
-  # `consume-recovery-mode-and-self-heal` §4.6-4.7: opt-in `/healthz`
+  # `convergence-self-healing` §4.6-4.7: opt-in `/healthz`
   # listener. Off by default — only flezha_market opts in via its
   # ConfigMap so bare-metal users keep their own probe shape.
   defp healthz_children do

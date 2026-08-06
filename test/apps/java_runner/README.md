@@ -8,17 +8,17 @@ The app declares its UnboundedOperative classes via
 `Flezha.createRunner(ns).defineUnbounded(...)` — the integration-matrix core
 being:
 
-- `do_nothing` — `DoNothingUnboundedOperative` + `DoNothingOperation`
-- `store_input` — `StoreInputUnboundedOperative` + `StoreInputOperation`
-- `compare_filter` — `CompareFilterUnboundedOperative` + `CompareFilterOperation`
+- `do_nothing` — `DoNothingUnboundedOperative` + `DoNothingProcedure`
+- `store_input` — `StoreInputUnboundedOperative` + `StoreInputProcedure`
+- `compare_filter` — `CompareFilterUnboundedOperative` + `CompareFilterProcedure`
 
 The factory id list matches `test/apps/rust_runner/`'s `do_nothing` /
 `store_input` / `compare_filter` set; the `operative-message-handlers`
 factories are absent from both apps until that capability ships.
 
-It also carries authoring-sugar twins (`@Operation` / `@State` / `@UnboundedOperative`, generated
-by `flezha-sdk-processor`): `SugarDoNothing`, `SugarStore`, and the 2-operation
-`SugarEntry` → `SugarDownstream` reference operative (`SugarStaticSegmentUnboundedOperative`).
+It also carries authoring-sugar twins (`@Procedure` / `@State` / `@UnboundedOperative`, generated
+by `flezha-sdk-processor`): `SugarDoNothing`, `SugarStore`, and the 2-procedure
+`SugarEntry` → `SugarDownstream` reference operative (`SugarStaticEntityUnboundedOperative`).
 `SugarTwinTest` asserts they register and process input identically to the
 hand-written equivalents. See `docs/sdk_authoring_contract.md`.
 

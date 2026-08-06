@@ -1,6 +1,6 @@
 defmodule Flezha.Healthz.ServerTest do
   @moduledoc """
-  HTTP `/healthz` contract per `consume-recovery-mode-and-self-heal`
+  HTTP `/healthz` contract per `convergence-self-healing`
   §4.6-4.9. Drives the listener over a real TCP socket — the
   hand-rolled `:gen_tcp` request parser is the artefact under test.
 
@@ -311,7 +311,7 @@ defmodule Flezha.Healthz.ServerTest do
     Snapshot.publish(%{
       last_tick_at: System.monotonic_time(:millisecond),
       stalled_operatives: [],
-      stuck_operatives: %{"btc_kraken" => %{detail: :wal_frozen, segment: "op/k1"}},
+      stuck_operatives: %{"btc_kraken" => %{detail: :wal_frozen, entity: "proc/k1"}},
       intent_mismatch: [],
       intended_operatives: 2,
       bound_operatives: 2,
@@ -330,7 +330,7 @@ defmodule Flezha.Healthz.ServerTest do
       assert decoded["reason"] == "output_stalled"
       assert decoded["producing_operatives"] == 1
       assert decoded["stuck_operatives"]["btc_kraken"]["detail"] == "wal_frozen"
-      assert decoded["stuck_operatives"]["btc_kraken"]["segment"] == "op/k1"
+      assert decoded["stuck_operatives"]["btc_kraken"]["entity"] == "proc/k1"
     end
   end
 

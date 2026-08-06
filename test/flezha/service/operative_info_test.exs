@@ -3,7 +3,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
   §6.1: `flz operative info` surfaces the operative's `kind`, lifecycle `phase`
   (`running` for a live operative in Phase 1), and `uptime_ms`, in both the text
   and JSON renderings. The richer bounded phases (compensating / completing /
-  finished) + elapsed-vs-max-duration + per-operation progress arrive with the
+  finished) + elapsed-vs-max-duration + per-procedure progress arrive with the
   saga + retention + SDK-reporting work in later phases.
   """
 
@@ -53,12 +53,12 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     stub_one(bounded_state(120))
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
-    %{"operatives" => [op]} = Jason.decode!(out)
+    %{"operatives" => [proc]} = Jason.decode!(out)
 
-    assert op["id"] == "op-1"
-    assert op["kind"] == "bounded"
-    assert op["phase"] == "running"
-    assert is_integer(op["uptime_ms"]) and op["uptime_ms"] >= 120
+    assert proc["id"] == "op-1"
+    assert proc["kind"] == "bounded"
+    assert proc["phase"] == "running"
+    assert is_integer(proc["uptime_ms"]) and proc["uptime_ms"] >= 120
   end
 
   test "text output shows Kind / Phase / Uptime lines" do
@@ -75,8 +75,8 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     stub_one(%{bounded_state(0) | builder: %{kind: :unbounded}})
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
-    %{"operatives" => [op]} = Jason.decode!(out)
-    assert op["kind"] == "unbounded"
+    %{"operatives" => [proc]} = Jason.decode!(out)
+    assert proc["kind"] == "unbounded"
   end
 
   test "a finished bounded operative is surfaced from its completion record" do
@@ -93,13 +93,13 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
       })
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
-    %{"operatives" => ops} = Jason.decode!(out)
-    op = Enum.find(ops, &(&1["id"] == "done-1"))
+    %{"operatives" => procs} = Jason.decode!(out)
+    proc = Enum.find(procs, &(&1["id"] == "done-1"))
 
-    assert op["kind"] == "bounded"
-    assert op["phase"] == "finished"
-    assert op["status"] == "ok"
-    assert op["result"] == Base.encode64("RES")
+    assert proc["kind"] == "bounded"
+    assert proc["phase"] == "finished"
+    assert proc["status"] == "ok"
+    assert proc["result"] == Base.encode64("RES")
   end
 
   test "a finished operative outside the retention window is not surfaced" do
@@ -117,7 +117,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
       })
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
-    %{"operatives" => ops} = Jason.decode!(out)
-    assert Enum.find(ops, &(&1["id"] == "done-old")) == nil
+    %{"operatives" => procs} = Jason.decode!(out)
+    assert Enum.find(procs, &(&1["id"] == "done-old")) == nil
   end
 end

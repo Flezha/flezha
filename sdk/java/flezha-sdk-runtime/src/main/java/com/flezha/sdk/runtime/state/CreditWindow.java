@@ -8,11 +8,11 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Sender-side credit window for the runner → controller state stream.
- * Mirrors {@code sdk/rust/src/segment/credit.rs} with identical semantics.
+ * Mirrors {@code sdk/rust/src/entity/credit.rs} with identical semantics.
  *
  * <p>The controller offers a byte window via the {@code CreditWindowInit}
  * control command; {@link #arm} adopts it and the ack rides back as the
- * command's {@code CommandResponse}. Every {@code segment_state_change}
+ * command's {@code CommandResponse}. Every {@code entity_state_change}
  * frame {@link #acquire}s its wire size before the sink write, and
  * {@code CreditGrant} frames {@link #grant} bytes back as the controller
  * fsyncs. An exhausted window parks the sending thread — park, never drop.

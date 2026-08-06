@@ -5,7 +5,7 @@ question and receive a typed reply without polluting the IO streams. The
 Elixir controller's Overwatch routes a fixed envelope to a per-operative handler
 plugin, which typically bounces the request into the SDK-side operative
 factory via a new control-channel command pair
-(`OperationMessage` / `OperationMessageResponse`).
+(`OperativeMessage` / `OperativeMessageResponse`).
 
 This mechanism is generic — future operative-to-operative RPC patterns
 land on it — and its first consumer is the first-party
@@ -124,9 +124,9 @@ structured error.
 
 `Flezha.Plugin.Provider.MessageForward` is the canonical handler that
 bridges Elixir-side requests to the SDK-side factory. It wraps
-`Flezha.Runner.ControlUnit.send_operation_message/3`, which
-transmits an `OperationMessage` command on the control channel and awaits
-the `OperationMessageResponse`. An empty `error` field maps to
+`Flezha.Runner.ControlUnit.send_operative_message/3`, which
+transmits an `OperativeMessage` command on the control channel and awaits
+the `OperativeMessageResponse`. An empty `error` field maps to
 `{:ok, payload_bytes}`; a non-empty `error` maps to `{:error, error_string}`.
 
 ### Not to be confused with operative-to-operative messaging
@@ -183,7 +183,7 @@ public final class MyOperative
 ```
 
 Factories that **do not** override the method throw/return the default
-"unsupported" error. The SDK converts it to an `OperationMessageResponse`
+"unsupported" error. The SDK converts it to an `OperativeMessageResponse`
 with a non-empty `error`, so the calling provider sees
 `{:error, "operative does not support handle_message"}` (or the
 equivalent SDK string) and the operative stays healthy. Existing factories
@@ -195,21 +195,21 @@ Two new protobuf messages (see
 [sdk_protocol_spec.md](sdk_protocol_spec.md)):
 
 ```proto
-message OperationMessage {
+message OperativeMessage {
   string operative_id = 1;
   bytes payload = 2;
 }
 
-message OperationMessageResponse {
+message OperativeMessageResponse {
   bytes payload = 1;
   string error = 2;  // empty on success
 }
 ```
 
-`OperationMessage` is dispatched on the existing control stream via the
-same primitives as `SegmentState` — no new stream class, no transport
+`OperativeMessage` is dispatched on the existing control stream via the
+same primitives as `EntityState` — no new stream class, no transport
 plumbing. The SDK decodes the request, invokes the factory's
-`handle_message`, wraps the result in `OperationMessageResponse`, and
+`handle_message`, wraps the result in `OperativeMessageResponse`, and
 writes it as the outer `CommandResponse.raw_data`.
 
 ## Migration
@@ -243,7 +243,7 @@ because `ControlUnit` lives on the runner, not the operative.
   budget. Size timeouts to account for distribution round-trip; for
   `FromOperative`, leave headroom under the outer
   `%InitStatePlugin{}.timeout_ms`.
-- **Control-channel contention.** Large `OperationMessage.payload`
+- **Control-channel contention.** Large `OperativeMessage.payload`
   values share the control stream with other commands. Keep payloads
   small; if request/reply traffic grows, a dedicated stream class is a
   future enhancement.

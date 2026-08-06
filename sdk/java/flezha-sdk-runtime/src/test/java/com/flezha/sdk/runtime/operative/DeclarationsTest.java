@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.proto.AddOperativeResponse;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.bounded.BoundedSpec;
@@ -38,7 +38,7 @@ class DeclarationsTest {
     }
 
     @Test
-    @DisplayName("a bounded chain declares its compensable ops and its leaf")
+    @DisplayName("a bounded chain declares its compensable procs and its leaf")
     void boundedChainDeclaresCompensableOpsAndLeaf() throws Exception {
         BoundedOperativeClassRegistry.registerClass(MixedSagaOperative.class);
         BoundedSpec spec = BoundedOperativeClassRegistry.getSpec("declarations-mixed-saga");
@@ -47,9 +47,9 @@ class DeclarationsTest {
         AddOperativeResponse response = decode(Declarations.forBounded(spec));
 
         // Reserve (0) and Ship (2) declare compensate; Charge (1) does not.
-        assertThat(response.getMetadataMap()).containsEntry("compensable_ops", "0,2");
-        // A linear chain has exactly one leaf: its last op.
-        assertThat(response.getMetadataMap()).containsEntry("leaf_ops", "2");
+        assertThat(response.getMetadataMap()).containsEntry("compensable_procs", "0,2");
+        // A linear chain has exactly one leaf: its last proc.
+        assertThat(response.getMetadataMap()).containsEntry("leaf_procs", "2");
     }
 
     @Test
@@ -64,9 +64,9 @@ class DeclarationsTest {
         // declared nothing at all (run-sugar / a non-parity SDK), an EMPTY value
         // means a chain in which nothing is compensable. A rewind treats them
         // differently, so the key must be present.
-        assertThat(response.getMetadataMap()).containsKey("compensable_ops");
-        assertThat(response.getMetadataMap()).containsEntry("compensable_ops", "");
-        assertThat(response.getMetadataMap()).containsEntry("leaf_ops", "0");
+        assertThat(response.getMetadataMap()).containsKey("compensable_procs");
+        assertThat(response.getMetadataMap()).containsEntry("compensable_procs", "");
+        assertThat(response.getMetadataMap()).containsEntry("leaf_procs", "0");
     }
 
     @Test
@@ -91,7 +91,7 @@ class DeclarationsTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sReserve = c.input(String.class, "in").into(Reserve.class);
             var sCharge = sReserve.named("c1").codec().into(Charge.class);
             var sShip = sCharge.named("c2").codec().into(Ship.class);
@@ -106,7 +106,7 @@ class DeclarationsTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sCharge = c.input(String.class, "in").into(Charge.class);
             sCharge.named("out").output("sink");
         }
@@ -124,8 +124,8 @@ class DeclarationsTest {
 
     public record Unit() {}
 
-    /** Minimal String→String op; subclasses vary only in name and compensate. */
-    abstract static class StrOp implements Operation<String, Unit, String, NoChange, WallClock, Void> {
+    /** Minimal String→String proc; subclasses vary only in name and compensate. */
+    abstract static class StrProc implements Procedure<String, Unit, String, NoChange, WallClock, Void> {
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -152,17 +152,17 @@ class DeclarationsTest {
         }
 
         @Override
-        public Unit initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Unit initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Unit();
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit(input);
         }
     }
 
-    public static final class Reserve extends StrOp {
+    public static final class Reserve extends StrProc {
         @Override
         public String name() {
             return "declarations_reserve";
@@ -174,18 +174,18 @@ class DeclarationsTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {}
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {}
     }
 
     /** Deliberately declares NO compensate — this is what makes the map "0,2". */
-    public static final class Charge extends StrOp {
+    public static final class Charge extends StrProc {
         @Override
         public String name() {
             return "declarations_charge";
         }
     }
 
-    public static final class Ship extends StrOp {
+    public static final class Ship extends StrProc {
         @Override
         public String name() {
             return "declarations_ship";
@@ -197,6 +197,6 @@ class DeclarationsTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {}
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {}
     }
 }

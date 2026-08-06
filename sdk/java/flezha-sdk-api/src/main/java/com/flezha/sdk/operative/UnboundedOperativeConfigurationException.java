@@ -6,7 +6,7 @@ import java.util.Objects;
 /**
  * Thrown by {@link com.flezha.sdk.FlezhaRunner#defineUnbounded(Class)} when an UnboundedOperative's
  * declared topology violates a wiring constraint (type-equality between a
- * stream's payload and its consumer Operations' input, node-identity and
+ * stream's payload and its consumer Procedures' input, node-identity and
  * channel-name uniqueness, graph shape — one entry, reachable, acyclic —
  * static-mode default-impl detection).
  *
@@ -42,26 +42,26 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
     }
 
     /**
-     * Raised when an Operation declares {@code EventTimeFrom} but does not
+     * Raised when a Procedure declares {@code EventTimeFrom} but does not
      * override {@code eventTime(Input)}. Rust enforces the extractor with a
      * compile-time {@code TimeExtractor<Input>} bound; Java's erasure precludes
      * that, so the same defect is caught at registration — before any input is
      * served and before anything durable exists.
      */
-    public static UnboundedOperativeConfigurationException eventTimeExtractorMissing(String operationName) {
-        return new UnboundedOperativeConfigurationException("operation `" + operationName
+    public static UnboundedOperativeConfigurationException eventTimeExtractorMissing(String procedureName) {
+        return new UnboundedOperativeConfigurationException("procedure `" + procedureName
                 + "` declares the EventTimeFrom clock but does not override `eventTime(Input)`; "
                 + "an event-time clock has no value to serve without an extractor");
     }
 
     /**
-     * Raised when an Operation declares {@code LogicalClock} with
+     * Raised when a Procedure declares {@code LogicalClock} with
      * {@code Change = NoChange}. The logical clock serves the durable change
-     * seq, and a stateless Operation has none. Carries the Rust error name
+     * seq, and a stateless Procedure has none. Carries the Rust error name
      * {@code UnservableClock}.
      */
-    public static UnboundedOperativeConfigurationException unservableClock(String operationName) {
-        return new UnboundedOperativeConfigurationException("UnservableClock: operation `" + operationName
+    public static UnboundedOperativeConfigurationException unservableClock(String procedureName) {
+        return new UnboundedOperativeConfigurationException("UnservableClock: procedure `" + procedureName
                 + "` declares LogicalClock with Change = NoChange; there is no durable change seq to serve");
     }
 
@@ -86,7 +86,7 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
      */
     public static UnboundedOperativeConfigurationException correctionWindowRequires(String missing) {
         return new UnboundedOperativeConfigurationException("`correctionWindow(...)` requires " + missing
-                + "; a correction rewinds the Segment to a baseline before the late input's event time "
+                + "; a correction rewinds the Entity to a baseline before the late input's event time "
                 + "and replays the slice, which is impossible without it");
     }
 
@@ -104,12 +104,12 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
     /**
      * Raised when a channel is declared {@code .keyed()} without a plugin wire.
      * A key rides as a {@code flz.key} stamp on a plugin frame, so a pure
-     * inter-operation channel has nowhere to carry it.
+     * inter-procedure channel has nowhere to carry it.
      */
     public static UnboundedOperativeConfigurationException keyedChannelWithoutPluginWire(String channel) {
         return new UnboundedOperativeConfigurationException("channel `" + channel
                 + "` is declared `.keyed()` but has no plugin wire; a key rides on a plugin frame's "
-                + "`flz.key` stamp, so it has nowhere to go on a pure inter-operation channel");
+                + "`flz.key` stamp, so it has nowhere to go on a pure inter-procedure channel");
     }
 
     /**
@@ -125,13 +125,13 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
 
     /**
      * Raised when a node identity string (an explicit node name or an
-     * operation's {@code name()}) is claimed by two distinct nodes. Carries
+     * procedure's {@code name()}) is claimed by two distinct nodes. Carries
      * the Rust error name {@code NodeIdentityCollision}.
      */
     public static UnboundedOperativeConfigurationException nodeIdentityCollision(String name) {
         return new UnboundedOperativeConfigurationException("NodeIdentityCollision: node identity `" + name
                 + "` is declared by two distinct nodes; a node name must be unique per operative"
-                + " and distinct from every operation name()");
+                + " and distinct from every procedure name()");
     }
 
     /** Raised when {@code branch(...)} is called with fewer than two arms. */
@@ -144,10 +144,10 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
      * Raised when a {@code merge(...)} closes on fewer than two sources.
      * Carries the Rust error name {@code MergeTooFewSources}.
      */
-    public static UnboundedOperativeConfigurationException mergeTooFewSources(String operation, int sources) {
-        return new UnboundedOperativeConfigurationException("MergeTooFewSources: merge into operation `" + operation
+    public static UnboundedOperativeConfigurationException mergeTooFewSources(String procedure, int sources) {
+        return new UnboundedOperativeConfigurationException("MergeTooFewSources: merge into procedure `" + procedure
                 + "` declares " + sources + " source channel(s); a merge consumes two or more — wire a single"
-                + " source with `.into(Op.class)` instead");
+                + " source with `.into(Proc.class)` instead");
     }
 
     /**
@@ -161,13 +161,13 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
     }
 
     /**
-     * Raised when a merge source would re-wire a channel→operation edge that
+     * Raised when a merge source would re-wire a channel→procedure edge that
      * {@code into(...)} or another merge already declared. Carries the Rust
      * error name {@code MergeSourceAlreadyWired}.
      */
-    public static UnboundedOperativeConfigurationException mergeSourceAlreadyWired(String channel, String operation) {
+    public static UnboundedOperativeConfigurationException mergeSourceAlreadyWired(String channel, String procedure) {
         return new UnboundedOperativeConfigurationException("MergeSourceAlreadyWired: channel `" + channel
-                + "` already feeds operation `" + operation + "`; an edge carries exactly one merge mapping or"
+                + "` already feeds procedure `" + procedure + "`; an edge carries exactly one merge mapping or"
                 + " none, so a merge source may not re-wire an edge declared by `into` or by another merge");
     }
 
@@ -175,37 +175,37 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
      * Raised when a node's output (transitively) reaches its own input.
      * Carries the Rust error name {@code Cycle}.
      */
-    public static UnboundedOperativeConfigurationException cycle(String operation) {
-        return new UnboundedOperativeConfigurationException("Cycle: operation `" + operation
+    public static UnboundedOperativeConfigurationException cycle(String procedure) {
+        return new UnboundedOperativeConfigurationException("Cycle: procedure `" + procedure
                 + "` is on a cycle; an operative topology is a DAG — a node's output may never"
                 + " reach its own input");
     }
 
     /**
-     * Raised when an operation is not reachable from any entry channel.
-     * Carries the Rust error name {@code UnreachableOperation}.
+     * Raised when a procedure is not reachable from any entry channel.
+     * Carries the Rust error name {@code UnreachableProcedure}.
      */
-    public static UnboundedOperativeConfigurationException unreachableOperation(String operation) {
+    public static UnboundedOperativeConfigurationException unreachableProcedure(String procedure) {
         return new UnboundedOperativeConfigurationException(
-                "UnreachableOperation: operation `" + operation + "` is not reachable from the entry channel");
+                "UnreachableProcedure: procedure `" + procedure + "` is not reachable from the entry channel");
     }
 
     /**
-     * Factory raised when a Operation's resolved {@code mailboxCapacity()} (after
+     * Factory raised when a Procedure's resolved {@code mailboxCapacity()} (after
      * applying the {@code FLEZHA_MAILBOX_CAPACITY} env fallback) is zero.
      * Capacity must be in {@code 1..=1_048_576}.
      */
-    public static UnboundedOperativeConfigurationException mailboxCapacityZero(String operation) {
+    public static UnboundedOperativeConfigurationException mailboxCapacityZero(String procedure) {
         return new UnboundedOperativeConfigurationException(
-                "operation `" + operation + "` declared mailboxCapacity = 0; capacity must be in 1..=1_048_576");
+                "procedure `" + procedure + "` declared mailboxCapacity = 0; capacity must be in 1..=1_048_576");
     }
 
     /**
-     * Factory raised when a Operation's resolved {@code mailboxCapacity()} is
+     * Factory raised when a Procedure's resolved {@code mailboxCapacity()} is
      * above {@code 1_048_576}. Capacity must be in {@code 1..=1_048_576}.
      */
-    public static UnboundedOperativeConfigurationException mailboxCapacityTooLarge(String operation, long value) {
-        return new UnboundedOperativeConfigurationException("operation `" + operation + "` declared mailboxCapacity = "
+    public static UnboundedOperativeConfigurationException mailboxCapacityTooLarge(String procedure, long value) {
+        return new UnboundedOperativeConfigurationException("procedure `" + procedure + "` declared mailboxCapacity = "
                 + value + "; capacity must be in 1..=1_048_576");
     }
 

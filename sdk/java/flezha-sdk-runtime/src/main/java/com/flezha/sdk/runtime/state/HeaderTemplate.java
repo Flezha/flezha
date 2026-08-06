@@ -11,13 +11,13 @@ import java.util.zip.CRC32;
 import javax.annotation.Nonnull;
 
 /**
- * 16-byte header stamped on every {@code segment_state_change} and
- * {@code segment_state_snapshot} frame. Layout (big-endian):
+ * 16-byte header stamped on every {@code entity_state_change} and
+ * {@code entity_state_snapshot} frame. Layout (big-endian):
  *
  * <pre>
  *   bytes 0..1   sdk_lang        (1 byte; Java = 2)
  *   bytes 1..5   sdk_version     (u32; parsed from Manifest Implementation-Version)
- *   bytes 5..9   schema_version  (u32; from Operation.schemaVersion())
+ *   bytes 5..9   schema_version  (u32; from Procedure.schemaVersion())
  *   bytes 9..10  format_id       (1 byte; Kryo = 4)
  *   bytes 10..12 reserved        (2 bytes; zero-filled)
  *   bytes 12..16 crc32           (u32; over change_bytes)
@@ -34,7 +34,7 @@ public final class HeaderTemplate {
     public static final byte FORMAT_ID_KRYO = 4;
 
     /**
-     * An effectively-once {@code segment_effect_record}: the body is postcard
+     * An effectively-once {@code entity_effect_record}: the body is postcard
      * (the controller decodes it), even though its inner change bytes stay
      * Kryo. The format id discriminates the FRAME kind, not the change codec.
      */

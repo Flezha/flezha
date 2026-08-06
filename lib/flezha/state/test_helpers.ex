@@ -47,14 +47,14 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Reset all per-Segment state: terminate every live `WalWriter` and wipe
+  Reset all per-Entity state: terminate every live `WalWriter` and wipe
   the on-disk `state_root`. Integration tests reuse operative ids across cases;
   now that restore actually rehydrates a operative from its WAL on (re)bind,
   leftover state from a prior test would leak into the next one. Call from a
-  `setup` block so each test starts from empty segments.
+  `setup` block so each test starts from empty entities.
   """
-  @spec reset_all_segments() :: :ok
-  def reset_all_segments() do
+  @spec reset_all_entities() :: :ok
+  def reset_all_entities() do
     sup = Flezha.State.Supervisor
 
     for {_, pid, _, _} <- DynamicSupervisor.which_children(sup), is_pid(pid) do
@@ -95,10 +95,10 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
-  Construct a deterministic `segment_id` tuple usable as a fixture.
+  Construct a deterministic `entity_id` tuple usable as a fixture.
   """
-  @spec sample_segment_id(binary()) :: Registry.segment_id()
-  def sample_segment_id(suffix \\ "p1") do
-    {"TestOperative", "TestOperation", suffix}
+  @spec sample_entity_id(binary()) :: Registry.entity_id()
+  def sample_entity_id(suffix \\ "p1") do
+    {"TestOperative", "TestProcedure", suffix}
   end
 end

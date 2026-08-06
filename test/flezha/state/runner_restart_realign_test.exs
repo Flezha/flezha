@@ -1,6 +1,6 @@
 defmodule Flezha.State.RunnerRestartRealignTest do
   @moduledoc """
-  §16 — Per-Segment WAL realignment on runner restart.
+  §16 — Per-Entity WAL realignment on runner restart.
 
   Reproduces the production durability defect: after a runner pod restarts
   and rebuilds its state from Kafka, it reconnects under a NEW runner id and
@@ -19,7 +19,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   freezing. A same-runner low seq stays a legitimate dedup.
 
   Owner fencing (`wal-owner-fencing`): a realign is honoured only from the
-  Segment's current owner binding. A session superseded by a newest-wins
+  Entity's current owner binding. A session superseded by a newest-wins
   takeover is fenced at its StreamChannel (unbind-old before bind-new) and,
   for late in-flight residue, refused at the WalWriter — never realigned on.
   """
@@ -44,9 +44,9 @@ defmodule Flezha.State.RunnerRestartRealignTest do
       end
     end
 
-    segment_id = TestHelpers.sample_segment_id("realign_" <> uniq())
-    {:ok, _} = Supervisor.find_or_start(segment_id)
-    {:ok, writer} = Supervisor.lookup(segment_id)
+    entity_id = TestHelpers.sample_entity_id("realign_" <> uniq())
+    {:ok, _} = Supervisor.find_or_start(entity_id)
+    {:ok, writer} = Supervisor.lookup(entity_id)
     header = TestHelpers.stub_header()
 
     parent = self()
@@ -62,7 +62,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
       File.rm_rf!(base)
     end)
 
-    %{segment_id: segment_id, writer: writer, header: header, parent: parent}
+    %{entity_id: entity_id, writer: writer, header: header, parent: parent}
   end
 
   test "a runner restart realigns the frozen WAL to the new runner's seq base", ctx do
@@ -73,8 +73,8 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
     # A pre-restart snapshot exists; realignment must discard it so a later
     # RestoreInitState ships only the new epoch (not stale snapshot + new WAL).
-    {:ok, _} = Snapshot.write_snapshot(ctx.segment_id, 3, ctx.header, "old-snap")
-    assert Snapshot.latest_snapshot(ctx.segment_id) != nil
+    {:ok, _} = Snapshot.write_snapshot(ctx.entity_id, 3, ctx.header, "old-snap")
+    assert Snapshot.latest_snapshot(ctx.entity_id) != nil
 
     # The runner pod restarts: a NEW runner id reconnects and, after its
     # Kafka rebuild, resumes from a fresh low seq base (1, 2, 3...).
@@ -94,7 +94,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     assert WalWriter.last_persisted_seq(ctx.writer) == 5
 
     # The stale pre-restart snapshot was discarded by the realignment.
-    assert Snapshot.latest_snapshot(ctx.segment_id) == nil
+    assert Snapshot.latest_snapshot(ctx.entity_id) == nil
 
     # The regression was healed by realignment — not mistaken for a forward gap.
     refute_received {:seq_gap, _, _}
@@ -110,7 +110,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
     refute_received {:wal_realign, _, _}
     assert WalWriter.last_persisted_seq(ctx.writer) == 4
-    assert Metrics.get(Metrics.for_segment(ctx.segment_id), :dedup_drops_total) >= 1
+    assert Metrics.get(Metrics.for_entity(ctx.entity_id), :dedup_drops_total) >= 1
   end
 
   test "a superseded session's divergent frames refuse at the writer instead of realigning",
@@ -151,7 +151,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
 
     assert_receive {:stale_refused, %{count: 1}, %{session: ^stale_id}}, 1_000
     refute_receive {:stale_refused, _, _}, 200
-    assert Metrics.get(Metrics.for_segment(ctx.segment_id), :stale_writer_refused_total) == 4
+    assert Metrics.get(Metrics.for_entity(ctx.entity_id), :stale_writer_refused_total) == 4
   end
 
   test "a fenced channel refuses every durable-write forward at the binding", ctx do
@@ -175,20 +175,20 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     assert_receive {:stale_refused, %{count: 1}, %{session: ^old_id}}, 1_000
 
     # Snapshot and delete forwards are refused too: no snap file appears and
-    # the Segment's writer/WAL survive.
+    # the Entity's writer/WAL survive.
     send(
       old,
-      {:flz_data, 0, "segment_state_snapshot", frame(ctx.segment_id, 6, ctx.header, "snap"), %{}}
+      {:flz_data, 0, "entity_state_snapshot", frame(ctx.entity_id, 6, ctx.header, "snap"), %{}}
     )
 
-    send(old, {:flz_data, 0, "delete_segment_state", encode_segment_id(ctx.segment_id), %{}})
+    send(old, {:flz_data, 0, "delete_entity_state", encode_entity_id(ctx.entity_id), %{}})
     _ = GenServer.call(old, :stream_ref_status)
 
-    assert Snapshot.latest_snapshot(ctx.segment_id) == nil
+    assert Snapshot.latest_snapshot(ctx.entity_id) == nil
     assert Process.alive?(ctx.writer)
 
     # An undecodable frame is still counted, with no episode event.
-    send(old, {:flz_data, 0, "segment_state_change", <<1, 2, 3>>, %{}})
+    send(old, {:flz_data, 0, "entity_state_change", <<1, 2, 3>>, %{}})
     _ = GenServer.call(old, :stream_ref_status)
     assert channel_refused_count(old_id) == 5
     refute_receive {:stale_refused, _, _}, 100
@@ -259,13 +259,13 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     end)
   end
 
-  defp encode_segment_id({rc, sh, pk}), do: Wire.encode_segment_id(rc, sh, pk)
+  defp encode_entity_id({rc, sh, pk}), do: Wire.encode_entity_id(rc, sh, pk)
 
   defp feed(channel, ctx, seqs) do
     Enum.each(seqs, fn seq ->
       send(
         channel,
-        {:flz_data, 0, "segment_state_change", frame(ctx.segment_id, seq, ctx.header, "s#{seq}"),
+        {:flz_data, 0, "entity_state_change", frame(ctx.entity_id, seq, ctx.header, "s#{seq}"),
          %{}}
       )
     end)
@@ -284,7 +284,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
   end
 
   defp frame({rc, sh, pk}, seq, header, body) do
-    pid_bytes = Wire.encode_segment_id(rc, sh, pk)
+    pid_bytes = Wire.encode_entity_id(rc, sh, pk)
 
     <<byte_size(pid_bytes)::16-big, pid_bytes::binary, seq::64-big, header::binary,
       byte_size(body)::32-big, body::binary, :erlang.crc32(body)::32-big>>

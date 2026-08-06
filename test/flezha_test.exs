@@ -61,9 +61,9 @@ defmodule FlezhaTest do
 
   setup _context do
     # Restore now rehydrates a operative from its WAL on (re)bind, so leftover
-    # per-Segment state from an earlier test that reused the same operative_id
-    # would leak in. Start each test from empty segments.
-    Flezha.State.TestHelpers.reset_all_segments()
+    # per-Entity state from an earlier test that reused the same operative_id
+    # would leak in. Start each test from empty entities.
+    Flezha.State.TestHelpers.reset_all_entities()
 
     on_exit(fn ->
       OperativeManager.stop_all_operatives(@default_namespace)
@@ -205,7 +205,7 @@ defmodule FlezhaTest do
       id: operative_id,
       factory_id: @test_compare_filter_factory,
       init_values: %{
-        "compare_filter_operation" => %{"comparable" => "hello world", "inverted" => false}
+        "compare_filter_procedure" => %{"comparable" => "hello world", "inverted" => false}
       }
     }
 
@@ -255,7 +255,7 @@ defmodule FlezhaTest do
     end
   end
 
-  @tag :get_segment_state
+  @tag :get_entity_state
   test "get operative state" do
     operative_id = "get_state_test"
 
@@ -269,12 +269,12 @@ defmodule FlezhaTest do
     OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "state_2", %{})
 
     {:ok, json_state} =
-      OperativeManager.get_segment_state(@default_namespace, operative_id)
+      OperativeManager.get_entity_state(@default_namespace, operative_id)
 
-    segment_state = Flezha.Service.Payloader.json_to_map(json_state)
+    entity_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert segment_state === %{
-             "store_input_operation" => %{
+    assert entity_state === %{
+             "store_input_procedure" => %{
                "binary_inputs" => [],
                "text_inputs" => ["state_1", "state_2"]
              }
@@ -302,7 +302,7 @@ defmodule FlezhaTest do
     OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "test_state_2", %{})
 
     test_state = %{
-      "store_input_operation" => %{
+      "store_input_procedure" => %{
         "binary_inputs" => [],
         "text_inputs" => ["test_state_1", "test_state_2"]
       }
@@ -318,14 +318,14 @@ defmodule FlezhaTest do
     })
 
     {:ok, json_state} =
-      OperativeManager.get_segment_state(@default_namespace, operative_id)
+      OperativeManager.get_entity_state(@default_namespace, operative_id)
 
     {:ok, old_overwatch_state} =
       OperativeManager.get_overwatch_state(@default_namespace, operative_id)
 
-    segment_state = Flezha.Service.Payloader.json_to_map(json_state)
+    entity_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert segment_state === test_state
+    assert entity_state === test_state
 
     test_pid = self()
 
@@ -359,14 +359,14 @@ defmodule FlezhaTest do
     )
 
     {:ok, json_state} =
-      OperativeManager.get_segment_state(@default_namespace, operative_id)
+      OperativeManager.get_entity_state(@default_namespace, operative_id)
 
     {:ok, new_overwatch_state} =
       OperativeManager.get_overwatch_state(@default_namespace, operative_id)
 
-    segment_state = Flezha.Service.Payloader.json_to_map(json_state)
+    entity_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert segment_state === test_state
+    assert entity_state === test_state
 
     old_plugins = Map.keys(old_overwatch_state.extensions.plugins) |> Enum.sort()
     new_plugins = Map.keys(new_overwatch_state.extensions.plugins) |> Enum.sort()
@@ -392,9 +392,9 @@ defmodule FlezhaTest do
     assert ow_state.arrived_via_hotswap?,
            "expected live HotSwap handover, not a WAL cold restore"
 
-    {:ok, json_state} = OperativeManager.get_segment_state(@default_namespace, operative_id)
+    {:ok, json_state} = OperativeManager.get_entity_state(@default_namespace, operative_id)
     state = Flezha.Service.Payloader.json_to_map(json_state)
-    assert "before_drain" in get_in(state, ["store_input_operation", "text_inputs"])
+    assert "before_drain" in get_in(state, ["store_input_procedure", "text_inputs"])
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
@@ -419,7 +419,7 @@ defmodule FlezhaTest do
 
     GenServer.cast(
       ow_pid,
-      {:correction_request, {operative_id, "store_input_operation", "poke"}, 1}
+      {:correction_request, {operative_id, "store_input_procedure", "poke"}, 1}
     )
 
     # Sync barrier: the cast is folded into state before the drain begins.
@@ -452,10 +452,10 @@ defmodule FlezhaTest do
     assert ow_state.arrived_via_hotswap?
 
     OperativeTestHelper.send_sync_io(operative_id, @default_namespace, "after_force", %{})
-    {:ok, json_state} = OperativeManager.get_segment_state(@default_namespace, operative_id)
+    {:ok, json_state} = OperativeManager.get_entity_state(@default_namespace, operative_id)
     state = Flezha.Service.Payloader.json_to_map(json_state)
-    assert "seed" in get_in(state, ["store_input_operation", "text_inputs"])
-    assert "after_force" in get_in(state, ["store_input_operation", "text_inputs"])
+    assert "seed" in get_in(state, ["store_input_procedure", "text_inputs"])
+    assert "after_force" in get_in(state, ["store_input_procedure", "text_inputs"])
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end
@@ -515,7 +515,7 @@ defmodule FlezhaTest do
   end
 
   @tag :runner_disconnect_migrate_op
-  test "runner disconnect migrate op" do
+  test "runner disconnect migrate proc" do
     namespace = @temp_namespace
     operative_id_1 = "operative_1"
     operative_id_2 = "operative_2"
@@ -556,14 +556,14 @@ defmodule FlezhaTest do
     end)
 
     # Make sure the states have been migrated.
-    {:ok, json_state_1} = OperativeManager.get_segment_state(namespace, operative_id_1)
-    {:ok, json_state_2} = OperativeManager.get_segment_state(namespace, operative_id_2)
+    {:ok, json_state_1} = OperativeManager.get_entity_state(namespace, operative_id_1)
+    {:ok, json_state_2} = OperativeManager.get_entity_state(namespace, operative_id_2)
 
     assert json_state_1 ===
-             "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}}"
+             "{\"store_input_procedure\":{\"binary_inputs\":[],\"text_inputs\":[\"state_1\"]}}"
 
     assert json_state_2 ===
-             "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}}"
+             "{\"store_input_procedure\":{\"binary_inputs\":[],\"text_inputs\":[\"state_2\"]}}"
   end
 
   @tag :runner_disconnect_preserve
@@ -647,7 +647,7 @@ defmodule FlezhaTest do
     # change-log onto the reseated runner, so poll the migrated state
     # rather than reading it the instant the tag lands.
     expected_state = fn operative_id ->
-      "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
+      "{\"store_input_procedure\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
     end
 
     # The convergence Loop dispatches the WAL restore once, inside the rebind
@@ -671,7 +671,7 @@ defmodule FlezhaTest do
                end
 
                Enum.all?(operative_infos, fn {operative_id, _info} ->
-                 OperativeManager.get_segment_state(namespace, operative_id) ===
+                 OperativeManager.get_entity_state(namespace, operative_id) ===
                    {:ok, expected_state.(operative_id)}
                end)
              end,
@@ -792,10 +792,10 @@ defmodule FlezhaTest do
 
     # Check the states before runner migrations.
     for {operative_id, _info} <- operative_infos do
-      {:ok, json_state} = OperativeManager.get_segment_state(namespace, operative_id)
+      {:ok, json_state} = OperativeManager.get_entity_state(namespace, operative_id)
 
       assert json_state ===
-               "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
+               "{\"store_input_procedure\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"
     end
 
     # Create snapshots for all operatives
@@ -819,14 +819,14 @@ defmodule FlezhaTest do
 
     # The tag converges when the registry row moves; the destination Overwatch
     # still has to finish binding and take the handover before it can answer for
-    # its Segments. Poll that out — migrated-with-state is an eventual property,
+    # its Entities. Poll that out — migrated-with-state is an eventual property,
     # and reading it at the first converged tag races the bind.
     assert eventually(
              fn ->
                Enum.all?(operative_infos, fn {operative_id, _info} ->
-                 OperativeManager.get_segment_state(namespace, operative_id) ===
+                 OperativeManager.get_entity_state(namespace, operative_id) ===
                    {:ok,
-                    "{\"store_input_operation\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"}
+                    "{\"store_input_procedure\":{\"binary_inputs\":[],\"text_inputs\":[\"state_#{operative_id}\"]}}"}
                end)
              end,
              15_000

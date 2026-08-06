@@ -15,7 +15,7 @@ defmodule Flezha.Service.Observability do
   The `subscribe/2`, `enable_source/2`, `disable_source/2` calls emit
   an audit `:event` signal on the bus recording the function name,
   the caller's `source`, and the optional `request_id` — this is the
-  audit seam `platform-audit-log` will consume.
+  audit seam `audit-log` will consume.
   """
 
   alias Flezha.AuthZ

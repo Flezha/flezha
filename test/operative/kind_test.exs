@@ -10,7 +10,7 @@ defmodule FlezhaTest.Operative.KindTest do
   alias Flezha.Operative.Kind
   alias Flezha.Service.Validator
 
-  @persistence_flags [:persistent_state?, :time_travel?, :dynamic_segments?, :output_stall_watch?]
+  @persistence_flags [:persistent_state?, :time_travel?, :dynamic_entities?, :output_stall_watch?]
 
   describe "capabilities" do
     test ":unbounded declares the full persistence surface" do
@@ -19,7 +19,7 @@ defmodule FlezhaTest.Operative.KindTest do
       assert Kind.capabilities(:unbounded) == %{
                persistent_state?: true,
                time_travel?: true,
-               dynamic_segments?: true,
+               dynamic_entities?: true,
                output_stall_watch?: true
              }
     end

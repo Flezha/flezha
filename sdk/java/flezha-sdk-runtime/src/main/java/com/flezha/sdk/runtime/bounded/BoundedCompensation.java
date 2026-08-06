@@ -8,12 +8,12 @@ import java.util.List;
  * Saga compensation planning for the bounded driver — the Java mirror of the
  * Rust SDK's {@code bounded::compensation}.
  *
- * <p>The driver records each <strong>completed</strong> stage (the operation +
- * the segments that ran, with their collected outputs) as it advances. On
- * abnormal termination — an operation fails, or a cooperative stop trips after
+ * <p>The driver records each <strong>completed</strong> stage (the procedure +
+ * the entities that ran, with their collected outputs) as it advances. On
+ * abnormal termination — a procedure fails, or a cooperative stop trips after
  * partial progress — {@link #planCompensation} turns those records into the
- * exact rollback order: completed operations are undone in <strong>reverse</strong>,
- * and within an operation each segment that ran is compensated once. A clean
+ * exact rollback order: completed procedures are undone in <strong>reverse</strong>,
+ * and within a procedure each entity that ran is compensated once. A clean
  * completion produces no records, so nothing is compensated.
  *
  * <p>The planner is <strong>pure</strong> so both rollback modes are testable
@@ -27,20 +27,20 @@ final class BoundedCompensation {
     private BoundedCompensation() {}
 
     /**
-     * One segment's contribution to a completed stage: which segment ran and the
-     * outputs it collected. Only segments that processed input are recorded
+     * One entity's contribution to a completed stage: which entity ran and the
+     * outputs it collected. Only entities that processed input are recorded
      * ("an effect").
      */
-    record SegmentRun(int segmentIndex, List<Object> outputs) {}
+    record EntityRun(int entityIndex, List<Object> outputs) {}
 
     /**
-     * A completed operation in the chain, recorded so it can be rolled back.
+     * A completed procedure in the chain, recorded so it can be rolled back.
      * {@code stageIdx} indexes both the chain and the driver's per-stage
-     * segment table; {@code iter} is the enclosing loop iteration, which keys the
-     * journal entry this stage commits under (a segment that ran in two
+     * entity table; {@code iter} is the enclosing loop iteration, which keys the
+     * journal entry this stage commits under (an entity that ran in two
      * iterations must be undone once per iteration).
      */
-    record StageRecord(int stageIdx, int iter, List<SegmentRun> segments) {}
+    record StageRecord(int stageIdx, int iter, List<EntityRun> entities) {}
 
     /**
      * Resolve the rollback order for an abnormal termination.

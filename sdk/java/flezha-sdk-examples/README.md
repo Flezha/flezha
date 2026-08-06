@@ -10,15 +10,15 @@ mvn -f sdk/java/pom.xml test -pl flezha-sdk-examples -am
 
 | # | File | What it teaches |
 |---|---|---|
-| 01 | [`E01_Echo`](src/main/java/com/flezha/examples/E01_Echo.java) | The three pieces: Operation, Operative, registration. Stateless. |
+| 01 | [`E01_Echo`](src/main/java/com/flezha/examples/E01_Echo.java) | The three pieces: Procedure, Operative, registration. Stateless. |
 | 02 | [`E02_StatefulCounter`](src/main/java/com/flezha/examples/E02_StatefulCounter.java) | Durable state via Changes — and why you never assign to a field. |
 | 03 | [`E03_EffectivelyOnce`](src/main/java/com/flezha/examples/E03_EffectivelyOnce.java) | Effectively-once output: keyed emits, checkpointed intervals. |
 | 04 | [`E04_LateInputCorrection`](src/main/java/com/flezha/examples/E04_LateInputCorrection.java) | Repairing the past when an input arrives late. |
 | 05 | [`E05_BoundedSaga`](src/main/java/com/flezha/examples/E05_BoundedSaga.java) | A bounded operative: resumable, compensating transaction. |
 | 06 | [`E06_DurableChatLoop`](src/main/java/com/flezha/examples/E06_DurableChatLoop.java) | A long-lived agent: one durable turn per message, suspended in between. |
-| 07 | [`E07_TestingYourOperationTest`](src/test/java/com/flezha/examples/E07_TestingYourOperationTest.java) | Testing an Operation — and proving it is replay-safe. |
-| 08 | [`E08_SpawnBoundedWorker`](src/main/java/com/flezha/examples/E08_SpawnBoundedWorker.java) | Asking the cluster for a bounded worker from inside an Operation. |
-| 09 | [`E09_MergedInput`](src/main/java/com/flezha/examples/E09_MergedInput.java) | One Operation over two Channels: a data feed plus a live config feed. |
+| 07 | [`E07_TestingYourProcedureTest`](src/test/java/com/flezha/examples/E07_TestingYourProcedureTest.java) | Testing a Procedure — and proving it is replay-safe. |
+| 08 | [`E08_SpawnBoundedWorker`](src/main/java/com/flezha/examples/E08_SpawnBoundedWorker.java) | Asking the cluster for a bounded worker from inside a Procedure. |
+| 09 | [`E09_MergedInput`](src/main/java/com/flezha/examples/E09_MergedInput.java) | One Procedure over two Channels: a data feed plus a live config feed. |
 
 ## The one idea worth internalising first
 
@@ -26,7 +26,7 @@ Everything durable in Flezha rests on **replay**. State is rebuilt by re-applyin
 a change log; a correction re-runs `run` outright; a crashed bounded step is
 re-attempted.
 
-So `run` must be a **pure function of its inputs**. An Operation that reads
+So `run` must be a **pure function of its inputs**. A Procedure that reads
 `System.currentTimeMillis()` or `UUID.randomUUID()` will produce a *different*
 result when replayed than when it first ran — and nothing will tell you. The
 state silently diverges after a crash; the "idempotent" upsert writes a second
@@ -37,16 +37,16 @@ The SDK gives you the two escapes, and the two gates:
 | Instead of | Use | Why |
 |---|---|---|
 | `System.currentTimeMillis()` | `ctx.now()` | Evaluated once per invocation; a replay serves the same value. |
-| `UUID.randomUUID()` | `ctx.stableId()` | Derived from segment + seq + call ordinal; a replay derives the same id. |
+| `UUID.randomUUID()` | `ctx.stableId()` | Derived from entity + seq + call ordinal; a replay derives the same id. |
 
 | Gate | Proves |
 |---|---|
 | `harness.replayEquals()` | Replaying the change log rebuilds the same **state**. |
 | `harness.replayEmitsEqual(inputs)` | Re-running produces the same **output**. |
 
-Both. An Operation can rebuild identical state while emitting a fresh UUID each
+Both. A Procedure can rebuild identical state while emitting a fresh UUID each
 run — and a keyed sink's idempotence depends on exactly that not happening.
-Example 07 shows both, and they are cheap enough to run on every Operation you
+Example 07 shows both, and they are cheap enough to run on every Procedure you
 write.
 
 ## Which shape do I want?
@@ -56,7 +56,7 @@ never finishes. (01–04)
 
 **Bounded** — started with arguments, runs to completion, torn down. A checkout,
 a job, a conversation. (05–06, and 08 spawns one from inside an unbounded
-Operation).
+Procedure).
 
 Then, for an unbounded operative, work down this list and stop at the first "no":
 
@@ -84,12 +84,12 @@ start, before a single input is served, with the same error names:
 - `.keyed()` on a channel with no plugin wire → refused (a key has nowhere to ride).
 - `effectivelyOnce()` with an unkeyed plugin channel → refused (a replay would duplicate).
 - `checkpointAck()` without `effectivelyOnce()` → `CheckpointAckWithoutTier`.
-- A durable bounded chain with a codec-less inter-op channel → `MissingInterOpCodec`.
+- A durable bounded chain with a codec-less inter-proc channel → `MissingInterProcCodec`.
 - A loop on `run`-sugar → `LoopWithoutChain` (there is no chain to iterate).
 - A `merge(...)` with fewer than two sources, the same Channel twice, or a source
   re-wiring an already-declared edge → `MergeTooFewSources` /
   `DuplicateMergeSource` / `MergeSourceAlreadyWired`.
 - A **bounded** merge over an entry Channel → `MergeFromEntryChannel` (the
-  spawn-args seed names no Channel; merge its operations' output streams).
+  spawn-args seed names no Channel; merge its procedures' output streams).
 
 If your operative starts, these all held.

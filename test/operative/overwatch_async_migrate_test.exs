@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
   @moduledoc """
-  Phase-3 (consume-recovery-mode-and-self-heal §3.3-3.5) async
+  Phase-3 (convergence-self-healing §3.3-3.5) async
   `:runner_migrate` task contract. Exercises the
   `stop_operative-during-in-flight-migrate` invariant: the bounded retry
   loop now runs in a `Task.Supervisor.async_nolink/3` task, so the
@@ -157,10 +157,10 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
 
   # The success half — the binding IS committed once the runner answers — is
   # covered end-to-end against a real runner by `flezha_test.exs` "runner
-  # disconnect migrate op".
+  # disconnect migrate proc".
 
   # fails when: `alter_handover_state` marks `arrived_via_hotswap?` even for a
-  # handover that carried nothing. The flag suppresses the per-Segment WAL
+  # handover that carried nothing. The flag suppresses the per-Entity WAL
   # restore at bind time AND the explicit `kick_restore` repair, so a migration
   # away from a DEAD runner — where the state source is gone and the handover is
   # empty by construction — starts fresh and can never be replayed back.

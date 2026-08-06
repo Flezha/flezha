@@ -3,9 +3,9 @@ package com.flezha.examples;
 import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -18,16 +18,16 @@ import java.util.Optional;
  * <b>05 — a bounded operative: a durable, compensating transaction.</b>
  *
  * <p>An <i>unbounded</i> operative runs forever over a stream. A <i>bounded</i>
- * one is started with arguments, runs a chain of operations to completion, and is
+ * one is started with arguments, runs a chain of procedures to completion, and is
  * torn down — a checkout, a payment, a provisioning job.
  *
  * <p>Two guarantees make it worth using over a plain method call:
  *
- * <p><b>It resumes, it does not restart.</b> Each operation commits at its
+ * <p><b>It resumes, it does not restart.</b> Each procedure commits at its
  * barrier: the controller journals what ran and the handoff to the next step, and
  * only then does the driver proceed. A crash after {@code reserve} committed
  * therefore <b>skips</b> {@code reserve} on resume and continues at {@code charge}
- * — it does not re-reserve. That is why every inter-op channel must declare a
+ * — it does not re-reserve. That is why every inter-proc channel must declare a
  * {@code .codec()}: the handoff is what the resumed run re-seeds from, and with no
  * codec there is nothing to journal.
  *
@@ -36,10 +36,10 @@ import java.util.Optional;
  * by contract: a crash mid-rollback re-invokes the hook, so it must tolerate
  * running twice.
  *
- * <p>A note on the undo handle: a completed operation's emitted output is not
+ * <p>A note on the undo handle: a completed procedure's emitted output is not
  * durable, so on a crash-resumed rollback your {@code compensate} receives an
  * <b>empty</b> output list. Anything you need to undo with — a reservation id, a
- * charge id — must live in the Segment's State, which <i>is</i> restored.
+ * charge id — must live in the Entity's State, which <i>is</i> restored.
  */
 public final class E05_BoundedSaga {
 
@@ -67,7 +67,7 @@ public final class E05_BoundedSaga {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sReserve = c.input(String.class, "order").into(Reserve.class);
             var sCharge = sReserve.named("reserved").codec().into(Charge.class);
             var sShip = sCharge.named("charged").codec().into(Ship.class);
@@ -76,7 +76,7 @@ public final class E05_BoundedSaga {
     }
 
     /** Shared shape: String in, String out, with an undo handle kept in State. */
-    abstract static class Step implements Operation<String, Step.Handle, String, NoChange, WallClock, Void> {
+    abstract static class Step implements Procedure<String, Step.Handle, String, NoChange, WallClock, Void> {
 
         /** The undo handle. State is restored on resume; emitted output is NOT. */
         public static final class Handle {
@@ -109,7 +109,7 @@ public final class E05_BoundedSaga {
         }
 
         @Override
-        public Handle initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Handle initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Handle();
         }
     }
@@ -121,7 +121,7 @@ public final class E05_BoundedSaga {
         }
 
         @Override
-        public void run(String order, StateHandle<Handle, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String order, StateHandle<Handle, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             // ctx.stableId() — not UUID.randomUUID(). A re-run derives the SAME id,
             // so the downstream system sees a retry, not a second reservation.
             String reservationId = ctx.stableId().toString();
@@ -135,7 +135,7 @@ public final class E05_BoundedSaga {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Handle, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Handle, NoChange> state, ProcedureCtx ctx) {
             // completedOutput may be EMPTY on a crash-resumed rollback. The handle
             // comes from State, which is restored.
             System.out.println("releasing reservation " + state.get().reservationId);
@@ -149,8 +149,8 @@ public final class E05_BoundedSaga {
         }
 
         @Override
-        public void run(String reserved, StateHandle<Handle, NoChange> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String reserved, StateHandle<Handle, NoChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
             ctx.emit(reserved + "|charged");
         }
 
@@ -160,7 +160,7 @@ public final class E05_BoundedSaga {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Handle, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Handle, NoChange> state, ProcedureCtx ctx) {
             System.out.println("refunding charge");
         }
     }
@@ -173,8 +173,8 @@ public final class E05_BoundedSaga {
         }
 
         @Override
-        public void run(String charged, StateHandle<Handle, NoChange> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String charged, StateHandle<Handle, NoChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
             ctx.emit(charged + "|shipped");
         }
     }

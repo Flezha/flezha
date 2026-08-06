@@ -55,8 +55,8 @@ class RunnerIdStoreTest {
     }
 
     @Test
-    void deriveIdProfileSegmentIsOrderIndependentAndSetSensitive() {
-        // Sorted before hashing → the profile segment is identical regardless of
+    void deriveIdProfileEntityIsOrderIndependentAndSetSensitive() {
+        // Sorted before hashing → the profile entity is identical regardless of
         // input order, and differs for a different factory set.
         String a = RunnerIdStore.deriveId("ns", List.of("a", "b", "c")).split("-", 3)[1];
         String b = RunnerIdStore.deriveId("ns", List.of("c", "a", "b")).split("-", 3)[1];

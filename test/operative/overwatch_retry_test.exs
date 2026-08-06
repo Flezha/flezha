@@ -230,7 +230,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     assert :ok = GenServer.call(pid, {:runner_migrate, runner_id})
 
     # init_error cleared and the plugin activated (resumes producing).
-    # `consume-recovery-mode-and-self-heal` §3.3-3.5 made `:runner_migrate`
+    # `convergence-self-healing` §3.3-3.5 made `:runner_migrate`
     # async (the retry loop runs in a `Task.Supervisor.async_nolink` task),
     # so we poll the state instead of asserting immediately.
     assert_receive :activated, 5_000

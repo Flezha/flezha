@@ -1,21 +1,21 @@
 package com.flezha.sdk.runtime.control.handlers;
 
-import com.flezha.sdk.operation.Operation;
+import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.RunnerContext;
-import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner.BoundedSegment;
+import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner.BoundedEntity;
 import com.flezha.sdk.runtime.control.CommandHandler;
-import com.flezha.sdk.runtime.control.handlers.SegmentLocator.Located;
+import com.flezha.sdk.runtime.control.handlers.EntityLocator.Located;
+import com.flezha.sdk.runtime.entity.EntitySlot;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.Operative;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
-import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.runtime.state.ChangeLogReader;
+import com.flezha.sdk.runtime.state.EntityStateRestore;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
-import com.flezha.sdk.runtime.state.SegmentStateRestore;
 import com.google.protobuf.ByteString;
 import java.util.Arrays;
 import java.util.List;
@@ -25,21 +25,21 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Handles the controller's {@code RestoreInitState} command: a warm restart of
- * a Segment after a runner restart / rebind.
+ * an Entity after a runner restart / rebind.
  *
  * <p>The controller ships the persisted snapshot + WAL change-log for one
- * Segment. This handler locates the live {@link SegmentSlot} whose wire
- * identity equals {@code segment_id}, rebuilds its state in place
+ * Entity. This handler locates the live {@link EntitySlot} whose wire
+ * identity equals {@code entity_id}, rebuilds its state in place
  * (Kryo-decode the snapshot if present, then fold the change-log via
- * {@code Operation.applyChange}), and re-arms the slot's {@code changeSeq} to
+ * {@code Procedure.applyChange}), and re-arms the slot's {@code changeSeq} to
  * {@code terminal_seq + 1} so the next produced frame is contiguous with the
  * persisted history (the controller then skips a WAL realign). It replies with
- * {@code RestoreInitStateResponse{segment_id, terminal_seq}}.
+ * {@code RestoreInitStateResponse{entity_id, terminal_seq}}.
  *
  * <p>When the unbounded scan misses, it scans live <strong>bounded</strong>
- * instances (whose Segments live on the {@link BoundedOperativeInstance}, not a
+ * instances (whose Entities live on the {@link BoundedOperativeInstance}, not a
  * {@link UnboundedOperativeInstance}): a durable bounded operative that has been
- * re-added rebuilds its committed Segment state in place and releases one count
+ * re-added rebuilds its committed Entity state in place and releases one count
  * on the driver's crash-resume gate. Only when neither matches does it fall back
  * to validating the change-log and acking the terminal seq. There is no
  * SDK-side HotSwap guard: the controller never dispatches {@code RestoreInitState}
@@ -58,14 +58,14 @@ public final class RestoreInitStateHandler implements CommandHandler {
             return new byte[0];
         }
         RestoreInitState req = request.getRestoreInitState();
-        byte[] segmentId = req.getSegmentId().toByteArray();
+        byte[] entityId = req.getEntityId().toByteArray();
         byte[] snapshot = req.getSnapshotBytes().toByteArray();
         byte[] changeLog = req.getChangeLogBytes().toByteArray();
 
         HeaderTemplate headerTemplate = new HeaderTemplate();
         long terminalSeq = 0L;
 
-        Located located = SegmentLocator.findUnbounded(ctx, segmentId);
+        Located located = EntityLocator.findUnbounded(ctx, entityId);
         if (located != null) {
             try {
                 terminalSeq = restoreSlot(located, snapshot, changeLog, headerTemplate);
@@ -73,23 +73,23 @@ public final class RestoreInitStateHandler implements CommandHandler {
                 errors.add("restore_init_state: apply failed: " + e.getMessage());
             }
         } else {
-            BoundedLocated bounded = findBoundedSegment(ctx, segmentId);
+            BoundedLocated bounded = findBoundedEntity(ctx, entityId);
             if (bounded != null) {
-                // Durable bounded Segment: rebuild its committed state in place
+                // Durable bounded Entity: rebuild its committed state in place
                 // and release one count on the driver's crash-resume gate. The
                 // frame landed regardless of apply success, so noteRestored() is
                 // unconditional (the gate never stalls on a corrupt record).
                 try {
-                    terminalSeq = bounded.segment().restore(snapshot, changeLog, headerTemplate);
+                    terminalSeq = bounded.entity().restore(snapshot, changeLog, headerTemplate);
                 } catch (RuntimeException e) {
                     errors.add("restore_init_state: apply failed: " + e.getMessage());
                 } finally {
-                    // Saga crash-resume (§4.3): carry the per-Segment compensation
+                    // Saga crash-resume (§4.3): carry the per-Entity compensation
                     // markers so the driver finishes an in-flight undo (intent) and
-                    // skips already-undone segments (done).
+                    // skips already-undone entities (done).
                     bounded.instance()
                             .noteCompensationMarkers(
-                                    bounded.segment().identity().encoded(),
+                                    bounded.entity().identity().encoded(),
                                     req.getHasCompensationIntent(),
                                     req.getHasCompensationDone());
                     bounded.instance().noteRestored();
@@ -108,7 +108,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
         }
 
         return RestoreInitStateResponse.newBuilder()
-                .setSegmentId(ByteString.copyFrom(segmentId))
+                .setEntityId(ByteString.copyFrom(entityId))
                 .setTerminalSeq(terminalSeq)
                 .build()
                 .toByteArray();
@@ -121,17 +121,17 @@ public final class RestoreInitStateHandler implements CommandHandler {
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static long restoreSlot(Located located, byte[] snapshot, byte[] changeLog, HeaderTemplate headerTemplate) {
-        SegmentSlot slot = located.slot();
-        Operation operation = slot.operationInstance();
+        EntitySlot slot = located.slot();
+        Procedure procedure = slot.procedureInstance();
         KryoCodec codec = new KryoCodec(located.instance().kryoTypes());
 
         slot.stateLock().lock();
         try {
-            SegmentStateRestore.Rebuilt rebuilt = SegmentStateRestore.rebuild(
-                    operation, codec, slot.operationKey(), snapshot, changeLog, headerTemplate);
+            EntityStateRestore.Rebuilt rebuilt =
+                    EntityStateRestore.rebuild(procedure, codec, slot.entityKey(), snapshot, changeLog, headerTemplate);
             slot.state().set(rebuilt.state());
             slot.changeSeq().set(rebuilt.terminalSeq() + 1);
-            // A restore re-seats the Segment on a different past. An open
+            // A restore re-seats the Entity on a different past. An open
             // checkpoint interval's changes were never acknowledged, so the
             // restored state does not contain them and the re-forwarded inputs
             // produce them again; a half-filled correction slice belongs to a
@@ -143,10 +143,10 @@ public final class RestoreInitStateHandler implements CommandHandler {
             int discarded = slot.discardQueuedInputOnRestore();
             if (discarded > 0) {
                 LOG.info(
-                        "restore discarded {} queued input(s) for segment {} — the controller"
+                        "restore discarded {} queued input(s) for entity {} — the controller"
                                 + " re-forwards them from the durable input log",
                         discarded,
-                        located.segmentId().encoded());
+                        located.entityId().encoded());
             }
             return rebuilt.terminalSeq();
         } finally {
@@ -155,17 +155,17 @@ public final class RestoreInitStateHandler implements CommandHandler {
     }
 
     /**
-     * Scan live bounded instances for the Segment whose wire identity equals
-     * {@code segmentId}. The unbounded {@link #findSlot} scan does not see
-     * bounded Segments (they live on the {@link BoundedOperativeInstance}, in the
+     * Scan live bounded instances for the Entity whose wire identity equals
+     * {@code entityId}. The unbounded {@link #findSlot} scan does not see
+     * bounded Entities (they live on the {@link BoundedOperativeInstance}, in the
      * bounded package), so this closes the crash-resume reachability gap.
      */
-    private static BoundedLocated findBoundedSegment(RunnerContext ctx, byte[] segmentId) {
+    private static BoundedLocated findBoundedEntity(RunnerContext ctx, byte[] entityId) {
         for (Operative operative : ctx.operativeInstanceRegistry().snapshot().values()) {
             if (operative instanceof BoundedOperativeInstance bounded) {
-                for (List<BoundedSegment> stage : bounded.stageSegments()) {
-                    for (BoundedSegment seg : stage) {
-                        if (Arrays.equals(seg.identity().encodedBytes(), segmentId)) {
+                for (List<BoundedEntity> stage : bounded.stageEntities()) {
+                    for (BoundedEntity seg : stage) {
+                        if (Arrays.equals(seg.identity().encodedBytes(), entityId)) {
                             return new BoundedLocated(bounded, seg);
                         }
                     }
@@ -175,5 +175,5 @@ public final class RestoreInitStateHandler implements CommandHandler {
         return null;
     }
 
-    private record BoundedLocated(BoundedOperativeInstance instance, BoundedSegment segment) {}
+    private record BoundedLocated(BoundedOperativeInstance instance, BoundedEntity entity) {}
 }

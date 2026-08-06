@@ -1,6 +1,6 @@
 package com.flezha.sdk.runtime.operative;
 
-import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner.BoundedSegment;
+import com.flezha.sdk.runtime.bounded.BoundedOperativeRunner.BoundedEntity;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Per-{@code AddOperative} runtime marker for a bounded-kind operative, carrying
  * its live <strong>control surface</strong>: a cancellation token and an inbox.
- * Unlike {@link UnboundedOperativeInstance} it spawns no segment workers and
+ * Unlike {@link UnboundedOperativeInstance} it spawns no entity workers and
  * holds no unbounded mailboxes — the bounded's sequential driver (see
  * {@code BoundedOperativeRunner}) runs on a dedicated thread and reaches this
  * instance for cancellation + post-start input.
@@ -34,7 +34,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class BoundedOperativeInstance implements Operative {
 
-    private volatile com.flezha.sdk.proto.OpJournalState opJournal;
+    private volatile com.flezha.sdk.proto.ProcJournalState opJournal;
 
     /**
      * Offset of the last inbox item the controller journaled for THIS instance
@@ -53,7 +53,7 @@ public final class BoundedOperativeInstance implements Operative {
     /**
      * Safety-net cap on the crash-resume wait. The expected count is the
      * authoritative release signal; this only prevents a permanent hold if a
-     * restore never lands (e.g. a controller/SDK persisted-Segment mismatch),
+     * restore never lands (e.g. a controller/SDK persisted-Entity mismatch),
      * degrading to a best-effort re-run rather than a hung operative.
      */
     private static final long RESUME_WAIT_TIMEOUT_MS = 30_000L;
@@ -66,17 +66,17 @@ public final class BoundedOperativeInstance implements Operative {
     private final AtomicBoolean cancelled = new AtomicBoolean(false);
     private final BlockingQueue<byte[]> inbox = new LinkedBlockingQueue<>(INBOX_CAPACITY);
 
-    // Crash-resume gate + pre-built Segment table (structured bounded only). The
-    // Segments are wired before the driver spawns so the inbound RestoreInitState
+    // Crash-resume gate + pre-built Entity table (structured bounded only). The
+    // Entities are wired before the driver spawns so the inbound RestoreInitState
     // handler reaches them by wire identity and the driver holds its first
-    // Operation on awaitRestore() until every expected restore has landed — one
-    // countdown per landed Segment restore. A fresh / run-sugar operative gets a
+    // Procedure on awaitRestore() until every expected restore has landed — one
+    // countdown per landed Entity restore. A fresh / run-sugar operative gets a
     // 0-count latch (no wait).
-    private volatile List<List<BoundedSegment>> stageSegments = List.of();
+    private volatile List<List<BoundedEntity>> stageEntities = List.of();
     private volatile CountDownLatch restoreGate = new CountDownLatch(0);
 
-    // Saga crash-resume markers (§4.3), keyed by SegmentId.encoded(), shipped
-    // back on RestoreInitState: `intents` ⇒ the Segment's operation completed
+    // Saga crash-resume markers (§4.3), keyed by EntityId.encoded(), shipped
+    // back on RestoreInitState: `intents` ⇒ the Entity's procedure completed
     // forward and may need undo; `done` ⇒ its compensation already ran (skip).
     // Non-empty `intents` ⇒ the driver finishes the compensation instead of
     // re-running the forward chain.
@@ -127,45 +127,45 @@ public final class BoundedOperativeInstance implements Operative {
     // ---- crash-resume gate (structured bounded) -----------------------------
 
     /**
-     * Install the pre-built per-stage Segments and the number of Controller
-     * Segment restores to wait for before the first Operation runs. Called by
+     * Install the pre-built per-stage Entities and the number of Controller
+     * Entity restores to wait for before the first Procedure runs. Called by
      * {@code AddOperativeHandler} before the instance is registered and the
      * driver spawns, so the restore frames that follow the ACK reach live
-     * Segments and the driver holds on {@link #awaitRestore}. Run-sugar wires an
+     * Entities and the driver holds on {@link #awaitRestore}. Run-sugar wires an
      * empty list and {@code 0}.
      */
-    public void wireStageSegments(@Nonnull List<List<BoundedSegment>> segments, int expected) {
-        this.stageSegments = segments;
+    public void wireStageEntities(@Nonnull List<List<BoundedEntity>> entities, int expected) {
+        this.stageEntities = entities;
         this.restoreGate = new CountDownLatch(Math.max(0, expected));
     }
 
-    /** The pre-built per-stage Segments (empty for run-sugar / before wiring). */
+    /** The pre-built per-stage Entities (empty for run-sugar / before wiring). */
     @Nonnull
-    public List<List<BoundedSegment>> stageSegments() {
-        return stageSegments;
+    public List<List<BoundedEntity>> stageEntities() {
+        return stageEntities;
     }
 
     /**
-     * Record one landed Segment restore and wake a driver parked on the resume
+     * Record one landed Entity restore and wake a driver parked on the resume
      * gate. Called unconditionally by the {@code RestoreInitState} handler for
-     * every restore frame that matches one of this instance's Segments — so the
+     * every restore frame that matches one of this instance's Entities — so the
      * gate advances even when an individual apply fails (the frame landed
      * regardless), and never stalls on a corrupt record.
      */
     /**
-     * The op-journal the controller shipped on {@code AddOperative} — the bind
+     * The proc-journal the controller shipped on {@code AddOperative} — the bind
      * itself, because the journal is instance-scoped and a class with no
-     * per-Segment state receives no restore. Present only on a resume of a
+     * per-Entity state receives no restore. Present only on a resume of a
      * durable structured class; it is what lets the driver enter the right
-     * iteration and SKIP already-committed operations instead of re-running the
+     * iteration and SKIP already-committed procedures instead of re-running the
      * chain from the top.
      */
     @Nonnull
-    public java.util.Optional<com.flezha.sdk.proto.OpJournalState> opJournal() {
+    public java.util.Optional<com.flezha.sdk.proto.ProcJournalState> opJournal() {
         return java.util.Optional.ofNullable(opJournal);
     }
 
-    public void setOpJournal(@Nonnull com.flezha.sdk.proto.OpJournalState journal) {
+    public void setProcJournal(@Nonnull com.flezha.sdk.proto.ProcJournalState journal) {
         this.opJournal = journal;
     }
 
@@ -183,31 +183,31 @@ public final class BoundedOperativeInstance implements Operative {
     }
 
     /**
-     * Record the shipped-back saga compensation markers for a Segment (crash-
-     * resume): {@code intent} ⇒ its operation completed forward and may need undo;
+     * Record the shipped-back saga compensation markers for an Entity (crash-
+     * resume): {@code intent} ⇒ its procedure completed forward and may need undo;
      * {@code done} ⇒ its compensation already ran (skip it on resume).
      */
-    public void noteCompensationMarkers(@Nonnull String segmentKey, boolean intent, boolean done) {
+    public void noteCompensationMarkers(@Nonnull String entityKey, boolean intent, boolean done) {
         if (intent) {
-            compensationIntents.add(segmentKey);
+            compensationIntents.add(entityKey);
         }
         if (done) {
-            compensationDone.add(segmentKey);
+            compensationDone.add(entityKey);
         }
     }
 
-    /** Whether this Segment completed forward and needs undo (drives which hooks a resume runs). */
-    public boolean hasCompensationIntent(@Nonnull String segmentKey) {
-        return compensationIntents.contains(segmentKey);
+    /** Whether this Entity completed forward and needs undo (drives which hooks a resume runs). */
+    public boolean hasCompensationIntent(@Nonnull String entityKey) {
+        return compensationIntents.contains(entityKey);
     }
 
-    /** Whether this Segment's compensation already ran (skip on resume). */
-    public boolean hasCompensationDone(@Nonnull String segmentKey) {
-        return compensationDone.contains(segmentKey);
+    /** Whether this Entity's compensation already ran (skip on resume). */
+    public boolean hasCompensationDone(@Nonnull String entityKey) {
+        return compensationDone.contains(entityKey);
     }
 
     /**
-     * Hold the calling driver until every expected Segment restore has landed, a
+     * Hold the calling driver until every expected Entity restore has landed, a
      * cooperative cancel (or thread interrupt) trips, or the safety-net timeout
      * elapses. A no-op when no restores are expected (fresh spawn / opted-out /
      * run-sugar), so it adds nothing to the non-resume path.
@@ -223,7 +223,7 @@ public final class BoundedOperativeInstance implements Operative {
                 long remainingMs = (deadlineNanos - System.nanoTime()) / 1_000_000L;
                 if (remainingMs <= 0) {
                     LOG.warn(
-                            "bounded {} crash-resume timed out waiting for {} Segment restore(s); "
+                            "bounded {} crash-resume timed out waiting for {} Entity restore(s); "
                                     + "proceeding with partially-restored state",
                             instanceId,
                             gate.getCount());

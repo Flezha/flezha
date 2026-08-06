@@ -15,8 +15,8 @@ class E09_MergedInputTest {
     void mergedTopologyRegisters() {
         UnboundedOperativeTopology topology = UnboundedOperativeTopologyBuilder.build(new E09_MergedInput.Thermostat());
 
-        assertThat(topology.operations()).hasSize(1);
-        int detector = topology.operationNameToId().get("detector");
+        assertThat(topology.procedures()).hasSize(1);
+        int detector = topology.procedureNameToId().get("detector");
         assertThat(topology.channel(topology.lookupChannelId("readings")).consumerIds())
                 .containsExactly(detector);
         assertThat(topology.channel(topology.lookupChannelId("config")).consumerIds())

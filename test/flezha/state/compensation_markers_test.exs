@@ -2,7 +2,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   @moduledoc """
   §4.3 durable saga compensation records (controller half). A durable bounded
   operative ships `compensation_intent` / `compensation_done` frames; the stream
-  channel persists them as per-Segment markers, and the bind-time restore path
+  channel persists them as per-Entity markers, and the bind-time restore path
   ships them back on `RestoreInitState` so a respawned driver finishes the
   remaining hooks and skips already-undone ones.
   """
@@ -27,11 +27,11 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
     :ok
   end
 
-  # Empty-body compensation wire frame (the record's information is the Segment
+  # Empty-body compensation wire frame (the record's information is the Entity
   # identity plus the payload-id), matching `Wire.decode_frame/1`: seq 0, a
   # zero header, no body (crc32 over an empty body is 0).
   defp comp_frame({rc, sh, pk}) do
-    sid = Wire.encode_segment_id(rc, sh, pk)
+    sid = Wire.encode_entity_id(rc, sh, pk)
     <<byte_size(sid)::16-big, sid::binary, 0::64-big, 0::128, 0::32-big, 0::32-big>>
   end
 
@@ -44,7 +44,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   end
 
   test "compensation_markers/1 reflects the persisted marker files" do
-    seg = {"rc", "op", "seg"}
+    seg = {"rc", "proc", "seg"}
     assert Registry.compensation_markers(seg) == %{intent: false, done: false}
 
     File.mkdir_p!(Path.dirname(Registry.compensation_marker_path(seg, :intent)))
@@ -54,8 +54,8 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
     File.write!(Registry.compensation_marker_path(seg, :done), "")
     assert Registry.compensation_markers(seg) == %{intent: true, done: true}
 
-    # delete_files/1 (the "remove every file for a Segment" contract) reclaims the
-    # markers too, so a recreated Segment never sees a stale one.
+    # delete_files/1 (the "remove every file for an Entity" contract) reclaims the
+    # markers too, so a recreated Entity never sees a stale one.
     Registry.delete_files(seg)
     assert Registry.compensation_markers(seg) == %{intent: false, done: false}
   end
@@ -78,7 +78,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
 
   test "bind-time restore ships the compensation markers back on RestoreInitState" do
     seg = {"ship_rc", "ship_op", "ship_seg"}
-    # A durable Segment that completed forward and needs undo: WAL on disk plus an
+    # A durable Entity that completed forward and needs undo: WAL on disk plus an
     # intent marker (no done marker — its compensation had not run before the crash).
     wal = Registry.wal_path(seg)
     File.mkdir_p!(Path.dirname(wal))

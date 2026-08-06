@@ -1,33 +1,33 @@
 # rust-sdk-dispatch Specification
 
 ## Purpose
-This capability covers the Rust SDK's Operative/Operation/Segment dispatch path: sticky per-Segment ordering invariants under ThreadPool dispatch, the dispatch throughput floor on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Segment flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the bounded `state.apply` hot-path cost, drain-time coalescing, the public `OperationTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
+This capability covers the Rust SDK's Operative/Procedure/Entity dispatch path: sticky per-Entity ordering invariants under ThreadPool dispatch, the dispatch throughput floor on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Entity flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the bounded `state.apply` hot-path cost, drain-time coalescing, the public `ProcedureTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
 ## Requirements
-### Requirement: Sticky Per-Segment Ordering Under ThreadPool Dispatch
+### Requirement: Sticky Per-Entity Ordering Under ThreadPool Dispatch
 
-Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOVED requirement below), the Rust SDK SHALL guarantee that for any single `(operative_instance, operation, segment)` triple, two invocations of that Operation's `run(...)` method on that Segment never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Segment's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Operative instances, number of Segments per Operation, or transport (UDS/QUIC).
+Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOVED requirement below), the Rust SDK SHALL guarantee that for any single `(operative_instance, procedure, entity)` triple, two invocations of that Procedure's `run(...)` method on that Entity never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Entity's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Operative instances, number of Entities per Procedure, or transport (UDS/QUIC).
 
-#### Scenario: Same segment never runs concurrently under load
-- **WHEN** 10,000 inputs targeting the same `(operative_instance, operation, segment_key)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
-- **THEN** at any wall-clock instant, at most one thread SHALL be inside that Segment's `run(...)` method
+#### Scenario: Same entity never runs concurrently under load
+- **WHEN** 10,000 inputs targeting the same `(operative_instance, procedure, entity_key)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
+- **THEN** at any wall-clock instant, at most one thread SHALL be inside that Entity's `run(...)` method
 
-#### Scenario: Different segments of same operation may run concurrently
-- **WHEN** inputs arrive simultaneously for two distinct segments of the same Operation (for example `("ohlc", "1m")` and `("ohlc", "1h")`) and the worker pool has ≥ 2 threads
-- **THEN** the two Segments' `run(...)` methods MAY execute concurrently on different threads
+#### Scenario: Different entities of same procedure may run concurrently
+- **WHEN** inputs arrive simultaneously for two distinct entities of the same Procedure (for example `("ohlc", "1m")` and `("ohlc", "1h")`) and the worker pool has ≥ 2 threads
+- **THEN** the two Entities' `run(...)` methods MAY execute concurrently on different threads
 
-#### Scenario: Per-segment inputs delivered in arrival order
-- **WHEN** inputs `"a"`, `"b"`, `"c"` are enqueued onto one Segment's mailbox in that order with an append-to-state Operation
-- **THEN** the Segment's State SHALL end with `["a", "b", "c"]` in exactly that order
+#### Scenario: Per-entity inputs delivered in arrival order
+- **WHEN** inputs `"a"`, `"b"`, `"c"` are enqueued onto one Entity's mailbox in that order with an append-to-state Procedure
+- **THEN** the Entity's State SHALL end with `["a", "b", "c"]` in exactly that order
 
 #### Scenario: Ordering holds across multiple entry streams
-- **WHEN** the agent opens 4 entry connections for a single Operative instance and the same Segment receives interleaved inputs from all 4
-- **THEN** `run(...)` calls for that Segment SHALL still be non-overlapping, though the interleaving order between streams is not constrained by this requirement
+- **WHEN** the agent opens 4 entry connections for a single Operative instance and the same Entity receives interleaved inputs from all 4
+- **THEN** `run(...)` calls for that Entity SHALL still be non-overlapping, though the interleaving order between streams is not constrained by this requirement
 
 ### Requirement: Dispatch Throughput Floor on Reference Workload
 
-On the regression bench (`100 operatives × 1 operation × 1 segment × 10K msg`, no-op Operation, UDS transport, default worker-pool size; see `operative-architecture/design.md` Decision 16) invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, the Rust SDK SHALL sustain at least **the floor measured against this change at merge time** of end-to-end message-processing throughput on commodity developer hardware (modern x86_64 laptop, 8+ cores, non-constrained CPU). Measured on the `Throughput:` line of the bench output (total messages ÷ message-processing elapsed time).
+On the regression bench (`100 operatives × 1 procedure × 1 entity × 10K msg`, no-op Procedure, UDS transport, default worker-pool size; see `operative-architecture/design.md` Decision 16) invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, the Rust SDK SHALL sustain at least **the floor measured against this change at merge time** of end-to-end message-processing throughput on commodity developer hardware (modern x86_64 laptop, 8+ cores, non-constrained CPU). Measured on the `Throughput:` line of the bench output (total messages ÷ message-processing elapsed time).
 
-The literal floor value SHALL be recorded in this requirement at merge time as a literal number, replacing the placeholder `<RECORDED_AT_MERGE>`. The floor recorded by `operative-bench-harness` (480_000 msg/s) SHALL NOT be carried forward without measurement; this change adds a per-push success-counter atomic op and may shift the floor by single-digit percent. The CI gate SHALL track the new value.
+The literal floor value SHALL be recorded in this requirement at merge time as a literal number, replacing the placeholder `<RECORDED_AT_MERGE>`. The floor recorded by `operative-bench-harness` (480_000 msg/s) SHALL NOT be carried forward without measurement; this change adds a per-push success-counter atomic proc and may shift the floor by single-digit percent. The CI gate SHALL track the new value.
 
 The literal floor value SHALL be recorded in `docs/benchmarking.md` and updated only in tandem with this requirement: when a future change intentionally raises or lowers the floor, the spec line and the doc value SHALL be updated in the same PR. CI SHALL verify spec/doc agreement on every build (`mix bench.floor` prints the recorded number; the `bench-regression` GitHub Actions job parses both the spec line and the doc value, fails the build if they disagree).
 
@@ -51,36 +51,36 @@ The umbrella's prior 350,000 msg/s floor (from before the cutover) SHALL NOT be 
 - **WHEN** a contributor edits the `BENCH_FLOOR_MSG_PER_SEC` value in `docs/benchmarking.md` without updating the literal in this requirement
 - **THEN** the `bench-regression` CI job's pre-bench sync check SHALL fail with a message identifying the divergence and pointing at both files
 
-#### Scenario: Segmenting-stress bench scales with worker pool size
-- **WHEN** the segmenting-stress bench (`8 operatives × 4 operations × 8 segments × 20K msg/operative`, fan-out per input to all 8 segments of the entry operation; invoked via `mix bench --shape segmenting --pool-sizes 1,8`) is run on an 8-core host
-- **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that segmenting-mode dispatch is not the bottleneck
-- **AND** the `bench-segmenting-scaling` CI job SHALL report the measured ratio to the PR check output without blocking the merge (informational gate)
+#### Scenario: Entity-stress bench scales with worker pool size
+- **WHEN** the entity-stress bench (`8 operatives × 4 procedures × 8 entities × 20K msg/operative`, fan-out per input to all 8 entities of the entry procedure; invoked via `mix bench --shape entity --pool-sizes 1,8`) is run on an 8-core host
+- **THEN** the throughput at pool size 8 SHALL be at least 4× the throughput at pool size 1, demonstrating that entity-mode dispatch is not the bottleneck
+- **AND** the `bench-entity-scaling` CI job SHALL report the measured ratio to the PR check output without blocking the merge (informational gate)
 
 ### Requirement: Per-Message Dispatch-Overhead Budget
 
-The Rust SDK's dispatch hot path — from a completed frame being delivered by the transport layer to the targeted Segment's `Operation::run(...)` being entered — SHALL consume no more than **4 synchronization operations per message** (where a synchronization operation is a mutex lock, atomic CAS, channel send, or equivalent memory-ordering primitive). Counted under single-threaded contention on an Operation with `operation_keys() == []` (single-segment mode), exercising the entry-channel → registry → mailbox → drain path.
+The Rust SDK's dispatch hot path — from a completed frame being delivered by the transport layer to the targeted Entity's `Procedure::run(...)` being entered — SHALL consume no more than **4 synchronization operations per message** (where a synchronization operation is a mutex lock, atomic CAS, channel send, or equivalent memory-ordering primitive). Counted under single-threaded contention on a Procedure with `entity_keys() == []` (single-entity mode), exercising the entry-channel → registry → mailbox → drain path.
 
-The 4-op budget covers: (1) registry / topology lookup for the entry channel ID → Operative instance pointer (one DashMap read or equivalent); (2) mailbox enqueue (`crossbeam::queue::ArrayQueue::try_push`, one logical step counted as one op even though its lock-free implementation may use a CAS on the tail plus a release-store on the slot); (3) `pushes_total` counter increment (one Relaxed atomic); (4) inflight CAS (one atomic compare-exchange).
+The 4-op budget covers: (1) registry / topology lookup for the entry channel ID → Operative instance pointer (one DashMap read or equivalent); (2) mailbox enqueue (`crossbeam::queue::ArrayQueue::try_push`, one logical step counted as one proc even though its lock-free implementation may use a CAS on the tail plus a release-store on the slot); (3) `pushes_total` counter increment (one Relaxed atomic); (4) inflight CAS (one atomic compare-exchange).
 
-The budget rises from 3 to 4 ops compared with the prior unbounded-mailbox shape (`crossbeam::queue::SegQueue` push without success counter). The added op is the success counter introduced by `operative-bounded-mailbox`; the underlying push transition from SegQueue to ArrayQueue is counted as the same logical step (one mailbox enqueue) and does not on its own raise the budget.
+The budget rises from 3 to 4 procs compared with the prior unbounded-mailbox shape (`crossbeam::queue::SegQueue` push without success counter). The added proc is the success counter introduced by `operative-bounded-mailbox`; the underlying push transition from SegQueue to ArrayQueue is counted as the same logical step (one mailbox enqueue) and does not on its own raise the budget.
 
-For static-mode operations, the additional per-input cost of segment fan-out (HashMap lookup per segment key, one mailbox enqueue + one counter increment + one inflight CAS per target segment) is intrinsic to the workload and counted separately — it is not part of the per-message budget. The fan-out formula updates from `3 + N × 2` to `4 + N × 3` where N is the segment fan-out width.
+For static-mode procedures, the additional per-input cost of entity fan-out (HashMap lookup per entity key, one mailbox enqueue + one counter increment + one inflight CAS per target entity) is intrinsic to the workload and counted separately — it is not part of the per-message budget. The fan-out formula updates from `3 + N × 2` to `4 + N × 3` where N is the entity fan-out width.
 
-The 4-op invariant is an analytical bound enforced by code review, consistent with the convention in `sdk/rust/benches/correctness.rs:13-19`. The microbench reports raw msg/s for diagnostic comparison against the recorded `SINGLE_SEGMENT_FLOOR_MSG_PER_SEC` value in `docs/benchmarking.md`; it does not assert the sync-op count programmatically.
+The 4-op invariant is an analytical bound enforced by code review, consistent with the convention in `sdk/rust/benches/correctness.rs:13-19`. The microbench reports raw msg/s for diagnostic comparison against the recorded `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` value in `docs/benchmarking.md`; it does not assert the sync-op count programmatically.
 
-#### Scenario: Single-segment microbench confirms the budget
-- **WHEN** the `throughput_single_segment` Criterion bench function in `sdk/rust/benches/correctness.rs` runs with contention pinned to one thread, single-segment Operation, no fan-out (invoked via `cargo bench --bench correctness -- throughput_single_segment`)
-- **THEN** the analytical sync-op count per message SHALL be ≤ 4 operations on the hot path (registry lookup, mailbox enqueue, success counter, inflight CAS)
-- **AND** the bench SHALL emit a `Throughput:` line in its Criterion output that callers can compare against the recorded `SINGLE_SEGMENT_FLOOR_MSG_PER_SEC` value in `docs/benchmarking.md`
+#### Scenario: Single-entity microbench confirms the budget
+- **WHEN** the `throughput_single_entity` Criterion bench function in `sdk/rust/benches/correctness.rs` runs with contention pinned to one thread, single-entity Procedure, no fan-out (invoked via `cargo bench --bench correctness -- throughput_single_entity`)
+- **THEN** the analytical sync-op count per message SHALL be ≤ 4 procedures on the hot path (registry lookup, mailbox enqueue, success counter, inflight CAS)
+- **AND** the bench SHALL emit a `Throughput:` line in its Criterion output that callers can compare against the recorded `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` value in `docs/benchmarking.md`
 
-#### Scenario: Static-mode segment fan-out cost is proportional to segment count
-- **WHEN** the `throughput_static_fanout` Criterion bench function in `sdk/rust/benches/correctness.rs` is run against an Operation with `operation_keys()` of length 4 and `segment_for` returning all four keys per input (invoked via `cargo bench --bench correctness -- throughput_static_fanout`)
-- **THEN** the per-input sync-op count SHALL be approximately `4 + 4 × 3 = 16` (one registry lookup + 4 segments × (mailbox enqueue + success counter + inflight CAS)), and SHALL NOT exceed `4 + N × 3` where N is the segment fan-out width
-- **AND** the bench SHALL emit a `Throughput:` line whose value, divided by the single-segment floor, SHALL be approximately `1 / (1 + 4 × 3 / 4) = 0.25` ± 30% (the analytical bound is approximate; the bench reports raw msg/s for sanity checking, not as a strict gate)
+#### Scenario: Static-mode entity fan-out cost is proportional to entity count
+- **WHEN** the `throughput_static_fanout` Criterion bench function in `sdk/rust/benches/correctness.rs` is run against a Procedure with `entity_keys()` of length 4 and `entities_for` returning all four keys per input (invoked via `cargo bench --bench correctness -- throughput_static_fanout`)
+- **THEN** the per-input sync-op count SHALL be approximately `4 + 4 × 3 = 16` (one registry lookup + 4 entities × (mailbox enqueue + success counter + inflight CAS)), and SHALL NOT exceed `4 + N × 3` where N is the entity fan-out width
+- **AND** the bench SHALL emit a `Throughput:` line whose value, divided by the single-entity floor, SHALL be approximately `1 / (1 + 4 × 3 / 4) = 0.25` ± 30% (the analytical bound is approximate; the bench reports raw msg/s for sanity checking, not as a strict gate)
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single operation's critical section. Operative classes are declared via `FlezhaRunner::define_unbounded::<R: UnboundedOperative>()`, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<UnboundedInstance>` or equivalent handle. Bounded instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
+The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single procedure's critical section. Operative classes are declared via `FlezhaRunner::define_unbounded::<R: UnboundedOperative>()`, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<UnboundedInstance>` or equivalent handle. Bounded instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
 
 The "registry" name carries forward from the pre-change implementation; what's stored in it is unchanged by this requirement. The concurrency guarantees are unchanged.
 
@@ -90,7 +90,7 @@ The "registry" name carries forward from the pre-change implementation; what's s
 
 #### Scenario: Registry preserves the declaration contract
 - **WHEN** user code calls `.define_unbounded::<R>()` on a `FlezhaRunner` and later `AddOperative` triggers an Operative instance creation
-- **THEN** the resulting `UnboundedInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-operation-segment-model` capability's scenarios
+- **THEN** the resulting `UnboundedInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-procedure-entity-model` capability's scenarios
 
 #### Scenario: Post-start removal is serialized with AddOperative
 - **WHEN** a `remove_unbounded` request and an `AddOperative` command for the same factory race
@@ -100,7 +100,7 @@ The "registry" name carries forward from the pre-change implementation; what's s
 
 Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_registry`, shared I/O streams, and `runner_id` (no clear-and-reassign window where frames are dropped). In addition:
 
-1. **Live-sink resolution** — the per-Segment state send path (`SegmentStateSink`) SHALL resolve the *live* secondary stream on every send rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Segments.
+1. **Live-sink resolution** — the per-Entity state send path (`EntityStateSink`) SHALL resolve the *live* secondary stream on every send rather than caching a stream handle, so a reconnect's freshly-wired stream is used without re-registering Entities.
 2. **Reconnect ring** — when no sink is installed or a write fails (the reconnect window), state-change frames SHALL be buffered in a bounded ring (drop-oldest on overflow) and replayed through the new sink on install, so changes produced mid-reconnect are not silently lost.
 3. **Broken-pipe flood → control reconnect** — sustained write failures (a flood within a short window) SHALL trigger a full control-channel reconnect via the coordinator rather than spinning on a dead stream.
 
@@ -118,76 +118,76 @@ Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_re
 
 Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `RunnerDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
 
-`SegmentState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operative-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<operation_name>": <state>}` (or, for static-mode operations, `{"<operation_name>": {"<operation_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
+`EntityState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operative-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<procedure_name>": <state>}` (or, for static-mode procedures, `{"<procedure_name>": {"<entity_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
 
-`OperationMessage` and `OperationMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Operation `handle_message` (see `operative-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
+`OperativeMessage` and `OperativeMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Procedure `handle_message` (see `operative-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
 
 #### Scenario: AddOperative with init_values produces same response shape
 - **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_unbounded::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
-- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Operation, see the `operative-operation-segment-model` capability)
+- **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Procedure, see the `operative-procedure-entity-model` capability)
 
 #### Scenario: RunnerDisconnect closes sockets identically
 - **WHEN** `RunnerDisconnect{}` is sent under both implementations
 - **THEN** both SDKs SHALL close their primary control stream and return identical `CommandResponse` bytes
 
-#### Scenario: OperationMessage returns canonical unsupported error pre-operative-message-handlers
-- **WHEN** an agent sends `OperationMessage{operative_id:"p1", payload:<...>}` to a v1 SDK
-- **THEN** the SDK SHALL respond with `OperationMessageResponse{ payload: "", error: "operative does not support handle_message" }`
+#### Scenario: OperativeMessage returns canonical unsupported error pre-operative-message-handlers
+- **WHEN** an agent sends `OperativeMessage{operative_id:"p1", payload:<...>}` to a v1 SDK
+- **THEN** the SDK SHALL respond with `OperativeMessageResponse{ payload: "", error: "operative does not support handle_message" }`
 
-### Requirement: Per-Segment flusher single-thread linger drain
+### Requirement: Per-Entity flusher single-thread linger drain
 
-The Rust SDK SHALL spawn at most one `SegmentFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::define_unbounded::<R>()` call that declares an Operation with a non-`NoChange` Change type. Programs that declare only `NoChange` Operations SHALL NOT spawn a flusher thread.
+The Rust SDK SHALL spawn at most one `EntityFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::define_unbounded::<R>()` call that declares a Procedure with a non-`NoChange` Change type. Programs that declare only `NoChange` Procedures SHALL NOT spawn a flusher thread.
 
-The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Segments; (c) for each Segment, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Segment's `send_frame` function pointer.
+The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Entities; (c) for each Entity, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Entity's `send_frame` function pointer.
 
 #### Scenario: NoChange-only program does not spawn flusher
 
-- **WHEN** a Rust process calls `.define_unbounded::<R>()` for an Operative whose Operations all have `Change = NoChange`
-- **THEN** no `SegmentFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
+- **WHEN** a Rust process calls `.define_unbounded::<R>()` for an Operative whose Procedures all have `Change = NoChange`
+- **THEN** no `EntityFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
 
 #### Scenario: First non-NoChange declaration starts the flusher
 
-- **WHEN** a Rust process calls `.define_unbounded::<R>()` for an Operative containing an Operation with `Change = MyChange`
+- **WHEN** a Rust process calls `.define_unbounded::<R>()` for an Operative containing a Procedure with `Change = MyChange`
 - **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
 
 ### Requirement: Toggle-aware drain semantics for persistence_enabled = false
 
-The Rust SDK's `SegmentFlusher` SHALL inspect each registered Segment's `persistence_enabled` flag at drain time. When `false`, the flusher SHALL acquire the buffer's Mutex, invoke `FlushableBuffer::drain_to_frames` (which still applies coalescing), and discard the resulting frames without invoking `send_frame`. The Segment's `change_seq` counter SHALL still advance through the discarded frames.
+The Rust SDK's `EntityFlusher` SHALL inspect each registered Entity's `persistence_enabled` flag at drain time. When `false`, the flusher SHALL acquire the buffer's Mutex, invoke `FlushableBuffer::drain_to_frames` (which still applies coalescing), and discard the resulting frames without invoking `send_frame`. The Entity's `change_seq` counter SHALL still advance through the discarded frames.
 
 When `true`, the flusher SHALL invoke `send_frame` for each frame and propagate any `Err(SendError)` by decrementing the seq counter so the next drain re-sends from the right point (no gaps in the agent's WAL view).
 
 #### Scenario: Toggle-off drain discards without wire I/O
 
 - **WHEN** an Operative with `persistence_enabled = false` records 10 Changes via `state.apply(...)` and the flusher's linger elapses
-- **THEN** the Segment's flush buffer SHALL be empty after the tick AND the Segment's `send_frame` function SHALL NOT have been invoked AND the Segment's `change_seq` SHALL have advanced by the post-coalesce record count
+- **THEN** the Entity's flush buffer SHALL be empty after the tick AND the Entity's `send_frame` function SHALL NOT have been invoked AND the Entity's `change_seq` SHALL have advanced by the post-coalesce record count
 
 #### Scenario: Toggle-on drain invokes send_frame per frame
 
 - **WHEN** an Operative with `persistence_enabled = true` records 10 Changes (no coalescing) via `state.apply(...)` and the flusher's linger elapses
-- **THEN** the Segment's `send_frame` function SHALL have been invoked exactly 10 times with frame bytes built from `[segment_id][seq: u64 BE][header: 16B][change_bytes][crc32: u32 BE]`
+- **THEN** the Entity's `send_frame` function SHALL have been invoked exactly 10 times with frame bytes built from `[entity_id][seq: u64 BE][header: 16B][change_bytes][crc32: u32 BE]`
 
 #### Scenario: send_frame failure preserves seq monotonicity
 
-- **WHEN** the Segment's `send_frame` returns `Err(SendError::TransportDown)` for the third frame in a 10-frame batch
+- **WHEN** the Entity's `send_frame` returns `Err(SendError::TransportDown)` for the third frame in a 10-frame batch
 - **THEN** the flusher SHALL stop the batch at that frame, decrement `change_seq` to undo the failed-and-following advances (the first two frames' seq advances stay), and SHALL retain the un-sent Changes in the buffer for the next drain (records 3-10 are re-pushed via a side channel that preserves their post-coalesce order)
 
 ### Requirement: Hot-path cost is bounded to one Vec::push per state.apply
 
-The Rust SDK's `state.apply(change)` SHALL pay exactly: one `Operation::apply_change(state, &change)` call (user-supplied; cost varies) plus one `Vec::push(change)` operation. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Segment sticky CAS and the `&mut self` borrow on the buffer (which is already exclusive via the runner thread's ownership of the segment's buffer for the duration of `Operation::run`).
+The Rust SDK's `state.apply(change)` SHALL pay exactly: one `Procedure::apply_change(state, &change)` call (user-supplied; cost varies) plus one `Vec::push(change)` procedure. The hot path SHALL NOT serialize, fsync, network-send, or acquire any lock beyond the existing per-Entity sticky CAS and the `&mut self` borrow on the buffer (which is already exclusive via the runner thread's ownership of the entity's buffer for the duration of `Procedure::run`).
 
 The microbench `state_apply_throughput` (`sdk/rust/benches/state.rs`) SHALL exercise this requirement and report nanoseconds per `state.apply(...)` call across change-payload-size and coalesce-key dimensions; CI SHALL fail the build if any dimension regresses >50% from the recorded baseline.
 
 #### Scenario: No serialization on state.apply
 
-- **WHEN** an Operation's `run` calls `state.apply(MyChange::Foo)` 100 times in a tight loop
+- **WHEN** a Procedure's `run` calls `state.apply(MyChange::Foo)` 100 times in a tight loop
 - **THEN** zero serialization calls (`serde::Serialize::serialize`, `postcard::to_allocvec`, `bincode::serialize`, etc.) SHALL be issued from the runner thread during these 100 calls
 
 #### Scenario: No I/O on state.apply
 
-- **WHEN** an Operation's `run` calls `state.apply(MyChange::Foo)` 100 times
+- **WHEN** a Procedure's `run` calls `state.apply(MyChange::Foo)` 100 times
 - **THEN** zero `write`, `send`, `fsync`, `fdatasync`, or NIF-call syscalls SHALL be issued from the runner thread during these 100 calls
 
-#### Scenario: state_apply_throughput microbench reports < 200 ns/op for SmallChange + NoCoalesceKey
+#### Scenario: state_apply_throughput microbench reports < 200 ns/proc for SmallChange + NoCoalesceKey
 
 - **WHEN** the `state_apply_throughput` Criterion bench runs with `change_kind = SmallChange (8B)` and `coalesce_kind = NoCoalesceKey` and the buffer is preallocated to capacity 1024
 - **THEN** the reported median time per `state.apply(...)` SHALL be < 200 ns on the reference host
@@ -200,26 +200,26 @@ The drain-time coalescing algorithm SHALL: (a) build a `HashMap<CoalesceKey, usi
 
 #### Scenario: Same-key records collapse to latest
 
-- **WHEN** an Operation records 50 `BarTick { interval: M1, ts: T }` Changes via `state.apply(...)` within one linger window, all returning `Some(CoalesceKey::from_hash(&(M1, T)))` from `coalesce_key()`
+- **WHEN** a Procedure records 50 `BarTick { interval: M1, ts: T }` Changes via `state.apply(...)` within one linger window, all returning `Some(CoalesceKey::from_hash(&(M1, T)))` from `coalesce_key()`
 - **THEN** the flusher's drain SHALL emit exactly one frame whose Change is the 50th `BarTick`
 
 #### Scenario: No-key records are preserved verbatim
 
-- **WHEN** an Operation records 10 Changes whose `coalesce_key() == None` within one linger window
+- **WHEN** a Procedure records 10 Changes whose `coalesce_key() == None` within one linger window
 - **THEN** the flusher's drain SHALL emit 10 frames in the same order they were pushed
 
 #### Scenario: Mixed coalesce-key and no-key records
 
-- **WHEN** an Operation records, in order: A (no key), B (key=K1), C (key=K1), D (no key), E (key=K2)
+- **WHEN** a Procedure records, in order: A (no key), B (key=K1), C (key=K1), D (no key), E (key=K2)
 - **THEN** the flusher's drain SHALL emit frames in order: A, C, D, E (B is collapsed to C; A and D are preserved verbatim; E is retained)
 
-### Requirement: OperationTestHarness in public API surface (Rust SDK)
+### Requirement: ProcedureTestHarness in public API surface (Rust SDK)
 
-The Rust SDK SHALL export `OperationTestHarness::<S: Operation>` under `flezha_runner::testing::OperationTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
+The Rust SDK SHALL export `ProcedureTestHarness::<S: Procedure>` under `flezha_runner::testing::ProcedureTestHarness`, gated by `cfg(any(test, feature = "testing"))`. The harness SHALL support:
 
-- `OperationTestHarness::<S>::new()` (requires `S: Default`) — constructs a harness with `S::init_state(None, None)`.
-- `OperationTestHarness::<S>::with_initial_state(state: S::State)` — explicit initial state.
-- `OperationTestHarness::<S>::with_payload(operation_key, payload)` — replicates the runtime's snapshot+changelog restoration flow.
+- `ProcedureTestHarness::<S>::new()` (requires `S: Default`) — constructs a harness with `S::init_state(None, None)`.
+- `ProcedureTestHarness::<S>::with_initial_state(state: S::State)` — explicit initial state.
+- `ProcedureTestHarness::<S>::with_payload(entity_key, payload)` — replicates the runtime's snapshot+changelog restoration flow.
 - `apply_inputs(iter: impl IntoIterator<Item = S::Input>) -> &mut Self` — invokes `S::run` for each input on the harness's owned state, recording emits and Changes.
 - `expect_changes(self, expected: &[S::Change]) -> Self` (consuming) — asserts equality, requires `S::Change: PartialEq + Debug`.
 - `expect_emits<C>(self, expected: &[C]) -> Self` (consuming) — asserts emits of type `C` equal expected.
@@ -229,23 +229,23 @@ The Rust SDK SHALL export `OperationTestHarness::<S: Operation>` under `flezha_r
 
 #### Scenario: Harness asserts on recorded Changes
 
-- **WHEN** a test runs `OperationTestHarness::<CounterOperation>::new().apply_inputs(vec![Input::Add(5), Input::Add(3)]).expect_changes(&[CounterChange { delta: 5 }, CounterChange { delta: 3 }])`
+- **WHEN** a test runs `ProcedureTestHarness::<CounterProcedure>::new().apply_inputs(vec![Input::Add(5), Input::Add(3)]).expect_changes(&[CounterChange { delta: 5 }, CounterChange { delta: 3 }])`
 - **THEN** the chain SHALL succeed and produce a harness whose `recorded_changes` equals the expected slice
 
 #### Scenario: Harness replays for determinism check
 
-- **WHEN** a test runs `OperationTestHarness::<CounterOperation>::new().apply_inputs(inputs).replay_equals()`
-- **THEN** the result SHALL be `Ok(())` because `CounterOperation::apply_change` is deterministic
+- **WHEN** a test runs `ProcedureTestHarness::<CounterProcedure>::new().apply_inputs(inputs).replay_equals()`
+- **THEN** the result SHALL be `Ok(())` because `CounterProcedure::apply_change` is deterministic
 
 #### Scenario: Harness detects non-deterministic apply_change
 
-- **WHEN** an Operation's `apply_change` reads `SystemTime::now()` and uses it to seed a state field, AND the harness runs `replay_equals()`
+- **WHEN** a Procedure's `apply_change` reads `SystemTime::now()` and uses it to seed a state field, AND the harness runs `replay_equals()`
 - **THEN** the result SHALL be `Err(ReplayMismatch { expected_serialized, actual_serialized })` whose `Display` impl renders a hex-diff identifying the divergent state field
 
 #### Scenario: Harness compiled-out without testing feature
 
 - **WHEN** a downstream crate depends on `flezha_runner` without enabling the `testing` feature flag and does not build under `#[cfg(test)]`
-- **THEN** `flezha_runner::testing` SHALL NOT be visible and references to `OperationTestHarness` SHALL fail to compile
+- **THEN** `flezha_runner::testing` SHALL NOT be visible and references to `ProcedureTestHarness` SHALL fail to compile
 
 ### Requirement: 16-byte version header stamped on persisted Changes
 
@@ -253,7 +253,7 @@ The Rust SDK SHALL stamp a 16-byte header on every Change record emitted to the 
 
 - bytes 0:1 — `sdk_lang: u8` SHALL equal `1` (Rust).
 - bytes 1:5 — `sdk_version: u32 BE` SHALL be parsed from `env!("CARGO_PKG_VERSION")` at SDK build time as `(major << 16) | (minor << 8) | patch`.
-- bytes 5:9 — `schema_version: u32 BE` SHALL equal `S::SCHEMA_VERSION` for the Operation owning the Change.
+- bytes 5:9 — `schema_version: u32 BE` SHALL equal `S::SCHEMA_VERSION` for the Procedure owning the Change.
 - bytes 9:10 — `format_id: u8` SHALL equal `1` (postcard) in v1.
 - bytes 10:12 — reserved, MUST be zero.
 - bytes 12:16 — `crc32: u32 BE` SHALL be `crc32fast::hash(&change_bytes)`.
@@ -262,7 +262,7 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 
 #### Scenario: Header bytes match the umbrella spec
 
-- **WHEN** a Rust SDK at `version 0.5.3` and Operation `SCHEMA_VERSION = 1` stamps a header for change_bytes `&[0x01, 0x02, 0x03]`
+- **WHEN** a Rust SDK at `version 0.5.3` and Procedure `SCHEMA_VERSION = 1` stamps a header for change_bytes `&[0x01, 0x02, 0x03]`
 - **THEN** the resulting 16-byte header SHALL equal `[0x01, 0x00, 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, <crc32 BE bytes of [0x01, 0x02, 0x03]>]`
 
 #### Scenario: Cross-language load fails loud
@@ -272,17 +272,17 @@ The header SHALL be stamped in `HeaderTemplate::stamp(change_bytes: &[u8]) -> [u
 
 #### Scenario: schema_version mismatch fails loud
 
-- **WHEN** the Rust SDK at Operation `SCHEMA_VERSION = 2` attempts to decode a record whose header carries `schema_version = 1`
+- **WHEN** the Rust SDK at Procedure `SCHEMA_VERSION = 2` attempts to decode a record whose header carries `schema_version = 1`
 - **THEN** `decode_header` SHALL return `Err(RestoreError::SchemaMismatch { expected: 2, found: 1 })` and SHALL NOT proceed to deserialization (registered migrators are reserved by the umbrella but not implemented in this change)
 
 #### Scenario: crc32 mismatch fails loud
 
 - **WHEN** the Rust SDK decodes a record whose header crc32 does not match a recomputed crc32 over the change_bytes
-- **THEN** `decode_header` SHALL return `Err(RestoreError::CrcMismatch { segment, seq })` and SHALL NOT proceed to deserialization
+- **THEN** `decode_header` SHALL return `Err(RestoreError::CrcMismatch { entity, seq })` and SHALL NOT proceed to deserialization
 
 ### Requirement: Public Rust SDK API uses canonical Operative/Runner vocabulary
 
-The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` (formerly `ComputeEngineNode`) and provide a method `get_operatives()` (formerly `get_processors()`) returning the registered Operatives on the current Runner. The module path SHALL be `sdk/rust/src/runner/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignRunnerId`, `RunnerDisconnect`, `AddOperative`, `RemOperative`, `SegmentState`, `SegmentApplyState`, `OperationMessage`, `OperationMessageResponse`, plus existing `RestoreInitState`, `CompactSegment`, `SegmentMailboxStatus`.
+The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNode` (formerly `ComputeEngineNode`) and provide a method `get_operatives()` (formerly `get_processors()`) returning the registered Operatives on the current Runner. The module path SHALL be `sdk/rust/src/runner/` (formerly `sdk/rust/src/compute_engine/`). Generated protobuf types SHALL reflect the renamed messages: `AssignRunnerId`, `RunnerDisconnect`, `AddOperative`, `RemOperative`, `EntityState`, `EntityApplyState`, `OperativeMessage`, `OperativeMessageResponse`, plus existing `RestoreInitState`, `CompactEntity`, `EntityMailboxStatus`.
 
 #### Scenario: Public types compile under new names
 - **WHEN** a downstream Rust crate depends on `flezha-sdk` and writes `use flezha_sdk::runner::RunnerNode;`
@@ -294,20 +294,20 @@ The Rust SDK SHALL expose its top-level dispatch types under the names `RunnerNo
 
 ### Requirement: Generated payload-id constants use canonical names
 
-The Rust SDK's payload-id constants (those that map to the binary framing's `payload_id(32)` byte slot) SHALL be named consistent with the canonical vocabulary: `SEGMENT_STATE_CHANGE`, `SEGMENT_STATE_SNAPSHOT`, `RESTORE_INIT_STATE`, `COMPACT_SEGMENT`, `SEGMENT_MAILBOX_STATUS`, `CONNECT_CONTROL_CHANNEL`, `CONTROL_COMMAND`. The previous `PROCESSOR_*` family SHALL be removed.
+The Rust SDK's payload-id constants (those that map to the binary framing's `payload_id(32)` byte slot) SHALL be named consistent with the canonical vocabulary: `ENTITY_STATE_CHANGE`, `ENTITY_STATE_SNAPSHOT`, `RESTORE_INIT_STATE`, `COMPACT_ENTITY`, `ENTITY_MAILBOX_STATUS`, `CONNECT_CONTROL_CHANNEL`, `CONTROL_COMMAND`. The previous `PROCESSOR_*` family SHALL be removed.
 
 #### Scenario: Payload-id constants compile and resolve
 - **WHEN** the Rust SDK is built
-- **THEN** the constants `SEGMENT_STATE_CHANGE` and `SEGMENT_STATE_SNAPSHOT` MUST be defined and exported; references to `PROCESSOR_STATE_CHANGE` MUST not exist
+- **THEN** the constants `ENTITY_STATE_CHANGE` and `ENTITY_STATE_SNAPSHOT` MUST be defined and exported; references to `PROCESSOR_STATE_CHANGE` MUST not exist
 
-### Requirement: Test fixtures' Operations exercise the output channel path
+### Requirement: Test fixtures' Procedures exercise the output channel path
 
-The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `OperationCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's `:on_output`-subscribed plugin tests. Specifically:
+The test fixtures under `test/apps/rust_runner/src/main.rs` SHALL emit at least one output frame per input received, via `ProcedureCtx::output(channel, value, metadata)`, on Operatives exercised by the controller's `:on_output`-subscribed plugin tests. Specifically:
 
-- `StoreInputOperative::StoreInputOperation::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
-- `CompareFilterOperative::CompareFilterOperation::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
+- `StoreInputOperative::StoreInputProcedure::run` SHALL emit the input string on a sink Channel (named `"output"`) after applying the `PushText` change.
+- `CompareFilterOperative::CompareFilterProcedure::run` SHALL emit the input string on a sink Channel when `state.comparable == input` (matching the existing test's expectation of `"hello world"` round-tripping through the filter).
 
-This requirement covers fixture behavior only; it does not change the SDK's `Operation` trait, the dispatch contract, or any wire format. A future production Operative may emit no outputs and remain conformant to the SDK's other requirements.
+This requirement covers fixture behavior only; it does not change the SDK's `Procedure` trait, the dispatch contract, or any wire format. A future production Operative may emit no outputs and remain conformant to the SDK's other requirements.
 
 #### Scenario: StoreInputOperative round-trips input via :on_output
 
@@ -359,7 +359,7 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 
 ### Requirement: Runner declaration and connection failures surface as typed Results
 
-Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.define_unbounded::<A>()?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidBounded(#[from] BuildBoundedError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `segment_for` overrides, type mismatches, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
+Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.define_unbounded::<A>()?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidBounded(#[from] BuildBoundedError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `entities_for` overrides, type mismatches, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
 
 `operatives()` SHALL return `Result<HashMap<String, Arc<UnboundedInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
 
@@ -387,7 +387,7 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 - **GIVEN** a process where a runner for `"ns1"` created via `Flezha::create_runner("ns1")?` has been started
 - **WHEN** code in the same process starts a second runner for `"ns2"`
 - **THEN** the call SHALL return `Err(FlezhaError::AlreadyRunning { namespace: "ns1".into() })`
-- **AND** no connection SHALL be attempted for `"ns2"`, and the process's `STABLE_ID`, `segment_state_sink`, and `credit::global()` state SHALL remain exclusively `"ns1"`'s
+- **AND** no connection SHALL be attempted for `"ns2"`, and the process's `STABLE_ID`, `entity_state_sink`, and `credit::global()` state SHALL remain exclusively `"ns1"`'s
 
 #### Scenario: Creating runners never claims the slot
 - **GIVEN** a process where a runner for `"ns1"` is already started
@@ -449,22 +449,22 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 
 ### Requirement: A restore SHALL NOT silently discard un-recoverable queued input
 
-A restore SHALL discard a Segment's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
+A restore SHALL discard an Entity's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
 
 `restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Overwatch.journal_input/2` journals for the effectively-once tier and for durable bounded instances, and passes every other operative through untouched. A plain stateful unbounded operative, which is the default configuration, has no such log.
 
 #### Scenario: Journaled input may be discarded
-- **GIVEN** a Segment whose class journals its inputs before forwarding
-- **WHEN** a restore rebuilds that Segment
+- **GIVEN** an Entity whose class journals its inputs before forwarding
+- **WHEN** a restore rebuilds that Entity
 - **THEN** the queued input MAY be discarded, because the Controller re-forwards it from the durable log
 
 #### Scenario: Un-journaled input is not silently destroyed
-- **GIVEN** a Segment whose class does not journal its inputs
-- **WHEN** a restore rebuilds that Segment
+- **GIVEN** an Entity whose class does not journal its inputs
+- **WHEN** a restore rebuilds that Entity
 - **THEN** its queued input SHALL NOT be silently discarded
 
 #### Scenario: The replay buffer and open interval clears are unchanged
-- **WHEN** a restore rebuilds a Segment
+- **WHEN** a restore rebuilds an Entity
 - **THEN** the replay buffer, replay flags, and any open checkpoint interval SHALL continue to be cleared as they are today, on every class
 
 ### Requirement: Input discarded by a restore SHALL be counted
@@ -472,64 +472,64 @@ A restore SHALL discard a Segment's queued input only where the Controller will 
 `Mailbox::clear` is a bare drain loop with no counter, telemetry, or log line, so a discard leaves no trace and the loss can only be inferred by reading the code. Any input discarded on the restore path SHALL be observable.
 
 #### Scenario: A discard emits a count
-- **WHEN** a restore discards queued input for a Segment
-- **THEN** the number of discarded items SHALL be recorded and exposed, naming the Segment
+- **WHEN** a restore discards queued input for an Entity
+- **THEN** the number of discarded items SHALL be recorded and exposed, naming the Entity
 
 ### Requirement: The two SDKs SHALL agree on restore-time mailbox handling
 
 The Rust SDK clears the mailbox on restore; the Java SDK does not, clearing only its staged changes. Neither behaviour is documented as the intended one. Both SDKs SHALL implement the same documented behaviour.
 
 #### Scenario: Equivalent restores behave equivalently
-- **GIVEN** equivalent Segments of the same class on a Rust runner and a Java runner, each with queued input
+- **GIVEN** equivalent Entities of the same class on a Rust runner and a Java runner, each with queued input
 - **WHEN** each is restored
 - **THEN** the fate of the queued input SHALL be the same on both
 
-### Requirement: The Rust SDK SHALL emit a segment_state_snapshot on CompactSegment
+### Requirement: The Rust SDK SHALL emit an entity_state_snapshot on CompactEntity
 
-`sdk/rust/src/command/compact.rs` currently ignores its runner argument and answers a hardcoded `CompactSegmentResponse{snapshot_seq: 0, snapshot_bytes_size: 0}` without shipping any frame, and pushes nothing onto `errors` — so the failure presents to the Controller as a successful handshake. The handler SHALL locate the addressed Segment, capture its state, ship a `segment_state_snapshot` data frame, and answer with the seq it actually captured.
+`sdk/rust/src/command/compact.rs` currently ignores its runner argument and answers a hardcoded `CompactEntityResponse{snapshot_seq: 0, snapshot_bytes_size: 0}` without shipping any frame, and pushes nothing onto `errors` — so the failure presents to the Controller as a successful handshake. The handler SHALL locate the addressed Entity, capture its state, ship an `entity_state_snapshot` data frame, and answer with the seq it actually captured.
 
-The snapshot body SHALL be encoded with the same codec the restore path decodes — postcard, per `segment/restore.rs`. The JSON serializer used for graceful shutdown and live migration SHALL NOT be used for the snapshot body.
+The snapshot body SHALL be encoded with the same codec the restore path decodes — postcard, per `entity/restore.rs`. The JSON serializer used for graceful shutdown and live migration SHALL NOT be used for the snapshot body.
 
 The frame SHALL carry a payload-id constant defined alongside the sink's other payload-ids, and SHALL be shipped through the existing reliable sink rather than a separate transport path.
 
-#### Scenario: A live Segment produces a snapshot at its current seq
+#### Scenario: A live Entity produces a snapshot at its current seq
 
-- **GIVEN** a live Segment with persisted Changes and a current `change_seq`
-- **WHEN** the SDK receives `CompactSegment` addressing that Segment
-- **THEN** the SDK SHALL ship one `segment_state_snapshot` frame carrying the Segment's serialized state stamped with a seq the Segment has reached
-- **AND** SHALL answer `CompactSegmentResponse` reporting that same seq and the body's byte size
+- **GIVEN** a live Entity with persisted Changes and a current `change_seq`
+- **WHEN** the SDK receives `CompactEntity` addressing that Entity
+- **THEN** the SDK SHALL ship one `entity_state_snapshot` frame carrying the Entity's serialized state stamped with a seq the Entity has reached
+- **AND** SHALL answer `CompactEntityResponse` reporting that same seq and the body's byte size
 
 #### Scenario: The snapshot body round-trips through the restore path
 
-- **GIVEN** a snapshot produced by the SDK for a Segment
+- **GIVEN** a snapshot produced by the SDK for an Entity
 - **WHEN** that snapshot is later shipped back to the SDK as `RestoreInitState.snapshot_bytes`
-- **THEN** the restore path SHALL decode it without error and SHALL reconstruct the state the Segment held when the snapshot was taken
+- **THEN** the restore path SHALL decode it without error and SHALL reconstruct the state the Entity held when the snapshot was taken
 
 #### Scenario: The seq and the state are captured together
 
 - **WHEN** the SDK captures state and seq for a snapshot
 - **THEN** the pair SHALL be captured such that the Controller may truncate the WAL up to that seq without discarding a record the snapshot does not already contain
 
-#### Scenario: An unaddressable Segment reports an error
+#### Scenario: An unaddressable Entity reports an error
 
-- **WHEN** the SDK receives `CompactSegment` for a `segment_id` matching no live Segment
+- **WHEN** the SDK receives `CompactEntity` for an `entity_id` matching no live Entity
 - **THEN** the handler SHALL report an error rather than answering as though compaction succeeded
 
-### Requirement: The Rust SDK SHALL take the op-journal from the bind
+### Requirement: The Rust SDK SHALL take the proc-journal from the bind
 
-`start_bounded_resumable` SHALL accept the instance's op-journal alongside the
+`start_bounded_resumable` SHALL accept the instance's proc-journal alongside the
 restore count and SHALL pass it to `BoundedInstance::new`, so the resume state is
 present before the driver is spawned. The `RestoreInitState` handler SHALL NOT
-carry the journal — that frame is per-Segment and is not shipped for a class with
-no persisted Segment.
+carry the journal — that frame is per-Entity and is not shipped for a class with
+no persisted Entity.
 
-#### Scenario: A resuming bind with no Segment restores still resumes at its iteration
+#### Scenario: A resuming bind with no Entity restores still resumes at its iteration
 
-- **GIVEN** a durable bounded class whose operations hold no per-Segment state, so no `RestoreInitState` is shipped
-- **WHEN** the controller binds it with `AddOperative.op_journal`
-- **THEN** the driver SHALL enter the journaled iteration and skip the operations committed in it
+- **GIVEN** a durable bounded class whose procedures hold no per-Entity state, so no `RestoreInitState` is shipped
+- **WHEN** the controller binds it with `AddOperative.proc_journal`
+- **THEN** the driver SHALL enter the journaled iteration and skip the procedures committed in it
 
 #### Scenario: A fresh bind carries no journal
 
-- **WHEN** `AddOperative` arrives with no `op_journal`
-- **THEN** `op_journal_resume()` SHALL be `None` and the chain SHALL run from the top
+- **WHEN** `AddOperative` arrives with no `proc_journal`
+- **THEN** `proc_journal_resume()` SHALL be `None` and the chain SHALL run from the top

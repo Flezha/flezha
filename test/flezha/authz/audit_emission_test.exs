@@ -1,6 +1,6 @@
 defmodule Flezha.AuthZ.AuditEmissionTest do
   @moduledoc """
-  Verifies that the four mutating authn/authz operations each emit
+  Verifies that the four mutating authn/authz procedures each emit
   exactly one `:platform_authz` event on the observability bus,
   carrying the documented `name:` atom and a `metadata.principal` /
   related identity field.

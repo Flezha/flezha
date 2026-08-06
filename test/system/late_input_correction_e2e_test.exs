@@ -31,7 +31,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   @moduletag timeout: 300_000
 
   @factory "candle"
-  @operation "candle_operation"
+  @procedure "candle_procedure"
 
   # No retention setup. The class's declared `correction_window` derives its own
   # input-log hold window and snapshot age floor — that IS the test. If the
@@ -136,11 +136,11 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
            "a beyond-window input must be processed as an arrival, not dropped"
   end
 
-  # The Segment's fold order, read straight out of the live state. This is the
+  # The Entity's fold order, read straight out of the live state. This is the
   # assertion surface: the change is about ORDER, so the test looks at order.
   defp folded(namespace, operative_id) do
-    with {:ok, json} <- OperativeManager.get_segment_state(namespace, operative_id),
-         %{@operation => %{"folded" => folded}} <- Flezha.Service.Payloader.json_to_map(json) do
+    with {:ok, json} <- OperativeManager.get_entity_state(namespace, operative_id),
+         %{@procedure => %{"folded" => folded}} <- Flezha.Service.Payloader.json_to_map(json) do
       folded
     else
       _ -> nil

@@ -2,19 +2,19 @@ package com.flezha.sdk.runtime.operative;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.flezha.sdk.runtime.segment.SegmentSlot;
+import com.flezha.sdk.runtime.entity.EntitySlot;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Nonnull;
 
 /**
- * Serializes a {@link UnboundedOperativeInstance}'s per-Operation / per-Segment state to a
+ * Serializes a {@link UnboundedOperativeInstance}'s per-Procedure / per-Entity state to a
  * canonical JSON blob per {@code operative-mvp-rust/design.md} Decision 10:
  *
  * <pre>
- *   single-mode operation:  {"operationName": &lt;state&gt;}
- *   static-mode operation:  {"operationName": {"operationKey": &lt;state&gt;, ...}}
+ *   single-mode procedure:  {"procedureName": &lt;state&gt;}
+ *   static-mode procedure:  {"procedureName": {"entityKey": &lt;state&gt;, ...}}
  * </pre>
  *
  * <p>Cross-language byte-equality with the Rust SDK is the eventual gate
@@ -31,23 +31,23 @@ public final class UnboundedOperativeStateSerializer {
     private UnboundedOperativeStateSerializer() {}
 
     /**
-     * Build the per-Operation / per-Segment JSON blob. Returns an empty
+     * Build the per-Procedure / per-Entity JSON blob. Returns an empty
      * {@code byte[]} on a serialization failure (logged by the caller).
      */
     @Nonnull
     public static byte[] serialize(@Nonnull UnboundedOperativeInstance instance) throws Exception {
         Map<String, Object> root = new LinkedHashMap<>();
-        for (int operationId = 0; operationId < instance.topology().operations().size(); operationId++) {
-            OperationDescriptor desc = instance.topology().operations().get(operationId);
-            List<SegmentSlot> segments = instance.segments().get(operationId);
-            if (desc.segmentKeys().isEmpty()) {
-                Object state = segments.get(0).state().get();
+        for (int procedureId = 0; procedureId < instance.topology().procedures().size(); procedureId++) {
+            ProcedureDescriptor desc = instance.topology().procedures().get(procedureId);
+            List<EntitySlot> entities = instance.entities().get(procedureId);
+            if (desc.entityKeys().isEmpty()) {
+                Object state = entities.get(0).state().get();
                 root.put(desc.name(), state);
             } else {
                 Map<String, Object> perKey = new LinkedHashMap<>();
-                for (int idx = 0; idx < desc.segmentKeys().size(); idx++) {
-                    String key = desc.segmentKeys().get(idx);
-                    Object state = segments.get(idx).state().get();
+                for (int idx = 0; idx < desc.entityKeys().size(); idx++) {
+                    String key = desc.entityKeys().get(idx);
+                    Object state = entities.get(idx).state().get();
                     perKey.put(key, state);
                 }
                 root.put(desc.name(), perKey);
@@ -58,8 +58,8 @@ public final class UnboundedOperativeStateSerializer {
 
     /**
      * Apply a previously-serialized state blob to a freshly-constructed
-     * {@link UnboundedOperativeInstance}. Segments absent from the blob retain the
-     * state set by their {@code initState} call (forward-compat with Operations
+     * {@link UnboundedOperativeInstance}. Entities absent from the blob retain the
+     * state set by their {@code initState} call (forward-compat with Procedures
      * added after the blob was captured).
      */
     public static void deserialize(@Nonnull UnboundedOperativeInstance instance, @Nonnull byte[] blob)
@@ -71,30 +71,30 @@ public final class UnboundedOperativeStateSerializer {
         // by the matching serialize() above so the cast is round-trip safe.
         @SuppressWarnings("unchecked")
         Map<String, Object> root = MAPPER.readValue(blob, Map.class);
-        for (int operationId = 0; operationId < instance.topology().operations().size(); operationId++) {
-            OperationDescriptor desc = instance.topology().operations().get(operationId);
-            Object operationEntry = root.get(desc.name());
-            if (operationEntry == null) {
+        for (int procedureId = 0; procedureId < instance.topology().procedures().size(); procedureId++) {
+            ProcedureDescriptor desc = instance.topology().procedures().get(procedureId);
+            Object procedureEntry = root.get(desc.name());
+            if (procedureEntry == null) {
                 continue;
             }
-            List<SegmentSlot> segments = instance.segments().get(operationId);
-            if (desc.segmentKeys().isEmpty()) {
+            List<EntitySlot> entities = instance.entities().get(procedureId);
+            if (desc.entityKeys().isEmpty()) {
                 Object state =
-                        decodeState(operationEntry, segments.get(0).state().get());
-                segments.get(0).state().set(state);
+                        decodeState(procedureEntry, entities.get(0).state().get());
+                entities.get(0).state().set(state);
             } else {
-                if (!(operationEntry instanceof Map<?, ?> perKey)) {
+                if (!(procedureEntry instanceof Map<?, ?> perKey)) {
                     continue;
                 }
-                for (int idx = 0; idx < desc.segmentKeys().size(); idx++) {
-                    String key = desc.segmentKeys().get(idx);
+                for (int idx = 0; idx < desc.entityKeys().size(); idx++) {
+                    String key = desc.entityKeys().get(idx);
                     Object encoded = perKey.get(key);
                     if (encoded == null) {
                         continue;
                     }
                     Object state =
-                            decodeState(encoded, segments.get(idx).state().get());
-                    segments.get(idx).state().set(state);
+                            decodeState(encoded, entities.get(idx).state().get());
+                    entities.get(idx).state().set(state);
                 }
             }
         }

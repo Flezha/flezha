@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Every ack-bearing exchange goes through this — the graceful-shutdown
  * {@code RunnerShutdownAck}, the dead-letter {@code ParkPayloadAck}, and the
- * bounded {@code OpCommitResponse} / {@code IterCommitResponse} barriers.
+ * bounded {@code ProcCommitResponse} / {@code IterCommitResponse} barriers.
  *
  * <p><b>Callers MUST register before sending.</b> That ordering is what makes
  * the registry race-free: a reply can never arrive before its future exists, so

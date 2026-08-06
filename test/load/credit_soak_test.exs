@@ -58,7 +58,7 @@ defmodule Flezha.Load.CreditSoakTest do
 
   @namespace "credit_soak"
   @factory "store_input"
-  @operation "store_input_operation"
+  @procedure "store_input_procedure"
   @ws_plugin_id "credit_soak_ws"
 
   @kraken_port 8097
@@ -155,8 +155,8 @@ defmodule Flezha.Load.CreditSoakTest do
     end)
 
     # Wait for the feed to flow and the credit handshake to complete.
-    segment_id = wait_for_segment(operative_id, @operation, 60_000)
-    writer = wait_for_writer(segment_id, 10_000)
+    entity_id = wait_for_entity(operative_id, @procedure, 60_000)
+    writer = wait_for_writer(entity_id, 10_000)
 
     assert wait_until(fn -> active_credit_row(ce_id) != nil end, 30_000),
            "credit handshake never completed"
@@ -186,7 +186,7 @@ defmodule Flezha.Load.CreditSoakTest do
       |> Enum.count(fn [a, b] -> b.parked > a.parked end)
 
     row = active_credit_row(ce_id)
-    shed = Flezha.State.Metrics.get(Flezha.State.Metrics.for_segment(segment_id), :wal_shed_total)
+    shed = Flezha.State.Metrics.get(Flezha.State.Metrics.for_entity(entity_id), :wal_shed_total)
     counts = anomaly_counts(anomalies)
 
     IO.puts(

@@ -1,29 +1,29 @@
 package com.flezha.test;
 
 import com.flezha.sdk.authoring.InitState;
-import com.flezha.sdk.authoring.Operation;
-import com.flezha.sdk.authoring.SegmentFor;
+import com.flezha.sdk.authoring.Procedure;
+import com.flezha.sdk.authoring.EntitiesFor;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * Static-segmented operation whose rolling-window length is encoded in the
- * segment key, supplied via {@code @InitState} (the macro default
+ * Static-entity procedure whose rolling-window length is encoded in the
+ * entity key, supplied via {@code @InitState} (the macro default
  * {@code new State()} cannot derive it). Mirrors the market {@code sma}/{@code ohlc}
- * operations and is the Java parity twin of the Rust {@code Windowed} sugar operation.
+ * procedures and is the Java parity twin of the Rust {@code Windowed} sugar procedure.
  */
-@Operation(id = "java_windowed", keys = {"win_2", "win_3"})
+@Procedure(id = "java_windowed", keys = {"win_2", "win_3"})
 public class Windowed {
 
-    @SegmentFor
-    public List<String> segmentFor(WindowInput input) {
+    @EntitiesFor
+    public List<String> entitiesFor(WindowInput input) {
         return List.of("win_2", "win_3");
     }
 
     @InitState
-    public WindowedState initState(Optional<String> operationKey) {
+    public WindowedState initState(Optional<String> entityKey) {
         WindowedState s = new WindowedState();
-        s.window = operationKey.equals(Optional.of("win_2")) ? 2 : 3;
+        s.window = entityKey.equals(Optional.of("win_2")) ? 2 : 3;
         return s;
     }
 

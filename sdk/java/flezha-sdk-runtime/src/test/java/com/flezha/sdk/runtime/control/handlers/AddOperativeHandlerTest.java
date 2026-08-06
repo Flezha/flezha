@@ -3,10 +3,10 @@ package com.flezha.sdk.runtime.control.handlers;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.RunnerContext;
@@ -127,14 +127,14 @@ class AddOperativeHandlerTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(IdempotentOperation.class);
+            c.input(String.class, "input").into(IdempotentProcedure.class);
         }
     }
 
-    public static final class IdempotentOperation
-            implements Operation<
+    public static final class IdempotentProcedure
+            implements Procedure<
                     String,
-                    IdempotentOperation.Empty,
+                    IdempotentProcedure.Empty,
                     String,
                     com.flezha.sdk.state.NoChange,
                     com.flezha.sdk.state.WallClock,
@@ -143,7 +143,7 @@ class AddOperativeHandlerTest {
 
         @Override
         public String name() {
-            return "idempotent_operation";
+            return "idempotent_procedure";
         }
 
         @Override
@@ -173,7 +173,7 @@ class AddOperativeHandlerTest {
 
         @Override
         public Empty initState(
-                Optional<String> operationKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
+                Optional<String> entityKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
             return new Empty();
         }
 
@@ -181,7 +181,7 @@ class AddOperativeHandlerTest {
         public void run(
                 String input,
                 com.flezha.sdk.state.StateHandle<Empty, com.flezha.sdk.state.NoChange> state,
-                OperationCtx ctx)
-                throws OperationException {}
+                ProcedureCtx ctx)
+                throws ProcedureException {}
     }
 }

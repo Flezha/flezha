@@ -3,50 +3,50 @@
 ## Purpose
 TBD - created by archiving change bounded-operative-functionality. Update Purpose after archive.
 ## Requirements
-### Requirement: A bounded operative is structured but runs its operations sequentially
+### Requirement: A bounded operative is structured but runs its procedures sequentially
 
-A bounded operative SHALL be authorable with the same Operation, Channel, and Segment surface as an unbounded operative, on the same per-segment state engine. The kind difference SHALL be **scheduling**: a bounded operative's operations SHALL run sequentially **along each path** of a static **tree-shaped chain** — the linear chain (`Op1 → Op2 → … → OpN`) as the single-branch case, and fan-out into independent branches per the `bounded-branching` capability (fan-in remains rejected) — where each operation's per-channel output is its downstream operation's input and a child runs only after its parent commits. **Within a single operation, segments SHALL run in parallel** exactly as in an unbounded operative (per-segment mailbox, worker, and state). The identity of a bounded operative's durable state SHALL use the same `{operative_class, operation_id, segment_key}` form — no synthetic operation/segment placeholders.
+A bounded operative SHALL be authorable with the same Procedure, Channel, and Entity surface as an unbounded operative, on the same per-entity state engine. The kind difference SHALL be **scheduling**: a bounded operative's procedures SHALL run sequentially **along each path** of a static **tree-shaped chain** — the linear chain (`Op1 → Op2 → … → ProcN`) as the single-branch case, and fan-out into independent branches per the `bounded-branching` capability (fan-in remains rejected) — where each procedure's per-channel output is its downstream procedure's input and a child runs only after its parent commits. **Within a single procedure, entities SHALL run in parallel** exactly as in an unbounded operative (per-entity mailbox, worker, and state). The identity of a bounded operative's durable state SHALL use the same `{operative_class, procedure_id, entity_key}` form — no synthetic procedure/entity placeholders.
 
-#### Scenario: A bounded operative declares operations and segments
+#### Scenario: A bounded operative declares procedures and entities
 
-- **WHEN** a bounded operative is authored with multiple Operations chained by Channels and a Segment key on a stateful Operation
-- **THEN** each Operation SHALL run on the same per-segment engine as an unbounded operative, with per-Segment state behaving identically, but the Operations SHALL execute in topological order along their path rather than concurrently with their ancestors
+- **WHEN** a bounded operative is authored with multiple Procedures chained by Channels and an Entity key on a stateful Procedure
+- **THEN** each Procedure SHALL run on the same per-entity engine as an unbounded operative, with per-Entity state behaving identically, but the Procedures SHALL execute in topological order along their path rather than concurrently with their ancestors
 
-#### Scenario: Segments within one operation run in parallel
+#### Scenario: Entities within one procedure run in parallel
 
-- **WHEN** an Operation in a bounded operative fans its input across multiple segment keys
-- **THEN** those segments SHALL be processed in parallel, each with its own state, and the Operation SHALL be considered finished only when every one of its segments has finished
+- **WHEN** a Procedure in a bounded operative fans its input across multiple entity keys
+- **THEN** those entities SHALL be processed in parallel, each with its own state, and the Procedure SHALL be considered finished only when every one of its entities has finished
 
 #### Scenario: Bounded state identity has no sentinels
 
-- **WHEN** a durable bounded operative writes Segment state
-- **THEN** the on-disk/on-wire identity SHALL be `{operative_class, operation_id, segment_key}` with real operation and segment values, not reserved placeholders
+- **WHEN** a durable bounded operative writes Entity state
+- **THEN** the on-disk/on-wire identity SHALL be `{operative_class, procedure_id, entity_key}` with real procedure and entity values, not reserved placeholders
 
-### Requirement: An operation completes when all its segments finish
+### Requirement: A procedure completes when all its entities finish
 
-A bounded operative SHALL advance from one operation to the next via a **barrier**: operation `Op(i+1)` SHALL NOT begin until operation `Op(i)` is **complete**, defined as every item of `Op(i)`'s input having been processed across all of its segments, with no segment mid-run and no pending work. The previous operation's collected output SHALL be released to the next operation only at this barrier. The first operation's input SHALL be seeded from the spawn `args` (`init_values`).
+A bounded operative SHALL advance from one procedure to the next via a **barrier**: procedure `Proc(i+1)` SHALL NOT begin until procedure `Proc(i)` is **complete**, defined as every item of `Proc(i)`'s input having been processed across all of its entities, with no entity mid-run and no pending work. The previous procedure's collected output SHALL be released to the next procedure only at this barrier. The first procedure's input SHALL be seeded from the spawn `args` (`init_values`).
 
-#### Scenario: The next operation waits for the barrier
+#### Scenario: The next procedure waits for the barrier
 
-- **WHEN** operation A in a bounded operative fans work across segments and operation B consumes A's output
-- **THEN** B SHALL NOT start processing until all of A's segments have finished, and B SHALL then run on A's complete output
+- **WHEN** procedure A in a bounded operative fans work across entities and procedure B consumes A's output
+- **THEN** B SHALL NOT start processing until all of A's entities have finished, and B SHALL then run on A's complete output
 
 #### Scenario: Completion is countable, not a timed guess
 
-- **WHEN** an operation processes a finite, known batch of items across its segments
-- **THEN** "operation complete" SHALL be determined by all dispatched items having been processed (a count), not by an idle-timeout heuristic
+- **WHEN** a procedure processes a finite, known batch of items across its entities
+- **THEN** "procedure complete" SHALL be determined by all dispatched items having been processed (a count), not by an idle-timeout heuristic
 
-### Requirement: `run` is sugar for a single-Operation bounded operative
+### Requirement: `run` is sugar for a single-Procedure bounded operative
 
-The bare `run(ctx, args) -> Result<Output>` authoring form SHALL be retained as **sugar** that expands to a bounded operative with one implicit Operation and one implicit Segment, whose body is `run` and whose completion is `run` returning. Authoring `run` SHALL be equivalent to hand-writing the one-Operation form; an author SHALL be able to start from `run` and grow into explicit Operations/Segments without a rewrite of unrelated code.
+The bare `run(ctx, args) -> Result<Output>` authoring form SHALL be retained as **sugar** that expands to a bounded operative with one implicit Procedure and one implicit Entity, whose body is `run` and whose completion is `run` returning. Authoring `run` SHALL be equivalent to hand-writing the one-Procedure form; an author SHALL be able to start from `run` and grow into explicit Procedures/Entities without a rewrite of unrelated code.
 
-#### Scenario: `run` expands to the one-Operation form
+#### Scenario: `run` expands to the one-Procedure form
 
 - **WHEN** a bounded operative is authored with only `run(ctx, args)`
-- **THEN** it SHALL run as a single-Operation, single-Segment bounded operative, and SHALL behave identically to the equivalent hand-written one-Operation bounded operative
+- **THEN** it SHALL run as a single-Procedure, single-Entity bounded operative, and SHALL behave identically to the equivalent hand-written one-Procedure bounded operative
 
-#### Scenario: Growing from `run` to operations is additive
+#### Scenario: Growing from `run` to procedures is additive
 
-- **WHEN** an author replaces a `run`-form bounded operative with an explicit multi-Operation form
+- **WHEN** an author replaces a `run`-form bounded operative with an explicit multi-Procedure form
 - **THEN** no change to the controller, protocol, or WAL format SHALL be required for it to run
 

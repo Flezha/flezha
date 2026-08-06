@@ -159,7 +159,7 @@ The shared library exposes a C API following established patterns from libcurl, 
 4. **Configuration via Structs** — Typed config structs, env vars are convenience wrappers.
 5. **Explicit Lifecycle** — `new → configure → connect → use → close → destroy`.
 6. **Logging Callbacks** — Each language routes logs to its own logger.
-7. **Thread Safety** — Context creation/destruction: single-threaded. All other operations: thread-safe.
+7. **Thread Safety** — Context creation/destruction: single-threaded. All other procedures: thread-safe.
 
 ### Functions
 

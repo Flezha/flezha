@@ -55,7 +55,7 @@ defmodule Flezha.State.FsyncBatcherTest do
     # Stopping it would race with the application supervisor's restart loop.
 
     test "10 marks of the same writer fan out to 1 fsync per tick window" do
-      pid = TestHelpers.sample_segment_id("batcher_one")
+      pid = TestHelpers.sample_entity_id("batcher_one")
       {:ok, _} = Supervisor.find_or_start(pid)
 
       # Isolated batcher with a long interval so our explicit flush is the only
@@ -83,8 +83,8 @@ defmodule Flezha.State.FsyncBatcherTest do
     end
 
     test "tick coalesces dirty set" do
-      a = TestHelpers.sample_segment_id("a")
-      b = TestHelpers.sample_segment_id("b")
+      a = TestHelpers.sample_entity_id("a")
+      b = TestHelpers.sample_entity_id("b")
       {:ok, _} = Supervisor.find_or_start(a)
       {:ok, _} = Supervisor.find_or_start(b)
 
@@ -99,7 +99,7 @@ defmodule Flezha.State.FsyncBatcherTest do
     end
 
     test "actual fsync runs against live writer" do
-      pid = TestHelpers.sample_segment_id("real")
+      pid = TestHelpers.sample_entity_id("real")
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
       :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "x")

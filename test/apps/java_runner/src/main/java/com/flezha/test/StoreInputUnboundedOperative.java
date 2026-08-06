@@ -5,8 +5,8 @@ import com.flezha.sdk.operative.UnboundedOperative;
 
 /**
  * Mirror of the Rust SDK's {@code StoreInputUnboundedOperative}: appends each
- * input to the Operation's State. No emit — the State is observable via
- * {@code SegmentState}.
+ * input to the Procedure's State. No emit — the State is observable via
+ * {@code EntityState}.
  */
 public final class StoreInputUnboundedOperative implements UnboundedOperative {
 
@@ -17,6 +17,6 @@ public final class StoreInputUnboundedOperative implements UnboundedOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(StoreInputOperation.class);
+        c.input(String.class, "input").into(StoreInputProcedure.class);
     }
 }

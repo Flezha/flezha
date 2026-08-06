@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The unbounded-correction capability lets an unbounded operative fix the past when a source sends a late or corrected event: an operative with the effectively-once tier, an `EventTimeFrom` clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Segment's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Segment, and the same transaction backs the operator verb `flz operative replay`.
+The unbounded-correction capability lets an unbounded operative fix the past when a source sends a late or corrected event: an operative with the effectively-once tier, an `EventTimeFrom` clock, and keyed plugin channels may declare a `correction_window`, and an input that lands behind the Entity's event-time high-water but inside that window triggers an automatic restore-and-replay of the input-log slice above a rewound baseline, event-time-ordered, under a bumped epoch — so conforming sinks overwrite the stale rows by natural key and converge on the corrected values. Inputs are journaled before they are forwarded, so the late input is already in the log at its arrival offset and the slice contains it by construction. Beyond-window inputs follow a declared policy, bursts of late inputs coalesce into one correction per Entity, and the same transaction backs the operator verb `flz operative replay`.
 ## Requirements
 ### Requirement: Correction window declaration with validated prerequisites
 
@@ -55,10 +55,10 @@ never be committed silently.
 
 ### Requirement: Late inputs inside the window trigger automatic correction
 
-Each Segment SHALL track its event-time high-water. An input whose extracted
+Each Entity SHALL track its event-time high-water. An input whose extracted
 event time is behind the high-water by no more than the correction window SHALL
 NOT be processed as arrival; the SDK SHALL request correction and hold the
-Segment's drain. The engine SHALL rewind the Segment to the last state seq whose
+Entity's drain. The engine SHALL rewind the Entity to the last state seq whose
 event time precedes the late input's, restore the runner to that baseline, and
 re-forward the input-log range above the baseline's consumed offset marked as a
 replay slice. The SDK SHALL buffer that slice to its end-of-slice marker, order
@@ -71,9 +71,9 @@ construction and no separate splice SHALL be performed.
 
 #### Scenario: Late trade corrects a candle
 
-- **WHEN** a Segment building 1m candles has high-water 14:06:00 and receives a
+- **WHEN** an Entity building 1m candles has high-water 14:06:00 and receives a
   trade with event time 14:05:10, within a 10-minute window
-- **THEN** after correction completes, the Segment's state equals the state that
+- **THEN** after correction completes, the Entity's state equals the state that
   a run receiving the trade in event-time order would have produced
 
 #### Scenario: Slice membership is durable, not timing-dependent
@@ -94,7 +94,7 @@ construction and no separate splice SHALL be performed.
 
 Late inputs older than the correction window SHALL follow the operative's
 declared policy: `process_as_arrival` (default) or `drop`. Both outcomes SHALL
-emit telemetry identifying the segment and the lateness magnitude.
+emit telemetry identifying the entity and the lateness magnitude.
 
 #### Scenario: Default policy processes as arrival
 
@@ -110,7 +110,7 @@ emit telemetry identifying the segment and the lateness magnitude.
 
 ### Requirement: Corrected outputs republish under a bumped epoch
 
-A deliberate correction or replay SHALL bump the Segment's epoch. Corrected
+A deliberate correction or replay SHALL bump the Entity's epoch. Corrected
 effect records SHALL supersede WAL history above the correction boundary via a
 non-destructive rewind that retains records at or below the baseline seq and
 drops only the snapshots above it; the epoch bump SHALL be durable before any
@@ -132,22 +132,22 @@ rows by natural key. Crash-driven re-emits SHALL NOT bump the epoch.
 - **THEN** the re-run reuses the same bumped epoch (no double increment) and the
   sink outcome is identical to an uninterrupted correction
 
-### Requirement: Correction requests coalesce per Segment
+### Requirement: Correction requests coalesce per Entity
 
-Concurrent or bursty late inputs for one Segment SHALL coalesce into a single
+Concurrent or bursty late inputs for one Entity SHALL coalesce into a single
 correction whose target is the oldest requested event time and whose splice
-contains all pending late inputs. At most one correction per Segment SHALL be in
+contains all pending late inputs. At most one correction per Entity SHALL be in
 flight.
 
 #### Scenario: Burst of late trades replays once
 
-- **WHEN** five late trades for one Segment arrive within the debounce interval
+- **WHEN** five late trades for one Entity arrive within the debounce interval
 - **THEN** exactly one restore-splice-replay cycle runs and its splice contains
   all five trades in event-time order
 
 ### Requirement: Operator replay verb
 
-`flz operative replay <segment> --from <seq|ts>` SHALL re-process the retained
+`flz operative replay <entity> --from <seq|ts>` SHALL re-process the retained
 input window from the given point through the current operative code and
 republish outputs under a bumped epoch, using the same correction transaction
 with an empty splice. Targets older than retention SHALL be refused with an

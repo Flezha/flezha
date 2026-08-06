@@ -1,9 +1,9 @@
-# Java SDK — Per-Segment State Persistence
+# Java SDK — Per-Entity State Persistence
 
-Java SDK port of `operative-state-persistence-rust`. Mirrors the Rust trait
-surface one-for-one within Java idioms: six-parameter `Operation` generic,
+Java SDK port of `operative-state-persistence`. Mirrors the Rust trait
+surface one-for-one within Java idioms: six-parameter `Procedure` generic,
 `StateHandle<State, Change>` mutation chokepoint, `UnboundedOperative::persistenceEnabled`
-default-method, per-Segment flusher, Kryo serialization with stable
+default-method, per-Entity flusher, Kryo serialization with stable
 registered type IDs.
 
 This doc is the Java-author counterpart to
@@ -14,14 +14,14 @@ fails loud per umbrella Decision 9.
 
 ## Surface
 
-### Operation generic shape
+### Procedure generic shape
 
 ```java
-public final class CounterOperation
-        implements Operation<Long, CounterOperation.State, Void, CounterChange, WallClock, Void> {
+public final class CounterProcedure
+        implements Procedure<Long, CounterProcedure.State, Void, CounterChange, WallClock, Void> {
     public static final class State { public long value; }
 
-    @Override public String name() { return "counter_operation"; }
+    @Override public String name() { return "counter_procedure"; }
     @Override public Class<Long> inputType() { return Long.class; }
     @Override public Class<Void> outputType() { return Void.class; }
     @Override public Class<CounterChange> changeType() { return CounterChange.class; }
@@ -29,7 +29,7 @@ public final class CounterOperation
     @Override public Class<Void> configType() { return Void.class; }
     @Override public List<Class<?>> kryoTypes() { return List.of(State.class, CounterChange.class); }
 
-    @Override public State initState(Optional<String> operationKey, Optional<RestoreInitPayload> payload) {
+    @Override public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> payload) {
         return new State();
     }
 
@@ -37,7 +37,7 @@ public final class CounterOperation
         state.value += change.delta();
     }
 
-    @Override public void run(Long input, StateHandle<State, CounterChange> state, OperationCtx ctx) {
+    @Override public void run(Long input, StateHandle<State, CounterChange> state, ProcedureCtx ctx) {
         state.apply(new CounterChange(input));
     }
 }
@@ -51,7 +51,7 @@ registration and flusher dispatch.
 ### StateHandle
 
 `StateHandle<State, Change>` replaces the raw `State` parameter on
-`Operation.run`. Reads go through `state.get()`; the recorded, replayable
+`Procedure.run`. Reads go through `state.get()`; the recorded, replayable
 mutation path is `state.apply(change)`.
 
 **Enforcement is by convention, not structure.** `state.get()` returns the live
@@ -67,14 +67,14 @@ deliberately not `DerefMut`, so a direct field mutation does not compile (see
 `docs/operative_state_persistence.md`). Java cannot match that — `get()` must
 return a readable object, and there is no borrow checker to withhold `&mut`.
 This is the same class of Rust asymmetry the Java SDK already documents for
-erasure vs `EventTimeFrom` (`Operation.eventTime`): the guarantee is enforced
+erasure vs `EventTimeFrom` (`Procedure.eventTime`): the guarantee is enforced
 structurally in Rust and by a weaker mechanism in Java.
 
 The detection Java provides in place of enforcement is
-`OperationTestHarness.replayEquals()` — an **opt-in** determinism gate that
+`ProcedureTestHarness.replayEquals()` — an **opt-in** determinism gate that
 replays the recorded change log against a fresh baseline and reports a mismatch
 when the live state diverges from the change-only replay. A bypassed mutation
-is exactly what it catches. Run it in CI against your own Operations.
+is exactly what it catches. Run it in CI against your own Procedures.
 
 #### State-mutation enforcement, per SDK
 
@@ -86,7 +86,7 @@ rather than each claiming the strongest one (see
 | ------ | ----------------- | --------- |
 | Rust   | Structural (compile-time) | `StateHandle: Deref` without `DerefMut`; `init_state` returns state by value |
 | Python | Runtime-rejected | direct attribute assignment on durable state raises, naming the attribute |
-| Java   | Documented-only + opt-in detection | convention; `OperationTestHarness.replayEquals()` catches a bypass |
+| Java   | Documented-only + opt-in detection | convention; `ProcedureTestHarness.replayEquals()` catches a bypass |
 
 Java does **not** add a runtime guard: withholding the object (a defensive copy
 or proxy on every `get()`) would be a hot-path cost imposed on every read to
@@ -110,9 +110,9 @@ window. Changes without a key are emitted as-is.
 
 ### NoChange
 
-`NoChange` is uninhabited. Operations opting out of persistence declare
+`NoChange` is uninhabited. Procedures opting out of persistence declare
 `Change = NoChange.class` (the default in the legacy migration); the runtime
-detects `Operation.changeType() == NoChange.class` and skips per-Segment
+detects `Procedure.changeType() == NoChange.class` and skips per-Entity
 flusher registration entirely.
 
 ### Clock
@@ -122,12 +122,12 @@ flusher registration entirely.
 others fails operative registration with
 `OperativeConfigurationException.clockNotImplementedYet`.
 
-### Per-Segment flusher
+### Per-Entity flusher
 
-Single platform thread per JVM, lazy-started on first non-`NoChange` Operation
+Single platform thread per JVM, lazy-started on first non-`NoChange` Procedure
 registration. Wakes every `linger_ms` (system property
 `flezha.flush.linger.ms` &gt; env var `FLEZHA_FLUSH_LINGER_MS` &gt; default
-5) and drains every registered Segment. Toggle-aware: when
+5) and drains every registered Entity. Toggle-aware: when
 `persistenceEnabled = false`, drain-and-discard without serialization or
 wire I/O.
 
@@ -135,7 +135,7 @@ wire I/O.
 
 ```java
 @Override public List<Class<?>> kryoTypes() {
-    return List.of(CounterOperation.State.class, CounterChange.class);
+    return List.of(CounterProcedure.State.class, CounterChange.class);
 }
 ```
 
@@ -151,7 +151,7 @@ The header is 16 bytes, big-endian:
 ```
 0:1   sdk_lang        (Java = 2)
 1:5   sdk_version     (u32; from Manifest Implementation-Version)
-5:9   schema_version  (u32; from Operation.schemaVersion())
+5:9   schema_version  (u32; from Procedure.schemaVersion())
 9:10  format_id       (Kryo = 4)
 10:12 reserved
 12:16 crc32           (over change_bytes)
@@ -163,41 +163,41 @@ loud per umbrella Decision 9.
 
 ## Test harness
 
-`flezha-sdk-testing` exports `OperationTestHarness<I, S, O, C>` for unit-testing
-Operations without standing up the runtime:
+`flezha-sdk-testing` exports `ProcedureTestHarness<I, S, O, C>` for unit-testing
+Procedures without standing up the runtime:
 
 ```java
-OperationTestHarness.of(new CounterOperation())
+ProcedureTestHarness.of(new CounterProcedure())
     .applyInputs(List.of(1L, 2L, 3L))
     .expectChanges(List.of(new CounterChange(1), new CounterChange(2), new CounterChange(3)))
     .expectState(new CounterState(6));
 
-assertThat(OperationTestHarness.of(new CounterOperation())
+assertThat(ProcedureTestHarness.of(new CounterProcedure())
     .applyInputs(inputs)
     .replayEquals()).isEmpty();  // determinism gate
 ```
 
-`replayEquals()` returns `Optional.empty()` when the Operation's state is a
+`replayEquals()` returns `Optional.empty()` when the Procedure's state is a
 deterministic function of the Change log; otherwise returns
 `ReplayMismatch` carrying the diagnostic Kryo bytes.
 
 ## Trade-offs
 
-- The six-parameter `Operation` generic is verbose. Documented; users learn
+- The six-parameter `Procedure` generic is verbose. Documented; users learn
   the pattern once. The alternative (no generics, runtime type checks) is
-  worse. See `operative-state-persistence-java/design.md` Decision 1.
+  worse. See `operative-state-persistence/design.md` Decision 1.
 - `Kryo.setRegistrationRequired(true)` is intentional: unregistered types
-  fail loud at first serialization. Users add to `Operation.kryoTypes()`.
+  fail loud at first serialization. Users add to `Procedure.kryoTypes()`.
 - The flusher's single-thread cadence is bounded by JVM GC stop-the-world
   pauses. Tune G1 / ZGC / Shenandoah for strict durability; the umbrella's
   durability bound is a guideline, not a hard cap.
 - `Optional<RestoreInitPayload>` adds a per-restart allocation vs Rust's
-  `Option<&RestoreInitPayload>`. Negligible (microseconds per Segment
+  `Option<&RestoreInitPayload>`. Negligible (microseconds per Entity
   restart).
 
 ## Related docs
 
-- `docs/operative_state_persistence.md` — Rust-side per-Segment persistence
+- `docs/operative_state_persistence.md` — Rust-side per-Entity persistence
 - `docs/resilience/state_persistence.md` — controller-side WAL and time-travel
 - `docs/sdk_protocol_spec.md` — wire-format spec
-- `docs/operative_architecture.md` — overall Operative/Operation/Segment model
+- `docs/operative_architecture.md` — overall Operative/Procedure/Entity model

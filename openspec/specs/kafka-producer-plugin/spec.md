@@ -387,18 +387,18 @@ The bounded outbound queue SHALL be FIFO regardless of admission primitive. Reco
 ### Requirement: Dedup key format
 
 The Kafka producer plugin SHALL compute its dedup key from the durable outbox
-identity as `<flz.segment>/<outbox_seq>/<epoch>` (where `flz.segment` is
-`operative_class/operation_id/segment_key` and `outbox_seq` is
+identity as `<flz.entity>/<outbox_seq>/<epoch>` (where `flz.entity` is
+`operative_class/procedure_id/entity_key` and `outbox_seq` is
 `<record WAL seq>.<emit ordinal>`). When outbox identity metadata is absent
 (at-least-once operatives), the plugin SHALL fall back to the caller-supplied
 `kafka_msg_key` behaviour unchanged. The plugin SHALL NOT use any value derived
 from the prior `processor_id` term in the dedup key composition; per-Operative
 identity in the dedup key is captured by `<operative_class>` (the Operative's
-module/class name) within `flz.segment`.
+module/class name) within `flz.entity`.
 
 #### Scenario: Dedup key uses outbox identity
 
-- **WHEN** the plugin emits a tier record produced by Segment `k1` of Operation
+- **WHEN** the plugin emits a tier record produced by Entity `k1` of Procedure
   `s1` of Operative class `MarketOperative` with outbox seq `42.0` and epoch `1`
 - **THEN** the message MUST carry a `flezha.dedup_key` header equal to
   `MarketOperative/s1/k1/42.0/1`

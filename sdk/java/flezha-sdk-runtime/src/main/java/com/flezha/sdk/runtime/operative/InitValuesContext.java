@@ -6,12 +6,12 @@ import java.util.Optional;
  * Per-thread {@code init_values} JSON string staged by
  * {@link com.flezha.sdk.runtime.control.handlers.AddOperativeHandler} before
  * a {@link UnboundedOperativeInstance} is constructed; readable from
- * {@link com.flezha.sdk.operation.Operation#initState(java.util.Optional)} via
+ * {@link com.flezha.sdk.procedure.Procedure#initState(java.util.Optional)} via
  * {@link #get()}.
  *
  * <p>Set on the spawning thread, cleared after the {@code UnboundedOperativeInstance}
  * constructor returns. Cross-thread propagation is intentionally NOT
- * supported in v1: each Operation×Segment is initialized synchronously on
+ * supported in v1: each Procedure×Entity is initialized synchronously on
  * the spawning thread before the UnboundedOperativeInstance is published.
  */
 public final class InitValuesContext {

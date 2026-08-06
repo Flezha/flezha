@@ -27,7 +27,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
   test "an unknown class defaults to :unbounded and reads every flag true", %{class: class} do
     assert ClassRegistry.get(class) == :unbounded
     assert ClassRegistry.capable?(class, :time_travel?)
-    assert ClassRegistry.capable?(class, :dynamic_segments?)
+    assert ClassRegistry.capable?(class, :dynamic_entities?)
     assert ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
@@ -36,7 +36,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
 
     assert ClassRegistry.get(class) == :bounded
     refute ClassRegistry.capable?(class, :time_travel?)
-    refute ClassRegistry.capable?(class, :dynamic_segments?)
+    refute ClassRegistry.capable?(class, :dynamic_entities?)
     refute ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
@@ -138,16 +138,16 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
       ClassRegistry.put_declarations(class, %{
         effectively_once: true,
         checkpoint_ack: true,
-        compensable_ops: [0, 2],
-        leaf_ops: [1, 2],
+        compensable_procs: [0, 2],
+        leaf_procs: [1, 2],
         correction_window_ms: 60_000,
         compact_after_bytes: 4_194_304
       })
 
     assert ClassRegistry.effectively_once?(class)
     assert ClassRegistry.checkpoint_ack?(class)
-    assert ClassRegistry.compensable_ops(class) == [0, 2]
-    assert ClassRegistry.leaf_ops(class) == [1, 2]
+    assert ClassRegistry.compensable_procs(class) == [0, 2]
+    assert ClassRegistry.leaf_procs(class) == [1, 2]
     assert ClassRegistry.correction_window_ms(class) == 60_000
     assert ClassRegistry.compact_after_bytes(class) == 4_194_304
 
@@ -157,16 +157,16 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
       ClassRegistry.put_declarations(class, %{
         effectively_once: false,
         checkpoint_ack: false,
-        compensable_ops: nil,
-        leaf_ops: nil,
+        compensable_procs: nil,
+        leaf_procs: nil,
         correction_window_ms: nil,
         compact_after_bytes: nil
       })
 
     refute ClassRegistry.effectively_once?(class)
     refute ClassRegistry.checkpoint_ack?(class)
-    refute ClassRegistry.compensable_ops(class)
-    refute ClassRegistry.leaf_ops(class)
+    refute ClassRegistry.compensable_procs(class)
+    refute ClassRegistry.leaf_procs(class)
     refute ClassRegistry.correction_window_ms(class)
     refute ClassRegistry.compact_after_bytes(class)
   end

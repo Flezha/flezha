@@ -1,9 +1,9 @@
 defmodule Flezha.State.WatchdogTest do
   @moduledoc """
-  Defect B: the per-Segment output-staleness sweep and the
-  compaction-handshake timeout. A live Segment whose persisted seq
-  freezes is detected and resynced; a genuinely idle Segment is not
-  flagged; a `CompactSegment` whose snapshot never returns is timed out
+  Defect B: the per-Entity output-staleness sweep and the
+  compaction-handshake timeout. A live Entity whose persisted seq
+  freezes is detected and resynced; a genuinely idle Entity is not
+  flagged; a `CompactEntity` whose snapshot never returns is timed out
   and recovered, and stays retriable.
   """
 
@@ -37,8 +37,8 @@ defmodule Flezha.State.WatchdogTest do
 
     parent = self()
 
-    Application.put_env(:flezha, :state_resync_fun, fn segment_id, opts ->
-      send(parent, {:resync_called, segment_id, opts})
+    Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
+      send(parent, {:resync_called, entity_id, opts})
       {:ok, make_ref()}
     end)
 
@@ -96,7 +96,7 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   defp live_writer(suffix, header) do
-    pid = TestHelpers.sample_segment_id(suffix <> uniq())
+    pid = TestHelpers.sample_entity_id(suffix <> uniq())
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, "z")
@@ -105,8 +105,8 @@ defmodule Flezha.State.WatchdogTest do
     {pid, w}
   end
 
-  test "a live segment whose seq froze is flagged and resynced", %{header: header} do
-    {segment_id, writer} = live_writer("stall_", header)
+  test "a live entity whose seq froze is flagged and resynced", %{header: header} do
+    {entity_id, writer} = live_writer("stall_", header)
 
     # Let the advance window lapse, then keep Changes arriving (duplicates)
     # without advancing the seq — the stall signature.
@@ -121,12 +121,12 @@ defmodule Flezha.State.WatchdogTest do
     # by the flezha convention it equals the on-disk `operative_class`.
     assert meta.operative_instance == "TestOperative"
     assert meta.operative_class == "TestOperative"
-    assert_receive {:resync_called, ^segment_id, opts}, 1_000
+    assert_receive {:resync_called, ^entity_id, opts}, 1_000
     assert opts[:reason] == :output_stall
   end
 
-  test "a genuinely idle segment is not flagged", %{header: header} do
-    {{_, _, key} = segment_id, _writer} = live_writer("idle_", header)
+  test "a genuinely idle entity is not flagged", %{header: header} do
+    {{_, _, key} = entity_id, _writer} = live_writer("idle_", header)
 
     # No Changes arrive after the window lapses — last_change_seen_at goes
     # stale alongside last_advance_at, so this is idle, not stalled.
@@ -134,30 +134,30 @@ defmodule Flezha.State.WatchdogTest do
 
     :ok = Watchdog.sweep_now()
 
-    # Scoped to THIS test's segment key. The Watchdog is a singleton and every
+    # Scoped to THIS test's entity key. The Watchdog is a singleton and every
     # test in this file uses the operative class "TestOperative", so an unscoped
     # refute — or one scoped only to the operative — matches a sibling test's
     # message and fails whenever the suite interleaves.
     refute_receive {:output_stall, _, %{key: ^key}}, 200
-    refute_receive {:resync_called, ^segment_id, _}, 200
+    refute_receive {:resync_called, ^entity_id, _}, 200
   end
 
-  test "a stalled compaction times out and stays retriable, without resyncing a live segment below give-up" do
-    {_, _, key} = segment_id = TestHelpers.sample_segment_id("comp_" <> uniq())
+  test "a stalled compaction times out and stays retriable, without resyncing a live entity below give-up" do
+    {_, _, key} = entity_id = TestHelpers.sample_entity_id("comp_" <> uniq())
 
-    Watchdog.compaction_started(segment_id, "exec-comp")
+    Watchdog.compaction_started(entity_id, "exec-comp")
     Process.sleep(@compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
 
-    # Scoped to this test's segment KEY, not its operative: the Watchdog is a
+    # Scoped to this test's entity KEY, not its operative: the Watchdog is a
     # singleton and every test here shares the class "TestOperative", so a sweep
     # also sees compactions a sibling test left pending.
     assert_receive {:compaction_timeout, %{waited_ms: ms}, %{key: ^key, attempt: 1}}, 1_000
     assert ms >= @compaction_ms
-    # Below the give-up threshold a still-live, still-correct Segment is NOT
+    # Below the give-up threshold a still-live, still-correct Entity is NOT
     # force-resynced — the backoff-gated trigger sweep is the retry.
-    refute_receive {:resync_called, ^segment_id, _}, 200
+    refute_receive {:resync_called, ^entity_id, _}, 200
 
     # Entry was cleared on timeout — a second sweep does not re-fire.
     :ok = Watchdog.sweep_now()
@@ -165,12 +165,12 @@ defmodule Flezha.State.WatchdogTest do
   end
 
   test "repeated compaction failures back off and give up loudly with a real resync" do
-    {_, _, key} = segment_id = TestHelpers.sample_segment_id("giveup_" <> uniq())
+    {_, _, key} = entity_id = TestHelpers.sample_entity_id("giveup_" <> uniq())
 
     # Drive four timeouts (compaction_started bypasses the backoff-gated trigger
     # sweep, so this reaches the give-up threshold without waiting out cooldowns).
     for _ <- 1..4 do
-      Watchdog.compaction_started(segment_id, "exec-giveup")
+      Watchdog.compaction_started(entity_id, "exec-giveup")
       Process.sleep(@compaction_ms * 2)
       :ok = Watchdog.sweep_now()
     end
@@ -178,16 +178,16 @@ defmodule Flezha.State.WatchdogTest do
     # The fourth crossing alarms loudly and dispatches a real resync carrying the
     # runner_id the WalWriter status held — the fix for the old silent no-op.
     assert_receive {:compaction_gave_up, %{attempts: 4}, %{key: ^key}}, 1_000
-    assert_receive {:resync_called, ^segment_id, opts}, 1_000
+    assert_receive {:resync_called, ^entity_id, opts}, 1_000
     assert opts[:reason] == :compaction_gave_up
     assert opts[:runner_id] == "exec-giveup"
   end
 
   test "a compaction that completes before the bound never times out" do
-    segment_id = TestHelpers.sample_segment_id("compok_" <> uniq())
+    entity_id = TestHelpers.sample_entity_id("compok_" <> uniq())
 
-    Watchdog.compaction_started(segment_id, "exec-ok")
-    Watchdog.compaction_completed(segment_id)
+    Watchdog.compaction_started(entity_id, "exec-ok")
+    Watchdog.compaction_completed(entity_id)
     Process.sleep(@compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
@@ -196,15 +196,15 @@ defmodule Flezha.State.WatchdogTest do
 
   # An owned writer (runner_id on append) is the trigger sweeps' subject;
   # writers without an owning runner are skipped (no session to ask).
-  # Returns the segment KEY: the Watchdog is a singleton whose sweep walks every
-  # registered segment, so every assertion here must be scoped to its own — any
-  # other test's WAL (an op-journal, say) triggers the same telemetry.
+  # Returns the entity KEY: the Watchdog is a singleton whose sweep walks every
+  # registered entity, so every assertion here must be scoped to its own — any
+  # other test's WAL (a proc-journal, say) triggers the same telemetry.
   defp owned_writer(suffix, header, body) do
-    {_rc, _op, key} = pid = TestHelpers.sample_segment_id(suffix <> uniq())
+    {_rc, _op, key} = pid = TestHelpers.sample_entity_id(suffix <> uniq())
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, body, "exec-trig")
-    # A triggered segment sits in the shared Watchdog's in-flight map; clear
+    # A triggered entity sits in the shared Watchdog's in-flight map; clear
     # it so it cannot expire as compaction_timeout noise in a later test.
     on_exit(fn -> Watchdog.compaction_completed(pid) end)
     {key, w}
@@ -282,7 +282,7 @@ defmodule Flezha.State.WatchdogTest do
 
     on_exit(fn -> :telemetry.detach(cat_id) end)
 
-    pid = {class, "op", "seg" <> uniq()}
+    pid = {class, "proc", "seg" <> uniq()}
     {:ok, _} = Supervisor.find_or_start(pid)
     {:ok, w} = Supervisor.lookup(pid)
     :ok = WalWriter.append(w, 0, header, "z")
@@ -296,8 +296,8 @@ defmodule Flezha.State.WatchdogTest do
 
     :ok = Watchdog.sweep_now()
 
-    # Scoped to THIS test's class and segment. The Watchdog is a singleton whose
-    # sweep walks every registered segment, so an unscoped refute also matches a
+    # Scoped to THIS test's class and entity. The Watchdog is a singleton whose
+    # sweep walks every registered entity, so an unscoped refute also matches a
     # sibling test's resync (a compaction timeout on its own WAL, say).
     refute_receive {:output_stall, _, %{operative_class: ^class}}, 200
     refute_receive {:resync_called, ^pid, _}, 200
@@ -334,7 +334,7 @@ defmodule Flezha.State.WatchdogTest do
     on_exit(fn -> :telemetry.detach(cat_id) end)
 
     for class <- [per_input, checkpoint] do
-      pid = {class, "op", "seg" <> uniq()}
+      pid = {class, "proc", "seg" <> uniq()}
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, w} = Supervisor.lookup(pid)
       :ok = WalWriter.append(w, 0, header, "z")

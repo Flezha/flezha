@@ -3,7 +3,7 @@
 The kernel is the substrate both profiles share: how a state change becomes durable, how an
 output gets an identity, how back-pressure is applied, who is allowed to write, and how the
 system knows work is flowing. Everything here is profile-agnostic — an unbounded operative and
-a bounded operative persist a segment through exactly the same machinery.
+a bounded operative persist an entity through exactly the same machinery.
 
 - [The write path](#the-write-path)
 - [The WAL record](#the-wal-record)
@@ -31,7 +31,7 @@ sequenceDiagram
     participant SRC as 🌐 Source
     participant OW as 🧠 Overwatch
     participant IL as 💾 Input log
-    participant EX as ⚙️ Runner segment
+    participant EX as ⚙️ Runner entity
     participant WW as 🧠 WAL writer
     participant FB as 💾 fsync batcher
     participant SINK as 📤 Sink
@@ -43,9 +43,9 @@ sequenceDiagram
     Note over OW: journal_input is the ONE durable ingest seam.<br/>A failed append is never forwarded.
     OW->>EX: forward, stamped flz.offset = N
 
-    EX->>EX: run the operation, mutate state in memory
+    EX->>EX: run the procedure, mutate state in memory
     EX->>WW: ONE effect record<br/>{changes, outputs, consumed_offset = N, event_time}
-    WW->>WW: append to the segment WAL (one write)
+    WW->>WW: append to the entity WAL (one write)
     WW->>FB: mark dirty
     Note over WW,FB: the record is on the page cache — NOT durable yet
 
@@ -53,8 +53,8 @@ sequenceDiagram
     WW->>WW: datasync — DURABLE POINT
     Note over WW: only now does outbox_durable_seq advance
 
-    WW->>SINK: flush the record's outputs to the on_output chain,<br/>stamped flz.segment / flz.seq / flz.epoch / flz.key
-    WW->>IL: record_consumed(segment, N)
+    WW->>SINK: flush the record's outputs to the on_output chain,<br/>stamped flz.entity / flz.seq / flz.epoch / flz.key
+    WW->>IL: record_consumed(entity, N)
     Note over IL: the minimum watermark may advance —<br/>which frees retention and mints source credit
 ```
 
@@ -74,7 +74,7 @@ never heard of the tier — the default costs nothing.
 
 ## The WAL record
 
-Every durable file in Flezha — a segment WAL, the input log, the bounded op journal, the
+Every durable file in Flezha — an entity WAL, the input log, the bounded proc journal, the
 bounded inbox — is the same framed, CRC-protected, append-only log.
 
 ```
@@ -84,7 +84,7 @@ bounded inbox — is the same framed, CRC-protected, append-only log.
 └──────────┴─────────┴────────────┴────────────────┴──────────┘
     crc32 covers header ‖ body
 
-header (16 bytes), segment WAL:
+header (16 bytes), entity WAL:
   [0]      sdk_lang        (Rust = 1, Java = 2)
   [1..5]   sdk_version     u32 BE
   [5..9]   schema_version  u32 BE
@@ -95,10 +95,10 @@ header (16 bytes), segment WAL:
 
 A torn tail — a partial record from a crash mid-write — is detected by the CRC on the forward
 scan at open and truncated. `WalWriter.fold_records/3` is the one place that walk lives; every
-reader (segment WAL, input log, op journal, retention rewriter, time-travel) goes through it.
+reader (entity WAL, input log, proc journal, retention rewriter, time-travel) goes through it.
 
-The bounded op journal reuses byte 0–3 of the header for its **epoch**, which is safe because
-byte 9 is the format-id slot and the journal never writes a segment format id there. The input
+The bounded proc journal reuses byte 0–3 of the header for its **epoch**, which is safe because
+byte 9 is the format-id slot and the journal never writes an entity format id there. The input
 log writes an append timestamp into bytes 0–7 and deliberately forces byte 9 to zero, so an
 input record can never be mistaken for an effect record.
 
@@ -109,7 +109,7 @@ invocation produces **one** record carrying everything that invocation did.
 
 ```mermaid
 flowchart LR
-    subgraph REC["segment_effect_record — format_id = 2, postcard"]
+    subgraph REC["entity_effect_record — format_id = 2, postcard"]
         direction TB
         C1["<b>changes</b> · Vec&lt;Vec&lt;u8&gt;&gt;<br/>the invocation's state deltas,<br/>folded on restore in order"]:::store
         C2["<b>outputs</b> · Vec&lt;OutputRecord&gt;<br/>{channel, key, metadata, payload}<br/>the invocation's plugin emits"]:::store
@@ -117,7 +117,7 @@ flowchart LR
         C4["<b>dlq</b> · Option&lt;DlqEntryBody&gt;<br/>{channel, error, attempts, payload}<br/>Some only for a parked poison payload"]:::store
         C5["<b>event_time</b> · u64<br/>the value the declared Clock evaluated to"]:::store
     end
-    REC ==>|"ONE append · ONE fsync"| WAL[("💾 segment WAL")]:::store
+    REC ==>|"ONE append · ONE fsync"| WAL[("💾 entity WAL")]:::store
     classDef store fill:#e5e7eb,stroke:#374151,color:#111
 ```
 
@@ -163,13 +163,13 @@ latency.
 
 Outbox state is three cursors on the writer: `outbox_durable_seq` (how far the fsync has
 reached — the gate), `outbox_flushed_seq` (how far the sink dispatch has reached), and
-`outbox_epoch`. All three are persisted to a small `<segment>.outbox.dedup` side-file, so a
+`outbox_epoch`. All three are persisted to a small `<entity>.outbox.dedup` side-file, so a
 restarted controller re-drives exactly the entries that were durable but never flushed. A stale
 cursor widens the re-drive, which sink dedup absorbs; it can never skip.
 
 ## Snapshots, compaction, and restore
 
-A segment's WAL is a change log. Left alone it grows forever, so the controller periodically
+An entity's WAL is a change log. Left alone it grows forever, so the controller periodically
 asks the runner for a full state snapshot and truncates the log beneath it.
 
 ```mermaid
@@ -177,14 +177,14 @@ sequenceDiagram
     participant EX as ⚙️ Runner
     participant CTRL as 🧠 Controller
 
-    Note over EX,CTRL: normal operation — a delta change log
+    Note over EX,CTRL: normal procedure — a delta change log
     loop every processed message
         EX->>CTRL: state change (seq++)
         CTRL->>CTRL: 💾 append to the WAL
     end
 
     Note over CTRL: the Watchdog sweeps every 10 s and fires on SIZE or AGE
-    CTRL->>EX: CompactSegment
+    CTRL->>EX: CompactEntity
     EX->>CTRL: full snapshot @ seq M
     CTRL->>CTRL: 💾 write .tmp → fsync → rename → truncate the WAL below M
 
@@ -197,7 +197,7 @@ Compaction fires on whichever comes first:
 
 | Trigger | Knob | Default |
 | --- | --- | --- |
-| WAL size | `:default_compact_after_bytes`, per-operation override | **8 MiB** |
+| WAL size | `:default_compact_after_bytes`, per-procedure override | **8 MiB** |
 | WAL age (oldest unsnapshotted record) | `:compact_after_age_ms` | **300 000 ms** (`0` disables) |
 
 The age floor exists for low-throughput operatives, which would otherwise never reach the byte
@@ -214,7 +214,7 @@ two are misconfigured.
 ### Baseline: push or pull
 
 Which way state moves depends on **who holds the history**. Getting this backwards zeroes a
-live segment, so the controller decides explicitly rather than assuming.
+live entity, so the controller decides explicitly rather than assuming.
 
 ```mermaid
 sequenceDiagram
@@ -222,13 +222,13 @@ sequenceDiagram
     participant CTRL as 🧠 Controller (fresh — no local WAL)
 
     Note over CTRL: an operative was placed here, but this node holds no WAL for it
-    EX->>CTRL: segment_state_change (seq 5001)
-    Note over CTRL: last_persisted_seq == -1 and the seq is not 0 —<br/>a cold takeover, not a fresh segment
+    EX->>CTRL: entity_state_change (seq 5001)
+    Note over CTRL: last_persisted_seq == -1 and the seq is not 0 —<br/>a cold takeover, not a fresh entity
 
     rect rgba(220,252,231,0.5)
         Note over CTRL: awaiting-baseline — shed the gap frame, count it, signal the Overwatch once
-        CTRL->>EX: CompactSegment — PULL a baseline
-        EX->>CTRL: segment_state_snapshot @ seq 5001
+        CTRL->>EX: CompactEntity — PULL a baseline
+        EX->>CTRL: entity_state_snapshot @ seq 5001
         CTRL->>CTRL: 💾 baseline established, last_persisted_seq = 5001
         EX->>CTRL: seq 5002+ now appends contiguously
     end
@@ -237,9 +237,9 @@ sequenceDiagram
 ```
 
 The rule: **controller has history + runner is fresh → push** `RestoreInitState`;
-**controller is fresh + runner has state → pull** `CompactSegment`. Backing this is an
+**controller is fresh + runner has state → pull** `CompactEntity`. Backing this is an
 empty-payload guard — `Restore.has_persisted_state?/1` treats a zero-byte WAL as *no state*, so
-the controller can never push an empty restore that would rebuild a live segment back to
+the controller can never push an empty restore that would rebuild a live entity back to
 `init_state`.
 
 Deeper detail, including the WAL record format and every configuration knob:
@@ -247,15 +247,15 @@ Deeper detail, including the WAL record format and every configuration knob:
 
 ## The minimum watermark and retention
 
-Under the tier, each segment reports the input-log offset it has durably consumed. The
-**minimum** across an operative's segments is the only offset that is safely done everywhere.
+Under the tier, each entity reports the input-log offset it has durably consumed. The
+**minimum** across an operative's entities is the only offset that is safely done everywhere.
 
 ```mermaid
 flowchart TB
     IN[("💾 Input log<br/>offset 4711 is the newest")]:::store
-    A["Operation A"]:::exec
-    B["Operation B segments<br/>consumed through 4711"]:::exec
-    C["Operation C segments<br/>consumed through 4710"]:::exec
+    A["Procedure A"]:::exec
+    B["Procedure B entities<br/>consumed through 4711"]:::exec
+    C["Procedure C entities<br/>consumed through 4710"]:::exec
     WM["🧠 watermark = MIN(4711, 4710) = 4710"]:::ctrl
     RET["truncate the input log below 4710<br/>(subject to the correction hold window)"]:::store
     CRED["mint source credit — the freed bytes"]:::ctrl
@@ -281,9 +281,9 @@ hope. It does two jobs: it is the retention floor, and it is what mints source c
 
 A branch that stops consuming freezes it. The retention sweeper notices — a watermark unchanged
 since the last sweep, with the log grown past 16 MiB, emits
-`[:flezha, :state, :input_log_frozen_watermark]` naming the lagging segment rather than silently
+`[:flezha, :state, :input_log_frozen_watermark]` naming the lagging entity rather than silently
 accumulating. The mechanism that *unfreezes* it is the dead-letter queue: after bounded retries
-the segment parks the poison payload durably and advances past it.
+the entity parks the poison payload durably and advances past it.
 
 The truncation floor is `min(watermark, the newest offset older than the hold window)`. The
 hold window (`:input_log_hold_window_ms`, default `0`) is what a correcting operative needs — it
@@ -306,7 +306,7 @@ flowchart LR
     subgraph CTRL["🧠 Controller"]
         IL[("💾 input log + offset<br/><b>1 · the basis of deterministic replay</b>")]:::store
         WAL2[("💾 WAL + snapshot<br/>state is durable")]:::store
-        OB[("💾 outbox identity<br/>(segment, seq, epoch, key)<br/><b>2 · a deterministic key</b>")]:::store
+        OB[("💾 outbox identity<br/>(entity, seq, epoch, key)<br/><b>2 · a deterministic key</b>")]:::store
     end
     EX["⚙️ Runner<br/>state in memory"]:::exec
     SINK["📤 Sink — idempotent<br/>upsert by key · (epoch, seq) guard<br/><b>3 · dedup</b>"]:::sink
@@ -325,7 +325,7 @@ flowchart LR
 ```
 
 Two sinks ship conforming out of the box. The **Postgres** sink upserts every record of a flush
-batch and advances a per-segment progress row in **one transaction**, both guarded by `(epoch,
+batch and advances a per-entity progress row in **one transaction**, both guarded by `(epoch,
 seq)` monotonicity, so a re-drive or a stale epoch is a byte-exact no-op. The **Kafka** producer
 uses `flz.key` as the message key and carries the durable identity as a dedup header.
 
@@ -347,14 +347,14 @@ identity, and user code reads them from the context.
 flowchart TB
     subgraph GOOD["ctx mediates — replay-stable"]
         DISP["⚙️ Dispatcher<br/>once per invocation: evaluate the declared Clock,<br/>snapshot change_seq, reset the ordinal counter"]:::exec
-        CTX["OperationCtx"]:::exec
+        CTX["ProcedureCtx"]:::exec
         DISP --> CTX
         CTX -->|"ctx.now()"| T["time · WallClock | EventTimeFrom&lt;F&gt; | LogicalClock"]:::store
-        CTX -->|"ctx.stable_id()"| ID["FNV-1a-128 over<br/>segment identity ‖ change_seq ‖ ordinal"]:::store
+        CTX -->|"ctx.stable_id()"| ID["FNV-1a-128 over<br/>entity identity ‖ change_seq ‖ ordinal"]:::store
         CTX -->|"ctx.emit_keyed(key, value)"| EM["keyed emit"]:::store
     end
     BAD["❌ SystemTime::now() · Uuid::new_v4() · an external read<br/>inside run / apply_change / compensate"]:::risk
-    HARNESS["OperationTestHarness<br/>replay_equals — the state gate<br/>replay_emits_equal — the output gate"]:::ctrl
+    HARNESS["ProcedureTestHarness<br/>replay_equals — the state gate<br/>replay_emits_equal — the output gate"]:::ctrl
 
     BAD -.->|"breaks replay — every re-run yields new values"| GOOD
     HARNESS -.->|"runs the inputs twice and compares bytes"| GOOD
@@ -372,14 +372,14 @@ compile error:
 | --- | --- |
 | `WallClock` | epoch milliseconds, read **once** at dispatch entry |
 | `EventTimeFrom<F>` | `F::extract(&input)` — the event time carried by the input itself |
-| `LogicalClock` | the segment's durable `change_seq` |
+| `LogicalClock` | the entity's durable `change_seq` |
 
 `EventTimeFrom` is the only clock that is fully deterministic across a replay, which is why
-late-input correction requires it. `LogicalClock` over a stateless operation is refused at build
+late-input correction requires it. `LogicalClock` over a stateless procedure is refused at build
 time — there is no sequence to serve.
 
 `ctx.stable_id()` replaces a random UUID with a hash of *where and when* the invocation
-happened: `FNV-1a-128(segment identity ‖ change_seq (8 bytes BE) ‖ per-invocation ordinal
+happened: `FNV-1a-128(entity identity ‖ change_seq (8 bytes BE) ‖ per-invocation ordinal
 (4 bytes BE))`, rendered as 32 hex characters. The *n*-th call in an invocation replays to the
 same value on the *n*-th call.
 
@@ -393,11 +393,11 @@ flowchart TB
         E1["ctx.emit(value)"]:::exec --> F1["frame: payload + user metadata<br/><i>no flz.* stamps at all</i>"]:::store
     end
     subgraph KOFF["A .keyed() channel, tier OFF — the SDK stamps"]
-        E2["ctx.emit_keyed(key, value)"]:::exec --> F2["flz.segment = class/operation/segment_key<br/>flz.seq = &lt;change_seq&gt;.&lt;emit ordinal&gt;<br/>flz.key = the natural key<br/><i>no flz.epoch</i>"]:::store
+        E2["ctx.emit_keyed(key, value)"]:::exec --> F2["flz.entity = class/procedure/entity_key<br/>flz.seq = &lt;change_seq&gt;.&lt;emit ordinal&gt;<br/>flz.key = the natural key<br/><i>no flz.epoch</i>"]:::store
     end
     subgraph KON["A .keyed() channel, tier ON — the CONTROLLER stamps"]
         E3["ctx.emit_keyed(key, value)"]:::exec --> R3["the emit rides inside the effect record —<br/>no stamps on the wire"]:::store
-        R3 --> F3["at flush, after the fsync:<br/>flz.segment · flz.key<br/>flz.seq = &lt;WAL seq&gt;.&lt;emit ordinal&gt;<br/><b>flz.epoch</b>"]:::store
+        R3 --> F3["at flush, after the fsync:<br/>flz.entity · flz.key<br/>flz.seq = &lt;WAL seq&gt;.&lt;emit ordinal&gt;<br/><b>flz.epoch</b>"]:::store
     end
     F2 --> SINK1["📤 changelog sink — upsert by flz.key"]:::sink
     F3 --> SINK2["📤 conforming sink — (epoch, seq) guard<br/>exact append dedup"]:::sink
@@ -419,7 +419,7 @@ The distinction is a real honesty boundary, not a formality:
 
 `flz.` is a reserved metadata namespace. A user emit carrying a `flz.`-prefixed key is rejected
 at emit time, so stamps cannot be forged or clobbered. The bounded transactional outbox mints
-through the same controller-side function, with `flz.seq = <op_idx>.<seq_in_op>`.
+through the same controller-side function, with `flz.seq = <proc_idx>.<seq_in_proc>`.
 
 ## The epoch rule
 
@@ -438,7 +438,7 @@ flowchart TB
         B2["flz operative replay"]:::sink
         B3["flz operative rewind (bounded loop)"]:::sink
     end
-    KEEP --> RULE["durable identity = (segment, seq, epoch)"]:::store
+    KEEP --> RULE["durable identity = (entity, seq, epoch)"]:::store
     BUMP --> RULE
     RULE --> SINKR["📤 Sink:<br/>same or lower (epoch, seq) → no-op<br/>higher → admit and overwrite by natural key"]:::store
 
@@ -502,7 +502,7 @@ frame past 8 MiB and counts it. It is protection against a dead partner, not aga
 
 A dropped input frame is **not** loss under the tier: it is already durable in the input log at
 its offset, and the crash-resume re-forward will deliver it. And in practice the buffer should
-never fill, because loop ① is upstream of it — a stuck segment freezes the watermark, which
+never fill, because loop ① is upstream of it — a stuck entity freezes the watermark, which
 starves source credit, which parks the source at the actual origin.
 
 ### The runner→controller credit loop
@@ -557,14 +557,14 @@ minimum-watermark advance is what drains the ledger and unparks the waiters in a
 
 This only back-pressures the actual source if the source adapter is *waiting* on that call, so
 under the tier the websocket provider switches from a fire-and-forget cast to a blocking call.
-A stalled segment therefore stops the socket read at the origin, which is exactly where you want
+A stalled entity therefore stops the socket read at the origin, which is exactly where you want
 it stopped.
 
 ---
 
 ## Ownership and fencing
 
-Exactly one runner session may write a segment's WAL. Ownership changes at the door — a new
+Exactly one runner session may write an entity's WAL. Ownership changes at the door — a new
 connection presenting a known stable identity takes over — and the takeover is ordered:
 **unbind the old session before binding the new one**, so an in-flight frame from the old session
 dies at the binding rather than in the writer.
@@ -580,8 +580,8 @@ sequenceDiagram
     CTRL->>CTRL: 2 · swap the stable identity's bindings onto S2
     CTRL->>CTRL: 3 · evict S1
 
-    OLD-->>CTRL: (in flight) segment_state_change
-    Note over CTRL: layer 1 — the fenced channel refuses every segment-write payload<br/>and emits stale_writer_refused once per segment episode
+    OLD-->>CTRL: (in flight) entity_state_change
+    Note over CTRL: layer 1 — the fenced channel refuses every entity-write payload<br/>and emits stale_writer_refused once per entity episode
 
     OLD-->>CTRL: (raced past the channel) append with the S1 session token
     Note over CTRL: layer 2 — the WAL writer compares the token to its owner<br/>and refuses a superseded session BEFORE it can realign
@@ -592,7 +592,7 @@ sequenceDiagram
 There are **two** fence layers, and the second is a per-write check:
 
 1. **The channel fence.** A superseded session's stream channels are flipped to `fenced?` and
-   refuse the seven segment-write payload ids outright.
+   refuse the seven entity-write payload ids outright.
 2. **The WAL owner token.** The session token rides *every* append, and the writer refuses one
    from a session it knows to be superseded. Crucially, this check runs **before** the realign
    decision, which is the entire point — a stale runner must never be allowed to rebase the
@@ -644,11 +644,11 @@ Full architecture: [`../resilience/convergence_loop.md`](../resilience/convergen
 ### Producing-liveness: fed, and advancing
 
 "Is the channel up" is a lie detector that fails. The honest question is *is work flowing* — and
-it has a precondition, because a segment with no input is **supposed** to be flat.
+it has a precondition, because an entity with no input is **supposed** to be flat.
 
 ```mermaid
 flowchart TB
-    START["convergence tick — per segment"]:::ctrl
+    START["convergence tick — per entity"]:::ctrl
     START --> FED{"is it BEING FED?<br/>has a change frame arrived<br/>within the grace window?"}
     FED -->|"no"| IDLE["IDLE → healthy<br/>flat is correct — there is no input"]:::prot
     FED -->|"yes"| ADV{"is the WAL SEQUENCE ADVANCING?<br/>did last_persisted_seq move<br/>within the grace window?"}
@@ -667,7 +667,7 @@ flowchart TB
 Two clocks on each WAL writer make this cheap: `last_change_seen_at` moves on **every** received
 change frame (the *fed* signal, and it moves even for a duplicate or a gap), and
 `last_advance_at` moves only when the persisted sequence actually increases (the *progress*
-signal). Comparing two timestamps per segment per tick costs nothing on the hot path.
+signal). Comparing two timestamps per entity per tick costs nothing on the hot path.
 
 Under the effectively-once tier, two more markers join, and a stuck verdict names which one
 froze — the deepest wins, because one root cause freezes the shallower markers as a consequence:
@@ -675,14 +675,14 @@ froze — the deepest wins, because one root cause freezes the shallower markers
 | Verdict | Fires when |
 | --- | --- |
 | `wal_frozen` | change frames arrive, but the persisted sequence does not advance |
-| `watermark_frozen` | the input log grows, but this segment's durable consumed offset does not advance |
+| `watermark_frozen` | the input log grows, but this entity's durable consumed offset does not advance |
 | `outbox_flat` | output-bearing records accumulate, but the outbox flush cursor does not advance |
 
 Each carries its own *is it being fed?* precondition — the input log must have *grown*, the
-output records must have *accumulated* — so an idle segment can never read as stuck. The
-consumed offset is read **per segment**, not as the operative's minimum: the minimum across
-segments *is* that watermark, so any frozen segment still freezes the operative's verdict, and
-the verdict names the segment actually responsible.
+output records must have *accumulated* — so an idle entity can never read as stuck. The
+consumed offset is read **per entity**, not as the operative's minimum: the minimum across
+entities *is* that watermark, so any frozen entity still freezes the operative's verdict, and
+the verdict names the entity actually responsible.
 
 The `State.Watchdog` sweeps every 10 s and runs four checks, of which the first two are the
 liveness pair:
@@ -691,7 +691,7 @@ liveness pair:
 | --- | --- | --- |
 | Output staleness | fed, but the sequence has not advanced for 60 s | `[:flezha, :state, :output_stall]` → resync, and the convergence loop ticks immediately |
 | Catastrophic dataflow | produced output before, but has received **nothing** for 60 s | `[:flezha, :state, :catastrophic_dataflow_stop]` + a critical log — a dead feed |
-| Compaction trigger | the WAL is past its size or age floor | `CompactSegment` |
+| Compaction trigger | the WAL is past its size or age floor | `CompactEntity` |
 | Compaction timeout | a requested snapshot has not arrived in 30 s | resync |
 
 The catastrophic sweep is skipped for a checkpoint-ack operative, whose silence between

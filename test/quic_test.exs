@@ -94,12 +94,12 @@ defmodule FlezhaQuicTest do
     )
 
     {:ok, json_state} =
-      OperativeManager.get_segment_state(@quic_namespace, operative_id)
+      OperativeManager.get_entity_state(@quic_namespace, operative_id)
 
-    segment_state = Flezha.Service.Payloader.json_to_map(json_state)
+    entity_state = Flezha.Service.Payloader.json_to_map(json_state)
 
-    assert segment_state === %{
-             "store_input_operation" => %{
+    assert entity_state === %{
+             "store_input_procedure" => %{
                "binary_inputs" => [],
                "text_inputs" => ["quic_state_1", "quic_state_2"]
              }

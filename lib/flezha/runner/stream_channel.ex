@@ -20,13 +20,13 @@ defmodule Flezha.Runner.StreamChannel do
   @io_liveness_threshold_ms 30_000
   @credit_handshake_timeout_ms 10_000
 
-  # Every payload-id this channel forwards onto a Segment's durable write path;
+  # Every payload-id this channel forwards onto an Entity's durable write path;
   # the takeover fence (`:fence_write_path`) refuses exactly this set.
-  @segment_write_payloads [
-    "segment_state_change",
-    "segment_effect_record",
-    "segment_state_snapshot",
-    "delete_segment_state",
+  @entity_write_payloads [
+    "entity_state_change",
+    "entity_effect_record",
+    "entity_state_snapshot",
+    "delete_entity_state",
     "compensation_intent",
     "compensation_done",
     "park_payload"
@@ -60,7 +60,7 @@ defmodule Flezha.Runner.StreamChannel do
         # session), durable-write forwards are refused at this binding.
         # Terminal — the session is evicted right after, never re-bound.
         fenced?: false,
-        refused_segments: MapSet.new()
+        refused_entities: MapSet.new()
       }
     }
   end
@@ -184,7 +184,7 @@ defmodule Flezha.Runner.StreamChannel do
     {:reply, :already_bound, state}
   end
 
-  # Takeover fence: unbind this channel from the Segment write path.
+  # Takeover fence: unbind this channel from the Entity write path.
   # Synchronous, so the takeover transaction knows that once this returns no
   # further durable-write forward can leave this channel — the single state
   # flip that stops a superseded session, with zero added work anywhere else.
@@ -201,13 +201,13 @@ defmodule Flezha.Runner.StreamChannel do
   #
   # Fenced (superseded-session) channel: refuse every durable-write forward
   # at the binding. In-flight frames from the old session die here instead of
-  # reaching a Segment's WAL/snapshot files after the takeover unbind.
+  # reaching an Entity's WAL/snapshot files after the takeover unbind.
   @impl true
   def handle_info(
         {:flz_data, _stream_id, payload_id, message, _metadata},
         %{fenced?: true} = state
       )
-      when payload_id in @segment_write_payloads do
+      when payload_id in @entity_write_payloads do
     {:noreply, refuse_stale_forward(state, payload_id, message)}
   end
 
@@ -215,30 +215,30 @@ defmodule Flezha.Runner.StreamChannel do
   # layout and append path; the `format_id = 2` header is the durable
   # marker the WalWriter keys the fsync-gated outbox flush on.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id in ["segment_state_change", "segment_effect_record"] do
-    state = handle_segment_state_change(state, message)
+      when payload_id in ["entity_state_change", "entity_effect_record"] do
+    state = handle_entity_state_change(state, message)
     {:noreply, mark_seen(state)}
   end
 
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id == "segment_state_snapshot" do
-    handle_segment_state_snapshot(state.runner_id, message)
+      when payload_id == "entity_state_snapshot" do
+    handle_entity_state_snapshot(state.runner_id, message)
     {:noreply, mark_seen(state)}
   end
 
   # Dynamic-mode hard-delete: the runner evicted a persistence-enabled
-  # Segment. Drop its WAL/snapshot/outbox files so a later recreate
+  # Entity. Drop its WAL/snapshot/outbox files so a later recreate
   # cold-starts. Fire-and-forget — no response frame is written back.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
-      when payload_id == "delete_segment_state" do
-    handle_delete_segment_state(message)
+      when payload_id == "delete_entity_state" do
+    handle_delete_entity_state(message)
     {:noreply, mark_seen(state)}
   end
 
   # Bounded-operative saga compensation markers (SDK → controller). A durable
-  # bounded records each operation's forward completion (`compensation_intent`)
+  # bounded records each procedure's forward completion (`compensation_intent`)
   # and each compensation's completion (`compensation_done`); persisted per
-  # Segment and shipped back on the next `RestoreInitState` so a respawn finishes
+  # Entity and shipped back on the next `RestoreInitState` so a respawn finishes
   # the remaining hooks and skips already-undone ones. Fire-and-forget.
   def handle_info({:flz_data, _stream_id, payload_id, message, _metadata}, state)
       when payload_id in ["compensation_intent", "compensation_done"] do
@@ -249,14 +249,14 @@ defmodule Flezha.Runner.StreamChannel do
   # Dead-letter park (SDK → controller, tier-off sessions): append the
   # poison payload to the durable DLQ store. The ParkPayloadAck control
   # command fires only after the entry is fsynced — park-then-advance, so
-  # the parked segment never advances past a payload the controller could
+  # the parked entity never advances past a payload the controller could
   # still lose.
   def handle_info({:flz_data, _stream_id, "park_payload", message, _metadata}, state) do
     handle_park_payload(state, message)
     {:noreply, mark_seen(state)}
   end
 
-  # Late-input correction (SDK → controller): a Segment saw an input behind its
+  # Late-input correction (SDK → controller): an Entity saw an input behind its
   # event-time high-water but inside the declared window. Only the SDK can know
   # that — the event time comes from user code — so detection is its half and
   # orchestration is the Overwatch's.
@@ -355,7 +355,7 @@ defmodule Flezha.Runner.StreamChannel do
 
   # Credit handshake outcome, sent by the offer Task. The ack activates the
   # ledger; a nack (pre-credit SDK, timeout, transport error) pins the attach
-  # to the legacy SegmentMailboxStatus path. Session mismatches are stale
+  # to the legacy EntityMailboxStatus path. Session mismatches are stale
   # outcomes from a superseded attach and are dropped.
   def handle_info(
         {:credit_ack, session},
@@ -447,19 +447,19 @@ defmodule Flezha.Runner.StreamChannel do
     end
   end
 
-  # Persistence frames are handed to the per-segment WalWriter via a
+  # Persistence frames are handed to the per-entity WalWriter via a
   # non-blocking cast: the writer appends, drives seq-gap resync, and writes
   # snapshots (an fsync) in its own process, so disk/recovery latency never
   # stalls this channel — which also carries the operative's output frames.
-  # The per-Segment queue that keeps a slow Segment from stalling siblings on
+  # The per-Entity queue that keeps a slow Entity from stalling siblings on
   # this stream is each WalWriter's own mailbox: the cast demuxes here and
-  # queues there, so only the shared credit window couples Segments.
-  defp handle_segment_state_change(state, frame) do
+  # queues there, so only the shared credit window couples Entities.
+  defp handle_entity_state_change(state, frame) do
     case StateWire.decode_frame(frame) do
-      {:ok, %{segment_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
-        segment_id = {rc, sh, pk}
+      {:ok, %{entity_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
+        entity_id = {rc, sh, pk}
 
-        case Flezha.State.Supervisor.find_or_start(segment_id) do
+        case Flezha.State.Supervisor.find_or_start(entity_id) do
           {:ok, pid} ->
             case credit_admit(state, rc, byte_size(frame)) do
               {:shed, state} ->
@@ -480,15 +480,15 @@ defmodule Flezha.Runner.StreamChannel do
 
           {:error, reason} ->
             Logger.error(
-              "[stream] segment_state_change WalWriter start failed " <>
-                "segment=#{inspect(segment_id)}: #{inspect(reason)}"
+              "[stream] entity_state_change WalWriter start failed " <>
+                "entity=#{inspect(entity_id)}: #{inspect(reason)}"
             )
 
             state
         end
 
       {:error, reason} ->
-        Logger.warning("[stream] segment_state_change decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] entity_state_change decode failed: #{inspect(reason)}")
         state
     end
   end
@@ -498,11 +498,11 @@ defmodule Flezha.Runner.StreamChannel do
   # runs in the store process after the fsync; `send_control_async` is a
   # cast, so it cannot block the store either.
   defp handle_correction_request(frame) do
-    with {:ok, %{segment_id: {operative_class, _, _} = segment_id, body: body}} <-
+    with {:ok, %{entity_id: {operative_class, _, _} = entity_id, body: body}} <-
            StateWire.decode_frame(frame),
          {:ok, target} <- StateWire.decode_correction_request(body),
          {:ok, overwatch} <- ClassRegistry.overwatch_pid(operative_class) do
-      Flezha.Operative.Overwatch.request_correction(overwatch, segment_id, target)
+      Flezha.Operative.Overwatch.request_correction(overwatch, entity_id, target)
     else
       other ->
         Logger.warning("[stream] undecodable correction_request: #{inspect(other)}")
@@ -510,15 +510,15 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   defp handle_park_payload(state, frame) do
-    with {:ok, %{segment_id: {rc, sh, pk}, body: body}} <- StateWire.decode_frame(frame),
+    with {:ok, %{entity_id: {rc, sh, pk}, body: body}} <- StateWire.decode_frame(frame),
          {:ok, park} <- StateWire.decode_park_body(body) do
       runner_id = state.runner_id
 
       Flezha.Dlq.Store.append_async(
         %{
           operative_class: rc,
-          operation_id: sh,
-          segment_key: pk,
+          procedure_id: sh,
+          entity_key: pk,
           channel: park.channel,
           origin_offset: park.origin_offset,
           error: park.error,
@@ -539,23 +539,23 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   # Count every refused forward; emit `stale_writer_refused` once per
-  # (Segment, superseded session) episode so a chatty zombie cannot storm the
-  # bus. A frame whose Segment cannot be decoded is still counted.
+  # (Entity, superseded session) episode so a chatty zombie cannot storm the
+  # bus. A frame whose Entity cannot be decoded is still counted.
   defp refuse_stale_forward(state, payload_id, frame) do
     LivenessCounters.bump_channel(state.liveness_ref, :stale_writer_refused)
 
-    case frame_segment_id(payload_id, frame) do
-      {:ok, {rc, sh, pk} = segment_id} ->
-        if MapSet.member?(state.refused_segments, segment_id) do
+    case frame_entity_id(payload_id, frame) do
+      {:ok, {rc, sh, pk} = entity_id} ->
+        if MapSet.member?(state.refused_entities, entity_id) do
           state
         else
           :telemetry.execute(
             [:flezha, :state, :stale_writer_refused],
             %{count: 1},
-            %{operative: rc, operation: sh, key: pk, session: state.runner_id}
+            %{operative: rc, procedure: sh, key: pk, session: state.runner_id}
           )
 
-          %{state | refused_segments: MapSet.put(state.refused_segments, segment_id)}
+          %{state | refused_entities: MapSet.put(state.refused_entities, entity_id)}
         end
 
       {:error, _} ->
@@ -563,11 +563,11 @@ defmodule Flezha.Runner.StreamChannel do
     end
   end
 
-  defp frame_segment_id("delete_segment_state", frame), do: StateWire.decode_segment_id(frame)
+  defp frame_entity_id("delete_entity_state", frame), do: StateWire.decode_entity_id(frame)
 
-  defp frame_segment_id(_payload_id, frame) do
-    with {:ok, %{segment_id: segment_id}} <- StateWire.decode_frame(frame),
-         do: {:ok, segment_id}
+  defp frame_entity_id(_payload_id, frame) do
+    with {:ok, %{entity_id: entity_id}} <- StateWire.decode_frame(frame),
+         do: {:ok, entity_id}
   end
 
   # ---------- Credit-grant flow control ----------
@@ -689,35 +689,35 @@ defmodule Flezha.Runner.StreamChannel do
     Application.get_env(:flezha, :credit_flow_control_enabled, true)
   end
 
-  # Writing a snapshot fsyncs and truncates the per-segment WAL (a call back
+  # Writing a snapshot fsyncs and truncates the per-entity WAL (a call back
   # into its writer), so run it in a separate process — off this channel's loop
   # and outside the writer (which would self-call).
-  defp handle_segment_state_snapshot(_runner_id, frame) do
+  defp handle_entity_state_snapshot(_runner_id, frame) do
     case StateWire.decode_frame(frame) do
-      {:ok, %{segment_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
-        segment_id = {rc, sh, pk}
-        spawn(fn -> write_snapshot(segment_id, seq, header, body) end)
+      {:ok, %{entity_id: {rc, sh, pk}, seq: seq, header: header, body: body}} ->
+        entity_id = {rc, sh, pk}
+        spawn(fn -> write_snapshot(entity_id, seq, header, body) end)
 
       {:error, reason} ->
-        Logger.warning("[stream] segment_state_snapshot decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] entity_state_snapshot decode failed: #{inspect(reason)}")
     end
   end
 
-  # Persist one saga compensation marker for the frame's Segment (presence is the
+  # Persist one saga compensation marker for the frame's Entity (presence is the
   # signal; `Flezha.State.Registry.compensation_markers/1` reads it back onto
   # `RestoreInitState`). Write off this channel's loop so a slow disk never stalls
   # the output-carrying channel.
   defp handle_compensation_record(payload_id, frame) do
     case StateWire.decode_frame(frame) do
-      {:ok, %{segment_id: segment_id}} ->
+      {:ok, %{entity_id: entity_id}} ->
         kind = if payload_id == "compensation_intent", do: :intent, else: :done
 
         spawn(fn ->
           with {:error, reason} <-
-                 Flezha.State.Registry.write_compensation_marker(segment_id, kind) do
+                 Flezha.State.Registry.write_compensation_marker(entity_id, kind) do
             Logger.error(
               "[stream] compensation marker write failed " <>
-                "segment=#{inspect(segment_id)} kind=#{kind}: #{inspect(reason)}"
+                "entity=#{inspect(entity_id)} kind=#{kind}: #{inspect(reason)}"
             )
           end
         end)
@@ -729,36 +729,36 @@ defmodule Flezha.Runner.StreamChannel do
 
   # Run the file teardown off this channel's loop: it stops the writer and
   # unlinks files, which we never want to gate the output-carrying channel on.
-  defp handle_delete_segment_state(frame) do
-    case StateWire.decode_segment_id(frame) do
+  defp handle_delete_entity_state(frame) do
+    case StateWire.decode_entity_id(frame) do
       {:ok, {rc, sh, pk}} ->
-        # Destructive idle-eviction is a dynamic-segmentation behaviour; ignore
-        # it for a kind without dynamic segments so a durable bounded operative's
+        # Destructive idle-eviction is a dynamic-entity mode behaviour; ignore
+        # it for a kind without dynamic entities so a durable bounded operative's
         # state is never dropped out from under it.
-        if ClassRegistry.capable?(rc, :dynamic_segments?) do
-          spawn(fn -> Flezha.State.Supervisor.delete_segment({rc, sh, pk}) end)
+        if ClassRegistry.capable?(rc, :dynamic_entities?) do
+          spawn(fn -> Flezha.State.Supervisor.delete_entity({rc, sh, pk}) end)
         else
           Logger.warning(
-            "[stream] delete_segment_state ignored for non-dynamic class #{inspect(rc)}"
+            "[stream] delete_entity_state ignored for non-dynamic class #{inspect(rc)}"
           )
         end
 
       {:error, reason} ->
-        Logger.warning("[stream] delete_segment_state decode failed: #{inspect(reason)}")
+        Logger.warning("[stream] delete_entity_state decode failed: #{inspect(reason)}")
     end
   end
 
-  defp write_snapshot(segment_id, seq, header, body) do
-    Flezha.State.Watchdog.compaction_completed(segment_id)
+  defp write_snapshot(entity_id, seq, header, body) do
+    Flezha.State.Watchdog.compaction_completed(entity_id)
 
-    case Flezha.State.Snapshot.write_snapshot(segment_id, seq, header, body) do
+    case Flezha.State.Snapshot.write_snapshot(entity_id, seq, header, body) do
       {:ok, _path} ->
         :ok
 
       {:error, reason} ->
         Logger.error(
-          "[stream] segment_state_snapshot write failed " <>
-            "segment=#{inspect(segment_id)}: #{inspect(reason)}"
+          "[stream] entity_state_snapshot write failed " <>
+            "entity=#{inspect(entity_id)}: #{inspect(reason)}"
         )
     end
   end

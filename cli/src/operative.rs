@@ -274,8 +274,8 @@ fn handle_rewind(args: &[String]) {
     }
 }
 
-/// `flz operative replay <operative/operation/key> --from <seq|ts>` — re-run a
-/// Segment's retained inputs from a point in the past through the current code,
+/// `flz operative replay <operative/procedure/key> --from <seq|ts>` — re-run a
+/// Entity's retained inputs from a point in the past through the current code,
 /// republishing under a bumped epoch so a guarded sink overwrites the stale rows
 /// by natural key. "Deploy a fix, heal the recent past."
 ///
@@ -285,12 +285,12 @@ fn handle_replay(args: &[String]) {
     if args.len() < 2 {
         eprintln!(
             "Error: Invalid number of arguments. \
-             Usage: flz operative replay <operative/operation/key> --from <seq|timestamp>"
+             Usage: flz operative replay <operative/procedure/key> --from <seq|timestamp>"
         );
         exit(1);
     }
 
-    let segment = &args[1];
+    let entity = &args[1];
     let namespace = get_namespace(&args[2..]);
 
     let from = match extract_param(&args[2..], "--from", "-f") {
@@ -306,7 +306,7 @@ fn handle_replay(args: &[String]) {
 
     let rpc_command = format!(
         "Flezha.Service.CliManager.operative_replay(\"{}\", \"{}\", \"{}\")",
-        namespace, segment, from,
+        namespace, entity, from,
     );
 
     let status = Command::new(get_flezha_command())
@@ -317,7 +317,7 @@ fn handle_replay(args: &[String]) {
     match status {
         Ok(status) if status.success() => {}
         Ok(_) => eprintln!("Unknown status returned."),
-        Err(e) => eprintln!("Failed to replay segment: {}", e),
+        Err(e) => eprintln!("Failed to replay entity: {}", e),
     }
 }
 
@@ -331,7 +331,7 @@ fn handle_state(args: &[String]) {
     let namespace = get_namespace(&args[2..]);
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.segment_state(\"{}\", \"{}\")",
+        "Flezha.Service.CliManager.entity_state(\"{}\", \"{}\")",
         namespace, operative_id,
     );
 
@@ -481,7 +481,7 @@ fn print_operative_help() {
     println!("    io_listen   Listen to operative I/O");
     println!("    send        Send a payload to an operative's input stream");
     println!("    rewind      Rewind a bounded loop to a committed iteration");
-    println!("    replay      Re-run a Segment's retained inputs from a point in the past");
+    println!("    replay      Re-run an Entity's retained inputs from a point in the past");
     println!("    help        Show this help message");
     println!();
     println!("EXAMPLES:");

@@ -6,7 +6,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   Counters tracked:
 
     * `:operatives`           — count of active Operatives
-    * `:segments`       — count of active Segments
+    * `:entities`       — count of active Entities
     * `:mailbox_bytes`    — total allocated mailbox bytes
     * `:runners`        — count of connected SDK Runners
     * `:disk_bytes`       — cached disk footprint snapshot (refreshed
@@ -24,7 +24,7 @@ defmodule Flezha.AuthZ.QuotaCounters do
   @cache :flz_authz_quota_counters_cache
   @filename "quota_counters.dets"
 
-  @kinds [:operatives, :segments, :mailbox_bytes, :runners, :disk_bytes]
+  @kinds [:operatives, :entities, :mailbox_bytes, :runners, :disk_bytes]
 
   ## ----- Public API -----
 

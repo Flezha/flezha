@@ -4,17 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.RetryPolicy;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
-import com.flezha.sdk.runtime.operative.StatelessTestOperation;
+import com.flezha.sdk.runtime.operative.StatelessTestProcedure;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.state.DlqPark;
-import com.flezha.sdk.runtime.state.SegmentStateSink;
+import com.flezha.sdk.runtime.state.EntityStateSink;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import java.nio.ByteBuffer;
@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Java mirror of {@code sdk/rust/tests/dlq_retry.rs}: retry-then-park
- * dispatcher semantics ({@code platform-dead-letter-queue}) —
+ * dispatcher semantics ({@code dead-letter-queue}) —
  * transient-recovers, non-retryable-parks-immediately, panic-parity.
  */
 class DlqRetryTest {
@@ -69,7 +69,7 @@ class DlqRetryTest {
         // thread — the dispatch thread is blocked in parkBlocking while
         // this write returns (the controller's fsync-then-ack, minus the
         // controller).
-        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+        EntityStateSink.installGlobalSink((payloadId, frame) -> {
             if (DlqPark.PAYLOAD_ID_PARK.equals(payloadId)) {
                 ParkedEntry entry = decodeParkFrame(frame);
                 if (PARKED.stream().noneMatch(p -> p.parkId().equals(entry.parkId()))) {
@@ -100,9 +100,9 @@ class DlqRetryTest {
         return UnboundedOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }
 
-    private void feed(UnboundedOperativeInstance instance, String operationName, Object input) {
-        int operationId = instance.topology().operationNameToId().get(operationName);
-        instance.dispatcher(operationId).fanoutSegments(input, 100L);
+    private void feed(UnboundedOperativeInstance instance, String procedureName, Object input) {
+        int procedureId = instance.topology().procedureNameToId().get(procedureName);
+        instance.dispatcher(procedureId).fanoutEntities(input, 100L);
     }
 
     private static boolean waitFor(java.util.function.BooleanSupplier predicate, long millis) {
@@ -130,7 +130,7 @@ class DlqRetryTest {
         long parkedBefore = DlqPark.PARKED_TOTAL.get();
         UnboundedOperativeInstance instance = instantiate(TransientOperative.class, "dlq_transient");
 
-        feed(instance, "dlq_transient_operation", "p");
+        feed(instance, "dlq_transient_procedure", "p");
 
         assertThat(waitFor(() -> TRANSIENT_OK.get() == 1, 5_000))
                 .as("third attempt should succeed")
@@ -146,15 +146,15 @@ class DlqRetryTest {
     // ---------- non-retryable parks immediately ----------
 
     @Test
-    @DisplayName("NonRetryable parks immediately and the segment continues")
+    @DisplayName("NonRetryable parks immediately and the entity continues")
     void nonRetryableParksImmediately() {
         UnboundedOperativeInstance instance = instantiate(NonRetryableOperative.class, "dlq_nonretry");
 
-        feed(instance, "dlq_nonretry_operation", "poison");
-        feed(instance, "dlq_nonretry_operation", "healthy");
+        feed(instance, "dlq_nonretry_procedure", "poison");
+        feed(instance, "dlq_nonretry_procedure", "healthy");
 
         assertThat(waitFor(() -> NON_RETRYABLE_OK.get() == 1, 5_000))
-                .as("segment must continue past the parked payload")
+                .as("entity must continue past the parked payload")
                 .isTrue();
         assertThat(PARKED).hasSize(1);
         ParkedEntry entry = PARKED.get(0);
@@ -170,18 +170,18 @@ class DlqRetryTest {
     // ---------- panic parity ----------
 
     @Test
-    @DisplayName("RuntimeException exhausts the budget, parks, and the segment continues")
+    @DisplayName("RuntimeException exhausts the budget, parks, and the entity continues")
     void panicParityExhaustsBudgetThenParksAndContinues() {
         UnboundedOperativeInstance instance = instantiate(PanickyOperative.class, "dlq_panicky");
 
-        feed(instance, "dlq_panicky_operation", "poison");
-        feed(instance, "dlq_panicky_operation", "healthy");
+        feed(instance, "dlq_panicky_procedure", "poison");
+        feed(instance, "dlq_panicky_procedure", "healthy");
 
         assertThat(waitFor(() -> PANIC_OK.get() == 1, 5_000))
-                .as("segment must continue past the parked payload — never a silent drop")
+                .as("entity must continue past the parked payload — never a silent drop")
                 .isTrue();
         assertThat(PARKED)
-                .as("parked exactly as a thrown OperationException would be")
+                .as("parked exactly as a thrown ProcedureException would be")
                 .hasSize(1);
         ParkedEntry entry = PARKED.get(0);
         assertThat(entry.attempts())
@@ -214,7 +214,7 @@ class DlqRetryTest {
     @Test
     @DisplayName("ParkBody postcard bytes match the Rust/controller fixture")
     void parkBodyPostcardBytesAreTheCrossLanguageFixture() {
-        // Shared fixture with sdk/rust/src/segment/park.rs
+        // Shared fixture with sdk/rust/src/entity/park.rs
         // `park_body_postcard_bytes_are_the_cross_language_fixture` and the
         // controller's decode; an encoding change breaks loudly here.
         byte[] bytes = DlqPark.encodeParkBody(new DlqPark.ParkBody(
@@ -232,7 +232,7 @@ class DlqRetryTest {
     // ---------- wire decode helpers ----------
 
     /**
-     * Parse the outer segment frame
+     * Parse the outer entity frame
      * ({@code [pid_len:u16][pid][seq:u64][header:16][body_len:u32][body][crc:u32]})
      * and postcard-decode the {@code ParkBody}.
      */
@@ -279,7 +279,7 @@ class DlqRetryTest {
     }
 
     // =========================================================================
-    // Test topologies. Operations are re-instantiated reflectively, so they
+    // Test topologies. Procedures are re-instantiated reflectively, so they
     // close over the static counters above.
     // =========================================================================
 
@@ -325,14 +325,14 @@ class DlqRetryTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(TypedOrder.class, "orders").retryBackoffMs(1).into(TypedOrderOperation.class);
+            c.input(TypedOrder.class, "orders").retryBackoffMs(1).into(TypedOrderProcedure.class);
         }
     }
 
-    public static final class TypedOrderOperation extends StatelessTestOperation<TypedOrder, Object, Void> {
+    public static final class TypedOrderProcedure extends StatelessTestProcedure<TypedOrder, Object, Void> {
         @Override
         public String name() {
-            return "dlq_typed_order_operation";
+            return "dlq_typed_order_procedure";
         }
 
         @Override
@@ -346,12 +346,12 @@ class DlqRetryTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(TypedOrder input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(TypedOrder input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             TYPED_OK.incrementAndGet();
         }
     }
@@ -364,14 +364,14 @@ class DlqRetryTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").retryBackoffMs(1).into(TransientOperation.class);
+            c.input(String.class, "input").retryBackoffMs(1).into(TransientProcedure.class);
         }
     }
 
-    public static final class TransientOperation extends StatelessTestOperation<String, Object, Void> {
+    public static final class TransientProcedure extends StatelessTestProcedure<String, Object, Void> {
         @Override
         public String name() {
-            return "dlq_transient_operation";
+            return "dlq_transient_procedure";
         }
 
         @Override
@@ -385,14 +385,14 @@ class DlqRetryTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             if (TRANSIENT_ATTEMPTS.getAndIncrement() < 2) {
-                throw new OperationException("transient");
+                throw new ProcedureException("transient");
             }
             TRANSIENT_OK.incrementAndGet();
         }
@@ -406,14 +406,14 @@ class DlqRetryTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").retryBackoffMs(1).into(NonRetryableOperation.class);
+            c.input(String.class, "input").retryBackoffMs(1).into(NonRetryableProcedure.class);
         }
     }
 
-    public static final class NonRetryableOperation extends StatelessTestOperation<String, Object, Void> {
+    public static final class NonRetryableProcedure extends StatelessTestProcedure<String, Object, Void> {
         @Override
         public String name() {
-            return "dlq_nonretry_operation";
+            return "dlq_nonretry_procedure";
         }
 
         @Override
@@ -427,15 +427,15 @@ class DlqRetryTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             NON_RETRYABLE_RUNS.incrementAndGet();
             if ("poison".equals(input)) {
-                throw new OperationException.NonRetryable("bad record");
+                throw new ProcedureException.NonRetryable("bad record");
             }
             NON_RETRYABLE_OK.incrementAndGet();
         }
@@ -449,14 +449,14 @@ class DlqRetryTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").retryBackoffMs(1).into(PanickyOperation.class);
+            c.input(String.class, "input").retryBackoffMs(1).into(PanickyProcedure.class);
         }
     }
 
-    public static final class PanickyOperation extends StatelessTestOperation<String, Object, Void> {
+    public static final class PanickyProcedure extends StatelessTestProcedure<String, Object, Void> {
         @Override
         public String name() {
-            return "dlq_panicky_operation";
+            return "dlq_panicky_procedure";
         }
 
         @Override
@@ -470,12 +470,12 @@ class DlqRetryTest {
         }
 
         @Override
-        protected Object initState(Optional<String> operationKey) {
+        protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
 
         @Override
-        public void run(String input, StateHandle<Object, NoChange> state, OperationCtx ctx) {
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {
             PANIC_RUNS.incrementAndGet();
             if ("poison".equals(input)) {
                 throw new RuntimeException("kaboom");

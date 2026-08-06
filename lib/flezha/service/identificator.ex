@@ -12,7 +12,7 @@ defmodule Flezha.Service.Identificator do
   def start_link(_) do
     Registry.start_link(
       keys: :unique,
-      segments: 1,
+      entities: 1,
       name: __MODULE__
     )
   end

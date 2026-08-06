@@ -35,12 +35,12 @@ controller's `alter_child_data` hook handles runner selection at operative start
 time.
 
 > **Note (operative-mvp-rust).** The Rust SDK now ships work as
-> `Unbounded Operative` / `Operation` / `Segment` (see `docs/operative_architecture.md`).
-> Segmenting is **SDK-internal**: a single Unbounded Operative instance can have many
-> Operations, each with many Segments running in parallel inside the
+> `Unbounded Operative` / `Procedure` / `Entity` (see `docs/operative_architecture.md`).
+> Entity is **SDK-internal**: a single Unbounded Operative instance can have many
+> Procedures, each with many Entities running in parallel inside the
 > runner process. ProcessHub continues per-operative placement at the
 > cluster level — one Unbounded Operative instance is one ProcessHub child — and is
-> not aware of segments. The two-level distribution above is unchanged.
+> not aware of entities. The two-level distribution above is unchanged.
 
 ## Per-namespace ProcessHub instances
 
@@ -159,7 +159,7 @@ lives in `FleetManager` (`lib/flezha/runner/fleet_manager.ex`):
   operative leaves through the migration-consent gate with a live HotSwap
   handover rather than being killed with the hub. Because the runner that would
   have serialized the state is the one that just died, the handover is empty and
-  the destination pulls the Segment files from this node
+  the destination pulls the Entity files from this node
   (`Flezha.State.WalTransfer`) — `state_root` is node-local and never assumed
   shared. The hub is reclaimed afterwards only if it ends up vacant. The drain
   runs off the FleetManager loop, since it blocks to its deadline, on a
@@ -238,8 +238,8 @@ State persistence is split between two layers:
 * **HotSwap migration** uses an in-memory snapshot captured by
   `prepare_handover_state` and consumed by `alter_handover_state/2` on
   the destination — see `lib/flezha/operative/overwatch.ex`.
-* **Cold-boot restart** is covered by the per-Segment WAL/snapshot
-  files in `app_data/state/{operative_class}/{operation_id}/...`
+* **Cold-boot restart** is covered by the per-Entity WAL/snapshot
+  files in `app_data/state/{operative_class}/{procedure_id}/...`
   (`docs/resilience/state_persistence.md`) plus ProcessHub's persistent
   registry under `app_data/process_hub/{hub_id}/registry.dets`. There is
   no periodic in-memory snapshot loop and no `flz cluster snapshot` CLI.
@@ -267,7 +267,7 @@ State persistence is split between two layers:
 These are common assumptions to double-check against the actual code:
 
 - **Auto-restore-on-boot exists** via ProcessHub's durable registry +
-  per-Segment WAL/snapshot files. See `docs/resilience/auto_restore_on_boot.md`
+  per-Entity WAL/snapshot files. See `docs/resilience/auto_restore_on_boot.md`
   for the full safety analysis. Anything beyond that boundary
   (out-of-cluster portable backups, point-in-time-to-arbitrary-past)
   is out of scope.
@@ -320,27 +320,27 @@ start, ProcessHub redistribution, in-place restart from
 and HotSwap migration — restores the same plugin set without runner
 intervention.
 
-This persistence layer is independent of the per-Segment WAL +
+This persistence layer is independent of the per-Entity WAL +
 snapshot persistence in `lib/flezha/state/` (`docs/resilience/state_persistence.md`):
-the cspec persists *which* plugins are subscribed; the per-Segment
-layer persists *how much progress* a Segment has made through its
+the cspec persists *which* plugins are subscribed; the per-Entity
+layer persists *how much progress* an Entity has made through its
 input stream. Both layers can be present, absent, or partially
 populated for a given operative without affecting one another.
 
 ## RestoreInitState vs runner_migrate
 
-The per-Segment `RestoreInitState` handshake (`operative-state-persistence-controller`)
+The per-Entity `RestoreInitState` handshake (`operative-state-persistence`)
 and the existing `runner_migrate` flow are **mutually exclusive
-per Segment**. A reconnecting Segment with `persistence_enabled =
+per Entity**. A reconnecting Entity with `persistence_enabled =
 true` and on-disk WAL/snapshot is restored via `RestoreInitState` only.
-A migrating Segment (HotSwap moving the Overwatch to a peer controller
+A migrating Entity (HotSwap moving the Overwatch to a peer controller
 host) carries its own snapshot bytes through the migration path; the
 new controller does NOT additionally fire `RestoreInitState` for the same
-Segment. Doing both would double-apply state.
+Entity. Doing both would double-apply state.
 
-The persistence module (`lib/flezha/state/`) is per-Segment and
+The persistence module (`lib/flezha/state/`) is per-Entity and
 ProcessHub-agnostic. ProcessHub picks the controller host; the persistence
-module owns the per-Segment WAL on whichever host the Overwatch is
+module owns the per-Entity WAL on whichever host the Overwatch is
 currently running on. Migrating an Overwatch to a peer host moves the
 in-memory state via `runner_migrate`; the new host's
 persistence module starts a fresh WAL (no replication is in scope for
@@ -349,7 +349,7 @@ v1).
 ## Related docs
 
 - `docs/sdk_protocol_spec.md` — wire-level binary framing and protobuf commands.
-- `docs/resilience/state_persistence.md` — per-Segment WAL, snapshot, and time-travel.
-- `docs/resilience/auto_restore_on_boot.md` — the single auto-restore mechanism (ProcessHub durable registry + per-Segment WAL).
+- `docs/resilience/state_persistence.md` — per-Entity WAL, snapshot, and time-travel.
+- `docs/resilience/auto_restore_on_boot.md` — the single auto-restore mechanism (ProcessHub durable registry + per-Entity WAL).
 - `docs/nif_architecture.md` — transport NIF design (UDS + QUIC drivers).
 - `docs/deployment.md` — k8s DaemonSet layout, env vars, hostPath volumes.

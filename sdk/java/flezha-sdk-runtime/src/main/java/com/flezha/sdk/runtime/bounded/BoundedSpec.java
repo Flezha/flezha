@@ -7,7 +7,7 @@ import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
-import com.flezha.sdk.runtime.operative.OperationDescriptor;
+import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
 import java.time.Duration;
@@ -75,7 +75,7 @@ public final class BoundedSpec {
         return topology;
     }
 
-    /** Operations in execution order (entry consumer → … → terminal). Empty for {@code run}-sugar. */
+    /** Procedures in execution order (entry consumer → … → terminal). Empty for {@code run}-sugar. */
     @Nonnull
     public List<Integer> chain() {
         return chain;
@@ -94,7 +94,7 @@ public final class BoundedSpec {
 
     /** Class-level persistence toggle; when true, a structured bounded's Changes are flushed to the WAL. */
     /**
-     * The failing-segment retry ladder. Resolved onto the SAME
+     * The failing-entity retry ladder. Resolved onto the SAME
      * {@link com.flezha.sdk.channel.RetryPolicy} the unbounded dead-letter ladder
      * uses, so both share one backoff implementation.
      */
@@ -119,19 +119,19 @@ public final class BoundedSpec {
         return persistenceEnabled;
     }
 
-    /** True when this spec runs the bare {@code run} body (no declared operations). */
+    /** True when this spec runs the bare {@code run} body (no declared procedures). */
     public boolean isRunSugar() {
         return topology.isEmpty();
     }
 
     /**
      * Build and validate the spec for a bounded class. An empty
-     * {@link BoundedOperative#operations} selects the {@code run}-sugar path; a
+     * {@link BoundedOperative#procedures} selects the {@code run}-sugar path; a
      * non-empty declaration is validated as a single entry-rooted DAG.
      *
      * @throws BoundedOperativeConfigurationException on invalid authoring
-     *     (external-stop-only, branching, cycle, dynamic segmentation,
-     *     disconnected operation, or no entry channel).
+     *     (external-stop-only, branching, cycle, dynamic entity mode,
+     *     disconnected procedure, or no entry channel).
      */
     @Nonnull
     public static BoundedSpec build(@Nonnull Class<? extends BoundedOperative> operativeClass) {
@@ -160,16 +160,16 @@ public final class BoundedSpec {
 
         UnboundedOperativeTopology topology;
         try {
-            topology = UnboundedOperativeTopologyBuilder.build(factoryId, probe::operations);
+            topology = UnboundedOperativeTopologyBuilder.build(factoryId, probe::procedures);
         } catch (UnboundedOperativeConfigurationException e) {
             // A structured bounded reuses the unbounded topology builder, which
-            // rejects dynamic-segment operations and unwired channels.
+            // rejects dynamic-entity procedures and unwired channels.
             throw new BoundedOperativeConfigurationException(
                     "bounded operative `" + factoryId + "` has an invalid topology: " + e.getMessage());
         }
 
-        // No declared operations ⇒ run-sugar.
-        if (topology.operations().isEmpty()) {
+        // No declared procedures ⇒ run-sugar.
+        if (topology.procedures().isEmpty()) {
             // A loop iterates the CHAIN. Run-sugar has no chain — its `run` body
             // owns its own control flow, so a declared loop mode has nothing to
             // iterate and is a contradiction, not a no-op.
@@ -191,29 +191,29 @@ public final class BoundedSpec {
 
         List<Integer> chain = topologicalOrder(factoryId, topology);
 
-        // A durable class journals its inter-op handoff at every op barrier, so
-        // every inter-op channel needs a codec. An opted-out class re-runs from
+        // A durable class journals its inter-proc handoff at every proc barrier, so
+        // every inter-proc channel needs a codec. An opted-out class re-runs from
         // the top by design and needs none.
         if (probe.persistenceEnabled()) {
             for (ChannelDescriptor channel : topology.channels()) {
-                boolean interOp = channel.kind() == com.flezha.sdk.channel.ChannelKind.INTER_OPERATION
+                boolean interProc = channel.kind() == com.flezha.sdk.channel.ChannelKind.INTER_PROCEDURE
                         && !channel.consumers().isEmpty();
-                if (interOp && channel.interOpCodec().isEmpty()) {
-                    throw BoundedOperativeConfigurationException.missingInterOpCodec(factoryId, channel.name());
+                if (interProc && channel.interProcCodec().isEmpty()) {
+                    throw BoundedOperativeConfigurationException.missingInterProcCodec(factoryId, channel.name());
                 }
             }
         }
 
-        // A durable CHAINED loop re-seeds each iteration from the terminal op's
+        // A durable CHAINED loop re-seeds each iteration from the terminal proc's
         // journaled handoff. With no codec there it would re-seed EMPTY on a
         // crash-resume — which the loop reads as "converged" and stops, silently
         // truncating the run. Refuse it at registration instead.
         if (probe.loopMode() == com.flezha.sdk.bounded.LoopMode.CHAINED && probe.persistenceEnabled()) {
-            int terminalOp = chain.get(chain.size() - 1);
+            int terminalProc = chain.get(chain.size() - 1);
             boolean terminalHasCodec = topology.channels().stream()
                     .anyMatch(c -> c.producer().isPresent()
-                            && c.producer().getAsInt() == terminalOp
-                            && c.interOpCodec().isPresent());
+                            && c.producer().getAsInt() == terminalProc
+                            && c.interProcCodec().isPresent());
             if (!terminalHasCodec) {
                 throw BoundedOperativeConfigurationException.loopTerminalWithoutCodec(factoryId);
             }
@@ -245,12 +245,12 @@ public final class BoundedSpec {
     /**
      * Resolve the topological execution order of a structured bounded's DAG
      * and reject anything outside the shared shape rule (no entry channel,
-     * multi-consumer entry, dynamic segmentation, cycles, disconnected
-     * operations). Operation ids are indices into {@code topology.operations()};
-     * a channel's {@code consumerIds()} are downstream operation ids.
+     * multi-consumer entry, dynamic entity mode, cycles, disconnected
+     * procedures). Procedure ids are indices into {@code topology.procedures()};
+     * a channel's {@code consumerIds()} are downstream procedure ids.
      */
     private static List<Integer> topologicalOrder(String factoryId, UnboundedOperativeTopology topology) {
-        // The entry channel seeds the first operation(s) from the spawn args.
+        // The entry channel seeds the first procedure(s) from the spawn args.
         ChannelDescriptor entry = null;
         for (ChannelDescriptor c : topology.channels()) {
             if (c.kind() == ChannelKind.ENTRY) {
@@ -260,8 +260,8 @@ public final class BoundedSpec {
         }
         if (entry == null) {
             throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
-                    + "` declares operations but no entry channel; a structured bounded must declare one input "
-                    + "channel (c.input(...)) to seed its first operation");
+                    + "` declares procedures but no entry channel; a structured bounded must declare one input "
+                    + "channel (c.input(...)) to seed its first procedure");
         }
         if (entry.consumers().isEmpty()) {
             throw new BoundedOperativeConfigurationException(
@@ -271,7 +271,7 @@ public final class BoundedSpec {
         // PER_INPUT loop's inbox item — so a merge mapping on an entry edge
         // could never be selected and every entry channel past the first would
         // be unreadable. Refuse the shape rather than accept one that cannot
-        // run (`multi-input-operations`). Mirrors Rust's MergeFromEntryChannel.
+        // run (`multi-input-procedures`). Mirrors Rust's MergeFromEntryChannel.
         for (ChannelDescriptor ch : topology.channels()) {
             if (ch.kind() != ChannelKind.ENTRY) {
                 continue;
@@ -279,12 +279,12 @@ public final class BoundedSpec {
             for (ConsumerEdge edge : ch.consumers()) {
                 if (edge.map().isPresent()) {
                     throw new BoundedOperativeConfigurationException("MergeFromEntryChannel: bounded operative `"
-                            + factoryId + "` merges entry channel `" + ch.name() + "` into operation `"
-                            + topology.operations().get(edge.operation()).name()
+                            + factoryId + "` merges entry channel `" + ch.name() + "` into procedure `"
+                            + topology.procedures().get(edge.procedure()).name()
                             + "`; a bounded operative is seeded from its spawn args (and, for a PER_INPUT loop, its"
                             + " inbox items) through ONE entry channel, and neither carries the channel a payload"
                             + " arrived on — so an entry channel cannot be one merge source among several. Merge the"
-                            + " output streams of two or more of this operative's operations instead");
+                            + " output streams of two or more of this operative's procedures instead");
                 }
             }
         }
@@ -294,10 +294,10 @@ public final class BoundedSpec {
         // walk dispatch a join only after ALL its producers, with the
         // accumulated batch — the former BFS enqueued a join on its FIRST
         // producer. Kahn-FIFO equals BFS numbering for a tree, so journaled
-        // op_idx values keep their meaning. Reachability is named before the
-        // cycle so a genuinely disconnected operation is not reported as a
+        // proc_idx values keep their meaning. Reachability is named before the
+        // cycle so a genuinely disconnected procedure is not reported as a
         // cycle symptom.
-        int n = topology.operations().size();
+        int n = topology.procedures().size();
         List<int[]> edges = new ArrayList<>();
         for (ChannelDescriptor ch : topology.channels()) {
             if (ch.producer().isPresent()) {
@@ -310,23 +310,23 @@ public final class BoundedSpec {
                 com.flezha.sdk.runtime.operative.builder.GraphShape.order(n, edges, entry.consumerIds());
         if (shape.unreachable() >= 0 && shape.onCycle() < 0) {
             throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
-                    + "` declares operation `"
-                    + topology.operations().get(shape.unreachable()).name()
+                    + "` declares procedure `"
+                    + topology.procedures().get(shape.unreachable()).name()
                     + "` that is not reachable from the entry channel");
         }
         if (shape.onCycle() >= 0) {
             throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
-                    + "` declares operation `"
-                    + topology.operations().get(shape.onCycle()).name()
-                    + "` on a cycle; a bounded topology is a DAG — an operation's output may never"
+                    + "` declares procedure `"
+                    + topology.procedures().get(shape.onCycle()).name()
+                    + "` on a cycle; a bounded topology is a DAG — a procedure's output may never"
                     + " reach its own input");
         }
-        for (OperationDescriptor op : topology.operations()) {
-            // Bounded has no dynamic-segments capability.
-            if (op.operationKeyOverridden()) {
+        for (ProcedureDescriptor proc : topology.procedures()) {
+            // Bounded has no dynamic-entities capability.
+            if (proc.entityKeyOverridden()) {
                 throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
-                        + "` declares a dynamic-segment operation `" + op.name()
-                        + "`; bounded operatives do not support dynamic segmentation");
+                        + "` declares a dynamic-entity procedure `" + proc.name()
+                        + "`; bounded operatives do not support dynamic entity mode");
             }
         }
 

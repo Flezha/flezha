@@ -2,11 +2,11 @@ package com.flezha.sdk.channel;
 
 /**
  * Per-channel retry policy applied by the consumer-side dispatcher when an
- * operation invocation fails (thrown {@code OperationException} or
+ * procedure invocation fails (thrown {@code ProcedureException} or
  * {@code RuntimeException}). After {@code maxAttempts} total attempts — or
- * immediately on an {@link com.flezha.sdk.operation.OperationException.NonRetryable}
+ * immediately on an {@link com.flezha.sdk.procedure.ProcedureException.NonRetryable}
  * — the payload is parked to the controller's dead-letter queue and the
- * segment advances. Declared via {@code .retryMax(...)} /
+ * entity advances. Declared via {@code .retryMax(...)} /
  * {@code .retryBackoffMs(...)} on the channel builder. Mirrors the Rust
  * SDK's {@code RetryPolicy}.
  *
@@ -27,7 +27,7 @@ public record RetryPolicy(int maxAttempts, long backoffBaseMs) {
      * ±50% jitter, capped at {@link #RETRY_BACKOFF_MAX_MS}.
      *
      * <p>Lives here because BOTH retry ladders — the unbounded dead-letter one and
-     * the bounded segment one — resolve onto this policy, so they share one
+     * the bounded entity one — resolve onto this policy, so they share one
      * backoff curve rather than two that can drift apart.
      */
     public long backoffFor(int attempt) {

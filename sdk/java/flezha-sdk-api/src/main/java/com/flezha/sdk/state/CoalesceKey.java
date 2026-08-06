@@ -1,7 +1,7 @@
 package com.flezha.sdk.state;
 
 /**
- * Coalesce key for the per-Segment flusher. Changes whose keys compare equal
+ * Coalesce key for the per-Entity flusher. Changes whose keys compare equal
  * collapse to the latest within a flush window.
  *
  * <p>The key is a 64-bit hash over arbitrary user-supplied values; collisions

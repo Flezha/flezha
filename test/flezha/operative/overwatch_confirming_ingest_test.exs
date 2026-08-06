@@ -13,7 +13,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
   alias Flezha.Operative.{Builder, Overwatch}
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.State.{OpInbox, TestHelpers}
+  alias Flezha.State.{ProcInbox, TestHelpers}
 
   setup :set_mimic_global
 
@@ -81,7 +81,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
     inst = instance_id()
     test_pid = self()
 
-    stub(OpInbox, :append, fn ^inst, msg, _md ->
+    stub(ProcInbox, :append, fn ^inst, msg, _md ->
       send(test_pid, {:appended, msg})
       {:ok, 7}
     end)
@@ -114,7 +114,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
   test "a duplicate absorbed by the durable inbox reports absorbed" do
     inst = instance_id()
-    stub(OpInbox, :append, fn ^inst, _msg, _md -> {:duplicate, 3} end)
+    stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:duplicate, 3} end)
 
     state = state(inst, durable_bounded: true, channel: fake_channel(:ok))
 
@@ -126,7 +126,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
   test "a durable-log refusal reports refused so the sender retries" do
     inst = instance_id()
-    stub(OpInbox, :append, fn ^inst, _msg, _md -> {:error, :enospc} end)
+    stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:error, :enospc} end)
 
     state = state(inst, durable_bounded: true, channel: fake_channel(:ok))
 
@@ -142,7 +142,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
     assert {:reply, {:error, :not_ready}, _} =
              Overwatch.handle_call({:ingest, "x", %{}}, self(), state(inst, channel: nil))
 
-    stub(OpInbox, :append, fn ^inst, _msg, _md -> {:ok, 1} end)
+    stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:ok, 1} end)
 
     durable = state(inst, durable_bounded: true, channel: nil)
 

@@ -3,7 +3,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   Per-`plugin_id` transactional Postgres sink: buffers `:on_output` records,
   and per flush batch runs ONE database transaction that (a) upserts every
   record into `flezha_records` keyed by `flz.key` and (b) upserts the
-  per-Segment `flezha_sink_progress` watermark row. Data and progress can
+  per-Entity `flezha_sink_progress` watermark row. Data and progress can
   never diverge.
 
   Every upsert is guarded by `(epoch, seq)` monotonicity, so a re-driven
@@ -25,7 +25,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   @records_ddl """
   CREATE TABLE IF NOT EXISTS #{@records_table} (
     key text PRIMARY KEY,
-    segment text,
+    entity text,
     seq text,
     epoch bigint,
     payload bytea,
@@ -35,7 +35,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   @progress_ddl """
   CREATE TABLE IF NOT EXISTS #{@progress_table} (
-    segment text PRIMARY KEY,
+    entity text PRIMARY KEY,
     last_seq text,
     epoch bigint
   )
@@ -45,12 +45,12 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   # numerically ("10.0" > "9.1"); the row comparison is the monotonicity
   # guard — not-strictly-newer identities leave the row untouched.
   @records_upsert """
-  INSERT INTO #{@records_table} (key, segment, seq, epoch, payload, updated_at)
-  SELECT u.key, u.segment, u.seq, u.epoch, u.payload, now()
+  INSERT INTO #{@records_table} (key, entity, seq, epoch, payload, updated_at)
+  SELECT u.key, u.entity, u.seq, u.epoch, u.payload, now()
   FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[], $5::bytea[])
-       AS u(key, segment, seq, epoch, payload)
+       AS u(key, entity, seq, epoch, payload)
   ON CONFLICT (key) DO UPDATE SET
-    segment = excluded.segment,
+    entity = excluded.entity,
     seq = excluded.seq,
     epoch = excluded.epoch,
     payload = excluded.payload,
@@ -60,8 +60,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   """
 
   @progress_upsert """
-  INSERT INTO #{@progress_table} (segment, last_seq, epoch) VALUES ($1, $2, $3)
-  ON CONFLICT (segment) DO UPDATE SET
+  INSERT INTO #{@progress_table} (entity, last_seq, epoch) VALUES ($1, $2, $3)
+  ON CONFLICT (entity) DO UPDATE SET
     last_seq = excluded.last_seq,
     epoch = excluded.epoch
   WHERE (excluded.epoch, string_to_array(excluded.last_seq, '.')::bigint[]) >
@@ -280,8 +280,8 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
       Postgrex.transaction(state.pool, fn conn ->
         Postgrex.query!(conn, @records_upsert, record_params(records))
 
-        Enum.each(progress, fn {segment, last_seq, epoch} ->
-          Postgrex.query!(conn, @progress_upsert, [segment, last_seq, epoch])
+        Enum.each(progress, fn {entity, last_seq, epoch} ->
+          Postgrex.query!(conn, @progress_upsert, [entity, last_seq, epoch])
         end)
       end)
 
@@ -309,18 +309,18 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
   defp progress_rows(batch) do
     batch
-    |> Enum.reject(&(&1.segment == ""))
-    |> Enum.group_by(& &1.segment)
-    |> Enum.map(fn {segment, recs} ->
+    |> Enum.reject(&(&1.entity == ""))
+    |> Enum.group_by(& &1.entity)
+    |> Enum.map(fn {entity, recs} ->
       newest = Enum.max_by(recs, & &1.sort)
-      {segment, newest.seq, newest.epoch}
+      {entity, newest.seq, newest.epoch}
     end)
   end
 
   defp record_params(records) do
     [
       Enum.map(records, & &1.key),
-      Enum.map(records, & &1.segment),
+      Enum.map(records, & &1.entity),
       Enum.map(records, & &1.seq),
       Enum.map(records, & &1.epoch),
       Enum.map(records, & &1.payload)
@@ -330,7 +330,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   # ---------- record decoding ----------
 
   # A record earns the guarded upsert by carrying a replay-stable identity —
-  # a segment and a numeric seq — NOT by carrying an epoch. A `.keyed()` channel
+  # an entity and a numeric seq — NOT by carrying an epoch. A `.keyed()` channel
   # without the effectively-once tier is stamped by the SDK, which cannot mint an
   # epoch (only the controller's outbox lineage owns one), so gating on the epoch
   # would drop those records into the unidentified branch with a stable key but no
@@ -344,16 +344,16 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   # outputs. Fully unstamped records get a unique synthetic key — plain inserts,
   # the monotonicity guard never fires for them.
   defp decode_record(msg, metadata) do
-    segment = Map.get(metadata, "flz.segment", "")
+    entity = Map.get(metadata, "flz.entity", "")
     seq = Map.get(metadata, "flz.seq", "")
     epoch = parse_epoch(Map.get(metadata, "flz.epoch")) || 0
 
-    if valid_seq?(seq) and segment != "" do
-      key = Map.get(metadata, "flz.key") || "#{segment}/#{seq}"
+    if valid_seq?(seq) and entity != "" do
+      key = Map.get(metadata, "flz.key") || "#{entity}/#{seq}"
 
       %{
         key: key,
-        segment: segment,
+        entity: entity,
         seq: seq,
         epoch: epoch,
         sort: sort_key(epoch, seq),
@@ -361,7 +361,7 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
       }
     else
       key = Map.get(metadata, "flz.key") || anon_key()
-      %{key: key, segment: "", seq: "", epoch: 0, sort: sort_key(0, ""), payload: msg}
+      %{key: key, entity: "", seq: "", epoch: 0, sort: sort_key(0, ""), payload: msg}
     end
   end
 

@@ -1,6 +1,6 @@
 defmodule Flezha.State.RecoveryForOverwatchTest do
   @moduledoc """
-  Phase-3 (consume-recovery-mode-and-self-heal §3.1-3.2) bind-driven
+  Phase-3 (convergence-self-healing §3.1-3.2) bind-driven
   replay trigger.
 
   Exercises `Flezha.State.Recovery.resync_for_overwatch/2`: it must

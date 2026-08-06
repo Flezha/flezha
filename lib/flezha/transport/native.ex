@@ -2,7 +2,7 @@ defmodule Flezha.Transport.Native do
   @moduledoc """
   Rustler NIF module wrapping the `flz_nif` crate.
 
-  Provides transport operations for UDS (and later QUIC) servers.
+  Provides transport procedures for UDS (and later QUIC) servers.
   The NIF handles transport I/O and binary frame parsing in Rust,
   delivering complete `{:flz_data, stream_id, payload_id, message, metadata}`
   tuples to Elixir processes.
@@ -42,7 +42,7 @@ defmodule Flezha.Transport.Native do
   """
   def driver_stats(_server_ref), do: :erlang.nif_error(:not_loaded)
 
-  # --- Behaviour callbacks (stream operations) ---
+  # --- Behaviour callbacks (stream procedures) ---
 
   @impl true
   def send_data(_stream_ref, _data), do: :erlang.nif_error(:not_loaded)

@@ -28,7 +28,7 @@ public final class ChannelDescriptor {
     private final OverflowPolicy overflowPolicy;
     private final RetryPolicy retry;
     private final boolean keyed;
-    private final Optional<InterOpCodec> interOpCodec;
+    private final Optional<InterProcCodec> interProcCodec;
 
     public ChannelDescriptor(
             @Nonnull String name,
@@ -44,8 +44,8 @@ public final class ChannelDescriptor {
             @Nonnull OverflowPolicy overflowPolicy,
             @Nonnull RetryPolicy retry,
             boolean keyed,
-            @Nonnull Optional<InterOpCodec> interOpCodec) {
-        this.interOpCodec = interOpCodec;
+            @Nonnull Optional<InterProcCodec> interProcCodec) {
+        this.interProcCodec = interProcCodec;
         this.name = name;
         this.kind = kind;
         this.producer = producer;
@@ -71,18 +71,19 @@ public final class ChannelDescriptor {
     }
 
     /**
-     * Codec for this inter-operation channel's payload, when declared. The
-     * bounded op-journal encodes the handoff between two operations with it, so a
-     * crash-resumed run can re-seed the next operation instead of re-running the
+     * Codec for this inter-procedure channel's payload, when declared. The
+     * bounded proc-journal encodes the handoff between two procedures with it, so a
+     * crash-resumed run can re-seed the next procedure instead of re-running the
      * chain from the top.
      */
     @Nonnull
-    public Optional<InterOpCodec> interOpCodec() {
-        return interOpCodec;
+    public Optional<InterProcCodec> interProcCodec() {
+        return interProcCodec;
     }
 
-    /** Encoder/decoder pair for an inter-operation handoff payload. */
-    public record InterOpCodec(@Nonnull Function<Object, byte[]> encoder, @Nonnull Function<byte[], Object> decoder) {}
+    /** Encoder/decoder pair for an inter-procedure handoff payload. */
+    public record InterProcCodec(
+            @Nonnull Function<Object, byte[]> encoder, @Nonnull Function<byte[], Object> decoder) {}
 
     @Nonnull
     public String name() {
@@ -106,12 +107,12 @@ public final class ChannelDescriptor {
     }
 
     /**
-     * The consuming operation ids, mappings stripped — what the graph-shape
+     * The consuming procedure ids, mappings stripped — what the graph-shape
      * walk and the bounded DAG builder need.
      */
     @Nonnull
     public List<Integer> consumerIds() {
-        return consumers.stream().map(ConsumerEdge::operation).toList();
+        return consumers.stream().map(ConsumerEdge::procedure).toList();
     }
 
     @Nonnull
@@ -162,7 +163,7 @@ public final class ChannelDescriptor {
 
     /**
      * Per-channel backpressure policy applied at the producer-side push
-     * site when a consumer Segment's bounded mailbox is full.
+     * site when a consumer Entity's bounded mailbox is full.
      */
     @Nonnull
     public OverflowPolicy overflowPolicy() {

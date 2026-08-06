@@ -8,9 +8,9 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`). No module other than the Loop emits heal actions (rebind, restart-plugin, reconnect-stream, evict-runner, etc.). Watchdog, FleetManager, HubManager, Healthz, StreamChannel — each emits *events* or *facts*; none of them decide what to fix.
 
 #### Scenario: stall is observed in one place, decision happens in another
-- **GIVEN** the State Watchdog detects output stall for operative `btc_kraken` operation 0
+- **GIVEN** the State Watchdog detects output stall for operative `btc_kraken` procedure 0
 - **WHEN** the Watchdog flags the stall
-- **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{operative_class, operative_instance, operation, key}`
+- **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{operative_class, operative_instance, procedure, key}`
 - **AND** the Watchdog performs no heal action of its own
 - **AND** the Convergence Loop records the stalled instance, and on its next tick the Diff classifies the divergence, the Planner emits a `rebind_operative` op (with `reason: :output_stall`), and the Heal executes it under per-target backoff.
 
@@ -34,7 +34,7 @@ Recovery-gating queries (namespace readiness, await-recovery-complete) SHALL be 
 
 ### Requirement: A hub stuck in `:recovery_timeout` does not permanently block healing for its namespace
 
-The convergence loop MUST include hubs in `:recovery_timeout` state in the ready set returned by `RecoveryGate.ready_namespaces/1`. Heal operations for operatives in a timed-out hub's namespace MUST proceed using the live cluster state (the authoritative source), not be gated indefinitely.
+The convergence loop MUST include hubs in `:recovery_timeout` state in the ready set returned by `RecoveryGate.ready_namespaces/1`. Heal procedures for operatives in a timed-out hub's namespace MUST proceed using the live cluster state (the authoritative source), not be gated indefinitely.
 
 A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace included in the ready set so operators are alerted to the stuck hub.
 
@@ -45,7 +45,7 @@ A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace includ
 - **THEN** the Loop heals misbound operatives in both `ns_ok` and `ns_timeout`
 - **AND** a `Logger.warning` is emitted naming `ns_timeout` as timed-out
 
-#### Scenario: normal operation is unchanged for healthy hubs
+#### Scenario: normal procedure is unchanged for healthy hubs
 
 - **GIVEN** all hubs are in `:normal` or `:skipped`
 - **WHEN** a convergence tick runs
@@ -78,11 +78,11 @@ Every cross-process call inside the Loop MUST be wrapped in `Convergence.SafeCal
 
 ### Requirement: Producing-liveness derives from durable progress markers with a fed precondition
 
-The convergence snapshot SHALL classify each bound operative's producing-liveness from durable progress markers compared between ticks — per-Segment WAL persisted seq always, and, when the operative runs the effectively-once tier, per-Segment durable consumed-offset advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
+The convergence snapshot SHALL classify each bound operative's producing-liveness from durable progress markers compared between ticks — per-Entity WAL persisted seq always, and, when the operative runs the effectively-once tier, per-Entity durable consumed-offset advance and outbox `flushed_seq` drain. Channel state and heartbeats SHALL NOT be producing-liveness inputs.
 
-The tier cursors SHALL be read per Segment. A Segment's durable consumed offset is the offset the controller has fsynced for it, and the minimum across an operative's Segments is that operative's watermark — so a single frozen Segment freezes the operative's verdict while the verdict still names the Segment responsible.
+The tier cursors SHALL be read per Entity. An Entity's durable consumed offset is the offset the controller has fsynced for it, and the minimum across an operative's Entities is that operative's watermark — so a single frozen Entity freezes the operative's verdict while the verdict still names the Entity responsible.
 
-Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the operative STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on operatives, an input-log tail growing while a Segment's durable consumed offset is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that operative.
+Every flat-marker verdict SHALL apply the fed precondition over the grace window: input-side evidence advancing while the progress marker is flat past the grace period classifies the operative STUCK (not producing); no input-side advance with a flat marker classifies it IDLE (producing-healthy). For tier-on operatives, an input-log tail growing while an Entity's durable consumed offset is flat is a STUCK verdict, and output-bearing WAL records accumulating while `outbox_flushed_seq` is flat is a STUCK verdict. When one root cause freezes multiple markers, the snapshot SHALL report the single deepest verdict for that operative.
 
 Cursor reads SHALL NOT create or resurrect durable state for an operative that has none: an operative without a live input log SHALL yield no cursor fields, and its classification SHALL degrade to WAL-seq-only rather than fail or default.
 
@@ -100,18 +100,18 @@ All marker reads SHALL be off-path at the convergence tick cadence, reusing coun
 
 #### Scenario: Frozen consumed offset with growing input-log is STUCK (tier on)
 
-- **WHEN** a tier-on operative's input-log tail grows across ticks while one of its Segments' durable consumed offset does not advance past the grace period
-- **THEN** the operative classifies STUCK with a watermark-frozen detail naming that Segment
+- **WHEN** a tier-on operative's input-log tail grows across ticks while one of its Entities' durable consumed offset does not advance past the grace period
+- **THEN** the operative classifies STUCK with a watermark-frozen detail naming that Entity
 
 #### Scenario: A checkpoint-ack operative that stops consuming is STUCK
 
-- **WHEN** a checkpoint-ack operative's input-log tail grows across ticks while its Segments' durable consumed offsets stay flat past the grace period
+- **WHEN** a checkpoint-ack operative's input-log tail grows across ticks while its Entities' durable consumed offsets stay flat past the grace period
 - **THEN** the operative classifies STUCK, even though its WAL persisted seq is legitimately flat between checkpoints and it is exempt from the catastrophic-dataflow sweep
 
 #### Scenario: Undrained outbox with accumulating output records is STUCK (tier on)
 
-- **WHEN** output-bearing WAL records accumulate for a Segment across ticks while its `outbox_flushed_seq` stays flat past the grace period
-- **THEN** the operative classifies STUCK with an outbox-flat detail naming that Segment
+- **WHEN** output-bearing WAL records accumulate for an Entity across ticks while its `outbox_flushed_seq` stays flat past the grace period
+- **THEN** the operative classifies STUCK with an outbox-flat detail naming that Entity
 
 #### Scenario: A tier-off operative is classified on the WAL seq alone
 
@@ -124,7 +124,7 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 #### Scenario: Registry wipe degrades health instead of reporting healthy
 
-- **WHEN** the durable registry is wiped so the live intended set is empty, while per-Operative state directories from prior operation exist on disk
+- **WHEN** the durable registry is wiped so the live intended set is empty, while per-Operative state directories from prior procedure exist on disk
 - **THEN** `/healthz` reports `200 degraded` with `reason: intent_mismatch` listing the evidenced operatives, not `200 healthy`
 
 #### Scenario: Deliberate decommission clears the mismatch

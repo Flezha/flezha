@@ -12,17 +12,17 @@ import javax.annotation.Nonnull;
  *
  * <p>A bounded is started with {@code args}, runs to an exit trigger, and is
  * then torn down. It reuses the unbounded <strong>building blocks</strong>
- * (Operations, Channels, Segments, per-Segment state, {@code ctx.emit}) but
+ * (Procedures, Channels, Entities, per-Entity state, {@code ctx.emit}) but
  * drives them under a bounded <strong>lifecycle</strong>:
  *
  * <ul>
  *   <li><strong>{@code run} sugar</strong> — the trivial case is a bare
- *       {@link #run} body: a single implicit Operation/Segment.</li>
- *   <li><strong>Structured</strong> — override {@link #operations} to author
- *       Operations/Channels/Segments on the same {@link ChannelBuilder} a
+ *       {@link #run} body: a single implicit Procedure/Entity.</li>
+ *   <li><strong>Structured</strong> — override {@link #procedures} to author
+ *       Procedures/Channels/Entities on the same {@link ChannelBuilder} a
  *       unbounded operative uses; the bounded driver runs the static DAG in
- *       topological order with a per-operation count-based barrier (segments
- *       within one operation still run in parallel) — fan-out branches are
+ *       topological order with a per-procedure count-based barrier (entities
+ *       within one procedure still run in parallel) — fan-out branches are
  *       independent, and a fan-in node runs once, after every producer
  *       feeding it committed, with the accumulated batch.</li>
  *   <li><strong>Exit triggers</strong> — the operative terminates on the first
@@ -35,7 +35,7 @@ import javax.annotation.Nonnull;
  * </ul>
  *
  * <p>Authoring is a distinct, lightweight interface (not a degenerate
- * {@code Operation}). Declare a bounded with
+ * {@code Procedure}). Declare a bounded with
  * {@link com.flezha.sdk.FlezhaRunner#defineBounded(Class)} — the sibling of
  * {@code defineUnbounded} — before {@code start()}/{@code run()}:
  *
@@ -57,14 +57,14 @@ public interface BoundedOperative extends Computation {
     String factoryId();
 
     /**
-     * Run-sugar body: the single-Operation, single-Segment case. Invoked once
+     * Run-sugar body: the single-Procedure, single-Entity case. Invoked once
      * per started instance with {@code args} from {@code init_values}. Emit
      * output via {@code ctx}, optionally call {@link BoundedOperativeCtx#complete}
      * with a result, and return normally; throwing
      * {@link BoundedOperativeException} is a terminal failure (no retry).
      *
      * <p>The default throws — a class must implement either {@code run} or
-     * {@link #operations}. A structured operative (non-empty {@code operations})
+     * {@link #procedures}. A structured operative (non-empty {@code procedures})
      * never has {@code run} invoked.
      *
      * @param ctx lifecycle context bound to this bounded instance
@@ -72,20 +72,20 @@ public interface BoundedOperative extends Computation {
      */
     default void run(@Nonnull BoundedOperativeCtx ctx, @Nonnull String args) throws BoundedOperativeException {
         throw new BoundedOperativeException(
-                "BoundedOperative `" + factoryId() + "`: neither run() nor operations() was implemented");
+                "BoundedOperative `" + factoryId() + "`: neither run() nor procedures() was implemented");
     }
 
     /**
-     * Structured form: declare a static <strong>DAG</strong> of Operations /
-     * Channels / Segments on the same graph builder an unbounded operative
+     * Structured form: declare a static <strong>DAG</strong> of Procedures /
+     * Channels / Entities on the same graph builder an unbounded operative
      * uses. The default is empty, selecting the {@link #run}-sugar path. The
-     * bounded driver runs the declaration in topological order: an operation
+     * bounded driver runs the declaration in topological order: a procedure
      * becomes runnable only after <strong>every</strong> producer feeding it
      * has committed — fan-out branches are independent, and a fan-in node is
      * dispatched once, with the accumulated batch of all its producers'
      * outputs. Cycles are rejected at registration.
      */
-    default void operations(@Nonnull ChannelBuilder c) {}
+    default void procedures(@Nonnull ChannelBuilder c) {}
 
     /**
      * Optional wall-clock backstop. {@link Optional#empty()} (the default) means
@@ -129,11 +129,11 @@ public interface BoundedOperative extends Computation {
     }
 
     /**
-     * Total attempts for a failing segment's batch, including the first (default
+     * Total attempts for a failing entity's batch, including the first (default
      * 3). {@code 0} or {@code 1} collapses to fail-fast.
      *
-     * <p>Retry is strictly PRE-commit: a journaled op is never retried. Only the
-     * failing segment re-runs — its siblings stay buffered at the barrier — and
+     * <p>Retry is strictly PRE-commit: a journaled proc is never retried. Only the
+     * failing entity re-runs — its siblings stay buffered at the barrier — and
      * each attempt gets a fresh sink, so a failed attempt's staged output is
      * dropped rather than double-emitted.
      */
@@ -153,7 +153,7 @@ public interface BoundedOperative extends Computation {
     /**
      * Saga rollback scope, applied when the operative terminates abnormally
      * after partial progress. Default {@link RollbackMode#ALL_OR_NOTHING} undoes
-     * every completed operation in reverse, back to the start;
+     * every completed procedure in reverse, back to the start;
      * {@link RollbackMode#KEEP_PROGRESS} keeps each finished loop iteration and
      * undoes only the in-flight one. The mode is irrelevant for a single-pass
      * chain (where both behave all-or-nothing) and for an operative with no
@@ -166,9 +166,9 @@ public interface BoundedOperative extends Computation {
     /**
      * Class-level persistence toggle (durable by default, mirroring
      * {@code UnboundedOperative.persistenceEnabled()}). When {@code true}, a
-     * structured bounded operative's per-Segment Changes are written to the WAL
+     * structured bounded operative's per-Entity Changes are written to the WAL
      * as they apply, so a crash resumes from persisted state. When
-     * {@code false}, the per-Segment flush drains and discards Changes with no
+     * {@code false}, the per-Entity flush drains and discards Changes with no
      * serialization or wire I/O — the operative is in-memory only (a crash
      * re-runs from the top). The controller resolves this durable-by-default
      * with a per-class operator opt-out.

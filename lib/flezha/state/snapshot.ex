@@ -19,7 +19,7 @@ defmodule Flezha.State.Snapshot do
        `apply_change` is required to be idempotent over `(seq, change)`
        pairs (umbrella spec), the result is identical to having truncated.
     3. **Crash mid-WAL-truncate** — handled by `WalWriter.truncate_up_to/2`'s
-       own `segment.wal.rewriting → rename` sequence.
+       own `entity.wal.rewriting → rename` sequence.
 
   No reconciliation step is required at boot.
   """
@@ -29,21 +29,21 @@ defmodule Flezha.State.Snapshot do
   @header_size 16
 
   @doc """
-  Persist a snapshot for `segment_id`. Truncates the WAL up to `seq`
+  Persist a snapshot for `entity_id`. Truncates the WAL up to `seq`
   on success, after the rename is durable. Returns the absolute path
   the snapshot was written to.
   """
-  @spec write_snapshot(Registry.segment_id(), non_neg_integer(), binary(), binary()) ::
+  @spec write_snapshot(Registry.entity_id(), non_neg_integer(), binary(), binary()) ::
           {:ok, binary()} | {:error, term()}
-  def write_snapshot(segment_id, seq, header, snapshot_bytes)
+  def write_snapshot(entity_id, seq, header, snapshot_bytes)
       when is_integer(seq) and seq >= 0 and is_binary(header) and is_binary(snapshot_bytes) do
     if byte_size(header) != @header_size do
       {:error, {:bad_header_size, byte_size(header)}}
     else
-      dir = Registry.state_dir(segment_id)
+      dir = Registry.state_dir(entity_id)
       File.mkdir_p!(dir)
 
-      final_path = Registry.snapshot_path(segment_id, seq)
+      final_path = Registry.snapshot_path(entity_id, seq)
       tmp_path = final_path <> ".tmp"
 
       crc = :erlang.crc32(<<header::binary, snapshot_bytes::binary>>)
@@ -54,12 +54,12 @@ defmodule Flezha.State.Snapshot do
            :ok <- :file.sync(dst),
            :ok <- :file.close(dst),
            :ok <- File.rename(tmp_path, final_path) do
-        case Supervisor.lookup(segment_id) do
+        case Supervisor.lookup(entity_id) do
           {:ok, pid} -> WalWriter.truncate_up_to(pid, seq)
           :error -> :ok
         end
 
-        metrics = Metrics.for_segment(segment_id)
+        metrics = Metrics.for_entity(entity_id)
         Metrics.put(metrics, :snapshot_seq, seq)
 
         {:ok, final_path}
@@ -95,11 +95,11 @@ defmodule Flezha.State.Snapshot do
   end
 
   @doc """
-  Highest-seq snapshot for the Segment, or `nil` if none exist.
+  Highest-seq snapshot for the Entity, or `nil` if none exist.
   """
-  @spec latest_snapshot(Registry.segment_id()) :: {non_neg_integer(), binary()} | nil
-  def latest_snapshot(segment_id) do
-    case Registry.snapshot_paths(segment_id) do
+  @spec latest_snapshot(Registry.entity_id()) :: {non_neg_integer(), binary()} | nil
+  def latest_snapshot(entity_id) do
+    case Registry.snapshot_paths(entity_id) do
       [] -> nil
       paths -> List.last(paths)
     end
@@ -108,9 +108,9 @@ defmodule Flezha.State.Snapshot do
   @doc """
   Remove a single snapshot file by seq. No-op if absent.
   """
-  @spec delete_snapshot(Registry.segment_id(), non_neg_integer()) :: :ok
-  def delete_snapshot(segment_id, seq) do
-    _ = File.rm(Registry.snapshot_path(segment_id, seq))
+  @spec delete_snapshot(Registry.entity_id(), non_neg_integer()) :: :ok
+  def delete_snapshot(entity_id, seq) do
+    _ = File.rm(Registry.snapshot_path(entity_id, seq))
     :ok
   end
 end

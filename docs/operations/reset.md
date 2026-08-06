@@ -3,13 +3,28 @@
 `flz reset` clears the Controller's durable on-disk state under
 `app_data/` so the next boot starts from a clean slate. It is the
 operator-facing inverse of "first boot ever" — useful when an operator
-wants to throw away every Segment's WAL/snapshot, every ProcessHub
+wants to throw away every Entity's WAL/snapshot, every ProcessHub
 durable registry, and (optionally) the on-disk TLS material and UDS
 sockets.
 
 It refuses to run while the Controller is up. Stop it first with
 `flz controller stop` (see
 [`../resilience/graceful_shutdown.md`](../resilience/graceful_shutdown.md)).
+
+## When a reset is mandatory
+
+Normally a reset is a choice. One case makes it a requirement:
+
+- **Upgrading across the Operative → Procedure → Entity rename.** That release
+  renamed the reserved on-disk names a bounded instance writes: `op.journal` →
+  `proc.journal`, and the reserved entity keys `_op_journal` → `_proc_journal`
+  and `_op_inbox` → `_proc_inbox`. State written before the rename is **not
+  readable** by the new build and is **not recovered** — there is no migrator,
+  by design. Run `flz controller stop && flz reset --yes`, then start. The
+  directory layout itself is positional and unchanged
+  (`state/{operative_class}/{procedure_id}/{entity_key}.*`), so only those
+  reserved names differ. Rolling back is a `git revert` plus the same reset:
+  state written by either build is unreadable by the other.
 
 ## Command surface
 
@@ -21,7 +36,7 @@ By default clears the contents of:
 
 | Directory                | Source                                    |
 | ------------------------ | ----------------------------------------- |
-| `app_data/state/`        | per-Segment WAL/snapshot/outbox files     |
+| `app_data/state/`        | per-Entity WAL/snapshot/outbox files     |
 | `app_data/process_hub/`  | ProcessHub durable registry (`.dets`)     |
 
 Opt-in (off by default):
@@ -150,5 +165,5 @@ the right files in place.
   X"). Different safety model; deferred to a follow-up change.
 - **Backups.** `tar -czf backup.tgz app_data/` before running.
 - **Time-travel-aware trimming.** Use `flz state retention <operative> <hours>` instead.
-- **Cluster-wide reset.** Single-node operation; run `flz reset` per
+- **Cluster-wide reset.** Single-node procedure; run `flz reset` per
   node.

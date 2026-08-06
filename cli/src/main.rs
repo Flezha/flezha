@@ -61,7 +61,7 @@ fn print_help() {
     println!("    runner       Runner management commands");
     println!("    plugin         Plugin management commands");
     println!("    boot           Boot/recovery status, await, and legacy snapshot import");
-    println!("    state          Per-Segment state queries (time-travel, retention, list)");
+    println!("    state          Per-Entity state queries (time-travel, retention, list)");
     println!("    reset          Clear Controller durable runtime data on disk (controller must be stopped)");
     println!("    observe        Observability foundation inspection (sources, sinks, tail)");
     println!("    audit          Durable audit log inspection (list, read, tail, stats, rotate)");

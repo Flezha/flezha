@@ -80,7 +80,7 @@ The system SHALL provide a built-in process-backed source named `:flezha_bounded
 
 ### Requirement: Cardinality budget enforcement on built-in sources
 
-Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (operatives × operations × segments × runners × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
+Every built-in source SHALL declare its cardinality budget at registration time and SHALL be designed so that the cluster-scale label cardinality (operatives × procedures × entities × runners × hubs) fits within the declared budget. Where the natural cardinality exceeds the foundation's default `1_000` budget, the source SHALL raise its budget at registration time and document the rationale in the source module's `@moduledoc`.
 
 #### Scenario: Source declares a budget at registration
 - **WHEN** the `:flezha_bounded_mailbox` source registers

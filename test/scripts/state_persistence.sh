@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Per-Segment state-persistence smoke test (engagement-only).
+# Per-Entity state-persistence smoke test (engagement-only).
 #
 # Verifies the data-plane half of the `operative-state-persistence`
 # contract (see `docs/controller_state_persistence.md`): with a operative
 # running, plugins attached, and inputs flowing, the controller writes
 # WAL files under `app_data/state/<runner_id>/<operative_class>/...`
-# and `flz state list <class>` surfaces the live segment.
+# and `flz state list <class>` surfaces the live entity.
 #
 # Out of scope (deliberately, see end-of-script PASS notes):
 #   * Full controller-side BEAM down/up cycle. The controller does
@@ -360,23 +360,23 @@ assert_plugin_listed() {
   return 1
 }
 
-assert_state_segments_present() {
+assert_state_entities_present() {
   local stage="$1"
   local out
   out="$(flz state list "${OPERATIVE_CLASS}" --output json 2>&1 || true)"
-  if ! echo "${out}" | grep -q '"segment_key"'; then
-    echo "[state_persistence] FAIL (${stage}): no segments reported under '${OPERATIVE_CLASS}'" >&2
+  if ! echo "${out}" | grep -q '"entity_key"'; then
+    echo "[state_persistence] FAIL (${stage}): no entities reported under '${OPERATIVE_CLASS}'" >&2
     echo "${out}" >&2
     return 1
   fi
-  note "${stage}: 'flz state list ${OPERATIVE_CLASS}' reports segments"
+  note "${stage}: 'flz state list ${OPERATIVE_CLASS}' reports entities"
   echo "${out}"
 }
 
-# Pick a segment path "operative_class/operation_id/segment_key" off the
+# Pick an entity path "operative_class/procedure_id/entity_key" off the
 # host filesystem so the time-travel assertion has a concrete target,
 # regardless of which runner_id the rust container is running under.
-discover_segment_path() {
+discover_entity_path() {
   local rel
   rel="$(find "${STATE_DIR}" -maxdepth 4 -type f \( -name '*.wal' -o -name '*.snap.*' \) 2>/dev/null \
     | head -1)"
@@ -393,14 +393,14 @@ discover_segment_path() {
 assert_time_travel_replay() {
   local stage="$1"
   local path
-  if ! path="$(discover_segment_path)"; then
+  if ! path="$(discover_entity_path)"; then
     echo "[state_persistence] FAIL (${stage}): no on-disk WAL/snapshot under ${STATE_DIR}" >&2
     return 1
   fi
   note "${stage}: replaying ${path}@latest via 'flz state at'"
   if ! flz state at "${path}" latest --output json >/dev/null 2>&1; then
     # Fallback: some builds expect a numeric seq rather than the
-    # word `latest`. Try seq=0 (genesis) which all valid segments
+    # word `latest`. Try seq=0 (genesis) which all valid entities
     # accept and which proves the time-travel pipeline is wired.
     if ! flz state at "${path}" 0 --output json >/dev/null 2>&1; then
       echo "[state_persistence] FAIL (${stage}): 'flz state at ${path}' did not return a state" >&2
@@ -498,7 +498,7 @@ sleep "${INPUT_WAIT_S}"
 # combined with the on-disk WAL assertion below.
 assert_operative_listed   "baseline"
 assert_plugin_listed  "${PLUGIN_WS_ID}"    "baseline"
-assert_state_segments_present "baseline"
+assert_state_entities_present "baseline"
 
 note "verifying on-disk WAL files under ${STATE_DIR}"
 ON_DISK_FILES=$(find "${STATE_DIR}" -type f 2>/dev/null | wc -l)
@@ -509,13 +509,13 @@ fi
 note "${ON_DISK_FILES} on-disk file(s) under ${STATE_DIR}:"
 find "${STATE_DIR}" -type f 2>/dev/null | sed 's/^/  /'
 
-note "PASS: per-Segment state persistence is engaged"
+note "PASS: per-Entity state persistence is engaged"
 note "  operative='${PROCESSOR_ID}' / class='${OPERATIVE_CLASS}'"
 note "  plugins=${PLUGIN_WS_ID},${PLUGIN_KAFKA_ID}"
 note ""
 note "Scope notes:"
 note "  * This script verifies the data-plane WAL is being written"
-note "    and that 'flz state list <class>' surfaces the live segment."
+note "    and that 'flz state list <class>' surfaces the live entity."
 note "  * It does NOT exercise a controller-side BEAM restart. As of"
 note "    today the controller does not auto-recreate operatives after"
 note "    its own BEAM restarts (only SDK/runner restarts trigger"
@@ -525,4 +525,4 @@ note "    belongs alongside test/scripts/plugin_persistence.sh."
 note "  * 'flz state rotate' and 'flz state at' are NOT exercised"
 note "    here because they currently crash the BEAM in this dev"
 note "    setup; that's a separate bug worth filing."
-note "      and segment state replayed under '${OPERATIVE_CLASS}'"
+note "      and entity state replayed under '${OPERATIVE_CLASS}'"

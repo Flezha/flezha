@@ -114,8 +114,8 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
     # initial state) would fail one of these.
     decoded = Jason.decode!(snapshot)
     assert is_map(decoded)
-    # Operative state serializes as `%{operation_name => operation_state}`;
-    # this single-operation operative has exactly one entry.
+    # Operative state serializes as `%{procedure_name => procedure_state}`;
+    # this single-procedure operative has exactly one entry.
     assert map_size(decoded) == 1
     inner = decoded |> Map.values() |> hd()
     assert Map.has_key?(inner, "text_inputs")

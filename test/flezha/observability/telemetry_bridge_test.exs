@@ -77,7 +77,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :output_stall],
       %{stalled_ms: 60_000, last_seq: 100},
-      %{operative: "btc_kraken", operation: "ohlc", key: "1m"}
+      %{operative: "btc_kraken", procedure: "ohlc", key: "1m"}
     )
 
     stall =
@@ -107,7 +107,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :state, :stale_writer_refused],
       %{count: 1},
-      %{operative: "r", operation: "s", key: "k", session: "sess_old"}
+      %{operative: "r", procedure: "s", key: "k", session: "sess_old"}
     )
 
     refused =
@@ -148,7 +148,7 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     :telemetry.execute(
       [:flezha, :convergence, :operative_stuck],
       %{count: 1},
-      %{operative_id: "btc_kraken", detail: :wal_frozen, segment: "ohlc/1m"}
+      %{operative_id: "btc_kraken", detail: :wal_frozen, entity: "ohlc/1m"}
     )
 
     stuck =
@@ -205,8 +205,8 @@ defmodule Flezha.Observability.TelemetryBridgeTest do
     {:ok, _ref} =
       Flezha.Dlq.Store.append(%{
         operative_class: "ObsOperative",
-        operation_id: "op",
-        segment_key: "k",
+        procedure_id: "proc",
+        entity_key: "k",
         channel: "input",
         origin_offset: nil,
         error: "boom",

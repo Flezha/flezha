@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
  * Handles the controller's {@code ParkPayloadAck}: the dead-letter entry
  * identified by {@code park_id} is durable in the DLQ store. Wakes the
  * dispatch thread blocked in {@link DlqPark#parkBlocking} so the parked
- * segment drops its poison payload and advances. Runs on the control
+ * entity drops its poison payload and advances. Runs on the control
  * router and never blocks. One-way — the generic {@code CommandResponse}
  * carries no payload.
  */

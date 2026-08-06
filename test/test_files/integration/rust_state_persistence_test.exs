@@ -1,18 +1,18 @@
 defmodule Flezha.Integration.RustStatePersistenceTest do
   @moduledoc """
-  Integration tests for `operative-state-persistence-rust`.
+  Integration tests for `operative-state-persistence`.
 
   These tests delegate to the SDK-side Rust integration tests in
   `sdk/rust/tests/operative_dispatch.rs` and the harness self-test in
   `sdk/rust/src/testing/tests/harness_smoke.rs`. End-to-end coverage
-  with the controller-side WAL ships in `operative-state-persistence-controller`.
+  with the controller-side WAL ships in `operative-state-persistence`.
 
   Scenarios covered Rust-side (verified by `mix test_rust`):
 
-  - `state.apply` records Changes (verified via `OperativeInstance::segments`
-    and the per-Segment flush buffer).
-  - `OperationTestHarness::replay_equals` succeeds for the deterministic
-    `CounterOperation` and fails for a non-deterministic Operation.
+  - `state.apply` records Changes (verified via `OperativeInstance::entities`
+    and the per-Entity flush buffer).
+  - `ProcedureTestHarness::replay_equals` succeeds for the deterministic
+    `CounterProcedure` and fails for a non-deterministic Procedure.
   - Toggle-off (`Operative::PERSISTENCE_ENABLED = false`) drains and
     discards without invoking the wire stub.
   - `Change::coalesce_key` collapses keyed Changes within a linger

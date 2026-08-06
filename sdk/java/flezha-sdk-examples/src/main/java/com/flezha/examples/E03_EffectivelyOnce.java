@@ -1,10 +1,10 @@
 package com.flezha.examples;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.RestoreInitPayload;
@@ -54,7 +54,7 @@ public final class E03_EffectivelyOnce {
         }
     }
 
-    public static final class RollupOperation implements Operation<String, Totals, String, AddTick, WallClock, Void> {
+    public static final class RollupProcedure implements Procedure<String, Totals, String, AddTick, WallClock, Void> {
 
         @Override
         public String name() {
@@ -97,29 +97,29 @@ public final class E03_EffectivelyOnce {
             state.ticks++;
         }
 
-        /** One Segment per symbol: the state is per-key, so the durability is too. */
+        /** One Entity per symbol: the state is per-key, so the durability is too. */
         @Override
-        public List<String> operationKeys() {
+        public List<String> entityKeys() {
             return List.of("BTC", "ETH");
         }
 
         @Override
-        public List<String> segmentFor(String input) {
+        public List<String> entitiesFor(String input) {
             return List.of(symbolOf(input));
         }
 
         @Override
-        public boolean segmentForOverridden() {
+        public boolean entitiesForOverridden() {
             return true;
         }
 
         @Override
-        public Totals initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Totals initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Totals();
         }
 
         @Override
-        public void run(String input, StateHandle<Totals, AddTick> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Totals, AddTick> state, ProcedureCtx ctx) throws ProcedureException {
             state.apply(new AddTick(valueOf(input)));
 
             // The key is derived from the input, so a replay of the same input
@@ -154,8 +154,8 @@ public final class E03_EffectivelyOnce {
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
             c.checkpointAck();
-            var sRollupOperation = c.input(String.class, "ticks").into(RollupOperation.class);
-            sRollupOperation.named("rollups").keyed().output("postgres_sink");
+            var sRollupProcedure = c.input(String.class, "ticks").into(RollupProcedure.class);
+            sRollupProcedure.named("rollups").keyed().output("postgres_sink");
         }
     }
 

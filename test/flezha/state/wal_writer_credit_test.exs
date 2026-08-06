@@ -2,7 +2,7 @@ defmodule Flezha.State.WalWriterCreditTest do
   @moduledoc """
   WalWriter side of credit-grant flow control: session-tagged drain
   reports on every outcome path (fsync, dedup, gap, shed, truncate) and
-  `SegmentMailboxStatus` suppression for credit-speaking sessions.
+  `EntityMailboxStatus` suppression for credit-speaking sessions.
   """
 
   use ExUnit.Case, async: false
@@ -17,7 +17,7 @@ defmodule Flezha.State.WalWriterCreditTest do
   setup do
     base = TestHelpers.tmp_app_data_dir()
 
-    stub(Flezha.State.FsyncBatcher, :mark_dirty, fn _segment_id -> :ok end)
+    stub(Flezha.State.FsyncBatcher, :mark_dirty, fn _entity_id -> :ok end)
 
     test_pid = self()
 
@@ -26,13 +26,13 @@ defmodule Flezha.State.WalWriterCreditTest do
       :ok
     end)
 
-    Application.put_env(:flezha, :state_resync_fun, fn segment_id, opts ->
-      send(test_pid, {:resync_called, segment_id, opts})
+    Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
+      send(test_pid, {:resync_called, entity_id, opts})
       :ok
     end)
 
     on_exit(fn ->
-      TestHelpers.reset_all_segments()
+      TestHelpers.reset_all_entities()
       Application.delete_env(:flezha, :state_root)
       Application.delete_env(:flezha, :state_resync_fun)
       Application.delete_env(:flezha, :wal_high_watermark_bytes)
@@ -40,10 +40,10 @@ defmodule Flezha.State.WalWriterCreditTest do
       File.rm_rf!(base)
     end)
 
-    segment_id = TestHelpers.sample_segment_id("credit_#{System.unique_integer([:positive])}")
-    {:ok, pid} = Supervisor.find_or_start(segment_id)
+    entity_id = TestHelpers.sample_entity_id("credit_#{System.unique_integer([:positive])}")
+    {:ok, pid} = Supervisor.find_or_start(entity_id)
 
-    %{pid: pid, segment_id: segment_id}
+    %{pid: pid, entity_id: entity_id}
   end
 
   defp opts(n), do: %{channel: self(), session: @session, wire_size: n}
@@ -97,7 +97,7 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert resync_opts[:reason] == :seq_gap
   end
 
-  test "a hard-bound shed releases its bytes immediately", %{pid: pid, segment_id: segment_id} do
+  test "a hard-bound shed releases its bytes immediately", %{pid: pid, entity_id: entity_id} do
     append!(pid, 0, "a", opts(10))
     assert sync(pid) == 0
 
@@ -118,9 +118,9 @@ defmodule Flezha.State.WalWriterCreditTest do
     # flushes the first append's tracked bytes — drain those reports so the
     # flood accounting below starts from a clean mailbox.
     :ok = :sys.resume(pid)
-    {:ok, _} = Supervisor.delete_segment(segment_id)
+    {:ok, _} = Supervisor.delete_entity(entity_id)
     drain_credit_reports()
-    {:ok, pid2} = Supervisor.find_or_start(segment_id)
+    {:ok, pid2} = Supervisor.find_or_start(entity_id)
     :ok = :sys.suspend(pid2)
 
     for seq <- 0..19, do: append!(pid2, seq, "x", opts(10))
@@ -144,17 +144,17 @@ defmodule Flezha.State.WalWriterCreditTest do
     assert total == 20 * 10
   end
 
-  describe "SegmentMailboxStatus suppression (2.4)" do
+  describe "EntityMailboxStatus suppression (2.4)" do
     setup do
       # Tiny watermarks read at writer init.
       Application.put_env(:flezha, :wal_high_watermark_bytes, 64)
       Application.put_env(:flezha, :wal_low_watermark_bytes, 32)
 
-      segment_id =
-        TestHelpers.sample_segment_id("credit_bp_#{System.unique_integer([:positive])}")
+      entity_id =
+        TestHelpers.sample_entity_id("credit_bp_#{System.unique_integer([:positive])}")
 
-      {:ok, pid} = Supervisor.find_or_start(segment_id)
-      %{pid: pid, segment_id: segment_id}
+      {:ok, pid} = Supervisor.find_or_start(entity_id)
+      %{pid: pid, entity_id: entity_id}
     end
 
     test "credit-speaking session receives no status flags", %{pid: pid} do
@@ -164,25 +164,25 @@ defmodule Flezha.State.WalWriterCreditTest do
 
       # Telemetry still fires for in-process observers…
       # …but no wire signal is shipped.
-      refute_receive {:ctl_async, _, {:segment_mailbox_status, _}}, 200
+      refute_receive {:ctl_async, _, {:entity_mailbox_status, _}}, 200
     end
 
-    test "legacy session keeps the byte-for-byte SegmentMailboxStatus wire signal", %{pid: pid} do
+    test "legacy session keeps the byte-for-byte EntityMailboxStatus wire signal", %{pid: pid} do
       body = String.duplicate("x", 100)
       WalWriter.append_async(pid, 0, TestHelpers.stub_header(), body, "exec-legacy")
       assert sync(pid) == 0
 
       assert_receive {:ctl_async, "exec-legacy",
-                      {:segment_mailbox_status,
-                       %RunnerCommands.SegmentMailboxStatus{status: "full"}}},
+                      {:entity_mailbox_status,
+                       %RunnerCommands.EntityMailboxStatus{status: "full"}}},
                      1_000
 
       # Draining below the low watermark ships :open exactly once.
       :ok = WalWriter.fsync(pid)
 
       assert_receive {:ctl_async, "exec-legacy",
-                      {:segment_mailbox_status,
-                       %RunnerCommands.SegmentMailboxStatus{status: "open"}}},
+                      {:entity_mailbox_status,
+                       %RunnerCommands.EntityMailboxStatus{status: "open"}}},
                      1_000
     end
   end

@@ -4,7 +4,7 @@ defmodule Flezha.Service.CliManager.ClusterTest do
   sources (`HubManager` registry access) are stubbed so the rendering
   and shaping are asserted deterministically.
 
-  After `consume-recovery-mode-and-self-heal` §4 deleted the
+  After `convergence-self-healing` §4 deleted the
   `Flezha.Reconciler.Leader` GenServer, the cluster_status leader
   column degrades to the local node — the cluster-wide registry-
   mutating actions that needed leader election are gone (process_hub's

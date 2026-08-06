@@ -18,7 +18,7 @@ import org.slf4j.LoggerFactory;
  * <ol>
  *   <li>Clear {@code io_streams} registry.</li>
  *   <li>Clear the live operative registry.</li>
- *   <li>Drain worker queues (via {@link com.flezha.sdk.runtime.worker.OperationDispatcher#shutdown()}).</li>
+ *   <li>Drain worker queues (via {@link com.flezha.sdk.runtime.worker.ProcedureDispatcher#shutdown()}).</li>
  *   <li>Reset {@code runner_id} to {@code "undefined"}.</li>
  *   <li>Loop connect attempts with exponential backoff capped at 30 s until
  *       the handshake succeeds again.</li>

@@ -1,8 +1,8 @@
 defmodule Flezha.State.RecoveryDispatchTest do
   @moduledoc """
   `snapshot-baseline-durability` D3: the resync dispatch path never ships a
-  `RestoreInitState` whose assembled payload is empty — a Segment with no
-  snapshot and no WAL records pulls a `CompactSegment` baseline instead, so
+  `RestoreInitState` whose assembled payload is empty — an Entity with no
+  snapshot and no WAL records pulls a `CompactEntity` baseline instead, so
   the live runner's accumulated state is never rebuilt to `init_state`.
   """
 
@@ -40,31 +40,31 @@ defmodule Flezha.State.RecoveryDispatchTest do
     %{header: TestHelpers.stub_header()}
   end
 
-  test "no persisted state resyncs via CompactSegment pull, never an empty RestoreInitState" do
-    segment_id = TestHelpers.sample_segment_id("nodata_" <> uniq())
+  test "no persisted state resyncs via CompactEntity pull, never an empty RestoreInitState" do
+    entity_id = TestHelpers.sample_entity_id("nodata_" <> uniq())
     # The writer's lazily-created zero-byte WAL is not persisted state.
-    {:ok, _} = Supervisor.find_or_start(segment_id)
+    {:ok, _} = Supervisor.find_or_start(entity_id)
 
-    refute Restore.has_persisted_state?(segment_id)
+    refute Restore.has_persisted_state?(entity_id)
 
-    assert {:ok, _ref} = Recovery.resync(segment_id, runner_id: "exec-1", reason: :seq_gap)
+    assert {:ok, _ref} = Recovery.resync(entity_id, runner_id: "exec-1", reason: :seq_gap)
 
-    assert_receive {:control_sent, "exec-1", :compact_segment}, 1_000
+    assert_receive {:control_sent, "exec-1", :compact_entity}, 1_000
     refute_receive {:control_sent, _, :restore_init_state}, 200
   end
 
   test "persisted WAL records resync via RestoreInitState push", %{header: header} do
-    segment_id = TestHelpers.sample_segment_id("data_" <> uniq())
-    {:ok, _} = Supervisor.find_or_start(segment_id)
-    {:ok, writer} = Supervisor.lookup(segment_id)
+    entity_id = TestHelpers.sample_entity_id("data_" <> uniq())
+    {:ok, _} = Supervisor.find_or_start(entity_id)
+    {:ok, writer} = Supervisor.lookup(entity_id)
     :ok = WalWriter.append(writer, 0, header, "x")
 
-    assert Restore.has_persisted_state?(segment_id)
+    assert Restore.has_persisted_state?(entity_id)
 
-    assert {:ok, _ref} = Recovery.resync(segment_id, runner_id: "exec-1", reason: :seq_gap)
+    assert {:ok, _ref} = Recovery.resync(entity_id, runner_id: "exec-1", reason: :seq_gap)
 
     assert_receive {:control_sent, "exec-1", :restore_init_state}, 1_000
-    refute_receive {:control_sent, _, :compact_segment}, 200
+    refute_receive {:control_sent, _, :compact_entity}, 200
   end
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))

@@ -47,7 +47,7 @@ pub unsafe extern "C" fn flezha_context_new(config: FlezhaConfig) -> *mut Flezha
 ///
 /// # Safety
 /// - `ctx` must be a pointer returned by `flezha_context_new`.
-/// - Must not be called concurrently with other operations on the same context.
+/// - Must not be called concurrently with other procedures on the same context.
 /// - After this call, `ctx` is invalid and must not be used.
 #[no_mangle]
 pub unsafe extern "C" fn flezha_context_destroy(ctx: *mut FlezhaContext) -> FlezhaStatus {

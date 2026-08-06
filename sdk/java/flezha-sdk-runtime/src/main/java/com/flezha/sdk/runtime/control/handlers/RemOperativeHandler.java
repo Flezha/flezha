@@ -9,7 +9,7 @@ import java.util.List;
 
 /**
  * Handler for {@code RemOperative}. Removes the {@link Operative} (operative or bounded)
- * from the registry; for a operative, pending mailbox items on its segments
+ * from the registry; for a operative, pending mailbox items on its entities
  * are dropped without being drained (matches Rust SDK v1 — bounded
  * mailboxes / drain-on-remove is tracked in a future change). This is also
  * the teardown the controller drives on a {@code BoundedCompleted}.

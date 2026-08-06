@@ -60,12 +60,12 @@ defmodule Flezha.Convergence.Loop do
             # Detection only — the classifier never feeds a heal decision.
             prev_liveness: nil,
             last_stall_verdict: :ok,
-            # operative_id => %{detail:, segment:} producing-liveness STUCK
+            # operative_id => %{detail:, entity:} producing-liveness STUCK
             # verdicts (fed but progress markers flat past grace). Report-only:
             # healing stays on the :output_stall → rebind path.
             stuck_operatives: %{},
             # [{taken_at_ms, tier-cursor markers}] — grace-window baselines for
-            # the classifier's cursor-delta checks. Holds only Segments with
+            # the classifier's cursor-delta checks. Holds only Entities with
             # effectively-once tier cursors (empty until that tier lands).
             progress_history: [],
             # Operatives with durable state evidence but no live intent — the
@@ -345,8 +345,8 @@ defmodule Flezha.Convergence.Loop do
 
     stuck =
       for {id, {:stuck, detail, ctx}} <- verdicts, into: %{} do
-        {sh, pk} = ctx.segment
-        {id, %{detail: detail, segment: "#{sh}/#{pk}"}}
+        {sh, pk} = ctx.entity
+        {id, %{detail: detail, entity: "#{sh}/#{pk}"}}
       end
 
     note_stuck_transitions(state.stuck_operatives, stuck)
@@ -359,41 +359,41 @@ defmodule Flezha.Convergence.Loop do
     _, _ -> state
   end
 
-  # Per-Segment fed/advance evidence from the existing Watchdog/WalWriter state,
+  # Per-Entity fed/advance evidence from the existing Watchdog/WalWriter state,
   # plus the tier cursors when the operative runs the effectively-once tier. The
-  # input-log read is per OPERATIVE, not per Segment — an operative with 200
-  # Segments costs one lookup per tick, not 200. A tier-off operative yields no
+  # input-log read is per OPERATIVE, not per Entity — an operative with 200
+  # Entities costs one lookup per tick, not 200. A tier-off operative yields no
   # cursor fields, and classification degrades to WAL-seq-only.
   @doc false
   def progress_markers() do
-    Flezha.State.Watchdog.segment_statuses()
+    Flezha.State.Watchdog.entity_statuses()
     |> Enum.group_by(fn {{rc, _sh, _pk}, _s} -> rc end)
     |> Enum.flat_map(fn {rc, statuses} ->
       cursors = Flezha.State.InputLog.cursors(rc)
 
-      Enum.map(statuses, fn {{_rc, sh, pk} = segment_id, s} ->
+      Enum.map(statuses, fn {{_rc, sh, pk} = entity_id, s} ->
         %{
           operative_id: rc,
-          segment: {sh, pk},
+          entity: {sh, pk},
           last_change_seen_at: s.last_change_seen_at,
           last_advance_at: s.last_advance_at,
           out_pending_seq: s.out_pending_seq,
           outbox_flushed_seq: s.outbox_flushed_seq
         }
-        |> merge_input_cursors(cursors, segment_id)
+        |> merge_input_cursors(cursors, entity_id)
       end)
     end)
   end
 
-  # A Segment that has never reported a consumed offset has no entry, so no key is
-  # merged and the watermark guard stays false — a Segment with no durable progress
+  # An Entity that has never reported a consumed offset has no entry, so no key is
+  # merged and the watermark guard stays false — an Entity with no durable progress
   # has nothing to freeze.
-  defp merge_input_cursors(marker, nil, _segment_id), do: marker
+  defp merge_input_cursors(marker, nil, _entity_id), do: marker
 
-  defp merge_input_cursors(marker, %{tail: tail, consumed: consumed}, segment_id) do
+  defp merge_input_cursors(marker, %{tail: tail, consumed: consumed}, entity_id) do
     marker = Map.put(marker, :input_log_tail, tail)
 
-    case Map.fetch(consumed, segment_id) do
+    case Map.fetch(consumed, entity_id) do
       {:ok, offset} -> Map.put(marker, :consumed_offset, offset)
       :error -> marker
     end
@@ -425,13 +425,13 @@ defmodule Flezha.Convergence.Loop do
     fresh = Map.drop(new, Map.keys(prev))
     cleared = Map.keys(prev) -- Map.keys(new)
 
-    Enum.each(fresh, fn {id, %{detail: detail, segment: segment}} ->
-      Logger.warning("[convergence] operative stuck: #{id} #{detail} segment=#{segment}")
+    Enum.each(fresh, fn {id, %{detail: detail, entity: entity}} ->
+      Logger.warning("[convergence] operative stuck: #{id} #{detail} entity=#{entity}")
 
       :telemetry.execute(
         [:flezha, :convergence, :operative_stuck],
         %{count: 1},
-        %{operative_id: id, detail: detail, segment: segment}
+        %{operative_id: id, detail: detail, entity: entity}
       )
     end)
 

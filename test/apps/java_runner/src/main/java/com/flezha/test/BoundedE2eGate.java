@@ -2,10 +2,10 @@ package com.flezha.test;
 
 /**
  * Shared crash-window gate for the durable structured bounded crash-resume e2e
- * (§7c.3). An operation (or a compensation hook) parks a pool/driver thread
+ * (§7c.3). A procedure (or a compensation hook) parks a pool/driver thread
  * until {@code FLEZHA_BOUNDED_E2E_RELEASE} is present in the environment. The
  * first runner is launched WITHOUT it (so a SIGKILL lands while the operative
- * is mid-chain, with earlier operations' Segment state already durable); the
+ * is mid-chain, with earlier procedures' Entity state already durable); the
  * respawned runner is launched WITH it, so the resumed instance runs to
  * completion. Mirrors the Rust test app's {@code block_until_released}.
  */

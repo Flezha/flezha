@@ -8,13 +8,13 @@ import com.flezha.sdk.channel.EntryChannel;
 import com.flezha.sdk.channel.Merge;
 import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.channel.Stream;
-import com.flezha.sdk.operation.Operation;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
-import com.flezha.sdk.runtime.operative.OperationDescriptor;
 import com.flezha.sdk.runtime.operative.PluginSink;
+import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -34,7 +34,7 @@ import javax.annotation.Nonnull;
  * <p>Mirror of the Rust SDK's {@code channel/builder.rs} +
  * {@code operative/builder.rs}:
  * <ul>
- *   <li>A node is identified by its Operation class unless an explicit node
+ *   <li>A node is identified by its Procedure class unless an explicit node
  *       name is given at wiring time; two unnamed mentions of one class are
  *       the same node (fan-in), a named mention is its own node, and an
  *       identity claimed by two distinct nodes is a collision.</li>
@@ -62,8 +62,8 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     private static final ObjectMapper DEFAULT_MAPPER = new ObjectMapper();
 
     private final List<ChannelEntry> channels = new ArrayList<>();
-    private final List<OperationEntry> operations = new ArrayList<>();
-    private final Map<String, Integer> operationNameToId = new LinkedHashMap<>();
+    private final List<ProcedureEntry> procedures = new ArrayList<>();
+    private final Map<String, Integer> procedureNameToId = new LinkedHashMap<>();
     private final List<String> errors = new ArrayList<>();
     private boolean effectivelyOnce;
     private boolean checkpointAck;
@@ -91,8 +91,8 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
      * Run an authoring lambda against a fresh builder, validate, and freeze the
      * result into a {@link UnboundedOperativeTopology}. Shared by unbounded
      * {@link UnboundedOperative#channels} authoring and bounded
-     * {@code operations(...)} authoring — both declare Operations / Channels /
-     * Segments on the same {@link ChannelBuilder}.
+     * {@code procedures(...)} authoring — both declare Procedures / Channels /
+     * Entities on the same {@link ChannelBuilder}.
      *
      * @throws UnboundedOperativeConfigurationException if any validation rule fails.
      */
@@ -183,31 +183,31 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         // cycles. Runs in the VALIDATION phase — the accumulated errors throw
         // before the descriptor-materialization loop, so a refusal added after
         // that point would never fire.
-        if (!operations.isEmpty()) {
+        if (!procedures.isEmpty()) {
             validateGraphShape();
         }
 
-        // Validate each Operation's static-mode / dynamic-mode declaration.
-        for (OperationEntry operation : operations) {
-            if (!operation.segmentKeys.isEmpty() && !operation.segmentForOverridden) {
-                errors.add("operation `" + operation.name
-                        + "` declares non-empty operationKeys() but does not override segmentFor "
-                        + "(set segmentForOverridden() to return true)");
+        // Validate each Procedure's static-mode / dynamic-mode declaration.
+        for (ProcedureEntry procedure : procedures) {
+            if (!procedure.entityKeys.isEmpty() && !procedure.entitiesForOverridden) {
+                errors.add("procedure `" + procedure.name
+                        + "` declares non-empty entityKeys() but does not override entitiesFor "
+                        + "(set entitiesForOverridden() to return true)");
             }
-            if (operation.segmentForOverridden && operation.segmentKeys.isEmpty()) {
-                errors.add("operation `" + operation.name
-                        + "` overrode segmentFor — single-mode operations have one implicit segment");
+            if (procedure.entitiesForOverridden && procedure.entityKeys.isEmpty()) {
+                errors.add("procedure `" + procedure.name
+                        + "` overrode entitiesFor — single-mode procedures have one implicit entity");
             }
         }
 
-        // Resolve mailbox capacity for each Operation (Operation override → env var →
+        // Resolve mailbox capacity for each Procedure (Procedure override → env var →
         // default), accumulating any range errors into the errors list.
-        int[] resolvedCapacities = new int[operations.size()];
-        for (int i = 0; i < operations.size(); i++) {
-            OperationEntry operation = operations.get(i);
+        int[] resolvedCapacities = new int[procedures.size()];
+        for (int i = 0; i < procedures.size(); i++) {
+            ProcedureEntry procedure = procedures.get(i);
             try {
                 resolvedCapacities[i] = MailboxCapacityResolver.resolve(
-                        operation.name, operation.mailboxCapacityDeclared, operation.mailboxCapacityOverridden);
+                        procedure.name, procedure.mailboxCapacityDeclared, procedure.mailboxCapacityOverridden);
             } catch (UnboundedOperativeConfigurationException e) {
                 errors.add(e.getMessage());
                 resolvedCapacities[i] = MailboxCapacityResolver.DEFAULT_MAILBOX_CAPACITY;
@@ -220,10 +220,10 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                         .getMessage());
             }
             boolean anyEventTime =
-                    operations.stream().anyMatch(o -> o.clockType == com.flezha.sdk.state.EventTimeFrom.class);
+                    procedures.stream().anyMatch(o -> o.clockType == com.flezha.sdk.state.EventTimeFrom.class);
             if (!anyEventTime) {
                 errors.add(UnboundedOperativeConfigurationException.correctionWindowRequires(
-                                "an `EventTimeFrom` clock on at least one operation")
+                                "an `EventTimeFrom` clock on at least one procedure")
                         .getMessage());
             }
             boolean allKeyed = channels.stream()
@@ -244,7 +244,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         for (ChannelEntry entry : channels) {
             boolean pluginWired = entry.pluginName != null || entry.pluginSinkName != null;
             // A key rides as a `flz.key` stamp on a plugin frame; a pure
-            // inter-operation channel has nowhere to carry it.
+            // inter-procedure channel has nowhere to carry it.
             if (entry.keyed && !pluginWired) {
                 errors.add(UnboundedOperativeConfigurationException.keyedChannelWithoutPluginWire(entry.name)
                         .getMessage());
@@ -281,22 +281,22 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                     entry.overflowPolicy,
                     new com.flezha.sdk.channel.RetryPolicy(entry.retryMaxAttempts, entry.retryBackoffBaseMs),
                     entry.keyed,
-                    entry.interOpEncoder == null
+                    entry.interProcEncoder == null
                             ? Optional.empty()
-                            : Optional.of(
-                                    new ChannelDescriptor.InterOpCodec(entry.interOpEncoder, entry.interOpDecoder))));
+                            : Optional.of(new ChannelDescriptor.InterProcCodec(
+                                    entry.interProcEncoder, entry.interProcDecoder))));
         }
 
-        // Materialize OperationDescriptors.
-        List<OperationDescriptor> operationDescriptors = new ArrayList<>(operations.size());
-        for (int i = 0; i < operations.size(); i++) {
-            OperationEntry entry = operations.get(i);
-            operationDescriptors.add(new OperationDescriptor(
+        // Materialize ProcedureDescriptors.
+        List<ProcedureDescriptor> procedureDescriptors = new ArrayList<>(procedures.size());
+        for (int i = 0; i < procedures.size(); i++) {
+            ProcedureEntry entry = procedures.get(i);
+            procedureDescriptors.add(new ProcedureDescriptor(
                     entry.name,
-                    entry.operationClass,
-                    entry.segmentKeys,
-                    entry.segmentForOverridden,
-                    entry.operationKeyOverridden,
+                    entry.procedureClass,
+                    entry.entityKeys,
+                    entry.entitiesForOverridden,
+                    entry.entityKeyOverridden,
                     entry.inputChannelId == null ? OptionalInt.empty() : OptionalInt.of(entry.inputChannelId),
                     entry.outputChannelId == null ? OptionalInt.empty() : OptionalInt.of(entry.outputChannelId),
                     entry.inputType,
@@ -310,15 +310,15 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                     resolvedCapacities[i],
                     entry.mailboxCapacityOverridden,
                     entry.compensateOverridden,
-                    entry.segmentIdleTtl));
+                    entry.entityIdleTtl));
         }
 
         return new UnboundedOperativeTopology(
                 factoryId,
                 channelDescriptors,
                 Map.copyOf(nameToId),
-                operationDescriptors,
-                Map.copyOf(operationNameToId),
+                procedureDescriptors,
+                Map.copyOf(procedureNameToId),
                 effectivelyOnce,
                 checkpointAck,
                 correctionWindowMs,
@@ -344,20 +344,20 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         List<Integer> roots = new ArrayList<>();
         for (ChannelEntry ch : channels) {
             if (ch.kind == ChannelKind.ENTRY) {
-                ch.consumers.forEach(e -> roots.add(e.operation()));
+                ch.consumers.forEach(e -> roots.add(e.procedure()));
             } else if (ch.producer != null) {
                 for (ConsumerEdge consumer : ch.consumers) {
-                    edges.add(new int[] {ch.producer, consumer.operation()});
+                    edges.add(new int[] {ch.producer, consumer.procedure()});
                 }
             }
         }
-        GraphShape.Order shape = GraphShape.order(operations.size(), edges, roots);
+        GraphShape.Order shape = GraphShape.order(procedures.size(), edges, roots);
         if (shape.onCycle() >= 0) {
-            errors.add(UnboundedOperativeConfigurationException.cycle(operations.get(shape.onCycle()).name)
+            errors.add(UnboundedOperativeConfigurationException.cycle(procedures.get(shape.onCycle()).name)
                     .getMessage());
         } else if (shape.unreachable() >= 0) {
-            errors.add(UnboundedOperativeConfigurationException.unreachableOperation(
-                            operations.get(shape.unreachable()).name)
+            errors.add(UnboundedOperativeConfigurationException.unreachableProcedure(
+                            procedures.get(shape.unreachable()).name)
                     .getMessage());
         }
     }
@@ -367,7 +367,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     private void checkMutable() {
         if (frozen) {
             throw new IllegalStateException("operative `" + frozenFactoryId
-                    + "`: the topology is frozen; stream handles are only usable inside channels()/operations()");
+                    + "`: the topology is frozen; stream handles are only usable inside channels()/procedures()");
         }
     }
 
@@ -383,33 +383,33 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     }
 
     /**
-     * Resolve or create the node for {@code operationClass} under the
+     * Resolve or create the node for {@code procedureClass} under the
      * node-identity rule: two unnamed mentions of one class are the same
      * node; an explicit node name creates/refers to a distinct node whose
-     * identity string replaces the operation's {@code name()}. An identity
+     * identity string replaces the procedure's {@code name()}. An identity
      * claimed by a <i>different</i> declaration is a collision.
      */
-    private int registerNode(Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass, String nodeName) {
-        Operation<?, ?, ?, ?, ?, ?> probe = instantiate(operationClass);
+    private int registerNode(Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass, String nodeName) {
+        Procedure<?, ?, ?, ?, ?, ?> probe = instantiate(procedureClass);
         String identity = nodeName != null ? nodeName : probe.name();
         boolean named = nodeName != null;
-        Integer existing = operationNameToId.get(identity);
+        Integer existing = procedureNameToId.get(identity);
         if (existing != null) {
-            OperationEntry existingEntry = operations.get(existing);
-            if (!existingEntry.operationClass.equals(operationClass) || existingEntry.named != named) {
+            ProcedureEntry existingEntry = procedures.get(existing);
+            if (!existingEntry.procedureClass.equals(procedureClass) || existingEntry.named != named) {
                 errors.add(UnboundedOperativeConfigurationException.nodeIdentityCollision(identity)
                         .getMessage());
             }
             return existing;
         }
-        int id = operations.size();
-        OperationEntry entry = new OperationEntry();
-        entry.operationClass = operationClass;
+        int id = procedures.size();
+        ProcedureEntry entry = new ProcedureEntry();
+        entry.procedureClass = procedureClass;
         entry.name = identity;
         entry.named = named;
-        entry.segmentKeys = List.copyOf(probe.operationKeys());
-        entry.segmentForOverridden = probe.segmentForOverridden();
-        entry.operationKeyOverridden = probe.operationKeyOverridden();
+        entry.entityKeys = List.copyOf(probe.entityKeys());
+        entry.entitiesForOverridden = probe.entitiesForOverridden();
+        entry.entityKeyOverridden = probe.entityKeyOverridden();
         entry.inputType = probe.inputType();
         entry.outputType = probe.outputType();
         entry.changeType = probe.changeType();
@@ -421,7 +421,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         entry.mailboxCapacityDeclared = probe.mailboxCapacity();
         entry.mailboxCapacityOverridden = probe.mailboxCapacityOverridden();
         entry.compensateOverridden = probe.compensateOverridden();
-        entry.segmentIdleTtl = probe.segmentIdleTtl();
+        entry.entityIdleTtl = probe.entityIdleTtl();
         // Every clock in the sealed hierarchy is wired. What Rust rejects at
         // compile time (a `TimeExtractor<Input>` bound, an unservable clock) is
         // rejected here instead — erasure precludes the compile-time form, so
@@ -435,16 +435,16 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
             errors.add(UnboundedOperativeConfigurationException.unservableClock(identity)
                     .getMessage());
         }
-        operations.add(entry);
-        operationNameToId.put(identity, id);
+        procedures.add(entry);
+        procedureNameToId.put(identity, id);
         return id;
     }
 
-    private Operation<?, ?, ?, ?, ?, ?> instantiate(Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass) {
+    private Procedure<?, ?, ?, ?, ?, ?> instantiate(Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass) {
         try {
-            return operationClass.getDeclaredConstructor().newInstance();
+            return procedureClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
-            errors.add("operation class `" + operationClass.getName() + "` must have a public no-arg constructor: "
+            errors.add("procedure class `" + procedureClass.getName() + "` must have a public no-arg constructor: "
                     + e.toString());
             // Return a placeholder so the rest of the build can collect more
             // errors before failing; the exception throws at build() time.
@@ -452,9 +452,9 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         }
     }
 
-    private static final Operation<
+    private static final Procedure<
                     Object, Object, Object, com.flezha.sdk.state.NoChange, com.flezha.sdk.state.WallClock, Void>
-            UNINSTANTIABLE = new Operation<>() {
+            UNINSTANTIABLE = new Procedure<>() {
                 @Override
                 public String name() {
                     return "<uninstantiable>";
@@ -487,16 +487,16 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
                 @Override
                 public Object initState(
-                        Optional<String> operationKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
-                    throw new UnsupportedOperationException("uninstantiable operation");
+                        Optional<String> entityKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
+                    throw new UnsupportedOperationException("uninstantiable procedure");
                 }
 
                 @Override
                 public void run(
                         Object input,
                         com.flezha.sdk.state.StateHandle<Object, com.flezha.sdk.state.NoChange> state,
-                        com.flezha.sdk.operation.OperationCtx ctx) {
-                    throw new UnsupportedOperationException("uninstantiable operation");
+                        com.flezha.sdk.procedure.ProcedureCtx ctx) {
+                    throw new UnsupportedOperationException("uninstantiable procedure");
                 }
             };
 
@@ -506,40 +506,40 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
      * the chain.
      */
     private int wireConsumer(
-            int channelId, Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass, String nodeName) {
-        return wireConsumer(channelId, operationClass, nodeName, null, null);
+            int channelId, Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass, String nodeName) {
+        return wireConsumer(channelId, procedureClass, nodeName, null, null);
     }
 
     /**
      * Wire {@code channelId} into a consumer node. A merge subscription passes
      * the declared merged input type and the mapping that lifts this channel's
-     * payload into it; what Rust checks at the {@code .into::<Op>()} call site
+     * payload into it; what Rust checks at the {@code .into::<Proc>()} call site
      * with an {@code Input = I} bound is checked here instead — erasure
      * precludes the compile-time form, so the same defect is caught at
      * registration.
      */
     private int wireConsumer(
             int channelId,
-            Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass,
+            Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
             String nodeName,
             Class<?> mergeInputType,
             Function<Object, Object> map) {
-        int operationId = registerNode(operationClass, nodeName);
-        OperationEntry operation = operations.get(operationId);
+        int procedureId = registerNode(procedureClass, nodeName);
+        ProcedureEntry procedure = procedures.get(procedureId);
         ChannelEntry channel = channels.get(channelId);
         // A merged subscription's payload is the mapping's result, not the
         // channel's — that is exactly what the merge exists to allow.
         Class<?> deliveredType = mergeInputType != null ? mergeInputType : channel.payloadType;
-        if (!deliveredType.equals(operation.inputType)) {
+        if (!deliveredType.equals(procedure.inputType)) {
             String producedBy = mergeInputType != null
                     ? "merge maps into"
                     : channel.producer == null
                             ? "payload type"
-                            : "producer operation `" + operations.get(channel.producer).name + "` outputType() =";
+                            : "producer procedure `" + procedures.get(channel.producer).name + "` outputType() =";
             errors.add("channel `" + channel.name + "`: " + producedBy + " "
                     + describe(deliveredType)
-                    + " does not match consumer operation `" + operation.name
-                    + "` inputType() = " + describe(operation.inputType));
+                    + " does not match consumer procedure `" + procedure.name
+                    + "` inputType() = " + describe(procedure.inputType));
         }
         // Re-declaring an existing mapping-free edge is the fan-in / repeated
         // `.into` case and stays a no-op. Re-declaring one where either side
@@ -547,23 +547,23 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         // edge would otherwise keep whichever mapping was declared first and
         // deliver the wrong value forever.
         Optional<ConsumerEdge> existing = channel.consumers.stream()
-                .filter(e -> e.operation() == operationId)
+                .filter(e -> e.procedure() == procedureId)
                 .findFirst();
         if (existing.isEmpty()) {
-            channel.consumers.add(new ConsumerEdge(operationId, Optional.ofNullable(map)));
+            channel.consumers.add(new ConsumerEdge(procedureId, Optional.ofNullable(map)));
         } else if (existing.get().map().isPresent() || map != null) {
-            errors.add(UnboundedOperativeConfigurationException.mergeSourceAlreadyWired(channel.name, operation.name)
+            errors.add(UnboundedOperativeConfigurationException.mergeSourceAlreadyWired(channel.name, procedure.name)
                     .getMessage());
-            return operationId;
+            return procedureId;
         }
-        // Cache input channel id on the operation. A fan-in operation keeps its
+        // Cache input channel id on the procedure. A fan-in procedure keeps its
         // first input channel here; every incoming channel stays reachable via
         // the channel descriptors, and the dispatcher routes via the
         // channel-side mapping.
-        if (operation.inputChannelId == null) {
-            operation.inputChannelId = channelId;
+        if (procedure.inputChannelId == null) {
+            procedure.inputChannelId = channelId;
         }
-        return operationId;
+        return procedureId;
     }
 
     /**
@@ -572,14 +572,14 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
      * {@code .named(...)} override; payload type = the node's declared
      * {@code outputType()}.
      */
-    private int ensureOutputChannel(int operationId) {
-        OperationEntry operation = operations.get(operationId);
-        if (operation.outputChannelId != null) {
-            return operation.outputChannelId;
+    private int ensureOutputChannel(int procedureId) {
+        ProcedureEntry procedure = procedures.get(procedureId);
+        if (procedure.outputChannelId != null) {
+            return procedure.outputChannelId;
         }
-        int id = declareChannel(operation.outputType, operation.name, ChannelKind.INTER_OPERATION);
-        channels.get(id).producer = operationId;
-        operation.outputChannelId = id;
+        int id = declareChannel(procedure.outputType, procedure.name, ChannelKind.INTER_PROCEDURE);
+        channels.get(id).producer = procedureId;
+        procedure.outputChannelId = id;
         return id;
     }
 
@@ -604,8 +604,8 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         int retryMaxAttempts = com.flezha.sdk.channel.RetryPolicy.DEFAULT.maxAttempts();
         long retryBackoffBaseMs = com.flezha.sdk.channel.RetryPolicy.DEFAULT.backoffBaseMs();
         boolean keyed;
-        Function<Object, byte[]> interOpEncoder;
-        Function<byte[], Object> interOpDecoder;
+        Function<Object, byte[]> interProcEncoder;
+        Function<byte[], Object> interProcDecoder;
         /** Entry channels only: wire bytes → typed payload. */
         Function<byte[], Object> entryParser;
         /**
@@ -625,7 +625,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         ChannelEntry entry = channels.get(channelId);
         if (maxAttempts <= 0) {
             errors.add("channel `" + entry.name + "` declared retryMax = " + maxAttempts
-                    + "; at least one attempt is required (throw OperationException.NonRetryable"
+                    + "; at least one attempt is required (throw ProcedureException.NonRetryable"
                     + " to park without retries)");
             return;
         }
@@ -637,9 +637,9 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     }
 
     /** Mutable internal record for a node registration. */
-    static final class OperationEntry {
+    static final class ProcedureEntry {
         /**
-         * Node identity: the operation's {@code name()}, or the explicit node
+         * Node identity: the procedure's {@code name()}, or the explicit node
          * name given at wiring time. Feeds everything {@code name()} feeds —
          * state directories, journal entries, the derived channel name,
          * diagnostics.
@@ -649,10 +649,10 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         /** Whether this node was created with an explicit node name. */
         boolean named;
 
-        Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass;
-        List<String> segmentKeys;
-        boolean segmentForOverridden;
-        boolean operationKeyOverridden;
+        Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass;
+        List<String> entityKeys;
+        boolean entitiesForOverridden;
+        boolean entityKeyOverridden;
         Class<?> inputType;
         Class<?> outputType;
         Class<? extends com.flezha.sdk.state.Change> changeType;
@@ -666,7 +666,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         int mailboxCapacityDeclared;
         boolean mailboxCapacityOverridden;
         boolean compensateOverridden;
-        java.util.Optional<java.time.Duration> segmentIdleTtl = java.util.Optional.empty();
+        java.util.Optional<java.time.Duration> entityIdleTtl = java.util.Optional.empty();
     }
 
     // ---- Builder handle types ----------------------------------------------
@@ -682,20 +682,20 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass) {
-            return wire(operationClass, null);
+        public <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass) {
+            return wire(procedureClass, null);
         }
 
         @Override
         @Nonnull
         public <O> Stream<O> into(
-                @Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass, @Nonnull String nodeName) {
-            return wire(operationClass, nodeName);
+                @Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, @Nonnull String nodeName) {
+            return wire(procedureClass, nodeName);
         }
 
-        private <O> Stream<O> wire(Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass, String nodeName) {
+        private <O> Stream<O> wire(Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
             checkMutable();
-            int node = wireConsumer(channelId, operationClass, nodeName);
+            int node = wireConsumer(channelId, procedureClass, nodeName);
             return new StreamImpl<>(node);
         }
 
@@ -789,31 +789,31 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public <O> Stream<O> into(@Nonnull Class<? extends Operation<I, ?, O, ?, ?, ?>> operation) {
-            return wire(operation, null);
+        public <O> Stream<O> into(@Nonnull Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedure) {
+            return wire(procedure, null);
         }
 
         @Override
         @Nonnull
         public <O> Stream<O> into(
-                @Nonnull Class<? extends Operation<I, ?, O, ?, ?, ?>> operation, @Nonnull String nodeName) {
-            return wire(operation, nodeName);
+                @Nonnull Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedure, @Nonnull String nodeName) {
+            return wire(procedure, nodeName);
         }
 
-        private <O> Stream<O> wire(Class<? extends Operation<I, ?, O, ?, ?, ?>> operationClass, String nodeName) {
+        private <O> Stream<O> wire(Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
             checkMutable();
             // Register the consumer before its sources — as Rust's `Merge::wire`
             // does — so the arity refusal can name it even with no source to
             // wire it. `registerNode` resolves by identity, so wiring below
             // returns this same node.
-            int node = registerNode(operationClass, nodeName);
+            int node = registerNode(procedureClass, nodeName);
             if (declared < 2) {
                 errors.add(
-                        UnboundedOperativeConfigurationException.mergeTooFewSources(operations.get(node).name, declared)
+                        UnboundedOperativeConfigurationException.mergeTooFewSources(procedures.get(node).name, declared)
                                 .getMessage());
             }
             for (MergeSourceEntry source : sources) {
-                wireConsumer(source.channelId(), operationClass, nodeName, mergedType, source.map());
+                wireConsumer(source.channelId(), procedureClass, nodeName, mergedType, source.map());
             }
             return new StreamImpl<>(node);
         }
@@ -823,7 +823,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
     private record MergeSourceEntry(int channelId, Function<Object, Object> map) {}
 
     /**
-     * The operation's output stream handle: a node id into the enclosing
+     * The procedure's output stream handle: a node id into the enclosing
      * builder. The channel out of the node is created lazily on first use.
      */
     private final class StreamImpl<T> extends Stream<T> {
@@ -839,20 +839,20 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass) {
-            return wire(operationClass, null);
+        public <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass) {
+            return wire(procedureClass, null);
         }
 
         @Override
         @Nonnull
         public <O> Stream<O> into(
-                @Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass, @Nonnull String nodeName) {
-            return wire(operationClass, nodeName);
+                @Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, @Nonnull String nodeName) {
+            return wire(procedureClass, nodeName);
         }
 
-        private <O> Stream<O> wire(Class<? extends Operation<T, ?, O, ?, ?, ?>> operationClass, String nodeName) {
+        private <O> Stream<O> wire(Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
             checkMutable();
-            int consumer = wireConsumer(channelId(), operationClass, nodeName);
+            int consumer = wireConsumer(channelId(), procedureClass, nodeName);
             return new StreamImpl<>(consumer);
         }
 
@@ -899,8 +899,8 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         public Stream<T> codecWith(@Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder) {
             checkMutable();
             ChannelEntry entry = channels.get(channelId());
-            entry.interOpEncoder = value -> encoder.apply(cast(value));
-            entry.interOpDecoder = bytes -> decoder.apply(bytes);
+            entry.interProcEncoder = value -> encoder.apply(cast(value));
+            entry.interProcDecoder = bytes -> decoder.apply(bytes);
             return this;
         }
 
@@ -970,7 +970,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         /** The producer node's declared output type: this stream's payload type. */
         @SuppressWarnings("unchecked")
         private Class<T> payloadType() {
-            return (Class<T>) operations.get(node).outputType;
+            return (Class<T>) procedures.get(node).outputType;
         }
 
         @SuppressWarnings("unchecked")
@@ -1014,7 +1014,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
             try {
                 return DEFAULT_MAPPER.readValue(bytes, payloadType);
             } catch (Exception e) {
-                throw new RuntimeException("inter-op codec (Jackson) decode failed: " + e.getMessage(), e);
+                throw new RuntimeException("inter-proc codec (Jackson) decode failed: " + e.getMessage(), e);
             }
         };
     }

@@ -7,19 +7,19 @@ import java.util.function.BiFunction;
 import javax.annotation.Nonnull;
 
 /**
- * Per-Segment registration record carried by {@link SegmentFlusher}. The
+ * Per-Entity registration record carried by {@link EntityFlusher}. The
  * flusher acquires {@code bufferLock}, drains a buffer, builds frames via the
  * {@code headerTemplate}, and (when {@code persistenceEnabled}) sends them via
  * {@code sendFrame}.
  *
- * <p>A Segment drains ONE of two buffers, never both:
+ * <p>An Entity drains ONE of two buffers, never both:
  *
  * <ul>
  *   <li>{@code buffer} — plain {@link Change} records, coalesced at drain and
- *       shipped as {@code segment_state_change}. The default.
+ *       shipped as {@code entity_state_change}. The default.
  *   <li>{@code effects} — effectively-once {@link EffectRecord}s, each carrying
  *       one invocation's changes, outputs and consumed offset, shipped as
- *       {@code segment_effect_record}. <b>Never coalesced</b>: a coalesced-away
+ *       {@code entity_effect_record}. <b>Never coalesced</b>: a coalesced-away
  *       effect record would take its outputs and its consumed offset with it.
  * </ul>
  *
@@ -39,6 +39,6 @@ public record FlusherEntry(
         @Nonnull AtomicLong changeSeq,
         @Nonnull BiFunction<String, byte[], Boolean> sendFrame,
         @Nonnull HeaderTemplate headerTemplate,
-        @Nonnull SegmentId segmentId,
+        @Nonnull EntityId entityId,
         int schemaVersion,
         @Nonnull KryoCodec codec) {}

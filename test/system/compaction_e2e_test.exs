@@ -1,12 +1,12 @@
 defmodule FlezhaTest.System.CompactionE2ETest do
   @moduledoc """
   End-to-end proof that snapshot compaction actually runs — the producing half
-  that `segment-compaction-is-a-stub` makes real.
+  that `entity-compaction-is-a-stub` makes real.
 
   Boots a real Rust runner, registers a changeful `store_input` operative,
-  drives inputs to grow its per-Segment WAL, then arms a low
+  drives inputs to grow its per-Entity WAL, then arms a low
   `compact_after_age_ms` and forces a Watchdog sweep. The sweep ships
-  `CompactSegment`; the SDK must answer with a `segment_state_snapshot` frame,
+  `CompactEntity`; the SDK must answer with an `entity_state_snapshot` frame,
   and the controller must write a snapshot FILE and truncate the WAL behind it.
 
   The gap this closes was measured on a live run BEFORE the fix (real Rust
@@ -35,7 +35,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
   @moduletag :system
   @namespace "compaction_e2e"
   @factory "store_input"
-  @operation "store_input_operation"
+  @procedure "store_input_procedure"
 
   setup do
     prev_age = Application.get_env(:flezha, :compact_after_age_ms)
@@ -70,7 +70,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     operative_id = "compaction_e2e_#{System.unique_integer([:positive])}"
-    segment_id = {operative_id, @operation, ""}
+    entity_id = {operative_id, @procedure, ""}
 
     builder = %Builder{
       id: operative_id,
@@ -91,9 +91,9 @@ defmodule FlezhaTest.System.CompactionE2ETest do
       })
     end
 
-    wal_before = CA.wait_for_wal_bytes(segment_id, 5_000)
-    assert wal_before > 0, "precondition: the Segment's WAL must hold records before compaction"
-    assert CA.snapshot_files(segment_id) == [], "precondition: no snapshot file exists yet"
+    wal_before = CA.wait_for_wal_bytes(entity_id, 5_000)
+    assert wal_before > 0, "precondition: the Entity's WAL must hold records before compaction"
+    assert CA.snapshot_files(entity_id) == [], "precondition: no snapshot file exists yet"
 
     parent = self()
     done_id = {__MODULE__, :compaction_completed, System.unique_integer([:positive])}
@@ -114,15 +114,15 @@ defmodule FlezhaTest.System.CompactionE2ETest do
     Process.sleep(50)
     :ok = Flezha.State.Watchdog.sweep_now()
 
-    assert_receive {:compaction_completed, %{operative: ^operative_id, operation: @operation}},
+    assert_receive {:compaction_completed, %{operative: ^operative_id, procedure: @procedure}},
                    10_000,
                    "the SDK never produced a snapshot (a stub answers snapshot_seq: 0 and ships no frame)"
 
     # The snapshot file appears and the WAL is truncated behind it.
-    assert CA.wait_for_snapshot_file(segment_id, 10_000),
-           "no snapshot file was written under the Segment's state dir"
+    assert CA.wait_for_snapshot_file(entity_id, 10_000),
+           "no snapshot file was written under the Entity's state dir"
 
-    wal_after = CA.wait_for_wal_shrink(segment_id, wal_before, 10_000)
+    wal_after = CA.wait_for_wal_shrink(entity_id, wal_before, 10_000)
 
     assert wal_after < wal_before,
            "WAL did not shrink after compaction (before=#{wal_before}, after=#{wal_after})"

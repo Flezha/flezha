@@ -123,11 +123,11 @@ RUN chmod +x /usr/local/bin/controller-entrypoint.sh /usr/local/bin/snapshot-on-
 
 # Named volumes inherit the mount-point's image-time ownership, so each
 # overlaid dir must exist with flezha:flezha or the non-root process
-# hits EACCES on first write. Includes /flezha/state (per-segment WAL
+# hits EACCES on first write. Includes /flezha/state (per-entity WAL
 # state-root, mounted in dev compose) — without pre-creating it here,
 # the named volume is created at mount time owned by root, FsyncBatcher
 # silently fails to write WAL, and warm-restart auto-recovery from per-
-# segment state never works.
+# entity state never works.
 RUN mkdir -p /flezha/app_data/sockets \
              /flezha/app_data/certs \
              /flezha/app_data/logs \

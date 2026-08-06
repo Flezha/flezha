@@ -316,7 +316,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       Map.merge(
         %{
           operative_id: "btc",
-          segment: {"op", "k1"},
+          entity: {"proc", "k1"},
           last_change_seen_at: @now,
           last_advance_at: @now
         },
@@ -338,7 +338,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       m = marker(last_change_seen_at: @now - 1_000, last_advance_at: @now - 2 * @grace)
 
       assert StallClassifier.classify_producing([m], nil, @opts) ==
-               %{"btc" => {:stuck, :wal_frozen, %{segment: {"op", "k1"}}}}
+               %{"btc" => {:stuck, :wal_frozen, %{entity: {"proc", "k1"}}}}
     end
 
     test "advancing markers classify advancing; absent tier cursors degrade to WAL-only" do
@@ -352,7 +352,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       # WAL itself is fed and advancing — only the watermark cursor is wedged.
       cur = marker(input_log_tail: 250, consumed_offset: 40)
 
-      assert %{"btc" => {:stuck, :watermark_frozen, %{segment: {"op", "k1"}}}} =
+      assert %{"btc" => {:stuck, :watermark_frozen, %{entity: {"proc", "k1"}}}} =
                StallClassifier.classify_producing([cur], [base], @opts)
     end
 
@@ -360,7 +360,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       base = marker(out_pending_seq: 10, outbox_flushed_seq: 10)
       cur = marker(out_pending_seq: 50, outbox_flushed_seq: 10)
 
-      assert %{"btc" => {:stuck, :outbox_flat, %{segment: {"op", "k1"}}}} =
+      assert %{"btc" => {:stuck, :outbox_flat, %{entity: {"proc", "k1"}}}} =
                StallClassifier.classify_producing([cur], [base], @opts)
     end
 
@@ -389,12 +389,12 @@ defmodule Flezha.Convergence.StallClassifierTest do
                StallClassifier.classify_producing([cur], [base], @opts)
     end
 
-    test "multi-segment collapse: any STUCK segment wins over advancing and idle" do
-      ok = marker(segment: {"op", "healthy"})
+    test "multi-entity collapse: any STUCK entity wins over advancing and idle" do
+      ok = marker(entity: {"proc", "healthy"})
 
       frozen =
         marker(
-          segment: {"op", "wedged"},
+          entity: {"proc", "wedged"},
           last_change_seen_at: @now - 1_000,
           last_advance_at: @now - 2 * @grace
         )
@@ -407,7 +407,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
         )
 
       assert %{
-               "btc" => {:stuck, :wal_frozen, %{segment: {"op", "wedged"}}},
+               "btc" => {:stuck, :wal_frozen, %{entity: {"proc", "wedged"}}},
                "eth" => :idle
              } = StallClassifier.classify_producing([ok, frozen, idle_other], nil, @opts)
     end

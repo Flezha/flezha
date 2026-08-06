@@ -23,9 +23,9 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
   end
 
   setup do
-    # Clean per-Segment state so a cold-start test sees no leftover WAL to
+    # Clean per-Entity state so a cold-start test sees no leftover WAL to
     # restore (restore now rehydrates on bind).
-    Flezha.State.TestHelpers.reset_all_segments()
+    Flezha.State.TestHelpers.reset_all_entities()
     on_exit(fn -> OperativeManager.stop_all_operatives(@namespace) end)
     :ok
   end
@@ -39,7 +39,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       opts: %{
         report_to: self(),
         return: %{
-          "store_input_operation" => %{
+          "store_input_procedure" => %{
             "binary_inputs" => [],
             "text_inputs" => ["seeded_by_plugin"]
           }
@@ -58,10 +58,10 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
     assert_receive {:probe, :called}, 500
 
     {:ok, json_state} =
-      OperativeManager.get_segment_state(@namespace, operative_id)
+      OperativeManager.get_entity_state(@namespace, operative_id)
 
     assert Flezha.Service.Payloader.json_to_map(json_state) == %{
-             "store_input_operation" => %{
+             "store_input_procedure" => %{
                "binary_inputs" => [],
                "text_inputs" => ["seeded_by_plugin"]
              }
@@ -85,7 +85,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       id: operative_id,
       factory_id: @factory,
       init_values: %{
-        "store_input_operation" => %{"binary_inputs" => [], "text_inputs" => ["FROM_INLINE"]}
+        "store_input_procedure" => %{"binary_inputs" => [], "text_inputs" => ["FROM_INLINE"]}
       },
       opts: [plugins: [plugin]]
     }
@@ -94,10 +94,10 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
     refute_receive {:probe, :called}, 200
 
     {:ok, json_state} =
-      OperativeManager.get_segment_state(@namespace, operative_id)
+      OperativeManager.get_entity_state(@namespace, operative_id)
 
     assert Flezha.Service.Payloader.json_to_map(json_state) == %{
-             "store_input_operation" => %{
+             "store_input_procedure" => %{
                "binary_inputs" => [],
                "text_inputs" => ["FROM_INLINE"]
              }
@@ -113,7 +113,7 @@ defmodule FlezhaTest.Operative.OverwatchInitStateTest do
       opts: %{
         report_to: self(),
         return: %{
-          "store_input_operation" => %{"binary_inputs" => [], "text_inputs" => ["x"]}
+          "store_input_procedure" => %{"binary_inputs" => [], "text_inputs" => ["x"]}
         }
       },
       subscriptions: [{:on_operative_init, []}]

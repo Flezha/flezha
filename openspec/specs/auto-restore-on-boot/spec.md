@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks that surface the replay lifecycle to observability, and wires per-Segment WAL/snapshot restoration into the data-stream attach path. Registry-dependent services gate on recovery completion rather than on the replay hooks. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
+The auto-restore-on-boot capability provides automatic, operator-free recovery of the Flezha cluster's running state across controller restarts, full-cluster cold boots, ProcessHub redistribution, and runner pod restarts. It activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace, registers Flezha-side hooks that surface the replay lifecycle to observability, and wires per-Entity WAL/snapshot restoration into the data-stream attach path. Registry-dependent services gate on recovery completion rather than on the replay hooks. The capability subsumes the prior `cluster-snapshot-restore` and `plugin-subscription-persistence` capabilities — boot-survival no longer requires operator-driven snapshot/restore CLI nor a parallel plugin-subscription store.
 ## Requirements
 ### Requirement: Configure ProcessHub for durable registry and auto-recovery per namespace
 
@@ -70,7 +70,7 @@ If the cspec write fails, the runtime mutation SHALL NOT be issued; the caller S
 
 If the runtime mutation fails after a successful cspec write, the cspec is correct (claims plugin enabled); on next Operative restart, `Overwatch.init/1`'s existing `subscribe_initial_plugins/2` path subscribes the plugin from the cspec. Self-healing on next start; no operator action needed.
 
-The previous self-heal-on-next-operation contract from `plugin-subscription-persistence` is no longer needed — the partial-failure window is closed by the registry-write-first ordering combined with the runtime mutation's retry-on-restart semantics.
+The previous self-heal-on-next-procedure contract from `plugin-subscription-persistence` is no longer needed — the partial-failure window is closed by the registry-write-first ordering combined with the runtime mutation's retry-on-restart semantics.
 
 #### Scenario: Crash between cspec write and runtime subscribe self-heals on restart
 
@@ -85,46 +85,46 @@ The previous self-heal-on-next-operation contract from `plugin-subscription-pers
 - **WHEN** `enable_plugin/2` is called and `ProcessRegistry.update/3` returns `{:error, _}`
 - **THEN** the call returns `{:error, :registry_unavailable}` and no `:plugin_subscribe` is issued
 
-### Requirement: Segment state restoration fires on first stream attach
+### Requirement: Entity state restoration fires on first stream attach
 
-When a Segment's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.Operative.Overwatch.dispatch_restore_init_state/2` for that Segment exactly once per Operative-startup BEFORE allowing input frames to flow.
+When an Entity's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.Operative.Overwatch.dispatch_restore_init_state/2` for that Entity exactly once per Operative-startup BEFORE allowing input frames to flow.
 
 The Operative's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
 
 This works identically across: ProcessHub-driven cold-boot replay, fresh `flz operative start`, ProcessHub redistribution, AddOperative reissue after runner restart.
 
-#### Scenario: ProcessHub replay + Segment stream attach ships RestoreInitState
+#### Scenario: ProcessHub replay + Entity stream attach ships RestoreInitState
 
 - **GIVEN** ProcessHub's persistent registry is replayed; a Operative is started; a runner connects and is assigned
-- **WHEN** the SDK opens a data stream for a Segment that has on-disk WAL records under `app_data/state/{operative_class}/{operation_id}/{segment_key}.wal`
-- **THEN** the controller ships `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
+- **WHEN** the SDK opens a data stream for an Entity that has on-disk WAL records under `app_data/state/{operative_class}/{procedure_id}/{entity_key}.wal`
+- **THEN** the controller ships `RestoreInitState{entity_id, snapshot_bytes, change_log_bytes}` over the control channel BEFORE forwarding any input frames
 
-#### Scenario: HotSwap-arrived Segment skips dispatch
+#### Scenario: HotSwap-arrived Entity skips dispatch
 
 - **GIVEN** a Operative arrives via HotSwap carrying a non-empty serialized state; `arrived_via_hotswap? = true`
-- **WHEN** the Segment's data stream attaches
+- **WHEN** the Entity's data stream attaches
 - **THEN** `dispatch_restore_init_state/2` SHALL NOT fire; the in-band handover state is the basis for going-forward processing
 
-#### Scenario: HotSwap-arrived Segment with an EMPTY handover does not skip dispatch
+#### Scenario: HotSwap-arrived Entity with an EMPTY handover does not skip dispatch
 
 - **GIVEN** a Operative migrates while its source runner is already gone, so `prepare_handover_state/1` has no runner to serialize from and ships an empty payload
 - **WHEN** `alter_handover_state/2` runs on the destination
 - **THEN** `arrived_via_hotswap?` SHALL remain `false` — an empty handover carries nothing to double-apply, and the on-disk state is the only surviving copy
 - **AND** neither the bind-time restore nor the `kick_restore` repair SHALL be suppressed
 
-### Requirement: A migration whose handover is empty SHALL pull the source controller's Segment files
+### Requirement: A migration whose handover is empty SHALL pull the source controller's Entity files
 
 `state_root` is node-local and MUST NOT be assumed shared. `prepare_handover_state/1` sources the operative's state from its **runner**, so a migration triggered by that runner's death necessarily ships an empty payload — and the source controller's disk then holds the only surviving copy.
 
-`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every Segment of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then drive the ordinary per-Segment replay (`{:kick_restore, runner_id}`).
+`prepare_handover_state/1` SHALL stamp `source_node` on the handover map. When `alter_handover_state/2` receives an empty payload and a `source_node` other than this node, the destination SHALL pull every Entity of the operative from that node via `Flezha.State.WalTransfer.pull_operative/3` and then drive the ordinary per-Entity replay (`{:kick_restore, runner_id}`).
 
 The pull SHALL be:
 
-1. **Destination-driven.** The source only answers reads (`segments/1`, `manifest/1`, `read_chunk/3` over `:erpc`), so a source that dies mid-transfer fails the pull instead of stranding a partial file on the destination.
-2. **Atomic per file.** Chunks are written to a `.transferring` sibling, fsynced, then renamed onto the destination path. Any failure removes the artefact and leaves that Segment cold — never half-restored.
-3. **Scoped by the Segment's own file set.** A requested name is resolved against `Flezha.State.Registry.segment_files/1`, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
+1. **Destination-driven.** The source only answers reads (`entities/1`, `manifest/1`, `read_chunk/3` over `:erpc`), so a source that dies mid-transfer fails the pull instead of stranding a partial file on the destination.
+2. **Atomic per file.** Chunks are written to a `.transferring` sibling, fsynced, then renamed onto the destination path. Any failure removes the artefact and leaves that Entity cold — never half-restored.
+3. **Scoped by the Entity's own file set.** A requested name is resolved against `Flezha.State.Registry.entity_files/1`, never joined onto the state directory, so a peer cannot read arbitrary paths off the node.
 4. **Off the Overwatch loop**, since the copy is bounded by file size.
-5. **Non-fatal.** A Segment that cannot be pulled is skipped; the operative keeps the Segments that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
+5. **Non-fatal.** An Entity that cannot be pulled is skipped; the operative keeps the Entities that did land. Telemetry: `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
 
 Source-side files SHALL NOT be deleted at migration completion; the Retention sweeper reaps orphans.
 
@@ -132,15 +132,15 @@ This is one-shot transfer at migration time, NOT replication: a controller that 
 
 #### Scenario: Controller loses all runners — operatives migrate with their state
 
-- **GIVEN** controller A hosting operative `p1` with Segment state on A's local disk; peer controller B with a runner for `p1`'s factory
+- **GIVEN** controller A hosting operative `p1` with Entity state on A's local disk; peer controller B with a runner for `p1`'s factory
 - **WHEN** A's last runner disconnects and `hub_migrate` drains the namespace hub
 - **THEN** `p1` migrates to B through the consent gate
-- **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Segment files from A and replays them
+- **AND** because A's runner is gone the handover payload is empty, so B pulls `p1`'s Entity files from A and replays them
 - **AND** `p1` resumes on B with its pre-migration state; A's files remain on A until Retention sweeps them
 
-#### Scenario: A peer cannot read outside the Segment's file set
+#### Scenario: A peer cannot read outside the Entity's file set
 
-- **GIVEN** a destination requesting file name `../../../etc/passwd` for a Segment
+- **GIVEN** a destination requesting file name `../../../etc/passwd` for an Entity
 - **WHEN** `read_chunk/3` runs on the source
 - **THEN** it SHALL return `{:error, :not_in_manifest}` and read nothing
 
@@ -177,9 +177,9 @@ Its budget SHALL be short relative to graceful shutdown's. A drain holds this no
 
 ### Requirement: State-directory cleanup ONLY on explicit operative stop
 
-State files under `app_data/state/{operative_class}/{operation_id}/{segment_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.OperativeManager.stop_operative/2` is called by an operator. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
+State files under `app_data/state/{operative_class}/{procedure_id}/{entity_key}.{wal,snap.N,outbox.dedup}` SHALL be removed ONLY when `Flezha.Service.OperativeManager.stop_operative/2` is called by an operator. ProcessHub's `child_unregistered_hook` (which fires on HotSwap source-side, redistribution-away, etc.) SHALL NOT delete state files.
 
-`stop_operative/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{operative_class}/{operation_id}/` for each operation. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
+`stop_operative/2` SHALL: (a) call `ProcessHub.stop_children/3` (which fires the existing hooks → cspec deletion via persistent registry); (b) on success, recursively delete `app_data/state/{operative_class}/{procedure_id}/` for each procedure. Skip with WARN log if any `.tmp` or `.rewriting` file is present.
 
 The Retention sweeper handles long-term orphans via `time_travel_retention_hours`.
 

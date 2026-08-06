@@ -12,8 +12,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Crash-resume gate unit tests for {@link BoundedOperativeInstance} — the Java
  * mirror of the Rust SDK's {@code bounded::runtime} tests. A durable structured
- * bounded driver holds its first Operation on {@code awaitRestore} until the
- * Controller's Segment restores have landed; the count is the authoritative
+ * bounded driver holds its first Procedure on {@code awaitRestore} until the
+ * Controller's Entity restores have landed; the count is the authoritative
  * release signal, with a cancel/interrupt short-circuit and a safety-net timeout.
  * Deterministic (a start-latch parks the waiter before the wake; no timing
  * sleeps).
@@ -88,10 +88,10 @@ class BoundedResumeGateTest {
 
     // --- helpers -------------------------------------------------------------
 
-    /** A gate expecting {@code expected} restores, with no real Segments (the gate never reads them). */
+    /** A gate expecting {@code expected} restores, with no real Entities (the gate never reads them). */
     private static BoundedOperativeInstance gate(int expected) {
         BoundedOperativeInstance instance = new BoundedOperativeInstance("resume-inst", "test-factory");
-        instance.wireStageSegments(List.of(), expected);
+        instance.wireStageEntities(List.of(), expected);
         return instance;
     }
 

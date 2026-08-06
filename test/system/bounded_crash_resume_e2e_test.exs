@@ -7,8 +7,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   Two real-wire scenarios per (runtime × transport) cell:
 
     * **resume** — a durable structured bounded operative (`commit_block_bounded`)
-      commits Segment state in operation A, then blocks in operation B. The
-      runner is SIGKILLed mid-run (op A durable, op B never finished), a
+      commits Entity state in procedure A, then blocks in procedure B. The
+      runner is SIGKILLed mid-run (proc A durable, proc B never finished), a
       replacement runner is started on the same stable identity, and the
       operative's controller-side supervisor is forced to re-bind onto it. The
       replacement restores the committed state and runs to completion — proving
@@ -32,11 +32,11 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       the SIGKILL, which QUIC surfaces only after its ~45 s idle timeout).
     * `Process.exit(overwatch_pid, :kill)` forces a fresh controller-side bind:
       ProcessHub transient-restarts the supervisor, which re-resolves onto the
-      live replacement and re-issues `AddOperative` with `resume_segment_count > 0`
+      live replacement and re-issues `AddOperative` with `resume_entity_count > 0`
       — the only path that arms the SDK's restore-before-run gate. The hard kill
       bypasses `terminate/2`, so the WAL survives (a graceful stop would delete it).
     * The replacement is launched WITH `FLEZHA_BOUNDED_E2E_RELEASE`, so the
-      blocking operation/compensation that parked on the first runner completes
+      blocking procedure/compensation that parked on the first runner completes
       on the resume, making the crash window deterministic (no wall-clock races).
 
   Tagged `:system` (boots real subprocesses) — excluded from the default
@@ -55,8 +55,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
-  alias Flezha.State.OpInbox
-  alias Flezha.State.OpJournal
+  alias Flezha.State.ProcInbox
+  alias Flezha.State.ProcJournal
   alias Flezha.State.Registry
   alias FlezhaTest.Helper.NodeTestHelper
 
@@ -87,31 +87,31 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       @describetag runtime: runtime, transport: transport
       @describetag cell: :"#{runtime}_#{transport}"
 
-      test "durable bounded resumes from committed Segment state after a SIGKILL", ctx do
-        # Mid-run point: op A committed durable Segment state (the spec's
-        # precondition); op B is then blocking, so the operative can only
+      test "durable bounded resumes from committed Entity state after a SIGKILL", ctx do
+        # Mid-run point: proc A committed durable Entity state (the spec's
+        # precondition); proc B is then blocking, so the operative can only
         # complete after resuming on the replacement. On rust the point also
-        # requires op A's journaled op-commit — the WAL flush and the OpCommit
+        # requires proc A's journaled proc-commit — the WAL flush and the ProcCommit
         # ack are independent, and the skip assertion below needs the journal
         # entry durable before the SIGKILL.
         operative_id =
           drive_crash_resume(ctx, "commit_block_bounded", "ok", fn oid ->
-            Overwatch.resume_segment_count(:bounded, oid) > 0 and
-              Flezha.State.OpJournal.restore_state(oid) != nil
+            Overwatch.resume_entity_count(:bounded, oid) > 0 and
+              Flezha.State.ProcJournal.restore_state(oid) != nil
           end)
 
-        # bounded-op-journal: op A's completion was journaled at the op barrier
+        # bounded-proc-journal: proc A's completion was journaled at the proc barrier
         # before the crash, so the resume SKIPS it — its WAL keeps exactly the
-        # pre-crash record (a redo would append a second one) and op B runs
+        # pre-crash record (a redo would append a second one) and proc B runs
         # seeded from the journaled handoff. Both SDKs honour this contract.
         assert wal_record_count(operative_id, "commit_a") == 1,
-               "journaled op A was re-run on resume (redo-vs-skip broken)"
+               "journaled proc A was re-run on resume (redo-vs-skip broken)"
 
-        {:ok, entries} = Flezha.State.OpJournal.read(operative_id)
-        committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+        {:ok, entries} = Flezha.State.ProcJournal.read(operative_id)
+        committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
 
-        assert 0 in committed, "op A's pre-crash commit is missing from the journal"
-        assert 1 in committed, "resumed op B never committed its boundary"
+        assert 0 in committed, "proc A's pre-crash commit is missing from the journal"
+        assert 1 in committed, "resumed proc B never committed its boundary"
 
         # Operator surface: `flz state journal <instance>` renders the entries.
         rendered =
@@ -119,8 +119,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
             Flezha.Service.CliManager.state_journal(operative_id)
           end)
 
-        assert rendered =~ "op_committed"
-        assert rendered =~ "op_idx=0"
+        assert rendered =~ "proc_committed"
+        assert rendered =~ "proc_idx=0"
       end
 
       test "durable saga bounded resumes compensation after a SIGKILL mid-rollback", ctx do
@@ -174,17 +174,17 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
         assert Enum.count(delivered, &(&1 == "c:#{seed}")) == 1,
                "the committed producer must not re-run"
 
-        {:ok, entries} = OpJournal.read(operative_id)
-        committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+        {:ok, entries} = ProcJournal.read(operative_id)
+        committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
 
         assert Enum.sort(committed) == [0, 1, 2, 3, 4],
                "each node commits exactly once across the crash — the join never twice: " <>
                  inspect(committed)
 
-        assert ClassRegistry.leaf_ops(operative_id) == [4],
+        assert ClassRegistry.leaf_procs(operative_id) == [4],
                "the join is the diamond's single leaf"
 
-        assert OpJournal.complete?(operative_id, [4])
+        assert ProcJournal.complete?(operative_id, [4])
       end
     end
   end
@@ -212,7 +212,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
           ctx,
           "tier_commit_block_bounded",
           "ok",
-          fn oid -> Overwatch.resume_segment_count(:bounded, oid) > 0 end,
+          fn oid -> Overwatch.resume_entity_count(:bounded, oid) > 0 end,
           plugins: [sink]
         )
 
@@ -241,7 +241,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       # Exact-identity dedup holds within an identity: no identity ever
       # carries two different payloads.
       outputs
-      |> Enum.group_by(fn {_m, md} -> {md["flz.segment"], md["flz.seq"], md["flz.epoch"]} end)
+      |> Enum.group_by(fn {_m, md} -> {md["flz.entity"], md["flz.seq"], md["flz.epoch"]} end)
       |> Enum.each(fn {identity, group} ->
         payloads = group |> Enum.map(fn {m, _} -> m end) |> Enum.uniq()
         assert length(payloads) == 1, "identity #{inspect(identity)} diverged"
@@ -252,11 +252,11 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   describe "opted-out class (rust/uds)" do
     @describetag runtime: :rust, transport: :uds, cell: :rust_uds_optout
 
-    # bounded-op-journal: a `PERSISTENCE_ENABLED = false` class skips the
-    # op-commit handshake entirely — no journal, no WAL — and a crash-resume
+    # bounded-proc-journal: a `PERSISTENCE_ENABLED = false` class skips the
+    # proc-commit handshake entirely — no journal, no WAL — and a crash-resume
     # keeps the re-run-from-top contract: with nothing restored and nothing
     # journaled, the only way the chain completes on the replacement is a
-    # fresh run of op A feeding op B. (Op A's sink marker is used only as the
+    # fresh run of proc A feeding proc B. (Proc A's sink marker is used only as the
     # pre-crash mid-run signal — plain bounded outputs are best-effort during
     # a rebind, so the resumed run's marker delivery is not asserted.)
     test "opted-out bounded writes no journal and re-runs from the top", ctx do
@@ -282,7 +282,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
           plugins: [sink]
         )
 
-      assert {:ok, []} = Flezha.State.OpJournal.read(operative_id)
+      assert {:ok, []} = Flezha.State.ProcJournal.read(operative_id)
       refute File.exists?(Flezha.State.Registry.journal_path(operative_id))
 
       assert [Registry.state_root(), operative_id, "**", "*.wal"]
@@ -299,8 +299,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     @a_out ~s(a-out:{"seed":"go"})
     @undo_forward ~s(out:{"seed":"go"})
 
-    # bounded-transactional-outbox: op A's plugin output is STAGED — it reaches
-    # the sink only after the controller journaled A's `op_committed` entry (with
+    # bounded-transactional-outbox: proc A's plugin output is STAGED — it reaches
+    # the sink only after the controller journaled A's `proc_committed` entry (with
     # the output inside it) and fsynced. A crash after that flush must not
     # re-deliver it: the `outbox_flushed` marker gates the restore re-drive.
     test "staged output is flushed once after its commit and never re-delivered", ctx do
@@ -318,25 +318,28 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       delivered = await_outputs(collector, 1)
 
       assert [{@a_out, md}] = delivered,
-             "op A's staged output must reach the sink exactly once: #{inspect(delivered)}"
+             "proc A's staged output must reach the sink exactly once: #{inspect(delivered)}"
 
-      # Minted from the journal: producing segment, op index + per-op sequence,
+      # Minted from the journal: producing entity, proc index + per-proc sequence,
       # instance epoch — the effectively-once output-identity shape.
-      assert md["flz.segment"] == "#{operative_id}/commit_a/"
+      assert md["flz.entity"] == "#{operative_id}/commit_a/"
       assert md["flz.seq"] == "0.0"
       assert md["flz.epoch"] == "0"
       assert md["channel"] == "mid"
 
-      assert OpJournal.pending_entries(operative_id) == [],
+      assert ProcJournal.pending_entries(operative_id) == [],
              "the instance still owes outbox entries after completing"
 
-      {:ok, entries} = OpJournal.read(operative_id)
+      {:ok, entries} = ProcJournal.read(operative_id)
 
       assert Enum.any?(
                entries,
-               &match?(%{type: :outbox_flushed, op_idx: 0, payload: %{for_type: 1}}, &1)
+               &match?(
+                 %{type: :outbox_flushed, proc_idx: 0, payload: %{for_type: :proc_committed}},
+                 &1
+               )
              ),
-             "op A's flush was never recorded"
+             "proc A's flush was never recorded"
 
       # Operator surface: the journal renders the outbox and its flush marker.
       rendered =
@@ -344,11 +347,11 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
           Flezha.Service.CliManager.state_journal(operative_id)
         end)
 
-      assert rendered =~ "outbox: #{operative_id}/commit_a/ seq_in_op=0 channel=mid"
-      assert rendered =~ "flushes: op_committed"
+      assert rendered =~ "outbox: #{operative_id}/commit_a/ seq_in_proc=0 channel=mid"
+      assert rendered =~ "flushes: proc_committed"
     end
 
-    # The crash-before-flush window: the `op_committed` record (output inside)
+    # The crash-before-flush window: the `proc_committed` record (output inside)
     # is durable, its `outbox_flushed` marker never landed — exactly what a
     # controller crash between the commit fsync and the flush leaves behind.
     # Restore must re-drive the delivery with the ORIGINAL keys.
@@ -376,7 +379,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       assert identity(second)["flz.seq"] == "0.0"
 
       # The re-drive recorded its own flush marker, so it is owed no more.
-      assert OpJournal.pending_entries(operative_id) == []
+      assert ProcJournal.pending_entries(operative_id) == []
     end
 
     # bounded-operative-saga + outbox: a `compensate` hook's plugin output is
@@ -402,32 +405,35 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       assert [{@undo_forward, forward}, {"out:undone", undo}] = delivered,
              "expected the forward output then exactly one undo: #{inspect(delivered)}"
 
-      # Same segment, same operation, same per-op sequence — only the comp
+      # Same entity, same procedure, same per-proc sequence — only the comp
       # marker keeps the undo's key off the forward output it reverses.
       assert identity(forward)["flz.seq"] == "0.0"
       assert identity(undo)["flz.seq"] == "0.0.1"
-      assert identity(undo)["flz.segment"] == identity(forward)["flz.segment"]
+      assert identity(undo)["flz.entity"] == identity(forward)["flz.entity"]
 
-      {:ok, entries} = OpJournal.read(operative_id)
+      {:ok, entries} = ProcJournal.read(operative_id)
 
-      assert [%{type: :compensated, op_idx: 0, payload: %{outbox: [_]}}] =
+      assert [%{type: :compensated, proc_idx: 0, payload: %{outbox: [_]}}] =
                Enum.filter(entries, &(&1.type == :compensated)),
              "the undo output was not journaled exactly once"
 
-      assert Enum.any?(entries, &match?(%{type: :outbox_flushed, payload: %{for_type: 5}}, &1)),
+      assert Enum.any?(
+               entries,
+               &match?(%{type: :outbox_flushed, payload: %{for_type: :compensated}}, &1)
+             ),
              "the undo flush was never recorded"
 
-      assert comp_done_count(operative_id) == 1, "the hook ran for exactly one segment"
-      assert OpJournal.pending_entries(operative_id) == []
+      assert comp_done_count(operative_id) == 1, "the hook ran for exactly one entity"
+      assert ProcJournal.pending_entries(operative_id) == []
     end
   end
 
-  # The durable mid-run point for the outbox scenarios: op A's boundary is
+  # The durable mid-run point for the outbox scenarios: proc A's boundary is
   # journaled AND its outbox is recorded flushed (the two are separate records,
   # so waiting on the commit alone would race the flush).
   defp committed_and_flushed?(operative_id) do
-    OpJournal.restore_state(operative_id) != nil and
-      OpJournal.pending_entries(operative_id) == []
+    ProcJournal.restore_state(operative_id) != nil and
+      ProcJournal.pending_entries(operative_id) == []
   end
 
   # Roll the journal back to the bytes it held before its first `outbox_flushed`
@@ -494,7 +500,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   end
 
   # The identity a flushed outbox entry is keyed by.
-  defp identity(md), do: Map.take(md, ["flz.segment", "flz.seq", "flz.epoch", "channel"])
+  defp identity(md), do: Map.take(md, ["flz.entity", "flz.seq", "flz.epoch", "channel"])
 
   defp drain_tier_outputs(acc) do
     receive do
@@ -586,9 +592,9 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       # Each iteration recorded the inbox offset it consumed, and the consumed
       # prefix was released.
       assert consumed_offsets(operative_id) == [1, 2]
-      assert OpInbox.undelivered(operative_id) == []
+      assert ProcInbox.undelivered(operative_id) == []
 
-      assert wait_until(fn -> OpJournal.restore_state(operative_id).parked end, 20_000),
+      assert wait_until(fn -> ProcJournal.restore_state(operative_id).parked end, 20_000),
              "the idle loop never parked at its committed boundary"
 
       # Evicted from the runner, but still registered and addressable — that IS
@@ -612,7 +618,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       # so this turn hangs mid-iteration with iterations 0-2 durable.
       send_turn(namespace, operative_id, "mid-crash")
 
-      assert wait_until(fn -> OpInbox.last_offset(operative_id) >= 4 end, 20_000),
+      assert wait_until(fn -> ProcInbox.last_offset(operative_id) >= 4 end, 20_000),
              "the crashing turn never reached the durable inbox"
 
       # Operator surface, while the turn is still in flight: it is durable and
@@ -666,13 +672,13 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       assert journal =~ "iter_committed"
       assert journal =~ "consumed inbox offset:"
       assert journal =~ "parked"
-      assert journal =~ "op_committed op_idx=0 iter=3"
+      assert journal =~ "proc_committed proc_idx=0 iter=3"
 
       # Every turn is consumed now, so the inbox has released all of them: the
       # journal keeps the offsets, the inbox keeps no payloads.
-      assert OpJournal.consumed_offset(operative_id) == 4
-      assert OpInbox.undelivered(operative_id) == []
-      assert OpInbox.read(operative_id) == []
+      assert ProcJournal.consumed_offset(operative_id) == 4
+      assert ProcInbox.undelivered(operative_id) == []
+      assert ProcInbox.read(operative_id) == []
     end
 
     # Suspension is durable STATE, not a live process: a controller-side restart
@@ -718,13 +724,13 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       assert replies(collector, 2) == ["reply:one", "reply:two"]
     end
 
-    # The same park/rehydrate cycle for a class with NO per-Segment state. It has
-    # no Segment WAL, so the controller ships no `RestoreInitState` on the
-    # rehydrating bind — the op-journal reaches the driver only because it rides
+    # The same park/rehydrate cycle for a class with NO per-Entity state. It has
+    # no Entity WAL, so the controller ships no `RestoreInitState` on the
+    # rehydrating bind — the proc-journal reaches the driver only because it rides
     # `AddOperative`. Delivered on the restore frame instead, turn two commits at
     # iteration 0 again, collides with iteration 0's `outbox_flushed`, and its
     # reply is journaled but never delivered.
-    test "a loop with no per-Segment state resumes at its iteration and still delivers", ctx do
+    test "a loop with no per-Entity state resumes at its iteration and still delivers", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
       namespace = unique("bounded_loop_stateless")
       operative_id = unique("stateless_loop_bounded")
@@ -750,7 +756,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
              "the idle stateless loop never parked"
 
       # Nothing on disk to restore — the journal is the only thing carried over.
-      assert Flezha.Operative.Overwatch.resume_segment_count(:bounded, operative_id) == 0
+      assert Flezha.Operative.Overwatch.resume_entity_count(:bounded, operative_id) == 0
 
       send_turn(namespace, operative_id, "two")
 
@@ -769,8 +775,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     # `bounded-loop-rewind`, end to end on a real runner: three chat turns
     # commit, the operator rewinds to iteration 0, and
     #
-    #   * iterations 2 and 1 are compensated in that order — the reply operation's
-    #     undo handle is in Segment State, so it retracts the turns in reverse;
+    #   * iterations 2 and 1 are compensated in that order — the reply procedure's
+    #     undo handle is in Entity State, so it retracts the turns in reverse;
     #   * the loop resumes waiting at iteration 1, and the next message sent is
     #     processed as that iteration (a rewind is undo-and-continue: a committed
     #     turn's input is not retained past its commit);
@@ -799,7 +805,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
                inspect(committed_iters(operative_id))
 
       assert replies(collector, 3) == ["reply:alpha", "reply:beta", "reply:gamma"]
-      assert OpJournal.current_epoch(operative_id) == 0
+      assert ProcJournal.current_epoch(operative_id) == 0
       assert consumed_offsets(operative_id) == [1, 2, 3]
 
       # --- rewind to iteration 0 ---
@@ -812,12 +818,12 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
       # The journal folded back: only iteration 0 is committed, and the epoch is
       # bumped so everything from here on supersedes what the unwound turns wrote.
-      assert wait_until(fn -> OpJournal.current_epoch(operative_id) == 1 end, 20_000)
+      assert wait_until(fn -> ProcJournal.current_epoch(operative_id) == 1 end, 20_000)
 
       # --- the loop unwinds the two turns above the target ---
       # Only iteration 0 remains committed; iterations 2 and 1 are undone.
       assert wait_until(
-               fn -> OpJournal.committed_iterations(operative_id) == [0] end,
+               fn -> ProcJournal.committed_iterations(operative_id) == [0] end,
                60_000
              ),
              "the journal did not fold back to the rewound-to iteration"
@@ -829,7 +835,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       send_turn(namespace, operative_id, "delta")
 
       assert wait_until(
-               fn -> OpJournal.committed_iterations(operative_id) == [0, 1] end,
+               fn -> ProcJournal.committed_iterations(operative_id) == [0, 1] end,
                90_000
              ),
              "the resumed loop did not run the next message as iteration 1"
@@ -852,48 +858,49 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     end
   end
 
-  describe "segment retry (rust/uds)" do
+  describe "entity retry (rust/uds)" do
     @describetag runtime: :rust, transport: :uds, cell: :rust_uds_retry
 
-    # `bounded-segment-retry` on a live runner: `retry_flaky` fails its first
-    # attempt, the per-segment ladder re-runs it in place, and the operation
+    # `bounded-entity-retry` on a live runner: `retry_flaky` fails its first
+    # attempt, the per-entity ladder re-runs it in place, and the procedure
     # commits normally — nothing compensates and the run reports `ok`.
-    test "a transient segment failure is retried and the run completes", ctx do
+    test "a transient entity failure is retried and the run completes", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
       operative_id = drive_retry_run(ctx, collector, "1", "ok")
 
-      # `res:...` is op A's forward output; the terminal marker names the attempt
-      # the flaky segment finally succeeded on — 2 ⇒ the ladder absorbed the
+      # `res:...` is proc A's forward output; the terminal marker names the attempt
+      # the flaky entity finally succeeded on — 2 ⇒ the ladder absorbed the
       # first failure.
       assert [{~s(res:{"seed":"go"}), _}, {marker, _}] = await_outputs(collector, 2)
       assert marker == ~s(attempt:2:{"seed":"go"})
 
-      {:ok, entries} = OpJournal.read(operative_id)
-      committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
-      assert committed == [0, 1], "the retried operation must still commit its boundary"
+      {:ok, entries} = ProcJournal.read(operative_id)
+      committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+      assert committed == [0, 1], "the retried procedure must still commit its boundary"
 
       refute Enum.any?(entries, &(&1.type == :compensated)),
              "a recovered retry must not compensate"
     end
 
     # Arming more failures than the ladder has attempts exhausts it: the original
-    # error is terminal, op A rolls back (its undo record is journaled + flushed),
+    # error is terminal, proc A rolls back (its undo record is journaled + flushed),
     # and the run reports `error` — the pre-change failure path, unchanged.
-    test "a persistent segment failure exhausts the ladder, compensates and errors", ctx do
+    test "a persistent entity failure exhausts the ladder, compensates and errors", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
       operative_id = drive_retry_run(ctx, collector, "99", "error")
 
       assert [{~s(res:{"seed":"go"}), _}, {"res:undone", _}] = await_outputs(collector, 2)
 
-      {:ok, entries} = OpJournal.read(operative_id)
+      {:ok, entries} = ProcJournal.read(operative_id)
 
-      assert [%{type: :compensated, op_idx: 0}] = Enum.filter(entries, &(&1.type == :compensated)),
+      assert [%{type: :compensated, proc_idx: 0}] =
+               Enum.filter(entries, &(&1.type == :compensated)),
              "the exhausted ladder did not run the saga rollback"
 
-      committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
-      assert committed == [0], "the failing operation must never commit"
+      committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
+      assert committed == [0], "the failing procedure must never commit"
     end
   end
 
@@ -931,17 +938,17 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
       assert Enum.count(delivered, &(&1 == "c:#{@seed}")) == 1,
              "the sibling branch had already committed: it must not re-run"
 
-      {:ok, entries} = OpJournal.read(operative_id)
-      committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+      {:ok, entries} = ProcJournal.read(operative_id)
+      committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
 
       assert committed == [0, 1, 2, 3],
-             "each operation commits exactly once across the crash: #{inspect(committed)}"
+             "each procedure commits exactly once across the crash: #{inspect(committed)}"
 
       # The SDK declares the leaf set, so the controller derives DONE from the
       # journal alone — no runner to ask.
-      leaf_ops = ClassRegistry.leaf_ops(operative_id)
-      assert leaf_ops == [2, 3], "BranchC and BranchD are the tree's leaves"
-      assert OpJournal.complete?(operative_id, leaf_ops)
+      leaf_procs = ClassRegistry.leaf_procs(operative_id)
+      assert leaf_procs == [2, 3], "BranchC and BranchD are the tree's leaves"
+      assert ProcJournal.complete?(operative_id, leaf_procs)
 
       rendered =
         ExUnit.CaptureIO.capture_io(fn ->
@@ -954,7 +961,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
     # A failure under one branch, after BOTH branches committed: the rollback is
     # reverse-topological — the sibling leaf and the failing branch's committed
-    # operation unwind before the root they share.
+    # procedure unwind before the root they share.
     test "a failure under one branch unwinds both branches before their parent", ctx do
       collector = spawn_link(fn -> collect_loop([]) end)
 
@@ -975,21 +982,21 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
 
       await_status(operative_id, "error", 30_000)
 
-      # Forward output of the three completed operations, then their undo — the
+      # Forward output of the three completed procedures, then their undo — the
       # deepest first, the shared root last.
       delivered = collector |> await_outputs(6) |> Enum.map(&elem(&1, 0))
 
       assert Enum.drop(delivered, 3) == ["undo-c", "b:undo-b", "a:undo-a"],
              "descendants before ancestors: #{inspect(delivered)}"
 
-      {:ok, entries} = OpJournal.read(operative_id)
-      committed = for %{type: :op_committed, op_idx: idx} <- entries, do: idx
+      {:ok, entries} = ProcJournal.read(operative_id)
+      committed = for %{type: :proc_committed, proc_idx: idx} <- entries, do: idx
       assert committed == [0, 1, 2], "the failing leaf never commits"
 
-      compensated = for %{type: :compensated, op_idx: idx} <- entries, do: idx
+      compensated = for %{type: :compensated, proc_idx: idx} <- entries, do: idx
       assert Enum.sort(compensated) == [0, 1, 2]
 
-      refute OpJournal.complete?(operative_id, ClassRegistry.leaf_ops(operative_id)),
+      refute ProcJournal.complete?(operative_id, ClassRegistry.leaf_procs(operative_id)),
              "a leaf that never committed leaves the operative incomplete"
     end
   end
@@ -997,25 +1004,25 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   # The crash point of `branch_bounded`: the root and BOTH its branches have
   # committed, and only the blocked grandchild is outstanding.
   defp branch_fanned_out?(operative_id) do
-    case OpJournal.restore_state(operative_id) do
-      %{committed_op_idxs: [0, 1, 2]} -> true
+    case ProcJournal.restore_state(operative_id) do
+      %{committed_proc_idxs: [0, 1, 2]} -> true
       _ -> false
     end
   end
 
   # The crash point of `diamond_bounded`: the root, the blocked arm's upper
   # half (B1) and the fast arm (C) have committed while the blocked producer
-  # (B2, op 3) is mid-run — the join therefore has exactly one journaled and
+  # (B2, proc 3) is mid-run — the join therefore has exactly one journaled and
   # one outstanding contribution.
   defp diamond_half_committed?(operative_id) do
-    case OpJournal.restore_state(operative_id) do
-      %{committed_op_idxs: idxs} -> Enum.sort(idxs) == [0, 1, 2]
+    case ProcJournal.restore_state(operative_id) do
+      %{committed_proc_idxs: idxs} -> Enum.sort(idxs) == [0, 1, 2]
       _ -> false
     end
   end
 
   # Start `retry_bounded` on a fresh runner with `failures` armed on the flaky
-  # segment, and wait for the run's terminal status.
+  # entity, and wait for the run's terminal status.
   defp drive_retry_run(ctx, collector, failures, terminal_status) do
     namespace = unique("bounded_retry")
     operative_id = unique("retry_bounded")
@@ -1050,12 +1057,12 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   end
 
   defp committed_iters(operative_id) do
-    {:ok, entries} = OpJournal.read(operative_id)
+    {:ok, entries} = ProcJournal.read(operative_id)
     for %{type: :iter_committed, iter: iter} <- entries, do: iter
   end
 
   defp consumed_offsets(operative_id) do
-    {:ok, entries} = OpJournal.read(operative_id)
+    {:ok, entries} = ProcJournal.read(operative_id)
     for %{type: :iter_committed, payload: %{consumed_offset: o}} <- entries, do: o
   end
 
@@ -1174,7 +1181,7 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
   end
 
   # Force a fresh controller-side bind so `AddOperative` carries
-  # `resume_segment_count > 0` (Path A). Killing the supervisor bypasses
+  # `resume_entity_count > 0` (Path A). Killing the supervisor bypasses
   # `terminate/2` (WAL survives) and ProcessHub transient-restarts it onto the
   # live replacement runner.
   defp force_fresh_rebind(namespace, operative_id) do
@@ -1195,8 +1202,8 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     match?({:ok, pid} when is_pid(pid), HubManager.get_pid(namespace, operative_id))
   end
 
-  # Number of per-Segment compensation-done markers the controller has written
-  # for this operative (one per compensated Segment).
+  # Number of per-Entity compensation-done markers the controller has written
+  # for this operative (one per compensated Entity).
   defp comp_done_count(operative_id) do
     [Registry.state_root(), operative_id, "**", "*.comp_done"]
     |> Path.join()
@@ -1204,10 +1211,10 @@ defmodule FlezhaTest.System.BoundedCrashResumeE2ETest do
     |> length()
   end
 
-  # Count change-log records in an operation's retained WAL file(s). The WAL is
+  # Count change-log records in a procedure's retained WAL file(s). The WAL is
   # a stream of `<seq::64><len::32><body::len><crc::32>` records.
-  defp wal_record_count(operative_id, operation) do
-    [Registry.state_root(), operative_id, operation, "*.wal"]
+  defp wal_record_count(operative_id, procedure) do
+    [Registry.state_root(), operative_id, procedure, "*.wal"]
     |> Path.join()
     |> Path.wildcard()
     |> Enum.map(fn path -> count_wal_records(File.read!(path), 0) end)

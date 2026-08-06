@@ -1,6 +1,6 @@
 defmodule FlezhaTest.State.WalTransferTest do
   @moduledoc """
-  Cross-controller pull of a Segment's durable files.
+  Cross-controller pull of an Entity's durable files.
 
   This is what makes the last-runner migration safe: the handover sources its
   state from the runner, and on that path the runner is dead, so the source
@@ -22,64 +22,64 @@ defmodule FlezhaTest.State.WalTransferTest do
     {:ok, root: root}
   end
 
-  defp seed_segment(suffix) do
-    segment_id = TestHelpers.sample_segment_id(suffix)
-    {:ok, srv} = Supervisor.find_or_start(segment_id)
+  defp seed_entity(suffix) do
+    entity_id = TestHelpers.sample_entity_id(suffix)
+    {:ok, srv} = Supervisor.find_or_start(entity_id)
     # An empty WAL sheds any frame before seq 0 and pulls a baseline instead.
     :ok = WalWriter.append(srv, 0, TestHelpers.stub_header(), "alpha")
     :ok = WalWriter.append(srv, 1, TestHelpers.stub_header(), "beta")
     FsyncBatcher.flush_now()
-    segment_id
+    entity_id
   end
 
   test "manifest lists only files that exist" do
-    segment_id = seed_segment("man")
+    entity_id = seed_entity("man")
 
-    assert Path.basename(Registry.wal_path(segment_id)) in WalTransfer.manifest(segment_id)
+    assert Path.basename(Registry.wal_path(entity_id)) in WalTransfer.manifest(entity_id)
 
-    # A Segment with nothing on disk offers nothing — the destination cold-starts.
-    assert WalTransfer.manifest(TestHelpers.sample_segment_id("empty")) == []
+    # An Entity with nothing on disk offers nothing — the destination cold-starts.
+    assert WalTransfer.manifest(TestHelpers.sample_entity_id("empty")) == []
   end
 
-  test "segments enumerates a class the destination cannot see locally" do
-    segment_id = {class, _, _} = seed_segment("enum")
+  test "entities enumerates a class the destination cannot see locally" do
+    entity_id = {class, _, _} = seed_entity("enum")
 
-    assert segment_id in WalTransfer.segments(class)
-    assert WalTransfer.segments("no_such_class") == []
+    assert entity_id in WalTransfer.entities(class)
+    assert WalTransfer.entities("no_such_class") == []
   end
 
   # fails when: read_chunk joins the requested name onto the state directory.
   # The name arrives over :erpc from another controller, so a traversing name
   # would let a peer read arbitrary files off this node.
-  test "read_chunk refuses a name that is not in the segment's file set" do
-    segment_id = seed_segment("guard")
+  test "read_chunk refuses a name that is not in the entity's file set" do
+    entity_id = seed_entity("guard")
 
     assert {:error, :not_in_manifest} =
-             WalTransfer.read_chunk(segment_id, "../../../etc/passwd", 0)
+             WalTransfer.read_chunk(entity_id, "../../../etc/passwd", 0)
 
-    assert {:error, :not_in_manifest} = WalTransfer.read_chunk(segment_id, "unrelated.wal", 0)
+    assert {:error, :not_in_manifest} = WalTransfer.read_chunk(entity_id, "unrelated.wal", 0)
   end
 
   test "read_chunk walks a real file to :eof" do
-    segment_id = seed_segment("chunk")
-    name = Path.basename(Registry.wal_path(segment_id))
+    entity_id = seed_entity("chunk")
+    name = Path.basename(Registry.wal_path(entity_id))
 
-    assert {:ok, first} = WalTransfer.read_chunk(segment_id, name, 0)
+    assert {:ok, first} = WalTransfer.read_chunk(entity_id, name, 0)
     assert byte_size(first) > 0
-    assert :eof = WalTransfer.read_chunk(segment_id, name, byte_size(first))
+    assert :eof = WalTransfer.read_chunk(entity_id, name, byte_size(first))
   end
 
   test "pulling from this node is a no-op" do
-    segment_id = seed_segment("self")
+    entity_id = seed_entity("self")
 
-    assert {:ok, 0} = WalTransfer.pull_segment(node(), segment_id)
-    assert 0 = WalTransfer.pull_operative(node(), elem(segment_id, 0))
+    assert {:ok, 0} = WalTransfer.pull_entity(node(), entity_id)
+    assert 0 = WalTransfer.pull_operative(node(), elem(entity_id, 0))
   end
 
   @tag :multi_node
-  test "a segment's files are pulled from a peer controller into this node's tree" do
-    segment_id = {class, _, _} = seed_segment("xnode")
-    source_bytes = File.read!(Registry.wal_path(segment_id))
+  test "an entity's files are pulled from a peer controller into this node's tree" do
+    entity_id = {class, _, _} = seed_entity("xnode")
+    source_bytes = File.read!(Registry.wal_path(entity_id))
 
     # The peer inherits the CURRENT state_root, so it is the node holding the
     # files. Moving this node's root afterwards makes the pull a genuine
@@ -88,13 +88,13 @@ defmodule FlezhaTest.State.WalTransferTest do
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 
-    refute File.exists?(Registry.wal_path(segment_id))
+    refute File.exists?(Registry.wal_path(entity_id))
 
     assert 1 = WalTransfer.pull_operative(peer_node, class)
 
-    assert File.read!(Registry.wal_path(segment_id)) == source_bytes
+    assert File.read!(Registry.wal_path(entity_id)) == source_bytes
     # The staging artefact never survives a successful pull.
-    refute File.exists?(Registry.wal_path(segment_id) <> ".transferring")
+    refute File.exists?(Registry.wal_path(entity_id) <> ".transferring")
 
     NodeTestHelper.stop_peer_node(peer_pid, peer_node)
   end

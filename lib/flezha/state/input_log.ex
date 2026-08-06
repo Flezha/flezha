@@ -12,13 +12,13 @@ defmodule Flezha.State.InputLog do
   `{operative_class, :input_log}` and answers the same `:fsync` call a
   `WalWriter` does, so the batcher drains it unchanged.
 
-  Retention is watermark-driven: each Segment's durable consumed-offset is
+  Retention is watermark-driven: each Entity's durable consumed-offset is
   reported into a public ETS table (`record_consumed/3`, repopulated from the
   WAL after a restart — the table is a rebuildable cache) and `sweep/1`
   truncates strictly below `min(watermark, now - hold_window)` with
-  `hold_window` defaulting to zero. A Segment that has consumed nothing holds
+  `hold_window` defaulting to zero. An Entity that has consumed nothing holds
   the watermark at the log start; a frozen watermark with a growing log emits
-  `[:flezha, :state, :input_log_frozen_watermark]` naming the lagging Segment
+  `[:flezha, :state, :input_log_frozen_watermark]` naming the lagging Entity
   instead of silently accumulating.
 
   Operatives without the tier never start an InputLog and never touch this
@@ -39,7 +39,7 @@ defmodule Flezha.State.InputLog do
   #   8      version u8    — 0 = pre-timestamp record ("unknown time")
   #   9..15  zero
   #
-  # Byte 9 stays zero on purpose: it is the segment WAL's `format_id`, so a
+  # Byte 9 stays zero on purpose: it is the entity WAL's `format_id`, so a
   # zero there means an input record can never decode as an effect record if
   # one is ever fed to the wrong reader.
   @header_version 1
@@ -86,7 +86,7 @@ defmodule Flezha.State.InputLog do
   Journal one inbound payload, returning its assigned offset. Starts the
   operative's log server on first use. The append (write syscall) completes
   before this returns, so the caller forwards only journaled payloads;
-  durability is fsync-batched like the per-Segment WAL. At zero source
+  durability is fsync-batched like the per-Entity WAL. At zero source
   credit the call parks (deferred reply) until the min-watermark advance
   mints credit — the intended source back-pressure, hence `:infinity`.
   """
@@ -125,14 +125,14 @@ defmodule Flezha.State.InputLog do
   # ---------- Min-watermark tracker (public ETS, rebuildable cache) ----------
 
   @doc """
-  Report a Segment's durable consumed-offset (called when an effect record
+  Report an Entity's durable consumed-offset (called when an effect record
   carrying `consumed_offset` becomes durable, and on boot repopulation from
   the WAL tail).
   """
   @spec record_consumed(binary(), tuple(), non_neg_integer()) :: :ok
-  def record_consumed(operative_class, segment_id, offset) do
+  def record_consumed(operative_class, entity_id, offset) do
     ensure_watermark_table()
-    :ets.insert(@watermarks, {{operative_class, segment_id}, offset})
+    :ets.insert(@watermarks, {{operative_class, entity_id}, offset})
 
     # A watermark advance may free source credit; the log server drains
     # the ledger and unparks waiting appends. Async — this runs on the
@@ -146,7 +146,7 @@ defmodule Flezha.State.InputLog do
   end
 
   @doc """
-  Move a Segment's consumed-offset *backwards* after a correction rewound its
+  Move an Entity's consumed-offset *backwards* after a correction rewound its
   WAL — the records that reported the old, higher offset no longer exist.
 
   Distinct from `record_consumed/3` only in intent, and that is the point: a
@@ -155,13 +155,13 @@ defmodule Flezha.State.InputLog do
   truncate the very inputs the correction is about to replay.
   """
   @spec rewind_consumed(binary(), tuple(), non_neg_integer() | -1) :: :ok
-  def rewind_consumed(operative_class, segment_id, offset) do
+  def rewind_consumed(operative_class, entity_id, offset) do
     ensure_watermark_table()
 
     if offset < 0 do
-      :ets.delete(@watermarks, {operative_class, segment_id})
+      :ets.delete(@watermarks, {operative_class, entity_id})
     else
-      :ets.insert(@watermarks, {{operative_class, segment_id}, offset})
+      :ets.insert(@watermarks, {{operative_class, entity_id}, offset})
     end
 
     :ok
@@ -178,22 +178,22 @@ defmodule Flezha.State.InputLog do
     GenServer.call(pid, {:offset_before_time, ts_ms})
   end
 
-  @doc "Drop a hard-deleted Segment's watermark entry so it stops holding truncation."
-  @spec forget_segment(binary(), tuple()) :: :ok
-  def forget_segment(operative_class, segment_id) do
+  @doc "Drop a hard-deleted Entity's watermark entry so it stops holding truncation."
+  @spec forget_entity(binary(), tuple()) :: :ok
+  def forget_entity(operative_class, entity_id) do
     ensure_watermark_table()
-    :ets.delete(@watermarks, {operative_class, segment_id})
+    :ets.delete(@watermarks, {operative_class, entity_id})
     :ok
   end
 
   @doc """
-  Minimum durable consumed-offset across the operative's reporting Segments,
-  or `nil` when no Segment has reported (the watermark then holds at the log
+  Minimum durable consumed-offset across the operative's reporting Entities,
+  or `nil` when no Entity has reported (the watermark then holds at the log
   start and nothing truncates).
   """
   @spec watermark(binary()) :: non_neg_integer() | nil
   def watermark(operative_class) do
-    case segment_offsets(operative_class) do
+    case entity_offsets(operative_class) do
       [] -> nil
       offsets -> offsets |> Enum.map(&elem(&1, 1)) |> Enum.min()
     end
@@ -201,7 +201,7 @@ defmodule Flezha.State.InputLog do
 
   @doc """
   Producing-liveness cursors: the log's last offset and the durable consumed
-  offset of every Segment that has reported one. `nil` when no log is live —
+  offset of every Entity that has reported one. `nil` when no log is live —
   the operative is not on the effectively-once tier and has none.
 
   Lookup-only on purpose. `last_offset/1` goes through `find_or_start/1`, and
@@ -216,7 +216,7 @@ defmodule Flezha.State.InputLog do
       {:ok, pid} ->
         %{
           tail: GenServer.call(pid, :last_offset),
-          consumed: Map.new(segment_offsets(operative_class))
+          consumed: Map.new(entity_offsets(operative_class))
         }
 
       :error ->
@@ -458,7 +458,7 @@ defmodule Flezha.State.InputLog do
     floor = truncation_floor(operative_class, watermark)
 
     # The *floor* decides whether there is work, not the watermark: under a hold
-    # window the floor advances with the clock even while every Segment's
+    # window the floor advances with the clock even while every Entity's
     # consumed-offset stands still, and gating on the watermark would mean a
     # fully-consumed, fully-aged-out log is never reclaimed.
     advanced? = floor != last_sweep_floor(operative_class)
@@ -547,7 +547,7 @@ defmodule Flezha.State.InputLog do
         %{
           operative: operative_class,
           watermark: watermark,
-          lagging_segment: lagging_segment(operative_class)
+          lagging_entity: lagging_entity(operative_class)
         }
       )
     end
@@ -557,27 +557,27 @@ defmodule Flezha.State.InputLog do
 
   # Two memos, two questions: the floor answers "is there anything left to
   # reclaim?" (it moves with the clock under a hold window); the watermark
-  # answers "is a Segment refusing to consume?" (the frozen-watermark warning).
+  # answers "is an Entity refusing to consume?" (the frozen-watermark warning).
   defp remember_sweep(operative_class, watermark, floor) do
     ensure_watermark_table()
     :ets.insert(@watermarks, {{operative_class, :last_sweep_floor}, floor})
     :ets.insert(@watermarks, {{operative_class, :last_sweep_watermark}, watermark})
   end
 
-  defp lagging_segment(operative_class) do
-    case segment_offsets(operative_class) do
+  defp lagging_entity(operative_class) do
+    case entity_offsets(operative_class) do
       [] -> nil
       offsets -> offsets |> Enum.min_by(&elem(&1, 1)) |> elem(0)
     end
   end
 
-  defp segment_offsets(operative_class) do
+  defp entity_offsets(operative_class) do
     ensure_watermark_table()
 
     @watermarks
     |> :ets.match({{operative_class, :"$1"}, :"$2"})
-    |> Enum.filter(fn [segment_id, _offset] -> is_tuple(segment_id) end)
-    |> Enum.map(fn [segment_id, offset] -> {segment_id, offset} end)
+    |> Enum.filter(fn [entity_id, _offset] -> is_tuple(entity_id) end)
+    |> Enum.map(fn [entity_id, offset] -> {entity_id, offset} end)
   end
 
   defp ensure_watermark_table() do

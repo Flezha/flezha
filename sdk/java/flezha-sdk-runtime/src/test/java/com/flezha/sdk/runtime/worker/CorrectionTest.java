@@ -5,17 +5,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.BeyondWindowPolicy;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
+import com.flezha.sdk.runtime.entity.EntitySlot;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
-import com.flezha.sdk.runtime.segment.SegmentSlot;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.EventTimeFrom;
@@ -40,7 +40,7 @@ import org.junit.jupiter.api.Test;
  */
 class CorrectionTest {
 
-    /** Event times, in the order the Operation actually saw them. */
+    /** Event times, in the order the Procedure actually saw them. */
     private static final List<Long> SEEN = new CopyOnWriteArrayList<>();
 
     private RunnerContext ctx;
@@ -77,22 +77,22 @@ class CorrectionTest {
     @DisplayName("a replayed slice dispatches in event-time order, and live inputs behind it wait")
     void replayedSliceDispatchesInEventTimeOrder() throws Exception {
         UnboundedOperativeInstance instance = instantiate(CorrectionOperative.class, "corr");
-        OperationDispatcher dispatcher = instance.dispatcher(0);
+        ProcedureDispatcher dispatcher = instance.dispatcher(0);
 
         // The slice arrives out of order (30, 10, 20) — that is the whole point:
         // 10 is the late input the correction exists to re-fold.
-        dispatcher.fanoutSegments("30", 100L, OptionalLong.of(0), true);
-        dispatcher.fanoutSegments("10", 100L, OptionalLong.of(1), true);
-        dispatcher.fanoutSegments("20", 100L, OptionalLong.of(2), true);
+        dispatcher.fanoutEntities("30", 100L, OptionalLong.of(0), true);
+        dispatcher.fanoutEntities("10", 100L, OptionalLong.of(1), true);
+        dispatcher.fanoutEntities("20", 100L, OptionalLong.of(2), true);
 
         // A LIVE input arrives while the slice is still open. It must NOT jump
         // ahead of the inputs being re-ordered.
-        dispatcher.fanoutSegments("40", 100L, OptionalLong.of(3), false);
+        dispatcher.fanoutEntities("40", 100L, OptionalLong.of(3), false);
 
         // Nothing has run yet: the slice is buffered.
         assertThat(SEEN).isEmpty();
 
-        dispatcher.endReplaySliceAllSegments();
+        dispatcher.endReplaySliceAllEntities();
         awaitDrain();
 
         // Slice in event-time order, THEN the live input behind it.
@@ -103,14 +103,14 @@ class CorrectionTest {
     @DisplayName("a replay does not lower the event-time high-water")
     void replayDoesNotLowerTheHighWater() throws Exception {
         UnboundedOperativeInstance instance = instantiate(CorrectionOperative.class, "corr");
-        OperationDispatcher dispatcher = instance.dispatcher(0);
-        SegmentSlot slot = instance.segments().get(0).get(0);
+        ProcedureDispatcher dispatcher = instance.dispatcher(0);
+        EntitySlot slot = instance.entities().get(0).get(0);
 
         // A live input at 500 sets the high-water.
-        dispatcher.fanoutSegments("500", 100L, OptionalLong.of(0), false);
+        dispatcher.fanoutEntities("500", 100L, OptionalLong.of(0), false);
         // A replay whose max event time is only 300.
-        dispatcher.fanoutSegments("300", 100L, OptionalLong.of(1), true);
-        dispatcher.endReplaySliceAllSegments();
+        dispatcher.fanoutEntities("300", 100L, OptionalLong.of(1), true);
+        dispatcher.endReplaySliceAllEntities();
         awaitDrain();
 
         // Had the replay lowered the mark to 300, a later input at 320 would read
@@ -122,12 +122,12 @@ class CorrectionTest {
     @DisplayName("beyond-window default is process-as-arrival, not drop")
     void beyondWindowDefaultProcessesAsArrival() throws Exception {
         UnboundedOperativeInstance instance = instantiate(CorrectionOperative.class, "corr");
-        OperationDispatcher dispatcher = instance.dispatcher(0);
+        ProcedureDispatcher dispatcher = instance.dispatcher(0);
 
-        dispatcher.fanoutSegments("100000", 100L, OptionalLong.of(0), false);
+        dispatcher.fanoutEntities("100000", 100L, OptionalLong.of(0), false);
         // Far older than the 1000 ms window — but the default must still process
         // it. Declaring a window must never silently start dropping data.
-        dispatcher.fanoutSegments("1", 100L, OptionalLong.of(1), false);
+        dispatcher.fanoutEntities("1", 100L, OptionalLong.of(1), false);
         awaitDrain();
 
         assertThat(SEEN).containsExactly(100000L, 1L);
@@ -137,10 +137,10 @@ class CorrectionTest {
     @DisplayName("beyondWindowPolicy(DROP) drops an input older than the window")
     void dropPolicyDropsBeyondWindow() throws Exception {
         UnboundedOperativeInstance instance = instantiate(DropOperative.class, "corr-drop");
-        OperationDispatcher dispatcher = instance.dispatcher(0);
+        ProcedureDispatcher dispatcher = instance.dispatcher(0);
 
-        dispatcher.fanoutSegments("100000", 100L, OptionalLong.of(0), false);
-        dispatcher.fanoutSegments("1", 100L, OptionalLong.of(1), false);
+        dispatcher.fanoutEntities("100000", 100L, OptionalLong.of(0), false);
+        dispatcher.fanoutEntities("1", 100L, OptionalLong.of(1), false);
         awaitDrain();
 
         assertThat(SEEN).containsExactly(100000L);
@@ -174,7 +174,7 @@ class CorrectionTest {
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
             c.correctionWindow(1000);
-            c.input(String.class, "in").into(CorrectionOp.class);
+            c.input(String.class, "in").into(CorrectionProc.class);
         }
     }
 
@@ -189,7 +189,7 @@ class CorrectionTest {
             c.effectivelyOnce();
             c.correctionWindow(1000);
             c.beyondWindowPolicy(BeyondWindowPolicy.DROP);
-            c.input(String.class, "in").into(CorrectionOp.class);
+            c.input(String.class, "in").into(CorrectionProc.class);
         }
     }
 
@@ -202,7 +202,7 @@ class CorrectionTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.correctionWindow(1000);
-            c.input(String.class, "in").into(CorrectionOp.class);
+            c.input(String.class, "in").into(CorrectionProc.class);
         }
     }
 
@@ -217,7 +217,7 @@ class CorrectionTest {
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
             c.correctionWindow(1000);
-            c.input(String.class, "in").into(WallClockOp.class);
+            c.input(String.class, "in").into(WallClockProc.class);
         }
     }
 
@@ -233,7 +233,8 @@ class CorrectionTest {
     }
 
     /** Input IS its event time, as a decimal string — keeps the fixtures honest and readable. */
-    public static final class CorrectionOp implements Operation<String, CountState, String, Inc, EventTimeFrom, Void> {
+    public static final class CorrectionProc
+            implements Procedure<String, CountState, String, Inc, EventTimeFrom, Void> {
         @Override
         public String name() {
             return "corr_op";
@@ -285,19 +286,19 @@ class CorrectionTest {
         }
 
         @Override
-        public CountState initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public CountState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new CountState();
         }
 
         @Override
-        public void run(String input, StateHandle<CountState, Inc> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<CountState, Inc> state, ProcedureCtx ctx) throws ProcedureException {
             SEEN.add(ctx.now());
             state.apply(new Inc());
         }
     }
 
-    public static final class WallClockOp
-            implements Operation<String, CountState, String, Inc, com.flezha.sdk.state.WallClock, Void> {
+    public static final class WallClockProc
+            implements Procedure<String, CountState, String, Inc, com.flezha.sdk.state.WallClock, Void> {
         @Override
         public String name() {
             return "wallclock_op";
@@ -339,11 +340,11 @@ class CorrectionTest {
         }
 
         @Override
-        public CountState initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public CountState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new CountState();
         }
 
         @Override
-        public void run(String input, StateHandle<CountState, Inc> state, OperationCtx ctx) throws OperationException {}
+        public void run(String input, StateHandle<CountState, Inc> state, ProcedureCtx ctx) throws ProcedureException {}
     }
 }

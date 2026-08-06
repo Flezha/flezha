@@ -37,7 +37,7 @@ supervision tree, then `FleetManager.resolve_stable_identity/4`:
 
 1. looks up the presented `stable_id`'s prior session token (`stable_sessions`);
 2. if found (reconnect **or** a live-session takeover),
-   `fence_superseded_session/1` unbinds the old session from every Segment
+   `fence_superseded_session/1` unbinds the old session from every Entity
    write path **before** the new session is bound (see "The WAL binds to the
    owner" below);
 3. `swap_bindings/3` re-points that session's operatives onto the new token —
@@ -74,8 +74,8 @@ ordered unbind-old **before** bind-new, in two halves:
 
 - **Channel flip** — `FleetManager.fence_superseded_session/1` synchronously
   calls `:fence_write_path` on each of the old session's `StreamChannel`s;
-  a fenced channel refuses every durable-write forward (`segment_state_change`,
-  `segment_state_snapshot`, `delete_segment_state`, compensation markers) at
+  a fenced channel refuses every durable-write forward (`entity_state_change`,
+  `entity_state_snapshot`, `delete_entity_state`, compensation markers) at
   the binding. The owning session's append path gains **no** per-record check.
 - **Superseded mark** — `FleetManager.mark_session_superseded/1` records the
   old token in a public ETS set (`superseded_session?/1`), covering the frames
@@ -84,11 +84,11 @@ ordered unbind-old **before** bind-new, in two halves:
   `{:error, :stale_writer}` instead of realigning or appending. Marks are
   pruned after 10 minutes on the periodic runner-cleanup tick.
 
-Refusals are loud but episode-bounded: the first refusal per (Segment,
+Refusals are loud but episode-bounded: the first refusal per (Entity,
 superseded session) emits `[:flezha, :state, :stale_writer_refused]`
 (bridged onto the observability bus); the rest only increment
 `stale_writer_refused` (per-channel liveness counter) /
-`stale_writer_refused_total` (per-Segment state metric). A legitimate rapid
+`stale_writer_refused_total` (per-Entity state metric). A legitimate rapid
 restart racing its own eviction may be refused briefly — never a durability
 loss, since the new session's restore/resync handshake re-covers those frames.
 

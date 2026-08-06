@@ -25,8 +25,8 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
       assert Overwatch.decode_declarations(raw) == %{
                effectively_once: false,
                checkpoint_ack: false,
-               compensable_ops: nil,
-               leaf_ops: nil,
+               compensable_procs: nil,
+               leaf_procs: nil,
                correction_window_ms: nil,
                compact_after_bytes: nil
              }
@@ -37,8 +37,8 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
     assert Overwatch.decode_declarations(<<255, 255, 255, 1>>) == %{
              effectively_once: false,
              checkpoint_ack: false,
-             compensable_ops: nil,
-             leaf_ops: nil,
+             compensable_procs: nil,
+             leaf_procs: nil,
              correction_window_ms: nil,
              compact_after_bytes: nil
            }
@@ -68,24 +68,24 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
   end
 
   test "compensable chain positions resolve to a list" do
-    assert declarations(%{"compensable_ops" => "0,2,3"}).compensable_ops == [0, 2, 3]
+    assert declarations(%{"compensable_procs" => "0,2,3"}).compensable_procs == [0, 2, 3]
   end
 
   test "a declared-but-empty compensable list is not the same as an absent one" do
-    # "" = a structured chain, none of it compensable (a rewind of an emitting op
+    # "" = a structured chain, none of it compensable (a rewind of an emitting proc
     # is refused); absent = the class declares nothing at all (no information).
-    assert declarations(%{"compensable_ops" => ""}).compensable_ops == []
-    assert declarations(%{"other" => "x"}).compensable_ops == nil
+    assert declarations(%{"compensable_procs" => ""}).compensable_procs == []
+    assert declarations(%{"other" => "x"}).compensable_procs == nil
   end
 
   test "leaf positions resolve to a list — the tree's completion rule" do
-    # A→(B,C): the operative is done when ops 1 and 2 have committed.
-    assert declarations(%{"leaf_ops" => "1,2"}).leaf_ops == [1, 2]
+    # A→(B,C): the operative is done when procs 1 and 2 have committed.
+    assert declarations(%{"leaf_procs" => "1,2"}).leaf_procs == [1, 2]
     # A linear chain's single terminal is the degenerate case.
-    assert declarations(%{"leaf_ops" => "1"}).leaf_ops == [1]
+    assert declarations(%{"leaf_procs" => "1"}).leaf_procs == [1]
     # Absent = run-sugar / unbounded / an SDK that does not declare it — the
     # controller cannot derive completion and must not guess.
-    assert declarations(%{"other" => "x"}).leaf_ops == nil
+    assert declarations(%{"other" => "x"}).leaf_procs == nil
   end
 
   defp encode(metadata) do

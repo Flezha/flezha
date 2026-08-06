@@ -8,7 +8,7 @@ defmodule Flezha do
   Flezha is a compute engine platform with an Elixir controller and SDK runtimes
   in Rust, Java, and others. It supports clustered operatives with hot-swap
   migration and a single auto-restore-on-boot mechanism — ProcessHub's
-  durable registry persists operative specs, and per-Segment WAL/snapshot
+  durable registry persists operative specs, and per-Entity WAL/snapshot
   files persist progress (see `docs/auto_restore_on_boot.md` and
   `docs/controller_state_persistence.md`).
   """
@@ -31,7 +31,7 @@ defmodule Flezha do
 
   defdelegate disable_plugin(plugin_id), to: PluginManager
 
-  defdelegate segment_state(namespace, operative),
+  defdelegate entity_state(namespace, operative),
     to: OperativeManager,
-    as: :get_segment_state
+    as: :get_entity_state
 end

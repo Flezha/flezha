@@ -28,7 +28,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   @moduletag :system
   @namespace "credit_flow_e2e"
   @factory "store_input"
-  @operation "store_input_operation"
+  @procedure "store_input_procedure"
 
   # A ~300 KiB burst against a 64 KiB window with a 1 s fsync tick: the
   # window exhausts within the first second and refills at ~64 KiB/s, so
@@ -74,7 +74,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   for runtime <- [:rust, :java] do
     @tag :credit_flow_e2e
     @tag runtime: runtime
-    test "#{runtime}: overdriven segment parks on credit, resumes on grants, zero sheds and zero drops" do
+    test "#{runtime}: overdriven entity parks on credit, resumes on grants, zero sheds and zero drops" do
       run_credit_scenario(unquote(runtime))
     end
   end
@@ -108,7 +108,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
 
     # The priming Change proves state frames flow at all (separating a
     # broken persistence path from a broken handshake in the failure mode).
-    assert wait_for_segment(operative_id, @operation, 30_000)
+    assert wait_for_entity(operative_id, @procedure, 30_000)
 
     assert wait_until(fn -> active_credit_row(ce_id) != nil end, 30_000),
            "credit handshake never completed"
@@ -126,12 +126,12 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
 
     # Zero drops: every Change lands in seq order despite the parking
     # (seq 0 was the priming input).
-    segment_id = wait_for_segment(operative_id, @operation, 30_000)
-    writer = wait_for_writer(segment_id, 10_000)
+    entity_id = wait_for_entity(operative_id, @procedure, 30_000)
+    writer = wait_for_writer(entity_id, 10_000)
     await_seq(writer, @input_count, 60_000)
 
     # Zero sheds / zero overruns: the sender honoured its window end-to-end.
-    metrics = Flezha.State.Metrics.for_segment(segment_id)
+    metrics = Flezha.State.Metrics.for_entity(entity_id)
     assert Flezha.State.Metrics.get(metrics, :wal_shed_total) == 0
 
     row = active_credit_row(ce_id)

@@ -9,7 +9,7 @@ import java.util.List;
 
 /**
  * Handler for the Controller-issued {@link Ping} command (see {@code
- * executor-controller-connection-healing} capability). The Controller issues
+ * runner-controller-connection-healing} capability). The Controller issues
  * a ping immediately before {@code AddOperative} during the Overwatch's cold-
  * restart startup sequence; a successful round-trip proves the control
  * channel is bound and the SDK's reply path is intact, so {@code AddOperative}

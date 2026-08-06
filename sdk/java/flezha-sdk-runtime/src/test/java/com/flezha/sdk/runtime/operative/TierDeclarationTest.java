@@ -4,11 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.proto.AddOperativeResponse;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
@@ -74,8 +74,8 @@ class TierDeclarationTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            var sOp = c.input(String.class, "in").into(Op.class);
-            sOp.named("out").keyed().output("sink");
+            var sProc = c.input(String.class, "in").into(Proc.class);
+            sProc.named("out").keyed().output("sink");
         }
     }
 
@@ -87,8 +87,8 @@ class TierDeclarationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sOp = c.input(String.class, "in").into(Op.class);
-            sOp.named("out").output("sink");
+            var sProc = c.input(String.class, "in").into(Proc.class);
+            sProc.named("out").output("sink");
         }
     }
 
@@ -102,14 +102,14 @@ class TierDeclarationTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            var sOp = c.input(String.class, "in").into(Op.class);
-            sOp.named("out").output("sink");
+            var sProc = c.input(String.class, "in").into(Proc.class);
+            sProc.named("out").output("sink");
         }
     }
 
     public record Unit() {}
 
-    public static final class Op implements Operation<String, Unit, String, NoChange, WallClock, Void> {
+    public static final class Proc implements Procedure<String, Unit, String, NoChange, WallClock, Void> {
         @Override
         public String name() {
             return "tier_op";
@@ -141,11 +141,11 @@ class TierDeclarationTest {
         }
 
         @Override
-        public Unit initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Unit initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Unit();
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {}
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {}
     }
 }

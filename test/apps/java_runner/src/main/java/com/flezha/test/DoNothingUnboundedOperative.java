@@ -18,7 +18,7 @@ public final class DoNothingUnboundedOperative implements UnboundedOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        var sDoNothingOperation = c.input(String.class, "input").into(DoNothingOperation.class);
-        sDoNothingOperation.named("echo").output("do_nothing_echo");
+        var sDoNothingProcedure = c.input(String.class, "input").into(DoNothingProcedure.class);
+        sDoNothingProcedure.named("echo").output("do_nothing_echo");
     }
 }

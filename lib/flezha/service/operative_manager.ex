@@ -64,17 +64,17 @@ defmodule Flezha.Service.OperativeManager do
          :ok <- OperativeBuilder.validate_operative(namespace, operative),
          :ok <- validate_factory(namespace, operative.factory_id),
          :ok <- check_operative_quota(namespace),
-         :ok <- check_segment_quota(namespace, operative) do
+         :ok <- check_entity_quota(namespace, operative) do
       case init_operative(namespace, operative) do
         {:ok, _} = ok ->
           _ = Flezha.AuthZ.Quotas.record_allocation(namespace, :max_operatives, 1)
-          seg_count = segment_count(operative)
+          seg_count = entity_count(operative)
 
           if seg_count > 0 do
             _ =
               Flezha.AuthZ.Quotas.record_allocation(
                 namespace,
-                :max_segments_per_operative,
+                :max_entities_per_operative,
                 seg_count
               )
           end
@@ -107,11 +107,11 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
-  defp check_segment_quota(namespace, operative) do
-    requested = segment_count(operative)
+  defp check_entity_quota(namespace, operative) do
+    requested = entity_count(operative)
 
     if requested > 0 do
-      case Flezha.AuthZ.Quotas.check_allocation(namespace, :max_segments_per_operative, requested) do
+      case Flezha.AuthZ.Quotas.check_allocation(namespace, :max_entities_per_operative, requested) do
         :ok -> :ok
         {:error, :namespace_unknown} -> :ok
         {:error, _} = err -> err
@@ -174,10 +174,10 @@ defmodule Flezha.Service.OperativeManager do
   def stop_operative(namespace, operative_id) do
     case get_operative_pid(namespace, operative_id) do
       {:ok, operative_pid} ->
-        # Read the segment count before the stop tears the operative down — the
+        # Read the entity count before the stop tears the operative down — the
         # operative is gone afterwards and the count is needed to release the
-        # `:max_segments_per_operative` quota symmetrically with start.
-        seg_count = operative_segment_count(namespace, operative_id)
+        # `:max_entities_per_operative` quota symmetrically with start.
+        seg_count = operative_entity_count(namespace, operative_id)
 
         case GenServer.call(operative_pid, :stop_operative) do
           :ok ->
@@ -189,7 +189,7 @@ defmodule Flezha.Service.OperativeManager do
               _ =
                 Flezha.AuthZ.Quotas.record_deallocation(
                   namespace,
-                  :max_segments_per_operative,
+                  :max_entities_per_operative,
                   seg_count
                 )
             end
@@ -205,15 +205,15 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
-  defp operative_segment_count(namespace, operative_id) do
+  defp operative_entity_count(namespace, operative_id) do
     case get_overwatch_state(namespace, operative_id) do
-      {:ok, %{builder: builder}} -> segment_count(builder)
+      {:ok, %{builder: builder}} -> entity_count(builder)
       _ -> 0
     end
   end
 
-  defp segment_count(operative) do
-    case Map.get(operative, :segments) do
+  defp entity_count(operative) do
+    case Map.get(operative, :entities) do
       ps when is_list(ps) -> length(ps)
       n when is_integer(n) -> n
       _ -> 0
@@ -246,9 +246,9 @@ defmodule Flezha.Service.OperativeManager do
 
   # On explicit stop, delete the on-disk state directories owned by the
   # operative. The operative_id is used as the operative_class identifier — the SDK
-  # convention is that each operative's segment frames carry the operative_id
+  # convention is that each operative's entity frames carry the operative_id
   # as operative_class. State files written under `app_data/state/<operative_id>/`
-  # are removed; any operation directory containing a `.tmp` or `.rewriting`
+  # are removed; any procedure directory containing a `.tmp` or `.rewriting`
   # marker is skipped (with WARN) because a write is in flight and
   # truncating it would corrupt the rename ceremony.
   #
@@ -271,10 +271,10 @@ defmodule Flezha.Service.OperativeManager do
     class_dir = Path.join(root, operative_id)
 
     case File.ls(class_dir) do
-      {:ok, operation_names} ->
-        Enum.each(operation_names, fn operation ->
-          operation_dir = Path.join(class_dir, operation)
-          maybe_delete_operation(operation_dir)
+      {:ok, procedure_names} ->
+        Enum.each(procedure_names, fn procedure ->
+          procedure_dir = Path.join(class_dir, procedure)
+          maybe_delete_procedure(procedure_dir)
         end)
 
         _ = File.rmdir(class_dir)
@@ -288,18 +288,18 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
-  defp maybe_delete_operation(operation_dir) do
-    case File.ls(operation_dir) do
+  defp maybe_delete_procedure(procedure_dir) do
+    case File.ls(procedure_dir) do
       {:ok, names} ->
         if Enum.any?(names, fn n ->
              String.ends_with?(n, ".tmp") or String.ends_with?(n, ".rewriting")
            end) do
           Logger.warning(
-            "[operative_manager] skipping state dir #{operation_dir}: write in flight " <>
+            "[operative_manager] skipping state dir #{procedure_dir}: write in flight " <>
               "(.tmp / .rewriting present)"
           )
         else
-          _ = File.rm_rf(operation_dir)
+          _ = File.rm_rf(procedure_dir)
         end
 
       {:error, _} ->
@@ -351,7 +351,7 @@ defmodule Flezha.Service.OperativeManager do
   `:duplicate` when that id is already claimed.
 
   The one place the registry's duplicate-id refusal is recognised, shared by
-  every in-cluster spawner — a schedule's slot firing and an operation's
+  every in-cluster spawner — a schedule's slot firing and a procedure's
   `spawn_or_deliver/5` — so how a collision reports is decided once.
   """
   @spec start_bounded(String.t(), String.t(), String.t(), map(), Keyword.t()) ::
@@ -372,7 +372,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   @typedoc """
-  How an operation-requested spawn resolved. `:spawned` and `:delivered` are
+  How a procedure-requested spawn resolved. `:spawned` and `:delivered` are
   the two success shapes; the rest report why nothing was spawned.
   """
   @type spawn_outcome ::
@@ -380,7 +380,7 @@ defmodule Flezha.Service.OperativeManager do
 
   @doc """
   Spawn-or-deliver `instance_id` in `namespace` — the controller half of an
-  operation's `ctx.spawn_bounded`.
+  procedure's `ctx.spawn_bounded`.
 
   A free id spawns a bounded instance of `factory_id` carrying `payload` as its
   first input (`:seed_input`, ingested inside the instance's bind continue, so
@@ -585,13 +585,13 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
-  def get_segment_state(namespace, operative_id) do
+  def get_entity_state(namespace, operative_id) do
     case get_operative_pid(namespace, operative_id) do
       {:ok, operative_pid} ->
         # Unwrap one level: the operative's own reply is already `{:ok, json} |
         # {:error, reason}`, so collapse `SafeCall`'s outer `{:ok, _}` to preserve
         # the existing contract; a bounded timeout/noproc stays `{:error, reason}`.
-        case SafeCall.bounded(operative_pid, :get_segment_state, overwatch_call_timeout_ms()) do
+        case SafeCall.bounded(operative_pid, :get_entity_state, overwatch_call_timeout_ms()) do
           {:ok, reply} -> reply
           {:error, _} = err -> err
         end

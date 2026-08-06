@@ -1,8 +1,8 @@
 package com.flezha.test;
 
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -15,12 +15,12 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Hand-written twin of {@link RollingWindow}: the exact {@code Operation} /
+ * Hand-written twin of {@link RollingWindow}: the exact {@code Procedure} /
  * {@code Change} impl the sugar expands to (variant names differ; behaviour
  * does not).
  */
 public final class RollingWindowTwin
-        implements Operation<WindowInput, RollingWindowTwin.State, Double, RollingWindowTwin.WindowChange, WallClock, Void> {
+        implements Procedure<WindowInput, RollingWindowTwin.State, Double, RollingWindowTwin.WindowChange, WallClock, Void> {
 
     static final int N = 3;
 
@@ -65,7 +65,7 @@ public final class RollingWindowTwin
     }
 
     @Override
-    public State initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+    public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
         return new State();
     }
 
@@ -87,7 +87,7 @@ public final class RollingWindowTwin
     }
 
     @Override
-    public void run(WindowInput input, StateHandle<State, WindowChange> state, OperationCtx ctx) throws OperationException {
+    public void run(WindowInput input, StateHandle<State, WindowChange> state, ProcedureCtx ctx) throws ProcedureException {
         state.apply(new WindowChange.PushBack(input.key(), input.value()));
         Deque<Double> w = state.get().window.get(input.key());
         if (w.size() > N) {

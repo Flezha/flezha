@@ -12,7 +12,7 @@ The convergence-recovery-gate capability defines a single, authoritative query A
 
 - `ready_namespaces(intent)` — given an `Intent` struct, returns a `MapSet` of namespace identifiers whose associated hubs are in a state where healing is permitted (`:normal | :skipped | :timeout`). For `:timeout` hubs it SHALL emit one `Logger.warning` per namespace per call.
 - `await_recovery_complete(hub_ids, timeout)` — blocks the caller until every hub in `hub_ids` reaches `:normal | :skipped`, or `timeout` ms elapses. Returns `:ok` or `{:error, {:recovery_timeout, [hub_ids]}}`. This function is moved from `Flezha.Convergence.Probe`.
-- `observe_state(hub_id, state)` — thin delegation to `Flezha.Convergence.Snapshot.observe_recovery/2`, provided so callers that currently call `Snapshot` for this operation have a consistent recovery-gate import.
+- `observe_state(hub_id, state)` — thin delegation to `Flezha.Convergence.Snapshot.observe_recovery/2`, provided so callers that currently call `Snapshot` for this procedure have a consistent recovery-gate import.
 
 No other module other than `RecoveryGate` SHALL compute "is this namespace ready for healing?" from recovery state. `Flezha.Convergence.Loop` and `Flezha.Convergence.Probe` SHALL delegate all recovery-gate queries to `RecoveryGate`.
 

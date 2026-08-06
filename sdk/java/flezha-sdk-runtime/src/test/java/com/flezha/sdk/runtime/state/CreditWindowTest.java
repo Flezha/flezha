@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Timeout;
 
 /**
  * Java mirror of the Rust SDK's credit-window tests
- * ({@code sdk/rust/src/segment/credit.rs}): debit/park/grant semantics,
+ * ({@code sdk/rust/src/entity/credit.rs}): debit/park/grant semantics,
  * stale-grant discard, reconnect reset, oversized-frame overshoot, and
  * the parked-liveness counter. The window is process-global, so the suite
  * is serialized by JUnit's default same-thread execution and each test

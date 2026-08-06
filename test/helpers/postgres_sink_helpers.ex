@@ -30,34 +30,34 @@ defmodule FlezhaTest.Helper.PostgresSink do
   def create_tables!(db) do
     Postgrex.query!(
       db,
-      "CREATE TABLE flezha_records (key text PRIMARY KEY, segment text, seq text, " <>
+      "CREATE TABLE flezha_records (key text PRIMARY KEY, entity text, seq text, " <>
         "epoch bigint, payload bytea, updated_at timestamptz)",
       []
     )
 
     Postgrex.query!(
       db,
-      "CREATE TABLE flezha_sink_progress (segment text PRIMARY KEY, last_seq text, epoch bigint)",
+      "CREATE TABLE flezha_sink_progress (entity text PRIMARY KEY, last_seq text, epoch bigint)",
       []
     )
 
     :ok
   end
 
-  @doc "All `flezha_records` rows ordered by key: `[key, segment, seq, epoch, payload, updated_at]`."
+  @doc "All `flezha_records` rows ordered by key: `[key, entity, seq, epoch, payload, updated_at]`."
   def rows(db) do
     Postgrex.query!(
       db,
-      "SELECT key, segment, seq, epoch, payload, updated_at FROM flezha_records ORDER BY key",
+      "SELECT key, entity, seq, epoch, payload, updated_at FROM flezha_records ORDER BY key",
       []
     ).rows
   end
 
-  @doc "All `flezha_sink_progress` rows ordered by segment: `[segment, last_seq, epoch]`."
+  @doc "All `flezha_sink_progress` rows ordered by entity: `[entity, last_seq, epoch]`."
   def progress(db) do
     Postgrex.query!(
       db,
-      "SELECT segment, last_seq, epoch FROM flezha_sink_progress ORDER BY segment",
+      "SELECT entity, last_seq, epoch FROM flezha_sink_progress ORDER BY entity",
       []
     ).rows
   end

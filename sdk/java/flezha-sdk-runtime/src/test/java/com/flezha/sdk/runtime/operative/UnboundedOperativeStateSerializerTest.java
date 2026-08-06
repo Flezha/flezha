@@ -4,9 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import java.util.List;
@@ -18,12 +18,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Per-Operation / per-Segment state-blob shape (per
+ * Per-Procedure / per-Entity state-blob shape (per
  * {@code operative-mvp-rust/design.md} Decision 10):
  *
  * <pre>
- *   single-mode operation:  {"operationName": &lt;state&gt;}
- *   static-mode operation:  {"operationName": {"operationKey": &lt;state&gt;, ...}}
+ *   single-mode procedure:  {"procedureName": &lt;state&gt;}
+ *   static-mode procedure:  {"procedureName": {"entityKey": &lt;state&gt;, ...}}
  * </pre>
  */
 class UnboundedOperativeStateSerializerTest {
@@ -34,16 +34,16 @@ class UnboundedOperativeStateSerializerTest {
     }
 
     @Test
-    @DisplayName("serialize emits the documented per-Operation / per-Segment shape")
+    @DisplayName("serialize emits the documented per-Procedure / per-Entity shape")
     void serializeShape() throws Exception {
         UnboundedOperativeClassRegistry.registerClass(MixedUnboundedOperative.class);
         UnboundedOperativeInstance instance = newInstance("mixed");
 
-        // Manually mutate the segment states so the test asserts the
+        // Manually mutate the entity states so the test asserts the
         // serializer reads from the live AtomicReference.
-        instance.segments().get(operationId(instance, "a")).get(0).state().set(new OperationAState(1));
-        instance.segments().get(operationId(instance, "b")).get(0).state().set(new OperationBState(1));
-        instance.segments().get(operationId(instance, "b")).get(1).state().set(new OperationBState(2));
+        instance.entities().get(procedureId(instance, "a")).get(0).state().set(new ProcedureAState(1));
+        instance.entities().get(procedureId(instance, "b")).get(0).state().set(new ProcedureBState(1));
+        instance.entities().get(procedureId(instance, "b")).get(1).state().set(new ProcedureBState(2));
 
         byte[] blob = UnboundedOperativeStateSerializer.serialize(instance);
         @SuppressWarnings("unchecked")
@@ -51,52 +51,52 @@ class UnboundedOperativeStateSerializerTest {
 
         assertThat(root).containsKey("a").containsKey("b");
         @SuppressWarnings("unchecked")
-        Map<String, Object> operationA = (Map<String, Object>) root.get("a");
-        assertThat(operationA).containsEntry("n", 1);
+        Map<String, Object> procedureA = (Map<String, Object>) root.get("a");
+        assertThat(procedureA).containsEntry("n", 1);
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> operationB = (Map<String, Object>) root.get("b");
-        assertThat(operationB).containsKey("1m").containsKey("1h");
+        Map<String, Object> procedureB = (Map<String, Object>) root.get("b");
+        assertThat(procedureB).containsKey("1m").containsKey("1h");
         @SuppressWarnings("unchecked")
-        Map<String, Object> b1m = (Map<String, Object>) operationB.get("1m");
+        Map<String, Object> b1m = (Map<String, Object>) procedureB.get("1m");
         @SuppressWarnings("unchecked")
-        Map<String, Object> b1h = (Map<String, Object>) operationB.get("1h");
+        Map<String, Object> b1h = (Map<String, Object>) procedureB.get("1h");
         assertThat(b1m).containsEntry("x", 1);
         assertThat(b1h).containsEntry("x", 2);
     }
 
     @Test
-    @DisplayName("deserialize round-trips identical segment states")
+    @DisplayName("deserialize round-trips identical entity states")
     void deserializeRoundTrips() throws Exception {
         UnboundedOperativeClassRegistry.registerClass(MixedUnboundedOperative.class);
         UnboundedOperativeInstance instance = newInstance("mixed");
-        instance.segments().get(operationId(instance, "a")).get(0).state().set(new OperationAState(7));
-        instance.segments().get(operationId(instance, "b")).get(0).state().set(new OperationBState(11));
-        instance.segments().get(operationId(instance, "b")).get(1).state().set(new OperationBState(13));
+        instance.entities().get(procedureId(instance, "a")).get(0).state().set(new ProcedureAState(7));
+        instance.entities().get(procedureId(instance, "b")).get(0).state().set(new ProcedureBState(11));
+        instance.entities().get(procedureId(instance, "b")).get(1).state().set(new ProcedureBState(13));
 
         byte[] blob = UnboundedOperativeStateSerializer.serialize(instance);
 
         UnboundedOperativeInstance second = newInstance("mixed");
         UnboundedOperativeStateSerializer.deserialize(second, blob);
 
-        assertThat(second.segments()
-                        .get(operationId(second, "a"))
+        assertThat(second.entities()
+                        .get(procedureId(second, "a"))
                         .get(0)
                         .state()
                         .get())
-                .isEqualTo(new OperationAState(7));
-        assertThat(second.segments()
-                        .get(operationId(second, "b"))
+                .isEqualTo(new ProcedureAState(7));
+        assertThat(second.entities()
+                        .get(procedureId(second, "b"))
                         .get(0)
                         .state()
                         .get())
-                .isEqualTo(new OperationBState(11));
-        assertThat(second.segments()
-                        .get(operationId(second, "b"))
+                .isEqualTo(new ProcedureBState(11));
+        assertThat(second.entities()
+                        .get(procedureId(second, "b"))
                         .get(1)
                         .state()
                         .get())
-                .isEqualTo(new OperationBState(13));
+                .isEqualTo(new ProcedureBState(13));
     }
 
     private static UnboundedOperativeInstance newInstance(String factoryId) {
@@ -107,15 +107,15 @@ class UnboundedOperativeStateSerializerTest {
         return UnboundedOperativeInstance.create(topology, factoryId + "-instance", ctx, ctx.workerPool());
     }
 
-    private static int operationId(UnboundedOperativeInstance instance, String operationName) {
-        return instance.topology().operationNameToId().get(operationName);
+    private static int procedureId(UnboundedOperativeInstance instance, String procedureName) {
+        return instance.topology().procedureNameToId().get(procedureName);
     }
 
-    public record OperationAState(int n) {}
+    public record ProcedureAState(int n) {}
 
-    public record OperationBState(int x) {}
+    public record ProcedureBState(int x) {}
 
-    public static final class OperationA extends StatelessTestOperation<String, OperationAState, String> {
+    public static final class ProcedureA extends StatelessTestProcedure<String, ProcedureAState, String> {
         @Override
         public String name() {
             return "a";
@@ -132,19 +132,19 @@ class UnboundedOperativeStateSerializerTest {
         }
 
         @Override
-        protected OperationAState initState(Optional<String> operationKey) {
-            return new OperationAState(0);
+        protected ProcedureAState initState(Optional<String> entityKey) {
+            return new ProcedureAState(0);
         }
 
         @Override
         public void run(
                 String input,
-                com.flezha.sdk.state.StateHandle<OperationAState, com.flezha.sdk.state.NoChange> state,
-                OperationCtx ctx)
-                throws OperationException {}
+                com.flezha.sdk.state.StateHandle<ProcedureAState, com.flezha.sdk.state.NoChange> state,
+                ProcedureCtx ctx)
+                throws ProcedureException {}
     }
 
-    public static final class OperationB extends StatelessTestOperation<String, OperationBState, String> {
+    public static final class ProcedureB extends StatelessTestProcedure<String, ProcedureBState, String> {
         @Override
         public String name() {
             return "b";
@@ -161,31 +161,31 @@ class UnboundedOperativeStateSerializerTest {
         }
 
         @Override
-        protected OperationBState initState(Optional<String> operationKey) {
-            return new OperationBState(0);
+        protected ProcedureBState initState(Optional<String> entityKey) {
+            return new ProcedureBState(0);
         }
 
         @Override
-        public List<String> operationKeys() {
+        public List<String> entityKeys() {
             return List.of("1m", "1h");
         }
 
         @Override
-        public boolean segmentForOverridden() {
+        public boolean entitiesForOverridden() {
             return true;
         }
 
         @Override
-        public List<String> segmentFor(String input) {
+        public List<String> entitiesFor(String input) {
             return List.of("1m");
         }
 
         @Override
         public void run(
                 String input,
-                com.flezha.sdk.state.StateHandle<OperationBState, com.flezha.sdk.state.NoChange> state,
-                OperationCtx ctx)
-                throws OperationException {}
+                com.flezha.sdk.state.StateHandle<ProcedureBState, com.flezha.sdk.state.NoChange> state,
+                ProcedureCtx ctx)
+                throws ProcedureException {}
     }
 
     public static final class MixedUnboundedOperative implements UnboundedOperative {
@@ -196,8 +196,8 @@ class UnboundedOperativeStateSerializerTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            // One entry (the graph-shape rule); A feeds B so both ops carry state.
-            c.input(String.class, "input.a").into(OperationA.class).into(OperationB.class);
+            // One entry (the graph-shape rule); A feeds B so both procs carry state.
+            c.input(String.class, "input.a").into(ProcedureA.class).into(ProcedureB.class);
         }
     }
 }

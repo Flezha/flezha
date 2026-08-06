@@ -1,16 +1,16 @@
 defmodule Flezha.Boot.StatePathMigrator do
   @moduledoc """
-  One-shot, idempotent migration of the per-Segment state tree from the
-  legacy `app_data/state/{runner_id}/{operative_class}/{operation_id}/` layout
-  to the flat `app_data/state/{operative_class}/{operation_id}/` layout introduced
+  One-shot, idempotent migration of the per-Entity state tree from the
+  legacy `app_data/state/{runner_id}/{operative_class}/{procedure_id}/` layout
+  to the flat `app_data/state/{operative_class}/{procedure_id}/` layout introduced
   by the `auto-restore-on-boot` change.
 
   Runs synchronously during `Flezha.Application.start/2` BEFORE
-  `Flezha.State.Supervisor` opens any per-Segment `WalWriter`. After
+  `Flezha.State.Supervisor` opens any per-Entity `WalWriter`. After
   the first successful run, subsequent invocations are no-ops because
   the legacy directories are gone.
 
-  Collision policy: when two runner-keyed copies of the same Segment
+  Collision policy: when two runner-keyed copies of the same Entity
   exist (because the runner_id rotated and both old + new survived),
   the file with the higher last-modified time wins; the loser is
   preserved alongside as `<key>.<ext>.preserved-{old_runner_id}` so an
@@ -33,7 +33,7 @@ defmodule Flezha.Boot.StatePathMigrator do
 
     if File.dir?(root) do
       # Only the legacy runner-keyed → flat migration runs. The reader
-      # (`Flezha.State.Registry`) resolves the flat `{operative_class}/{operation}`
+      # (`Flezha.State.Registry`) resolves the flat `{operative_class}/{procedure}`
       # layout, so the migrator must produce no other layout — a namespace
       # prefix added ahead of reader support would orphan state.
       do_migrate(root)
@@ -96,15 +96,15 @@ defmodule Flezha.Boot.StatePathMigrator do
 
       if File.dir?(legacy_rc) do
         File.ls!(legacy_rc)
-        |> Enum.reduce(acc, fn operation_id, acc ->
-          legacy_operation = Path.join(legacy_rc, operation_id)
+        |> Enum.reduce(acc, fn procedure_id, acc ->
+          legacy_procedure = Path.join(legacy_rc, procedure_id)
 
-          if File.dir?(legacy_operation) do
-            migrate_operation(
+          if File.dir?(legacy_procedure) do
+            migrate_procedure(
               runner_id,
               operative_class,
-              operation_id,
-              legacy_operation,
+              procedure_id,
+              legacy_procedure,
               root,
               acc
             )
@@ -124,18 +124,18 @@ defmodule Flezha.Boot.StatePathMigrator do
     end)
   end
 
-  defp migrate_operation(runner_id, operative_class, operation_id, legacy_operation, root, acc) do
-    flat_operation = Path.join([root, operative_class, operation_id])
-    File.mkdir_p!(flat_operation)
+  defp migrate_procedure(runner_id, operative_class, procedure_id, legacy_procedure, root, acc) do
+    flat_procedure = Path.join([root, operative_class, procedure_id])
+    File.mkdir_p!(flat_procedure)
 
-    File.ls!(legacy_operation)
+    File.ls!(legacy_procedure)
     |> Enum.reduce(acc, fn name, acc ->
-      from = Path.join(legacy_operation, name)
-      to = Path.join(flat_operation, name)
+      from = Path.join(legacy_procedure, name)
+      to = Path.join(flat_procedure, name)
       move_file(from, to, runner_id, acc)
     end)
     |> tap(fn _ ->
-      _ = remove_if_empty(legacy_operation)
+      _ = remove_if_empty(legacy_procedure)
     end)
   end
 

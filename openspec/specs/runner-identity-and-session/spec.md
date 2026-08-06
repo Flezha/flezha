@@ -57,13 +57,13 @@ When a new session presents a stable identity that already has a currently-live 
 
 ### Requirement: The durable write path's owner binding follows takeover
 
-Newest-wins takeover SHALL update each affected Segment's durable write-path
+Newest-wins takeover SHALL update each affected Entity's durable write-path
 binding in the same transaction that re-binds the stable identity to the new
 session, ordered unbind-old-session before bind-new-session, so no window exists
-in which both sessions can forward Changes to the same Segment's WAL. A superseded
+in which both sessions can forward Changes to the same Entity's WAL. A superseded
 session's forwards SHALL stop at the binding (single state flip at takeover), with no
 per-record ownership check added to the owning session's append path. The first
-refused forward per (Segment, superseded session) episode SHALL emit
+refused forward per (Entity, superseded session) episode SHALL emit
 `[:flezha, :state, :stale_writer_refused]`; subsequent refusals in the episode
 SHALL only increment a counter.
 
@@ -71,7 +71,7 @@ SHALL only increment a counter.
 
 - **GIVEN** stable identity `S` bound to session `sess_old` with Changes in flight
 - **WHEN** a new session `sess_new` takes over `S`
-- **THEN** `sess_old`'s channels are unbound from every affected Segment's write path before `sess_new`'s are bound, and no Change from `sess_old` lands in any Segment WAL after the unbind
+- **THEN** `sess_old`'s channels are unbound from every affected Entity's write path before `sess_new`'s are bound, and no Change from `sess_old` lands in any Entity WAL after the unbind
 
 #### Scenario: Refusal is episode-bounded telemetry
 

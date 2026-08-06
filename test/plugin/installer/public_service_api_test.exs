@@ -1,6 +1,6 @@
 defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
   @moduledoc """
-  Tests that mutating operations serialize through the `Installer` GenServer
+  Tests that mutating procedures serialize through the `Installer` GenServer
   so two concurrent installs cannot race on the code server or DETS.
   """
 

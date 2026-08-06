@@ -42,11 +42,11 @@ defmodule Flezha.State.RetentionTest do
       File.rm_rf!(base)
     end)
 
-    %{base: base, segment_id: TestHelpers.sample_segment_id("ret_" <> uniq())}
+    %{base: base, entity_id: TestHelpers.sample_entity_id("ret_" <> uniq())}
   end
 
-  describe "sweep_segment" do
-    test "0-retention truncates WAL down to the latest snapshot", %{segment_id: pid} do
+  describe "sweep_entity" do
+    test "0-retention truncates WAL down to the latest snapshot", %{entity_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
       header = TestHelpers.stub_header()
@@ -56,19 +56,19 @@ defmodule Flezha.State.RetentionTest do
       # After snapshot the writer is at seq 6 with WAL = [5, 6].
       assert WalWriter.last_persisted_seq(srv) == 6
 
-      :ok = Retention.sweep_segment(pid, 0)
+      :ok = Retention.sweep_entity(pid, 0)
 
       # Latest snapshot remains; WAL should still be [5, 6] because they're > kept_seq=4.
       assert {4, _} = Snapshot.latest_snapshot(pid)
 
       # Add an older snapshot to demonstrate it gets reaped under 0 retention.
       {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
-      :ok = Retention.sweep_segment(pid, 0)
+      :ok = Retention.sweep_entity(pid, 0)
       assert [{5, _}] = Registry.snapshot_paths(pid)
     end
 
     test "non-zero retention keeps only the latest when all snaps are within window", %{
-      segment_id: pid
+      entity_id: pid
     } do
       header = TestHelpers.stub_header()
       {:ok, _} = Supervisor.find_or_start(pid)
@@ -81,11 +81,11 @@ defmodule Flezha.State.RetentionTest do
       # 1-hour retention; both snaps are within the window. Per design.md
       # Decision 5: when no snap is older than cutoff, kept_seq = latest_seq
       # and earlier snaps are deleted as redundant.
-      :ok = Retention.sweep_segment(pid, 1)
+      :ok = Retention.sweep_entity(pid, 1)
       assert [{3, _}] = Registry.snapshot_paths(pid)
     end
 
-    test "rewriting preserves crc-validity of kept records", %{segment_id: pid} do
+    test "rewriting preserves crc-validity of kept records", %{entity_id: pid} do
       header = TestHelpers.stub_header()
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)
@@ -139,7 +139,7 @@ defmodule Flezha.State.RetentionTest do
     test "a bounded class is swept as retention_hours=0 (older snapshot reaped)" do
       header = TestHelpers.stub_header()
       class = "bnd_ret_" <> uniq()
-      pid = {class, "op", "seg"}
+      pid = {class, "proc", "seg"}
       Flezha.Operative.ClassRegistry.put(class, :bounded)
       on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
 
@@ -162,7 +162,7 @@ defmodule Flezha.State.RetentionTest do
     test "an unbounded class keeps the older snapshot under the same window" do
       header = TestHelpers.stub_header()
       class = "cont_ret_" <> uniq()
-      pid = {class, "op", "seg"}
+      pid = {class, "proc", "seg"}
 
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid)

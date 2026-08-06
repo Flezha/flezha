@@ -6,8 +6,8 @@ import com.flezha.sdk.native_.FlezhaNativeException;
 import com.flezha.sdk.native_.FlezhaStatus;
 import com.flezha.sdk.native_.NativeEventDispatcher;
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.operation.SpawnRequests;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.SpawnRequests;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.bounded.BoundedSpec;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
@@ -25,7 +25,7 @@ import com.flezha.sdk.runtime.operative.Operative;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
-import com.flezha.sdk.runtime.state.SegmentStateSink;
+import com.flezha.sdk.runtime.state.EntityStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import java.util.List;
 import java.util.Map;
@@ -96,7 +96,7 @@ public final class FlezhaImpl implements RunnerHandle {
      * <ol>
      *   <li>Resolve config from env vars; log it at INFO.</li>
      *   <li>Create the native context.</li>
-     *   <li>Initialize the worker pool (consumed by every {@code UnboundedOperativeInstance}'s {@code OperationDispatcher}).</li>
+     *   <li>Initialize the worker pool (consumed by every {@code UnboundedOperativeInstance}'s {@code ProcedureDispatcher}).</li>
      *   <li>Open the control stream and send the handshake init JSON.</li>
      *   <li>Block until the controller replies with {@code AssignRunnerId}.</li>
      * </ol>
@@ -223,7 +223,7 @@ public final class FlezhaImpl implements RunnerHandle {
         // A broken-pipe flood on the data stream (control channel still alive)
         // drives a full control reconnect via the coordinator — the same
         // recovery path as an observed connection-lost event.
-        SegmentStateSink.installReconnectRequester(coordinator::onConnectionLost);
+        EntityStateSink.installReconnectRequester(coordinator::onConnectionLost);
 
         NativeTransport.setDispatcher(nativeHandle, eventDispatcher);
 
@@ -334,10 +334,10 @@ public final class FlezhaImpl implements RunnerHandle {
 
     private int countLiveInstances(String factoryId) {
         int live = 0;
-        for (Operative op : ctx.operativeInstanceRegistry().snapshot().values()) {
-            String fid = op instanceof UnboundedOperativeInstance ri
+        for (Operative proc : ctx.operativeInstanceRegistry().snapshot().values()) {
+            String fid = proc instanceof UnboundedOperativeInstance ri
                     ? ri.topology().factoryId()
-                    : ((BoundedOperativeInstance) op).factoryId();
+                    : ((BoundedOperativeInstance) proc).factoryId();
             if (factoryId.equals(fid)) {
                 live++;
             }

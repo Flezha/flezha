@@ -15,7 +15,7 @@ import javax.annotation.Nonnull;
  * <p>This is the <b>only</b> channel through which the controller learns what an
  * SDK class supports: {@code Overwatch.decode_declarations/1} reads this map and
  * nothing else. A capability the controller must gate on — the effectively-once
- * tier, checkpoint ack granularity, a correction window, which bounded ops are
+ * tier, checkpoint ack granularity, a correction window, which bounded procs are
  * compensable, which are leaves — is invisible until it appears here.
  *
  * <p>A class that declares nothing encodes to <b>zero bytes</b>, which the
@@ -54,11 +54,11 @@ public final class Declarations {
         }
         // The Watchdog resolves the WAL size trigger per operative_class, so ship
         // the most conservative (smallest) declared threshold across this
-        // operative's operations — an override on any one must not be ignored.
+        // operative's procedures — an override on any one must not be ignored.
         // Only when it differs from the shared default, keeping an unchanged
         // class's reply byte-identical.
-        long compactAfterBytes = topology.operations().stream()
-                .mapToLong(OperationDescriptor::compactAfterBytes)
+        long compactAfterBytes = topology.procedures().stream()
+                .mapToLong(ProcedureDescriptor::compactAfterBytes)
                 .min()
                 .orElse(DEFAULT_COMPACT_AFTER_BYTES);
         if (compactAfterBytes != DEFAULT_COMPACT_AFTER_BYTES) {
@@ -71,8 +71,8 @@ public final class Declarations {
      * Encode a bounded class's declarations: which tree positions are
      * compensable, and which are leaves.
      *
-     * <p>Run-sugar has no ops, so it declares nothing. Note the distinction the
-     * controller depends on: a <b>missing</b> {@code compensable_ops} key means
+     * <p>Run-sugar has no procs, so it declares nothing. Note the distinction the
+     * controller depends on: a <b>missing</b> {@code compensable_procs} key means
      * the class declared nothing at all (run-sugar, or a non-parity SDK), while
      * an <b>empty</b> value means a chain in which nothing is compensable — a
      * rewind treats those differently.
@@ -86,25 +86,25 @@ public final class Declarations {
         UnboundedOperativeTopology topology = spec.topology().orElseThrow();
         java.util.List<Integer> chain = spec.chain();
 
-        metadata.put("compensable_ops", positions(chain, node -> topology.operation(chain.get(node))
+        metadata.put("compensable_procs", positions(chain, node -> topology.procedure(chain.get(node))
                 .compensateOverridden()));
 
-        // The graph's LEAVES: operations whose output feeds no other operation.
+        // The graph's LEAVES: procedures whose output feeds no other procedure.
         // The operative is DONE when all of them have committed, and the
         // controller derives that from the journal alone — so it needs the set.
         // A linear chain is the degenerate one-leaf case.
-        metadata.put("leaf_ops", positions(chain, node -> isLeaf(topology, chain.get(node))));
+        metadata.put("leaf_procs", positions(chain, node -> isLeaf(topology, chain.get(node))));
 
         return encode(metadata);
     }
 
-    /** An operation whose output channel feeds no downstream operation. */
+    /** A procedure whose output channel feeds no downstream procedure. */
     private static boolean isLeaf(UnboundedOperativeTopology topology, int opIdx) {
-        OperationDescriptor op = topology.operation(opIdx);
-        if (op.outputChannelId().isEmpty()) {
+        ProcedureDescriptor proc = topology.procedure(opIdx);
+        if (proc.outputChannelId().isEmpty()) {
             return true;
         }
-        ChannelDescriptor out = topology.channel(op.outputChannelId().getAsInt());
+        ChannelDescriptor out = topology.channel(proc.outputChannelId().getAsInt());
         return out == null || out.consumers().isEmpty();
     }
 

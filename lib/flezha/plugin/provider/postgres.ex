@@ -2,7 +2,7 @@ defmodule Flezha.Plugin.Provider.Postgres do
   @moduledoc """
   Transactional PostgreSQL sink (`:io_binding`): per flush batch, ONE
   database transaction upserts every record into `flezha_records` (keyed by
-  `flz.key`) and advances the per-Segment `flezha_sink_progress` watermark
+  `flz.key`) and advances the per-Entity `flezha_sink_progress` watermark
   row — effectively-once into the DB for tier operatives, plain inserts for
   everything else. See `docs/resilience/data_durability.md` "Delivery
   semantics".

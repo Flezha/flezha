@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Runner.ControlChannelSpawnBoundedTest do
   @moduledoc """
   SDK -> Controller `SpawnBoundedRequest` dispatch
-  (`add-operation-requested-spawn`): the ControlChannel decodes the frame on the
+  (`procedure-requested-spawn`): the ControlChannel decodes the frame on the
   SDK-initiated-command seam, resolves it off-process against the channel's own
   namespace, and writes one `SpawnBoundedResponse` back under the request's
   reference id.

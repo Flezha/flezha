@@ -3,10 +3,10 @@ package com.flezha.sdk.runtime.control;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RunnerShutdownNotification;
@@ -187,16 +187,16 @@ class GracefulShutdownTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(ShutdownTestOperation.class);
+            c.input(String.class, "input").into(ShutdownTestProcedure.class);
         }
     }
 
-    public static final class ShutdownTestOperation
-            implements Operation<
+    public static final class ShutdownTestProcedure
+            implements Procedure<
                     String, String, String, com.flezha.sdk.state.NoChange, com.flezha.sdk.state.WallClock, Void> {
         @Override
         public String name() {
-            return "shutdown_test_operation";
+            return "shutdown_test_procedure";
         }
 
         @Override
@@ -226,7 +226,7 @@ class GracefulShutdownTest {
 
         @Override
         public String initState(
-                Optional<String> operationKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
+                Optional<String> entityKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
             return "initial-state";
         }
 
@@ -234,7 +234,7 @@ class GracefulShutdownTest {
         public void run(
                 String input,
                 com.flezha.sdk.state.StateHandle<String, com.flezha.sdk.state.NoChange> state,
-                OperationCtx ctx)
-                throws OperationException {}
+                ProcedureCtx ctx)
+                throws ProcedureException {}
     }
 }

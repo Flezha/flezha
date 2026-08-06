@@ -1,8 +1,8 @@
 defmodule Flezha.Dlq.Store do
   @moduledoc """
-  Durable dead-letter store (`platform-dead-letter-queue`).
+  Durable dead-letter store (`dead-letter-queue`).
 
-  One controller-wide GenServer owning `app_data/dlq/<operative_class>/<operation_id>/`:
+  One controller-wide GenServer owning `app_data/dlq/<operative_class>/<procedure_id>/`:
   a JSONL metadata index (`entries.jsonl`, one record per parked payload)
   with payload bytes in adjacent `<entry_id>.bin` blob files. Appends are
   fsynced before the caller's durable-ack callback fires — the SDK holds
@@ -10,7 +10,7 @@ defmodule Flezha.Dlq.Store do
   crash-safe.
 
   Idempotence rides the entry id, a hash of the park's origin identity:
-  `segment_key@origin_offset` when the effectively-once tier provides an
+  `entity_key@origin_offset` when the effectively-once tier provides an
   offset, else `channel:sha256(payload)` — so ack-lost re-sends and
   crash-replay re-parks land on the existing entry instead of duplicating
   it. A re-park that arrives while the entry is `replaying` (an operator
@@ -40,7 +40,7 @@ defmodule Flezha.Dlq.Store do
 
   @doc """
   Durably append a parked payload. `entry` carries `:operative_class`,
-  `:operation_id`, `:segment_key`, `:channel`, `:origin_offset` (nil
+  `:procedure_id`, `:entity_key`, `:channel`, `:origin_offset` (nil
   outside the tier), `:error`, `:attempts`, `:payload` (binary or nil).
   Returns `{:ok, entry_ref}` after the index line (and blob) are fsynced;
   idempotent on origin identity.
@@ -65,7 +65,7 @@ defmodule Flezha.Dlq.Store do
   def list(server \\ __MODULE__, operative_class),
     do: GenServer.call(server, {:list, operative_class}, 30_000)
 
-  @doc "Fetch one entry (with payload bytes) by `<class>/<operation>/<id>` ref."
+  @doc "Fetch one entry (with payload bytes) by `<class>/<procedure>/<id>` ref."
   @spec get(pid() | atom(), String.t()) :: {:ok, map(), binary() | nil} | {:error, term()}
   def get(server \\ __MODULE__, entry_ref), do: GenServer.call(server, {:get, entry_ref}, 30_000)
 
@@ -86,7 +86,7 @@ defmodule Flezha.Dlq.Store do
   @spec resolve(pid() | atom(), String.t()) :: :ok | {:error, term()}
   def resolve(server \\ __MODULE__, entry_ref), do: drop(server, entry_ref)
 
-  @doc "Per-operation usage: `[%{operative_class, operation_id, entries, bytes}]`."
+  @doc "Per-procedure usage: `[%{operative_class, procedure_id, entries, bytes}]`."
   @spec stats(pid() | atom()) :: [map()]
   def stats(server \\ __MODULE__), do: GenServer.call(server, :stats, 30_000)
 
@@ -115,7 +115,7 @@ defmodule Flezha.Dlq.Store do
 
   def handle_call({:list, operative_class}, _from, state) do
     entries =
-      list_operation_dirs(operative_class)
+      list_procedure_dirs(operative_class)
       |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
       |> Enum.sort_by(& &1["ts_ms"])
 
@@ -161,13 +161,13 @@ defmodule Flezha.Dlq.Store do
 
   def handle_call(:stats, _from, state) do
     stats =
-      list_operation_dirs(nil)
+      list_procedure_dirs(nil)
       |> Enum.map(fn {rc, sh} ->
         entries = load_entries(rc, sh)
 
         %{
           operative_class: rc,
-          operation_id: sh,
+          procedure_id: sh,
           entries: length(entries),
           bytes: dir_bytes(rc, sh)
         }
@@ -205,7 +205,7 @@ defmodule Flezha.Dlq.Store do
 
   defp do_append(entry) do
     rc = Map.fetch!(entry, :operative_class)
-    sh = Map.fetch!(entry, :operation_id)
+    sh = Map.fetch!(entry, :procedure_id)
     id = entry_id(entry)
     payload = Map.get(entry, :payload)
 
@@ -224,7 +224,7 @@ defmodule Flezha.Dlq.Store do
   end
 
   defp write_new_entry(rc, sh, id, entry, payload) do
-    dir = op_dir(rc, sh)
+    dir = proc_dir(rc, sh)
     File.mkdir_p!(dir)
 
     if payload do
@@ -237,8 +237,8 @@ defmodule Flezha.Dlq.Store do
       "id" => id,
       "ts_ms" => System.system_time(:millisecond),
       "operative_class" => rc,
-      "operation_id" => sh,
-      "segment_key" => Map.get(entry, :segment_key, ""),
+      "procedure_id" => sh,
+      "entity_key" => Map.get(entry, :entity_key, ""),
       "channel" => Map.get(entry, :channel, ""),
       "origin_offset" => Map.get(entry, :origin_offset),
       "error" => Map.get(entry, :error, ""),
@@ -252,8 +252,8 @@ defmodule Flezha.Dlq.Store do
 
     :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
       operative_class: rc,
-      operation_id: sh,
-      segment_key: record["segment_key"],
+      procedure_id: sh,
+      entity_key: record["entity_key"],
       channel: record["channel"],
       generation: record["generation"]
     })
@@ -283,8 +283,8 @@ defmodule Flezha.Dlq.Store do
 
     :telemetry.execute([:flezha, :dlq, :parked], %{count: 1}, %{
       operative_class: rc,
-      operation_id: sh,
-      segment_key: existing["segment_key"],
+      procedure_id: sh,
+      entity_key: existing["entity_key"],
       channel: existing["channel"],
       generation: (existing["generation"] || 1) + 1
     })
@@ -300,7 +300,7 @@ defmodule Flezha.Dlq.Store do
     key =
       case {Map.get(entry, :origin_offset), Map.get(entry, :payload)} do
         {offset, _} when is_integer(offset) ->
-          "#{Map.get(entry, :segment_key, "")}@#{offset}"
+          "#{Map.get(entry, :entity_key, "")}@#{offset}"
 
         {nil, payload} when is_binary(payload) ->
           "#{Map.get(entry, :channel, "")}:#{Base.encode16(:crypto.hash(:sha256, payload))}"
@@ -321,7 +321,7 @@ defmodule Flezha.Dlq.Store do
     cutoff_ms = System.system_time(:millisecond) - retention_s * 1000
 
     all =
-      list_operation_dirs(nil)
+      list_procedure_dirs(nil)
       |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
       |> Enum.sort_by(& &1["ts_ms"])
 
@@ -343,20 +343,20 @@ defmodule Flezha.Dlq.Store do
 
   defp retention_drop(entry, reason) do
     rc = entry["operative_class"]
-    sh = entry["operation_id"]
+    sh = entry["procedure_id"]
     bytes = entry_bytes(entry)
 
     Logger.warning(
       "[dlq] RETENTION DROP (#{reason}): discarding parked payload " <>
         "#{ref(rc, sh, entry["id"])} channel=#{entry["channel"]} " <>
-        "segment=#{entry["segment_key"]} error=#{inspect(entry["error"])} — " <>
+        "entity=#{entry["entity_key"]} error=#{inspect(entry["error"])} — " <>
         "this data was never replayed and is now permanently lost"
     )
 
     :telemetry.execute([:flezha, :dlq, :retention_dropped], %{count: 1, bytes: bytes}, %{
       operative_class: rc,
-      operation_id: sh,
-      segment_key: entry["segment_key"],
+      procedure_id: sh,
+      entity_key: entry["entity_key"],
       channel: entry["channel"],
       entry_id: entry["id"],
       reason: reason
@@ -376,11 +376,11 @@ defmodule Flezha.Dlq.Store do
 
   # ---------- index file plumbing ----------
 
-  defp op_dir(rc, sh), do: Path.join([root(), safe(rc), safe(sh)])
+  defp proc_dir(rc, sh), do: Path.join([root(), safe(rc), safe(sh)])
 
-  defp entries_path(rc, sh), do: Path.join(op_dir(rc, sh), @entries_file)
+  defp entries_path(rc, sh), do: Path.join(proc_dir(rc, sh), @entries_file)
 
-  defp blob_path(rc, sh, id), do: Path.join(op_dir(rc, sh), id <> ".bin")
+  defp blob_path(rc, sh, id), do: Path.join(proc_dir(rc, sh), id <> ".bin")
 
   defp ref(rc, sh, id), do: "#{rc}/#{sh}/#{id}"
 
@@ -391,13 +391,13 @@ defmodule Flezha.Dlq.Store do
     end
   end
 
-  # Path-safety: identity segments come off the wire; never let them climb
+  # Path-safety: identity entities come off the wire; never let them climb
   # out of the DLQ root.
   defp safe(component) do
     String.replace(component, ~r/[^A-Za-z0-9._-]/, "_")
   end
 
-  defp list_operation_dirs(operative_class) do
+  defp list_procedure_dirs(operative_class) do
     classes =
       case operative_class do
         nil -> File.ls(root()) |> ok_or([])
@@ -479,7 +479,7 @@ defmodule Flezha.Dlq.Store do
   end
 
   defp dir_bytes(rc, sh) do
-    dir = op_dir(rc, sh)
+    dir = proc_dir(rc, sh)
 
     File.ls(dir)
     |> ok_or([])
@@ -496,7 +496,7 @@ defmodule Flezha.Dlq.Store do
     :telemetry.execute(
       [:flezha, :dlq, :usage],
       %{entries: length(load_entries(rc, sh)), bytes: dir_bytes(rc, sh)},
-      %{operative_class: rc, operation_id: sh}
+      %{operative_class: rc, procedure_id: sh}
     )
   end
 

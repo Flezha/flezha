@@ -2,7 +2,7 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
   @moduledoc """
   Shared scaffolding for the credit-grant flow-control suites
   (unit, e2e, soak): wire-frame building, ledger counter reads,
-  segment/writer discovery, and fsync-cadence control.
+  entity/writer discovery, and fsync-cadence control.
   """
 
   import ExUnit.Assertions
@@ -11,9 +11,9 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
   alias Flezha.Transport.LivenessCounters
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @doc "Build one `segment_state_change` wire frame (`Flezha.State.Wire` layout)."
-  def state_change_frame(class, key, seq, body, operation \\ "op1") do
-    sid = Wire.encode_segment_id(class, operation, key)
+  @doc "Build one `entity_state_change` wire frame (`Flezha.State.Wire` layout)."
+  def state_change_frame(class, key, seq, body, procedure \\ "op1") do
+    sid = Wire.encode_entity_id(class, procedure, key)
     header = TestHelpers.stub_header()
 
     <<byte_size(sid)::16-big, sid::binary, seq::64-big, header::binary, byte_size(body)::32-big,
@@ -40,8 +40,8 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
     |> Enum.max(fn -> 0 end)
   end
 
-  @doc "Wait for `operative_id`'s WalWriter registration under `operation`; returns the segment_id."
-  def wait_for_segment(operative_id, operation, timeout_ms) do
+  @doc "Wait for `operative_id`'s WalWriter registration under `procedure`; returns the entity_id."
+  def wait_for_entity(operative_id, procedure, timeout_ms) do
     registry = Flezha.State.Supervisor.registry_name()
 
     result =
@@ -49,7 +49,7 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
         fn ->
           Registry.select(registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
           |> Enum.find(fn
-            {^operative_id, ^operation, _pk} -> true
+            {^operative_id, ^procedure, _pk} -> true
             _ -> false
           end)
         end,
@@ -60,14 +60,14 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
     result
   end
 
-  @doc "Wait for `segment_id`'s WalWriter pid."
-  def wait_for_writer(segment_id, timeout_ms) do
+  @doc "Wait for `entity_id`'s WalWriter pid."
+  def wait_for_writer(entity_id, timeout_ms) do
     assert NodeTestHelper.wait_until(
-             fn -> match?({:ok, _}, Flezha.State.Supervisor.lookup(segment_id)) end,
+             fn -> match?({:ok, _}, Flezha.State.Supervisor.lookup(entity_id)) end,
              timeout_ms
            )
 
-    {:ok, pid} = Flezha.State.Supervisor.lookup(segment_id)
+    {:ok, pid} = Flezha.State.Supervisor.lookup(entity_id)
     pid
   end
 

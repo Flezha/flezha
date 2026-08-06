@@ -10,7 +10,7 @@
 #   ./scripts/bench.sh -r java                        # java SDK over uds
 #   ./scripts/bench.sh -t quic                        # rust SDK over quic
 #   ./scripts/bench.sh -r java -t quic -n 100 -m 1000 # java + quic, bigger run
-#   ./scripts/bench.sh --shape segmenting --pool-sizes 1,8
+#   ./scripts/bench.sh --shape entity --pool-sizes 1,8
 #
 # Compare two runs:
 #   ./scripts/bench.sh -r rust -n 100 -m 1000 | tee bench-rust.txt
@@ -40,14 +40,14 @@ Usage: ./scripts/bench.sh [OPTIONS]
 Options:
   -r, --runtime <rust|java>          SDK runtime (default: rust)
   -t, --transport <uds|quic>         Wire transport (default: uds)
-  -s, --shape <regression|segmenting|dynamic>
+  -s, --shape <regression|entity|dynamic>
                                      Bench shape (default: regression).
-                                     `segmenting` ignores -n/-m and uses the
+                                     `entity` ignores -n/-m and uses the
                                      8x4x8x20k stress workload. `dynamic` drives
-                                     the dynamic_segment operative (lazy
-                                     per-key Segments, 8 keys/operative), honors -n/-m.
+                                     the dynamic_entity operative (lazy
+                                     per-key Entities, 8 keys/operative), honors -n/-m.
       --pool-sizes <list>            Comma-separated worker-pool sizes for
-                                     --shape segmenting (default: 1,8)
+                                     --shape entity (default: 1,8)
   -n, --num-operatives <N>               Operative count for regression shape (default: 100)
   -m, --messages-per-operative <N>       Messages per operative for regression shape
                                      (default: 100)
@@ -56,7 +56,7 @@ Options:
 Switching combinations are independent:
   -r picks the SDK (rust or java)
   -t picks the wire (uds or quic)
-  -s picks the workload (regression or segmenting)
+  -s picks the workload (regression or entity)
 EOF
 }
 
@@ -80,17 +80,17 @@ case "$TRANSPORT" in uds|quic) ;; *)
     echo "Error: --transport must be 'uds' or 'quic', got '$TRANSPORT'"; exit 1 ;;
 esac
 if [[ -n "$SHAPE" ]]; then
-    case "$SHAPE" in regression|segmenting|dynamic) ;; *)
-        echo "Error: --shape must be 'regression', 'segmenting', or 'dynamic', got '$SHAPE'"; exit 1 ;;
+    case "$SHAPE" in regression|entity|dynamic) ;; *)
+        echo "Error: --shape must be 'regression', 'entity', or 'dynamic', got '$SHAPE'"; exit 1 ;;
     esac
 fi
 
 ARGS=(--runtime "$RUNTIME")
 [[ -n "$SHAPE" ]] && ARGS+=(--shape "$SHAPE")
 
-if [[ "$SHAPE" == "segmenting" ]]; then
+if [[ "$SHAPE" == "entity" ]]; then
     [[ -n "$POOL_SIZES" ]] && ARGS+=(--pool-sizes "$POOL_SIZES")
-    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT shape=segmenting pool-sizes=${POOL_SIZES:-1,8}"
+    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT shape=entity pool-sizes=${POOL_SIZES:-1,8}"
 else
     ARGS+=(--num-operatives "$NUM_OPERATIVES" --messages-per-operative "$MESSAGES_PER_OPERATIVE")
     echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT operatives=$NUM_OPERATIVES msg/operative=$MESSAGES_PER_OPERATIVE"

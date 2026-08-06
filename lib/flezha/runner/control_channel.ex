@@ -21,7 +21,7 @@ defmodule Flezha.Runner.ControlChannel do
 
   # Re-attempt cadence for a journaled outbox whose operative is not bound yet
   # (mirrors the unbounded outbox's `:outbox_retry` in `Flezha.State.WalWriter`).
-  @op_outbox_retry_ms 1_000
+  @proc_outbox_retry_ms 1_000
 
   def start_link({namespace, runner_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, runner_id, stream_ref, nil},
@@ -125,7 +125,7 @@ defmodule Flezha.Runner.ControlChannel do
 
   @doc """
   Synchronously clear this channel's `stream_ref` to `nil` so the existing
-  rebind machinery (see `executor-controller-connection-healing`) can claim
+  rebind machinery (see `runner-controller-connection-healing`) can claim
   the next data stream the SDK opens. Used by
   `Flezha.Runner.FleetManager.reset_control_channel/1` after an end-to-end
   ping fails — the controller-side `ControlChannel` GenServer is alive but
@@ -220,8 +220,8 @@ defmodule Flezha.Runner.ControlChannel do
         handle_bounded_completed(state, completed)
         {:noreply, state}
 
-      {:op_commit, %{} = commit, reference_id} ->
-        handle_op_commit(state, commit, reference_id)
+      {:proc_commit, %{} = commit, reference_id} ->
+        handle_proc_commit(state, commit, reference_id)
         {:noreply, state}
 
       {:iter_commit, %{} = commit, reference_id} ->
@@ -271,8 +271,8 @@ defmodule Flezha.Runner.ControlChannel do
   # first attempted. The journal is the source of truth, so the retry simply
   # re-runs the same flush; it stops when nothing is owed.
   @impl true
-  def handle_info({:op_outbox_retry, operative_id}, state) do
-    flush_op_outbox(operative_id)
+  def handle_info({:proc_outbox_retry, operative_id}, state) do
+    flush_proc_outbox(operative_id)
     {:noreply, state}
   end
 
@@ -369,7 +369,7 @@ defmodule Flezha.Runner.ControlChannel do
   @sdk_initiated_commands [
     :runner_shutdown_notification,
     :bounded_completed,
-    :op_commit,
+    :proc_commit,
     :iter_commit,
     :iter_park,
     :update_factories,
@@ -494,34 +494,34 @@ defmodule Flezha.Runner.ControlChannel do
     )
   end
 
-  # Op-boundary commit (bounded-op-journal + bounded-transactional-outbox):
-  # append the `op_committed` entry — segments ran, handoff, AND the operation's
+  # Proc-boundary commit (bounded-proc-journal + bounded-transactional-outbox):
+  # append the `proc_committed` entry — entities ran, handoff, AND the procedure's
   # staged outbox in ONE record — and fsync BEFORE replying. The ack IS the
-  # durable point the driver gates the next operation on, and the point past
+  # durable point the driver gates the next procedure on, and the point past
   # which the staged output may finally be delivered. A failed append (disk
   # error, oversized payload) rides back in `error` and terminates the run
   # abnormally on the SDK side. The append + fsync run in the journal's
-  # WalWriter process; op boundaries are coarse, so blocking this channel for
+  # WalWriter process; proc boundaries are coarse, so blocking this channel for
   # one fsync round-trip is acceptable (same posture as the awaited restore).
   #
   # `compensating` marks the undo twin: the same handshake carrying a
   # compensation hook's staged undo output, journaled as a `compensated` entry.
-  defp handle_op_commit(state, commit, reference_id) do
-    %RunnerCommands.OpCommit{
+  defp handle_proc_commit(state, commit, reference_id) do
+    %RunnerCommands.ProcCommit{
       operative_id: operative_id,
-      op_idx: op_idx,
+      proc_idx: proc_idx,
       iter: iter,
-      segments_ran: segments_ran,
+      entities_ran: entities_ran,
       handoff: handoff,
       outbox: outbox,
       compensating: compensating
     } = commit
 
     outbox =
-      Enum.map(outbox, fn %RunnerCommands.OpOutboxItem{} = item ->
+      Enum.map(outbox, fn %RunnerCommands.ProcOutboxItem{} = item ->
         %{
-          segment_id: item.segment_id,
-          seq_in_op: item.seq_in_op,
+          entity_id: item.entity_id,
+          seq_in_proc: item.seq_in_proc,
           channel: item.channel,
           payload: item.payload
         }
@@ -529,14 +529,14 @@ defmodule Flezha.Runner.ControlChannel do
 
     result =
       if compensating do
-        Flezha.State.OpJournal.append_compensated(operative_id, op_idx, iter, outbox)
+        Flezha.State.ProcJournal.append_compensated(operative_id, proc_idx, iter, outbox)
       else
-        Flezha.State.OpJournal.append_op_committed(
+        Flezha.State.ProcJournal.append_proc_committed(
           operative_id,
-          op_idx,
+          proc_idx,
           iter,
-          segments_ran,
-          Enum.map(handoff, fn %RunnerCommands.OpHandoffItem{channel_id: cid, payload: bytes} ->
+          entities_ran,
+          Enum.map(handoff, fn %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes} ->
             {cid, bytes}
           end),
           outbox
@@ -544,12 +544,12 @@ defmodule Flezha.Runner.ControlChannel do
       end
 
     :telemetry.execute(
-      [:flezha, :state, :op_commit],
+      [:flezha, :state, :proc_commit],
       %{count: 1, handoff_items: length(handoff), outbox_items: length(outbox)},
       %{
         namespace: state.namespace,
         operative_id: operative_id,
-        op_idx: op_idx,
+        proc_idx: proc_idx,
         compensating: compensating,
         status: commit_status(result)
       }
@@ -560,19 +560,19 @@ defmodule Flezha.Runner.ControlChannel do
         state,
         reference_id,
         result,
-        "op-journal commit operative=#{inspect(operative_id)} op_idx=#{op_idx}",
-        &{:op_commit_response,
-         %RunnerCommands.OpCommitResponse{
+        "proc-journal commit operative=#{inspect(operative_id)} proc_idx=#{proc_idx}",
+        &{:proc_commit_response,
+         %RunnerCommands.ProcCommitResponse{
            operative_id: operative_id,
-           op_idx: op_idx,
+           proc_idx: proc_idx,
            error: &1
          }}
       )
 
     # Flush AFTER the ack (the durable point has passed, so the output may now
-    # be seen). The next operation is free to run while this lands — the chain
+    # be seen). The next procedure is free to run while this lands — the chain
     # hands data forward through the handoff, never through the sink.
-    if durable?, do: flush_op_outbox(operative_id)
+    if durable?, do: flush_proc_outbox(operative_id)
   end
 
   # The protocol's core invariant, in one place: the reply to a durability
@@ -614,11 +614,11 @@ defmodule Flezha.Runner.ControlChannel do
     } = commit
 
     result =
-      Flezha.State.OpJournal.append_iter_committed(
+      Flezha.State.ProcJournal.append_iter_committed(
         operative_id,
         iter,
         consumed_offset,
-        Enum.map(handoff, fn %RunnerCommands.OpHandoffItem{channel_id: cid, payload: bytes} ->
+        Enum.map(handoff, fn %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes} ->
           {cid, bytes}
         end)
       )
@@ -639,7 +639,7 @@ defmodule Flezha.Runner.ControlChannel do
         state,
         reference_id,
         result,
-        "op-journal iteration commit operative=#{inspect(operative_id)} iter=#{iter}",
+        "proc-journal iteration commit operative=#{inspect(operative_id)} iter=#{iter}",
         &{:iter_commit_response,
          %RunnerCommands.IterCommitResponse{
            operative_id: operative_id,
@@ -650,35 +650,35 @@ defmodule Flezha.Runner.ControlChannel do
 
     if durable? do
       snapshot_iteration_boundary(state.runner_id, operative_id)
-      flush_op_outbox(operative_id)
-      if consumed_offset > 0, do: Flezha.State.OpInbox.truncate(operative_id, consumed_offset)
+      flush_proc_outbox(operative_id)
+      if consumed_offset > 0, do: Flezha.State.ProcInbox.truncate(operative_id, consumed_offset)
     end
   end
 
-  # Boundary snapshot: ask the SDK to compact every Segment of the instance, so a
+  # Boundary snapshot: ask the SDK to compact every Entity of the instance, so a
   # rehydrate restores iteration-N state from a snapshot instead of replaying the
   # whole WAL.
   #
-  # Off this process: `CompactSegment` is dispatched through `send_control`,
+  # Off this process: `CompactEntity` is dispatched through `send_control`,
   # which is a call INTO this very channel — issuing it inline would be the
   # channel calling itself (same reason the bounded-completed teardown runs in a
   # task). Best-effort besides: a failed or dropped compaction only means the
   # restore falls back to WAL replay, which the Watchdog's own size/age triggers
   # will re-attempt.
   defp snapshot_iteration_boundary(runner_id, operative_id) do
-    segments =
-      Flezha.State.Registry.all_segments()
+    entities =
+      Flezha.State.Registry.all_entities()
       |> Enum.filter(fn {class, _, _} -> class == operative_id end)
 
     Task.start(fn ->
-      Enum.each(segments, fn segment_id ->
-        case Flezha.Operative.Overwatch.dispatch_compact_segment(runner_id, segment_id) do
+      Enum.each(entities, fn entity_id ->
+        case Flezha.Operative.Overwatch.dispatch_compact_entity(runner_id, entity_id) do
           {:ok, _ref} ->
             :ok
 
           {:error, reason} ->
             Logger.debug(
-              "[control_channel] boundary snapshot skipped for #{inspect(segment_id)}: " <>
+              "[control_channel] boundary snapshot skipped for #{inspect(entity_id)}: " <>
                 "#{inspect(reason)} — rehydrate falls back to WAL replay"
             )
         end
@@ -713,7 +713,7 @@ defmodule Flezha.Runner.ControlChannel do
     namespace = state.namespace
 
     Task.start(fn ->
-      case Flezha.State.OpJournal.append_parked(operative_id, iter, deadline) do
+      case Flezha.State.ProcJournal.append_parked(operative_id, iter, deadline) do
         :ok ->
           case HubManager.get_pid(namespace, operative_id) do
             {:ok, pid} when is_pid(pid) ->
@@ -739,7 +739,7 @@ defmodule Flezha.Runner.ControlChannel do
     end)
   end
 
-  # An operation asked for a bounded instance (`ctx.spawn_bounded`). The
+  # A procedure asked for a bounded instance (`ctx.spawn_bounded`). The
   # namespace is this channel's — never the requester's claim — so a request
   # cannot reach another namespace.
   #
@@ -816,13 +816,13 @@ defmodule Flezha.Runner.ControlChannel do
   # the `outbox_flushed` marker written per entry after delivery. An unbound
   # operative (cold-boot re-drive before the bind lands) retries on a timer;
   # the journal still owes the entries, so nothing is dropped either way.
-  defp flush_op_outbox(operative_id) do
-    case Flezha.State.OpJournal.flush_pending(operative_id) do
+  defp flush_proc_outbox(operative_id) do
+    case Flezha.State.ProcJournal.flush_pending(operative_id) do
       :ok ->
         :ok
 
       {:error, :no_overwatch} ->
-        Process.send_after(self(), {:op_outbox_retry, operative_id}, @op_outbox_retry_ms)
+        Process.send_after(self(), {:proc_outbox_retry, operative_id}, @proc_outbox_retry_ms)
         :ok
     end
   end

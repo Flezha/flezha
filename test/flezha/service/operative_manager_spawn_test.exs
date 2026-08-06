@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
   @moduledoc """
-  `OperativeManager.spawn_or_deliver/5` — the controller half of an operation's
-  `ctx.spawn_bounded` (`add-operation-requested-spawn`).
+  `OperativeManager.spawn_or_deliver/5` — the controller half of a procedure's
+  `ctx.spawn_bounded` (`procedure-requested-spawn`).
 
   The registry is simulated by an ETS table whose `insert_new` is the same
   atomic claim ProcessHub's `start_child` performs, so the concurrency case

@@ -1,6 +1,6 @@
 defmodule Flezha.Service.PluginHelper do
   @moduledoc """
-  High-level helpers for common plugin operations.
+  High-level helpers for common plugin procedures.
   Designed for programmatic callers (UI, API) — returns tagged tuples
   instead of printing to stdout.
   """

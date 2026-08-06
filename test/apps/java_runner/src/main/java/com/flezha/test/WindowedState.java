@@ -6,7 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Per-segment state whose window length comes from the segment key (see {@link Windowed}). */
+/** Per-entity state whose window length comes from the entity key (see {@link Windowed}). */
 @State
 public class WindowedState {
     public int window;

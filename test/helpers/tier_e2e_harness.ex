@@ -23,14 +23,14 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Brutally kill the Segment's writers (bypassing `terminate/2` — the cursor
+  Brutally kill the Entity's writers (bypassing `terminate/2` — the cursor
   persist at shutdown must not run) and reset the durable cursor to
   "nothing flushed": the crash-after-flush-before-cursor window at e2e
   scale. The restart must re-drive every durable output with its original
   identity.
   """
-  def stale_cursor_and_crash_writers(operative_id, segment_id) do
-    case Flezha.State.Supervisor.lookup(segment_id) do
+  def stale_cursor_and_crash_writers(operative_id, entity_id) do
+    case Flezha.State.Supervisor.lookup(entity_id) do
       {:ok, pid} -> Process.exit(pid, :kill)
       :error -> :ok
     end
@@ -40,8 +40,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
       :error -> :ok
     end
 
-    dedup = Outbox.read(segment_id)
-    :ok = Outbox.write(segment_id, %{dedup | outbox_flushed_seq: -1})
+    dedup = Outbox.read(entity_id)
+    :ok = Outbox.write(entity_id, %{dedup | outbox_flushed_seq: -1})
   end
 
   def boot_runner(namespace, id_path, opts \\ []) do
@@ -159,14 +159,14 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   end
 
   @doc """
-  Group outputs by their durable output identity `(flz.segment, flz.seq,
+  Group outputs by their durable output identity `(flz.entity, flz.seq,
   flz.epoch)`. The tier's dedup contract is that one identity never carries two
   different payloads — a controller re-drive repeats an identity byte-for-byte.
   """
   def by_identity(outputs) do
     Enum.group_by(
       outputs,
-      fn {_msg, md} -> {md["flz.segment"], md["flz.seq"], md["flz.epoch"]} end,
+      fn {_msg, md} -> {md["flz.entity"], md["flz.seq"], md["flz.epoch"]} end,
       fn {msg, _md} -> msg end
     )
   end

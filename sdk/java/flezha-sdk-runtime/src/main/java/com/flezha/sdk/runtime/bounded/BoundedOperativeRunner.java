@@ -9,35 +9,35 @@ import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.native_.NativeTransport;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.proto.BoundedCompleted;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.IterCommit;
 import com.flezha.sdk.proto.IterPark;
-import com.flezha.sdk.proto.OpCommit;
-import com.flezha.sdk.proto.OpCommittedOp;
-import com.flezha.sdk.proto.OpHandoffItem;
-import com.flezha.sdk.proto.OpJournalState;
-import com.flezha.sdk.proto.OpOutboxItem;
+import com.flezha.sdk.proto.ProcCommit;
+import com.flezha.sdk.proto.ProcCommittedProc;
+import com.flezha.sdk.proto.ProcHandoffItem;
+import com.flezha.sdk.proto.ProcJournalState;
+import com.flezha.sdk.proto.ProcOutboxItem;
 import com.flezha.sdk.runtime.RunnerContext;
-import com.flezha.sdk.runtime.bounded.BoundedCompensation.SegmentRun;
+import com.flezha.sdk.runtime.bounded.BoundedCompensation.EntityRun;
 import com.flezha.sdk.runtime.bounded.BoundedCompensation.StageRecord;
 import com.flezha.sdk.runtime.control.AckRegistry;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.BoundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
-import com.flezha.sdk.runtime.operative.OperationDescriptor;
+import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.state.DlqPark;
+import com.flezha.sdk.runtime.state.EntityFlusher;
+import com.flezha.sdk.runtime.state.EntityId;
+import com.flezha.sdk.runtime.state.EntityStateRestore;
+import com.flezha.sdk.runtime.state.EntityStateSink;
 import com.flezha.sdk.runtime.state.FlusherEntry;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
-import com.flezha.sdk.runtime.state.SegmentFlusher;
-import com.flezha.sdk.runtime.state.SegmentId;
-import com.flezha.sdk.runtime.state.SegmentStateRestore;
-import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
@@ -71,14 +71,14 @@ import org.slf4j.LoggerFactory;
  * Sequential bounded driver. One driver runs per started bounded instance on a
  * <strong>dedicated thread</strong> (not a worker-pool thread): a {@code run}-sugar
  * body may block on its inbox during an interactive loop, and the structured
- * path joins pool segment sub-tasks — running the driver on the shared pool
+ * path joins pool entity sub-tasks — running the driver on the shared pool
  * would tie up a worker indefinitely and a single-thread pool would self-deadlock.
  * The driver:
  *
  * <ul>
  *   <li>runs the body — {@code run}-sugar ({@link #runSugar}) or the structured
- *       linear chain ({@link #runStructured}: operations sequential, segments
- *       parallel within an operation, count-based barrier between them);</li>
+ *       linear chain ({@link #runStructured}: procedures sequential, entities
+ *       parallel within a procedure, count-based barrier between them);</li>
  *   <li>observes the lifecycle — the instance's cancellation token (tripped by
  *       {@code BoundedStop} / {@code RemOperative} / a {@code maxDuration}
  *       watcher), the inbox, and {@code ctx.complete};</li>
@@ -92,9 +92,9 @@ import org.slf4j.LoggerFactory;
  * this driver's thread starts, so an inbox frame or {@code BoundedStop} arriving
  * immediately after {@code AddOperative} is never lost to a startup race.
  *
- * <p>P1 is in-memory: per-segment Changes fold into state via {@code applyChange}
+ * <p>P1 is in-memory: per-entity Changes fold into state via {@code applyChange}
  * but are not persisted (durability + crash-resume land in Phase 3, where the
- * WAL flush wires onto the same {@link SegmentId} identity computed here).
+ * WAL flush wires onto the same {@link EntityId} identity computed here).
  */
 public final class BoundedOperativeRunner {
 
@@ -115,7 +115,7 @@ public final class BoundedOperativeRunner {
     /**
      * Indirection over {@link NativeTransport#streamWrite(long, long, byte[])}
      * so tests can capture bounded output / completion frames without a real
-     * native context. Mirrors {@code OperationDispatcher.WIRE_WRITER}.
+     * native context. Mirrors {@code ProcedureDispatcher.WIRE_WRITER}.
      */
     public interface WireWriter {
         int write(long handle, long streamId, byte[] frame);
@@ -194,7 +194,7 @@ public final class BoundedOperativeRunner {
 
     // ---- run-sugar path -----------------------------------------------------
 
-    /** Run-sugar path: a single implicit Operation/Segment whose body is {@code run}. */
+    /** Run-sugar path: a single implicit Procedure/Entity whose body is {@code run}. */
     private static Outcome runSugar(
             RunnerContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
         BoundedOperativeCtxImpl ctxImpl = new BoundedOperativeCtxImpl(ctx, instance);
@@ -217,10 +217,10 @@ public final class BoundedOperativeRunner {
     // ---- structured path ----------------------------------------------------
 
     /**
-     * Structured path: run the linear chain sequentially. Operation {@code N+1}
-     * starts only when every segment of operation {@code N} has finished
-     * (count-based barrier); segments within an operation run in parallel on the
-     * pool. Inter-operation output collected at each barrier seeds the next stage.
+     * Structured path: run the linear chain sequentially. Procedure {@code N+1}
+     * starts only when every entity of procedure {@code N} has finished
+     * (count-based barrier); entities within a procedure run in parallel on the
+     * pool. Inter-procedure output collected at each barrier seeds the next stage.
      */
     private static Outcome runStructured(
             RunnerContext ctx, BoundedOperativeInstance instance, BoundedSpec spec, String args) {
@@ -228,12 +228,12 @@ public final class BoundedOperativeRunner {
         List<Integer> chain = spec.chain();
         String instanceId = instance.instanceId();
 
-        // Segments were built + wired onto the instance by AddOperativeHandler up
+        // Entities were built + wired onto the instance by AddOperativeHandler up
         // front (before the ACK) so the Controller's RestoreInitState frames could
-        // reach them. Hold the first Operation on the crash-resume gate until those
+        // reach them. Hold the first Procedure on the crash-resume gate until those
         // restores have landed — so a durable respawn reads persisted state instead
         // of cold-starting. A no-op for a fresh spawn (nothing expected).
-        List<List<BoundedSegment>> stageSegments = instance.stageSegments();
+        List<List<BoundedEntity>> stageEntities = instance.stageEntities();
         instance.awaitRestore();
 
         // Crash-resume into an in-flight compensation (saga, §4.3): a non-empty
@@ -243,14 +243,14 @@ public final class BoundedOperativeRunner {
         // ones — rather than re-running the forward chain, which would redo
         // already-undone work. Empty ⇒ a fresh run / crash mid-forward, re-run below.
         int resumeIter = resumeIter(instance);
-        List<StageRecord> resumed = reconstructCompletedFromIntents(instance, chain, stageSegments, resumeIter);
+        List<StageRecord> resumed = reconstructCompletedFromIntents(instance, chain, stageEntities, resumeIter);
         if (!resumed.isEmpty()) {
             runCompensation(
                     ctx,
                     topology,
                     instanceId,
                     chain,
-                    stageSegments,
+                    stageEntities,
                     resumed,
                     spec.rollbackMode(),
                     instance,
@@ -259,7 +259,7 @@ public final class BoundedOperativeRunner {
             return new Outcome("error", "resumed compensation after crash", EMPTY);
         }
 
-        // Seed the first operation from the spawn args via the entry channel's typed parser.
+        // Seed the first procedure from the spawn args via the entry channel's typed parser.
         ChannelDescriptor entry = entryChannel(topology);
         Object seed = wrapEntry(entry, args.getBytes(StandardCharsets.UTF_8));
         List<Object> batch = new ArrayList<>();
@@ -268,19 +268,19 @@ public final class BoundedOperativeRunner {
         // A loop iterates the SAME chain machinery below; ONCE is the degenerate
         // single-iteration case, so the forward path is unchanged for it.
         if (spec.loopMode() != LoopMode.ONCE) {
-            return runLoop(ctx, instance, spec, topology, chain, stageSegments, entry, batch);
+            return runLoop(ctx, instance, spec, topology, chain, stageEntities, entry, batch);
         }
 
         // A rewind's outstanding undo runs BEFORE any forward progress: the
         // controller has decided those committed iterations never happened, and
         // resuming the chain on top of un-undone effects would compound them.
-        String undoError = runRewindUndo(ctx, instance, spec, topology, chain, stageSegments);
+        String undoError = runRewindUndo(ctx, instance, spec, topology, chain, stageEntities);
         if (undoError != null) {
             return new Outcome("error", undoError, EMPTY);
         }
 
         // ONCE is a single pass, so its one and only iteration is 0.
-        IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageSegments, batch, 0);
+        IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageEntities, batch, 0);
         if (it.abnormal() == null) {
             return new Outcome("ok", "", EMPTY);
         }
@@ -289,7 +289,7 @@ public final class BoundedOperativeRunner {
                 topology,
                 instanceId,
                 chain,
-                stageSegments,
+                stageEntities,
                 it.completed(),
                 spec.rollbackMode(),
                 instance,
@@ -310,7 +310,7 @@ public final class BoundedOperativeRunner {
     /**
      * Run the undo the controller's rewind marker says is still owed.
      *
-     * <p>{@code rewind_undo} is DERIVED by the controller — the committed ops of
+     * <p>{@code rewind_undo} is DERIVED by the controller — the committed procs of
      * the rewound iterations that have no {@code compensated} record appended
      * after their own commit. So the SDK does not decide what to unwind; it
      * drains a list, which is what makes a crash mid-rewind resume with exactly
@@ -322,8 +322,8 @@ public final class BoundedOperativeRunner {
      *   <li>The rollback mode is <b>forced</b> all-or-nothing, whatever the class
      *       declares. A rewind unwinds committed iterations by definition, so
      *       "keep progress" is meaningless here.
-     *   <li>The per-segment crash-resume done markers are <b>not</b> consulted.
-     *       They are per <em>segment</em>, and a segment that ran in two rewound
+     *   <li>The per-entity crash-resume done markers are <b>not</b> consulted.
+     *       They are per <em>entity</em>, and an entity that ran in two rewound
      *       iterations must be undone once per iteration.
      * </ul>
      *
@@ -336,35 +336,35 @@ public final class BoundedOperativeRunner {
             BoundedSpec spec,
             UnboundedOperativeTopology topology,
             List<Integer> chain,
-            List<List<BoundedSegment>> stageSegments) {
-        List<OpCommittedOp> owed =
-                instance.opJournal().map(OpJournalState::getRewindUndoList).orElseGet(List::of);
+            List<List<BoundedEntity>> stageEntities) {
+        List<ProcCommittedProc> owed =
+                instance.opJournal().map(ProcJournalState::getRewindUndoList).orElseGet(List::of);
         if (owed.isEmpty()) {
             return null;
         }
 
         // Rebuild the completed-stage records the planner consumes. Outputs are
-        // empty: a committed op's collected output was never durable, so a
-        // compensable op must keep its undo handle in State (which IS restored) —
+        // empty: a committed proc's collected output was never durable, so a
+        // compensable proc must keep its undo handle in State (which IS restored) —
         // the same at-least-once contract the crash-resume undo rests on.
         List<StageRecord> completed = new ArrayList<>();
-        for (OpCommittedOp op : owed) {
-            int stageIdx = op.getOpIdx();
+        for (ProcCommittedProc proc : owed) {
+            int stageIdx = proc.getProcIdx();
             if (stageIdx < 0) {
                 continue;
             }
-            List<SegmentRun> ran = new ArrayList<>();
-            for (int i = 0; i < stageSegments.get(stageIdx).size(); i++) {
-                ran.add(new SegmentRun(i, List.of()));
+            List<EntityRun> ran = new ArrayList<>();
+            for (int i = 0; i < stageEntities.get(stageIdx).size(); i++) {
+                ran.add(new EntityRun(i, List.of()));
             }
-            completed.add(new StageRecord(stageIdx, op.getIter(), ran));
+            completed.add(new StageRecord(stageIdx, proc.getIter(), ran));
         }
         if (completed.isEmpty()) {
             return null;
         }
 
         String instanceId = instance.instanceId();
-        LOG.info("bounded `{}`: rewind owes {} op undo(s); unwinding before resuming", instanceId, completed.size());
+        LOG.info("bounded `{}`: rewind owes {} proc undo(s); unwinding before resuming", instanceId, completed.size());
 
         // FORCED all-or-nothing: a rewind unwinds committed iterations by
         // definition, so a "keep progress" declaration is meaningless here. The
@@ -373,24 +373,24 @@ public final class BoundedOperativeRunner {
                 BoundedCompensation.planCompensation(RollbackMode.ALL_OR_NOTHING, List.of(), completed);
 
         for (StageRecord record : plan) {
-            List<BoundedSegment> slots = stageSegments.get(record.stageIdx());
-            // A FRESH sink per undone op: each op journals exactly ONE
-            // `compensated` record, and that record is what drains this op from
+            List<BoundedEntity> slots = stageEntities.get(record.stageIdx());
+            // A FRESH sink per undone proc: each proc journals exactly ONE
+            // `compensated` record, and that record is what drains this proc from
             // `rewind_undo`.
-            BoundedSegmentSink sink = new BoundedSegmentSink(ctx, instanceId, spec.persistenceEnabled());
+            BoundedEntitySink sink = new BoundedEntitySink(ctx, instanceId, spec.persistenceEnabled());
 
-            // Deliberately does NOT consult the per-segment crash-resume done
-            // markers: those are per SEGMENT, and a segment that ran in two
+            // Deliberately does NOT consult the per-entity crash-resume done
+            // markers: those are per ENTITY, and an entity that ran in two
             // rewound iterations must be undone once per iteration.
-            boolean hasHook = !slots.isEmpty() && slots.get(0).op().compensateOverridden();
+            boolean hasHook = !slots.isEmpty() && slots.get(0).proc().compensateOverridden();
             if (hasHook) {
-                for (SegmentRun segRun : record.segments()) {
-                    compensateSegment(topology, instanceId, slots.get(segRun.segmentIndex()), segRun.outputs(), sink);
+                for (EntityRun segRun : record.entities()) {
+                    compensateEntity(topology, instanceId, slots.get(segRun.entityIndex()), segRun.outputs(), sink);
                 }
             }
 
-            // ONE compensated record per undone op — EVEN AN EMPTY ONE for a
-            // hookless op. Without it that op is never drained from `rewind_undo`
+            // ONE compensated record per undone proc — EVEN AN EMPTY ONE for a
+            // hookless proc. Without it that proc is never drained from `rewind_undo`
             // and every later restore re-offers it forever.
             if (spec.persistenceEnabled()) {
                 shipCompensationOutbox(ctx, instanceId, record.iter(), sink.staged());
@@ -431,7 +431,7 @@ public final class BoundedOperativeRunner {
             BoundedSpec spec,
             UnboundedOperativeTopology topology,
             List<Integer> chain,
-            List<List<BoundedSegment>> stageSegments,
+            List<List<BoundedEntity>> stageEntities,
             ChannelDescriptor entry,
             List<Object> firstSeed) {
         String instanceId = instance.instanceId();
@@ -450,14 +450,14 @@ public final class BoundedOperativeRunner {
                 seed.add(wrapEntry(entry, item));
             }
 
-            IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageSegments, seed, iter);
+            IterationOut it = runIteration(ctx, instance, spec, topology, chain, stageEntities, seed, iter);
             if (it.abnormal() != null) {
                 runCompensation(
                         ctx,
                         topology,
                         instanceId,
                         chain,
-                        stageSegments,
+                        stageEntities,
                         it.completed(),
                         spec.rollbackMode(),
                         instance,
@@ -467,7 +467,7 @@ public final class BoundedOperativeRunner {
             }
 
             if (spec.persistenceEnabled()) {
-                String err = commitIteration(ctx, instance, topology, iter, it.terminalBatch(), chain, stageSegments);
+                String err = commitIteration(ctx, instance, topology, iter, it.terminalBatch(), chain, stageEntities);
                 if (err != null) {
                     return new Outcome("error", err, EMPTY);
                 }
@@ -504,9 +504,9 @@ public final class BoundedOperativeRunner {
             int iter,
             List<Object> terminalBatch,
             List<Integer> chain,
-            List<List<BoundedSegment>> stageSegments) {
+            List<List<BoundedEntity>> stageEntities) {
         // The terminal handoff is what re-seeds a crash-resumed CHAINED iteration.
-        List<BoundedSegment> terminal = stageSegments.get(chain.size() - 1);
+        List<BoundedEntity> terminal = stageEntities.get(chain.size() - 1);
         Optional<ChannelDescriptor> out =
                 terminal.isEmpty() ? Optional.empty() : terminal.get(0).outputChannel();
 
@@ -570,14 +570,14 @@ public final class BoundedOperativeRunner {
             BoundedSpec spec,
             UnboundedOperativeTopology topology,
             List<Integer> chain,
-            List<List<BoundedSegment>> stageSegments,
+            List<List<BoundedEntity>> stageEntities,
             List<Object> seedBatch,
             int iter) {
         String instanceId = instance.instanceId();
 
-        // Each operation is fed by ITS producer, not by "whatever ran last". With a
-        // branch, two operations share one producer's output; with a fan-in, one
-        // operation is fed by two producers — and those two contributions must
+        // Each procedure is fed by ITS producer, not by "whatever ran last". With a
+        // branch, two procedures share one producer's output; with a fan-in, one
+        // procedure is fed by two producers — and those two contributions must
         // ACCUMULATE. Overwriting there silently drops half the input, which is the
         // defect a naive "running batch" carries into a branching graph.
         Map<Integer, List<Object>> inputs = new HashMap<>();
@@ -590,14 +590,14 @@ public final class BoundedOperativeRunner {
         // Non-null once the chain terminates abnormally (error / mid-chain stop).
         Outcome abnormal = null;
 
-        // Crash-resume from the op-journal: an operation the controller recorded
+        // Crash-resume from the proc-journal: a procedure the controller recorded
         // as committed is NOT re-run — its effects are already durable, and
-        // re-running it would redo them. The next operation is seeded from the
+        // re-running it would redo them. The next procedure is seeded from the
         // handoff journaled at that barrier.
-        Set<Integer> committedOps = journaledCommittedOps(instance);
-        if (!committedOps.isEmpty()) {
+        Set<Integer> committedProcs = journaledCommittedProcs(instance);
+        if (!committedProcs.isEmpty()) {
             try {
-                bankJournaledHandoffs(instance, topology, chain, committedOps, inputs);
+                bankJournaledHandoffs(instance, topology, chain, committedProcs, inputs);
             } catch (BoundedOperativeException e) {
                 // Outside the stage loop's own catch, so a mapping that throws
                 // while re-seeding is contained here instead of unwinding the
@@ -613,17 +613,17 @@ public final class BoundedOperativeRunner {
                 abnormal = new Outcome("cancelled", "", EMPTY);
                 break;
             }
-            if (committedOps.contains(stageIdx)) {
+            if (committedProcs.contains(stageIdx)) {
                 LOG.info(
-                        "bounded `{}`: op {} was journaled as committed before the crash; skipping",
+                        "bounded `{}`: proc {} was journaled as committed before the crash; skipping",
                         instanceId,
                         stageIdx);
                 continue;
             }
-            OperationDescriptor op = topology.operation(chain.get(stageIdx));
-            List<BoundedSegment> segs = stageSegments.get(stageIdx);
+            ProcedureDescriptor proc = topology.procedure(chain.get(stageIdx));
+            List<BoundedEntity> segs = stageEntities.get(stageIdx);
             batch = inputs.getOrDefault(chain.get(stageIdx), List.of());
-            List<List<Object>> partitioned = partition(op, segs, batch);
+            List<List<Object>> partitioned = partition(proc, segs, batch);
             try {
                 StageOut stageOut = runStageParallel(
                         ctx,
@@ -636,31 +636,31 @@ public final class BoundedOperativeRunner {
                         instance);
                 batch = stageOut.batch();
 
-                // Durable saga (§4.3): record this operation's completion — one
-                // compensation-intent marker per segment that ran — so a crash
+                // Durable saga (§4.3): record this procedure's completion — one
+                // compensation-intent marker per entity that ran — so a crash
                 // mid-compensation knows what still needs undo. Only for
-                // compensable operations (a hookless op is never rolled back).
-                if (!segs.isEmpty() && segs.get(0).op().compensateOverridden()) {
-                    for (SegmentRun segRun : stageOut.segments()) {
+                // compensable procedures (a hookless proc is never rolled back).
+                if (!segs.isEmpty() && segs.get(0).proc().compensateOverridden()) {
+                    for (EntityRun segRun : stageOut.entities()) {
                         emitCompensationRecord(
-                                SegmentStateSink.PAYLOAD_ID_COMPENSATION_INTENT,
-                                segs.get(segRun.segmentIndex()).identity(),
+                                EntityStateSink.PAYLOAD_ID_COMPENSATION_INTENT,
+                                segs.get(segRun.entityIndex()).identity(),
                                 spec.persistenceEnabled());
                     }
                 }
-                completed.add(new StageRecord(stageIdx, iter, stageOut.segments()));
+                completed.add(new StageRecord(stageIdx, iter, stageOut.entities()));
 
-                // Op barrier: journal this operation's completion + handoff and
+                // Proc barrier: journal this procedure's completion + handoff and
                 // block until it is durable. A durable structured class only.
                 if (spec.persistenceEnabled()) {
-                    String commitError = commitOpBoundary(
+                    String commitError = commitProcBoundary(
                             ctx,
                             topology,
                             instanceId,
                             stageIdx,
                             iter,
                             segs,
-                            stageOut.segments(),
+                            stageOut.entities(),
                             batch,
                             segs.isEmpty() ? Optional.empty() : segs.get(0).outputChannel(),
                             stageOut.outbox());
@@ -670,25 +670,25 @@ public final class BoundedOperativeRunner {
                     }
                 }
 
-                // Release this operation's output to EVERY consumer of its output
+                // Release this procedure's output to EVERY consumer of its output
                 // channel: a branch feeds several, and a fan-in ACCUMULATES. Assigning
                 // instead of accumulating here is the bug branching must avoid — it
                 // silently drops one producer's contribution.
                 //
                 // Ordered AFTER the intent markers, the completion record and the
-                // op barrier — the Rust `run_iteration` ordering. A merge mapping
-                // can throw here, and the operation that produced the batch has
+                // proc barrier — the Rust `run_iteration` ordering. A merge mapping
+                // can throw here, and the procedure that produced the batch has
                 // already RUN: recording it first is what puts it in the saga's
                 // undo plan (and its intent markers on disk) instead of leaving
                 // its effects outstanding.
-                if (op.outputChannelId().isPresent()) {
+                if (proc.outputChannelId().isPresent()) {
                     ChannelDescriptor outCh =
-                            topology.channel(op.outputChannelId().getAsInt());
+                            topology.channel(proc.outputChannelId().getAsInt());
                     if (outCh != null) {
                         for (ConsumerEdge edge : outCh.consumers()) {
                             // A merged consumer receives each producer's
                             // contribution through that edge's mapping.
-                            extendMapped(inputs.computeIfAbsent(edge.operation(), k -> new ArrayList<>()), edge, batch);
+                            extendMapped(inputs.computeIfAbsent(edge.procedure(), k -> new ArrayList<>()), edge, batch);
                         }
                     }
                 }
@@ -703,9 +703,9 @@ public final class BoundedOperativeRunner {
 
     /**
      * Roll back the completed stages of an abnormally-terminated chain. Completed
-     * operations are compensated in reverse order (per
-     * {@link BoundedCompensation#planCompensation}) and, within an operation,
-     * once per segment that ran. Operations without a {@code compensate} hook are
+     * procedures are compensated in reverse order (per
+     * {@link BoundedCompensation#planCompensation}) and, within a procedure,
+     * once per entity that ran. Procedures without a {@code compensate} hook are
      * skipped. Best-effort: a failing hook is logged and the remaining steps
      * still run, so one broken undo cannot strand the rest. Runs on the driver
      * thread (not the work pool).
@@ -716,7 +716,7 @@ public final class BoundedOperativeRunner {
             UnboundedOperativeTopology topology,
             String instanceId,
             List<Integer> chain,
-            List<List<BoundedSegment>> stageSegments,
+            List<List<BoundedEntity>> stageEntities,
             List<StageRecord> completed,
             RollbackMode rollbackMode,
             BoundedOperativeInstance instance,
@@ -729,28 +729,28 @@ public final class BoundedOperativeRunner {
         if (plan.isEmpty()) {
             return;
         }
-        // Compensation output stages too, and rides its own OpCommit with
+        // Compensation output stages too, and rides its own ProcCommit with
         // `compensating` set — an undo's effect must be as durable as the effect
         // it reverses.
-        BoundedSegmentSink sink = new BoundedSegmentSink(ctx, instanceId, persistenceEnabled);
+        BoundedEntitySink sink = new BoundedEntitySink(ctx, instanceId, persistenceEnabled);
         for (StageRecord record : plan) {
-            List<BoundedSegment> slots = stageSegments.get(record.stageIdx());
-            // The hook flag is per operation; a hookless operation is skipped.
-            if (slots.isEmpty() || !slots.get(0).op().compensateOverridden()) {
+            List<BoundedEntity> slots = stageEntities.get(record.stageIdx());
+            // The hook flag is per procedure; a hookless procedure is skipped.
+            if (slots.isEmpty() || !slots.get(0).proc().compensateOverridden()) {
                 continue;
             }
-            for (SegmentRun segRun : record.segments()) {
-                BoundedSegment seg = slots.get(segRun.segmentIndex());
-                // Crash-resume (§4.3): a segment whose compensation-done marker
+            for (EntityRun segRun : record.entities()) {
+                BoundedEntity seg = slots.get(segRun.entityIndex());
+                // Crash-resume (§4.3): an entity whose compensation-done marker
                 // was shipped back already ran its undo — skip it.
                 if (instance.hasCompensationDone(seg.identity().encoded())) {
                     continue;
                 }
-                compensateSegment(topology, instanceId, seg, segRun.outputs(), sink);
+                compensateEntity(topology, instanceId, seg, segRun.outputs(), sink);
                 // Durable saga (§4.3): record this compensation's completion so a
-                // later crash resumes the remainder and skips this segment.
+                // later crash resumes the remainder and skips this entity.
                 emitCompensationRecord(
-                        SegmentStateSink.PAYLOAD_ID_COMPENSATION_DONE, seg.identity(), persistenceEnabled);
+                        EntityStateSink.PAYLOAD_ID_COMPENSATION_DONE, seg.identity(), persistenceEnabled);
             }
         }
 
@@ -760,58 +760,58 @@ public final class BoundedOperativeRunner {
     }
 
     /**
-     * Invoke one segment's {@code compensate} hook. The shared EFFECT of both undo
+     * Invoke one entity's {@code compensate} hook. The shared EFFECT of both undo
      * passes — the marker-backed crash-resume one and the journal-backed rewind
      * one — which otherwise differ in what they decide to undo.
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private static void compensateSegment(
+    private static void compensateEntity(
             UnboundedOperativeTopology topology,
             String instanceId,
-            BoundedSegment seg,
+            BoundedEntity seg,
             List<Object> outputs,
-            BoundedSegmentSink sink) {
+            BoundedEntitySink sink) {
         BoundedCollectAdapter adapter = new BoundedCollectAdapter(topology, seg.outputChannel(), sink, seg.identity());
-        Operation op = seg.op();
-        BiConsumer<Object, Change> applyChangeFn = (s, c) -> op.applyChange(s, c);
-        // Compensation Changes record onto the segment's flush buffer and ship to
+        Procedure proc = seg.proc();
+        BiConsumer<Object, Change> applyChangeFn = (s, c) -> proc.applyChange(s, c);
+        // Compensation Changes record onto the entity's flush buffer and ship to
         // the WAL (durable classes) so a crash mid-compensation leaves the undo
         // recorded.
         List<Change> buffer = seg.changeBuffer();
         StateHandle<Object, Change> handle = StateHandle.create(seg.state(), buffer, applyChangeFn);
         try {
-            op.compensate(outputs, handle, adapter);
-        } catch (OperationException | RuntimeException e) {
-            LOG.warn("bounded {} compensation for op `{}` failed: {}", instanceId, op.name(), e.toString());
+            proc.compensate(outputs, handle, adapter);
+        } catch (ProcedureException | RuntimeException e) {
+            LOG.warn("bounded {} compensation for proc `{}` failed: {}", instanceId, proc.name(), e.toString());
         } finally {
-            seg.flusher().ifPresent(SegmentFlusher::flushEntry);
+            seg.flusher().ifPresent(EntityFlusher::flushEntry);
         }
     }
 
-    /** Journal the undo's staged output under a {@code compensating} OpCommit. */
+    /** Journal the undo's staged output under a {@code compensating} ProcCommit. */
     private static void shipCompensationOutbox(
             RunnerContext ctx, String instanceId, int iter, List<StagedOutput> staged) {
         // Stamped for the same reason the forward barrier is: the undo of
         // iteration N is a distinct journal entry from the undo of iteration N-1.
-        OpCommit.Builder commit =
-                OpCommit.newBuilder().setOperativeId(instanceId).setIter(iter).setCompensating(true);
+        ProcCommit.Builder commit =
+                ProcCommit.newBuilder().setOperativeId(instanceId).setIter(iter).setCompensating(true);
         int seq = 0;
         for (StagedOutput out : staged) {
-            commit.addOutbox(OpOutboxItem.newBuilder()
-                    .setSeqInOp(seq++)
+            commit.addOutbox(ProcOutboxItem.newBuilder()
+                    .setSeqInProc(seq++)
                     .setChannel(out.channel())
                     .setPayload(ByteString.copyFrom(out.payload()))
                     .build());
         }
         // The undo wait deliberately ignores cancellation: a rollback IS the
         // response to that cancel, so abandoning it would leave the undo unshipped.
-        String referenceId = "op-commit-undo-" + instanceId + "-" + System.nanoTime();
+        String referenceId = "proc-commit-undo-" + instanceId + "-" + System.nanoTime();
         String error = shipAndAwait(
                 ctx,
                 referenceId,
                 CommandRequest.newBuilder()
                         .setReferenceId(referenceId)
-                        .setOpCommit(commit.build())
+                        .setProcCommit(commit.build())
                         .build(),
                 "compensation outbox");
         if (error != null) {
@@ -821,25 +821,22 @@ public final class BoundedOperativeRunner {
 
     /**
      * Rebuild the completed-stage records to compensate on a crash-resume from
-     * the shipped-back compensation-intent markers: a Segment marked "intent"
-     * completed forward and needs undo. Outputs are empty — an operation's
-     * collected inter-operation output was never durable, so a durable
-     * compensable operation must persist its undo handle in State (which IS
+     * the shipped-back compensation-intent markers: an Entity marked "intent"
+     * completed forward and needs undo. Outputs are empty — a procedure's
+     * collected inter-procedure output was never durable, so a durable
+     * compensable procedure must persist its undo handle in State (which IS
      * restored), per the at-least-once author contract. Stages are gathered in
      * chain order; {@link BoundedCompensation#planCompensation} reverses them.
      */
     private static List<StageRecord> reconstructCompletedFromIntents(
-            BoundedOperativeInstance instance,
-            List<Integer> chain,
-            List<List<BoundedSegment>> stageSegments,
-            int iter) {
+            BoundedOperativeInstance instance, List<Integer> chain, List<List<BoundedEntity>> stageEntities, int iter) {
         List<StageRecord> completed = new ArrayList<>();
         for (int stageIdx = 0; stageIdx < chain.size(); stageIdx++) {
-            List<BoundedSegment> slots = stageSegments.get(stageIdx);
-            List<SegmentRun> segs = new ArrayList<>();
+            List<BoundedEntity> slots = stageEntities.get(stageIdx);
+            List<EntityRun> segs = new ArrayList<>();
             for (int i = 0; i < slots.size(); i++) {
                 if (instance.hasCompensationIntent(slots.get(i).identity().encoded())) {
-                    segs.add(new SegmentRun(i, List.of()));
+                    segs.add(new EntityRun(i, List.of()));
                 }
             }
             if (!segs.isEmpty()) {
@@ -850,115 +847,116 @@ public final class BoundedOperativeRunner {
     }
 
     /** Ship one saga compensation marker — a no-op for an opted-out (non-durable) class. */
-    private static void emitCompensationRecord(String payloadId, SegmentId identity, boolean persistenceEnabled) {
+    private static void emitCompensationRecord(String payloadId, EntityId identity, boolean persistenceEnabled) {
         if (persistenceEnabled) {
-            SegmentStateSink.sendCompensationRecord(payloadId, identity);
+            EntityStateSink.sendCompensationRecord(payloadId, identity);
         }
     }
 
     /**
-     * Build every stage's Segments for a structured spec, in chain order. Called
+     * Build every stage's Entities for a structured spec, in chain order. Called
      * synchronously by {@code AddOperativeHandler} (before the instance is
-     * registered + the driver spawns) so the Segments are reachable by the
+     * registered + the driver spawns) so the Entities are reachable by the
      * inbound {@code RestoreInitState} handler and the resume gate is armed before
      * any restore frame — or the driver thread — runs.
      */
     @Nonnull
-    public static List<List<BoundedSegment>> buildAllStageSegments(
+    public static List<List<BoundedEntity>> buildAllStageEntities(
             @Nonnull UnboundedOperativeTopology topology,
             @Nonnull String instanceId,
             @Nonnull List<Integer> chain,
             boolean persistenceEnabled) {
-        List<List<BoundedSegment>> stageSegments = new ArrayList<>(chain.size());
+        List<List<BoundedEntity>> stageEntities = new ArrayList<>(chain.size());
         for (int opId : chain) {
-            stageSegments.add(buildStageSegments(topology, instanceId, opId, persistenceEnabled));
+            stageEntities.add(buildStageEntities(topology, instanceId, opId, persistenceEnabled));
         }
-        return stageSegments;
+        return stageEntities;
     }
 
     /**
-     * Build the segments for one stage: a single segment in single mode, one per
-     * declared key in static mode. Uses the same {@link SegmentId} identity a
-     * unbounded operative would (real operation name + segment key, no
-     * sentinels), so Phase-3 durability rides the same per-Segment identity.
+     * Build the entities for one stage: a single entity in single mode, one per
+     * declared key in static mode. Uses the same {@link EntityId} identity a
+     * unbounded operative would (real procedure name + entity key, no
+     * sentinels), so Phase-3 durability rides the same per-Entity identity.
      */
-    static List<BoundedSegment> buildStageSegments(
+    static List<BoundedEntity> buildStageEntities(
             UnboundedOperativeTopology topology, String instanceId, int opId, boolean persistenceEnabled) {
-        OperationDescriptor op = topology.operation(opId);
-        Optional<ChannelDescriptor> outputChannel = op.outputChannelId().isPresent()
-                ? Optional.ofNullable(topology.channel(op.outputChannelId().getAsInt()))
+        ProcedureDescriptor proc = topology.procedure(opId);
+        Optional<ChannelDescriptor> outputChannel = proc.outputChannelId().isPresent()
+                ? Optional.ofNullable(topology.channel(proc.outputChannelId().getAsInt()))
                 : Optional.empty();
-        List<BoundedSegment> segs = new ArrayList<>();
-        if (op.segmentKeys().isEmpty()) {
-            segs.add(buildSegment(instanceId, op, Optional.empty(), outputChannel, persistenceEnabled));
+        List<BoundedEntity> segs = new ArrayList<>();
+        if (proc.entityKeys().isEmpty()) {
+            segs.add(buildEntity(instanceId, proc, Optional.empty(), outputChannel, persistenceEnabled));
         } else {
-            for (String key : op.segmentKeys()) {
-                segs.add(buildSegment(instanceId, op, Optional.of(key), outputChannel, persistenceEnabled));
+            for (String key : proc.entityKeys()) {
+                segs.add(buildEntity(instanceId, proc, Optional.of(key), outputChannel, persistenceEnabled));
             }
         }
         return segs;
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static BoundedSegment buildSegment(
+    private static BoundedEntity buildEntity(
             String instanceId,
-            OperationDescriptor op,
+            ProcedureDescriptor proc,
             Optional<String> key,
             Optional<ChannelDescriptor> outputChannel,
             boolean persistenceEnabled) {
-        Operation operationInstance = instantiateOperation(op.operationClass());
-        Object state = operationInstance.initState(key, Optional.empty());
-        SegmentId identity = SegmentId.of(instanceId, op.name(), key);
+        Procedure procedureInstance = instantiateProcedure(proc.procedureClass());
+        Object state = procedureInstance.initState(key, Optional.empty());
+        EntityId identity = EntityId.of(instanceId, proc.name(), key);
 
-        // A changeful segment ships its Changes to the WAL on flush; the entry
+        // A changeful entity ships its Changes to the WAL on flush; the entry
         // carries the class-level persistence toggle (drain-and-discard when off).
         // Reuses the unbounded flusher's frame + sink path, byte-for-byte.
         List<Change> changeBuffer = new ArrayList<>();
         Optional<FlusherEntry> flusher = Optional.empty();
-        if (op.changeType() != NoChange.class) {
+        if (proc.changeType() != NoChange.class) {
             flusher = Optional.of(new FlusherEntry(
                     new Object(),
                     changeBuffer,
                     // Bounded operatives do not run the effectively-once tier:
-                    // their durability contract is the op-journal, not the
+                    // their durability contract is the proc-journal, not the
                     // effect record.
                     List.of(),
                     persistenceEnabled,
                     new AtomicLong(0L),
-                    SegmentStateSink::send,
+                    EntityStateSink::send,
                     new HeaderTemplate(),
                     identity,
-                    op.schemaVersion(),
-                    new KryoCodec(op.kryoTypes())));
+                    proc.schemaVersion(),
+                    new KryoCodec(proc.kryoTypes())));
         }
-        return new BoundedSegment(operationInstance, state, identity, key, outputChannel, changeBuffer, flusher);
+        return new BoundedEntity(procedureInstance, state, identity, key, outputChannel, changeBuffer, flusher);
     }
 
     /**
-     * Partition an input batch across a stage's segments. Single mode routes
-     * every item to segment 0; static mode routes by the operation's
-     * {@code segmentFor} keys.
+     * Partition an input batch across a stage's entities. Single mode routes
+     * every item to entity 0; static mode routes by the procedure's
+     * {@code entitiesFor} keys.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static List<List<Object>> partition(OperationDescriptor op, List<BoundedSegment> segs, List<Object> batch) {
+    private static List<List<Object>> partition(
+            ProcedureDescriptor proc, List<BoundedEntity> segs, List<Object> batch) {
         List<List<Object>> buckets = new ArrayList<>(segs.size());
         for (int i = 0; i < segs.size(); i++) {
             buckets.add(new ArrayList<>());
         }
-        if (op.segmentKeys().isEmpty()) {
+        if (proc.entityKeys().isEmpty()) {
             if (!buckets.isEmpty()) {
                 buckets.get(0).addAll(batch);
             }
             return buckets;
         }
         Map<String, Integer> keyToIdx = new HashMap<>();
-        for (int i = 0; i < op.segmentKeys().size(); i++) {
-            keyToIdx.put(op.segmentKeys().get(i), i);
+        for (int i = 0; i < proc.entityKeys().size(); i++) {
+            keyToIdx.put(proc.entityKeys().get(i), i);
         }
-        // segmentFor is a stateless routing function; any segment's instance works.
-        Operation router = segs.get(0).op();
+        // entitiesFor is a stateless routing function; any entity's instance works.
+        Procedure router = segs.get(0).proc();
         for (Object item : batch) {
-            List<String> keys = router.segmentFor(item);
+            List<String> keys = router.entitiesFor(item);
             for (String key : keys) {
                 Integer idx = keyToIdx.get(key);
                 if (idx != null) {
@@ -970,45 +968,45 @@ public final class BoundedOperativeRunner {
     }
 
     /**
-     * Run a stage's segments in parallel on the pool and join on a count-based
-     * barrier: every dispatched item is processed across all segments, with no
-     * segment mid-run, before the collected output is released to the next stage.
+     * Run a stage's entities in parallel on the pool and join on a count-based
+     * barrier: every dispatched item is processed across all entities, with no
+     * entity mid-run, before the collected output is released to the next stage.
      */
     private static StageOut runStageParallel(
             RunnerContext ctx,
             String instanceId,
             UnboundedOperativeTopology topology,
-            List<BoundedSegment> segs,
+            List<BoundedEntity> segs,
             List<List<Object>> partitioned,
             boolean staging,
             RetryPolicy retry,
             BoundedOperativeInstance instance)
             throws BoundedOperativeException {
-        Map<Integer, List<OpOutboxItem>> outboxBySegment = new java.util.concurrent.ConcurrentHashMap<>();
-        List<Future<SegmentRun>> futures = new ArrayList<>();
+        Map<Integer, List<ProcOutboxItem>> outboxByEntity = new java.util.concurrent.ConcurrentHashMap<>();
+        List<Future<EntityRun>> futures = new ArrayList<>();
         for (int i = 0; i < segs.size(); i++) {
             List<Object> items = partitioned.get(i);
             if (items.isEmpty()) {
                 continue;
             }
             final int segIdx = i;
-            BoundedSegment seg = segs.get(i);
+            BoundedEntity seg = segs.get(i);
             futures.add(ctx.workerPool().submit(() -> {
-                SegmentOut out = runSegmentRetrying(topology, instanceId, ctx, seg, items, staging, retry, instance);
-                outboxBySegment.put(segIdx, out.outbox());
-                return new SegmentRun(segIdx, out.collected());
+                EntityOut out = runEntityRetrying(topology, instanceId, ctx, seg, items, staging, retry, instance);
+                outboxByEntity.put(segIdx, out.outbox());
+                return new EntityRun(segIdx, out.collected());
             }));
         }
 
-        // Wait for every segment (the barrier) before returning, even on
-        // failure, so no segment is mid-run when the stage completes. Each
-        // segment's outputs are kept under its index for both the next-stage
+        // Wait for every entity (the barrier) before returning, even on
+        // failure, so no entity is mid-run when the stage completes. Each
+        // entity's outputs are kept under its index for both the next-stage
         // batch and saga rollback.
-        List<SegmentRun> segments = new ArrayList<>();
+        List<EntityRun> entities = new ArrayList<>();
         BoundedOperativeException firstErr = null;
-        for (Future<SegmentRun> f : futures) {
+        for (Future<EntityRun> f : futures) {
             try {
-                segments.add(f.get());
+                entities.add(f.get());
             } catch (ExecutionException ee) {
                 if (firstErr == null) {
                     firstErr = asBounded(ee.getCause());
@@ -1016,109 +1014,109 @@ public final class BoundedOperativeRunner {
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 if (firstErr == null) {
-                    firstErr = new BoundedOperativeException("bounded segment task interrupted", ie);
+                    firstErr = new BoundedOperativeException("bounded entity task interrupted", ie);
                 }
             }
         }
         if (firstErr != null) {
             throw firstErr;
         }
-        // Deterministic next-stage batch: segments in index order (each segment's
-        // own item order is preserved by runSegment).
-        segments.sort(Comparator.comparingInt(SegmentRun::segmentIndex));
+        // Deterministic next-stage batch: entities in index order (each entity's
+        // own item order is preserved by runEntity).
+        entities.sort(Comparator.comparingInt(EntityRun::entityIndex));
         List<Object> batch = new ArrayList<>();
-        List<OpOutboxItem> outbox = new ArrayList<>();
-        for (SegmentRun sr : segments) {
+        List<ProcOutboxItem> outbox = new ArrayList<>();
+        for (EntityRun sr : entities) {
             batch.addAll(sr.outputs());
-            outbox.addAll(outboxBySegment.getOrDefault(sr.segmentIndex(), List.of()));
+            outbox.addAll(outboxByEntity.getOrDefault(sr.entityIndex(), List.of()));
         }
-        return new StageOut(batch, segments, outbox);
+        return new StageOut(batch, entities, outbox);
     }
 
     /**
-     * Process one segment's items sequentially (per-segment ordering preserved),
-     * running {@code Operation.run} against the segment's in-memory state via a
-     * {@link BoundedCollectAdapter} that collects inter-operation output and
+     * Process one entity's items sequentially (per-entity ordering preserved),
+     * running {@code Procedure.run} against the entity's in-memory state via a
+     * {@link BoundedCollectAdapter} that collects inter-procedure output and
      * routes plugin-bound output. The Java analog of the Rust dispatcher's
      * {@code run_collecting} path.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static SegmentOut runSegment(
+    private static EntityOut runEntity(
             UnboundedOperativeTopology topology,
             String instanceId,
             RunnerContext ctx,
-            BoundedSegment seg,
+            BoundedEntity seg,
             List<Object> items,
             boolean staging)
             throws BoundedOperativeException {
-        BoundedSegmentSink sink = new BoundedSegmentSink(ctx, instanceId, staging);
+        BoundedEntitySink sink = new BoundedEntitySink(ctx, instanceId, staging);
         BoundedCollectAdapter adapter = new BoundedCollectAdapter(topology, seg.outputChannel(), sink, seg.identity());
-        Operation op = seg.op();
-        BiConsumer<Object, Change> applyChangeFn = (s, c) -> op.applyChange(s, c);
-        // Changes record onto the segment's flush buffer; the flush after the
+        Procedure proc = seg.proc();
+        BiConsumer<Object, Change> applyChangeFn = (s, c) -> proc.applyChange(s, c);
+        // Changes record onto the entity's flush buffer; the flush after the
         // loop ships them to the WAL when the class is durable.
         List<Change> buffer = seg.changeBuffer();
         try {
             for (Object item : items) {
                 StateHandle<Object, Change> handle = StateHandle.create(seg.state(), buffer, applyChangeFn);
                 try {
-                    op.run(item, handle, adapter);
-                } catch (OperationException e) {
-                    // Carry the operation's own classification through to the retry
+                    proc.run(item, handle, adapter);
+                } catch (ProcedureException e) {
+                    // Carry the procedure's own classification through to the retry
                     // ladder: an author who declared the failure permanent must not
                     // have it re-run.
-                    String msg = "operation `" + op.name() + "` failed: " + e.getMessage();
-                    throw e instanceof OperationException.NonRetryable
+                    String msg = "procedure `" + proc.name() + "` failed: " + e.getMessage();
+                    throw e instanceof ProcedureException.NonRetryable
                             ? BoundedOperativeException.nonRetryable(msg)
                             : new BoundedOperativeException(msg, e);
                 } catch (RuntimeException e) {
-                    throw new BoundedOperativeException("operation `" + op.name() + "` threw: " + e, e);
+                    throw new BoundedOperativeException("procedure `" + proc.name() + "` threw: " + e, e);
                 }
             }
         } finally {
             // Flush regardless of outcome so the WAL reflects the state applied
             // before any failure (at-least-once; the saga compensates a partial run).
-            seg.flusher().ifPresent(SegmentFlusher::flushEntry);
+            seg.flusher().ifPresent(EntityFlusher::flushEntry);
         }
         // A stage that threw never reaches here — its staged bytes die with the
-        // exception, so a failed op leaks nothing onto the outbox.
-        List<OpOutboxItem> outbox = new ArrayList<>(sink.staged().size());
-        int seqInOp = 0;
+        // exception, so a failed proc leaks nothing onto the outbox.
+        List<ProcOutboxItem> outbox = new ArrayList<>(sink.staged().size());
+        int seqInProc = 0;
         for (StagedOutput out : sink.staged()) {
-            outbox.add(OpOutboxItem.newBuilder()
-                    .setSegmentId(ByteString.copyFrom(seg.identity().encodedBytes()))
-                    .setSeqInOp(seqInOp++)
+            outbox.add(ProcOutboxItem.newBuilder()
+                    .setEntityId(ByteString.copyFrom(seg.identity().encodedBytes()))
+                    .setSeqInProc(seqInProc++)
                     .setChannel(out.channel())
                     .setPayload(ByteString.copyFrom(out.payload()))
                     .build());
         }
-        return new SegmentOut(sink.collected(), outbox);
+        return new EntityOut(sink.collected(), outbox);
     }
 
-    /** One segment's run: the values it collected for the next stage, plus the output it staged. */
-    private record SegmentOut(List<Object> collected, List<OpOutboxItem> outbox) {}
+    /** One entity's run: the values it collected for the next stage, plus the output it staged. */
+    private record EntityOut(List<Object> collected, List<ProcOutboxItem> outbox) {}
 
     /**
-     * The failing-segment retry ladder: re-run ONLY this segment's batch, with a
+     * The failing-entity retry ladder: re-run ONLY this entity's batch, with a
      * fresh sink each attempt.
      *
      * <p>Freshness is what makes the retry safe. A failed attempt's staged output
-     * is discarded with its sink, so a recovered segment emits its outputs once,
+     * is discarded with its sink, so a recovered entity emits its outputs once,
      * not once per attempt. Siblings stay buffered at the barrier throughout —
      * nothing else re-runs.
      *
-     * <p>Strictly PRE-commit: this sits inside the stage, before the op barrier,
-     * so a journaled op is never retried. Backoff reuses the dead-letter ladder's
+     * <p>Strictly PRE-commit: this sits inside the stage, before the proc barrier,
+     * so a journaled proc is never retried. Backoff reuses the dead-letter ladder's
      * helper ({@code base × 2^(n-1)}, ±50% jitter, capped) rather than a second
      * implementation, and the wait is cancellation-aware so a stop or
      * {@code maxDuration} ends it at once.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static SegmentOut runSegmentRetrying(
+    private static EntityOut runEntityRetrying(
             UnboundedOperativeTopology topology,
             String instanceId,
             RunnerContext ctx,
-            BoundedSegment seg,
+            BoundedEntity seg,
             List<Object> items,
             boolean staging,
             RetryPolicy retry,
@@ -1129,7 +1127,7 @@ public final class BoundedOperativeRunner {
         while (true) {
             attempt++;
             try {
-                return runSegment(topology, instanceId, ctx, seg, items, staging);
+                return runEntity(topology, instanceId, ctx, seg, items, staging);
             } catch (BoundedOperativeException e) {
                 boolean last = attempt >= maxAttempts;
                 if (e.isNonRetryable() || last || instance.isCancelled()) {
@@ -1137,7 +1135,7 @@ public final class BoundedOperativeRunner {
                 }
                 DlqPark.RETRIES_TOTAL.incrementAndGet();
                 LOG.warn(
-                        "bounded `{}` segment `{}` attempt {}/{} failed (retrying): {}",
+                        "bounded `{}` entity `{}` attempt {}/{} failed (retrying): {}",
                         instanceId,
                         seg.identity().encoded(),
                         attempt,
@@ -1190,12 +1188,12 @@ public final class BoundedOperativeRunner {
     }
 
     @SuppressWarnings("rawtypes")
-    private static Operation instantiateOperation(Class<? extends Operation<?, ?, ?, ?, ?, ?>> operationClass) {
+    private static Procedure instantiateProcedure(Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass) {
         try {
-            return operationClass.getDeclaredConstructor().newInstance();
+            return procedureClass.getDeclaredConstructor().newInstance();
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(
-                    "operation class `" + operationClass.getName() + "` must have a public no-arg constructor: " + e,
+                    "procedure class `" + procedureClass.getName() + "` must have a public no-arg constructor: " + e,
                     e);
         }
     }
@@ -1204,7 +1202,7 @@ public final class BoundedOperativeRunner {
         if (cause instanceof BoundedOperativeException be) {
             return be;
         }
-        return new BoundedOperativeException(cause == null ? "bounded segment task failed" : cause.toString(), cause);
+        return new BoundedOperativeException(cause == null ? "bounded entity task failed" : cause.toString(), cause);
     }
 
     private static String messageOf(Throwable t) {
@@ -1231,10 +1229,10 @@ public final class BoundedOperativeRunner {
         }
     }
 
-    /** The op indices the controller journaled as committed before the crash. */
-    private static Set<Integer> journaledCommittedOps(BoundedOperativeInstance instance) {
+    /** The proc indices the controller journaled as committed before the crash. */
+    private static Set<Integer> journaledCommittedProcs(BoundedOperativeInstance instance) {
         return instance.opJournal()
-                .map(j -> new HashSet<>(j.getCommittedOpIdxsList()))
+                .map(j -> new HashSet<>(j.getCommittedProcIdxsList()))
                 .orElseGet(HashSet::new);
     }
 
@@ -1246,7 +1244,7 @@ public final class BoundedOperativeRunner {
      * values straight in.
      *
      * <p>The mapping is author code, and unlike every other author callback on
-     * a bounded chain it runs on the driver thread rather than inside a segment
+     * a bounded chain it runs on the driver thread rather than inside an entity
      * invocation. Left uncontained, an exception would unwind the driver before
      * it can emit {@code BoundedCompleted} and the instance would be stranded
      * with no terminal frame; rethrowing as {@link BoundedOperativeException}
@@ -1283,33 +1281,33 @@ public final class BoundedOperativeRunner {
             Set<Integer> committedPositions,
             Map<Integer, List<Object>> inputs)
             throws BoundedOperativeException {
-        var edges = instance.opJournal().map(j -> j.getOpHandoffsList()).orElseGet(List::of);
+        var edges = instance.opJournal().map(j -> j.getProcHandoffsList()).orElseGet(List::of);
         for (var edge : edges) {
-            int position = edge.getOpIdx();
+            int position = edge.getProcIdx();
             if (!committedPositions.contains(position) || position >= chain.size()) {
                 continue;
             }
-            OperationDescriptor producer = topology.operation(chain.get(position));
+            ProcedureDescriptor producer = topology.procedure(chain.get(position));
             if (producer.outputChannelId().isEmpty()) {
                 continue;
             }
             ChannelDescriptor channel =
                     topology.channel(producer.outputChannelId().getAsInt());
-            if (channel == null || channel.interOpCodec().isEmpty()) {
+            if (channel == null || channel.interProcCodec().isEmpty()) {
                 LOG.warn(
-                        "bounded resume: no inter-op codec on channel `{}`; cannot decode handoff",
+                        "bounded resume: no inter-proc codec on channel `{}`; cannot decode handoff",
                         channel == null ? "<missing>" : channel.name());
                 continue;
             }
             List<Object> decoded = new ArrayList<>();
-            for (OpHandoffItem item : edge.getHandoffList()) {
-                decoded.add(channel.interOpCodec()
+            for (ProcHandoffItem item : edge.getHandoffList()) {
+                decoded.add(channel.interProcCodec()
                         .get()
                         .decoder()
                         .apply(item.getPayload().toByteArray()));
             }
             for (ConsumerEdge consumerEdge : channel.consumers()) {
-                int consumer = consumerEdge.operation();
+                int consumer = consumerEdge.procedure();
                 if (!committedPositions.contains(chain.indexOf(consumer))) {
                     extendMapped(inputs.computeIfAbsent(consumer, k -> new ArrayList<>()), consumerEdge, decoded);
                 }
@@ -1318,7 +1316,7 @@ public final class BoundedOperativeRunner {
     }
 
     /** How long the driver waits for the controller to journal + fsync a commit. */
-    private static final long OP_COMMIT_TIMEOUT_MS = 30_000L;
+    private static final long PROC_COMMIT_TIMEOUT_MS = 30_000L;
 
     /** Write one control command to the control stream. Returns the wire status (0 = ok). */
     private static int sendControl(RunnerContext ctx, CommandRequest request) {
@@ -1330,7 +1328,7 @@ public final class BoundedOperativeRunner {
      * The driver's durability barrier: ship a control command and BLOCK until the
      * controller says its journal entry is durable.
      *
-     * <p>Journal-then-ack is the contract every barrier rests on — the op commit,
+     * <p>Journal-then-ack is the contract every barrier rests on — the proc commit,
      * the iteration commit, and the compensation record all use this one path.
      * Registering before the write is what makes it race-free: the ack can never
      * outrun the waiter.
@@ -1344,27 +1342,27 @@ public final class BoundedOperativeRunner {
             AckRegistry.forget(referenceId);
             return what + " write failed (status=" + writeStatus + ")";
         }
-        if (!AckRegistry.await(referenceId, ack, OP_COMMIT_TIMEOUT_MS)) {
-            return what + " was not acknowledged within " + OP_COMMIT_TIMEOUT_MS + " ms";
+        if (!AckRegistry.await(referenceId, ack, PROC_COMMIT_TIMEOUT_MS)) {
+            return what + " was not acknowledged within " + PROC_COMMIT_TIMEOUT_MS + " ms";
         }
         return null;
     }
 
     /**
-     * Encode an inter-operation handoff for the journal. This blob is what a
+     * Encode an inter-procedure handoff for the journal. This blob is what a
      * crash-resumed run re-seeds from instead of re-running the chain, so it is
      * only produced for a channel that declared a codec.
      */
-    private static List<OpHandoffItem> encodeHandoff(
+    private static List<ProcHandoffItem> encodeHandoff(
             UnboundedOperativeTopology topology, Optional<ChannelDescriptor> channel, List<Object> batch) {
-        if (channel.isEmpty() || channel.get().interOpCodec().isEmpty()) {
+        if (channel.isEmpty() || channel.get().interProcCodec().isEmpty()) {
             return List.of();
         }
         Integer channelId = topology.lookupChannelId(channel.get().name());
-        Function<Object, byte[]> encoder = channel.get().interOpCodec().get().encoder();
-        List<OpHandoffItem> items = new ArrayList<>(batch.size());
+        Function<Object, byte[]> encoder = channel.get().interProcCodec().get().encoder();
+        List<ProcHandoffItem> items = new ArrayList<>(batch.size());
         for (Object value : batch) {
-            items.add(OpHandoffItem.newBuilder()
+            items.add(ProcHandoffItem.newBuilder()
                     .setChannelId(channelId == null ? 0 : channelId)
                     .setPayload(ByteString.copyFrom(encoder.apply(value)))
                     .build());
@@ -1373,56 +1371,58 @@ public final class BoundedOperativeRunner {
     }
 
     /**
-     * Journal this operation's completion at the op barrier and block until the
+     * Journal this procedure's completion at the proc barrier and block until the
      * controller says the entry is durable.
      *
      * <p>Journal-then-ack is the whole contract: once the controller replies, a
-     * crash-resumed run SKIPS this op and re-seeds the next one from the handoff
+     * crash-resumed run SKIPS this proc and re-seeds the next one from the handoff
      * journaled here — instead of re-running the chain from the top. A failure or
      * timeout is terminal and rolls back, because continuing past an
      * un-journaled barrier would silently forfeit that guarantee.
      *
      * @return an error message, or {@code null} on success.
      */
-    private static String commitOpBoundary(
+    private static String commitProcBoundary(
             RunnerContext ctx,
             UnboundedOperativeTopology topology,
             String instanceId,
             int opIdx,
             int iter,
-            List<BoundedSegment> segs,
-            List<SegmentRun> ran,
+            List<BoundedEntity> segs,
+            List<EntityRun> ran,
             List<Object> handoffBatch,
             Optional<ChannelDescriptor> handoffChannel,
-            List<OpOutboxItem> outbox) {
+            List<ProcOutboxItem> outbox) {
 
         // The enclosing iteration is part of the entry's journal identity: the
-        // controller keys an outbox-flush marker by (type, op_idx, iter), so an
+        // controller keys an outbox-flush marker by (type, proc_idx, iter), so an
         // unstamped commit on a later iteration reads as already-flushed and its
         // staged output is never delivered.
-        OpCommit.Builder commit =
-                OpCommit.newBuilder().setOperativeId(instanceId).setOpIdx(opIdx).setIter(iter);
-        // The transactional outbox: this op's plugin output becomes durable in
-        // the SAME journal record as the op itself. The controller flushes it
+        ProcCommit.Builder commit = ProcCommit.newBuilder()
+                .setOperativeId(instanceId)
+                .setProcIdx(opIdx)
+                .setIter(iter);
+        // The transactional outbox: this proc's plugin output becomes durable in
+        // the SAME journal record as the proc itself. The controller flushes it
         // after the fsync, so a crash either loses both or neither.
         commit.addAllOutbox(outbox);
-        for (SegmentRun run : ran) {
-            commit.addSegmentsRan(
-                    ByteString.copyFrom(segs.get(run.segmentIndex()).identity().encodedBytes()));
+        for (EntityRun run : ran) {
+            commit.addEntitiesRan(
+                    ByteString.copyFrom(segs.get(run.entityIndex()).identity().encodedBytes()));
         }
 
         // The handoff is what makes the resume a SKIP rather than a re-run.
         commit.addAllHandoff(encodeHandoff(topology, handoffChannel, handoffBatch));
 
-        String referenceId = "op-commit-" + instanceId + "-" + opIdx + "-" + System.nanoTime();
+        String referenceId = "proc-commit-" + instanceId + "-" + opIdx + "-" + System.nanoTime();
         return shipAndAwait(
                 ctx,
                 referenceId,
                 CommandRequest.newBuilder()
                         .setReferenceId(referenceId)
-                        .setOpCommit(commit.build())
+                        .setProcCommit(commit.build())
                         .build(),
-                "OpCommit for op " + opIdx);
+                "ProcCommit for proc " + opIdx);
     }
 
     private static void emitCompletion(
@@ -1465,61 +1465,61 @@ public final class BoundedOperativeRunner {
     }
 
     /**
-     * One stage's parallel-join result: the inter-operation {@code batch}
-     * released to the next stage, plus the per-segment record (which segments
+     * One stage's parallel-join result: the inter-procedure {@code batch}
+     * released to the next stage, plus the per-entity record (which entities
      * ran, with their collected outputs) retained for a possible saga rollback.
      */
-    private record StageOut(List<Object> batch, List<SegmentRun> segments, List<OpOutboxItem> outbox) {}
+    private record StageOut(List<Object> batch, List<EntityRun> entities, List<ProcOutboxItem> outbox) {}
 
     /**
-     * One bounded per-segment state holder (the lightweight unbounded
-     * {@code SegmentSlot} analog): the per-segment {@link Operation} instance,
-     * its in-memory state, the {@link SegmentId} identity (real op name + key),
+     * One bounded per-entity state holder (the lightweight unbounded
+     * {@code EntitySlot} analog): the per-entity {@link Procedure} instance,
+     * its in-memory state, the {@link EntityId} identity (real proc name + key),
      * and the producer-edge output channel.
      *
      * <p>Public so the {@code RestoreInitState} handler (a different package) can
-     * reach a durable bounded Segment by wire identity on crash-resume; its
-     * internals stay package-private. Unlike the unbounded {@code SegmentSlot},
+     * reach a durable bounded Entity by wire identity on crash-resume; its
+     * internals stay package-private. Unlike the unbounded {@code EntitySlot},
      * {@code state} carries no lock: the driver is held on the resume gate until
      * every restore has landed, so restore-then-run is serialized.
      */
-    public static final class BoundedSegment {
+    public static final class BoundedEntity {
         @SuppressWarnings("rawtypes")
-        private final Operation op;
+        private final Procedure proc;
 
         // Non-final: warm-restart (restore) replaces it in place.
         private Object state;
-        private final SegmentId identity;
-        // Segment key (empty in single mode), needed to seed initState on restore.
-        private final Optional<String> operationKey;
+        private final EntityId identity;
+        // Entity key (empty in single mode), needed to seed initState on restore.
+        private final Optional<String> entityKey;
         private final Optional<ChannelDescriptor> outputChannel;
-        // Per-segment flush buffer (the unbounded SegmentSlot analog): the
-        // StateHandle records Changes here; `flusher` (present iff the operation
+        // Per-entity flush buffer (the unbounded EntitySlot analog): the
+        // StateHandle records Changes here; `flusher` (present iff the procedure
         // is changeful) ships them to the WAL on flush.
         private final List<Change> changeBuffer;
         private final Optional<FlusherEntry> flusher;
 
         @SuppressWarnings("rawtypes")
-        BoundedSegment(
-                Operation op,
+        BoundedEntity(
+                Procedure proc,
                 Object state,
-                SegmentId identity,
-                Optional<String> operationKey,
+                EntityId identity,
+                Optional<String> entityKey,
                 Optional<ChannelDescriptor> outputChannel,
                 List<Change> changeBuffer,
                 Optional<FlusherEntry> flusher) {
-            this.op = op;
+            this.proc = proc;
             this.state = state;
             this.identity = identity;
-            this.operationKey = operationKey;
+            this.entityKey = entityKey;
             this.outputChannel = outputChannel;
             this.changeBuffer = changeBuffer;
             this.flusher = flusher;
         }
 
         @SuppressWarnings("rawtypes")
-        Operation op() {
-            return op;
+        Procedure proc() {
+            return proc;
         }
 
         Object state() {
@@ -1527,7 +1527,7 @@ public final class BoundedOperativeRunner {
         }
 
         @Nonnull
-        public SegmentId identity() {
+        public EntityId identity() {
             return identity;
         }
 
@@ -1544,9 +1544,9 @@ public final class BoundedOperativeRunner {
         }
 
         /**
-         * Warm-restart this Segment in place from the controller's persisted
+         * Warm-restart this Entity in place from the controller's persisted
          * snapshot + WAL change-log — the bounded analog of the unbounded slot
-         * restore. Rebuilds the committed state via {@link SegmentStateRestore},
+         * restore. Rebuilds the committed state via {@link EntityStateRestore},
          * replaces the in-memory state, and re-arms the flusher's change-seq to
          * {@code terminal + 1} so post-resume appends stay contiguous (the
          * controller then skips a WAL realign). Returns the terminal WAL seq
@@ -1557,9 +1557,9 @@ public final class BoundedOperativeRunner {
         @SuppressWarnings({"rawtypes", "unchecked"})
         public long restore(
                 @Nonnull byte[] snapshot, @Nonnull byte[] changeLog, @Nonnull HeaderTemplate headerTemplate) {
-            KryoCodec codec = new KryoCodec(op.kryoTypes());
-            SegmentStateRestore.Rebuilt rebuilt =
-                    SegmentStateRestore.rebuild(op, codec, operationKey, snapshot, changeLog, headerTemplate);
+            KryoCodec codec = new KryoCodec(proc.kryoTypes());
+            EntityStateRestore.Rebuilt rebuilt =
+                    EntityStateRestore.rebuild(proc, codec, entityKey, snapshot, changeLog, headerTemplate);
             this.state = rebuilt.state();
             long terminal = rebuilt.terminalSeq();
             flusher.ifPresent(f -> f.changeSeq().set(terminal + 1));
@@ -1568,29 +1568,29 @@ public final class BoundedOperativeRunner {
     }
 
     /**
-     * Per-segment collecting sink for the structured driver. Inter-operation
+     * Per-entity collecting sink for the structured driver. Inter-procedure
      * output is buffered for the next stage; plugin-bound output is forwarded to
      * the operative's wire (identical to {@code run}-sugar {@code ctx.emit}).
      */
-    /** One staged plugin-bound output awaiting its op barrier. */
+    /** One staged plugin-bound output awaiting its proc barrier. */
     record StagedOutput(String channel, byte[] payload) {}
 
-    private static final class BoundedSegmentSink implements BoundedCollectSink {
+    private static final class BoundedEntitySink implements BoundedCollectSink {
         private final RunnerContext ctx;
         private final String instanceId;
         private final List<Object> collected = new ArrayList<>();
         private final List<StagedOutput> staged = new ArrayList<>();
 
         /**
-         * Whether this sink stages output for the op barrier instead of shipping
+         * Whether this sink stages output for the proc barrier instead of shipping
          * it. True only for a durable structured class: its outputs ride the
-         * {@code OpCommit}'s outbox and become durable with the op that produced
+         * {@code ProcCommit}'s outbox and become durable with the proc that produced
          * them. Run-sugar has no barrier to stage against, and an opted-out class
          * has no journal — both emit direct, exactly as before.
          */
         private final boolean staging;
 
-        BoundedSegmentSink(RunnerContext ctx, String instanceId, boolean staging) {
+        BoundedEntitySink(RunnerContext ctx, String instanceId, boolean staging) {
             this.ctx = ctx;
             this.instanceId = instanceId;
             this.staging = staging;
@@ -1614,7 +1614,7 @@ public final class BoundedOperativeRunner {
             return collected;
         }
 
-        /** Staged outputs, in emission order. Drained onto the op barrier's outbox. */
+        /** Staged outputs, in emission order. Drained onto the proc barrier's outbox. */
         List<StagedOutput> staged() {
             return staged;
         }

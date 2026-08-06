@@ -14,14 +14,14 @@ defmodule Flezha.Operative.Kind do
 
   ## Capabilities
 
-    * `:persistent_state?` — durable per-Segment write-ahead log, snapshots,
-      and restore, plus per-Segment state introspection. The gate for
-      crash-resume and segment-state queries.
+    * `:persistent_state?` — durable per-Entity write-ahead log, snapshots,
+      and restore, plus per-Entity state introspection. The gate for
+      crash-resume and entity-state queries.
     * `:time_travel?` — point-in-time state queries and retention beyond the
       latest snapshot (gates `flz state at`).
-    * `:dynamic_segments?` — lazy per-key Segment creation and destructive
+    * `:dynamic_entities?` — lazy per-key Entity creation and destructive
       idle eviction with cold-start-fresh.
-    * `:output_stall_watch?` — the per-Segment output-staleness watchdog that
+    * `:output_stall_watch?` — the per-Entity output-staleness watchdog that
       forces a rebind.
 
   `:unbounded` declares all four. `:bounded` is a run-once, stateless job and
@@ -49,7 +49,7 @@ defmodule Flezha.Operative.Kind do
     unbounded: %{
       persistent_state?: true,
       time_travel?: true,
-      dynamic_segments?: true,
+      dynamic_entities?: true,
       output_stall_watch?: true
     },
     bounded: %{}

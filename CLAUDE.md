@@ -1,44 +1,44 @@
 # Flezha repo notes
 
-## Multi-input operations (`add-multi-input-operations`)
+## Multi-input procedures (`add-multi-input-procedures`)
 
 - **`c.merge::<I>()` / `c.merge(I.class)`** — subscribe two or more source
-  channels to ONE operation whose `Input` is an author-declared sum type, each
-  `.from(source, map)` supplying the mapping. Entry streams and inter-op
+  channels to ONE procedure whose `Input` is an author-declared sum type, each
+  `.from(source, map)` supplying the mapping. Entry streams and inter-proc
   streams are both sources on an UNBOUNDED operative, freely mixed (bounded
-  takes inter-op only — see below). Single-input `.into` is unchanged.
+  takes inter-proc only — see below). Single-input `.into` is unchanged.
 - **The whole feature is ONE field on the consumer edge.**
-  `ChannelDescriptor.consumers` went from `Vec<OperationId>` to
-  `Vec<ConsumerEdge>` (`operation` + `Option<MergeMapFn>`); `consumer_ids()` /
+  `ChannelDescriptor.consumers` went from `Vec<ProcedureId>` to
+  `Vec<ConsumerEdge>` (`procedure` + `Option<MergeMapFn>`); `consumer_ids()` /
   `consumerIds()` is the id-only view the graph walks and the bounded DAG use.
   No wire change, no controller change, no journal-format change.
 - **GOTCHA — map at the ROUTING seam, not the delivery seam.** The mapping is
   applied in `dispatcher::route_to_consumers` (Rust) /
-  `OperationDispatcher.routeToConsumers` (Java — the wire reader and
-  `fanoutInterOperation` both go through it), which is the one path both live
+  `ProcedureDispatcher.routeToConsumers` (Java — the wire reader and
+  `fanoutInterProcedure` both go through it), which is the one path both live
   delivery and the controller's re-forwarded replay slice travel. That is why
   replay determinism cost zero code: frames are still journaled per source
   channel, and the slice re-maps identically. Mapping later (inside dispatch)
   would have forked live and replay.
-- **`segment_for` / `operation_key` see the MAPPED value** — they run after the
-  edge map, so per-source segmentation is encoded in the enum, not per edge.
-- **Bounded works over INTER-OP channels only**: `ChainCtx::edge_map` +
+- **`entities_for` / `entity_key` see the MAPPED value** — they run after the
+  edge map, so per-source entity mode is encoded in the enum, not per edge.
+- **Bounded works over INTER-PROC channels only**: `ChainCtx::edge_map` +
   `extend_mapped` apply the edge map where the driver accumulates a producer's
   batch into its child AND where `resumed_start` re-seeds from the journaled
   handoff. Java mirrors both in `BoundedOperativeRunner`. Without this a merge
   in a bounded chain would downcast-panic.
 - **GOTCHA — a merge mapping is the ONE author closure on a bounded chain that
-  runs on the DRIVER thread**, not inside a segment invocation, so it is the one
+  runs on the DRIVER thread**, not inside an entity invocation, so it is the one
   the existing `catch_unwind`s miss. `extend_mapped` contains it (Rust) /
   `BoundedOperativeRunner.extendMapped` rethrows as `BoundedOperativeException`
   (Java) into the chain's existing abort-and-compensate path; without that an
   unwind skips `emit_bounded_completed` and the instance is stranded with no
   terminal frame. No retry — a mapping is pure by contract, so a re-run panics
-  identically. Unbounded is already covered on the inter-op side (the producer's
+  identically. Unbounded is already covered on the inter-proc side (the producer's
   invocation guard); an unbounded ENTRY source is unguarded, exactly as the
   entry parser on that same wire-reader seam already is.
 - **GOTCHA — the consumer-release block must sit AFTER the intent markers, the
-  stage record and the op-commit barrier.** That ordering is load-bearing now
+  stage record and the proc-commit barrier.** That ordering is load-bearing now
   that a mapping can throw there: release-first leaves the producer whose edge
   blew up out of `completed` AND off disk (no intent markers), so it is never
   compensated and a crash mid-abort cannot recover it either. Java had it
@@ -53,18 +53,18 @@
   iteration's `completed` from `journaled_stages`' in-flight stages
   (`driver.rs` `resumed_stages` → `completed`), so the journaled producer IS
   unwound; Java's `runIteration` starts `completed` empty and `continue`s past
-  journaled ops without recording them, so NOTHING is unwound. Do not write
+  journaled procs without recording them, so NOTHING is unwound. Do not write
   "both SDKs unwind the same set" without saying which site.
 - **KNOWN LIMITATION (verified against HEAD, documented, NOT fixed) — a resumed
   Java bounded chain compensates only what re-ran.** `runIteration` never seeds
-  `completed` from the op-journal, so any abnormal exit from a resumed chain
-  leaves the journaled-committed operations un-undone; Rust unwinds them.
+  `completed` from the proc-journal, so any abnormal exit from a resumed chain
+  leaves the journaled-committed procedures un-undone; Rust unwinds them.
   Pre-existing and NOT merge-specific (it applies to a resumed Java chain
   failing anywhere forward) — a merge mapping throwing at the re-seed site is
   one way to reach it. Symptom: a Java bounded instance that crashed mid-chain,
-  resumed, then failed reports `error` having compensated fewer operations than
+  resumed, then failed reports `error` having compensated fewer procedures than
   its Rust twin. Closing it is a bounded-resume semantics change, out of scope
-  here. Written up in `docs/multi_input_operations.md` "Known limitation".
+  here. Written up in `docs/multi_input_procedures.md` "Known limitation".
 - **GOTCHA — a bounded merge over an ENTRY channel is refused, not supported.**
   The bounded seed (`driver.rs seed_bytes`, fed by the spawn args and by
   `PerInput` inbox items) is a bare payload naming no channel, so no mapping
@@ -77,7 +77,7 @@
 - **Refusals**: `TopologyIssue::MergeTooFewSources` / `DuplicateMergeSource` /
   `MergeSourceAlreadyWired` (both SDKs, same names) + the bounded
   `MergeFromEntryChannel`. Mapped-type mismatch is a COMPILE error in Rust
-  (`Operation<Input = I>` bound on `.into::<Op>()`) and a registration error in
+  (`Procedure<Input = I>` bound on `.into::<Proc>()`) and a registration error in
   Java (`wireConsumer` compares the declared merge type, not the channel
   payload type) — the standard erasure asymmetry.
 - **GOTCHA — `attach_consumer` must not silently drop a mapping.** It dedups by
@@ -115,19 +115,19 @@
   containment and the terminal report; Rust additionally asserts the journaled
   stages were undone in reverse, read off the compensation-DONE markers (the
   comp log is empty there — `diamond_op!` logs per completed output and a
-  journal-rebuilt `SegmentRun` has none, a trap worth remembering). Java asserts
+  journal-rebuilt `EntityRun` has none, a trap worth remembering). Java asserts
   no undo list on that path — see the known limitation above.
 - **`sdk/rust/public-api.txt` is part of "done" for any SDK-surface change**
   (`sdk/rust/README.md` "Public API workflow"). It is human-curated commentary,
   not `cargo public-api` output, so it is hand-edited — and a CHANGED signature
   (here `ChannelDescriptor::consumers`) must be recorded, not just additions.
-- **Docs/examples**: `docs/multi_input_operations.md`, `docs/glossary.md`
+- **Docs/examples**: `docs/multi_input_procedures.md`, `docs/glossary.md`
   ("Merge"), `sdk/rust/examples/merged_input.rs`, Java `E09_MergedInput`.
 
-## Operation-requested spawn (`add-operation-requested-spawn`)
+## Procedure-requested spawn (`add-procedure-requested-spawn`)
 
 - **`ctx.spawn_bounded` / `ctx.spawnBounded`** — spawn-or-deliver a bounded
-  instance from inside any operation, in the requester's own namespace. Free id
+  instance from inside any procedure, in the requester's own namespace. Free id
   ⇒ spawn with the payload as the first input; taken id ⇒ deliver
   (`IfRunning::Deliver`) or `already_running` (`Error`).
 - **The namespace is NOT on the wire.** `SpawnBoundedRequest{instance_id,
@@ -166,16 +166,16 @@
 - **`runner::coordinator_try_send`** reports whether the message reached a
   coordinator; `coordinator_send` delegates to it. A stale trigger (closed
   runner) now resolves a spawn as `Unavailable` instead of waiting out 30 s.
-- **Replay issues nothing** — `OperationCtx::during_replay` (Rust, set from
-  `SegmentPayload.replay`) / `OperationCtx.replaying()` (Java, threaded through
+- **Replay issues nothing** — `ProcedureCtx::during_replay` (Rust, set from
+  `EntityPayload.replay`) / `ProcedureCtx.replaying()` (Java, threaded through
   `InputEnvelope`) ⇒ `SkippedOnReplay`.
 - **Tests**: `test/flezha/service/operative_manager_spawn_test.exs` (ETS
   `insert_new` stands in for the registry's atomic claim, so the concurrent
   burst exercises the real race), `control_channel_spawn_bounded_test.exs`,
-  Rust `operation::tests::spawn`, Java `SpawnHandleTest` + `SpawnRequesterTest`.
+  Rust `procedure::tests::spawn`, Java `SpawnHandleTest` + `SpawnRequesterTest`.
   GOTCHA: the Rust coordinator trigger is process-global — every test that
   installs one takes `runner::env_test_guard()`.
-- **Docs**: `docs/operation_requested_spawn.md`, `docs/sdk_protocol_spec.md`,
+- **Docs**: `docs/procedure_requested_spawn.md`, `docs/sdk_protocol_spec.md`,
   `docs/resilience/bounded_operative.md`. Examples:
   `sdk/rust/examples/spawn_bounded_worker.rs`, Java `E08_SpawnBoundedWorker`.
 
@@ -242,12 +242,12 @@
 - **`ProviderBehaviour.retry_backoff_ms/3`** — the Postgres sink's inline
   `min(base * 2^(n-1), max)` extracted; both sinks share it now.
 - **RESTART LIMITATION (verified, documented, NOT fixed)**: in-flight queued
-  items do NOT survive a controller restart. `OpJournal.flush_entry/3` casts
+  items do NOT survive a controller restart. `ProcJournal.flush_entry/3` casts
   `{:io_out,..}` THEN appends `outbox_flushed`; `WalWriter.dispatch_outbox_
   entries/2` casts THEN advances+persists `outbox_flushed_seq`. Neither cursor
   is gated on a sink ack, so once the marker lands the item is no longer owed.
   Same posture as the Kafka/Postgres buffers. Already pinned by the existing
-  `op_journal_test` "pending_entries == [] after flush" assertion — no new test.
+  `proc_journal_test` "pending_entries == [] after flush" assertion — no new test.
 - **Telemetry** `[:flezha, :plugin, :operative_forward, :delivered|:retry|
   :queue_depth|:saturated]` (Kafka's `[:flezha, :plugin, <provider>, _]` shape)
   → `TelemetryBridge` source `:flezha_operative_forward`.
@@ -261,7 +261,7 @@
   because the test process cannot be its own channel),
   `test/flezha/plugin/provider/operative_forward_test.exs` (refusals, cycle,
   reuse, saturation, retry-until-delivered, identity stamps, disable-stops-worker,
-  telemetry). `Mimic.copy(Flezha.State.OpInbox)` added to `test_helper.exs`.
+  telemetry). `Mimic.copy(Flezha.State.ProcInbox)` added to `test_helper.exs`.
 - **Docs**: `docs/operative_forward_plugin.md` (new),
   `docs/resilience/data_durability.md` "Operative to operative",
   `docs/glossary.md`, `docs/plugin_lifecycle.md`,
@@ -355,15 +355,15 @@
 
 - **The Java SDK is now at functional parity with Rust.** Every capability an end
   user can author in Rust — the effectively-once tier, checkpoint ack, late-input
-  correction, the full bounded durable stack (op-journal, staged outbox, durable
-  loop + suspension, segment retry, loop rewind, branching), dynamic segmentation,
+  correction, the full bounded durable stack (proc-journal, staged outbox, durable
+  loop + suspension, entity retry, loop rewind, branching), dynamic entity mode,
   and the determinism contract — is available in Java. The e2e matrix no longer
   branches per runtime; there is ONE contract.
 - **The unblocker was `AddOperativeHandler` returning `new byte[0]`.**
   `AddOperativeResponse.metadata` is the ONE seam `Overwatch.decode_declarations/1`
   reads. With it empty the controller could not be TOLD a Java class is
   `effectively_once` / has a `correction_window` / an `ack_granularity` /
-  `compensable_ops` / `leaf_ops` — so every declaration-gated capability was
+  `compensable_procs` / `leaf_procs` — so every declaration-gated capability was
   blocked, including ones not yet written. `Declarations.java` builds it now. A
   class declaring nothing still encodes to **zero bytes** (= "declared nothing"),
   which is what keeps existing classes byte-identical.
@@ -374,7 +374,7 @@
   record), not the change codec.
 - **`Postcard.java`** is the ONE postcard implementation (extracted from
   `DlqPark`'s private encoder). **`AckRegistry.java`** is the ONE ack rendezvous
-  (`RunnerShutdownAck`, `ParkPayloadAck`, `OpCommitResponse`,
+  (`RunnerShutdownAck`, `ParkPayloadAck`, `ProcCommitResponse`,
   `IterCommitResponse`). Callers MUST register before sending — that ordering is
   what makes it race-free.
 - **`StableId`** is two longs, not `BigInteger`: the FNV prime is `2^88 + 0x13b`,
@@ -392,13 +392,13 @@
 - **GOTCHA — the topology builder throws its accumulated `errors` BEFORE the
   descriptor-materialization loop.** A refusal added to that loop is added after
   the throw point and never fires. Put new refusals in the validation phase.
-- **GOTCHA — never assert on `SegmentSlot.effectBuffer()`.** The background
+- **GOTCHA — never assert on `EntitySlot.effectBuffer()`.** The background
   flusher drains it within a ~5 ms linger tick, so such a test passes alone and
   flakes under load. Use `EffectRecordCapture` (test helper) which captures what
   actually SHIPPED. `stagedChanges()` IS safe — the flusher deliberately never
   drains it (an open interval is not flushable).
 - **GOTCHA — a bounded unit test's `WireWriter` IS the controller.** It must (a)
-  `AckRegistry.complete()` every `OpCommit`/`IterCommit` (the driver BLOCKS at each
+  `AckRegistry.complete()` every `ProcCommit`/`IterCommit` (the driver BLOCKS at each
   barrier; a silent fake controller hangs it for 30 s), (b) FLUSH each commit's
   outbox onto the secondary stream (output is staged now — the SDK no longer ships
   it, so every emit assertion depends on this), and (c) count its completion latch
@@ -411,16 +411,16 @@
   iteration it parked at.
 - **Branching needed NO planner change**: BFS numbering already makes completion
   order topological and `planCompensation` already reverses it. What it DID need is
-  per-op input routing — a fan-in must **accumulate** both producers' output, not
+  per-proc input routing — a fan-in must **accumulate** both producers' output, not
   overwrite.
 - **`data_heartbeat` now carries `dispatches` + `blocked_parks`** (was
   `credit_parked` only). This was a LIVE operational gap: a wedged Java runner
   looked healthy to the controller's `StallClassifier`.
-- **GOTCHA — `OpCommit.iter` MUST be stamped; Java silently did not.**
-  `commitOpBoundary` set only `operative_id`/`op_idx`, so every `op_committed`
+- **GOTCHA — `ProcCommit.iter` MUST be stamped; Java silently did not.**
+  `commitProcBoundary` set only `operative_id`/`proc_idx`, so every `proc_committed`
   landed at `iter=0` while `iter_committed` advanced normally. The controller
-  keys an entry's flush marker by `{type, op_idx, iter}`
-  (`OpJournal.pending_entries/1`), so on a loop's SECOND and later iterations the
+  keys an entry's flush marker by `{type, proc_idx, iter}`
+  (`ProcJournal.pending_entries/1`), so on a loop's SECOND and later iterations the
   commit collided with iteration 0's already-written `outbox_flushed` and its
   staged output was **journaled but never delivered** — silent, and invisible to
   every test that ran one iteration. Rust always stamped it (`driver.rs`, both the
@@ -431,7 +431,7 @@
   `opCommitIters() == [0, 1]` — it fails with `[0, 0]` against the old code.
   Symptom to recognise: a `PER_INPUT`/`CHAINED` Java operative emits fine on its
   first turn and is silent forever after, with `flz state journal` showing an
-  `op_committed` carrying an outbox and no following `outbox_flushed`.
+  `proc_committed` carrying an outbox and no following `outbox_flushed`.
 
 ## Checkpoint ack-granularity (`effectively-once-checkpoint-granularity`)
 
@@ -516,8 +516,8 @@
   PARAMETER, not `current+1` — that is what makes a crash-resumed correction
   idempotent instead of double-bumping.
 - **`flz.replay_end` is a BROADCAST, not a mark on the last input.** An input routes
-  to ONE segment by key, so a marker riding the last one strands the slice every
-  OTHER segment buffered. It is a payload-less frame intercepted in `fast.rs` before
+  to ONE entity by key, so a marker riding the last one strands the slice every
+  OTHER entity buffered. It is a payload-less frame intercepted in `fast.rs` before
   channel lookup → `dispatcher::end_replay_slice`.
 - **Drain ordering gotcha**: a closed slice must flush BEFORE any live input popped
   behind it (`maybe_dispatch_replay_slice` runs both mid-pop-loop and after it) —
@@ -550,7 +550,7 @@
 - **NEVER reset the event-time high-water on a replay.** Every replay is preceded
   by a restore, which already rebuilt it from the change log. Zeroing it first
   (an early draft did) is lossy on a crash-resume whose unconsumed tail carries a
-  LOWER max event time than the recovered state — the segment comes back with a
+  LOWER max event time than the recovered state — the entity comes back with a
   high-water below the truth and silently reads a genuinely late input as on-time.
   Pinned by `a_replay_does_not_lower_the_event_time_high_water`.
 - **`WalWriter.fold_records/3`** is now the ONE place the
@@ -560,57 +560,57 @@
   a side effect, not a fold) now go through it. `Wire.decode_effect_record/2` is
   the matching "header check + body decode" pair. `Retention.rewrite_offline/2`
   reuses `WalWriter.rewrite_keep_seq_gt/2` instead of its own byte-copy.
-- **CLI**: `flz operative replay <operative/operation/key> --from <seq|ts>`.
+- **CLI**: `flz operative replay <operative/procedure/key> --from <seq|ts>`.
   Telemetry `[:flezha, :correction, :completed|:refused]`, `[:flezha, :state, :wal_rewind]`.
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — `c.correctionWindow(ms)` + event-time slice.
 
 ## Bounded loop rewind (`bounded-loop-rewind`)
 
-- **Marker, not truncation**: `rewound` = op-journal entry type 6, target =
+- **Marker, not truncation**: `rewound` = proc-journal entry type 6, target =
   the entry's own `iter` field (empty payload), appended with
   `current_epoch + 1` — the FIRST non-zero epoch anything writes. The journal
-  stays append-only; `OpJournal.live_entries/1` is the one fold that applies
+  stays append-only; `ProcJournal.live_entries/1` is the one fold that applies
   markers (**on `rewound(N)`, purge accumulated entries with `iter > N`; keep
   everything appended after it**). `restore_state/1`, `pending_entries/1`,
   `consumed_offset/1`, `committed_iterations/1` all run over it — so a rewound
   iteration's unflushed outbox **ceases to be owed**, not merely gets skipped.
 - **Undo is derived, not marked**: `restore_state/1` also returns `rewind_undo`
-  = op_committed entries before the marker with `iter > N`, minus those with a
+  = proc_committed entries before the marker with `iter > N`, minus those with a
   `compensated` entry appended *after* their own commit (that "after its own
   commit" test is what keeps a re-run distinguishable from the original it
   replaced, and survives a second rewind). No done-marker, no completeness
   oracle → crash-mid-rewind resumes with exactly the outstanding work.
-- **Wire**: ONE additive field, `OpJournalState.rewind_undo = 8`
-  (`repeated OpCommittedOp`). No new control message — the controller writes the
+- **Wire**: ONE additive field, `ProcJournalState.rewind_undo = 8`
+  (`repeated ProcCommittedProc`). No new control message — the controller writes the
   marker and rebinds; the folded journal is all the SDK sees.
 - **SDK**: `drive_chain` gains one branch before the forward loop →
   `run_rewind_undo` reuses `plan_compensation(AllOrNothing, groups, &[])`
   verbatim (reverse iteration, reverse stage) — **forced** AllOrNothing whatever
   the class's `rollback_mode` says, since a rewind unwinds committed iterations
   by definition. `StageRecord` gained `iter` (the `compensated` entry's `iter`
-  was hardcoded `0` before). Journals ONE `compensated` per op — **even an empty
-  one for a hookless op**, which is what drains `rewind_undo`; and it does NOT
-  consult the per-segment done markers (they are per *segment*, and a segment
+  was hardcoded `0` before). Journals ONE `compensated` per proc — **even an empty
+  one for a hookless proc**, which is what drains `rewind_undo`; and it does NOT
+  consult the per-entity done markers (they are per *entity*, and an entity
   that ran in two rewound iterations must be undone once per iteration).
   The two undo passes deliberately stay separate — one is **marker**-backed
-  (crash resume, per segment), the other **journal**-backed (rewind, per op) —
-  but share `plan_compensation` (the plan), `compensate_segment` (the effect) and
+  (crash resume, per entity), the other **journal**-backed (rewind, per proc) —
+  but share `plan_compensation` (the plan), `compensate_entity` (the effect) and
   `journal_undo` (the `compensated` record).
 - **Resume = rebind, not park**: `Overwatch.handle_call({:rewind, N})` → guard →
   `append_rewound` → evict (`evict_runner/2`, extracted from `enter_suspended`)
   → `rehydrate/1`. No `parked` entry, no wake timer.
 - **Coverage guard** (`rewind_guard/2`, controller-side, before anything durable
-  changes): an unwound op that staged plugin output MUST declare `compensate`.
+  changes): an unwound proc that staged plugin output MUST declare `compensate`.
   The keyed-channel half of the original spec is **unreachable for bounded** —
-  `BoundedSegmentSink` stages `(channel, bytes)` and `outbox_items` drops the
+  `BoundedEntitySink` stages `(channel, bytes)` and `outbox_items` drops the
   key, so a bounded emit carries no `flz.key`. Facts ride the EXISTING
-  `AddOperativeResponse.metadata` map (`"compensable_ops" => "0,2"`, no proto
+  `AddOperativeResponse.metadata` map (`"compensable_procs" => "0,2"`, no proto
   change) → `ClassRegistry.put_compensable_ops/2` (same sidecar shape as the
-  tier). The guard asks `OpJournal.staged_channels_above/2` — the journal owns
+  tier). The guard asks `ProcJournal.staged_channels_above/2` — the journal owns
   its fold, Overwatch owns the policy (`live_entries/1` is private).
 - **`Overwatch.decode_declarations/1`** is the ONE place the `AddOperative`
-  response is decoded → `%{effectively_once:, compensable_ops:}`. A new
-  SDK-declared capability is added there and nowhere else. (`compensable_ops`
+  response is decoded → `%{effectively_once:, compensable_procs:}`. A new
+  SDK-declared capability is added there and nowhere else. (`compensable_procs`
   `nil` = the class declared nothing — Java/unbounded/run-sugar — vs `[]` = a
   chain with nothing compensable; a rewind treats those differently.)
 - **GOTCHA — a rewind does NOT replay inputs.** `ControlChannel` truncates the
@@ -619,12 +619,12 @@
   `consumed_offset` back cannot resurrect it. Rewind is **undo-and-continue**:
   the loop resumes waiting and the NEXT message becomes iteration N+1. (The e2e
   caught this — an earlier draft asserted re-delivery and failed.)
-- **Segment State** is unwound by the `compensate` hooks (the saga contract), NOT
-  by truncating the state WAL. A hookless op leaves its State change in place.
+- **Entity State** is unwound by the `compensate` hooks (the saga contract), NOT
+  by truncating the state WAL. A hookless proc leaves its State change in place.
 - **CLI**: `flz operative rewind <instance> --to-iteration N`
   (`CliManager.operative_rewind/3`); `flz state journal` renders `rewound`.
   Telemetry `[:flezha, :bounded, :rewind]`.
-- **Tests**: `op_journal_test.exs` (epoch bump, fold purge, outbox no longer
+- **Tests**: `proc_journal_test.exs` (epoch bump, fold purge, outbox no longer
   owed, `rewind_undo` drain, re-run + second rewind),
   `overwatch_suspension_test.exs` (rewind + both refusals),
   `cli_manager_rewind_test.exs`, `bounded_driver_scenarios` (reverse-order undo,
@@ -638,16 +638,16 @@
   event-time-ordered replay splice, an actually-enforced input-log `hold_window`;
   `realign_epoch/4` wipes the WAL and every snapshot — it cannot be "scoped").
 
-## Bounded segment retry (`bounded-segment-retry`)
+## Bounded entity retry (`bounded-entity-retry`)
 
-- **Ladder (SDK, Rust)**: `run_segment_retrying` in `bounded/driver.rs` wraps the
-  pool task — only the FAILING segment re-runs its batch (siblings stay buffered
+- **Ladder (SDK, Rust)**: `run_entity_retrying` in `bounded/driver.rs` wraps the
+  pool task — only the FAILING entity re-runs its batch (siblings stay buffered
   at the barrier), fresh sink per attempt (a failed attempt's staged output is
   dropped, never double-emitted). Backoff REUSES `dispatcher::retry_backoff`
   (the unbounded DLQ ladder's helper: `base × 2^(n-1)` ±50% jitter, capped
   `RETRY_BACKOFF_MAX_MS` = 5 s) and the wait is cancellation-aware
   (`sleep_cancellable`, ≤200 ms poll → a stop/`max_duration` ends it at once).
-  Retries count into `segment::park::RETRIES_TOTAL` (same `data_heartbeat`
+  Retries count into `entity::park::RETRIES_TOTAL` (same `data_heartbeat`
   metric as unbounded).
 - **Policy**: `BoundedOperative::retry_attempts()` (default 3 TOTAL attempts) +
   `retry_backoff()` (default 500 ms base) → resolved onto the SHARED
@@ -656,23 +656,23 @@
   (`BuildBoundedError::ZeroRetryBackoff`).
 - **Classification**: `BoundedError { message, non_retryable }` (was a tuple
   struct); `BoundedError::non_retryable/1`, `From<String>/<&str>` stay
-  retryable. An operation body classifies with the EXISTING
-  `OperationError::non_retryable` — `run_collecting` carries `is_non_retryable()`
+  retryable. A procedure body classifies with the EXISTING
+  `ProcedureError::non_retryable` — `run_collecting` carries `is_non_retryable()`
   through to the ladder. A panic stays retryable (author never classified it).
-- **Boundaries**: retry is strictly PRE-commit (a journaled op is never
-  retried); a crash mid-ladder resumes as a normal uncommitted-op re-run
-  (attempt counter resets). `run`-sugar has no segments → terminal on first Err.
+- **Boundaries**: retry is strictly PRE-commit (a journaled proc is never
+  retried); a crash mid-ladder resumes as a normal uncommitted-proc re-run
+  (attempt counter resets). `run`-sugar has no entities → terminal on first Err.
   A stage error while the cancel token is set now reports `cancelled` (was
   `error`) — `run_stage_parallel`'s caller folds it through `abnormal_status`.
 - **Tests**: `bounded_driver_scenarios` (recover / exhaust+compensate /
   non-retryable / attempts=0 / stop-interrupts-backoff / run-sugar counted
-  once), `retry_policy_is_resolved_and_validated`, e2e "segment retry (rust/uds)"
+  once), `retry_policy_is_resolved_and_validated`, e2e "entity retry (rust/uds)"
   in `test/system/bounded_crash_resume_e2e_test.exs` (fixture `retry_bounded`,
   failures armed via `FLEZHA_BOUNDED_RETRY_FAILS`). GOTCHA: an e2e/unit scenario
   must never busy-wait on the main test thread — it is the fake controller and
-  must stay in `drain` to ack `OpCommit`, else the driver's 30 s ack timeout
+  must stay in `drain` to ack `ProcCommit`, else the driver's 30 s ack timeout
   fires (cancel from a helper thread instead).
-- **Docs**: `docs/resilience/bounded_operative.md` "Segment retry: the rung
+- **Docs**: `docs/resilience/bounded_operative.md` "Entity retry: the rung
   before the abort" (incl. the bounded-vs-unbounded escape-ladder split),
   `docs/resilience/data_durability.md` DLQ "Bounded equivalence".
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — `retryAttempts()` / `retryBackoff()` ladder.
@@ -685,30 +685,30 @@
   terminal handoff). `drive_chain` is now an iteration loop around the
   SAME stage machinery (`run_iteration` = the old for-loop body).
   Registration rejects a loop on run-sugar (`LoopWithoutChain`) and a
-  durable `Chained` whose terminal op has no codec'd output channel
+  durable `Chained` whose terminal proc has no codec'd output channel
   (`LoopTerminalWithoutCodec` — else a crash re-seeds empty and reads as
   "converged").
 - **Iteration commit**: `IterCommit` (proto tag 30) / `IterCommitResponse`
   (31) at every iteration boundary → ONE `iter_committed(iter,
   consumed_offset)` journal entry (type 3, ACTIVE) carrying the terminal
-  handoff; ack; THEN boundary `CompactSegment` per segment + outbox flush
+  handoff; ack; THEN boundary `CompactEntity` per entity + outbox flush
   + inbox truncate (post-ack cleanup — a failure there costs work, not
-  correctness). Every `op_committed` is stamped with its enclosing `iter`.
+  correctness). Every `proc_committed` is stamped with its enclosing `iter`.
 - **KeepProgress is real**: `plan_compensation`'s `committed` is rebuilt
-  from journaled `committed_ops` grouped by iter (`journaled_iterations`).
-  Planner UNCHANGED. A journal-rebuilt iteration's `SegmentRun.outputs` is
+  from journaled `committed_procs` grouped by iter (`journaled_iterations`).
+  Planner UNCHANGED. A journal-rebuilt iteration's `EntityRun.outputs` is
   empty (the at-least-once undo-handle-in-State contract) — the tests key
   on that (`undo-loop:1` in-flight vs `undo-loop:0` journaled).
-- **Durable inbox**: `lib/flezha/state/op_inbox.ex` — per-instance
-  `inbox.wal` beside `op.journal` on the SAME WalWriter substrate,
-  identity `Registry.inbox_id/1` (`{inst, inst, "_op_inbox"}`).
+- **Durable inbox**: `lib/flezha/state/proc_inbox.ex` — per-instance
+  `inbox.wal` beside `proc.journal` on the SAME WalWriter substrate,
+  identity `Registry.inbox_id/1` (`{inst, inst, "_proc_inbox"}`).
   **Offset = WAL seq + 1** (the substrate REQUIRES seq 0 first — an
   empty WAL receiving any other seq sheds the frame and pulls a baseline
   — while offset 0 must mean "nothing consumed"/"unjournaled").
   `Registry.@reserved_files` keeps `inbox.wal` out of `scan_dir` (it
-  would otherwise decode as a Segment named "inbox").
+  would otherwise decode as an Entity named "inbox").
 - **Append-before-forward**: `Overwatch.journal_input/2` — the ONE durable
-  ingest seam (eff-once InputLog clause + durable-bounded OpInbox clause).
+  ingest seam (eff-once InputLog clause + durable-bounded ProcInbox clause).
   Stamps `flz.inbox_offset`; a duplicate (`flz.msg_id`, else payload hash,
   inside the undelivered window) returns nil = absorbed; a failed append
   is NOT forwarded.
@@ -735,9 +735,9 @@
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — `loopMode()` / `wakeAfter()` / `IterCommit` / `IterPark`.
 - **Tests**: `bounded_driver_scenarios` (loop turns → iteration commits +
   park + resume-at-iteration; journal-backed KeepProgress/AllOrNothing),
-  `loop_authoring_is_validated`, `test/flezha/state/op_inbox_test.exs`,
-  `op_journal_test.exs` (iter/park entries),
-  `control_channel_op_commit_test.exs` (IterCommit journal→ack→truncate,
+  `loop_authoring_is_validated`, `test/flezha/state/proc_inbox_test.exs`,
+  `proc_journal_test.exs` (iter/park entries),
+  `control_channel_proc_commit_test.exs` (IterCommit journal→ack→truncate,
   boundary snapshot, IterPark→suspend),
   `test/flezha/operative/overwatch_suspension_test.exs` (park/rehydrate/
   timer/redeploy).
@@ -749,87 +749,87 @@
 
 ## Bounded staged commit + transactional outbox (`bounded-staged-commit-and-outbox`)
 
-- **Staging (SDK)**: inside a structured op `ctx.emit` NEVER hits the wire —
-  `BoundedSegmentSink` (per segment, per stage) buffers `(channel, bytes)`
+- **Staging (SDK)**: inside a structured proc `ctx.emit` NEVER hits the wire —
+  `BoundedEntitySink` (per entity, per stage) buffers `(channel, bytes)`
   when `ChainCtx.journaling()` (durable class AND coordinator installed);
   otherwise (opted-out / transport-less) it forwards direct, as before.
   `BoundedCollectSink::emit_plugin_bytes(channel, bytes)` carries the
   channel name (`descriptor.name`, same as the eff-once effect record).
   A failing stage drops its staged bytes with the `Err` — nothing leaks.
   `run`-sugar keeps the direct path (no barrier to stage against).
-- **Transport**: extends the SAME `OpCommit` handshake — `outbox`
-  (`OpOutboxItem{segment_id, seq_in_op, channel, payload}`, tag 6) +
-  `compensating` (tag 7). No second protocol. `ship_op_commit/3` is shared
+- **Transport**: extends the SAME `ProcCommit` handshake — `outbox`
+  (`ProcOutboxItem{entity_id, seq_in_proc, channel, payload}`, tag 6) +
+  `compensating` (tag 7). No second protocol. `ship_proc_commit/3` is shared
   by the forward barrier and the undo record; the undo wait ignores the
   cancel token (rollback IS the response to that cancel).
-- **Journal**: `op_committed` carries segments+handoff+outbox in ONE record;
+- **Journal**: `proc_committed` carries entities+handoff+outbox in ONE record;
   `outbox_flushed` (type 2, payload `[for_type u8]` — forward vs undo are
   gated independently) and `compensated` (type 5, outbox only) are now
   ACTIVE. Epoch = u32 in the WAL record **header** (bytes 0–3; byte 9 is the
   effect-record format-id, so no collision), 0 until rewind bumps it.
-- **Flush**: `OpJournal.flush_pending/2` is the ONE path — post-ack
+- **Flush**: `ProcJournal.flush_pending/2` is the ONE path — post-ack
   (`ControlChannel`, retry timer on `:no_overwatch`) and restore re-drive
-  (`Overwatch.replay_persisted_segments`, gated `kind == :bounded`, passes
+  (`Overwatch.replay_persisted_entities`, gated `kind == :bounded`, passes
   its own pid). Journal state (not memory) decides what is owed →
   idempotent by construction. Delivery = `GenServer.cast(overwatch,
   {:io_out, payload, stamps})`, same fan-out as `WalWriter`'s eff-once
-  outbox. Stamps: `flz.segment`, `flz.seq` = `<op_idx>.<seq_in_op>`
+  outbox. Stamps: `flz.entity`, `flz.seq` = `<proc_idx>.<seq_in_proc>`
   (undo: trailing `.1` — numeric so the Postgres sink's
   `string_to_array(seq)::bigint[]` guard still orders it), `flz.epoch`,
-  `channel`. Telemetry `[:flezha, :state, :op_outbox_flush]`.
+  `channel`. Telemetry `[:flezha, :state, :proc_outbox_flush]`.
 - **Ordering gotcha**: the undo record is journaled BEFORE the
   `compensation_done` marker — a crash between them re-runs the (idempotent)
   hook rather than losing its undo output.
 - **Tests**: `bounded_driver_scenarios` (staging, leak-nothing, run-sugar
   direct, `UndoSaga` comp staging; the fake controller now FLUSHES each
   commit's outbox on ack, which is why the old output assertions still
-  hold), `test/flezha/state/op_journal_test.exs` (crash-before-flush
+  hold), `test/flezha/state/proc_journal_test.exs` (crash-before-flush
   re-drive with identical keys = truncate journal back to pre-flush bytes),
-  `control_channel_op_commit_test.exs` (sync on `:sys.get_state(channel)` —
+  `control_channel_proc_commit_test.exs` (sync on `:sys.get_state(channel)` —
   the marker append lands after the `:io_out` cast).
-- **Java SDK**: AT PARITY (`java-sdk-parity`) — staged commit + `OpCommit` outbox.
-- **Docs**: `docs/sdk_protocol_spec.md` `OpCommit`/`OpCommitResponse`,
+- **Java SDK**: AT PARITY (`java-sdk-parity`) — staged commit + `ProcCommit` outbox.
+- **Docs**: `docs/sdk_protocol_spec.md` `ProcCommit`/`ProcCommitResponse`,
   `docs/resilience/data_durability.md` "Bounded operatives: staged commit
   and the transactional outbox".
 
-## Bounded op-journal (`bounded-op-journal`)
+## Bounded proc-journal (`bounded-proc-journal`)
 
-- **Store**: `lib/flezha/state/op_journal.ex` — per-instance `op.journal` at
-  `<state_root>/<inst>/<inst>/op.journal` on the WalWriter+FsyncBatcher
+- **Store**: `lib/flezha/state/proc_journal.ex` — per-instance `proc.journal` at
+  `<state_root>/<inst>/<inst>/proc.journal` on the WalWriter+FsyncBatcher
   substrate under reserved identity `Registry.journal_id/1`
-  (`{inst, inst, "_op_journal"}`); entry codec
-  `[type u8][op_idx u16][iter u32][payload]` inside normal WAL framing,
-  type 1 = `op_committed` (segments-ran + channel-tagged handoff blobs),
+  (`{inst, inst, "_proc_journal"}`); entry codec
+  `[type u8][proc_idx u16][iter u32][payload]` inside normal WAL framing,
+  type 1 = `proc_committed` (entities-ran + channel-tagged handoff blobs),
   2–5 reserved (tolerated on decode). Size bound =
   `:wal_high_watermark_bytes` → `{:error, {:oversized_handoff, ..}}`. The
   journal writer skips the outbox dedup side-file so it never registers a
-  phantom Segment.
-- **Handshake**: SDK→controller `OpCommit` (proto tag 28) at every op
+  phantom Entity.
+- **Handshake**: SDK→controller `ProcCommit` (proto tag 28) at every proc
   barrier of a durable structured bounded; ControlChannel appends +
-  fsyncs, replies `OpCommitResponse` (tag 29) under the SAME reference_id
+  fsyncs, replies `ProcCommitResponse` (tag 29) under the SAME reference_id
   (journal-then-ack); driver blocks ≤30 s (`bounded/driver.rs
-  commit_op_boundary`), failure/timeout → terminal error + compensation.
-  Telemetry `[:flezha, :state, :op_commit]`.
-- **Resume**: journal state rides `RestoreInitState.op_journal`
-  (`OpJournalState`); `drive_chain` skips committed ops and seeds the next
+  commit_proc_boundary`), failure/timeout → terminal error + compensation.
+  Telemetry `[:flezha, :state, :proc_commit]`.
+- **Resume**: journal state rides `RestoreInitState.proc_journal`
+  (`ProcJournalState`); `drive_chain` skips committed procs and seeds the next
   batch from the journaled handoff via the channel codec. Compensation
   precedence: a comp-**done** marker wins (intents alone don't — they also
-  accumulate during forward progress). Skipped ops still roll back on a
+  accumulate during forward progress). Skipped procs still roll back on a
   later abnormal exit (folded from intent markers).
 - **Codec**: `.codec()` (postcard/serde) or `.codec_with(enc, dec)` on
-  inter-op channels; REQUIRED for durable structured bounded classes —
-  registration fails `MissingInterOpCodec` naming the channel. Opted-out
+  inter-proc channels; REQUIRED for durable structured bounded classes —
+  registration fails `MissingInterProcCodec` naming the channel. Opted-out
   classes skip journal + handshake entirely (re-run-from-top preserved).
 - **CLI**: `flz state journal <operative/instance>`
   (`CliManager.state_journal/2`).
-- **Java SDK**: AT PARITY (`java-sdk-parity`) — `OpCommit` handshake + journal-gated
+- **Java SDK**: AT PARITY (`java-sdk-parity`) — `ProcCommit` handshake + journal-gated
   resume-skip. The e2e no longer branches per runtime.
-- **Tests**: `test/flezha/state/op_journal_test.exs`,
-  `test/flezha/runner/control_channel_op_commit_test.exs`, Rust
+- **Tests**: `test/flezha/state/proc_journal_test.exs`,
+  `test/flezha/runner/control_channel_proc_commit_test.exs`, Rust
   `bounded_driver_scenarios` (gating + resume-skip + codec validation),
-  e2e `test/system/bounded_crash_resume_e2e_test.exs` (op A NOT re-run on
+  e2e `test/system/bounded_crash_resume_e2e_test.exs` (proc A NOT re-run on
   rust; opted-out `optout_commit_block` re-runs from top).
-- **Docs**: `docs/sdk_protocol_spec.md` `OpCommit`/`OpCommitResponse`,
+- **Docs**: `docs/sdk_protocol_spec.md` `ProcCommit`/`ProcCommitResponse`,
   `docs/resilience/bounded_operative.md` "Durability" section.
 
 ## Dead-letter queue (`platform-dead-letter-queue`)
@@ -838,14 +838,14 @@
   (returned error or panic/exception, one policy) up to the input
   channel's `retry_max` (default 3 total attempts, exponential backoff +
   jitter capped 5 s); `.retry_max(n)` / `.retry_backoff_ms(b)` on the
-  channel builders, `OperationError::NonRetryable` /
-  `OperationException.NonRetryable` parks immediately. Rust:
+  channel builders, `ProcedureError::NonRetryable` /
+  `ProcedureException.NonRetryable` parks immediately. Rust:
   `sdk/rust/src/operative/dispatcher.rs` retry loop +
-  `sdk/rust/src/segment/park.rs` (blocking wire park, ack registry);
-  Java: `OperationDispatcher.runOnce` + `runtime/state/DlqPark.java`
+  `sdk/rust/src/entity/park.rs` (blocking wire park, ack registry);
+  Java: `ProcedureDispatcher.runOnce` + `runtime/state/DlqPark.java`
   (hand-rolled postcard encoder, fixture-pinned cross-language).
 - **Protocol**: data-stream payload-id `park_payload` (postcard
-  `ParkBody`, same outer frame as `segment_state_change`, zero header)
+  `ParkBody`, same outer frame as `entity_state_change`, zero header)
   acked by control command `ParkPayloadAck` (proto tag 27) AFTER the
   store fsync — park-then-advance, SDK re-sends every 2 s until acked.
   Tier-on parks skip the frame entirely: `EffectRecordBody` gained a
@@ -854,9 +854,9 @@
   materializes the store entry synchronously before
   `InputLog.record_consumed` (watermark un-freezes after the park).
 - **Store**: `lib/flezha/dlq/store.ex` — one GenServer,
-  `app_data/dlq/<class>/<operation>/entries.jsonl` + `<id>.bin` blobs,
+  `app_data/dlq/<class>/<procedure>/entries.jsonl` + `<id>.bin` blobs,
   fsync-before-ack, idempotent on origin identity
-  (`segment@offset` tier-on, `channel:sha256(payload)` tier-off);
+  (`entity@offset` tier-on, `channel:sha256(payload)` tier-off);
   re-park while `status=replaying` bumps `generation`. Retention age AND
   size (30 d / 4 GiB, more restrictive wins), loud
   `[:flezha, :dlq, :retention_dropped]` per deletion. Config `:dlq`
@@ -877,7 +877,7 @@
   `test/flezha/dlq/store_test.exs`, WalWriter park cases in
   `wal_writer_outbox_test.exs`, CLI `cli_manager_dlq_test.exs`, e2e
   `test/system/dlq_e2e_test.exs` (Rust + Java + tier watermark;
-  `--include system [--include java_sdk]`). Poison test ops:
+  `--include system [--include java_sdk]`). Poison test procs:
   `poison_probe` (Rust) / `java_poison_probe` (rebuild the committed jar
   with `scripts/build-dist.sh` after SDK changes!) / `tier_store` value
   `"poison"`.
@@ -897,9 +897,9 @@
   restarts. New top-level dep `postgrex ~> 0.22` (active only when the
   plugin is configured, like `:kafka_ex`).
 - **Semantics**: per flush batch ONE `Postgrex.transaction` — bulk upsert
-  into `flezha_records` (key = `flz.key`, fallback `<segment>/<seq>` for
+  into `flezha_records` (key = `flz.key`, fallback `<entity>/<seq>` for
   keyless tier outputs, unique `_anon/N` for unstamped records) + one
-  `flezha_sink_progress` watermark upsert per segment. Both guarded by
+  `flezha_sink_progress` watermark upsert per entity. Both guarded by
   `(epoch, string_to_array(seq)::bigint[])` row comparison so re-drives
   and stale epochs are byte-exact no-ops. Same-key records within a batch
   are collapsed to the newest identity first (`ON CONFLICT` double-touch).
@@ -925,13 +925,13 @@
 
 ## Deterministic effects + output identity (`deterministic-effects-and-output-identity`)
 
-- **Determinism contract** (documented on the `Operation` rustdoc): `run`
+- **Determinism contract** (documented on the `Procedure` rustdoc): `run`
   / `apply_change` / `compensate` obtain time via `ctx.now()` and
   identifiers via `ctx.stable_id()` — no ambient `SystemTime::now()` /
   `Uuid::new_v4()` / external reads. Verified by
-  `OperationTestHarness::replay_emits_equal` (output-side sibling of
+  `ProcedureTestHarness::replay_emits_equal` (output-side sibling of
   `replay_equals`; injectable fixed/scripted wall clock).
-- **Clocks** (`sdk/rust/src/operation/clock.rs`): no static
+- **Clocks** (`sdk/rust/src/procedure/clock.rs`): no static
   `Clock::now()` — the dispatcher evaluates the declared clock once per
   invocation via `ClockFor<Input>` (all `Time = u64`). `WallClock` =
   epoch ms at dispatch entry; `EventTimeFrom<F>` = `F:
@@ -940,10 +940,10 @@
   restore). Build rejects `LogicalClock` + `Change = NoChange`
   (`BuildTopologyError::UnservableClock`).
 - **`ctx.stable_id()`**: frozen FNV-1a-128 over
-  `segment identity ‖ change_seq ‖ per-invocation ordinal`.
+  `entity identity ‖ change_seq ‖ per-invocation ordinal`.
 - **Keyed channels**: `.keyed()` (plugin wire required, else
   `KeyedChannelWithoutPluginWire`) + `ctx.emit_keyed(key, value)`; plugin
-  frames stamped `flz.segment` (`instance/operation/segment_key`),
+  frames stamped `flz.entity` (`instance/procedure/entity_key`),
   `flz.seq` (`<change_seq>.<emit_ordinal>`, read after flush-before-emit),
   `flz.key`. User `flz.*` metadata rejected (`ReservedMetadataKey`).
   Non-keyed channels byte-identical (guarded by test + criterion bench).
@@ -957,91 +957,91 @@
 - **Docs**: `docs/sdk_protocol_spec.md` "Output identity stamps",
   `docs/resilience/data_durability.md` "Output identity".
 
-## Snapshot compaction is now real (`segment-compaction-is-a-stub`)
+## Snapshot compaction is now real (`entity-compaction-is-a-stub`)
 
-- **The controller half was always built; both SDKs answered `CompactSegment`
+- **The controller half was always built; both SDKs answered `CompactEntity`
   with a STUB** (`command/compact.rs` → `snapshot_seq: 0`, no frame; Java
-  `CompactSegmentHandler` → `new byte[0]`). Measured live before the fix: 9
+  `CompactEntityHandler` → `new byte[0]`). Measured live before the fix: 9
   `compaction_trigger`, 8 `compaction_timeout`, 0 `compaction_completed`, 0
   snapshot files, flat WAL. So the earlier "Java at full parity / persistence
   green" claims did NOT hold for this path on EITHER SDK until this change.
-- **SDK emit** = the producing half. Rust adds `OperationDispatcher::snapshot_frame`
+- **SDK emit** = the producing half. Rust adds `ProcedureDispatcher::snapshot_frame`
   (the type-erased MIRROR of `restore_state`, NOT a third `build_state_fns` fn
   pointer — reuses the same postcard machinery restore decodes); Java's
-  `CompactSegmentHandler` shares the `SegmentLocator.findUnbounded` scan with
+  `CompactEntityHandler` shares the `EntityLocator.findUnbounded` scan with
   `RestoreInitStateHandler` (cx-refine extraction) + Kryo. Both
-  DRAIN pending changes first (`flush_one` / new `SegmentFlusher.flushSegment/1`)
+  DRAIN pending changes first (`flush_one` / new `EntityFlusher.flushEntity/1`)
   so state == shipped WAL, then serialize under the state lock and ship
-  `segment_state_snapshot` (new payload-id const in both sinks) stamped with
+  `entity_state_snapshot` (new payload-id const in both sinks) stamped with
   `change_seq - 1` = the highest seq the snapshot folds. **GOTCHA — the codec
   is the trap**: postcard (Rust) / Kryo (Java), NOT the JSON migration
   serializer, or restore can't decode it (and compaction being unexercised, it
-  would pass review). Java `NativeTransport.sendSegmentStateSnapshot` DELETED
+  would pass review). Java `NativeTransport.sendEntityStateSnapshot` DELETED
   (0 callers, javadoc lied about stamping the payload-id).
 - **Seq semantics (load-bearing)**: controller `truncate_up_to(seq)` =
   `rewrite_keep_seq_gt` (keeps `seq > snapshot_seq`), and `establish_baseline`
   sets `last_persisted_seq = snapshot_seq`, so `snapshot_seq` MUST be the
   highest ALREADY-shipped seq (`change_seq - 1` after draining) — stamping
   `change_seq` (the next-to-assign) would dedup-drop the next real record.
-- **Controller now inspects `CompactSegmentResponse`** (`dispatch_compact_segment`
+- **Controller now inspects `CompactEntityResponse`** (`dispatch_compact_entity`
   → the shared `ControlUnit.send_control_await/3` request/reply off-process so a
   slow snapshot never blocks the Watchdog sweep / WalWriter pull; **falls back to
   a direct `send_control` when no ControlUnit exists** — isolated unit tests).
   cx-refine unified that request/reply seam: `send_control_await` now backs
-  `send_operation_message`, the credit-window handshake, Overwatch's private
+  `send_operative_message`, the credit-window handshake, Overwatch's private
   `send_control`, and the compaction inspection. `{0,0}` against a
   non-empty WAL (`Restore.has_persisted_state?`) = failed handshake →
   `[:flezha, :state, :compaction_failed]` → `Watchdog.compaction_failed`.
 - **The timeout handler was itself a silent no-op** (`Recovery.resync/2` with no
   `runner_id` → `{:error, :no_runner_id}` discarded with `_ =`). Now the
   `compactions` map carries `{started_at, runner_id}`; the Watchdog holds one
-  `Convergence.Backoff` keyed `{:compaction, segment_id}` (added ONE tiny
+  `Convergence.Backoff` keyed `{:compaction, entity_id}` (added ONE tiny
   `attempt/2` accessor — no strike map). Below give-up: record + backoff-gated
-  retry, NO disruptive resync of a live Segment. At give-up (attempt ≥ 4):
+  retry, NO disruptive resync of a live Entity. At give-up (attempt ≥ 4):
   `[:flezha, :state, :compaction_gave_up]` alarm + a real resync WITH the
   runner_id. Completion resets the strike.
-- **`compact_after_bytes` was unreachable by ANY caller** (`_operation_id`
+- **`compact_after_bytes` was unreachable by ANY caller** (`_procedure_id`
   discarded). Now `PersistenceResolver.compact_after_bytes(operative_class,
   metadata)` routes through the `resolve/5` cascade → `ClassRegistry.compact_
   after_bytes` (SDK declaration) → global default; the SDK ships it in
-  `AddOperative` metadata (smallest across operations, only when ≠ 8 MiB
+  `AddOperative` metadata (smallest across procedures, only when ≠ 8 MiB
   default — byte-identical otherwise) on BOTH arms; decoded in
   `decode_declarations/1` + persisted via `put_compact_after_bytes`. Watchdog
-  now passes the CLASS, not the operation id.
+  now passes the CLASS, not the procedure id.
 - **e2e on both arms**: `test/system/compaction_e2e_test.exs` (Rust) +
   `test/java_sdk/compaction_e2e_test.exs` assert a snapshot FILE appears and the
   WAL strictly shrinks against a real runner — the `assert_receive
   compaction_completed` is what fails against a stub. Round-trip unit tests:
   Rust `snapshot_frame_round_trips_through_restore`, Java
-  `compactSegmentShipsASnapshotThatRoundTripsThroughRestore`. Controller units:
+  `compactEntityShipsASnapshotThatRoundTripsThroughRestore`. Controller units:
   `watchdog_test` (backoff/give-up), `persistence_resolver_test`,
   `class_registry_test`, `add_operative_response_test`.
 - **NOTE**: `snapshot-baseline-durability`'s baseline-seed pull (a cold
-  controller pulls a full-state snapshot via `CompactSegment`) is now genuinely
+  controller pulls a full-state snapshot via `CompactEntity`) is now genuinely
   reachable for the first time — its `dispatch_resync` empty-WAL branch was
   inert while the SDK stubbed. See that change's spec.
 
-## Per-Segment state persistence (`operative-state-persistence`)
+## Per-Entity state persistence (`operative-state-persistence`)
 
 - **Modules**: `lib/flezha/state/` — `Registry`, `Wire`, `Metrics`,
   `Outbox`, `PersistenceResolver`, `Supervisor`, `WalWriter`,
   `FsyncBatcher`, `Snapshot`, `Retention`, `Restore`, `TimeTravel`,
   `TestHelpers`.
-- **On-disk layout**: `app_data/state/{operative_class}/{operation_id}/{segment_key}.{wal,snap.{seq},outbox.dedup}` (flat — `runner_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
-- **Wire payload-ids**: `segment_state_change`, `segment_state_snapshot`,
-  `delete_segment_state` (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
-  `CompactSegment`, `CompactSegmentResponse`, `SegmentMailboxStatus`
-  (control channel). See `docs/sdk_protocol_spec.md` "Per-Segment
+- **On-disk layout**: `app_data/state/{operative_class}/{procedure_id}/{entity_key}.{wal,snap.{seq},outbox.dedup}` (flat — `runner_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
+- **Wire payload-ids**: `entity_state_change`, `entity_state_snapshot`,
+  `delete_entity_state` (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
+  `CompactEntity`, `CompactEntityResponse`, `EntityMailboxStatus`
+  (control channel). See `docs/sdk_protocol_spec.md` "Per-Entity
   State Persistence".
-- **Dynamic segmentation (`operative-dynamic-segmenting`)**: SDK-side
-  `sdk/rust/src/segment/dynamic.rs` (`DynamicSegmentRegistry` +
-  `Reaper`). Dynamic-mode Operations (`operation_key()` overridden, empty
-  `operation_keys()`) create Segments lazily per key. Eviction is OFF by
-  default (`segment_idle_ttl() -> None`); when a TTL is opted in, the
-  per-Operation reaper evicts idle Segments **destructively** — it ships
-  `delete_segment_state` (SDK→controller) and the recreate cold-starts
+- **Dynamic entity mode**: SDK-side
+  `sdk/rust/src/entity/dynamic.rs` (`DynamicEntityRegistry` +
+  `Reaper`). Dynamic-mode Procedures (`entity_key()` overridden, empty
+  `entity_keys()`) create Entities lazily per key. Eviction is OFF by
+  default (`entity_idle_ttl() -> None`); when a TTL is opted in, the
+  per-Procedure reaper evicts idle Entities **destructively** — it ships
+  `delete_entity_state` (SDK→controller) and the recreate cold-starts
   fresh (no restore-from-disk, by decision 2026-06-16). Controller handler:
-  `Flezha.State.Supervisor.delete_segment/1` (stops WalWriter, drops
+  `Flezha.State.Supervisor.delete_entity/1` (stops WalWriter, drops
   FsyncBatcher mark, unlinks files via `Registry.delete_files/1`).
 - **Runtime config knobs**: `:state_root` (default `app_data/state`),
   `:agent_fsync_interval_ms` (5 ms), `:wal_high_watermark_bytes`
@@ -1053,10 +1053,10 @@
   `:compact_after_age_ms` (300 s, `0` disables — and is `0` in `:test`;
   env `FLEZHA_COMPACT_AFTER_AGE_MS`).
 - **Snapshot baseline durability (`snapshot-baseline-durability`)**: the
-  `Watchdog` sweep auto-triggers `CompactSegment` on WAL **size or age**
+  `Watchdog` sweep auto-triggers `CompactEntity` on WAL **size or age**
   (`[:flezha, :state, :compaction_trigger]`); a fresh controller with an
-  empty WAL for a live runner's Segment **pulls** a baseline
-  (WalWriter awaiting-baseline sheds + one `CompactSegment`,
+  empty WAL for a live runner's Entity **pulls** a baseline
+  (WalWriter awaiting-baseline sheds + one `CompactEntity`,
   `[:flezha, :state, :baseline_seed]`) instead of erroring; the resync
   path never pushes an empty `RestoreInitState`
   (`Restore.has_persisted_state?/1`, zero-byte WAL ≡ no state).
@@ -1067,16 +1067,16 @@
   kill switch `FLEZHA_CREDIT_FLOW_CONTROL`), debits each frame's wire size,
   and mints one batched `CreditGrant` per fsync-drain below
   `:credit_low_watermark_bytes` (default `window / 2`). SDK windows:
-  `sdk/rust/src/segment/credit.rs`, `sdk/java .../state/CreditWindow.java`
+  `sdk/rust/src/entity/credit.rs`, `sdk/java .../state/CreditWindow.java`
   (park in the flusher under the buffer lock; `credit_parked` in
-  `data_heartbeat` metadata). Credit sessions get no `SegmentMailboxStatus`;
+  `data_heartbeat` metadata). Credit sessions get no `EntityMailboxStatus`;
   shed/overrun on one emits `[:flezha, :state, :credit_anomaly]`. Soak:
   `test/load/credit_soak_test.exs` (`MIX_RUN_CREDIT_SOAK=1`). The
   source-ingestion credit loop is deferred until `effectively-once-output`
   lands (input-log + min-watermark do not exist yet).
-- **CLI**: `flz state list <operative>`, `flz state at <operative/operation/key> <seq|ts>`,
-  `flz state rotate <operative/operation/key>`, `flz state retention <operative> <hours>`,
-  `flz state delete <operative/operation/key>`. Implemented in `cli/src/state.rs`;
+- **CLI**: `flz state list <operative>`, `flz state at <operative/procedure/key> <seq|ts>`,
+  `flz state rotate <operative/procedure/key>`, `flz state retention <operative> <hours>`,
+  `flz state delete <operative/procedure/key>`. Implemented in `cli/src/state.rs`;
   RPCs into `Flezha.Service.CliManager.state_*/N`.
 - **Detailed notes**: `docs/resilience/state_persistence.md`.
 
@@ -1106,10 +1106,10 @@
   locked out, state readable on disk the whole time. The flag is now set only
   when the payload was non-empty.
 - **`Flezha.State.WalTransfer`** — destination-pulled chunked `:erpc` copy of a
-  Segment's durable files. Source answers reads only (`segments/1`,
+  Entity's durable files. Source answers reads only (`entities/1`,
   `manifest/1`, `read_chunk/3`); destination writes `.transferring` → fsync →
   atomic rename. `read_chunk/3` resolves the requested name against
-  `Registry.segment_files/1` (extracted, also backs `delete_files/1`) rather
+  `Registry.entity_files/1` (extracted, also backs `delete_files/1`) rather
   than joining onto the state dir — a peer must not be able to read arbitrary
   paths. `prepare_handover_state/1` stamps `source_node`; an empty handover
   triggers `adopt_source_state/2` → pull → the existing `{:kick_restore, _}`.
@@ -1132,7 +1132,7 @@
 - **GOTCHA — restoring a stopped hub also needs its runner hooks.** A fresh hub
   has no per-runner `child_registered` hook, so `hook_insert_pid` never fires,
   the StreamChannels never learn the operative pids, and every later data-plane
-  read (segment state, migration, drain handover) silently gets nothing back
+  read (entity state, migration, drain handover) silently gets nothing back
   while everything reads healthy. Restore is `ensure_hub(ns)` PLUS
   `HubManager.register_handler(ns, runner)` per `FleetManager.active_runners(ns)`.
   This bit `hub_manager_registry_test.exs`, whose `durable_registry_pending?/0`
@@ -1191,7 +1191,7 @@
   is up. See `docs/operations/reset.md`.
 - **Persistence layers**: ProcessHub durable registry at
   `app_data/process_hub/<hub_id>/registry.dets` (cspec + `opts[:plugins]`)
-  + per-Segment WAL at `app_data/state/<operative_class>/<operation_id>/...`
+  + per-Entity WAL at `app_data/state/<operative_class>/<procedure_id>/...`
   (change-by-change progress) + marker file at
   `app_data/process_hub/<hub_id>/cluster.healthy` (operator gate).
 - **Plugin enable/disable** uses cspec-write-first ordering via
@@ -1314,7 +1314,7 @@
 - **Runtime config knob**: `:observability, :data_plane_liveness`
   (default `true`, env `FLEZHA_DATA_PLANE_LIVENESS`) gates the ~1 Hz
   poll + classifier; counters stay always-on.
-- **Ops fallback** (docs, not built): sample
+- **Procs fallback** (docs, not built): sample
   `/proc/<beam_pid>/task/*/` for `flz-uds-driver` threads in `D`/frozen
   `utime` (`bin/flzvm pid`).
 - **Detailed notes**: `docs/resilience/transport_liveness.md`.
@@ -1568,7 +1568,7 @@
   one ETS lookup per call (NamespaceStore cache + QuotaCounters
   cache). `record_allocation/3` / `record_deallocation/3` apply
   async. `OperativeManager.start_operative/2` enforces `max_operatives` /
-  `max_segments_per_operative` at allocation time and records on
+  `max_entities_per_operative` at allocation time and records on
   success; `stop_operative/2` decrements on stop. Mailbox / disk /
   runner enforcement points land in the namespace-state
   follow-up.

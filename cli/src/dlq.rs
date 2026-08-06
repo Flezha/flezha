@@ -56,7 +56,7 @@ fn entry_ref_arg(args: &[String], usage: &str) -> String {
 }
 
 fn handle_show(args: &[String]) {
-    let entry_ref = entry_ref_arg(args, "flz dlq show <operative/operation/entry-id>");
+    let entry_ref = entry_ref_arg(args, "flz dlq show <operative/procedure/entry-id>");
     rpc(format!(
         "Flezha.Service.CliManager.dlq_show(\"{}\")",
         entry_ref
@@ -64,7 +64,7 @@ fn handle_show(args: &[String]) {
 }
 
 fn handle_replay(args: &[String]) {
-    let entry_ref = entry_ref_arg(args, "flz dlq replay <operative/operation/entry-id>");
+    let entry_ref = entry_ref_arg(args, "flz dlq replay <operative/procedure/entry-id>");
     rpc(format!(
         "Flezha.Service.CliManager.dlq_replay(\"{}\")",
         entry_ref
@@ -72,7 +72,7 @@ fn handle_replay(args: &[String]) {
 }
 
 fn handle_drop(args: &[String]) {
-    let entry_ref = entry_ref_arg(args, "flz dlq drop <operative/operation/entry-id>");
+    let entry_ref = entry_ref_arg(args, "flz dlq drop <operative/procedure/entry-id>");
     rpc(format!(
         "Flezha.Service.CliManager.dlq_drop(\"{}\")",
         entry_ref
@@ -86,7 +86,7 @@ fn print_dlq_help() {
     println!(
         "  flz dlq list [operative]                       Parked entries, nearest-to-expiry first"
     );
-    println!("  flz dlq show <operative/operation/entry-id>    Entry metadata + payload preview");
-    println!("  flz dlq replay <operative/operation/entry-id>  Re-dispatch through the normal input path");
-    println!("  flz dlq drop <operative/operation/entry-id>    Discard the entry (audited)");
+    println!("  flz dlq show <operative/procedure/entry-id>    Entry metadata + payload preview");
+    println!("  flz dlq replay <operative/procedure/entry-id>  Re-dispatch through the normal input path");
+    println!("  flz dlq drop <operative/procedure/entry-id>    Discard the entry (audited)");
 }

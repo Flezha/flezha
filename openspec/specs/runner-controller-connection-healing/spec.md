@@ -21,7 +21,7 @@ The Rust SDK's `command_add_operative` handler SHALL be idempotent: an `AddOpera
 - **AND** the new Controller process reaches ready
 - **AND** the Runner's reconnect loop opens a new control channel within its existing backoff window
 - **THEN** within 5 s of the Controller reaching ready, the Kafka topic's `LOG-END-OFFSET` SHALL have advanced past its pre-restart value
-- **AND** the test SHALL NOT have called `flz operative start`, restarted the Runner container, or issued any other re-assignment operation between the restart and the assertion
+- **AND** the test SHALL NOT have called `flz operative start`, restarted the Runner container, or issued any other re-assignment procedure between the restart and the assertion
 
 #### Scenario: StreamChannel rebinds to a fresh stream_ref instead of dropping traffic
 - **GIVEN** a `StreamChannel` for Operative `r1` was bound to `stream_ref_old`
@@ -84,7 +84,7 @@ Note: the `market-executor` container/PID-file name above is owned by the separa
 
 For any byte sequence the SDK reads from the control socket — including 0-byte reads, truncated frames, frames with unknown command variants, frames whose `reference_id` is empty, frames whose `Command` oneof is `None` — the SDK SHALL surface a typed `Result::Err` to its caller and SHALL NOT `panic!`, `.unwrap()`, or `.expect()` from within a runtime thread. The error path SHALL drive the existing reconnect loop (clean transport restart) for transport-edge events (clean close, truncated read) and structured logging plus reconnect for protocol-edge events (unknown variant, missing oneof).
 
-The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateResponse`, and `Command::CompactSegmentResponse` clauses (currently `CommandActionType::NotificationIgnore`) demonstrate the desired pattern for protocol-edge events: log and drop. The decode-edge event class (this requirement) extends the same defensive posture one layer below the variant match.
+The existing `Command::RunnerShutdownNotification`, `Command::RestoreInitStateResponse`, and `Command::CompactEntityResponse` clauses (currently `CommandActionType::NotificationIgnore`) demonstrate the desired pattern for protocol-edge events: log and drop. The decode-edge event class (this requirement) extends the same defensive posture one layer below the variant match.
 
 #### Scenario: `Command` oneof is None and SDK does not panic
 - **GIVEN** the SDK receives a well-formed `CommandRequest` whose `command` field is `None` (a future protocol contract violation or a defensive serialization bug)
@@ -358,7 +358,7 @@ on any control-socket transport-edge event" requirement.
 
 `FleetManager.evict_runner/1` driven by the convergence Loop SHALL be a no-op when the target runner is currently `:active` (its connection is open), and SHALL be idempotent on an unknown id. The authoritative connect-handler path (`previous_runner_id` presented by the SDK itself) remains unconditional.
 
-#### Scenario: a reconnected runner survives a stale eviction op
+#### Scenario: a reconnected runner survives a stale eviction proc
 - **GIVEN** the Diff snapshot queued `default_X` for eviction but `default_X` reconnected before the heal ran
 - **WHEN** `evict_runner(default_X)` executes
 - **THEN** FleetManager observes `default_X` is `:active` and performs no eviction, leaving its operatives producing.

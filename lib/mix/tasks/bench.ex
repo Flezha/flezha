@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Bench do
 
       mix bench --num-operatives 1000 --messages-per-operative 1000
       mix bench --runtime java -n 100 -m 1000
-      mix bench --runtime rust --shape segmenting --pool-sizes 1,8
+      mix bench --runtime rust --shape entity --pool-sizes 1,8
 
   ## Options
 
@@ -25,14 +25,14 @@ defmodule Mix.Tasks.Bench do
       `mvn -f test/apps/java_runner/pom.xml package`.
     * `--shape` - Bench shape: `regression` (default; the apples-to-apples
       regression check, factory `do_nothing`, dimensions from `-n` / `-m`),
-      `segmenting` (the `operative-bench-harness` segmenting-stress shape, factory
-      `segmenting_stress`, dimensions hard-coded at `8 × 20_000` per
+      `entity` (the `operative-bench-harness` entity-stress shape, factory
+      `entity_stress`, dimensions hard-coded at `8 × 20_000` per
       `operative-bench-harness/design.md` Decision 6, swept across the comma-list in
-      `--pool-sizes`), or `dynamic` (the `operative-dynamic-segmenting` shape, factory
-      `dynamic_segment`, lazy per-key Segments with 8 keys/operative,
+      `--pool-sizes`), or `dynamic` (the dynamic entity-mode shape, factory
+      `dynamic_entity`, lazy per-key Entities with 8 keys/operative,
       dimensions from `-n` / `-m`).
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
-      only honored when `--shape segmenting`. Each value spawns a fresh
+      only honored when `--shape entity`. Each value spawns a fresh
       Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
       reports throughput per-size; the final scaling summary is parsed by CI.
 
@@ -78,7 +78,7 @@ defmodule Mix.Tasks.Bench do
     IO.puts("Shape: #{shape}")
     IO.puts("Operatives: #{num_operatives}")
     IO.puts("Messages per operative: #{messages_per_operative}")
-    if shape == :segmenting, do: IO.puts("Pool sizes: #{Enum.join(pool_sizes, ",")}")
+    if shape == :entity, do: IO.puts("Pool sizes: #{Enum.join(pool_sizes, ",")}")
     IO.puts("")
 
     Process.put(:bench_runtime, runtime)
@@ -95,15 +95,15 @@ defmodule Mix.Tasks.Bench do
       :dynamic ->
         run_default_shape(runtime, num_operatives, messages_per_operative, :dynamic)
 
-      :segmenting ->
-        run_segmenting_shape(num_operatives, messages_per_operative, pool_sizes)
+      :entity ->
+        run_entity_shape(num_operatives, messages_per_operative, pool_sizes)
     end
   end
 
   # ----- Single-namespace shapes: regression (default) and dynamic -----
   #
   # `:regression` is byte-identical to the historical default behaviour.
-  # `:dynamic` reuses the same harness with the `dynamic_segment`
+  # `:dynamic` reuses the same harness with the `dynamic_entity`
   # factory and keyed inputs (see `input_for_shape/3`).
 
   defp run_default_shape(runtime, num_operatives, messages_per_operative, shape) do
@@ -130,12 +130,12 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  # ----- Shape: segmenting (new — sweeps pool sizes, emits scaling summary) -----
+  # ----- Shape: entity (new — sweeps pool sizes, emits scaling summary) -----
 
-  defp run_segmenting_shape(num_operatives, messages_per_operative, pool_sizes) do
+  defp run_entity_shape(num_operatives, messages_per_operative, pool_sizes) do
     results =
       Enum.map(pool_sizes, fn pool ->
-        IO.puts("\n=== Segmenting Stress: pool=#{pool} ===")
+        IO.puts("\n=== Entity Stress: pool=#{pool} ===")
         # Always bring up a fresh bench namespace per pool size — the default
         # namespace's compute engines were started without FLEZHA_WORKER_POOL_SIZE
         # threaded through, so they can't be reused for the per-pool sweep.
@@ -147,7 +147,7 @@ defmodule Mix.Tasks.Bench do
               @bench_namespace,
               num_operatives,
               messages_per_operative,
-              :segmenting
+              :entity
             )
 
           {pool, throughput}
@@ -252,11 +252,11 @@ defmodule Mix.Tasks.Bench do
 
   defp parse_shape(nil), do: :regression
   defp parse_shape("regression"), do: :regression
-  defp parse_shape("segmenting"), do: :segmenting
+  defp parse_shape("entity"), do: :entity
   defp parse_shape("dynamic"), do: :dynamic
 
   defp parse_shape(other) do
-    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"segmenting\", or \"dynamic\"."
+    raise "Unknown --shape value: #{inspect(other)}. Expected \"regression\", \"entity\", or \"dynamic\"."
   end
 
   defp parse_pool_sizes(nil), do: [1, 8]
@@ -276,8 +276,8 @@ defmodule Mix.Tasks.Bench do
   end
 
   defp factory_for_shape(:regression), do: "do_nothing"
-  defp factory_for_shape(:segmenting), do: "segmenting_stress"
-  defp factory_for_shape(:dynamic), do: "dynamic_segment"
+  defp factory_for_shape(:entity), do: "entity_stress"
+  defp factory_for_shape(:dynamic), do: "dynamic_entity"
 
   defp dimensions_for_shape(:regression, opts) do
     {opts[:num_operatives] || 100, opts[:messages_per_operative] || 100}
@@ -287,10 +287,10 @@ defmodule Mix.Tasks.Bench do
     {opts[:num_operatives] || 100, opts[:messages_per_operative] || 100}
   end
 
-  defp dimensions_for_shape(:segmenting, opts) do
+  defp dimensions_for_shape(:entity, opts) do
     if opts[:num_operatives] || opts[:messages_per_operative] do
       IO.warn(
-        "--shape segmenting ignores -n/-m; dimensions are hard-coded at 8 × 20_000 " <>
+        "--shape entity ignores -n/-m; dimensions are hard-coded at 8 × 20_000 " <>
           "per operative-bench-harness/design.md Decision 6. Use --shape regression for " <>
           "custom dimensions."
       )
@@ -481,21 +481,21 @@ defmodule Mix.Tasks.Bench do
     throughput_msgs_per_sec
   end
 
-  # `do_nothing` echoes once per input (single operation, single segment,
+  # `do_nothing` echoes once per input (single procedure, single entity,
   # one plugin-bound emit), so each dispatched input produces one
-  # `:on_output` event. `segmenting_stress` chains four operations × 8
-  # segments; only OperationD emits to a plugin, and only its `p0` segment
-  # is targeted by the pipeline routing so it runs once per OperationC emit.
-  # The entry operation fans 8-wide → OperationA runs 8× → 8 emits to B[p0] →
+  # `:on_output` event. `entity_stress` chains four procedures × 8
+  # entities; only ProcedureD emits to a plugin, and only its `p0` entity
+  # is targeted by the pipeline routing so it runs once per ProcedureC emit.
+  # The entry procedure fans 8-wide → ProcedureA runs 8× → 8 emits to B[p0] →
   # 8 emits to C[p0] → 8 emits to D[p0] → 8 plugin-bound emits per input.
   defp expected_responses(:regression, total_messages), do: total_messages
-  defp expected_responses(:segmenting, total_messages), do: total_messages * 8
-  # `dynamic_segment` emits once per input (one plugin-bound emit),
+  defp expected_responses(:entity, total_messages), do: total_messages * 8
+  # `dynamic_entity` emits once per input (one plugin-bound emit),
   # so each dispatched input produces one `:on_output` event.
   defp expected_responses(:dynamic, total_messages), do: total_messages
 
   # Per-shape wire input. The dynamic shape prefixes a bounded key
-  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Segments per operative
+  # (`k0`..`k7`) so a steady burst exercises 8 dynamic Entities per operative
   # without tripping the soft cap; other shapes are key-agnostic.
   defp input_for_shape(:dynamic, operative_id, msg_num) do
     "k#{rem(msg_num, 8)}:test_msg_#{operative_id}_#{msg_num}"

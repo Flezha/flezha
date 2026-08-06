@@ -5,7 +5,7 @@ Two complementary liveness signals on the controller↔runner transport: a
 **data-plane stall instrumentation** (which layer wedged when output went
 silent?). They cover different wedge classes — see the table below.
 
-## Control-plane session liveness (unify-executor-liveness-and-identity)
+## Control-plane session liveness (runner-controller-connection-healing)
 
 `Flezha.Runner.ControlChannel` treats the inbound control-frame stream as the
 single liveness signal for the runner session. It stamps a monotonic
@@ -115,7 +115,7 @@ channel's.
 
 **Runner dispatch self-report** (Rust SDK): every `data_heartbeat` frame
 carries `dispatches` (process-global count of payloads dispatched through
-`drain_segment`) and `blocked_parks` (Block-policy full-mailbox episodes) in
+`drain_entity`) and `blocked_parks` (Block-policy full-mailbox episodes) in
 its metadata. The heartbeat thread outlives a wedged dispatch pool, so without
 this counter a runner can look alive while processing nothing — exactly the
 2026-06-10 freeze. The secondary `StreamChannel` mirrors the values into
@@ -181,11 +181,11 @@ never reads as a stall:
 The same module carries `StallClassifier.classify_producing/3` — the
 per-operative producing-liveness classifier the Loop runs at tick cadence over
 durable progress markers. `Flezha.Convergence.Loop.progress_markers/0` builds
-them from `Flezha.State.Watchdog.segment_statuses/0` (WAL
+them from `Flezha.State.Watchdog.entity_statuses/0` (WAL
 `last_change_seen_at` / `last_advance_at`, plus the `out_pending_seq` /
 `outbox_flushed_seq` outbox cursors) joined with `Flezha.State.InputLog.cursors/1`
-(the log tail and each Segment's durable consumed offset) — one input-log read
-per operative per tick, not per Segment. A tier-off operative has no input log,
+(the log tail and each Entity's durable consumed offset) — one input-log read
+per operative per tick, not per Entity. A tier-off operative has no input log,
 yields no cursor fields, and degrades to WAL-seq-only.
 
 It shares the deepest-verdict-wins convention and the fed precondition:
@@ -195,11 +195,11 @@ It shares the deepest-verdict-wins convention and the fed precondition:
 
 Each detail carries its own fed precondition, so an idle operative cannot trip
 one: `watermark_frozen` requires the **input-log tail to have grown** while the
-Segment's consumed offset stood still, and `outbox_flat` requires
+Entity's consumed offset stood still, and `outbox_flat` requires
 **output-bearing records to have accumulated** while the flush cursor stood
 still. `out_pending_seq` deliberately counts only output-bearing records —
 `outbox_durable_seq` advances on every fsynced record, so reusing it would read a
-Segment that persists state but emits nothing as a permanently frozen outbox.
+Entity that persists state but emits nothing as a permanently frozen outbox.
 
 Like the data-plane classifier it is report-only — healing stays on the
 `:output_stall → rebind` path. See `docs/resilience/convergence_loop.md`

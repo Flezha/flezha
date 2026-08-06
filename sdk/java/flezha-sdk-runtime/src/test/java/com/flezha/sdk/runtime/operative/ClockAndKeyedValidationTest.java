@@ -4,11 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.EventTimeFrom;
 import com.flezha.sdk.state.LogicalClock;
@@ -91,7 +91,7 @@ class ClockAndKeyedValidationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(NoExtractorOp.class);
+            c.input(String.class, "in").into(NoExtractorProc.class);
         }
     }
 
@@ -103,7 +103,7 @@ class ClockAndKeyedValidationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(ExtractorOp.class);
+            c.input(String.class, "in").into(ExtractorProc.class);
         }
     }
 
@@ -115,7 +115,7 @@ class ClockAndKeyedValidationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(UnservableClockOp.class);
+            c.input(String.class, "in").into(UnservableClockProc.class);
         }
     }
 
@@ -127,8 +127,8 @@ class ClockAndKeyedValidationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sPlainOp = c.input(String.class, "in").into(PlainOp.class);
-            sPlainOp.named("mid").keyed().into(SecondOp.class);
+            var sPlainProc = c.input(String.class, "in").into(PlainProc.class);
+            sPlainProc.named("mid").keyed().into(SecondProc.class);
         }
     }
 
@@ -140,15 +140,15 @@ class ClockAndKeyedValidationTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sPlainOp = c.input(String.class, "in").into(PlainOp.class);
-            sPlainOp.named("out").keyed().output("sink");
+            var sPlainProc = c.input(String.class, "in").into(PlainProc.class);
+            sPlainProc.named("out").keyed().output("sink");
         }
     }
 
     public record Unit() {}
 
     abstract static class Base<C extends Change, K extends com.flezha.sdk.state.Clock>
-            implements Operation<String, Unit, String, C, K, Void> {
+            implements Procedure<String, Unit, String, C, K, Void> {
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -165,16 +165,16 @@ class ClockAndKeyedValidationTest {
         }
 
         @Override
-        public Unit initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Unit initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Unit();
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, C> state, OperationCtx ctx) throws OperationException {}
+        public void run(String input, StateHandle<Unit, C> state, ProcedureCtx ctx) throws ProcedureException {}
     }
 
     /** Declares EventTimeFrom but never overrides eventTime — the refused case. */
-    public static final class NoExtractorOp extends Base<NoChange, EventTimeFrom> {
+    public static final class NoExtractorProc extends Base<NoChange, EventTimeFrom> {
         @Override
         public String name() {
             return "no_extractor";
@@ -191,7 +191,7 @@ class ClockAndKeyedValidationTest {
         }
     }
 
-    public static final class ExtractorOp extends Base<NoChange, EventTimeFrom> {
+    public static final class ExtractorProc extends Base<NoChange, EventTimeFrom> {
         @Override
         public String name() {
             return "with_extractor";
@@ -219,7 +219,7 @@ class ClockAndKeyedValidationTest {
     }
 
     /** LogicalClock + NoChange: there is no durable seq to serve. */
-    public static final class UnservableClockOp extends Base<NoChange, LogicalClock> {
+    public static final class UnservableClockProc extends Base<NoChange, LogicalClock> {
         @Override
         public String name() {
             return "unservable";
@@ -236,7 +236,7 @@ class ClockAndKeyedValidationTest {
         }
     }
 
-    public static class PlainOp extends Base<NoChange, WallClock> {
+    public static class PlainProc extends Base<NoChange, WallClock> {
         @Override
         public String name() {
             return "plain_op";
@@ -253,7 +253,7 @@ class ClockAndKeyedValidationTest {
         }
     }
 
-    public static final class SecondOp extends PlainOp {
+    public static final class SecondProc extends PlainProc {
         @Override
         public String name() {
             return "second_op";

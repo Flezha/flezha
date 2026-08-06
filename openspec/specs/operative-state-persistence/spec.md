@@ -2,57 +2,57 @@
 
 ## Purpose
 
-The operative-state-persistence capability provides agent-side, per-Segment durability for Operative state. The agent maintains an append-only write-ahead log (WAL) per Segment under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Segment reconnect, the agent assembles a `RestoreInitState{segment_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Operative-class opt-in via runtime config or an Operative-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`segment_state_change`, `segment_state_snapshot`) flow alongside the existing protocol; no SDK or runner code outside this capability is required.
+The operative-state-persistence capability provides agent-side, per-Entity durability for Operative state. The agent maintains an append-only write-ahead log (WAL) per Entity under `app_data/state/`, fsynced on a configurable cadence, with asynchronous size-triggered compaction into snapshot files. On Entity reconnect, the agent assembles a `RestoreInitState{entity_id, snapshot_bytes, change_log_bytes}` payload and ships it to the SDK over the control channel; the SDK applies the snapshot and folds the WAL tail to recover terminal state. Persistence is per-Operative-class opt-in via runtime config or an Operative-class const, defaulting on. The agent retains pre-compaction WAL records for a configurable window to support time-travel queries via `flz state at`. The capability is additive to the existing `Overwatch` GenServer: persistence frames (`entity_state_change`, `entity_state_snapshot`) flow alongside the existing protocol; no SDK or runner code outside this capability is required.
 ## Requirements
-### Requirement: Per-Segment append-only WAL on the agent
+### Requirement: Per-Entity append-only WAL on the agent
 
-Each Segment whose Operative has `persistence_enabled = true` and whose Operation's `Change` is not `NoChange` SHALL have a per-Segment write-ahead log on the Controller at `app_data/state/{operative_class}/{operation_id}/{segment_key}.wal`. The on-disk path SHALL NOT include `runner_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
+Each Entity whose Operative has `persistence_enabled = true` and whose Procedure's `Change` is not `NoChange` SHALL have a per-Entity write-ahead log on the Controller at `app_data/state/{operative_class}/{procedure_id}/{entity_key}.wal`. The on-disk path SHALL NOT include `runner_id` as a path component. Records SHALL be `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]` where `len = 16 + byte_size(change_bytes)` and `crc32 = :erlang.crc32(<<header::binary, change_bytes::binary>>)`. The WAL SHALL be written by the Controller's persistence module (`lib/flezha/state/wal_writer.ex`) and SHALL never be written directly by user code or by the SDK.
 
-`seq` SHALL be strictly monotonic per Segment and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Segment; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`. For a frame whose `seq > last_persisted_seq + 1` the Controller SHALL distinguish two cases:
+`seq` SHALL be strictly monotonic per Entity and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Entity; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`. For a frame whose `seq > last_persisted_seq + 1` the Controller SHALL distinguish two cases:
 
 - **Populated WAL** (`last_persisted_seq >= 0`) and not a runner-restart realign: a genuine protocol violation. The Controller SHALL reject the append (returning `{:error, {:gap, expected, got}}`) and the SDK SHALL treat it as a protocol violation and disconnect.
-- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not a runner-restart realign: a cold-takeover where this Controller holds no baseline for a Segment the runner already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Segment, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive exactly one `CompactSegment` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until a `segment_state_snapshot` establishes the baseline.
+- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not a runner-restart realign: a cold-takeover where this Controller holds no baseline for an Entity the runner already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Entity, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive exactly one `CompactEntity` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until an `entity_state_snapshot` establishes the baseline.
 
-A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Segment `WalWriter`. The migrator SHALL walk every directory under `app_data/state/` of the form `{runner_id}/{operative_class}/{operation_id}/` and atomically move its contents into `{operative_class}/{operation_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{runner_id}/` directories are emptied, they are removed.
+A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Entity `WalWriter`. The migrator SHALL walk every directory under `app_data/state/` of the form `{runner_id}/{operative_class}/{procedure_id}/` and atomically move its contents into `{operative_class}/{procedure_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{runner_id}/` directories are emptied, they are removed.
 
 #### Scenario: WAL path uses flat layout
 
-- **WHEN** a Segment `p1` with operation `s1` and segment_key `k1` belonging to Operative class `MarketOperative` is running and persistence is enabled
+- **WHEN** an Entity `p1` with procedure `s1` and entity_key `k1` belonging to Operative class `MarketOperative` is running and persistence is enabled
 - **THEN** the Controller SHALL write its WAL to `app_data/state/MarketOperative/s1/k1.wal`
 - **AND** the path SHALL NOT contain any `runner_id` component regardless of which runner currently hosts the Operative
 
 #### Scenario: WAL allocated lazily on first append
 
-- **WHEN** the agent receives the first `segment_state_change` frame for a Segment that does not yet have a WAL file
-- **THEN** the persistence module SHALL create the directory `app_data/state/{operative}/{operation}/`, open the WAL file at `{segment_key}.wal` with `[:raw, :read, :write, :binary, :append]`, and start a `WalWriter` GenServer for the Segment
+- **WHEN** the agent receives the first `entity_state_change` frame for an Entity that does not yet have a WAL file
+- **THEN** the persistence module SHALL create the directory `app_data/state/{operative}/{procedure}/`, open the WAL file at `{entity_key}.wal` with `[:raw, :read, :write, :binary, :append]`, and start a `WalWriter` GenServer for the Entity
 
 #### Scenario: Strictly monotonic seq accepted in order
 
-- **WHEN** the SDK ships frames with `seq = 1, 2, 3` for a fresh Segment
+- **WHEN** the SDK ships frames with `seq = 1, 2, 3` for a fresh Entity
 - **THEN** the agent SHALL append all three records to the WAL in order; the file's `last_persisted_seq` SHALL equal 3 after the third append
 
 #### Scenario: Re-shipped seq is silently deduped
 
-- **WHEN** the SDK ships a frame with `seq = 5` for a Segment whose `last_persisted_seq = 7` (re-ship after SDK crash that lost the in-memory cursor)
+- **WHEN** the SDK ships a frame with `seq = 5` for an Entity whose `last_persisted_seq = 7` (re-ship after SDK crash that lost the in-memory cursor)
 - **THEN** the agent SHALL NOT append the duplicate; the agent SHALL increment `dedup_drops_total`; the wire reply SHALL be `:ok` (so the SDK does not retry)
 
 #### Scenario: Out-of-order seq on a populated WAL is rejected
 
-- **GIVEN** a Segment whose `last_persisted_seq = 7` (populated WAL)
+- **GIVEN** an Entity whose `last_persisted_seq = 7` (populated WAL)
 - **WHEN** the SDK ships a frame with `seq = 10`
 - **THEN** the agent SHALL refuse the append and reply `{:error, {:gap, expected: 8, got: 10}}`; the SDK SHALL treat this as a protocol violation and disconnect
 
 #### Scenario: Gap on an empty WAL seeds a baseline instead of disconnecting
 
-- **GIVEN** a freshly-assigned Controller with no WAL for a Segment (`last_persisted_seq = -1`) whose live runner has been producing changes and next emits `seq = 5001`, and the frame is not a runner-restart realign
-- **WHEN** the agent receives the `segment_state_change` frame
-- **THEN** the agent SHALL NOT reply with a fatal gap error and SHALL NOT disconnect the SDK; the agent SHALL shed the frame (incrementing the shed counter), mark the Segment awaiting-baseline, and dispatch exactly one `CompactSegment` to pull a full-state baseline; further gap frames arriving before the snapshot SHALL be shed without error
-- **AND** once the pulled `segment_state_snapshot{seq}` lands, `last_persisted_seq` SHALL equal that snapshot's seq and the runner's next new delta SHALL append contiguously
+- **GIVEN** a freshly-assigned Controller with no WAL for an Entity (`last_persisted_seq = -1`) whose live runner has been producing changes and next emits `seq = 5001`, and the frame is not a runner-restart realign
+- **WHEN** the agent receives the `entity_state_change` frame
+- **THEN** the agent SHALL NOT reply with a fatal gap error and SHALL NOT disconnect the SDK; the agent SHALL shed the frame (incrementing the shed counter), mark the Entity awaiting-baseline, and dispatch exactly one `CompactEntity` to pull a full-state baseline; further gap frames arriving before the snapshot SHALL be shed without error
+- **AND** once the pulled `entity_state_snapshot{seq}` lands, `last_persisted_seq` SHALL equal that snapshot's seq and the runner's next new delta SHALL append contiguously
 
 #### Scenario: Crash-safe append via crc
 
 - **WHEN** the agent process crashes mid-record-write, leaving a partial record at the file tail
-- **THEN** on next agent boot, `WalWriter::scan_for_last_valid_seq/1` SHALL detect the partial record (crc32 mismatch on the trailing bytes), truncate the file to the last valid record, and resume normal operation; `last_persisted_seq` SHALL equal the seq of the last valid record
+- **THEN** on next agent boot, `WalWriter::scan_for_last_valid_seq/1` SHALL detect the partial record (crc32 mismatch on the trailing bytes), truncate the file to the last valid record, and resume normal procedure; `last_persisted_seq` SHALL equal the seq of the last valid record
 
 #### Scenario: One-time migration from runner_id-keyed layout
 
@@ -66,17 +66,17 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 
 - **GIVEN** a runner restart between WAL writes — first write under `exec-9`, restart yields `exec-12` for the same Operative
 - **WHEN** the migrator runs (one-time, on first boot under new code)
-- **THEN** files from BOTH `exec-9/MarketOperative/btc/` and `exec-12/MarketOperative/btc/` SHALL be merged into the flat path; on collision (same segment_key.wal in both), the migrator SHALL prefer the file with the higher last-record `seq` (read by scanning) and preserve the other as `<key>.wal.preserved-<exec-9>` for forensics
+- **THEN** files from BOTH `exec-9/MarketOperative/btc/` and `exec-12/MarketOperative/btc/` SHALL be merged into the flat path; on collision (same entity_key.wal in both), the migrator SHALL prefer the file with the higher last-record `seq` (read by scanning) and preserve the other as `<key>.wal.preserved-<exec-9>` for forensics
 
 ### Requirement: Snapshot lifecycle with atomic rename and WAL truncation
 
-When the agent receives a `segment_state_snapshot` frame from the SDK (typically in response to a `CompactSegment` command), the agent SHALL: (1) write the snapshot bytes to `{segment_key}.snap.{seq}.tmp` with `[:raw, :write, :binary]`; (2) `:file.sync/1` the temp file; (3) atomically rename to `{segment_key}.snap.{seq}` via `:file.rename/2`; (4) call `WalWriter.truncate_up_to(seq)` which rewrites the WAL dropping records with `seq' <= seq` and atomically renames the rewritten file into place.
+When the agent receives an `entity_state_snapshot` frame from the SDK (typically in response to a `CompactEntity` command), the agent SHALL: (1) write the snapshot bytes to `{entity_key}.snap.{seq}.tmp` with `[:raw, :write, :binary]`; (2) `:file.sync/1` the temp file; (3) atomically rename to `{entity_key}.snap.{seq}` via `:file.rename/2`; (4) call `WalWriter.truncate_up_to(seq)` which rewrites the WAL dropping records with `seq' <= seq` and atomically renames the rewritten file into place.
 
 If the agent crashes between steps 3 and 4, the next boot SHALL find both the new snapshot and the un-truncated WAL; `lib/flezha/state/registry.ex::scan_dir/1` SHALL detect the situation, prefer the latest snapshot, and mark the WAL records ≤ `snapshot.seq` as redundant. Replay-from-this-state is correct: applying the snapshot then folding the WAL produces a state where the redundant records' apply_change calls are no-ops (because the snapshot already encodes their effects).
 
 #### Scenario: Snapshot rename atomic
 
-- **WHEN** the agent receives a `segment_state_snapshot` frame
+- **WHEN** the agent receives an `entity_state_snapshot` frame
 - **THEN** an observer reading the directory SHALL see either the prior snapshot file OR the new snapshot file at any moment, but not a half-written file
 
 #### Scenario: WAL truncation removes pre-snapshot records
@@ -89,54 +89,54 @@ If the agent crashes between steps 3 and 4, the next boot SHALL find both the ne
 - **WHEN** the agent crashes between snapshot-rename and WAL-truncate, leaving snapshot at seq 100 and full WAL with seqs 1-150
 - **THEN** on next agent reconnect, the agent SHALL ship `RestoreInitState` with the snapshot bytes AND the full WAL bytes (records 1-150); the SDK SHALL apply the snapshot (state at seq 100) then fold records 1-150 — records 1-100 are no-ops because the snapshot already encodes their effects; records 101-150 advance the state correctly; terminal state matches the pre-crash state at seq 150
 
-### Requirement: Asynchronous compaction triggered by per-Segment WAL size
+### Requirement: Asynchronous compaction triggered by per-Entity WAL size
 
-Compaction SHALL be triggered by **WAL size or age**. When a Segment's WAL exceeds `compact_after_bytes` (per-Operation, **default 8 MiB**; the SDK ships the per-Operation value to the agent in the `AddOperative` metadata, and the SDK's own advertised default SHALL be 8 MiB so it does not override the global `:flezha, :default_compact_after_bytes`), OR the Segment's oldest un-snapshotted WAL record is older than `compact_after_age_ms` (global runtime knob, default `300_000`; `0` disables the age trigger), the agent SHALL trigger asynchronous compaction by enqueuing `Overwatch.handle_continue(:compact_segment, segment_id)`. The continuation SHALL ship `CompactSegment{segment_id}` to the SDK over the control channel. The age trigger SHALL be evaluated by the existing `Flezha.State.Watchdog` periodic sweep, reusing the same continuation as the size trigger.
+Compaction SHALL be triggered by **WAL size or age**. When an Entity's WAL exceeds `compact_after_bytes` (per-Procedure, **default 8 MiB**; the SDK ships the per-Procedure value to the agent in the `AddOperative` metadata, and the SDK's own advertised default SHALL be 8 MiB so it does not override the global `:flezha, :default_compact_after_bytes`), OR the Entity's oldest un-snapshotted WAL record is older than `compact_after_age_ms` (global runtime knob, default `300_000`; `0` disables the age trigger), the agent SHALL trigger asynchronous compaction by enqueuing `Overwatch.handle_continue(:compact_entity, entity_id)`. The continuation SHALL ship `CompactEntity{entity_id}` to the SDK over the control channel. The age trigger SHALL be evaluated by the existing `Flezha.State.Watchdog` periodic sweep, reusing the same continuation as the size trigger.
 
-The SDK SHALL acquire the Segment's sticky CAS, clone `Self::State`, release the CAS, serialize the clone (postcard), and ship `segment_state_snapshot{segment_id, seq, header, snapshot_bytes, crc32}` back to the agent. The agent SHALL handle the snapshot per the snapshot-lifecycle requirement above. The agent SHALL reply `CompactSegmentResponse{segment_id, snapshot_seq, snapshot_bytes_size}` to confirm.
+The SDK SHALL acquire the Entity's sticky CAS, clone `Self::State`, release the CAS, serialize the clone (postcard), and ship `entity_state_snapshot{entity_id, seq, header, snapshot_bytes, crc32}` back to the agent. The agent SHALL handle the snapshot per the snapshot-lifecycle requirement above. The agent SHALL reply `CompactEntityResponse{entity_id, snapshot_seq, snapshot_bytes_size}` to confirm.
 
 The hot path SHALL pay only the brief sticky-CAS hold during the state clone — microseconds, not the seconds-to-minutes a synchronous full-state snapshot would take.
 
 #### Scenario: Compaction triggered by size threshold
 
-- **WHEN** a Segment's `wal_size_bytes` grows past 8 MiB (the default `compact_after_bytes`)
-- **THEN** the agent SHALL enqueue `:compact_segment` for that Segment without blocking new Change ingestion
+- **WHEN** an Entity's `wal_size_bytes` grows past 8 MiB (the default `compact_after_bytes`)
+- **THEN** the agent SHALL enqueue `:compact_entity` for that Entity without blocking new Change ingestion
 
-#### Scenario: Compaction triggered by WAL age for a low-throughput Segment
+#### Scenario: Compaction triggered by WAL age for a low-throughput Entity
 
-- **GIVEN** `compact_after_age_ms = 300_000` and a Segment whose WAL has not reached 8 MiB but whose oldest un-snapshotted record is older than 5 minutes
+- **GIVEN** `compact_after_age_ms = 300_000` and an Entity whose WAL has not reached 8 MiB but whose oldest un-snapshotted record is older than 5 minutes
 - **WHEN** the `Flezha.State.Watchdog` sweep runs
-- **THEN** the agent SHALL enqueue `:compact_segment` for that Segment so a fresh baseline is written even though the size threshold was never reached
+- **THEN** the agent SHALL enqueue `:compact_entity` for that Entity so a fresh baseline is written even though the size threshold was never reached
 
 #### Scenario: Age trigger disabled
 
 - **GIVEN** `compact_after_age_ms = 0`
-- **WHEN** the `Flezha.State.Watchdog` sweep runs over a Segment with an old but small WAL
+- **WHEN** the `Flezha.State.Watchdog` sweep runs over an Entity with an old but small WAL
 - **THEN** the agent SHALL NOT enqueue compaction on the basis of age; only the size trigger applies
 
-#### Scenario: Per-Operation override propagated and honored
+#### Scenario: Per-Procedure override propagated and honored
 
-- **WHEN** an Operation declares `compact_after_bytes() -> usize { 16 * 1024 * 1024 }` in the SDK
-- **THEN** the SDK SHALL ship `compact_after_bytes = 16777216` for this Operation in `AddOperative` metadata; the agent SHALL trigger compaction for this Operation's Segments when WAL grows past 16 MiB
+- **WHEN** a Procedure declares `compact_after_bytes() -> usize { 16 * 1024 * 1024 }` in the SDK
+- **THEN** the SDK SHALL ship `compact_after_bytes = 16777216` for this Procedure in `AddOperative` metadata; the agent SHALL trigger compaction for this Procedure's Entities when WAL grows past 16 MiB
 
 #### Scenario: Hot path holds CAS only for state clone
 
-- **WHEN** the SDK receives `CompactSegment` and clones the state
-- **THEN** the SDK SHALL acquire the sticky CAS, clone, release the CAS within the same `Operation::run`-equivalent invocation, and serialize the clone in a non-runner context; the segment's input throughput SHALL NOT drop below 90% of pre-compaction throughput during the clone
+- **WHEN** the SDK receives `CompactEntity` and clones the state
+- **THEN** the SDK SHALL acquire the sticky CAS, clone, release the CAS within the same `Procedure::run`-equivalent invocation, and serialize the clone in a non-runner context; the entity's input throughput SHALL NOT drop below 90% of pre-compaction throughput during the clone
 
 ### Requirement: Restart restores state via RestoreInitState handshake
 
-On runner (re)bind, the controller SHALL recover each persisted Segment's state, choosing the direction by which side holds authoritative history:
+On runner (re)bind, the controller SHALL recover each persisted Entity's state, choosing the direction by which side holds authoritative history:
 
-- **Controller holds a baseline (a snapshot and/or WAL for the Segment) → push.** The controller SHALL drive a `RestoreInitState` handshake and the SDK SHALL rebuild the live Segment slot from the controller's durable WAL — snapshot apply followed by change-log fold — rather than initialising empty.
-- **Controller holds no baseline for the Segment (no snapshot and no WAL) while the runner is live → pull.** The controller SHALL request a `CompactSegment` from the runner to obtain a full-state baseline, rather than pushing a `RestoreInitState`. Because a freshly-assigned controller cannot enumerate a live runner's Segments (its own disk is empty), the pull is data-plane-triggered by the first `segment_state_change` frame that arrives with an empty WAL (see "Per-Segment append-only WAL on the agent", empty-WAL gap).
+- **Controller holds a baseline (a snapshot and/or WAL for the Entity) → push.** The controller SHALL drive a `RestoreInitState` handshake and the SDK SHALL rebuild the live Entity slot from the controller's durable WAL — snapshot apply followed by change-log fold — rather than initialising empty.
+- **Controller holds no baseline for the Entity (no snapshot and no WAL) while the runner is live → pull.** The controller SHALL request a `CompactEntity` from the runner to obtain a full-state baseline, rather than pushing a `RestoreInitState`. Because a freshly-assigned controller cannot enumerate a live runner's Entities (its own disk is empty), the pull is data-plane-triggered by the first `entity_state_change` frame that arrives with an empty WAL (see "Per-Entity append-only WAL on the agent", empty-WAL gap).
 
-The restore/resync dispatch path SHALL NOT ship a `RestoreInitState` whose assembled payload is empty (no snapshot and no WAL). It SHALL guard with `Flezha.State.Restore.has_persisted_state?/1` — as the bind-time path already does — so an empty payload can never rebuild a live Segment to `init_state` and destroy accumulated state. An empty-WAL condition SHALL route to the pull path above instead.
+The restore/resync dispatch path SHALL NOT ship a `RestoreInitState` whose assembled payload is empty (no snapshot and no WAL). It SHALL guard with `Flezha.State.Restore.has_persisted_state?/1` — as the bind-time path already does — so an empty payload can never rebuild a live Entity to `init_state` and destroy accumulated state. An empty-WAL condition SHALL route to the pull path above instead.
 
 Restore SHALL be:
 
 1. **Unconditional on every Overwatch bind** — driven by `Flezha.State.Recovery.resync_for_overwatch/2` (not a class→runner lookup that fails on cold boot). When the operative arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
-2. **Keyed by operative instance id, not factory id** — the Segment wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the operative *instance*, so two operatives of the same factory class never collide on one WAL.
+2. **Keyed by operative instance id, not factory id** — the Entity wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the operative *instance*, so two operatives of the same factory class never collide on one WAL.
 3. **Inclusive of seq 0** — an empty WAL initialises `last_persisted_seq = -1` (not `0`) and the "no snapshot" restore sentinel is `-1`, so the 0-based first change is never dedup-dropped. After fold, the SDK re-arms `change_seq = terminal_seq + 1` so the next produced frame is contiguous.
 
 #### Scenario: a stateful operative resumes its accumulated state after both runners restart
@@ -150,22 +150,22 @@ Restore SHALL be:
 - **THEN** the seq-0 change is included in the restored change-log (the `-1` empty-WAL/no-snapshot sentinels keep it), not dropped as a dedup floor.
 
 #### Scenario: fresh controller pulls a baseline from a live runner
-- **GIVEN** an Operation is reassigned to a controller that has no WAL and no snapshot for its Segment, while the runner stays live holding accumulated state at seq 5000
-- **WHEN** the operative binds and the runner's next `segment_state_change` arrives
-- **THEN** the controller SHALL request a `CompactSegment` and, on receiving the `segment_state_snapshot`, write it as the Segment's baseline; the controller SHALL NOT push a `RestoreInitState` (which would carry an empty payload and reset the live Segment to `init_state`)
+- **GIVEN** a Procedure is reassigned to a controller that has no WAL and no snapshot for its Entity, while the runner stays live holding accumulated state at seq 5000
+- **WHEN** the operative binds and the runner's next `entity_state_change` arrives
+- **THEN** the controller SHALL request a `CompactEntity` and, on receiving the `entity_state_snapshot`, write it as the Entity's baseline; the controller SHALL NOT push a `RestoreInitState` (which would carry an empty payload and reset the live Entity to `init_state`)
 
 #### Scenario: empty-payload restore is never dispatched
-- **GIVEN** a resync is triggered for a Segment whose controller has no snapshot and no WAL
+- **GIVEN** a resync is triggered for an Entity whose controller has no snapshot and no WAL
 - **WHEN** the recovery path evaluates whether to ship `RestoreInitState`
 - **THEN** `has_persisted_state?/1` SHALL be false and no `RestoreInitState` SHALL be sent; the accumulated live state on the runner SHALL be preserved (not rebuilt to `init_state`)
 
 ### Requirement: Time-travel queries via WAL retention beyond latest snapshot
 
-The agent SHALL retain pre-compaction WAL records for `time_travel_retention_hours` beyond the latest snapshot, configurable per-Operative-class via runtime config `time_travel_retention_hours.<OperativeClass>` (default `6` hours globally; setting to `0` disables time travel for that Operative class). The retention sweeper (`Flezha.State.Retention`) SHALL run on `time_travel_retention_check_interval_ms` (default 60_000), iterate Segments, and rewrite each Segment's WAL dropping records older than the cutoff.
+The agent SHALL retain pre-compaction WAL records for `time_travel_retention_hours` beyond the latest snapshot, configurable per-Operative-class via runtime config `time_travel_retention_hours.<OperativeClass>` (default `6` hours globally; setting to `0` disables time travel for that Operative class). The retention sweeper (`Flezha.State.Retention`) SHALL run on `time_travel_retention_check_interval_ms` (default 60_000), iterate Entities, and rewrite each Entity's WAL dropping records older than the cutoff.
 
-The agent SHALL expose a query interface `Flezha.State.TimeTravel.query(segment_id, target)` where `target = {:seq, u64} | {:timestamp, datetime}`. The query SHALL: (1) locate the latest snapshot at-or-before the target; (2) read the tail-WAL records up to the target; (3) ship `RestoreInitState` to a transient SDK-side replay operative; (4) receive a `segment_state_snapshot` carrying JSON-encoded terminal state; (5) return the JSON to the caller.
+The agent SHALL expose a query interface `Flezha.State.TimeTravel.query(entity_id, target)` where `target = {:seq, u64} | {:timestamp, datetime}`. The query SHALL: (1) locate the latest snapshot at-or-before the target; (2) read the tail-WAL records up to the target; (3) ship `RestoreInitState` to a transient SDK-side replay operative; (4) receive an `entity_state_snapshot` carrying JSON-encoded terminal state; (5) return the JSON to the caller.
 
-The query SHALL be exposed via the `flz state at <operative/operation/segment> <seq | timestamp>` CLI subcommand.
+The query SHALL be exposed via the `flz state at <operative/procedure/entity> <seq | timestamp>` CLI subcommand.
 
 #### Scenario: Default 6-hour retention
 
@@ -179,7 +179,7 @@ The query SHALL be exposed via the `flz state at <operative/operation/segment> <
 
 #### Scenario: Query within retention window returns state
 
-- **WHEN** the runner runs `flz state at MarketOperative/btc/OhlcOperation/M1 "2026-05-07T10:30:00Z"` AND that timestamp falls within the retention window
+- **WHEN** the runner runs `flz state at MarketOperative/btc/OhlcProcedure/M1 "2026-05-07T10:30:00Z"` AND that timestamp falls within the retention window
 - **THEN** the agent SHALL load the latest snapshot at-or-before the timestamp and fold WAL records up to it; the CLI SHALL print the JSON-encoded state
 
 #### Scenario: Query outside retention returns error
@@ -189,8 +189,8 @@ The query SHALL be exposed via the `flz state at <operative/operation/segment> <
 
 #### Scenario: Query against persistence-off Operative errors
 
-- **WHEN** the runner runs `flz state at <operative/operation/segment> <target>` for a Segment whose Operative has `persistence_enabled = false`
-- **THEN** the agent SHALL return `TimeTravelError{kind: :segment_not_persistent, operative, operation, segment}`
+- **WHEN** the runner runs `flz state at <operative/procedure/entity> <target>` for an Entity whose Operative has `persistence_enabled = false`
+- **THEN** the agent SHALL return `TimeTravelError{kind: :entity_not_persistent, operative, procedure, entity}`
 
 #### Scenario: Live retention update applies on next sweep
 
@@ -199,7 +199,7 @@ The query SHALL be exposed via the `flz state at <operative/operation/segment> <
 
 ### Requirement: Fsync batching at configurable cadence
 
-The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BEAM node. The batcher SHALL maintain a `MapSet` of dirty Segment IDs (Segments whose `WalWriter` has appended bytes since the last fsync). On each tick at interval `agent_fsync_interval_ms` (default 5; configurable via runtime config in range [1, 1000]), the batcher SHALL: (1) iterate the dirty set; (2) cast `:fsync` to each `WalWriter`; (3) reset the set; (4) schedule the next tick via `Process.send_after/3`.
+The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BEAM node. The batcher SHALL maintain a `MapSet` of dirty Entity IDs (Entities whose `WalWriter` has appended bytes since the last fsync). On each tick at interval `agent_fsync_interval_ms` (default 5; configurable via runtime config in range [1, 1000]), the batcher SHALL: (1) iterate the dirty set; (2) cast `:fsync` to each `WalWriter`; (3) reset the set; (4) schedule the next tick via `Process.send_after/3`.
 
 `WalWriter` SHALL invoke `:file.datasync/1` on its file handle when receiving the `:fsync` message and SHALL update `fsync_durability_lag_ms` to `now - oldest_pending_record_timestamp`.
 
@@ -210,7 +210,7 @@ The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BE
 
 #### Scenario: 5 ms + 5 ms = 10 ms total durability bound
 
-- **WHEN** an Operation records a Change at time `t` under default flusher and fsync settings (`linger_ms = 5` SDK-side; `agent_fsync_interval_ms = 5` agent-side)
+- **WHEN** a Procedure records a Change at time `t` under default flusher and fsync settings (`linger_ms = 5` SDK-side; `agent_fsync_interval_ms = 5` agent-side)
 - **THEN** the Change SHALL be durably fsynced to disk on the agent by `t + 10 ms` modulo network round-trip and OS scheduling; `fsync_durability_lag_ms` SHALL stabilize below 10 ms under steady-state load
 
 #### Scenario: Runner-tightened bound
@@ -228,7 +228,7 @@ The agent SHALL resolve a per-Operative-class boolean `persistence_enabled` at t
 
 The resolved value SHALL be bound to the Operative instance for its entire lifetime. Subsequent changes to the runner-side config or to the SDK's Operative-class const (via SDK redeploy) SHALL NOT affect already-running instances.
 
-When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot files for any of that Operative's Segments, SHALL ignore (drop with a counter increment) any incoming `segment_state_change` or `segment_state_snapshot` frames for those Segments, and SHALL NOT issue `RestoreInitState` on reconnect.
+When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot files for any of that Operative's Entities, SHALL ignore (drop with a counter increment) any incoming `entity_state_change` or `entity_state_snapshot` frames for those Entities, and SHALL NOT issue `RestoreInitState` on reconnect.
 
 #### Scenario: Default-on with no override
 
@@ -251,7 +251,7 @@ Every WAL record and snapshot file SHALL carry a 16-byte header preceding the pa
 
 - bytes 0:1 — `sdk_lang: u8` (1 = Rust, 2 = Java; reserved range 3–254)
 - bytes 1:5 — `sdk_version: u32 BE` (semver-encoded)
-- bytes 5:9 — `schema_version: u32 BE` (per-Operation, user-controlled)
+- bytes 5:9 — `schema_version: u32 BE` (per-Procedure, user-controlled)
 - bytes 9:10 — `format_id: u8` (1 = postcard, 2 = bincode, 3 = rkyv-zerocopy, 4 = kryo-registered)
 - bytes 10:12 — reserved, MUST be zero
 - bytes 12:16 — `crc32: u32 BE` over the payload bytes (change_bytes for WAL records; snapshot_bytes for snapshot files)
@@ -260,17 +260,17 @@ The agent SHALL stamp the header at write time using the SDK-supplied values (th
 
 #### Scenario: Header stamped verbatim from SDK
 
-- **WHEN** the SDK ships a `segment_state_change` frame with header `[0x01, ...sdk_version..., ...schema_version..., 0x01, 0x00, 0x00, ...crc32...]`
+- **WHEN** the SDK ships an `entity_state_change` frame with header `[0x01, ...sdk_version..., ...schema_version..., 0x01, 0x00, 0x00, ...crc32...]`
 - **THEN** the agent SHALL append the WAL record byte-for-byte; no agent-side header rewriting SHALL occur
 
 #### Scenario: Cross-language load fails loud at SDK side
 
-- **WHEN** a Java SDK reconnects to a Segment whose WAL was written by a Rust SDK (header `sdk_lang = 1`)
+- **WHEN** a Java SDK reconnects to an Entity whose WAL was written by a Rust SDK (header `sdk_lang = 1`)
 - **THEN** on `RestoreInitState` decode, the Java SDK SHALL fail with a cross-language-mismatch error and SHALL NOT proceed; the agent's role is unchanged (it ships bytes, the SDK enforces the language gate)
 
 ### Requirement: Idempotent emits with stable dedup keys
 
-The Rust SDK runtime SHALL automatically attach `flezha.dedup_key = "{operative_class}/{operation_id}/{segment_key}/{change_seq}"` to outgoing plugin-bound emit metadata for any emit issued during a `state.apply(...)`-driven `Operation::run` invocation. The agent's plugin-provider path SHALL NOT alter or strip this metadata key; it SHALL flow through to the sink verbatim.
+The Rust SDK runtime SHALL automatically attach `flezha.dedup_key = "{operative_class}/{procedure_id}/{entity_key}/{change_seq}"` to outgoing plugin-bound emit metadata for any emit issued during a `state.apply(...)`-driven `Procedure::run` invocation. The agent's plugin-provider path SHALL NOT alter or strip this metadata key; it SHALL flow through to the sink verbatim.
 
 The Kafka producer plugin (`Flezha.Plugin.Provider.Kafka`) SHALL use the `flezha.dedup_key` value as the Kafka producer key (taking precedence over any other configured keying strategy). Other plugin providers MAY use the key for sink-specific dedup purposes; the contract is that the key is opaque metadata.
 
@@ -278,27 +278,27 @@ User-supplied metadata via `ctx.emit_with_meta(value, meta)` SHALL have its `fle
 
 #### Scenario: Dedup key attached automatically
 
-- **WHEN** an Operation at `(MarketOperative/btc, OhlcOperation, M1)` records a Change at `seq = 12345` AND the same `Operation::run` invocation calls `ctx.emit::<BarClosed>(...)` to a Kafka-bound channel
-- **THEN** the outgoing Kafka producer SHALL receive the message with key `"MarketOperative/OhlcOperation/M1/12345"`
+- **WHEN** a Procedure at `(MarketOperative/btc, OhlcProcedure, M1)` records a Change at `seq = 12345` AND the same `Procedure::run` invocation calls `ctx.emit::<BarClosed>(...)` to a Kafka-bound channel
+- **THEN** the outgoing Kafka producer SHALL receive the message with key `"MarketOperative/OhlcProcedure/M1/12345"`
 
 #### Scenario: Replayed Change preserves dedup key
 
-- **WHEN** a Segment is restored from snapshot + WAL and re-issues an emit for `seq = 12345`
-- **THEN** the re-issued Kafka producer message SHALL carry the identical key `"MarketOperative/OhlcOperation/M1/12345"` as the original emit; downstream sink dedup (e.g. Kafka log compaction by key) SHALL collapse the duplicates
+- **WHEN** an Entity is restored from snapshot + WAL and re-issues an emit for `seq = 12345`
+- **THEN** the re-issued Kafka producer message SHALL carry the identical key `"MarketOperative/OhlcProcedure/M1/12345"` as the original emit; downstream sink dedup (e.g. Kafka log compaction by key) SHALL collapse the duplicates
 
-#### Scenario: Agent-side outbox dedupes by (segment, change_seq)
+#### Scenario: Agent-side outbox dedupes by (entity, change_seq)
 
-- **WHEN** the SDK ships `segment_state_change` with `seq = 12345` to the agent twice for the same Segment (once before crash, once after replay)
+- **WHEN** the SDK ships `entity_state_change` with `seq = 12345` to the agent twice for the same Entity (once before crash, once after replay)
 - **THEN** the agent SHALL persist exactly one record; the duplicate SHALL be detected via `seq <= last_persisted_seq` and discarded silently with `dedup_drops_total += 1`
 
 #### Scenario: User-supplied dedup_key is dropped
 
-- **WHEN** an Operation calls `ctx.emit_with_meta(value, %{"flezha.dedup_key" => "custom"})`
-- **THEN** the user's `flezha.dedup_key` entry SHALL be silently dropped; the SDK runtime SHALL stamp `"{operative}/{operation}/{segment}/{seq}"` as the dedup key
+- **WHEN** a Procedure calls `ctx.emit_with_meta(value, %{"flezha.dedup_key" => "custom"})`
+- **THEN** the user's `flezha.dedup_key` entry SHALL be silently dropped; the SDK runtime SHALL stamp `"{operative}/{procedure}/{entity}/{seq}"` as the dedup key
 
-### Requirement: Per-Segment persistence metrics
+### Requirement: Per-Entity persistence metrics
 
-Each Segment's metric set SHALL expose six counters via `:counters` references, accessible from `Flezha.State.Metrics.to_map(segment_id)` and exported through the existing `Flezha.Plugin.Provider.Metrics` path:
+Each Entity's metric set SHALL expose six counters via `:counters` references, accessible from `Flezha.State.Metrics.to_map(entity_id)` and exported through the existing `Flezha.Plugin.Provider.Metrics` path:
 
 - `persisted_changes_total` — monotonic; incremented per Change appended to the WAL (post-coalesce, post-dedup).
 - `persisted_bytes_total` — monotonic; incremented by the byte length of each appended record.
@@ -309,14 +309,14 @@ Each Segment's metric set SHALL expose six counters via `:counters` references, 
 
 The counters SHALL use `Ordering::Relaxed` (the BEAM `:counters` API does not expose ordering modes; this is satisfied by the underlying implementation). External metric systems (Prometheus, StatsD) integration is out of scope for this requirement; the existing `Flezha.Plugin.Provider.Metrics` path is the export surface.
 
-#### Scenario: Counters initialized at Segment construction
+#### Scenario: Counters initialized at Entity construction
 
-- **WHEN** a Segment is constructed with `persistence_enabled = true`
+- **WHEN** an Entity is constructed with `persistence_enabled = true`
 - **THEN** all six counters SHALL be allocated; `persisted_changes_total = 0`, `persisted_bytes_total = 0`, `wal_size_bytes = 0`, `snapshot_seq = 0` (no snapshot yet), `flush_latency_ms_p99 = 0`, `fsync_durability_lag_ms = 0`
 
 #### Scenario: Counters update after Change append
 
-- **WHEN** the agent appends 10 Changes totaling 500 bytes to a Segment's WAL
+- **WHEN** the agent appends 10 Changes totaling 500 bytes to an Entity's WAL
 - **THEN** `persisted_changes_total` SHALL increase by 10; `persisted_bytes_total` SHALL increase by `>= 500` (record framing overhead included; ≈ `500 + 10 * (8 + 4 + 16 + 4) = 820` bytes in practice); `wal_size_bytes` SHALL equal the file size after the appends
 
 #### Scenario: Counters survive agent restart
@@ -326,33 +326,33 @@ The counters SHALL use `Ordering::Relaxed` (the BEAM `:counters` API does not ex
 
 ### Requirement: Back-pressure via OverflowPolicy when WAL outpaces fsync
 
-For sessions that are NOT credit-speaking (pre-credit SDKs, or the controller running with credit flow control disabled), the agent SHALL monitor each `WalWriter`'s `pending_bytes` (queued-but-not-fsynced bytes). When `pending_bytes >= wal_high_watermark_bytes` (default 16 MiB), the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :full}` over the control channel to the SDK. When `pending_bytes` falls below `wal_low_watermark_bytes` (default `wal_high_watermark_bytes / 2`), the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :open}`.
+For sessions that are NOT credit-speaking (pre-credit SDKs, or the controller running with credit flow control disabled), the agent SHALL monitor each `WalWriter`'s `pending_bytes` (queued-but-not-fsynced bytes). When `pending_bytes >= wal_high_watermark_bytes` (default 16 MiB), the agent SHALL ship `EntityMailboxStatus{entity_id, status: :full}` over the control channel to the SDK. When `pending_bytes` falls below `wal_low_watermark_bytes` (default `wal_high_watermark_bytes / 2`), the agent SHALL ship `EntityMailboxStatus{entity_id, status: :open}`.
 
-The SDK's per-Segment mailbox observer SHALL treat `:full` as equivalent to the existing per-Segment mailbox-full condition that drives `OverflowPolicy`; the producing Operation's `ctx.emit(...)` SHALL apply the channel's declared policy (`Block` parks the producer, `DropNewest` drops, `DropOldest` discards-oldest).
+The SDK's per-Entity mailbox observer SHALL treat `:full` as equivalent to the existing per-Entity mailbox-full condition that drives `OverflowPolicy`; the producing Procedure's `ctx.emit(...)` SHALL apply the channel's declared policy (`Block` parks the producer, `DropNewest` drops, `DropOldest` discards-oldest).
 
-The agent SHALL NOT issue `:full` more than once per Segment while the watermark is exceeded (idempotent transitions); SHALL NOT issue `:open` until `:full` was previously sent for that Segment (no spurious `:open` frames).
+The agent SHALL NOT issue `:full` more than once per Entity while the watermark is exceeded (idempotent transitions); SHALL NOT issue `:open` until `:full` was previously sent for that Entity (no spurious `:open` frames).
 
-For credit-speaking sessions the agent SHALL NOT ship `SegmentMailboxStatus` frames: back-pressure for those sessions is carried entirely by the credit-grant protocol (see the `credit-grant-flow-control` capability), which parks the sender on window exhaustion instead of signalling a status flag.
+For credit-speaking sessions the agent SHALL NOT ship `EntityMailboxStatus` frames: back-pressure for those sessions is carried entirely by the credit-grant protocol (see the `credit-grant-flow-control` capability), which parks the sender on window exhaustion instead of signalling a status flag.
 
 #### Scenario: High-watermark triggers :full status
 
-- **WHEN** a Segment's `WalWriter` accumulates `pending_bytes = 16 MiB + 1 record` on a non-credit-speaking session
-- **THEN** the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :full}` exactly once
+- **WHEN** an Entity's `WalWriter` accumulates `pending_bytes = 16 MiB + 1 record` on a non-credit-speaking session
+- **THEN** the agent SHALL ship `EntityMailboxStatus{entity_id, status: :full}` exactly once
 
 #### Scenario: Low-watermark triggers :open status
 
-- **WHEN** the same Segment's `pending_bytes` drains below 8 MiB after fsyncs
-- **THEN** the agent SHALL ship `SegmentMailboxStatus{segment_id, status: :open}` exactly once
+- **WHEN** the same Entity's `pending_bytes` drains below 8 MiB after fsyncs
+- **THEN** the agent SHALL ship `EntityMailboxStatus{entity_id, status: :open}` exactly once
 
 #### Scenario: OverflowPolicy::Block parks producer under back-pressure
 
-- **WHEN** an Operation with `OverflowPolicy::Block` on its emit channel calls `ctx.emit(...)` for a Segment under `:full` status on a non-credit-speaking session
-- **THEN** the producer SHALL park its calling thread; on receipt of `:open` status the producer SHALL unpark and the emit SHALL succeed; the producer's `Operation::run` SHALL eventually return `Ok(())`
+- **WHEN** a Procedure with `OverflowPolicy::Block` on its emit channel calls `ctx.emit(...)` for an Entity under `:full` status on a non-credit-speaking session
+- **THEN** the producer SHALL park its calling thread; on receipt of `:open` status the producer SHALL unpark and the emit SHALL succeed; the producer's `Procedure::run` SHALL eventually return `Ok(())`
 
 #### Scenario: Credit-speaking session receives no status flags
 
-- **WHEN** a credit-speaking SDK's Segment drives `pending_bytes` past `wal_high_watermark_bytes`
-- **THEN** no `SegmentMailboxStatus` frame is shipped; the sender is throttled by credit exhaustion instead
+- **WHEN** a credit-speaking SDK's Entity drives `pending_bytes` past `wal_high_watermark_bytes`
+- **THEN** no `EntityMailboxStatus` frame is shipped; the sender is throttled by credit exhaustion instead
 
 ### Requirement: Hard in-memory bound sheds WAL appends past the watermark
 
@@ -365,7 +365,7 @@ block: the shed leaves a sequence gap that the existing resync path repairs.
 
 The hard bound SHALL be strictly above the soft watermark. For non-credit-speaking
 sessions, shedding remains the last-resort safety net for a slow disk or an SDK
-that does not honour the `SegmentMailboxStatus` wire signal. For credit-speaking
+that does not honour the `EntityMailboxStatus` wire signal. For credit-speaking
 sessions, the credit ledger SHALL refuse an overrunning frame before the hard
 bound is reached, so shedding is unreachable for a conformant sender; any shed
 recorded against a credit-speaking session SHALL be surfaced as an anomaly
@@ -391,24 +391,24 @@ back-pressure.
 
 - **WHEN** a credit-speaking SDK honours its window while the disk drains slowly
 - **THEN** the sender parks on credit exhaustion before the hard bound is
-  reached and `wal_shed_total` for its Segments does not advance
+  reached and `wal_shed_total` for its Entities does not advance
 
 ### Requirement: Crash-safe persistence on agent reboot
 
-On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.State.Supervisor` SHALL call `Registry.scan_dir/1` for each `app_data/state/{operative}/{operation}/` directory and reconstruct the in-memory persistence state:
+On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.State.Supervisor` SHALL call `Registry.scan_dir/1` for each `app_data/state/{operative}/{procedure}/` directory and reconstruct the in-memory persistence state:
 
-- For each `segment_key.wal` file: start a `WalWriter` GenServer; `WalWriter::scan_for_last_valid_seq/1` runs at `init/1` to recover `last_persisted_seq` and truncate any partial-write tail.
-- For each `segment_key.snap.{seq}` file (latest): record the `snapshot_seq` counter.
-- For each `segment_key.snap.{seq}.tmp` file: unlink (orphaned mid-write).
-- For each `segment_key.wal.rewriting` file: unlink (orphaned retention rewrite).
-- For each `segment_key.outbox.dedup` file: read the persisted `last_persisted_seq` for the dedup cache (recovered from the WAL scan as a cross-check).
+- For each `entity_key.wal` file: start a `WalWriter` GenServer; `WalWriter::scan_for_last_valid_seq/1` runs at `init/1` to recover `last_persisted_seq` and truncate any partial-write tail.
+- For each `entity_key.snap.{seq}` file (latest): record the `snapshot_seq` counter.
+- For each `entity_key.snap.{seq}.tmp` file: unlink (orphaned mid-write).
+- For each `entity_key.wal.rewriting` file: unlink (orphaned retention rewrite).
+- For each `entity_key.outbox.dedup` file: read the persisted `last_persisted_seq` for the dedup cache (recovered from the WAL scan as a cross-check).
 
-`Flezha.State.Outbox` SHALL persist `last_persisted_seq` per Segment into `segment_key.outbox.dedup` (8-byte u64 BE) on every WAL append via a write-then-rename atomic update; this allows fast dedup-cache priming on boot without re-scanning the entire WAL.
+`Flezha.State.Outbox` SHALL persist `last_persisted_seq` per Entity into `entity_key.outbox.dedup` (8-byte u64 BE) on every WAL append via a write-then-rename atomic update; this allows fast dedup-cache priming on boot without re-scanning the entire WAL.
 
 #### Scenario: Boot recovers from clean shutdown
 
 - **WHEN** the agent boots after a clean shutdown
-- **THEN** for each Segment's WAL file, `WalWriter::scan_for_last_valid_seq` SHALL run successfully and recover `last_persisted_seq` matching the on-disk state
+- **THEN** for each Entity's WAL file, `WalWriter::scan_for_last_valid_seq` SHALL run successfully and recover `last_persisted_seq` matching the on-disk state
 
 #### Scenario: Boot recovers from crash during WAL append
 
@@ -417,32 +417,32 @@ On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.Sta
 
 #### Scenario: Boot recovers from crash during snapshot rename
 
-- **WHEN** the agent boots after a crash between snapshot fsync and rename, leaving `segment_key.snap.{seq}.tmp`
+- **WHEN** the agent boots after a crash between snapshot fsync and rename, leaving `entity_key.snap.{seq}.tmp`
 - **THEN** boot SHALL unlink the `.tmp` file; the prior snapshot (if any) and the un-truncated WAL are intact; persistence resumes correctly
 
 #### Scenario: Boot recovers from crash during retention rewrite
 
-- **WHEN** the agent boots after a crash during the retention sweeper's WAL rewrite, leaving `segment_key.wal.rewriting`
+- **WHEN** the agent boots after a crash during the retention sweeper's WAL rewrite, leaving `entity_key.wal.rewriting`
 - **THEN** boot SHALL unlink the `.rewriting` file; the original WAL is intact; the next sweeper tick re-runs the rewrite idempotently
 
 ### Requirement: flz state CLI subcommand surface
 
 The agent SHALL expose a `flz state` CLI subcommand tree, using operative vocabulary in every path argument:
 
-- `flz state at <operative/operation/segment> <seq | timestamp>` — point-in-time state query per the time-travel requirement. Returns JSON-encoded state.
-- `flz state list <operative>` — for each Segment of the Operative, prints `wal_seq`, `snapshot_seq`, `wal_bytes`, `flush_latency_ms_p99`, `fsync_durability_lag_ms`. Reads `Metrics.to_map/1`.
-- `flz state rotate <operative/operation/segment>` — forces compaction by enqueuing the per-Segment compaction continuation on the Overwatch. Returns immediately ("compaction queued"); the snapshot completes asynchronously.
+- `flz state at <operative/procedure/entity> <seq | timestamp>` — point-in-time state query per the time-travel requirement. Returns JSON-encoded state.
+- `flz state list <operative>` — for each Entity of the Operative, prints `wal_seq`, `snapshot_seq`, `wal_bytes`, `flush_latency_ms_p99`, `fsync_durability_lag_ms`. Reads `Metrics.to_map/1`.
+- `flz state rotate <operative/procedure/entity>` — forces compaction by enqueuing the per-Entity compaction continuation on the Overwatch. Returns immediately ("compaction queued"); the snapshot completes asynchronously.
 - `flz state retention <operative> <hours>` — sets `time_travel_retention_hours.<OperativeClass>` in runtime config (`persistent: true`); the next retention-sweeper tick reads the new value.
 
-#### Scenario: flz state list enumerates Segments
+#### Scenario: flz state list enumerates Entities
 
 - **WHEN** the runner runs `flz state list MarketOperative`
-- **THEN** the CLI SHALL print one line per Segment with the listed fields; output SHALL be tabular (column-aligned)
+- **THEN** the CLI SHALL print one line per Entity with the listed fields; output SHALL be tabular (column-aligned)
 
 #### Scenario: flz state rotate triggers async compaction
 
-- **WHEN** the runner runs `flz state rotate MarketOperative/btc/OhlcOperation/M1`
-- **THEN** the CLI SHALL print "compaction queued" and exit 0; the agent SHALL ship `CompactSegment` to the SDK; the resulting snapshot SHALL appear on disk within seconds
+- **WHEN** the runner runs `flz state rotate MarketOperative/btc/OhlcProcedure/M1`
+- **THEN** the CLI SHALL print "compaction queued" and exit 0; the agent SHALL ship `CompactEntity` to the SDK; the resulting snapshot SHALL appear on disk within seconds
 
 #### Scenario: flz state retention persists across agent restart
 
@@ -451,78 +451,78 @@ The agent SHALL expose a `flz state` CLI subcommand tree, using operative vocabu
 
 ### Requirement: Snapshot files use flat path
 
-The Controller SHALL store snapshot files at `app_data/state/{operative_class}/{operation_id}/{segment_key}.snap.{seq}`. The on-disk path SHALL NOT include `runner_id`. The on-the-wire payload-id SHALL be `segment_state_snapshot`.
+The Controller SHALL store snapshot files at `app_data/state/{operative_class}/{procedure_id}/{entity_key}.snap.{seq}`. The on-disk path SHALL NOT include `runner_id`. The on-the-wire payload-id SHALL be `entity_state_snapshot`.
 
 #### Scenario: Snapshot path is flat
 
-- **WHEN** the Controller compacts the WAL of Segment `p1` (Operative class `MarketOperative`, operation `s1`, segment_key `k1`) and assigns snapshot seq=42
+- **WHEN** the Controller compacts the WAL of Entity `p1` (Operative class `MarketOperative`, procedure `s1`, entity_key `k1`) and assigns snapshot seq=42
 - **THEN** the resulting file SHALL be at `app_data/state/MarketOperative/s1/k1.snap.42`
 
-### Requirement: ProcessorApplyState renamed to SegmentApplyState
+### Requirement: ProcessorApplyState renamed to EntityApplyState
 
-The protobuf message carrying inbound state application SHALL be named `SegmentApplyState`. The field naming the owning operative SHALL be `operative_id`; field `segment_id` (string) IS the canonical identifier for the targeted Segment. The on-the-wire payload-id SHALL be `segment_apply_state`. The inverse `SegmentState` message and the `segment_state_change` / `segment_state_snapshot` / `delete_segment_state` payload-ids replace the former `partition_*` names in lockstep across all SDKs.
+The protobuf message carrying inbound state application SHALL be named `EntityApplyState`. The field naming the owning operative SHALL be `operative_id`; field `entity_id` (string) IS the canonical identifier for the targeted Entity. The on-the-wire payload-id SHALL be `entity_apply_state`. The inverse `EntityState` message and the `entity_state_change` / `entity_state_snapshot` / `delete_entity_state` payload-ids replace the former `partition_*` names in lockstep across all SDKs.
 
-#### Scenario: Rust SDK emits SegmentApplyState
-- **WHEN** the Rust SDK applies a state change to Segment `p1` belonging to Operative `r1`
-- **THEN** the SDK SHALL send a `SegmentApplyState { operative_id: "r1", segment_id: "...", change_bytes: ... }` on the control channel; the Controller SHALL accept it and route it to the Segment's WAL writer
+#### Scenario: Rust SDK emits EntityApplyState
+- **WHEN** the Rust SDK applies a state change to Entity `p1` belonging to Operative `r1`
+- **THEN** the SDK SHALL send an `EntityApplyState { operative_id: "r1", entity_id: "...", change_bytes: ... }` on the control channel; the Controller SHALL accept it and route it to the Entity's WAL writer
 
-#### Scenario: Java SDK emits SegmentApplyState
-- **WHEN** the Java SDK applies a state change to a Segment
-- **THEN** the SDK SHALL send a `SegmentApplyState` message identical in shape to the Rust SDK's; the Controller SHALL handle both identically
+#### Scenario: Java SDK emits EntityApplyState
+- **WHEN** the Java SDK applies a state change to an Entity
+- **THEN** the SDK SHALL send an `EntityApplyState` message identical in shape to the Rust SDK's; the Controller SHALL handle both identically
 
-### Requirement: SDK serializes Operative state on `SegmentState` request via the Decision-10 JSON shape
+### Requirement: SDK serializes Operative state on `EntityState` request via the Decision-10 JSON shape
 
-When the SDK receives a `SegmentState{operative_id}` command, it SHALL respond with a JSON object whose top-level keys are the Operative's Operation names and whose values are:
+When the SDK receives an `EntityState{operative_id}` command, it SHALL respond with a JSON object whose top-level keys are the Operative's Procedure names and whose values are:
 
-- For single-mode Operations (one Segment per Operation): the serialized `Self::State` of that Segment.
-- For static-mode Operations (`operation_keys() = [...]`): an inner JSON object whose keys are the Operation's `operation_key` values and whose values are each Segment's serialized `Self::State`.
+- For single-mode Procedures (one Entity per Procedure): the serialized `Self::State` of that Entity.
+- For static-mode Procedures (`entity_keys() = [...]`): an inner JSON object whose keys are the Procedure's `entity_key` values and whose values are each Entity's serialized `Self::State`.
 
-The wire payload SHALL be `segment_state` payload-id with the JSON object as the message bytes. Empty Operatives (no live Segments) SHALL produce `{}`.
+The wire payload SHALL be `entity_state` payload-id with the JSON object as the message bytes. Empty Operatives (no live Entities) SHALL produce `{}`.
 
-State serialization SHALL go through a per-Operation fn pointer captured at `register_unbounded::<R>()` time. The fn pointer downcasts the type-erased state held in `SegmentSlot::state` to its statically-known `SegmentState<S>` and emits `serde_json::Value` via the `S::State: Serialize` bound on the trait. No additional user-facing trait machinery is required beyond the existing `Serialize + DeserializeOwned` bounds on `Operation::State`.
+State serialization SHALL go through a per-Procedure fn pointer captured at `register_unbounded::<R>()` time. The fn pointer downcasts the type-erased state held in `EntitySlot::state` to its statically-known `EntityState<S>` and emits `serde_json::Value` via the `S::State: Serialize` bound on the trait. No additional user-facing trait machinery is required beyond the existing `Serialize + DeserializeOwned` bounds on `Procedure::State`.
 
-#### Scenario: Single-mode Operation returns its state at the operation-name key
+#### Scenario: Single-mode Procedure returns its state at the procedure-name key
 
-- **WHEN** the SDK receives `SegmentState{operative_id}` for an Operative whose only Operation is `"counter"` (single-mode) with state `{"value": 42}`
+- **WHEN** the SDK receives `EntityState{operative_id}` for an Operative whose only Procedure is `"counter"` (single-mode) with state `{"value": 42}`
 - **THEN** the wire reply payload SHALL be `{"counter": {"value": 42}}`
 
-#### Scenario: Static-mode Operation returns a key-keyed object
+#### Scenario: Static-mode Procedure returns a key-keyed object
 
-- **WHEN** the SDK receives `SegmentState{operative_id}` for an Operative whose only Operation is `"ohlc"` (static-mode, keys `["1m", "1h"]`) with `1m` state `{"high": 10}` and `1h` state `{"high": 20}`
+- **WHEN** the SDK receives `EntityState{operative_id}` for an Operative whose only Procedure is `"ohlc"` (static-mode, keys `["1m", "1h"]`) with `1m` state `{"high": 10}` and `1h` state `{"high": 20}`
 - **THEN** the wire reply payload SHALL be `{"ohlc": {"1m": {"high": 10}, "1h": {"high": 20}}}`
 
-### Requirement: SDK applies `AddOperative.init_values` JSON to per-Segment state
+### Requirement: SDK applies `AddOperative.init_values` JSON to per-Entity state
 
-When the SDK receives an `AddOperative{operative_id, factory_id, init_values}` command and `init_values` is a non-empty JSON object, the SDK SHALL parse the JSON, walk its top-level keys, and for each key that matches a registered Operation name on the Operative's class:
+When the SDK receives an `AddOperative{operative_id, factory_id, init_values}` command and `init_values` is a non-empty JSON object, the SDK SHALL parse the JSON, walk its top-level keys, and for each key that matches a registered Procedure name on the Operative's class:
 
-- For single-mode Operations: deserialize the JSON value directly into `S::State` via the per-Operation `deserialize_state` fn pointer (captured at registration time and bounded on `S::State: DeserializeOwned`), then overwrite the freshly-`init_state`d Segment's state with the deserialized value.
-- For static-mode Operations: walk the inner object's keys; for each `(key, value)` pair where `key` is a declared `operation_key`, deserialize the inner value into `S::State` and overwrite that Segment's state.
+- For single-mode Procedures: deserialize the JSON value directly into `S::State` via the per-Procedure `deserialize_state` fn pointer (captured at registration time and bounded on `S::State: DeserializeOwned`), then overwrite the freshly-`init_state`d Entity's state with the deserialized value.
+- For static-mode Procedures: walk the inner object's keys; for each `(key, value)` pair where `key` is a declared `entity_key`, deserialize the inner value into `S::State` and overwrite that Entity's state.
 
-Top-level keys that do not match any Operation name SHALL be ignored (with an `eprintln!` log line at the SDK boundary). Inner-object keys that do not match a declared `operation_key` SHALL also be ignored.
+Top-level keys that do not match any Procedure name SHALL be ignored (with an `eprintln!` log line at the SDK boundary). Inner-object keys that do not match a declared `entity_key` SHALL also be ignored.
 
-If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Segment's state untouched after the cold-start `Operation::init_state(operation_key, None)` returned by the build path.
+If `init_values` is empty (`""` on the wire), the SDK SHALL leave each Entity's state untouched after the cold-start `Procedure::init_state(entity_key, None)` returned by the build path.
 
 `MigrationDeserialization{factory_id, operative_id, serialized_state}` SHALL reuse the same `apply_init_values` path: the `serialized_state` payload is the UTF-8 JSON blob produced by `serialize_operative_state` on the source runner; applying it to a freshly-started instance restores byte-identical state.
 
-#### Scenario: Cold start with init_values seeds single-mode Operation
+#### Scenario: Cold start with init_values seeds single-mode Procedure
 
-- **WHEN** the SDK receives `AddOperative{operative_id, factory_id, init_values: "{\"counter\":{\"value\":7}}"}` for an Operative with one single-mode Operation `"counter"`
-- **THEN** the SDK SHALL deserialize `{"value":7}` directly into `CounterState` and overwrite the Segment's state with `CounterState { value: 7 }`
+- **WHEN** the SDK receives `AddOperative{operative_id, factory_id, init_values: "{\"counter\":{\"value\":7}}"}` for an Operative with one single-mode Procedure `"counter"`
+- **THEN** the SDK SHALL deserialize `{"value":7}` directly into `CounterState` and overwrite the Entity's state with `CounterState { value: 7 }`
 
-#### Scenario: Cold start with init_values seeds static-mode Operation per key
+#### Scenario: Cold start with init_values seeds static-mode Procedure per key
 
-- **WHEN** the SDK receives `AddOperative{...init_values: "{\"ohlc\":{\"1m\":{\"high\":5},\"1h\":{\"high\":10}}}"}` for an Operative with `operation_keys = ["1m", "1h"]`
-- **THEN** the SDK SHALL deserialize `{"high":5}` into the `"1m"` Segment's state AND deserialize `{"high":10}` into the `"1h"` Segment's state
+- **WHEN** the SDK receives `AddOperative{...init_values: "{\"ohlc\":{\"1m\":{\"high\":5},\"1h\":{\"high\":10}}}"}` for an Operative with `entity_keys = ["1m", "1h"]`
+- **THEN** the SDK SHALL deserialize `{"high":5}` into the `"1m"` Entity's state AND deserialize `{"high":10}` into the `"1h"` Entity's state
 
 #### Scenario: Empty init_values uses the default path
 
 - **WHEN** the SDK receives `AddOperative{...init_values: ""}`
-- **THEN** the SDK SHALL leave each Segment's state at the value `Operation::init_state(operation_key, None)` returned at build time
+- **THEN** the SDK SHALL leave each Entity's state at the value `Procedure::init_state(entity_key, None)` returned at build time
 
 #### Scenario: Round-trip via MigrationSerialization / MigrationDeserialization
 
 - **WHEN** the SDK on the source runner responds to `MigrationSerialization{operative_id}` with payload bytes `B = serialize_operative_state(instance)`, and a second SDK on the destination runner receives `MigrationDeserialization{factory_id, operative_id, serialized_state: B}`
-- **THEN** the destination's freshly-started instance SHALL have Segment state byte-identical to the source's at the moment of serialization, as observed by `serialize_operative_state` re-issued against the destination
+- **THEN** the destination's freshly-started instance SHALL have Entity state byte-identical to the source's at the moment of serialization, as observed by `serialize_operative_state` re-issued against the destination
 
 ### Requirement: The persisted `runner_id` in an operative-binding record is advisory across a controller restart
 
@@ -551,17 +551,17 @@ No on-disk format change accompanies this requirement; the binding record's `run
 
 ### Requirement: A persistence seq gap triggers resync, not permanent rejection
 
-When the Controller receives a `segment_state_change` frame whose `seq > last_persisted_seq + 1`, it SHALL treat the gap as a recoverable desync rather than a terminal protocol error. The Controller SHALL emit `[:flezha, :state, :seq_gap]` telemetry with measurements `%{expected: integer(), got: integer()}` and metadata identifying the Segment, and SHALL initiate the `RestoreInitState` resync handshake for that Segment (assemble snapshot + WAL tail per the existing "Restart restores state via RestoreInitState handshake" flow, ship it to the SDK, await `RestoreInitStateResponse{terminal_seq}`, and resume accepting Changes at `terminal_seq + 1`). After a successful resync the Segment's WAL SHALL advance again and its outbox SHALL drain to the output plugins.
+When the Controller receives an `entity_state_change` frame whose `seq > last_persisted_seq + 1`, it SHALL treat the gap as a recoverable desync rather than a terminal protocol error. The Controller SHALL emit `[:flezha, :state, :seq_gap]` telemetry with measurements `%{expected: integer(), got: integer()}` and metadata identifying the Entity, and SHALL initiate the `RestoreInitState` resync handshake for that Entity (assemble snapshot + WAL tail per the existing "Restart restores state via RestoreInitState handshake" flow, ship it to the SDK, await `RestoreInitStateResponse{terminal_seq}`, and resume accepting Changes at `terminal_seq + 1`). After a successful resync the Entity's WAL SHALL advance again and its outbox SHALL drain to the output plugins.
 
-The Controller SHALL NOT leave a Segment indefinitely rejecting Changes with `{:error, {:gap, expected, got}}`. The strict acceptance rule for the contiguous case (`seq == last_persisted_seq + 1`) and the silent-dedup rule for the stale case (`seq <= last_persisted_seq`) are unchanged.
+The Controller SHALL NOT leave an Entity indefinitely rejecting Changes with `{:error, {:gap, expected, got}}`. The strict acceptance rule for the contiguous case (`seq == last_persisted_seq + 1`) and the silent-dedup rule for the stale case (`seq <= last_persisted_seq`) are unchanged.
 
-#### Scenario: Gap resynchronises the segment instead of wedging it
-- **GIVEN** a Segment with `last_persisted_seq = 100`
+#### Scenario: Gap resynchronises the entity instead of wedging it
+- **GIVEN** an Entity with `last_persisted_seq = 100`
 - **WHEN** the Controller receives a Change with `seq = 137` (a gap)
 - **THEN** the Controller SHALL emit `[:flezha, :state, :seq_gap]` with `expected: 101, got: 137`
-- **AND** the Controller SHALL ship `RestoreInitState` for the Segment and await `RestoreInitStateResponse`
-- **AND** after the handshake the Segment SHALL accept subsequent Changes and its WAL SHALL advance past `last_persisted_seq`
-- **AND** the Segment SHALL NOT remain in a permanent gap-rejection state
+- **AND** the Controller SHALL ship `RestoreInitState` for the Entity and await `RestoreInitStateResponse`
+- **AND** after the handshake the Entity SHALL accept subsequent Changes and its WAL SHALL advance past `last_persisted_seq`
+- **AND** the Entity SHALL NOT remain in a permanent gap-rejection state
 
 #### Scenario: Contiguous and stale frames are unaffected
 - **WHEN** a Change arrives with `seq == last_persisted_seq + 1`
@@ -569,46 +569,46 @@ The Controller SHALL NOT leave a Segment indefinitely rejecting Changes with `{:
 - **AND WHEN** a Change arrives with `seq <= last_persisted_seq`
 - **THEN** it SHALL be silently deduped with a `dedup_drops_total` increment as today
 
-### Requirement: Per-Segment output-staleness watchdog with self-heal
+### Requirement: Per-Entity output-staleness watchdog with self-heal
 
-The Controller SHALL track, per persistence-enabled Segment, the wall-clock time at which `last_persisted_seq` last advanced. A periodic sweep SHALL run on a configurable interval and, for any Segment whose data stream is attached (the SDK is live and applying inputs) but whose `last_persisted_seq` has not advanced within `output_stall_timeout_ms` (configurable per Operative class; default 60_000), SHALL emit `[:flezha, :state, :output_stall]` telemetry (measurements `%{stalled_ms: integer(), last_seq: integer()}`, Segment metadata) and SHALL trigger the `RestoreInitState` resync recovery for that Segment.
+The Controller SHALL track, per persistence-enabled Entity, the wall-clock time at which `last_persisted_seq` last advanced. A periodic sweep SHALL run on a configurable interval and, for any Entity whose data stream is attached (the SDK is live and applying inputs) but whose `last_persisted_seq` has not advanced within `output_stall_timeout_ms` (configurable per Operative class; default 60_000), SHALL emit `[:flezha, :state, :output_stall]` telemetry (measurements `%{stalled_ms: integer(), last_seq: integer()}`, Entity metadata) and SHALL trigger the `RestoreInitState` resync recovery for that Entity.
 
-This bounds the duration of any silent persistence/output freeze to at most one `output_stall_timeout_ms` window. Because WAL persistence and output-plugin delivery share the per-Segment outbox, recovering WAL advance SHALL also resume output (e.g. Kafka production) for that Segment.
+This bounds the duration of any silent persistence/output freeze to at most one `output_stall_timeout_ms` window. Because WAL persistence and output-plugin delivery share the per-Entity outbox, recovering WAL advance SHALL also resume output (e.g. Kafka production) for that Entity.
 
-#### Scenario: A live segment whose WAL stops advancing is detected and recovered
-- **GIVEN** a persistence-enabled Segment whose data stream is attached and whose SDK continues to apply inputs (in-memory state advancing)
+#### Scenario: A live entity whose WAL stops advancing is detected and recovered
+- **GIVEN** a persistence-enabled Entity whose data stream is attached and whose SDK continues to apply inputs (in-memory state advancing)
 - **WHEN** `last_persisted_seq` does not advance for longer than `output_stall_timeout_ms`
 - **THEN** the staleness sweep SHALL emit `[:flezha, :state, :output_stall]` with the stalled duration and last seq
-- **AND** the Controller SHALL trigger resync recovery for the Segment
-- **AND** after recovery the Segment's WAL SHALL advance and its outbox SHALL drain
+- **AND** the Controller SHALL trigger resync recovery for the Entity
+- **AND** after recovery the Entity's WAL SHALL advance and its outbox SHALL drain
 
-#### Scenario: An idle segment is not falsely flagged
-- **GIVEN** a persistence-enabled Segment whose SDK is applying no inputs (genuinely idle, no Changes to persist)
+#### Scenario: An idle entity is not falsely flagged
+- **GIVEN** a persistence-enabled Entity whose SDK is applying no inputs (genuinely idle, no Changes to persist)
 - **WHEN** the staleness sweep runs
-- **THEN** the Segment SHALL NOT be flagged as stalled and SHALL NOT be resynced (no Change is expected, so a non-advancing `last_persisted_seq` is correct)
+- **THEN** the Entity SHALL NOT be flagged as stalled and SHALL NOT be resynced (no Change is expected, so a non-advancing `last_persisted_seq` is correct)
 
 ### Requirement: Compaction handshake is bounded and cannot wedge persistence
 
-When the Controller ships `CompactSegment{segment_id}` to the SDK, it SHALL bound the wait for the corresponding `segment_state_snapshot` response with a timeout. If the snapshot does not arrive within the bound, the Controller SHALL emit `[:flezha, :state, :compaction_timeout]` telemetry, SHALL NOT leave the Segment's WAL append blocked, and SHALL recover via resync. Compaction SHALL be retriable on a later trigger; a single failed/slow compaction SHALL NOT permanently stop WAL growth or output for the Segment.
+When the Controller ships `CompactEntity{entity_id}` to the SDK, it SHALL bound the wait for the corresponding `entity_state_snapshot` response with a timeout. If the snapshot does not arrive within the bound, the Controller SHALL emit `[:flezha, :state, :compaction_timeout]` telemetry, SHALL NOT leave the Entity's WAL append blocked, and SHALL recover via resync. Compaction SHALL be retriable on a later trigger; a single failed/slow compaction SHALL NOT permanently stop WAL growth or output for the Entity.
 
 The recovery step SHALL actually execute: a recovery invocation that cannot dispatch — for example because it lacks the `runner_id` needed to address the runner — SHALL NOT be silently discarded by its caller. Retries SHALL be bounded per the strike-and-give-up requirement above rather than repeating at the sweep interval without limit.
 
 #### Scenario: A stalled compaction times out instead of freezing the WAL
-- **GIVEN** a Segment for which the Controller has shipped `CompactSegment`
-- **WHEN** no `segment_state_snapshot` response arrives within the compaction timeout
+- **GIVEN** an Entity for which the Controller has shipped `CompactEntity`
+- **WHEN** no `entity_state_snapshot` response arrives within the compaction timeout
 - **THEN** the Controller SHALL emit `[:flezha, :state, :compaction_timeout]`
-- **AND** WAL append for the Segment SHALL NOT remain blocked (no "large WAL, no snapshot, frozen" state)
+- **AND** WAL append for the Entity SHALL NOT remain blocked (no "large WAL, no snapshot, frozen" state)
 - **AND** persistence SHALL recover via resync and compaction SHALL be eligible to retry later
 
 #### Scenario: The recovery step is not a silent no-op
-- **GIVEN** a compaction timeout for a Segment whose owning runner is known to the Controller
+- **GIVEN** a compaction timeout for an Entity whose owning runner is known to the Controller
 - **WHEN** the timeout handler runs
 - **THEN** the recovery it invokes SHALL either dispatch, or record its inability to dispatch
 - **AND** the handler SHALL NOT discard the recovery result
 
 ### Requirement: State path resolution SHALL be single-source and coherent
 
-The on-disk location of a Segment's WAL/snapshot/outbox SHALL be computed from a single
+The on-disk location of an Entity's WAL/snapshot/outbox SHALL be computed from a single
 authoritative resolver that every reader, writer, and the boot-time migrator agree on, so
 that no path divergence can orphan persisted state. If `FLEZHA_STATE_DIR` is set, the
 resolver and the migrator SHALL use the same value, and a change of root between boots
@@ -618,19 +618,19 @@ than silently orphaned. The boot migrator SHALL NOT relocate state into a layout
 support are prohibited because they orphan state.
 
 #### Scenario: WAL is not orphaned by a path-resolution change
-- **GIVEN** persisted WAL/snapshot files for running Segments
+- **GIVEN** persisted WAL/snapshot files for running Entities
 - **WHEN** the Controller restarts after this change
 - **THEN** the restore path SHALL find the existing files at the resolver's path
-- **AND** no Segment's state SHALL become invisible because the migrator and reader disagree on the path
+- **AND** no Entity's state SHALL become invisible because the migrator and reader disagree on the path
 
 #### Scenario: Migrator and reader agree on layout
 - **WHEN** the boot migrator runs
 - **THEN** the directory layout it produces SHALL be exactly the layout `Flezha.State.Registry` reads
 - **AND** any layout the reader does not support SHALL NOT be produced by the migrator
 
-### Requirement: Per-Segment WAL SHALL realign to a restarted runner's seq base
+### Requirement: Per-Entity WAL SHALL realign to a restarted runner's seq base
 
-The Controller's per-Segment WAL SHALL adopt a restarted runner's sequence base as the
+The Controller's per-Entity WAL SHALL adopt a restarted runner's sequence base as the
 live source of truth rather than freezing. When a runner process restarts and reconnects
 under a new runner id, it resumes emitting Changes from a fresh sequence base derived from
 its post-restart rebuild (e.g. a Kafka replay), which may diverge from the persisted
@@ -640,30 +640,30 @@ of dedup-dropping the new runner's Changes as stale. A Change at or below
 `last_persisted_seq` from the *same* runner SHALL remain a legitimate dedup. A realignment
 SHALL emit `[:flezha, :state, :wal_realign]` telemetry.
 
-A realign SHALL be honoured only when the divergent Changes arrive via the Segment's
+A realign SHALL be honoured only when the divergent Changes arrive via the Entity's
 current owner binding — the session the takeover logic most recently bound to the
-Segment's write path. Changes forwarded by a superseded session SHALL be refused at
+Entity's write path. Changes forwarded by a superseded session SHALL be refused at
 the binding (the superseded session's channels are unbound during takeover, before the
 new session is bound) and SHALL NOT trigger a realign; the refusal SHALL NOT add any
 per-record check to the owning session's append path.
 
 #### Scenario: A restarted runner's diverged seq base realigns the WAL
-- **GIVEN** a Segment whose WAL has advanced to seq N under runner A
-- **WHEN** runner A restarts and a new runner B, bound as the Segment's owner by takeover, resumes emitting Changes from a seq base diverged from N
+- **GIVEN** an Entity whose WAL has advanced to seq N under runner A
+- **WHEN** runner A restarts and a new runner B, bound as the Entity's owner by takeover, resumes emitting Changes from a seq base diverged from N
 - **THEN** the WAL SHALL realign to runner B's seq base and resume advancing rather than freeze at N
 - **AND** a `[:flezha, :state, :wal_realign]` event SHALL be emitted
 
 #### Scenario: A same-runner duplicate is still deduped
-- **GIVEN** a Segment whose WAL has advanced to seq N under runner A
+- **GIVEN** an Entity whose WAL has advanced to seq N under runner A
 - **WHEN** runner A re-sends a Change at or below seq N (a retransmit, not a restart)
 - **THEN** the Change SHALL be deduped and the WAL SHALL NOT realign
 
 #### Scenario: Output-stall resync resolves the owning runner
-- **WHEN** the Watchdog detects an output stall and triggers a resync for a Segment
+- **WHEN** the Watchdog detects an output stall and triggers a resync for an Entity
 - **THEN** `Flezha.State.Recovery.resolve_runner/1` SHALL resolve the owning runner id from the durable registry entry's metadata tag, keyed by the operative's operative_class (its `:operative_class` opt, defaulting to its id)
 
 #### Scenario: A superseded session's divergent frames do not realign
-- **GIVEN** a Segment whose stable identity was taken over by a new session while the old session's frames are still in flight
+- **GIVEN** an Entity whose stable identity was taken over by a new session while the old session's frames are still in flight
 - **WHEN** the superseded session's channel forwards a Change with a divergent seq base
 - **THEN** the frame SHALL be refused at the binding, the WAL SHALL NOT realign, and a `[:flezha, :state, :stale_writer_refused]` event SHALL be emitted once for the episode
 
@@ -674,7 +674,7 @@ For a persistence-enabled operative, the SDK SHALL drain a just-applied state ch
 #### Scenario: durable state does not trail emitted output
 - **GIVEN** a persistence-enabled operative applies a state change and then emits output for it
 - **WHEN** the dispatch runs with flush-before-emit enabled
-- **THEN** the change is shipped to the per-Segment WAL path before the output frame is written
+- **THEN** the change is shipped to the per-Entity WAL path before the output frame is written
 - **AND** on a subsequent hard-kill the restored state is no further behind the emitted output than the single in-flight change.
 
 #### Scenario: a non-persistent operative keeps the inline fast path
@@ -682,42 +682,42 @@ For a persistence-enabled operative, the SDK SHALL drain a just-applied state ch
 - **WHEN** it emits output
 - **THEN** no flush-before-emit drain occurs and the emit path is unchanged.
 
-### Requirement: Per-Segment state is deleted on dynamic-mode eviction
+### Requirement: Per-Entity state is deleted on dynamic-mode eviction
 
-When the SDK evicts a Segment due to dynamic-mode idle-TTL eviction (see `operative-operation-segment-model` "Per-Operation idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_segment_state{segment_id}` frame so the agent removes the per-Segment WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{operative}/{operation}/`). A subsequent input for the same key SHALL cold-start a fresh Segment (new WAL from seq 0); the SDK SHALL NOT restore the evicted Segment's state from disk.
+When the SDK evicts an Entity due to dynamic-mode idle-TTL eviction (see `operative-procedure-entity-model` "Per-Procedure idle-TTL eviction is opt-in"), eviction SHALL be destructive. If persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_entity_state{entity_id}` frame so the agent removes the per-Entity WAL, snapshot, and outbox files (`{key}.wal`, `{key}.snap.{seq}`, `{key}.outbox.dedup` under `app_data/state/{operative}/{procedure}/`). A subsequent input for the same key SHALL cold-start a fresh Entity (new WAL from seq 0); the SDK SHALL NOT restore the evicted Entity's state from disk.
 
 #### Scenario: Eviction deletes on-disk state
-- **WHEN** a persistence-enabled dynamic-mode Segment is evicted
-- **THEN** the SDK SHALL ship `delete_segment_state{segment_id}` and the agent SHALL remove the WAL, snapshot, and outbox files for that segment_id
+- **WHEN** a persistence-enabled dynamic-mode Entity is evicted
+- **THEN** the SDK SHALL ship `delete_entity_state{entity_id}` and the agent SHALL remove the WAL, snapshot, and outbox files for that entity_id
 
 #### Scenario: Recreate after eviction cold-starts
-- **WHEN** a dynamic-mode Segment is evicted and a subsequent input arrives for the same key
-- **THEN** the SDK SHALL recreate the Segment via `init_state(Some(key), None)` and a new WAL SHALL start from seq 0; no restore-from-disk SHALL occur
+- **WHEN** a dynamic-mode Entity is evicted and a subsequent input arrives for the same key
+- **THEN** the SDK SHALL recreate the Entity via `init_state(Some(key), None)` and a new WAL SHALL start from seq 0; no restore-from-disk SHALL occur
 
-### Requirement: Per-Segment state delete RPC
+### Requirement: Per-Entity state delete RPC
 
-The agent SHALL accept a `delete_segment_state` data-stream frame whose body is the structured `segment_id`. On receipt the agent SHALL: (1) stop any per-Segment `WalWriter` for that segment_id and drop its pending `FsyncBatcher` dirty mark; (2) remove the `{key}.wal`, `{key}.snap.{seq}` (all sequences), and `{key}.outbox.dedup` files. Delete SHALL be idempotent: a delete for a segment_id with no files SHALL succeed.
+The agent SHALL accept a `delete_entity_state` data-stream frame whose body is the structured `entity_id`. On receipt the agent SHALL: (1) stop any per-Entity `WalWriter` for that entity_id and drop its pending `FsyncBatcher` dirty mark; (2) remove the `{key}.wal`, `{key}.snap.{seq}` (all sequences), and `{key}.outbox.dedup` files. Delete SHALL be idempotent: a delete for an entity_id with no files SHALL succeed.
 
 The delete is reachable via two paths:
 
-- The SDK reaper, for evicted persistence-enabled Segments (fire-and-forget; the agent writes no response frame back on the data stream).
-- The CLI command `flz state delete <operative/operation/key>`, which calls `Flezha.State.Supervisor.delete_segment/1` directly and returns a `{segment_id, status}` confirmation synchronously.
+- The SDK reaper, for evicted persistence-enabled Entities (fire-and-forget; the agent writes no response frame back on the data stream).
+- The CLI command `flz state delete <operative/procedure/key>`, which calls `Flezha.State.Supervisor.delete_entity/1` directly and returns an `{entity_id, status}` confirmation synchronously.
 
 #### Scenario: Delete removes existing files
-- **WHEN** the agent receives `delete_segment_state` for a segment_id that has WAL and snapshot files on disk
-- **THEN** the agent SHALL stop the per-Segment processes and remove all three file types
+- **WHEN** the agent receives `delete_entity_state` for an entity_id that has WAL and snapshot files on disk
+- **THEN** the agent SHALL stop the per-Entity processes and remove all three file types
 
-#### Scenario: Delete is idempotent for nonexistent segment
-- **WHEN** the agent receives `delete_segment_state` for a segment_id with no on-disk state
+#### Scenario: Delete is idempotent for nonexistent entity
+- **WHEN** the agent receives `delete_entity_state` for an entity_id with no on-disk state
 - **THEN** the agent SHALL succeed without error (the delete is a no-op)
 
 #### Scenario: CLI delete returns confirmation
-- **WHEN** an operator runs `flz state delete <operative/operation/key>` against a Segment with on-disk state
-- **THEN** `Flezha.State.Supervisor.delete_segment/1` SHALL remove the files and return `{:ok, %{segment_id, status: :ok}}`, and the CLI SHALL exit 0
+- **WHEN** an operator runs `flz state delete <operative/procedure/key>` against an Entity with on-disk state
+- **THEN** `Flezha.State.Supervisor.delete_entity/1` SHALL remove the files and return `{:ok, %{entity_id, status: :ok}}`, and the CLI SHALL exit 0
 
-### Requirement: Atomic effect record type in the per-Segment WAL
+### Requirement: Atomic effect record type in the per-Entity WAL
 
-The per-Segment WAL SHALL support an additional record type carrying an
+The per-Entity WAL SHALL support an additional record type carrying an
 invocation's state change(s), its outbox entries (channel, key, user metadata,
 payload, emit ordinal), and its consumed input offset as one crc-protected record
 appended and fsynced as a unit. Existing change-record and snapshot requirements
@@ -727,7 +727,7 @@ as they fold plain change records.
 
 #### Scenario: Effect record replays as state
 
-- **WHEN** a Segment with effect records in its WAL is restored via the restore
+- **WHEN** an Entity with effect records in its WAL is restored via the restore
   handshake
 - **THEN** the assembled payload folds the change portions in seq order and the
   restored state equals the pre-crash state
@@ -777,7 +777,7 @@ re-drive rule (never skip ahead).
 
 ### Requirement: Outbox flush cursor lives beside the persistence watermark
 
-The per-Segment dedup file SHALL carry both the existing `last_persisted_seq`
+The per-Entity dedup file SHALL carry both the existing `last_persisted_seq`
 watermark and the new `outbox_flushed_seq` cursor, updated with the same
 atomic tmp+rename discipline. On restart, a missing or stale cursor SHALL be
 treated as "re-drive from the last known value" (never as "skip ahead").
@@ -791,17 +791,17 @@ treated as "re-drive from the last known value" (never as "skip ahead").
 
 ### Requirement: The restore contract SHALL state the fate of queued input
 
-The restore contract SHALL state what happens to a Segment's queued input, and
+The restore contract SHALL state what happens to an Entity's queued input, and
 SHALL make the answer depend on whether the Controller will re-forward it.
 
-The `RestoreInitState` requirement describes how a Segment's state is rebuilt
-but says nothing about the input a live Segment already holds queued when the
+The `RestoreInitState` requirement describes how an Entity's state is rebuilt
+but says nothing about the input a live Entity already holds queued when the
 restore lands. The SDKs consequently disagree — the Rust SDK discards it, the
 Java SDK preserves it — with neither behaviour documented as intended.
 
 The Controller re-forwards input only for classes whose inputs it journals
 before forwarding: the effectively-once tier, whose inputs land in the input
-log, and durable bounded instances, whose inputs land in the op inbox.
+log, and durable bounded instances, whose inputs land in the proc inbox.
 `Overwatch.journal_input/2` passes every other operative through un-journaled,
 including a plain stateful unbounded operative — the default configuration,
 since persistence defaults to enabled and the tier is an explicit opt-in.
@@ -814,15 +814,15 @@ since persistence defaults to enabled and the tier is an explicit opt-in.
 
 #### Scenario: Un-journaled queued input survives a restore
 
-- **GIVEN** a live Segment of a class whose inputs the Controller does not
+- **GIVEN** a live Entity of a class whose inputs the Controller does not
   journal, holding queued input
-- **WHEN** the Controller drives a `RestoreInitState` handshake for that Segment
+- **WHEN** the Controller drives a `RestoreInitState` handshake for that Entity
 - **THEN** the queued input SHALL NOT be silently lost
 
 #### Scenario: A restore-time discard is observable to an operator
 
 - **WHEN** a restore discards queued input
-- **THEN** the discard SHALL be counted and exposed, naming the Segment, rather
+- **THEN** the discard SHALL be counted and exposed, naming the Entity, rather
   than leaving no trace
 
 ### Requirement: The compaction handshake SHALL be verified end to end against a real SDK
@@ -833,76 +833,76 @@ The coverage SHALL assert against observable durable state — a snapshot file e
 
 #### Scenario: A triggered compaction produces a durable snapshot and truncates the WAL
 
-- **GIVEN** a live runner hosting a Segment whose Operation has a non-`NoChange` Change type, with persistence enabled and a WAL containing records
-- **WHEN** the Controller ships `CompactSegment` for that Segment and the SDK answers
-- **THEN** a snapshot file SHALL exist for that Segment under its state directory
-- **AND** the Segment's WAL size SHALL be strictly smaller than it was before the handshake
-- **AND** `[:flezha, :state, :compaction_completed]` SHALL have been observed for that Segment
+- **GIVEN** a live runner hosting an Entity whose Procedure has a non-`NoChange` Change type, with persistence enabled and a WAL containing records
+- **WHEN** the Controller ships `CompactEntity` for that Entity and the SDK answers
+- **THEN** a snapshot file SHALL exist for that Entity under its state directory
+- **AND** the Entity's WAL size SHALL be strictly smaller than it was before the handshake
+- **AND** `[:flezha, :state, :compaction_completed]` SHALL have been observed for that Entity
 
 #### Scenario: A stub SDK response fails the coverage
 
-- **GIVEN** an SDK build whose `CompactSegment` handler answers `snapshot_seq = 0` without shipping a `segment_state_snapshot` frame
+- **GIVEN** an SDK build whose `CompactEntity` handler answers `snapshot_seq = 0` without shipping an `entity_state_snapshot` frame
 - **WHEN** the end-to-end compaction coverage runs against it
 - **THEN** the coverage SHALL fail
 
 #### Scenario: The cold-controller baseline-seed pull becomes reachable
 
-- **GIVEN** the archived `snapshot-baseline-durability` change, whose cold-controller "pull a full-state baseline via `CompactSegment`" path was inert because no SDK ever answered the handshake with a snapshot
-- **WHEN** a cold controller with an empty WAL for a live runner's Segment issues `CompactSegment` (via `Recovery.dispatch_resync`'s empty-WAL branch)
-- **THEN** the SDK SHALL now answer with a real `segment_state_snapshot`, so the baseline-seed scenario that change asserts becomes reachable for the first time
+- **GIVEN** the archived `snapshot-baseline-durability` change, whose cold-controller "pull a full-state baseline via `CompactEntity`" path was inert because no SDK ever answered the handshake with a snapshot
+- **WHEN** a cold controller with an empty WAL for a live runner's Entity issues `CompactEntity` (via `Recovery.dispatch_resync`'s empty-WAL branch)
+- **THEN** the SDK SHALL now answer with a real `entity_state_snapshot`, so the baseline-seed scenario that change asserts becomes reachable for the first time
 - **AND** this change's requirements — not an amendment to the archived change — are the current authority for that handshake (the archived change is left as the historical record)
 
-### Requirement: The Controller SHALL inspect CompactSegmentResponse
+### Requirement: The Controller SHALL inspect CompactEntityResponse
 
-`Overwatch.dispatch_compact_segment/2` currently treats a successful `send_control` as compaction having started and never reads the response body. The Controller SHALL inspect `CompactSegmentResponse` and SHALL treat a response that reports no snapshot for a Segment with a non-empty WAL as a failure of the handshake, not as its completion.
+`Overwatch.dispatch_compact_entity/2` currently treats a successful `send_control` as compaction having started and never reads the response body. The Controller SHALL inspect `CompactEntityResponse` and SHALL treat a response that reports no snapshot for an Entity with a non-empty WAL as a failure of the handshake, not as its completion.
 
 #### Scenario: Zero snapshot_seq against a non-empty WAL is an error
 
-- **GIVEN** a Segment whose WAL contains at least one record
-- **WHEN** the SDK answers `CompactSegmentResponse{snapshot_seq: 0, snapshot_bytes_size: 0}`
-- **THEN** the Controller SHALL record the handshake as failed, SHALL emit failure telemetry naming the Segment, and SHALL NOT mark the compaction as started or completed
+- **GIVEN** an Entity whose WAL contains at least one record
+- **WHEN** the SDK answers `CompactEntityResponse{snapshot_seq: 0, snapshot_bytes_size: 0}`
+- **THEN** the Controller SHALL record the handshake as failed, SHALL emit failure telemetry naming the Entity, and SHALL NOT mark the compaction as started or completed
 
 #### Scenario: Zero snapshot_seq against an empty WAL is not an error
 
-- **GIVEN** a Segment whose WAL contains no records
-- **WHEN** the SDK answers `CompactSegmentResponse{snapshot_seq: 0}`
+- **GIVEN** an Entity whose WAL contains no records
+- **WHEN** the SDK answers `CompactEntityResponse{snapshot_seq: 0}`
 - **THEN** the Controller SHALL NOT treat the response as a failure
 
 ### Requirement: A failing compaction SHALL be bounded by strikes and give up loudly
 
-`Watchdog.flag_compaction_timeout/2` currently calls `Recovery.resync/2` without a `runner_id`, so `do_resync/2` returns `{:error, :no_runner_id}` and the caller discards it — the timeout handler is a silent no-op, and the Segment is dropped from the in-flight map so the next sweep re-triggers it indefinitely. Repeated compaction failure for a Segment SHALL be counted, SHALL back off between attempts, and SHALL escalate to a loud, operator-visible give-up rather than retrying at the sweep interval forever.
+`Watchdog.flag_compaction_timeout/2` currently calls `Recovery.resync/2` without a `runner_id`, so `do_resync/2` returns `{:error, :no_runner_id}` and the caller discards it — the timeout handler is a silent no-op, and the Entity is dropped from the in-flight map so the next sweep re-triggers it indefinitely. Repeated compaction failure for an Entity SHALL be counted, SHALL back off between attempts, and SHALL escalate to a loud, operator-visible give-up rather than retrying at the sweep interval forever.
 
 #### Scenario: Repeated failures back off rather than retrying at sweep cadence
 
-- **GIVEN** a Segment whose compaction handshake fails or times out
+- **GIVEN** an Entity whose compaction handshake fails or times out
 - **WHEN** the failure repeats
-- **THEN** the interval between successive `CompactSegment` dispatches for that Segment SHALL increase
-- **AND** the Controller SHALL NOT dispatch `CompactSegment` for that Segment once per sweep indefinitely
+- **THEN** the interval between successive `CompactEntity` dispatches for that Entity SHALL increase
+- **AND** the Controller SHALL NOT dispatch `CompactEntity` for that Entity once per sweep indefinitely
 
 #### Scenario: Give-up is observable
 
-- **GIVEN** a Segment whose compaction has failed past the strike threshold
+- **GIVEN** an Entity whose compaction has failed past the strike threshold
 - **WHEN** the threshold is crossed
-- **THEN** the Controller SHALL emit give-up telemetry naming the Segment and the failure count, at a severity an operator can alert on
+- **THEN** the Controller SHALL emit give-up telemetry naming the Entity and the failure count, at a severity an operator can alert on
 
 #### Scenario: A recovery attempt that cannot dispatch is not silently discarded
 
 - **WHEN** a compaction failure path invokes recovery without the information needed to dispatch it
 - **THEN** the outcome SHALL be logged or counted; it SHALL NOT be discarded
 
-### Requirement: The per-Operation compact_after_bytes threshold SHALL be reachable
+### Requirement: The per-Procedure compact_after_bytes threshold SHALL be reachable
 
-`PersistenceResolver.compact_after_bytes/2` names its first parameter `_operation_id` and discards it, so the per-Operation threshold the existing compaction requirement mandates cannot be resolved by any caller — the global default always wins. The resolver SHALL consult the per-Operation value, and every caller SHALL pass the arguments needed to resolve it.
+`PersistenceResolver.compact_after_bytes/2` names its first parameter `_procedure_id` and discards it, so the per-Procedure threshold the existing compaction requirement mandates cannot be resolved by any caller — the global default always wins. The resolver SHALL consult the per-Procedure value, and every caller SHALL pass the arguments needed to resolve it.
 
-#### Scenario: A declared per-Operation threshold governs its own Segments
+#### Scenario: A declared per-Procedure threshold governs its own Entities
 
-- **GIVEN** an Operation that declares a `compact_after_bytes` different from the global default, shipped in the `AddOperative` metadata
-- **WHEN** the Watchdog evaluates the size trigger for a Segment of that Operation
+- **GIVEN** a Procedure that declares a `compact_after_bytes` different from the global default, shipped in the `AddOperative` metadata
+- **WHEN** the Watchdog evaluates the size trigger for an Entity of that Procedure
 - **THEN** the declared value SHALL be used, not the global default
 
-#### Scenario: An undeclared Operation falls back to the global default
+#### Scenario: An undeclared Procedure falls back to the global default
 
-- **GIVEN** an Operation that declares no `compact_after_bytes`
+- **GIVEN** a Procedure that declares no `compact_after_bytes`
 - **WHEN** the Watchdog evaluates the size trigger
 - **THEN** the global `:default_compact_after_bytes` SHALL be used
 

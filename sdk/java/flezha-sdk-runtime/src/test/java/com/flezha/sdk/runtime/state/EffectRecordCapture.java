@@ -12,9 +12,9 @@ import java.util.OptionalLong;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Captures the effect records a Segment actually ships.
+ * Captures the effect records an Entity actually ships.
  *
- * <p>Tests must NOT assert on {@code SegmentSlot.effectBuffer()}: the background
+ * <p>Tests must NOT assert on {@code EntitySlot.effectBuffer()}: the background
  * flusher drains it within a linger tick (~5 ms), so such an assertion races and
  * flakes under load. Assert on what reached the sink instead — which is stronger
  * anyway, since it exercises the frame and its header too.
@@ -26,7 +26,7 @@ public final class EffectRecordCapture {
     /** Install as the global state sink. Call from {@code @BeforeEach}. */
     public void install() {
         sends.clear();
-        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+        EntityStateSink.installGlobalSink((payloadId, frame) -> {
             sends.add(Map.entry(payloadId, frame));
             return true;
         });
@@ -44,7 +44,7 @@ public final class EffectRecordCapture {
     public List<EffectRecord> records() {
         List<EffectRecord> out = new ArrayList<>();
         for (Map.Entry<String, byte[]> sent : sends) {
-            if (SegmentStateSink.PAYLOAD_ID_EFFECT_RECORD.equals(sent.getKey())) {
+            if (EntityStateSink.PAYLOAD_ID_EFFECT_RECORD.equals(sent.getKey())) {
                 out.add(decode(sent.getValue()));
             }
         }

@@ -1,7 +1,7 @@
 defmodule Flezha.State.Recovery do
   @moduledoc """
-  Single recovery primitive for per-Segment persistence: re-run the
-  `RestoreInitState` handshake so a desynced or stalled Segment resumes
+  Single recovery primitive for per-Entity persistence: re-run the
+  `RestoreInitState` handshake so a desynced or stalled Entity resumes
   from a consistent point.
 
   Used by the three failure edges that were previously silent:
@@ -13,7 +13,7 @@ defmodule Flezha.State.Recovery do
   Telemetry for *why* a resync was triggered is emitted by the caller;
   this module owns only the resync mechanism. The dispatch can be
   redirected in tests via the `:state_resync_fun` application env (an
-  arity-2 fun `(segment_id, opts -> term)`), which lets a test simulate
+  arity-2 fun `(entity_id, opts -> term)`), which lets a test simulate
   the SDK's rewind-and-resend without a live runner.
   """
 
@@ -23,10 +23,10 @@ defmodule Flezha.State.Recovery do
   alias Flezha.State.Restore
 
   @spec resync(tuple(), keyword()) :: {:ok, reference()} | {:error, term()}
-  def resync({_rc, _sh, _pk} = segment_id, opts \\ []) do
+  def resync({_rc, _sh, _pk} = entity_id, opts \\ []) do
     case Application.get_env(:flezha, :state_resync_fun) do
-      fun when is_function(fun, 2) -> fun.(segment_id, opts)
-      _ -> do_resync(segment_id, opts)
+      fun when is_function(fun, 2) -> fun.(entity_id, opts)
+      _ -> do_resync(entity_id, opts)
     end
   end
 
@@ -78,13 +78,13 @@ defmodule Flezha.State.Recovery do
     end
   end
 
-  defp do_resync(segment_id, opts) do
+  defp do_resync(entity_id, opts) do
     reason = Keyword.get(opts, :reason, :unknown)
     runner_id = Keyword.get(opts, :runner_id)
 
     cond do
       is_binary(runner_id) ->
-        dispatch_resync(segment_id, runner_id, reason)
+        dispatch_resync(entity_id, runner_id, reason)
 
       true ->
         # Callers without an runner_id are only signalling "I observed
@@ -96,14 +96,14 @@ defmodule Flezha.State.Recovery do
 
   # Direction is chosen by who holds authoritative history: with a local
   # baseline the controller pushes `RestoreInitState`; without one it pulls a
-  # full-state snapshot via `CompactSegment` — an empty RestoreInitState
-  # would rebuild the live Segment to `init_state` and wipe accumulated state.
-  defp dispatch_resync(segment_id, runner_id, reason) do
+  # full-state snapshot via `CompactEntity` — an empty RestoreInitState
+  # would rebuild the live Entity to `init_state` and wipe accumulated state.
+  defp dispatch_resync(entity_id, runner_id, reason) do
     result =
-      if Restore.has_persisted_state?(segment_id) do
-        Overwatch.dispatch_restore_init_state(runner_id, segment_id)
+      if Restore.has_persisted_state?(entity_id) do
+        Overwatch.dispatch_restore_init_state(runner_id, entity_id)
       else
-        Overwatch.dispatch_compact_segment(runner_id, segment_id)
+        Overwatch.dispatch_compact_entity(runner_id, entity_id)
       end
 
     case result do
@@ -113,7 +113,7 @@ defmodule Flezha.State.Recovery do
       other ->
         Logger.warning(
           "[State.Recovery] resync dispatch failed reason=#{inspect(reason)} " <>
-            "segment=#{inspect(segment_id)}: #{inspect(other)}"
+            "entity=#{inspect(entity_id)}: #{inspect(other)}"
         )
 
         other

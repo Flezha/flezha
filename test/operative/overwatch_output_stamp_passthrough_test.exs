@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
   @moduledoc """
-  Output-identity pass-through: the SDK stamps `flz.segment` / `flz.seq` /
+  Output-identity pass-through: the SDK stamps `flz.entity` / `flz.seq` /
   `flz.key` on keyed-channel frames, and the controller must deliver them
   to the `:on_output` plugin chain unchanged — StreamChannel routes the
   frame's metadata as-is and Overwatch hands it to the plugin ctx as-is.
@@ -24,7 +24,7 @@ defmodule FlezhaTest.Operative.OverwatchOutputStampPassthroughTest do
 
   @stamped_metadata %{
     "channel" => "out",
-    "flz.segment" => "operative-1/ohlc_operation/BTC",
+    "flz.entity" => "operative-1/ohlc_procedure/BTC",
     "flz.seq" => "42.1",
     "flz.key" => "BTC/1m/1720000000",
     "user_key" => "user_value"

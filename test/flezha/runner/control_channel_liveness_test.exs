@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
   @moduledoc """
-  Control-plane liveness watchdog (unify-executor-liveness-and-identity, D1).
+  Control-plane liveness watchdog (runner-controller-connection-healing, D1).
 
   `Flezha.Runner.ControlChannel` stamps a monotonic `last_seen` on every
   inbound control frame — including the SDK keepalive ping it formerly echoed

@@ -234,7 +234,7 @@ defmodule FlezhaTest.Plugin.KafkaTest do
              responses: [
                %{
                  topic: @topic,
-                 segment_responses: [
+                 entity_responses: [
                    %{
                      partition: 0,
                      error_code: 0,

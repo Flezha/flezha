@@ -5,9 +5,9 @@ TBD - created by archiving change sdk-graph-authoring-api. Update Purpose after 
 ## Requirements
 ### Requirement: Producer-first stream-handle graph builder
 
-Both SDKs SHALL author operative topologies through a producer-first fluent builder in which `.into(<operation>)` wires a consumer onto the current stream and returns the **consumed operation's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. The handle SHALL be a lightweight, copyable reference into the operative's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`codec()`, `keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the operative.
+Both SDKs SHALL author operative topologies through a producer-first fluent builder in which `.into(<procedure>)` wires a consumer onto the current stream and returns the **consumed procedure's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. The handle SHALL be a lightweight, copyable reference into the operative's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`codec()`, `keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the operative.
 
-The payload type of every non-entry channel SHALL be taken from the producing operation's declared `Output` type — the builder SHALL NOT accept a redundant type token for inter-operation channels. Wiring a consumer whose `Input` type differs from the stream's payload type SHALL fail to compile in Rust and SHALL fail registration in Java with an error naming both operations and both types.
+The payload type of every non-entry channel SHALL be taken from the producing procedure's declared `Output` type — the builder SHALL NOT accept a redundant type token for inter-procedure channels. Wiring a consumer whose `Input` type differs from the stream's payload type SHALL fail to compile in Rust and SHALL fail registration in Java with an error naming both procedures and both types.
 
 #### Scenario: Linear chain is one expression
 
@@ -17,7 +17,7 @@ The payload type of every non-entry channel SHALL be taken from the producing op
 #### Scenario: Type-mismatched consumer is refused
 
 - **WHEN** `stream.into(B)` is declared where B's `Input` type differs from the stream's payload type
-- **THEN** the program SHALL fail to compile (Rust) or registration SHALL throw naming both operations and both types (Java)
+- **THEN** the program SHALL fail to compile (Rust) or registration SHALL throw naming both procedures and both types (Java)
 
 #### Scenario: Handle used after freeze is refused
 
@@ -45,11 +45,11 @@ Using one stream handle to wire more than one consumer SHALL declare fan-out: ev
 
 ### Requirement: Channel names auto-derive from the producer node's identity
 
-A channel created by wiring out of a node SHALL be named by that node's identity string (the operation's `name()`, or the explicit node name per the node-identity requirement) unless `.named("...")` overrides it. Entry channels SHALL keep an explicit, mandatory name (they are the operative's external input address). Derived, overridden, and entry names SHALL all live in the existing per-operative channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
+A channel created by wiring out of a node SHALL be named by that node's identity string (the procedure's `name()`, or the explicit node name per the node-identity requirement) unless `.named("...")` overrides it. Entry channels SHALL keep an explicit, mandatory name (they are the operative's external input address). Derived, overridden, and entry names SHALL all live in the existing per-operative channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
 
 #### Scenario: Derived name ships on the wire
 
-- **WHEN** operation `Validate` (whose `name()` returns `"validate"`) is wired via `.alsoOutput("audit_sink")` with no `.named(...)` override
+- **WHEN** procedure `Validate` (whose `name()` returns `"validate"`) is wired via `.alsoOutput("audit_sink")` with no `.named(...)` override
 - **THEN** frames delivered to the `audit_sink` plugin SHALL carry `channel = "validate"` in their metadata
 
 #### Scenario: named() overrides the derived name
@@ -62,14 +62,14 @@ A channel created by wiring out of a node SHALL be named by that node's identity
 - **WHEN** a `.named(...)` override or node name collides with another channel name in the same operative
 - **THEN** registration SHALL fail with an error naming both colliding declarations
 
-### Requirement: Node identity permits reusing one Operation class at several graph positions
+### Requirement: Node identity permits reusing one Procedure class at several graph positions
 
-A graph node SHALL be identified by its Operation class unless an explicit node name is supplied at wiring time (`.into(Filter.class, "spam_filter")` in Java, `into_named::<Filter>("spam_filter")` in Rust). Two unnamed mentions of the same class SHALL resolve to the same node. An explicit node name SHALL create a distinct node whose identity string replaces the operation's `name()` for every purpose identity serves today: per-segment state directories, journal entries, derived channel names, and diagnostics. Node identity strings SHALL be unique per operative; a collision (with another node name or an operation `name()`) SHALL fail registration.
+A graph node SHALL be identified by its Procedure class unless an explicit node name is supplied at wiring time (`.into(Filter.class, "spam_filter")` in Java, `into_named::<Filter>("spam_filter")` in Rust). Two unnamed mentions of the same class SHALL resolve to the same node. An explicit node name SHALL create a distinct node whose identity string replaces the procedure's `name()` for every purpose identity serves today: per-entity state directories, journal entries, derived channel names, and diagnostics. Node identity strings SHALL be unique per operative; a collision (with another node name or a procedure `name()`) SHALL fail registration.
 
 #### Scenario: Same class reused as two named nodes
 
 - **WHEN** an operative declares `validated.into(Filter.class, "fraud_filter")` and `validated.into(Filter.class, "spam_filter")`
-- **THEN** registration SHALL succeed with two distinct nodes, and each node's segments SHALL persist state under its own identity (`fraud_filter` / `spam_filter`)
+- **THEN** registration SHALL succeed with two distinct nodes, and each node's entities SHALL persist state under its own identity (`fraud_filter` / `spam_filter`)
 
 #### Scenario: Unnamed mentions unify
 
@@ -107,7 +107,7 @@ The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channe
 #### Scenario: Typed entry with default JSON
 
 - **WHEN** an operative declares `c.input(OrderEvent.class, "orders")` and a JSON-encoded OrderEvent arrives on the wire
-- **THEN** the consuming operation's `run` SHALL receive the deserialized `OrderEvent`
+- **THEN** the consuming procedure's `run` SHALL receive the deserialized `OrderEvent`
 
 #### Scenario: Custom parser overload
 
@@ -117,7 +117,7 @@ The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channe
 #### Scenario: Parse failure parks to the DLQ
 
 - **WHEN** an arriving payload fails the entry parser on every retry attempt of the channel's retry budget
-- **THEN** the payload SHALL be parked to the dead-letter queue under the entry channel's origin identity, and the consuming operation SHALL NOT be invoked with a partial value
+- **THEN** the payload SHALL be parked to the dead-letter queue under the entry channel's origin identity, and the consuming procedure SHALL NOT be invoked with a partial value
 
 #### Scenario: String and bytes entries are byte-identical to today
 
@@ -136,11 +136,11 @@ The plugin-bound terminal SHALL be `output(name[, serializer])` (Rust: `output`)
 #### Scenario: alsoOutput without a serializer uses defaults
 
 - **WHEN** a stream of a JSON-serializable type declares `.alsoOutput("audit_sink")` with no serializer
-- **THEN** the tap SHALL publish the default-JSON bytes of each emitted value to `audit_sink`, and inter-operation consumers SHALL receive the typed values unchanged
+- **THEN** the tap SHALL publish the default-JSON bytes of each emitted value to `audit_sink`, and inter-procedure consumers SHALL receive the typed values unchanged
 
 ### Requirement: The channel-declaration API is replaced with no coexistence
 
-`ChannelDecl`, `.from(...)`, and the typed-and-named inter-operation `channel(<type>, "name")` declaration SHALL be removed from both SDKs' public surface in the same change that introduces the graph builder. There SHALL be no transitional period in which both APIs are usable.
+`ChannelDecl`, `.from(...)`, and the typed-and-named inter-procedure `channel(<type>, "name")` declaration SHALL be removed from both SDKs' public surface in the same change that introduces the graph builder. There SHALL be no transitional period in which both APIs are usable.
 
 #### Scenario: Old spellings do not compile
 
@@ -149,7 +149,7 @@ The plugin-bound terminal SHALL be `output(name[, serializer])` (Rust: `output`)
 
 ### Requirement: One contract across SDKs, per-language spelling allowed
 
-The graph builder's semantics — handle model, branching, node identity, DAG rule, fan-in accumulation, derived names, typed inputs, `output` vocabulary — SHALL be identical in Rust and Java, and the shared e2e matrix SHALL exercise one contract with no per-runtime branching. Per-language surface differences SHALL be limited to spelling (`Op.class` vs turbofish, lambdas vs closures, `into(Op.class, "name")` vs `into_named::<Op>("name")`). Where Rust enforces a rule at compile time, Java SHALL enforce the same rule at registration with an error carrying the same diagnostic content.
+The graph builder's semantics — handle model, branching, node identity, DAG rule, fan-in accumulation, derived names, typed inputs, `output` vocabulary — SHALL be identical in Rust and Java, and the shared e2e matrix SHALL exercise one contract with no per-runtime branching. Per-language surface differences SHALL be limited to spelling (`Proc.class` vs turbofish, lambdas vs closures, `into(Proc.class, "name")` vs `into_named::<Proc>("name")`). Where Rust enforces a rule at compile time, Java SHALL enforce the same rule at registration with an error carrying the same diagnostic content.
 
 #### Scenario: Same graph, both SDKs, same behavior
 

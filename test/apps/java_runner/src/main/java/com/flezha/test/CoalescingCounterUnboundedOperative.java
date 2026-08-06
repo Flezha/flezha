@@ -4,7 +4,7 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operative.UnboundedOperative;
 
 /**
- * Demonstrates the per-Segment flusher's coalescing path: {@link TickChange}
+ * Demonstrates the per-Entity flusher's coalescing path: {@link TickChange}
  * carries a {@link com.flezha.sdk.state.CoalesceKey} so Changes with equal
  * {@code (interval, ts)} collapse to the latest within a flush window.
  */
@@ -17,6 +17,6 @@ public final class CoalescingCounterUnboundedOperative implements UnboundedOpera
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(TickOperation.class);
+        c.input(String.class, "input").into(TickProcedure.class);
     }
 }

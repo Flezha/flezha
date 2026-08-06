@@ -3,7 +3,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   Credit-grant flow control on the runner→controller state stream:
   negotiation (offer/ack/nack/kill-switch), per-stream byte ledger,
   fsync-minted watermark-batched grants, overrun shedding, reconnect
-  reset, and per-Segment receiver isolation.
+  reset, and per-Entity receiver isolation.
   """
 
   use ExUnit.Case, async: false
@@ -52,7 +52,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
     # Keep fsync under test control: the real batcher never learns about the
     # writers, so credit is minted only by explicit WalWriter.fsync/1 calls.
-    stub(Flezha.State.FsyncBatcher, :mark_dirty, fn _segment_id -> :ok end)
+    stub(Flezha.State.FsyncBatcher, :mark_dirty, fn _entity_id -> :ok end)
 
     # Capture every controller→SDK async control send (grants, mailbox status).
     test_pid = self()
@@ -63,7 +63,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     end)
 
     on_exit(fn ->
-      TestHelpers.reset_all_segments()
+      TestHelpers.reset_all_entities()
       Application.delete_env(:flezha, :state_root)
       Application.delete_env(:flezha, :credit_window_bytes)
       Application.delete_env(:flezha, :credit_flow_control_enabled)
@@ -89,7 +89,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   end
 
   defp push_frame(channel, frame) do
-    send(channel, {:flz_data, :ref, "segment_state_change", frame, %{}})
+    send(channel, {:flz_data, :ref, "entity_state_change", frame, %{}})
     # Flush through the channel's mailbox.
     _ = GenServer.call(channel, :stream_ref_status)
     :ok
@@ -99,7 +99,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     assert wait_until(fun, timeout_ms), "condition not met within #{timeout_ms}ms"
   end
 
-  defp writer_pid(segment_id), do: wait_for_writer(segment_id, 2_000)
+  defp writer_pid(entity_id), do: wait_for_writer(entity_id, 2_000)
 
   defp establish_credit(ctx) do
     start_stub_control_unit(ctx.runner_id, :ack)
@@ -235,7 +235,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       row = counters_row(ctx.runner_id, ctx.name)
       assert row.credit_overrun_total == 0
 
-      metrics = Flezha.State.Metrics.for_segment({ctx.class, "op1", "k1"})
+      metrics = Flezha.State.Metrics.for_entity({ctx.class, "op1", "k1"})
       assert Flezha.State.Metrics.get(metrics, :wal_shed_total) == 0
       assert Flezha.State.WalWriter.last_persisted_seq(writer) == 20
     end
@@ -248,8 +248,8 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
 
       resync_notify = self()
 
-      Application.put_env(:flezha, :state_resync_fun, fn segment_id, opts ->
-        send(resync_notify, {:resync_called, segment_id, opts})
+      Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
+        send(resync_notify, {:resync_called, entity_id, opts})
         :ok
       end)
 
@@ -317,8 +317,8 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     end
   end
 
-  describe "per-Segment receiver queues (3.1)" do
-    test "a slow Segment cannot stall a healthy sibling on the same stream", ctx do
+  describe "per-Entity receiver queues (3.1)" do
+    test "a slow Entity cannot stall a healthy sibling on the same stream", ctx do
       establish_credit(ctx)
 
       # k1's writer already exists from the handshake trigger frame (seq 0);

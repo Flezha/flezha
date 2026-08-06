@@ -209,11 +209,11 @@ defmodule Flezha.Convergence.StallClassifier do
   Per-operative producing-liveness from durable progress markers, compared at
   the convergence tick cadence.
 
-  `current` is one map per live Segment (built by the Loop from
-  `Flezha.State.Watchdog.segment_statuses/0`): always `:operative_id`,
-  `:segment`, `:last_change_seen_at`, `:last_advance_at` (the WAL
+  `current` is one map per live Entity (built by the Loop from
+  `Flezha.State.Watchdog.entity_statuses/0`): always `:operative_id`,
+  `:entity`, `:last_change_seen_at`, `:last_advance_at` (the WAL
   fed/advance evidence), `:out_pending_seq` and `:outbox_flushed_seq`, plus —
-  when the effectively-once tier runs — `:input_log_tail` and this Segment's
+  when the effectively-once tier runs — `:input_log_tail` and this Entity's
   durable `:consumed_offset`. `baseline` is a snapshot taken at least one grace
   window earlier (`nil` before one has aged enough); cursor checks compare
   against it and are skipped when it or the cursor fields are absent, so
@@ -222,7 +222,7 @@ defmodule Flezha.Convergence.StallClassifier do
   Every verdict carries the fed precondition: input-side evidence advancing
   while the progress marker is flat past the grace window is `{:stuck,
   detail, ctx}` (detail ∈ `:wal_frozen | :watermark_frozen | :outbox_flat`,
-  ctx naming the lagging Segment); flat markers with no input is `:idle`
+  ctx naming the lagging Entity); flat markers with no input is `:idle`
   (producing-healthy). Per operative the single deepest verdict wins.
   """
   @spec classify_producing([map()], [map()] | nil, map()) :: %{
@@ -231,14 +231,14 @@ defmodule Flezha.Convergence.StallClassifier do
   def classify_producing(current, baseline, opts \\ %{}) do
     o = Map.merge(@producing_defaults, opts)
     now = Map.get_lazy(o, :now, fn -> System.monotonic_time(:millisecond) end)
-    base = index_by(baseline || [], fn m -> {m.operative_id, m.segment} end)
+    base = index_by(baseline || [], fn m -> {m.operative_id, m.entity} end)
 
     current
     |> Enum.group_by(& &1.operative_id)
     |> Map.new(fn {operative_id, markers} ->
       verdicts =
         Enum.map(markers, fn m ->
-          marker_verdict(m, Map.get(base, {m.operative_id, m.segment}), now, o.grace_ms)
+          marker_verdict(m, Map.get(base, {m.operative_id, m.entity}), now, o.grace_ms)
         end)
 
       {operative_id, Enum.max_by(verdicts, &verdict_rank/1)}
@@ -250,19 +250,19 @@ defmodule Flezha.Convergence.StallClassifier do
     advanced? = now - m.last_advance_at < grace_ms
 
     cond do
-      fed? and not advanced? -> {:stuck, :wal_frozen, %{segment: m.segment}}
-      watermark_frozen?(m, base) -> {:stuck, :watermark_frozen, %{segment: m.segment}}
-      outbox_flat?(m, base) -> {:stuck, :outbox_flat, %{segment: m.segment}}
+      fed? and not advanced? -> {:stuck, :wal_frozen, %{entity: m.entity}}
+      watermark_frozen?(m, base) -> {:stuck, :watermark_frozen, %{entity: m.entity}}
+      outbox_flat?(m, base) -> {:stuck, :outbox_flat, %{entity: m.entity}}
       advanced? -> :advancing
       true -> :idle
     end
   end
 
-  # Tier-on: the input-log tail grew over the grace window while THIS Segment's
-  # durable consumed offset did not advance. Read per Segment, not as the
-  # operative's min-watermark: the minimum across Segments IS that watermark, so
-  # any frozen Segment still freezes the operative's verdict — and the verdict
-  # names the Segment actually responsible, which a class-wide scalar cannot.
+  # Tier-on: the input-log tail grew over the grace window while THIS Entity's
+  # durable consumed offset did not advance. Read per Entity, not as the
+  # operative's min-watermark: the minimum across Entities IS that watermark, so
+  # any frozen Entity still freezes the operative's verdict — and the verdict
+  # names the Entity actually responsible, which a class-wide scalar cannot.
   defp watermark_frozen?(m, base) when is_map(base) do
     is_integer(m[:input_log_tail]) and is_integer(base[:input_log_tail]) and
       is_integer(m[:consumed_offset]) and is_integer(base[:consumed_offset]) and

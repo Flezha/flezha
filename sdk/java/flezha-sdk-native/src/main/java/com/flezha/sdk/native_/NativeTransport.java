@@ -139,17 +139,17 @@ public final class NativeTransport {
     public static final int STREAM_TYPE_SECONDARY = 0x02;
 
     /**
-     * Send a per-Segment state-change frame on the controller's control channel.
+     * Send a per-Entity state-change frame on the controller's control channel.
      * The {@code frame} bytes are the umbrella-spec wire format (instance id,
-     * operation name, segment key, seq, header, change bytes, crc32) already
-     * built by the SDK's {@code SegmentFlusher}. Returns 0 on OK, non-zero
+     * procedure name, entity key, seq, header, change bytes, crc32) already
+     * built by the SDK's {@code EntityFlusher}. Returns 0 on OK, non-zero
      * {@link FlezhaStatus} otherwise.
      *
      * <p>Wraps the existing generic {@link #streamWrite(long, long, byte[])}
-     * with the {@code segment_state_change} payload-id constant from
-     * {@code operative-state-persistence-controller}'s wire spec.
+     * with the {@code entity_state_change} payload-id constant from
+     * {@code operative-state-persistence}'s wire spec.
      */
-    public static int sendSegmentStateChange(long handle, long streamId, @Nonnull byte[] frame) {
+    public static int sendEntityStateChange(long handle, long streamId, @Nonnull byte[] frame) {
         return streamWrite(handle, streamId, frame);
     }
 }

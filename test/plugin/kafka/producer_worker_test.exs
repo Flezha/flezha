@@ -141,7 +141,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   describe "effectively-once tier records (§5)" do
     @tier_metadata %{
       "channel" => "out",
-      "flz.segment" => "MarketOperative/s1/k1",
+      "flz.entity" => "MarketOperative/s1/k1",
       "flz.seq" => "42.0",
       "flz.epoch" => "1",
       "flz.key" => "BTC/1m/1720000000"

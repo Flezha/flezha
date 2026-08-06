@@ -3,10 +3,10 @@ package com.flezha.sdk.runtime.worker;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.Frame;
@@ -31,7 +31,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * Output identity: the {@code flz.segment} / {@code flz.seq} / {@code flz.key}
+ * Output identity: the {@code flz.entity} / {@code flz.seq} / {@code flz.key}
  * stamps a keyed emit carries, the byte-identical layout a non-keyed emit keeps,
  * and the determinism surface ({@code ctx.now()} / {@code ctx.stableId()}).
  *
@@ -54,7 +54,7 @@ class OutputIdentityTest {
         capturedWrites.clear();
         UnboundedOperativeClassRegistry.reset();
 
-        OperationDispatcher.setWireWriter((handle, streamId, frame) -> {
+        ProcedureDispatcher.setWireWriter((handle, streamId, frame) -> {
             capturedWrites.add(frame);
             return 0;
         });
@@ -67,7 +67,7 @@ class OutputIdentityTest {
 
     @AfterEach
     void close() {
-        OperationDispatcher.resetWireWriter();
+        ProcedureDispatcher.resetWireWriter();
         if (ctx != null && ctx.workerPool() != null) {
             ctx.workerPool().shutdownNow();
         }
@@ -80,7 +80,7 @@ class OutputIdentityTest {
     }
 
     private void feed(UnboundedOperativeInstance instance, Object input) throws Exception {
-        instance.dispatcher(0).fanoutSegments(input, 100L);
+        instance.dispatcher(0).fanoutEntities(input, 100L);
         ctx.workerPool().shutdown();
         assertThat(ctx.workerPool().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
     }
@@ -97,7 +97,7 @@ class OutputIdentityTest {
     }
 
     @Test
-    @DisplayName("a keyed emit stamps flz.segment, flz.seq and flz.key")
+    @DisplayName("a keyed emit stamps flz.entity, flz.seq and flz.key")
     void keyedEmitCarriesIdentityStamps() throws Exception {
         UnboundedOperativeInstance instance = instantiate(KeyedOperative.class, "identity-keyed");
         feed(instance, "BTC");
@@ -108,10 +108,10 @@ class OutputIdentityTest {
 
         assertThat(meta).containsEntry("channel", "out");
         assertThat(meta).containsEntry("flz.key", "BTC");
-        // instance / operation / segmentKey — the segment key is empty for a
-        // single-mode operation, matching the controller's identity encoding.
-        assertThat(meta.get("flz.segment")).isEqualTo("identity-keyed-instance/keyed_op/");
-        // <changeSeq>.<emitOrdinal> — first emit of a stateless op.
+        // instance / procedure / entityKey — the entity key is empty for a
+        // single-mode procedure, matching the controller's identity encoding.
+        assertThat(meta.get("flz.entity")).isEqualTo("identity-keyed-instance/keyed_op/");
+        // <changeSeq>.<emitOrdinal> — first emit of a stateless proc.
         assertThat(meta).containsEntry("flz.seq", "0.0");
     }
 
@@ -178,8 +178,8 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sKeyedOp = c.input(String.class, "in").into(KeyedOp.class);
-            sKeyedOp.named("out").keyed().output("sink");
+            var sKeyedProc = c.input(String.class, "in").into(KeyedProc.class);
+            sKeyedProc.named("out").keyed().output("sink");
         }
     }
 
@@ -191,8 +191,8 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sPlainOp = c.input(String.class, "in").into(PlainOp.class);
-            sPlainOp.named("out").output("sink");
+            var sPlainProc = c.input(String.class, "in").into(PlainProc.class);
+            sPlainProc.named("out").output("sink");
         }
     }
 
@@ -204,7 +204,7 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(DeterminismOp.class);
+            c.input(String.class, "in").into(DeterminismProc.class);
         }
     }
 
@@ -216,8 +216,8 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sReservedMetaOp = c.input(String.class, "in").into(ReservedMetaOp.class);
-            sReservedMetaOp.named("out").output("sink");
+            var sReservedMetaProc = c.input(String.class, "in").into(ReservedMetaProc.class);
+            sReservedMetaProc.named("out").output("sink");
         }
     }
 
@@ -229,14 +229,14 @@ class OutputIdentityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sPlainEmitOnKeyedOp = c.input(String.class, "in").into(PlainEmitOnKeyedOp.class);
-            sPlainEmitOnKeyedOp.named("out").keyed().output("sink");
+            var sPlainEmitOnKeyedProc = c.input(String.class, "in").into(PlainEmitOnKeyedProc.class);
+            sPlainEmitOnKeyedProc.named("out").keyed().output("sink");
         }
     }
 
     public record Unit() {}
 
-    abstract static class Base implements Operation<String, Unit, String, NoChange, WallClock, Void> {
+    abstract static class Base implements Procedure<String, Unit, String, NoChange, WallClock, Void> {
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -263,43 +263,43 @@ class OutputIdentityTest {
         }
 
         @Override
-        public Unit initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Unit initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Unit();
         }
     }
 
-    public static final class KeyedOp extends Base {
+    public static final class KeyedProc extends Base {
         @Override
         public String name() {
             return "keyed_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emitKeyed(input, "payload");
         }
     }
 
-    public static final class PlainOp extends Base {
+    public static final class PlainProc extends Base {
         @Override
         public String name() {
             return "plain_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("payload");
         }
     }
 
-    public static final class DeterminismOp extends Base {
+    public static final class DeterminismProc extends Base {
         @Override
         public String name() {
             return "determinism_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             NOW_SEEN.add(String.valueOf(ctx.now()));
             NOW_SEEN.add(String.valueOf(ctx.now()));
             NOW_SEEN.add(String.valueOf(ctx.now()));
@@ -308,39 +308,39 @@ class OutputIdentityTest {
         }
     }
 
-    public static final class ReservedMetaOp extends Base {
+    public static final class ReservedMetaProc extends Base {
         @Override
         public String name() {
             return "reserved_meta_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             try {
                 ctx.emitWithMeta("payload", Map.of("flz.key", "spoofed"));
                 EMIT_OUTCOMES.add("ok");
-            } catch (OperationException.ReservedMetadataKey e) {
+            } catch (ProcedureException.ReservedMetadataKey e) {
                 EMIT_OUTCOMES.add("ReservedMetadataKey:" + e.key());
-            } catch (OperationException e) {
+            } catch (ProcedureException e) {
                 EMIT_OUTCOMES.add("other:" + e);
             }
         }
     }
 
-    public static final class PlainEmitOnKeyedOp extends Base {
+    public static final class PlainEmitOnKeyedProc extends Base {
         @Override
         public String name() {
             return "plain_on_keyed_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             try {
                 ctx.emit("payload");
                 EMIT_OUTCOMES.add("ok");
-            } catch (OperationException.KeyRequiredOnKeyedChannel e) {
+            } catch (ProcedureException.KeyRequiredOnKeyedChannel e) {
                 EMIT_OUTCOMES.add("KeyRequiredOnKeyedChannel:" + e.channel());
-            } catch (OperationException e) {
+            } catch (ProcedureException e) {
                 EMIT_OUTCOMES.add("other:" + e);
             }
         }

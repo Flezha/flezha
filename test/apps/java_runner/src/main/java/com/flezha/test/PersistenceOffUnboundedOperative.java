@@ -4,7 +4,7 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.operative.UnboundedOperative;
 
 /**
- * Same Operation as {@link StatefulCounterUnboundedOperative}, but with
+ * Same Procedure as {@link StatefulCounterUnboundedOperative}, but with
  * persistence disabled at the operative-class level. Used by integration tests
  * to verify the toggle-off drain discards Changes without serialization or
  * wire I/O.
@@ -23,6 +23,6 @@ public final class PersistenceOffUnboundedOperative implements UnboundedOperativ
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(IntInputAdapterOperation.class);
+        c.input(String.class, "input").into(IntInputAdapterProcedure.class);
     }
 }

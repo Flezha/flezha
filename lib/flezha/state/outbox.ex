@@ -1,6 +1,6 @@
 defmodule Flezha.State.Outbox do
   @moduledoc """
-  Per-Segment dedup file (`<key>.outbox.dedup`): the persistence watermark
+  Per-Entity dedup file (`<key>.outbox.dedup`): the persistence watermark
   `last_persisted_seq`, the outbox flush cursor `outbox_flushed_seq`, and
   the realign `epoch`, written together with the atomic
   `<key>.outbox.dedup.tmp` → rename pattern so a crash mid-write leaves
@@ -27,9 +27,9 @@ defmodule Flezha.State.Outbox do
           epoch: non_neg_integer()
         }
 
-  @spec read(Registry.segment_id()) :: t()
-  def read(segment_id) do
-    path = Registry.outbox_dedup_path(segment_id)
+  @spec read(Registry.entity_id()) :: t()
+  def read(entity_id) do
+    path = Registry.outbox_dedup_path(entity_id)
 
     case File.read(path) do
       {:ok, <<seq::64-big, flushed::64-big-signed, epoch::64-big>>} ->
@@ -43,19 +43,19 @@ defmodule Flezha.State.Outbox do
     end
   end
 
-  @spec write(Registry.segment_id(), t()) :: :ok | {:error, term()}
-  def write(segment_id, %{
+  @spec write(Registry.entity_id(), t()) :: :ok | {:error, term()}
+  def write(entity_id, %{
         last_persisted_seq: seq,
         outbox_flushed_seq: flushed,
         epoch: epoch
       })
       when is_integer(seq) and seq >= 0 and is_integer(flushed) and flushed >= -1 and
              is_integer(epoch) and epoch >= 0 do
-    path = Registry.outbox_dedup_path(segment_id)
+    path = Registry.outbox_dedup_path(entity_id)
     tmp_path = path <> ".tmp"
 
     # No mkdir: the WAL open owns dir creation, so a cache write can never
-    # resurrect a deleted Segment dir (it fails with :enoent instead).
+    # resurrect a deleted Entity dir (it fails with :enoent instead).
     with :ok <- File.write(tmp_path, <<seq::64-big, flushed::64-big-signed, epoch::64-big>>),
          :ok <- File.rename(tmp_path, path) do
       :ok

@@ -5,7 +5,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
   with `:timeout` and drops the ref so `response_refs` cannot grow unbounded.
 
   Runner liveness/eviction is NOT this sweep's job — it is the
-  `ControlChannel` watchdog's (unify-executor-liveness-and-identity, D1). The
+  `ControlChannel` watchdog's (runner-controller-connection-healing, D1). The
   old `synthesize_disconnect` eviction role was removed from this heartbeat.
   """
   use ExUnit.Case, async: false

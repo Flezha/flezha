@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.function.BiConsumer;
 
 /**
- * Mutation seam threaded into {@code Operation.run}. Reads go through
+ * Mutation seam threaded into {@code Procedure.run}. Reads go through
  * {@link #get()}; the recorded, replayable mutation path is {@link #apply(Change)}.
  *
  * <p><b>Enforcement is by convention, not structure.</b> {@link #get()} returns
@@ -14,7 +14,7 @@ import java.util.function.BiConsumer;
  * time by implementing {@code Deref} and deliberately not {@code DerefMut}; Java
  * cannot, because {@code get()} must return a readable object. The detection
  * available in place of enforcement is
- * {@code OperationTestHarness.replayEquals()} — an opt-in determinism gate meant
+ * {@code ProcedureTestHarness.replayEquals()} — an opt-in determinism gate meant
  * to run in CI. See {@code docs/java_state_persistence.md}.
  */
 public final class StateHandle<State, ChangeT extends Change> {
@@ -50,8 +50,8 @@ public final class StateHandle<State, ChangeT extends Change> {
     }
 
     /**
-     * Mutation chokepoint. Invokes {@code Operation::applyChange} on the
-     * underlying state and pushes the Change onto the per-Segment flush
+     * Mutation chokepoint. Invokes {@code Procedure::applyChange} on the
+     * underlying state and pushes the Change onto the per-Entity flush
      * buffer.
      */
     public void apply(ChangeT change) {

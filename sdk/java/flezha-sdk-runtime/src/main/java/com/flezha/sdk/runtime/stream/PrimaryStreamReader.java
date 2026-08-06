@@ -10,8 +10,8 @@ import com.flezha.sdk.runtime.operative.Operative;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
 import com.flezha.sdk.runtime.state.DlqPark;
-import com.flezha.sdk.runtime.state.SegmentId;
-import com.flezha.sdk.runtime.worker.OperationDispatcher;
+import com.flezha.sdk.runtime.state.EntityId;
+import com.flezha.sdk.runtime.worker.ProcedureDispatcher;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.OptionalLong;
@@ -24,7 +24,7 @@ import org.slf4j.LoggerFactory;
  * {@code onData} callback. Each incoming chunk feeds into a local
  * {@link FrameParser}; for each decoded {@link Frame} the reader looks up
  * the {@link UnboundedOperativeInstance} by {@code payloadId} (= operative instance id) and
- * routes the input to the consumer Operations declared on the entry channel
+ * routes the input to the consumer Procedures declared on the entry channel
  * named in {@code metadata["channel"]}.
  *
  * <p>If the {@code channel} metadata key is missing, the reader falls back
@@ -45,7 +45,7 @@ public final class PrimaryStreamReader {
     /** Durable inbox offset of a looping bounded operative's message. */
     private static final String INBOX_OFFSET_META_KEY = "flz.inbox_offset";
 
-    /** Payload-less broadcast closing an open replay slice on every Segment. */
+    /** Payload-less broadcast closing an open replay slice on every Entity. */
     private static final String REPLAY_END_META_KEY = "flz.replay_end";
 
     private static OptionalLong parseOffset(String raw) {
@@ -108,14 +108,14 @@ public final class PrimaryStreamReader {
 
         // `flz.replay_end` is a payload-less BROADCAST, intercepted before any
         // channel lookup. It cannot ride on the last input of the slice: an input
-        // routes to exactly ONE Segment by key, so a marker carried that way would
-        // close one Segment's slice and strand the slice every other Segment
+        // routes to exactly ONE Entity by key, so a marker carried that way would
+        // close one Entity's slice and strand the slice every other Entity
         // buffered.
         if (frame.metadata().containsKey(REPLAY_END_META_KEY)) {
-            for (int operationId = 0; operationId < topology.operations().size(); operationId++) {
-                OperationDispatcher dispatcher = instance.dispatcher(operationId);
+            for (int procedureId = 0; procedureId < topology.procedures().size(); procedureId++) {
+                ProcedureDispatcher dispatcher = instance.dispatcher(procedureId);
                 if (dispatcher != null) {
-                    dispatcher.endReplaySliceAllSegments();
+                    dispatcher.endReplaySliceAllEntities();
                 }
             }
             return;
@@ -157,7 +157,7 @@ public final class PrimaryStreamReader {
             }
             return;
         }
-        OperationDispatcher.routeToConsumers(instance, channel, input, streamId, offset, replay);
+        ProcedureDispatcher.routeToConsumers(instance, channel, input, streamId, offset, replay);
     }
 
     /**
@@ -208,7 +208,7 @@ public final class PrimaryStreamReader {
                 // A parser violating the determinism contract may succeed on a
                 // re-attempt; deliver rather than drop.
                 Object typed = parser.apply(bytes);
-                OperationDispatcher.routeToConsumers(instance, channel, typed, streamId, offset, replay);
+                ProcedureDispatcher.routeToConsumers(instance, channel, typed, streamId, offset, replay);
                 return;
             } catch (RuntimeException e) {
                 error = describe(e);
@@ -221,7 +221,7 @@ public final class PrimaryStreamReader {
                 channel.name(),
                 attempt,
                 error);
-        SegmentId identity = SegmentId.of(instance.instanceId(), channel.name(), Optional.of("_entry"));
+        EntityId identity = EntityId.of(instance.instanceId(), channel.name(), Optional.of("_entry"));
         DlqPark.parkBlocking(
                 identity,
                 new DlqPark.ParkBody(

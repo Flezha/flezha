@@ -9,18 +9,18 @@ import com.flezha.sdk.bounded.BoundedOperativeCtx;
 import com.flezha.sdk.bounded.BoundedOperativeException;
 import com.flezha.sdk.bounded.RollbackMode;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.BoundedCompleted;
 import com.flezha.sdk.proto.BoundedStop;
 import com.flezha.sdk.proto.CommandRequest;
-import com.flezha.sdk.proto.OpCommittedOp;
-import com.flezha.sdk.proto.OpEdgeHandoff;
-import com.flezha.sdk.proto.OpHandoffItem;
-import com.flezha.sdk.proto.OpJournalState;
+import com.flezha.sdk.proto.ProcCommittedProc;
+import com.flezha.sdk.proto.ProcEdgeHandoff;
+import com.flezha.sdk.proto.ProcHandoffItem;
+import com.flezha.sdk.proto.ProcJournalState;
 import com.flezha.sdk.proto.RemOperative;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
@@ -39,10 +39,10 @@ import com.flezha.sdk.runtime.operative.Operative;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstanceRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
+import com.flezha.sdk.runtime.state.EntityId;
+import com.flezha.sdk.runtime.state.EntityStateSink;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
-import com.flezha.sdk.runtime.state.SegmentId;
-import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.NoChange;
@@ -82,9 +82,9 @@ class BoundedKindTest {
     private static final AtomicInteger EMIT_RUNS = new AtomicInteger(0);
 
     /**
-     * Saga compensation observation log. Compensable operations append a marker
-     * so rollback order and per-segment firing are assertable without wire
-     * plumbing (a compensable inter-operation op's {@code ctx.emit} is collected,
+     * Saga compensation observation log. Compensable procedures append a marker
+     * so rollback order and per-entity firing are assertable without wire
+     * plumbing (a compensable inter-procedure proc's {@code ctx.emit} is collected,
      * not wired).
      */
     private static final List<String> COMPENSATION_LOG = new CopyOnWriteArrayList<>();
@@ -112,7 +112,7 @@ class BoundedKindTest {
     @AfterEach
     void restoreWriter() {
         BoundedOperativeRunner.resetWireWriter();
-        SegmentStateSink.resetForTesting();
+        EntityStateSink.resetForTesting();
     }
 
     // --- Registration --------------------------------------------------------
@@ -153,7 +153,7 @@ class BoundedKindTest {
     @DisplayName("a branching structured topology registers, and both branches run")
     void branchingTopologyRunsBothBranches() throws Exception {
         // Formerly rejected outright ("branching"). One producer now feeds two
-        // downstream operations, and BFS order keeps completion topological — which
+        // downstream procedures, and BFS order keeps completion topological — which
         // is why the compensation planner needed no change at all.
         BoundedOperativeClassRegistry.registerClass(BranchingBoundedOperative.class);
         Captured cap = new Captured();
@@ -166,12 +166,12 @@ class BoundedKindTest {
 
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
         // Both branches were fed from the shared producer's output.
-        assertThat(cap.committedOpIdxs()).hasSize(3);
+        assertThat(cap.committedProcIdxs()).hasSize(3);
     }
 
     @Test
-    @DisplayName("a dynamic-segment operation is rejected at registration")
-    void dynamicSegmentOperationRejected() {
+    @DisplayName("a dynamic-entity procedure is rejected at registration")
+    void dynamicEntityProcedureRejected() {
         assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(DynamicBoundedOperative.class))
                 .isInstanceOf(BoundedOperativeConfigurationException.class)
                 .hasMessageContaining("dynamic");
@@ -375,8 +375,8 @@ class BoundedKindTest {
     // --- Structured (sequential driver) --------------------------------------
 
     @Test
-    @DisplayName("a structured single-operation bounded equals the run-sugar one-operation form")
-    void structuredSingleOpEqualsSugar() throws Exception {
+    @DisplayName("a structured single-procedure bounded equals the run-sugar one-procedure form")
+    void structuredSingleProcEqualsSugar() throws Exception {
         BoundedOperativeClassRegistry.registerClass(EchoStructuredOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
@@ -391,7 +391,7 @@ class BoundedKindTest {
     }
 
     @Test
-    @DisplayName("a multi-operation bounded runs its operations in order with a barrier")
+    @DisplayName("a multi-procedure bounded runs its procedures in order with a barrier")
     void structuredChainRunsInOrder() throws Exception {
         BoundedOperativeClassRegistry.registerClass(ChainBoundedOperative.class);
         Captured cap = new Captured();
@@ -409,8 +409,8 @@ class BoundedKindTest {
     }
 
     @Test
-    @DisplayName("parallel static segments run with independent per-segment state and a barrier")
-    void structuredParallelSegmentsKeepPerSegmentState() throws Exception {
+    @DisplayName("parallel static entities run with independent per-entity state and a barrier")
+    void structuredParallelEntitiesKeepPerEntityState() throws Exception {
         BoundedOperativeClassRegistry.registerClass(FanBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
@@ -420,14 +420,14 @@ class BoundedKindTest {
                 .handle(ctx, addBoundedOperative("test-fan-bounded", "fan-1", "a,bb,ccc,dddd"), new ArrayList<>());
         assertThat(cap.awaitCompletions()).isTrue();
 
-        // odd segment: "a"(1) then "ccc"(2); even segment: "bb"(1) then "dddd"(2).
-        // Independent per-segment counters; the barrier collected all four.
+        // odd entity: "a"(1) then "ccc"(2); even entity: "bb"(1) then "dddd"(2).
+        // Independent per-entity counters; the barrier collected all four.
         assertThat(cap.outputs(SECONDARY_STREAM)).containsExactlyInAnyOrder("1:a", "2:ccc", "1:bb", "2:dddd");
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
     }
 
     @Test
-    @DisplayName("a hybrid inter-operation channel both feeds the next stage and routes to a plugin sink")
+    @DisplayName("a hybrid inter-procedure channel both feeds the next stage and routes to a plugin sink")
     void structuredHybridChannelRoutesBoth() throws Exception {
         BoundedOperativeClassRegistry.registerClass(HybridBoundedOperative.class);
         Captured cap = new Captured();
@@ -445,14 +445,14 @@ class BoundedKindTest {
     }
 
     @Test
-    @DisplayName("bounded segments use the real {instance, operation, segment} identity — no sentinels (§2.3)")
-    void structuredSegmentsUseRealIdentity() {
+    @DisplayName("bounded entities use the real {instance, procedure, entity} identity — no sentinels (§2.3)")
+    void structuredEntitiesUseRealIdentity() {
         BoundedSpec spec = BoundedSpec.build(FanBoundedOperative.class);
         UnboundedOperativeTopology topology = spec.topology().orElseThrow();
-        // Chain: SplitOp (single segment) → FanOp (static even/odd); FanOp is the 2nd stage.
-        int fanOpId = spec.chain().get(1);
-        List<BoundedOperativeRunner.BoundedSegment> segs =
-                BoundedOperativeRunner.buildStageSegments(topology, "inst-1", fanOpId, true);
+        // Chain: SplitProc (single entity) → FanProc (static even/odd); FanProc is the 2nd stage.
+        int fanProcId = spec.chain().get(1);
+        List<BoundedOperativeRunner.BoundedEntity> segs =
+                BoundedOperativeRunner.buildStageEntities(topology, "inst-1", fanProcId, true);
         assertThat(segs)
                 .extracting(s -> s.identity().encoded())
                 .containsExactlyInAnyOrder("inst-1/bounded_fan_op/even", "inst-1/bounded_fan_op/odd");
@@ -467,13 +467,13 @@ class BoundedKindTest {
         BoundedOperativeClassRegistry.registerClass(FanOptOutBoundedOperative.class);
 
         List<byte[]> walFrames = new CopyOnWriteArrayList<>();
-        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+        EntityStateSink.installGlobalSink((payloadId, frame) -> {
             walFrames.add(frame);
             return true;
         });
 
-        // FanBoundedOperative is durable-by-default; its FanOp applies a Change
-        // per item, which the driver flushes as a segment_state_change frame.
+        // FanBoundedOperative is durable-by-default; its FanProc applies a Change
+        // per item, which the driver flushes as an entity_state_change frame.
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
         cap.expectCompletions(1);
@@ -482,7 +482,7 @@ class BoundedKindTest {
         assertThat(cap.awaitCompletions()).isTrue();
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
         assertThat(walFrames)
-                .as("a durable bounded ships segment_state_change frames to the WAL")
+                .as("a durable bounded ships entity_state_change frames to the WAL")
                 .isNotEmpty();
 
         // The opt-out twin does identical work with persistenceEnabled=false:
@@ -498,11 +498,11 @@ class BoundedKindTest {
         assertThat(walFrames).as("an opt-out bounded writes nothing to the WAL").isEmpty();
     }
 
-    // --- Op-journal (bounded-op-journal) -------------------------------------
+    // --- Proc-journal (bounded-proc-journal) -------------------------------------
 
     @Test
-    @DisplayName("a durable chain journals an OpCommit at every op barrier")
-    void durableChainJournalsEveryOpBoundary() throws Exception {
+    @DisplayName("a durable chain journals a ProcCommit at every proc barrier")
+    void durableChainJournalsEveryProcBoundary() throws Exception {
         BoundedOperativeClassRegistry.registerClass(ChainBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
@@ -512,9 +512,9 @@ class BoundedKindTest {
                 .handle(ctx, addBoundedOperative("test-chain-bounded", "journal-1", "x"), new ArrayList<>());
         assertThat(cap.awaitCompletions()).isTrue();
 
-        // One commit per operation, in chain order — the durability boundary the
+        // One commit per procedure, in chain order — the durability boundary the
         // resume later reads to decide what NOT to re-run.
-        assertThat(cap.committedOpIdxs()).containsExactly(0, 1);
+        assertThat(cap.committedProcIdxs()).containsExactly(0, 1);
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
     }
 
@@ -533,21 +533,21 @@ class BoundedKindTest {
                         new ArrayList<>());
         assertThat(cap.awaitCompletions()).isTrue();
 
-        assertThat(cap.committedOpIdxs())
+        assertThat(cap.committedProcIdxs())
                 .as("persistence opted out ⇒ no journal, no handshake")
                 .isEmpty();
     }
 
     @Test
-    @DisplayName("a durable structured class with a codec-less inter-op channel is refused")
-    void missingInterOpCodecIsRefused() {
+    @DisplayName("a durable structured class with a codec-less inter-proc channel is refused")
+    void missingInterProcCodecIsRefused() {
         assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(NoCodecBoundedOperative.class))
                 .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
-                .hasMessageContaining("MissingInterOpCodec")
+                .hasMessageContaining("MissingInterProcCodec")
                 .hasMessageContaining("mid");
     }
 
-    /** Durable + structured, but its inter-op handoff has no codec to journal. */
+    /** Durable + structured, but its inter-proc handoff has no codec to journal. */
     public static final class NoCodecBoundedOperative implements BoundedOperative {
         @Override
         public String factoryId() {
@@ -555,7 +555,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sStage1 = c.input(String.class, "in").into(Stage1.class);
             var sStage2 = sStage1.named("mid").into(Stage2.class);
             sStage2.named("out").output("sink");
@@ -565,8 +565,8 @@ class BoundedKindTest {
     // --- Staged commit + transactional outbox (bounded-transactional-outbox) --
 
     @Test
-    @DisplayName("a durable op STAGES its output onto the barrier's outbox instead of shipping it")
-    void durableOpStagesOutputOntoTheOutbox() throws Exception {
+    @DisplayName("a durable proc STAGES its output onto the barrier's outbox instead of shipping it")
+    void durableProcStagesOutputOntoTheOutbox() throws Exception {
         BoundedOperativeClassRegistry.registerClass(ChainBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
@@ -576,7 +576,7 @@ class BoundedKindTest {
                 .handle(ctx, addBoundedOperative("test-chain-bounded", "outbox-1", "x"), new ArrayList<>());
         assertThat(cap.awaitCompletions()).isTrue();
 
-        // The terminal op's emit rode its OpCommit's outbox — the SDK never wrote
+        // The terminal proc's emit rode its ProcCommit's outbox — the SDK never wrote
         // it to the wire itself.
         List<String> staged = cap.outboxPayloads();
         assertThat(staged).containsExactly("x-1-2");
@@ -594,7 +594,7 @@ class BoundedKindTest {
                 .handle(ctx, addBoundedOperative("test-emit-then-fail", "outbox-fail", "x"), new ArrayList<>());
         assertThat(cap.awaitCompletions()).isTrue();
 
-        // The op emitted and THEN threw. Its staged bytes die with the exception:
+        // The proc emitted and THEN threw. Its staged bytes die with the exception:
         // they never reach a barrier, so they never become durable.
         assertThat(cap.outboxPayloads()).isEmpty();
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
@@ -608,22 +608,22 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sEmitThenFail = c.input(String.class, "in").into(EmitThenFail.class);
             sEmitThenFail.named("out").output("sink");
         }
     }
 
-    public static final class EmitThenFail extends StrOp {
+    public static final class EmitThenFail extends StrProc {
         @Override
         public String name() {
             return "emit_then_fail";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("leaked:" + input);
-            throw new OperationException("boom after emit");
+            throw new ProcedureException("boom after emit");
         }
     }
 
@@ -650,8 +650,8 @@ class BoundedKindTest {
         // One iteration commit per inbox item.
         assertThat(cap.committedIterations()).containsExactly(0, 1);
 
-        // Each op commit is stamped with the iteration that enclosed it. The
-        // controller keys an entry's outbox-flush marker by (type, op_idx, iter),
+        // Each proc commit is stamped with the iteration that enclosed it. The
+        // controller keys an entry's outbox-flush marker by (type, proc_idx, iter),
         // so leaving this at 0 makes turn-b's commit read as already-flushed and
         // its staged output is never delivered.
         assertThat(cap.opCommitIters()).containsExactly(0, 1);
@@ -663,18 +663,18 @@ class BoundedKindTest {
 
     @Test
     @DisplayName(
-            "a resuming bind carries the op-journal, so a class with NO per-Segment state resumes at its iteration")
-    void resumingBindCarriesTheOpJournalWithoutAnySegmentRestore() throws Exception {
+            "a resuming bind carries the proc-journal, so a class with NO per-Entity state resumes at its iteration")
+    void resumingBindCarriesTheProcJournalWithoutAnyEntityRestore() throws Exception {
         BoundedOperativeClassRegistry.registerClass(LoopingBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
         // The journal is instance-scoped, so it rides the bind. A class with no
-        // per-Segment state gets NO RestoreInitState at all (resumeSegmentCount
+        // per-Entity state gets NO RestoreInitState at all (resumeEntityCount
         // 0) — deliver it on the restore frame instead and this loop resumes at
         // iteration 0 on every wake, colliding with iteration 0's outbox-flush
         // marker and silently dropping every turn after the first.
-        OpJournalState journal = OpJournalState.newBuilder().setIter(1).build();
+        ProcJournalState journal = ProcJournalState.newBuilder().setIter(1).build();
         new AddOperativeHandler()
                 .handle(
                         ctx,
@@ -700,7 +700,7 @@ class BoundedKindTest {
     }
 
     @Test
-    @DisplayName("a durable CHAINED loop whose terminal op has no codec is refused")
+    @DisplayName("a durable CHAINED loop whose terminal proc has no codec is refused")
     void chainedLoopWithoutTerminalCodecIsRefused() {
         assertThatThrownBy(() -> BoundedOperativeClassRegistry.registerClass(ChainedNoCodecOperative.class))
                 .isInstanceOf(com.flezha.sdk.bounded.BoundedOperativeConfigurationException.class)
@@ -720,7 +720,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sStage1 = c.input(String.class, "in").into(Stage1.class);
             sStage1.named("out").codec().output("sink");
         }
@@ -742,7 +742,7 @@ class BoundedKindTest {
         public void run(BoundedOperativeCtx ctx, String args) {}
     }
 
-    /** Durable CHAINED, but the terminal op's output has no codec to re-seed from. */
+    /** Durable CHAINED, but the terminal proc's output has no codec to re-seed from. */
     public static final class ChainedNoCodecOperative implements BoundedOperative {
         @Override
         public String factoryId() {
@@ -755,20 +755,20 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sStage1 = c.input(String.class, "in").into(Stage1.class);
             sStage1.named("out").output("sink");
         }
     }
 
-    // --- Segment retry ladder (bounded-segment-retry) -------------------------
+    // --- Entity retry ladder (bounded-entity-retry) -------------------------
 
     /** Attempt counter for the retry fixtures; reset per test. */
     private static final AtomicInteger RETRY_ATTEMPTS = new AtomicInteger();
 
     @Test
-    @DisplayName("a transient segment failure recovers on retry, and emits its output ONCE")
-    void transientSegmentFailureRecoversOnRetry() throws Exception {
+    @DisplayName("a transient entity failure recovers on retry, and emits its output ONCE")
+    void transientEntityFailureRecoversOnRetry() throws Exception {
         RETRY_ATTEMPTS.set(0);
         BoundedOperativeClassRegistry.registerClass(FlakyBoundedOperative.class);
         Captured cap = new Captured();
@@ -785,7 +785,7 @@ class BoundedKindTest {
                 .isEqualTo(2);
 
         // The failed attempt's staged output died with its sink: the recovered
-        // segment emits once, not once per attempt.
+        // entity emits once, not once per attempt.
         assertThat(cap.outboxPayloads()).containsExactly("flaky:x");
     }
 
@@ -829,9 +829,9 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
-            var sFlakyOp = c.input(String.class, "in").into(FlakyOp.class);
-            sFlakyOp.named("out").output("sink");
+        public void procedures(ChannelBuilder c) {
+            var sFlakyProc = c.input(String.class, "in").into(FlakyProc.class);
+            sFlakyProc.named("out").output("sink");
         }
     }
 
@@ -842,9 +842,9 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
-            var sPoisonOp = c.input(String.class, "in").into(PoisonOp.class);
-            sPoisonOp.named("out").output("sink");
+        public void procedures(ChannelBuilder c) {
+            var sPoisonProc = c.input(String.class, "in").into(PoisonProc.class);
+            sPoisonProc.named("out").output("sink");
         }
     }
 
@@ -860,38 +860,38 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sStage1 = c.input(String.class, "in").into(Stage1.class);
             sStage1.named("out").output("sink");
         }
     }
 
     /** Emits, then fails on the FIRST attempt only — proving the staged emit is dropped with it. */
-    public static final class FlakyOp extends StrOp {
+    public static final class FlakyProc extends StrProc {
         @Override
         public String name() {
             return "flaky_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("flaky:" + input);
             if (RETRY_ATTEMPTS.incrementAndGet() == 1) {
-                throw new OperationException("transient");
+                throw new ProcedureException("transient");
             }
         }
     }
 
-    public static final class PoisonOp extends StrOp {
+    public static final class PoisonProc extends StrProc {
         @Override
         public String name() {
             return "retry_poison_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             RETRY_ATTEMPTS.incrementAndGet();
-            throw new OperationException.NonRetryable("bad record");
+            throw new ProcedureException.NonRetryable("bad record");
         }
     }
 
@@ -901,7 +901,7 @@ class BoundedKindTest {
     private static final List<String> REWIND_UNDO_LOG = new CopyOnWriteArrayList<>();
 
     @Test
-    @DisplayName("a rewind unwinds the owed ops in reverse, and a HOOKLESS op still journals its drain")
+    @DisplayName("a rewind unwinds the owed procs in reverse, and a HOOKLESS proc still journals its drain")
     void rewindUnwindsOwedOpsInReverseAndDrainsHooklessOnes() throws Exception {
         REWIND_UNDO_LOG.clear();
         BoundedOperativeClassRegistry.registerClass(RewindSagaOperative.class);
@@ -909,34 +909,36 @@ class BoundedKindTest {
         RunnerContext ctx = newCtx(cap);
 
         cap.expectCompletions(1);
-        // The controller's rewind marker says ops 0 (compensable) and 1 (HOOKLESS)
+        // The controller's rewind marker says procs 0 (compensable) and 1 (HOOKLESS)
         // of a rewound iteration are still owed an undo. It rides the bind.
-        OpJournalState journal = OpJournalState.newBuilder()
-                .addRewindUndo(OpCommittedOp.newBuilder().setOpIdx(0).setIter(1).build())
-                .addRewindUndo(OpCommittedOp.newBuilder().setOpIdx(1).setIter(1).build())
+        ProcJournalState journal = ProcJournalState.newBuilder()
+                .addRewindUndo(
+                        ProcCommittedProc.newBuilder().setProcIdx(0).setIter(1).build())
+                .addRewindUndo(
+                        ProcCommittedProc.newBuilder().setProcIdx(1).setIter(1).build())
                 .build();
         new AddOperativeHandler()
                 .handle(ctx, addBoundedResumable("test-rewind-saga", "rewind-1", "x", 1, journal), new ArrayList<>());
 
         // The restore frame still releases the driver's resume gate.
         byte[] segId =
-                SegmentId.of("rewind-1", "rewind_reserve", Optional.empty()).encodedBytes();
+                EntityId.of("rewind-1", "rewind_reserve", Optional.empty()).encodedBytes();
         CommandRequest restore = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setSegmentId(ByteString.copyFrom(segId))
+                        .setEntityId(ByteString.copyFrom(segId))
                         .build())
                 .build();
         new RestoreInitStateHandler().handle(ctx, restore, new ArrayList<>());
 
         assertThat(cap.awaitCompletions()).isTrue();
 
-        // Reverse order: the later op is undone first.
+        // Reverse order: the later proc is undone first.
         assertThat(REWIND_UNDO_LOG).containsExactly("undo-charge", "undo-reserve");
 
-        // TWO compensating commits — one per undone op, INCLUDING the hookless one.
+        // TWO compensating commits — one per undone proc, INCLUDING the hookless one.
         // That empty record is what drains it from rewind_undo; without it the
-        // controller would re-offer that op on every later restore, forever.
+        // controller would re-offer that proc on every later restore, forever.
         assertThat(cap.compensatingCommits()).isEqualTo(2);
     }
 
@@ -948,21 +950,21 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sRewindReserve = c.input(String.class, "in").into(RewindReserve.class);
             var sRewindCharge = sRewindReserve.named("r1").codec().into(RewindCharge.class);
             sRewindCharge.named("out").output("sink");
         }
     }
 
-    public static final class RewindReserve extends StrOp {
+    public static final class RewindReserve extends StrProc {
         @Override
         public String name() {
             return "rewind_reserve";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("reserved:" + input);
         }
 
@@ -972,19 +974,19 @@ class BoundedKindTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             REWIND_UNDO_LOG.add("undo-reserve");
         }
     }
 
-    public static final class RewindCharge extends StrOp {
+    public static final class RewindCharge extends StrProc {
         @Override
         public String name() {
             return "rewind_charge";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("charged:" + input);
         }
 
@@ -994,7 +996,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             REWIND_UNDO_LOG.add("undo-charge");
         }
     }
@@ -1002,32 +1004,32 @@ class BoundedKindTest {
     // --- Crash-resume (Phase 3b §5b.2) ---------------------------------------
 
     @Test
-    @DisplayName("§5b.2 a durable bounded holds its first Operation until a Segment restore lands, then resumes it")
+    @DisplayName("§5b.2 a durable bounded holds its first Procedure until an Entity restore lands, then resumes it")
     void durableBoundedResumesFromRestoreThroughGate() throws Exception {
         BoundedOperativeClassRegistry.registerClass(FanBoundedOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
 
-        // Respawn expecting one Segment restore: AddOperativeHandler builds + wires
-        // the Segments (reachable by the restore handler) before the driver spawns,
+        // Respawn expecting one Entity restore: AddOperativeHandler builds + wires
+        // the Entities (reachable by the restore handler) before the driver spawns,
         // and the driver parks on the resume gate — nothing runs until the restore
         // lands.
         cap.expectCompletions(1);
         new AddOperativeHandler()
                 .handle(ctx, addBoundedResumable("test-fan-bounded", "resume-inst", "a,bb", 1), new ArrayList<>());
 
-        // Ship a WAL replay for the 'even' FanOp Segment carrying 5 Inc changes, so
+        // Ship a WAL replay for the 'even' FanProc Entity carrying 5 Inc changes, so
         // its counter resumes at 5 (not a cold 0). The restore handler finds the
-        // bounded Segment by wire identity, rebuilds its state, and releases the gate.
-        KryoCodec codec = new KryoCodec(new FanOp().kryoTypes());
+        // bounded Entity by wire identity, rebuilds its state, and releases the gate.
+        KryoCodec codec = new KryoCodec(new FanProc().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
         byte[] changeLog = incChangeLog(codec, template, 5);
-        byte[] evenId = SegmentId.of("resume-inst", "bounded_fan_op", Optional.of("even"))
+        byte[] evenId = EntityId.of("resume-inst", "bounded_fan_op", Optional.of("even"))
                 .encodedBytes();
         CommandRequest restore = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setSegmentId(ByteString.copyFrom(evenId))
+                        .setEntityId(ByteString.copyFrom(evenId))
                         .setChangeLogBytes(ByteString.copyFrom(changeLog))
                         .build())
                 .build();
@@ -1101,8 +1103,8 @@ class BoundedKindTest {
     }
 
     @Test
-    @DisplayName("§7b.1 compensation fires once per segment that ran; a hookless operation is skipped")
-    void sagaPerSegmentRollback() throws Exception {
+    @DisplayName("§7b.1 compensation fires once per entity that ran; a hookless procedure is skipped")
+    void sagaPerEntityRollback() throws Exception {
         BoundedOperativeClassRegistry.registerClass(FanSagaOperative.class);
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
@@ -1113,8 +1115,8 @@ class BoundedKindTest {
         assertThat(cap.awaitCompletions()).isTrue();
 
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
-        // odd segment ran "a","ccc"; even ran "bb"; the hook fires once per
-        // segment with that segment's own outputs. SplitOp (no hook) is skipped.
+        // odd entity ran "a","ccc"; even ran "bb"; the hook fires once per
+        // entity with that entity's own outputs. SplitProc (no hook) is skipped.
         assertThat(COMPENSATION_LOG)
                 .containsExactlyInAnyOrder("undo-fan:even:[even:bb]", "undo-fan:odd:[odd:a,odd:ccc]");
     }
@@ -1148,11 +1150,11 @@ class BoundedKindTest {
     // --- Saga durable records + crash-resume (Phase 3c §4.3) -----------------
 
     @Test
-    @DisplayName("§4.3 a durable saga records compensation_intent per completed op and compensation_done per undo")
+    @DisplayName("§4.3 a durable saga records compensation_intent per completed proc and compensation_done per undo")
     void sagaDurableEmitsCompensationRecords() throws Exception {
         BoundedOperativeClassRegistry.registerClass(SagaBoundedOperative.class);
         List<String> records = new CopyOnWriteArrayList<>();
-        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+        EntityStateSink.installGlobalSink((payloadId, frame) -> {
             records.add(payloadId);
             return true;
         });
@@ -1168,13 +1170,13 @@ class BoundedKindTest {
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
 
         long intents = records.stream()
-                .filter(SegmentStateSink.PAYLOAD_ID_COMPENSATION_INTENT::equals)
+                .filter(EntityStateSink.PAYLOAD_ID_COMPENSATION_INTENT::equals)
                 .count();
         long dones = records.stream()
-                .filter(SegmentStateSink.PAYLOAD_ID_COMPENSATION_DONE::equals)
+                .filter(EntityStateSink.PAYLOAD_ID_COMPENSATION_DONE::equals)
                 .count();
-        assertThat(intents).as("one intent per completed compensable segment").isEqualTo(2L);
-        assertThat(dones).as("one done per compensated segment").isEqualTo(2L);
+        assertThat(intents).as("one intent per completed compensable entity").isEqualTo(2L);
+        assertThat(dones).as("one done per compensated entity").isEqualTo(2L);
     }
 
     @Test
@@ -1182,14 +1184,14 @@ class BoundedKindTest {
     void sagaCrashResumeSkipsDoneCompensations() throws Exception {
         BoundedOperativeClassRegistry.registerClass(ResumeSagaOperative.class);
         List<String> records = new CopyOnWriteArrayList<>();
-        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+        EntityStateSink.installGlobalSink((payloadId, frame) -> {
             records.add(payloadId);
             return true;
         });
 
         Captured cap = new Captured();
         RunnerContext ctx = newCtx(cap);
-        // Respawn expecting two Segment restores (A + B); the driver parks on the gate.
+        // Respawn expecting two Entity restores (A + B); the driver parks on the gate.
         cap.expectCompletions(1);
         new AddOperativeHandler()
                 .handle(ctx, addBoundedResumable("test-resume-saga", "resume-saga", "x", 2), new ArrayList<>());
@@ -1197,21 +1199,21 @@ class BoundedKindTest {
         // Original run: A + B both completed (intent); B already undone before the
         // crash (done). Resume must undo A and SKIP B, without re-running forward.
         byte[] aId =
-                SegmentId.of("resume-saga", "resume_undo_a", Optional.empty()).encodedBytes();
+                EntityId.of("resume-saga", "resume_undo_a", Optional.empty()).encodedBytes();
         byte[] bId =
-                SegmentId.of("resume-saga", "resume_undo_b", Optional.empty()).encodedBytes();
+                EntityId.of("resume-saga", "resume_undo_b", Optional.empty()).encodedBytes();
         shipCompensationRestore(ctx, aId, true, false);
         shipCompensationRestore(ctx, bId, true, true);
 
         assertThat(cap.awaitCompletions()).isTrue();
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("error");
         assertThat(COMPENSATION_LOG).as("A undone, B skipped").containsExactly("undo-A");
-        assertThat(cap.outputs(SECONDARY_STREAM)).as("forward ops not re-run").isEmpty();
+        assertThat(cap.outputs(SECONDARY_STREAM)).as("forward procs not re-run").isEmpty();
         long dones = records.stream()
-                .filter(SegmentStateSink.PAYLOAD_ID_COMPENSATION_DONE::equals)
+                .filter(EntityStateSink.PAYLOAD_ID_COMPENSATION_DONE::equals)
                 .count();
         long intents = records.stream()
-                .filter(SegmentStateSink.PAYLOAD_ID_COMPENSATION_INTENT::equals)
+                .filter(EntityStateSink.PAYLOAD_ID_COMPENSATION_INTENT::equals)
                 .count();
         assertThat(dones)
                 .as("only A emits a fresh compensation_done; B was skipped")
@@ -1223,12 +1225,12 @@ class BoundedKindTest {
 
     // --- helpers -------------------------------------------------------------
 
-    /** Ship one bounded-Segment RestoreInitState carrying its saga compensation markers. */
-    private static void shipCompensationRestore(RunnerContext ctx, byte[] segmentId, boolean intent, boolean done) {
+    /** Ship one bounded-Entity RestoreInitState carrying its saga compensation markers. */
+    private static void shipCompensationRestore(RunnerContext ctx, byte[] entityId, boolean intent, boolean done) {
         CommandRequest restore = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setSegmentId(ByteString.copyFrom(segmentId))
+                        .setEntityId(ByteString.copyFrom(entityId))
                         .setHasCompensationIntent(intent)
                         .setHasCompensationDone(done)
                         .build())
@@ -1259,21 +1261,21 @@ class BoundedKindTest {
     }
 
     private static CommandRequest addBoundedResumable(
-            String factoryId, String operativeId, String args, int resumeSegmentCount) {
-        return addBoundedResumable(factoryId, operativeId, args, resumeSegmentCount, null);
+            String factoryId, String operativeId, String args, int resumeEntityCount) {
+        return addBoundedResumable(factoryId, operativeId, args, resumeEntityCount, null);
     }
 
-    /** The same, carrying the op-journal the controller ships on a resuming bind. */
+    /** The same, carrying the proc-journal the controller ships on a resuming bind. */
     private static CommandRequest addBoundedResumable(
-            String factoryId, String operativeId, String args, int resumeSegmentCount, OpJournalState journal) {
+            String factoryId, String operativeId, String args, int resumeEntityCount, ProcJournalState journal) {
         AddOperative.Builder add = AddOperative.newBuilder()
                 .setOperativeId(operativeId)
                 .setFactoryId(factoryId)
                 .setInitValues(args)
                 .setKind("bounded")
-                .setResumeSegmentCount(resumeSegmentCount);
+                .setResumeEntityCount(resumeEntityCount);
         if (journal != null) {
-            add.setOpJournal(journal);
+            add.setProcJournal(journal);
         }
         return CommandRequest.newBuilder()
                 .setReferenceId("ref")
@@ -1286,7 +1288,7 @@ class BoundedKindTest {
         ByteArrayOutputStream log = new ByteArrayOutputStream();
         for (long seq = 0; seq < count; seq++) {
             byte[] body = codec.serialize(new Inc());
-            byte[] header = template.stamp(new FanOp().schemaVersion(), body);
+            byte[] header = template.stamp(new FanProc().schemaVersion(), body);
             int len = 16 + body.length;
             CRC32 crc = new CRC32();
             crc.update(header);
@@ -1351,13 +1353,13 @@ class BoundedKindTest {
         /**
          * Stand in for the controller on the control stream.
          *
-         * <p>An {@code OpCommit} is acked under its own reference_id, as the
-         * controller does after its journal fsync — the driver BLOCKS at every op
+         * <p>An {@code ProcCommit} is acked under its own reference_id, as the
+         * controller does after its journal fsync — the driver BLOCKS at every proc
          * barrier waiting for it, so a fake controller that stayed silent would
          * hang the run until the 30 s timeout and fail it as un-journaled.
          *
          * <p>Only a {@code BoundedCompleted} counts down the completion latch: the
-         * control stream now carries op commits too, and counting those would
+         * control stream now carries proc commits too, and counting those would
          * release the test mid-chain.
          */
         private void handleControlFrame(byte[] frame) {
@@ -1366,13 +1368,13 @@ class BoundedKindTest {
                 for (Frame f : parser.feed(frame)) {
                     CommandRequest request = CommandRequest.parseFrom(f.message());
                     switch (request.getCommandCase()) {
-                        case OP_COMMIT -> {
+                        case PROC_COMMIT -> {
                             // The real controller journals the commit, fsyncs, acks,
-                            // and THEN flushes the outbox — the op's plugin output
-                            // becomes durable with the op itself. Stand in for that
+                            // and THEN flushes the outbox — the proc's plugin output
+                            // becomes durable with the proc itself. Stand in for that
                             // flush so the output assertions still observe the
                             // emits, now arriving via the transactional outbox.
-                            flushOutbox(request.getOpCommit());
+                            flushOutbox(request.getProcCommit());
                             AckRegistry.complete(request.getReferenceId());
                         }
                         case ITER_COMMIT -> AckRegistry.complete(request.getReferenceId());
@@ -1418,7 +1420,7 @@ class BoundedKindTest {
 
         /**
          * The run's terminal {@code BoundedCompleted}. The control stream also
-         * carries an {@code OpCommit} per op barrier now, so this selects the
+         * carries an {@code ProcCommit} per proc barrier now, so this selects the
          * completion rather than assuming a single frame.
          */
         BoundedCompleted decodeCompletion() throws Exception {
@@ -1435,14 +1437,14 @@ class BoundedKindTest {
         }
 
         /**
-         * Replay a committed op's outbox onto the secondary stream, exactly as the
+         * Replay a committed proc's outbox onto the secondary stream, exactly as the
          * controller's post-ack flush does. Without this the staged output would
          * never reach the wire in a unit test and every emit assertion would fail
          * — which is precisely the point of the transactional outbox: the output
          * is no longer the SDK's to ship.
          */
-        private void flushOutbox(com.flezha.sdk.proto.OpCommit commit) {
-            for (com.flezha.sdk.proto.OpOutboxItem item : commit.getOutboxList()) {
+        private void flushOutbox(com.flezha.sdk.proto.ProcCommit commit) {
+            for (com.flezha.sdk.proto.ProcOutboxItem item : commit.getOutboxList()) {
                 meta.add(new long[] {SECONDARY_STREAM});
                 frames.add(FrameEncoder.build(
                         commit.getOperativeId(), item.getPayload().toByteArray(), Map.of()));
@@ -1482,15 +1484,15 @@ class BoundedKindTest {
             return false;
         }
 
-        /** Every payload the driver staged onto an OpCommit's outbox, in commit order. */
+        /** Every payload the driver staged onto a ProcCommit's outbox, in commit order. */
         List<String> outboxPayloads() throws Exception {
             List<String> out = new ArrayList<>();
             for (byte[] raw : framesOn(CONTROL_STREAM)) {
                 for (Frame f : new FrameParser().feed(raw)) {
                     CommandRequest request = CommandRequest.parseFrom(f.message());
-                    if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT) {
-                        for (com.flezha.sdk.proto.OpOutboxItem item :
-                                request.getOpCommit().getOutboxList()) {
+                    if (request.getCommandCase() == CommandRequest.CommandCase.PROC_COMMIT) {
+                        for (com.flezha.sdk.proto.ProcOutboxItem item :
+                                request.getProcCommit().getOutboxList()) {
                             out.add(new String(item.getPayload().toByteArray(), UTF8));
                         }
                     }
@@ -1505,8 +1507,8 @@ class BoundedKindTest {
             for (byte[] raw : framesOn(CONTROL_STREAM)) {
                 for (Frame f : new FrameParser().feed(raw)) {
                     CommandRequest request = CommandRequest.parseFrom(f.message());
-                    if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT
-                            && request.getOpCommit().getCompensating()) {
+                    if (request.getCommandCase() == CommandRequest.CommandCase.PROC_COMMIT
+                            && request.getProcCommit().getCompensating()) {
                         n++;
                     }
                 }
@@ -1514,29 +1516,29 @@ class BoundedKindTest {
             return n;
         }
 
-        /** The op indices the driver journaled, in commit order. */
-        List<Integer> committedOpIdxs() throws Exception {
+        /** The proc indices the driver journaled, in commit order. */
+        List<Integer> committedProcIdxs() throws Exception {
             List<Integer> out = new ArrayList<>();
             for (byte[] raw : framesOn(CONTROL_STREAM)) {
                 for (Frame f : new FrameParser().feed(raw)) {
                     CommandRequest request = CommandRequest.parseFrom(f.message());
-                    if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT) {
-                        out.add(request.getOpCommit().getOpIdx());
+                    if (request.getCommandCase() == CommandRequest.CommandCase.PROC_COMMIT) {
+                        out.add(request.getProcCommit().getProcIdx());
                     }
                 }
             }
             return out;
         }
 
-        /** The enclosing iteration each forward op commit carried, in commit order. */
+        /** The enclosing iteration each forward proc commit carried, in commit order. */
         List<Integer> opCommitIters() throws Exception {
             List<Integer> out = new ArrayList<>();
             for (byte[] raw : framesOn(CONTROL_STREAM)) {
                 for (Frame f : new FrameParser().feed(raw)) {
                     CommandRequest request = CommandRequest.parseFrom(f.message());
-                    if (request.getCommandCase() == CommandRequest.CommandCase.OP_COMMIT
-                            && !request.getOpCommit().getCompensating()) {
-                        out.add(request.getOpCommit().getIter());
+                    if (request.getCommandCase() == CommandRequest.CommandCase.PROC_COMMIT
+                            && !request.getProcCommit().getCompensating()) {
+                        out.add(request.getProcCommit().getIter());
                     }
                 }
             }
@@ -1662,7 +1664,7 @@ class BoundedKindTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(EchoOp.class);
+            c.input(String.class, "in").into(EchoProc.class);
         }
     }
 
@@ -1675,9 +1677,9 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
-            var sEchoOp = c.input(String.class, "in").into(EchoOp.class);
-            sEchoOp.named("out").output("sink");
+        public void procedures(ChannelBuilder c) {
+            var sEchoProc = c.input(String.class, "in").into(EchoProc.class);
+            sEchoProc.named("out").output("sink");
         }
     }
 
@@ -1688,7 +1690,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sStage1 = c.input(String.class, "in").into(Stage1.class);
             var sStage2 = sStage1.named("mid").codec().into(Stage2.class);
             sStage2.named("out").output("sink");
@@ -1702,10 +1704,10 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
-            var sSplitOp = c.input(String.class, "in").into(SplitOp.class);
-            var sFanOp = sSplitOp.named("mid").codec().into(FanOp.class);
-            sFanOp.named("out").output("sink");
+        public void procedures(ChannelBuilder c) {
+            var sSplitProc = c.input(String.class, "in").into(SplitProc.class);
+            var sFanProc = sSplitProc.named("mid").codec().into(FanProc.class);
+            sFanProc.named("out").output("sink");
         }
     }
 
@@ -1717,10 +1719,10 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
-            var sSplitOp = c.input(String.class, "in").into(SplitOp.class);
-            var sFanOp = sSplitOp.named("mid").codec().into(FanOp.class);
-            sFanOp.named("out").output("sink");
+        public void procedures(ChannelBuilder c) {
+            var sSplitProc = c.input(String.class, "in").into(SplitProc.class);
+            var sFanProc = sSplitProc.named("mid").codec().into(FanProc.class);
+            sFanProc.named("out").output("sink");
         }
 
         @Override
@@ -1736,7 +1738,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sHybridStage1 = c.input(String.class, "in").into(HybridStage1.class);
             var sHybridStage2 = sHybridStage1
                     .named("mid")
@@ -1754,13 +1756,13 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sStage1 = c.input(String.class, "in").into(Stage1.class);
             var chmid = sStage1.named("mid").codec();
             var sStage2 = chmid.into(Stage2.class);
-            var sEchoOp = chmid.into(EchoOp.class);
+            var sEchoProc = chmid.into(EchoProc.class);
             sStage2.named("out2").output("sink");
-            sEchoOp.named("out3").output("sink");
+            sEchoProc.named("out3").output("sink");
         }
     }
 
@@ -1771,8 +1773,8 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
-            c.input(String.class, "in").into(DynOp.class);
+        public void procedures(ChannelBuilder c) {
+            c.input(String.class, "in").into(DynProc.class);
         }
     }
 
@@ -1786,7 +1788,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sSagaReserve = c.input(String.class, "in").into(SagaReserve.class);
             var sSagaCharge = sSagaReserve.named("c1").codec().into(SagaCharge.class);
             var sSagaShipFails = sSagaCharge.named("c2").codec().into(SagaShipFails.class);
@@ -1811,7 +1813,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sSagaReserve = c.input(String.class, "in").into(SagaReserve.class);
             var sSagaCharge = sSagaReserve.named("c1").codec().into(SagaCharge.class);
             var sSagaShipFails = sSagaCharge.named("c2").codec().into(SagaShipFails.class);
@@ -1827,7 +1829,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sResumeUndoA = c.input(String.class, "in").into(ResumeUndoA.class);
             var sResumeUndoB = sResumeUndoA.named("c1").codec().into(ResumeUndoB.class);
             var sSagaShipFails = sResumeUndoB.named("c2").codec().into(SagaShipFails.class);
@@ -1843,15 +1845,15 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sSagaReserve = c.input(String.class, "in").into(SagaReserve.class);
             var sSagaCharge = sSagaReserve.named("c1").codec().into(SagaCharge.class);
-            var sEchoOp = sSagaCharge.named("c2").codec().into(EchoOp.class);
-            sEchoOp.named("out").output("sink");
+            var sEchoProc = sSagaCharge.named("c2").codec().into(EchoProc.class);
+            sEchoProc.named("out").output("sink");
         }
     }
 
-    /** Split(hookless) → Fan(compensable, even/odd) → FailLast: per-segment rollback; Split is skipped. */
+    /** Split(hookless) → Fan(compensable, even/odd) → FailLast: per-entity rollback; Split is skipped. */
     public static final class FanSagaOperative implements BoundedOperative {
         @Override
         public String factoryId() {
@@ -1859,9 +1861,9 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
-            var sSplitOp = c.input(String.class, "in").into(SplitOp.class);
-            var sSagaFan = sSplitOp.named("mid").codec().into(SagaFan.class);
+        public void procedures(ChannelBuilder c) {
+            var sSplitProc = c.input(String.class, "in").into(SplitProc.class);
+            var sSagaFan = sSplitProc.named("mid").codec().into(SagaFan.class);
             var sFailLast = sSagaFan.named("mid2").codec().into(FailLast.class);
             sFailLast.named("out").output("sink");
         }
@@ -1875,17 +1877,17 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var sStopReserve = c.input(String.class, "in").into(StopReserve.class);
-            var sEchoOp = sStopReserve.named("mid").codec().into(EchoOp.class);
-            sEchoOp.named("out").output("sink");
+            var sEchoProc = sStopReserve.named("mid").codec().into(EchoProc.class);
+            sEchoProc.named("out").output("sink");
         }
     }
 
-    // --- test operations -----------------------------------------------------
+    // --- test procedures -----------------------------------------------------
 
     /** Stateless {@code String → String} base, factoring the type-handle boilerplate. */
-    abstract static class StrOp implements Operation<String, Unit, String, NoChange, WallClock, Void> {
+    abstract static class StrProc implements Procedure<String, Unit, String, NoChange, WallClock, Void> {
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -1912,106 +1914,106 @@ class BoundedKindTest {
         }
 
         @Override
-        public Unit initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Unit initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Unit();
         }
     }
 
     public record Unit() {}
 
-    public static final class EchoOp extends StrOp {
+    public static final class EchoProc extends StrProc {
         @Override
         public String name() {
             return "bounded_echo_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("echo:" + input);
         }
     }
 
-    public static final class Stage1 extends StrOp {
+    public static final class Stage1 extends StrProc {
         @Override
         public String name() {
             return "bounded_stage1";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit(input + "-1");
         }
     }
 
-    public static final class Stage2 extends StrOp {
+    public static final class Stage2 extends StrProc {
         @Override
         public String name() {
             return "bounded_stage2";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit(input + "-2");
         }
     }
 
-    public static final class SplitOp extends StrOp {
+    public static final class SplitProc extends StrProc {
         @Override
         public String name() {
             return "bounded_split_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             for (String piece : input.split(",")) {
                 ctx.emit(piece);
             }
         }
     }
 
-    public static final class HybridStage1 extends StrOp {
+    public static final class HybridStage1 extends StrProc {
         @Override
         public String name() {
             return "bounded_hybrid_stage1";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("h:" + input);
         }
     }
 
-    public static final class HybridStage2 extends StrOp {
+    public static final class HybridStage2 extends StrProc {
         @Override
         public String name() {
             return "bounded_hybrid_stage2";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("final:" + input);
         }
     }
 
-    /** Dynamic-segment operation (operationKey overridden) — used only for the rejection test. */
-    public static final class DynOp extends StrOp {
+    /** Dynamic-entity procedure (entityKey overridden) — used only for the rejection test. */
+    public static final class DynProc extends StrProc {
         @Override
         public String name() {
             return "bounded_dyn_op";
         }
 
         @Override
-        public Optional<String> operationKey(String input) {
+        public Optional<String> entityKey(String input) {
             return Optional.of(input);
         }
 
         @Override
-        public boolean operationKeyOverridden() {
+        public boolean entityKeyOverridden() {
             return true;
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) {}
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {}
     }
 
     public static final class CountState {
@@ -2020,8 +2022,8 @@ class BoundedKindTest {
 
     public static final class Inc implements Change {}
 
-    /** Static-segmented (even/odd by length parity), counts per-segment, emits {@code <n>:<item>}. */
-    public static final class FanOp implements Operation<String, CountState, String, Inc, WallClock, Void> {
+    /** Static-entity (even/odd by length parity), counts per-entity, emits {@code <n>:<item>}. */
+    public static final class FanProc implements Procedure<String, CountState, String, Inc, WallClock, Void> {
         @Override
         public String name() {
             return "bounded_fan_op";
@@ -2060,22 +2062,22 @@ class BoundedKindTest {
         }
 
         @Override
-        public List<String> operationKeys() {
+        public List<String> entityKeys() {
             return List.of("even", "odd");
         }
 
         @Override
-        public boolean segmentForOverridden() {
+        public boolean entitiesForOverridden() {
             return true;
         }
 
         @Override
-        public List<String> segmentFor(String input) {
+        public List<String> entitiesFor(String input) {
             return input.length() % 2 == 0 ? List.of("even") : List.of("odd");
         }
 
         @Override
-        public CountState initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public CountState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new CountState();
         }
 
@@ -2085,24 +2087,24 @@ class BoundedKindTest {
         }
 
         @Override
-        public void run(String input, StateHandle<CountState, Inc> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<CountState, Inc> state, ProcedureCtx ctx) throws ProcedureException {
             state.apply(new Inc());
             long n = state.get().n;
             ctx.emit(n + ":" + input);
         }
     }
 
-    // --- compensable (saga) operations ---------------------------------------
+    // --- compensable (saga) procedures ---------------------------------------
 
     /** Compensable: reserves (emits {@code reserved:<arg>}); undo logs {@code undo-reserve}. */
-    public static final class SagaReserve extends StrOp {
+    public static final class SagaReserve extends StrProc {
         @Override
         public String name() {
             return "saga_reserve";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("reserved:" + input);
         }
 
@@ -2112,7 +2114,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             for (String out : completedOutput) {
                 COMPENSATION_LOG.add("undo-reserve:" + out);
             }
@@ -2120,14 +2122,14 @@ class BoundedKindTest {
     }
 
     /** Compensable: charges (emits {@code charged:<input>}); undo logs {@code undo-charge}. */
-    public static final class SagaCharge extends StrOp {
+    public static final class SagaCharge extends StrProc {
         @Override
         public String name() {
             return "saga_charge";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("charged:" + input);
         }
 
@@ -2137,7 +2139,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             for (String out : completedOutput) {
                 COMPENSATION_LOG.add("undo-charge:" + out);
             }
@@ -2145,31 +2147,31 @@ class BoundedKindTest {
     }
 
     /** Terminal step that always fails — triggers reverse rollback; itself never compensated. */
-    public static final class SagaShipFails extends StrOp {
+    public static final class SagaShipFails extends StrProc {
         @Override
         public String name() {
             return "saga_ship_fails";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
-            throw new OperationException("ship failed");
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
+            throw new ProcedureException("ship failed");
         }
     }
 
     /**
      * Compensable; undo logs {@code undo-A} UNCONDITIONALLY (not per output) so a
      * crash-resume — which reconstructs completed stages with EMPTY outputs (an
-     * operation's collected output was never durable) — is still observable.
+     * procedure's collected output was never durable) — is still observable.
      */
-    public static final class ResumeUndoA extends StrOp {
+    public static final class ResumeUndoA extends StrProc {
         @Override
         public String name() {
             return "resume_undo_a";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("a:" + input);
         }
 
@@ -2179,20 +2181,20 @@ class BoundedKindTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             COMPENSATION_LOG.add("undo-A");
         }
     }
 
     /** Compensable twin of {@link ResumeUndoA}; undo logs {@code undo-B} unconditionally. */
-    public static final class ResumeUndoB extends StrOp {
+    public static final class ResumeUndoB extends StrProc {
         @Override
         public String name() {
             return "resume_undo_b";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit("b:" + input);
         }
 
@@ -2202,35 +2204,35 @@ class BoundedKindTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             COMPENSATION_LOG.add("undo-B");
         }
     }
 
-    /** Terminal failing op for the per-segment rollback chain. */
-    public static final class FailLast extends StrOp {
+    /** Terminal failing proc for the per-entity rollback chain. */
+    public static final class FailLast extends StrProc {
         @Override
         public String name() {
             return "saga_fail_last";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
-            throw new OperationException("fan ship failed");
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
+            throw new ProcedureException("fan ship failed");
         }
     }
 
-    /** Per-segment state holding the segment key so {@code compensate} can identify its segment. */
+    /** Per-entity state holding the entity key so {@code compensate} can identify its entity. */
     public static final class FanKeyState {
         String key = "";
     }
 
     /**
-     * Static-segmented compensable op: stores its segment key in state, emits
-     * {@code <key>:<item>}, and compensates ONCE per segment (logs all that
-     * segment's outputs together) so per-segment firing is assertable.
+     * Static-entity compensable proc: stores its entity key in state, emits
+     * {@code <key>:<item>}, and compensates ONCE per entity (logs all that
+     * entity's outputs together) so per-entity firing is assertable.
      */
-    public static final class SagaFan implements Operation<String, FanKeyState, String, NoChange, WallClock, Void> {
+    public static final class SagaFan implements Procedure<String, FanKeyState, String, NoChange, WallClock, Void> {
         @Override
         public String name() {
             return "saga_fan";
@@ -2262,30 +2264,30 @@ class BoundedKindTest {
         }
 
         @Override
-        public List<String> operationKeys() {
+        public List<String> entityKeys() {
             return List.of("even", "odd");
         }
 
         @Override
-        public boolean segmentForOverridden() {
+        public boolean entitiesForOverridden() {
             return true;
         }
 
         @Override
-        public List<String> segmentFor(String input) {
+        public List<String> entitiesFor(String input) {
             return input.length() % 2 == 0 ? List.of("even") : List.of("odd");
         }
 
         @Override
-        public FanKeyState initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public FanKeyState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             FanKeyState s = new FanKeyState();
-            s.key = operationKey.orElse("");
+            s.key = entityKey.orElse("");
             return s;
         }
 
         @Override
-        public void run(String input, StateHandle<FanKeyState, NoChange> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String input, StateHandle<FanKeyState, NoChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
             ctx.emit(state.get().key + ":" + input);
         }
 
@@ -2296,23 +2298,23 @@ class BoundedKindTest {
 
         @Override
         public void compensate(
-                List<String> completedOutput, StateHandle<FanKeyState, NoChange> state, OperationCtx ctx) {
+                List<String> completedOutput, StateHandle<FanKeyState, NoChange> state, ProcedureCtx ctx) {
             COMPENSATION_LOG.add("undo-fan:" + state.get().key + ":[" + String.join(",", completedOutput) + "]");
         }
     }
 
     /**
-     * Compensable stage-0 op with a handshake so a cooperative stop lands after
+     * Compensable stage-0 proc with a handshake so a cooperative stop lands after
      * it completes but before stage 1 (deterministic forced-stop rollback).
      */
-    public static final class StopReserve extends StrOp {
+    public static final class StopReserve extends StrProc {
         @Override
         public String name() {
             return "saga_stop_reserve";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             STAGE0_RAN.set(true);
             while (!STAGE0_RELEASE.get()) {
                 try {
@@ -2331,7 +2333,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             for (String out : completedOutput) {
                 COMPENSATION_LOG.add("undo-stop-reserve:" + out);
             }
@@ -2358,7 +2360,7 @@ class BoundedKindTest {
 
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
         // Kahn positions: A=0, B=1, C=2, join=3 — the join commits once, last.
-        assertThat(cap.committedOpIdxs()).containsExactly(0, 1, 2, 3);
+        assertThat(cap.committedProcIdxs()).containsExactly(0, 1, 2, 3);
         assertThat(DIAMOND_LOG)
                 .as("both producers run before the join; the join sees BOTH contributions once")
                 .containsExactly("a:x", "b:a:x", "c:a:x", "j:b:a:x", "j:c:a:x");
@@ -2377,7 +2379,7 @@ class BoundedKindTest {
                 BoundedSpec.build(DiamondBoundedOperative.class).topology().orElseThrow();
         // The journal says A (position 0) and B (position 1) committed before the
         // crash, each with its edge handoff.
-        OpJournalState journal = abCommittedJournal(topology, "dfan", "db");
+        ProcJournalState journal = abCommittedJournal(topology, "dfan", "db");
         new AddOperativeHandler()
                 .handle(
                         ctx,
@@ -2385,11 +2387,11 @@ class BoundedKindTest {
                         new ArrayList<>());
 
         // The restore frame still releases the driver's resume gate.
-        byte[] segId = SegmentId.of("diamond-r", "diam_a", Optional.empty()).encodedBytes();
+        byte[] segId = EntityId.of("diamond-r", "diam_a", Optional.empty()).encodedBytes();
         CommandRequest restore = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setSegmentId(ByteString.copyFrom(segId))
+                        .setEntityId(ByteString.copyFrom(segId))
                         .build())
                 .build();
         new RestoreInitStateHandler().handle(ctx, restore, new ArrayList<>());
@@ -2397,7 +2399,7 @@ class BoundedKindTest {
         assertThat(cap.awaitCompletions()).isTrue();
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
         // Only the uncommitted branch (C, position 2) and the join re-run.
-        assertThat(cap.committedOpIdxs()).containsExactly(2, 3);
+        assertThat(cap.committedProcIdxs()).containsExactly(2, 3);
         assertThat(DIAMOND_LOG)
                 .as("committed producers never re-run; the join accumulates B's"
                         + " journaled handoff with C's fresh output")
@@ -2422,7 +2424,7 @@ class BoundedKindTest {
                 .containsExactly("undo-join", "undo-c", "undo-b", "undo-a");
     }
 
-    // --- Fan-in wired as a merge (`multi-input-operations`) -------------------
+    // --- Fan-in wired as a merge (`multi-input-procedures`) -------------------
 
     @Test
     @DisplayName("a merged fan-in maps each producer's contribution on the edge it arrived on")
@@ -2438,7 +2440,7 @@ class BoundedKindTest {
         assertThat(cap.awaitCompletions()).isTrue();
 
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
-        assertThat(cap.committedOpIdxs()).containsExactly(0, 1, 2, 3);
+        assertThat(cap.committedProcIdxs()).containsExactly(0, 1, 2, 3);
         assertThat(DIAMOND_LOG)
                 .as("the join's input is neither producer's Output; each edge's mapping lifts it")
                 .containsExactly("a:x", "b:a:x", "c:a:x", "mb:b:a:x", "mc:c:a:x");
@@ -2454,25 +2456,25 @@ class BoundedKindTest {
 
         cap.expectCompletions(1);
         var topology = BoundedSpec.build(MergeBoundedOperative.class).topology().orElseThrow();
-        OpJournalState journal = abCommittedJournal(topology, "mfan", "mb");
+        ProcJournalState journal = abCommittedJournal(topology, "mfan", "mb");
         new AddOperativeHandler()
                 .handle(ctx, addBoundedResumable("test-merge-bounded", "merge-r", "x", 1, journal), new ArrayList<>());
 
-        byte[] segId = SegmentId.of("merge-r", "diam_a", Optional.empty()).encodedBytes();
+        byte[] segId = EntityId.of("merge-r", "diam_a", Optional.empty()).encodedBytes();
         new RestoreInitStateHandler()
                 .handle(
                         ctx,
                         CommandRequest.newBuilder()
                                 .setReferenceId("r")
                                 .setRestoreInitState(RestoreInitState.newBuilder()
-                                        .setSegmentId(ByteString.copyFrom(segId))
+                                        .setEntityId(ByteString.copyFrom(segId))
                                         .build())
                                 .build(),
                         new ArrayList<>());
 
         assertThat(cap.awaitCompletions()).isTrue();
         assertThat(cap.decodeCompletion().getStatus()).isEqualTo("ok");
-        assertThat(cap.committedOpIdxs()).containsExactly(2, 3);
+        assertThat(cap.committedProcIdxs()).containsExactly(2, 3);
         assertThat(DIAMOND_LOG)
                 .as("B's journaled handoff is decoded then mapped, exactly as the live run mapped it")
                 .containsExactly("c:a:x", "mb:b:a:x", "mc:c:a:x");
@@ -2481,7 +2483,7 @@ class BoundedKindTest {
     @Test
     @DisplayName("a throwing merge mapping is contained: the instance still reports and compensates")
     void aThrowingMergeMappingIsContained() throws Exception {
-        // The mapping runs on the driver thread, outside any segment
+        // The mapping runs on the driver thread, outside any entity
         // invocation. Uncontained it would unwind the driver before
         // BoundedCompleted is emitted and strand the instance with no terminal
         // frame — so the observable outcome is what this asserts.
@@ -2528,21 +2530,21 @@ class BoundedKindTest {
         var topology = BoundedSpec.build(ThrowingMergeBoundedOperative.class)
                 .topology()
                 .orElseThrow();
-        OpJournalState journal = abCommittedJournal(topology, "tmfan", "tmb");
+        ProcJournalState journal = abCommittedJournal(topology, "tmfan", "tmb");
         new AddOperativeHandler()
                 .handle(
                         ctx,
                         addBoundedResumable("test-throwing-merge-bounded", "merge-throw-r", "x", 1, journal),
                         new ArrayList<>());
 
-        byte[] segId = SegmentId.of("merge-throw-r", "diam_a", Optional.empty()).encodedBytes();
+        byte[] segId = EntityId.of("merge-throw-r", "diam_a", Optional.empty()).encodedBytes();
         new RestoreInitStateHandler()
                 .handle(
                         ctx,
                         CommandRequest.newBuilder()
                                 .setReferenceId("r")
                                 .setRestoreInitState(RestoreInitState.newBuilder()
-                                        .setSegmentId(ByteString.copyFrom(segId))
+                                        .setEntityId(ByteString.copyFrom(segId))
                                         .build())
                                 .build(),
                         new ArrayList<>());
@@ -2555,9 +2557,9 @@ class BoundedKindTest {
         assertThat(completion.getError()).contains("merge mapping threw");
         assertThat(completion.getError()).contains("merge mapping blew up");
         // The undo list is deliberately NOT asserted here. A resumed Java chain
-        // does not seed its completed list from the op-journal, so nothing is
+        // does not seed its completed list from the proc-journal, so nothing is
         // compensated on this path — a pre-existing gap recorded under "Known
-        // limitation" in docs/multi_input_operations.md. Pinning that value
+        // limitation" in docs/multi_input_procedures.md. Pinning that value
         // would turn the limitation into a contract and make closing it a
         // test failure; containment and the terminal report are what this
         // capability actually guarantees.
@@ -2571,7 +2573,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var a = c.input(String.class, "in").into(DiamA.class).named("tmfan").codec();
             var b = a.into(DiamB.class).named("tmb").codec();
             var cc = a.into(DiamC.class).named("tmc").codec();
@@ -2580,7 +2582,7 @@ class BoundedKindTest {
                         throw new IllegalStateException("merge mapping blew up");
                     })
                     .from(cc, MergedJoinInput::fromC)
-                    .into(MergeJoinOp.class)
+                    .into(MergeJoinProc.class)
                     .named("tmout")
                     .output("sink");
         }
@@ -2608,11 +2610,11 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             c.merge(MergedJoinInput.class)
                     .from(c.input(String.class, "in"), MergedJoinInput::fromB)
                     .from(c.input(String.class, "also"), MergedJoinInput::fromC)
-                    .into(MergeJoinOp.class);
+                    .into(MergeJoinProc.class);
         }
     }
 
@@ -2632,8 +2634,8 @@ class BoundedKindTest {
     }
 
     /** The diamond's join re-authored as a merge over one sum-type input. */
-    public static final class MergeJoinOp
-            implements Operation<MergedJoinInput, Unit, String, NoChange, WallClock, Void> {
+    public static final class MergeJoinProc
+            implements Procedure<MergedJoinInput, Unit, String, NoChange, WallClock, Void> {
         @Override
         public String name() {
             return "bounded_merge_join_op";
@@ -2665,13 +2667,13 @@ class BoundedKindTest {
         }
 
         @Override
-        public Unit initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Unit initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Unit();
         }
 
         @Override
-        public void run(MergedJoinInput input, StateHandle<Unit, NoChange> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(MergedJoinInput input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
             String out = input.branch() + ":" + input.value();
             DIAMOND_LOG.add(out);
             ctx.emit(out);
@@ -2686,14 +2688,14 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var a = c.input(String.class, "in").into(DiamA.class).named("mfan").codec();
             var b = a.into(DiamB.class).named("mb").codec();
             var cc = a.into(DiamC.class).named("mc").codec();
             c.merge(MergedJoinInput.class)
                     .from(b, MergedJoinInput::fromB)
                     .from(cc, MergedJoinInput::fromC)
-                    .into(MergeJoinOp.class)
+                    .into(MergeJoinProc.class)
                     .named("mout")
                     .output("sink");
         }
@@ -2711,31 +2713,31 @@ class BoundedKindTest {
     /**
      * The journal a diamond-shaped chain leaves when A (the fan, position 0)
      * and B (one branch, position 1) committed before the crash: each
-     * producer's edge handoff, encoded with its channel's inter-op codec. The
+     * producer's edge handoff, encoded with its channel's inter-proc codec. The
      * branching resume and both merge resumes differ only in the two channel
      * names.
      */
-    private static OpJournalState abCommittedJournal(
+    private static ProcJournalState abCommittedJournal(
             UnboundedOperativeTopology topology, String fanChannel, String bChannel) {
-        return OpJournalState.newBuilder()
-                .addCommittedOpIdxs(0)
-                .addCommittedOpIdxs(1)
-                .addOpHandoffs(handoff(topology, 0, fanChannel, "a:x"))
-                .addOpHandoffs(handoff(topology, 1, bChannel, "b:a:x"))
+        return ProcJournalState.newBuilder()
+                .addCommittedProcIdxs(0)
+                .addCommittedProcIdxs(1)
+                .addProcHandoffs(handoff(topology, 0, fanChannel, "a:x"))
+                .addProcHandoffs(handoff(topology, 1, bChannel, "b:a:x"))
                 .build();
     }
 
-    private static OpEdgeHandoff handoff(
+    private static ProcEdgeHandoff handoff(
             UnboundedOperativeTopology topology, int opIdx, String channelName, String value) {
         int channelId = channelIdByName(topology, channelName);
         byte[] payload = topology.channel(channelId)
-                .interOpCodec()
+                .interProcCodec()
                 .orElseThrow()
                 .encoder()
                 .apply(value);
-        return OpEdgeHandoff.newBuilder()
-                .setOpIdx(opIdx)
-                .addHandoff(OpHandoffItem.newBuilder()
+        return ProcEdgeHandoff.newBuilder()
+                .setProcIdx(opIdx)
+                .addHandoff(ProcHandoffItem.newBuilder()
                         .setChannelId(channelId)
                         .setPayload(ByteString.copyFrom(payload))
                         .build())
@@ -2750,7 +2752,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var a = c.input(String.class, "in").into(DiamA.class).named("dfan").codec();
             a.into(DiamB.class).named("db").codec().into(DiamJoin.class);
             a.into(DiamC.class)
@@ -2770,7 +2772,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void operations(ChannelBuilder c) {
+        public void procedures(ChannelBuilder c) {
             var a = c.input(String.class, "in").into(DiamA.class).named("dfan").codec();
             var join = a.into(DiamB.class).named("db").codec().into(DiamJoin.class);
             a.into(DiamC.class).named("dc").codec().into(DiamJoin.class);
@@ -2778,7 +2780,7 @@ class BoundedKindTest {
         }
     }
 
-    abstract static class DiamondOp extends StrOp {
+    abstract static class DiamondProc extends StrProc {
         abstract String tag();
 
         @Override
@@ -2787,7 +2789,7 @@ class BoundedKindTest {
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             String out = tag().substring(0, 1) + ":" + input;
             DIAMOND_LOG.add(out);
             ctx.emit(out);
@@ -2799,48 +2801,48 @@ class BoundedKindTest {
         }
 
         @Override
-        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, OperationCtx ctx) {
+        public void compensate(List<String> completedOutput, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) {
             DIAMOND_LOG.add("undo-" + tag());
         }
     }
 
-    public static final class DiamA extends DiamondOp {
+    public static final class DiamA extends DiamondProc {
         @Override
         String tag() {
             return "a";
         }
     }
 
-    public static final class DiamB extends DiamondOp {
+    public static final class DiamB extends DiamondProc {
         @Override
         String tag() {
             return "b";
         }
     }
 
-    public static final class DiamC extends DiamondOp {
+    public static final class DiamC extends DiamondProc {
         @Override
         String tag() {
             return "c";
         }
     }
 
-    public static final class DiamJoin extends DiamondOp {
+    public static final class DiamJoin extends DiamondProc {
         @Override
         String tag() {
             return "join";
         }
     }
 
-    public static final class DiamShipFails extends StrOp {
+    public static final class DiamShipFails extends StrProc {
         @Override
         public String name() {
             return "diam_ship_fails";
         }
 
         @Override
-        public void run(String input, StateHandle<Unit, NoChange> state, OperationCtx ctx) throws OperationException {
-            throw new OperationException("diamond ship failed");
+        public void run(String input, StateHandle<Unit, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
+            throw new ProcedureException("diamond ship failed");
         }
     }
 }

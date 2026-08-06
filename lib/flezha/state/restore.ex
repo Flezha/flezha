@@ -23,13 +23,13 @@ defmodule Flezha.State.Restore do
           terminal_seq_hint: non_neg_integer()
         }
 
-  @spec assemble_payload(Registry.segment_id()) :: {:ok, payload()}
-  def assemble_payload(segment_id) do
+  @spec assemble_payload(Registry.entity_id()) :: {:ok, payload()}
+  def assemble_payload(entity_id) do
     # `-1` (not `0`) is the "no snapshot" sentinel: the WAL is 0-based, so a
     # `0` sentinel with the `seq > snapshot_seq` tail filter would silently
     # drop the very first change record. `-1` includes seq 0.
     {snapshot_bytes, snapshot_seq} =
-      case Snapshot.latest_snapshot(segment_id) do
+      case Snapshot.latest_snapshot(entity_id) do
         nil ->
           {<<>>, -1}
 
@@ -41,7 +41,7 @@ defmodule Flezha.State.Restore do
       end
 
     {change_log_bytes, terminal_seq} =
-      read_tail_wal(segment_id, snapshot_seq)
+      read_tail_wal(entity_id, snapshot_seq)
 
     terminal_seq_hint = max(snapshot_seq, terminal_seq)
 
@@ -54,24 +54,24 @@ defmodule Flezha.State.Restore do
   end
 
   @doc """
-  Whether the Segment has any persisted state to restore. A zero-byte WAL
+  Whether the Entity has any persisted state to restore. A zero-byte WAL
   (lazily created by the writer before any record landed) is no state: an
-  assembled payload from it would be empty and rebuild a live Segment to
+  assembled payload from it would be empty and rebuild a live Entity to
   `init_state`.
   """
-  @spec has_persisted_state?(Registry.segment_id()) :: boolean()
-  def has_persisted_state?(segment_id) do
-    Snapshot.latest_snapshot(segment_id) != nil or
+  @spec has_persisted_state?(Registry.entity_id()) :: boolean()
+  def has_persisted_state?(entity_id) do
+    Snapshot.latest_snapshot(entity_id) != nil or
       match?(
         {:ok, %{size: size}} when size > 0,
-        File.stat(Registry.wal_path(segment_id))
+        File.stat(Registry.wal_path(entity_id))
       )
   end
 
   # Read the WAL once and parse records in memory; a per-record `:file.pread`
   # churns small transient refc binaries that fragment the binary allocator.
-  defp read_tail_wal(segment_id, snapshot_seq) do
-    case :file.read_file(Registry.wal_path(segment_id)) do
+  defp read_tail_wal(entity_id, snapshot_seq) do
+    case :file.read_file(Registry.wal_path(entity_id)) do
       {:ok, data} ->
         {iodata, terminal_seq} = gather_records(data, snapshot_seq, [], snapshot_seq)
         {IO.iodata_to_binary(iodata), terminal_seq}

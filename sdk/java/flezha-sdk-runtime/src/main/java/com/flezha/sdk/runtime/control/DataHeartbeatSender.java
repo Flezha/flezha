@@ -3,9 +3,9 @@ package com.flezha.sdk.runtime.control;
 import com.flezha.sdk.native_.NativeTransport;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
+import com.flezha.sdk.runtime.entity.EntityCounters;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.reconnect.ReconnectCoordinator;
-import com.flezha.sdk.runtime.segment.SegmentCounters;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -78,13 +78,13 @@ public final class DataHeartbeatSender {
                 new byte[0],
                 Map.of(
                         "dispatches",
-                        Long.toString(SegmentCounters.dispatchesCompleted()),
+                        Long.toString(EntityCounters.dispatchesCompleted()),
                         "blocked_parks",
-                        Long.toString(SegmentCounters.blockedParkEpisodes()),
+                        Long.toString(EntityCounters.blockedParkEpisodes()),
                         "credit_parked",
                         Long.toString(com.flezha.sdk.runtime.state.CreditWindow.creditParked()),
                         "restore_discarded_inputs",
-                        Long.toString(SegmentCounters.restoreDiscardedInputs())));
+                        Long.toString(EntityCounters.restoreDiscardedInputs())));
         for (long sid : ctx.streamRegistry().secondaries()) {
             if (sid > 0) {
                 try {

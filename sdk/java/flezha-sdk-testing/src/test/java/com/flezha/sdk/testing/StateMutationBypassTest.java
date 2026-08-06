@@ -2,9 +2,9 @@ package com.flezha.sdk.testing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
  * readable object.
  *
  * <p>The bypass is silent everywhere except one place: {@link
- * OperationTestHarness#replayEquals()}, the opt-in determinism gate. That is the
+ * ProcedureTestHarness#replayEquals()}, the opt-in determinism gate. That is the
  * detection the Java SDK provides in lieu of structural enforcement.
  */
 class StateMutationBypassTest {
@@ -30,8 +30,8 @@ class StateMutationBypassTest {
     @Test
     @DisplayName("a direct field write bypasses the change log and is caught only by replayEquals()")
     void directMutationIsDroppedAndOnlyReplayEqualsCatchesIt() {
-        OperationTestHarness<String, Counter, String, Bump> harness =
-                OperationTestHarness.of(new BypassingOp()).withWallClock(1L);
+        ProcedureTestHarness<String, Counter, String, Bump> harness =
+                ProcedureTestHarness.of(new BypassingProc()).withWallClock(1L);
 
         harness.applyInputs(List.of("a", "b", "c"));
 
@@ -46,10 +46,10 @@ class StateMutationBypassTest {
     }
 
     @Test
-    @DisplayName("the same Operation using state.apply() is journaled and replay-clean")
+    @DisplayName("the same Procedure using state.apply() is journaled and replay-clean")
     void applyPathIsJournaledAndReplaySafe() {
-        OperationTestHarness<String, Counter, String, Bump> harness =
-                OperationTestHarness.of(new JournalingOp()).withWallClock(1L);
+        ProcedureTestHarness<String, Counter, String, Bump> harness =
+                ProcedureTestHarness.of(new JournalingProc()).withWallClock(1L);
 
         harness.applyInputs(List.of("a", "b", "c"));
 
@@ -60,14 +60,14 @@ class StateMutationBypassTest {
 
     // --- fixtures -----------------------------------------------------------
 
-    /** Mutable per-Segment state; only {@code applyChange} is meant to write it. */
+    /** Mutable per-Entity state; only {@code applyChange} is meant to write it. */
     public static final class Counter {
         public long count;
     }
 
     public record Bump() implements Change {}
 
-    abstract static class Base implements Operation<String, Counter, String, Bump, WallClock, Void> {
+    abstract static class Base implements Procedure<String, Counter, String, Bump, WallClock, Void> {
         @Override
         public Class<String> inputType() {
             return String.class;
@@ -104,33 +104,33 @@ class StateMutationBypassTest {
         }
 
         @Override
-        public Counter initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public Counter initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Counter();
         }
     }
 
     /** The defect: writes the field directly, bypassing {@code apply}. */
-    public static final class BypassingOp extends Base {
+    public static final class BypassingProc extends Base {
         @Override
         public String name() {
             return "bypassing_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Counter, Bump> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Counter, Bump> state, ProcedureCtx ctx) throws ProcedureException {
             state.get().count += 1; // compiles, runs, never journaled
         }
     }
 
     /** The correct form, for contrast. */
-    public static final class JournalingOp extends Base {
+    public static final class JournalingProc extends Base {
         @Override
         public String name() {
             return "journaling_op";
         }
 
         @Override
-        public void run(String input, StateHandle<Counter, Bump> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Counter, Bump> state, ProcedureCtx ctx) throws ProcedureException {
             state.apply(new Bump());
         }
     }

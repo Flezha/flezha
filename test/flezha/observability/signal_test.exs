@@ -11,12 +11,12 @@ defmodule Flezha.Observability.SignalTest do
           source: :s,
           name: :n,
           measurements: %{count: 1, bytes: 16_384},
-          metadata: %{operative: "r", operation: 3}
+          metadata: %{operative: "r", procedure: 3}
         })
 
       assert %Signal{kind: :metric, source: :s, name: :n} = signal
       assert signal.measurements == %{count: 1, bytes: 16_384}
-      assert signal.metadata == %{operative: "r", operation: 3}
+      assert signal.metadata == %{operative: "r", procedure: 3}
       assert is_integer(signal.ts)
     end
 

@@ -56,7 +56,7 @@ Flezha uses a transport abstraction layer to support multiple communication back
 7. Agent sends `ConnectSocket{sockets_count: N}` command
 8. SDK opens 2×N bidi streams (N primary + N secondary), sends type byte on each
 9. Agent's `QuicStreamAcceptor` reads type byte, routes to `StreamChannel`s
-10. System ready for operative operations
+10. System ready for operative procedures
 
 ## Stream Types & Data Flow
 

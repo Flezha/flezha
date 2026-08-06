@@ -371,10 +371,7 @@ pub(crate) fn walk_for_stats(path: &Path) -> io::Result<(u64, u64)> {
             Err(e) => return Err(e),
         };
 
-        if md.file_type().is_symlink() {
-            files += 1;
-            bytes += md.len();
-        } else if md.is_file() {
+        if md.file_type().is_symlink() || md.is_file() {
             files += 1;
             bytes += md.len();
         } else if md.is_dir() {
@@ -407,7 +404,7 @@ fn clear_root(path: &Path, app_data_root: &Path) -> io::Result<()> {
         let entry_path = entry.path();
 
         if let Err(msg) = assert_safe_to_unlink(&entry_path, app_data_root, path) {
-            return Err(io::Error::new(ErrorKind::Other, msg));
+            return Err(io::Error::other(msg));
         }
 
         let ft = entry.file_type()?;
@@ -589,7 +586,7 @@ pub fn print_reset_help() {
     println!("    Controller is up; stop it first with `flz controller stop`.");
     println!();
     println!("    By default clears:");
-    println!("        app_data/state/         (per-Segment WAL/snapshot/outbox)");
+    println!("        app_data/state/         (per-Entity WAL/snapshot/outbox)");
     println!("        app_data/process_hub/   (ProcessHub durable registry)");
     println!();
     println!("    Opt-in clears (off by default):");

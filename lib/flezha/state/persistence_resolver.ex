@@ -20,15 +20,15 @@ defmodule Flezha.State.PersistenceResolver do
        per-class override for how long a finished bounded operative's data is
        retained; global default `:default_bounded_completed_retention_hours`
        (`72`, env `FLEZHA_BOUNDED_RETENTION_HOURS`).
-    * `:compact_after_bytes` — per-Operation threshold, sourced from SDK
+    * `:compact_after_bytes` — per-Procedure threshold, sourced from SDK
        metadata first; global default `8 * 1024 * 1024`.
     * `:output_stall_timeout_ms` — `%{<OperativeClass> => non_neg_integer}`.
        Global default `60_000`. `0` disables the output-staleness
        watchdog for that Operative class.
     * `:compaction_timeout_ms` — global; the bound on the
-       `CompactSegment` → `segment_state_snapshot` handshake.
+       `CompactEntity` → `entity_state_snapshot` handshake.
        Default `30_000`. `0` disables the compaction-timeout sweep.
-    * `:compact_after_age_ms` — global; a Segment whose oldest
+    * `:compact_after_age_ms` — global; an Entity whose oldest
        un-snapshotted WAL record is older than this is compacted even
        if it never reaches `compact_after_bytes`. Default `300_000`.
        `0` disables the age trigger.
@@ -57,10 +57,10 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  Whether an operative of `kind` + `operative_class` has durable per-Segment
+  Whether an operative of `kind` + `operative_class` has durable per-Entity
   state (WAL + snapshot + restore) — the kind+class resolution of the
   `persistent_state?` capability that gates bind-time restore (crash-resume)
-  and `:get_segment_state` introspection:
+  and `:get_entity_state` introspection:
 
     * `:unbounded` — always durable.
     * `:bounded` — durable **by default**, opt-out per class (same precedence
@@ -69,7 +69,7 @@ defmodule Flezha.State.PersistenceResolver do
     * any other kind — not durable.
 
   Distinct from the pure per-kind `Flezha.Operative.Kind.capable?/2` flags
-  (`time_travel?`, `dynamic_segments?`, `output_stall_watch?`) which a durable
+  (`time_travel?`, `dynamic_entities?`, `output_stall_watch?`) which a durable
   bounded operative does NOT inherit.
   """
   @spec persistent_state?(atom(), binary(), map()) :: boolean()
@@ -98,7 +98,7 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  How many hours a finished bounded operative's data (retained Segment state +
+  How many hours a finished bounded operative's data (retained Entity state +
   completion record) is kept before the retention sweeper reclaims it.
   Precedence: operator override map `:bounded_completed_retention_hours` →
   instance metadata → global `:default_bounded_completed_retention_hours`
@@ -124,7 +124,7 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  The per-Segment WAL size at which the Watchdog triggers a compaction, per
+  The per-Entity WAL size at which the Watchdog triggers a compaction, per
   operative class. Precedence (moduledoc): operator override map
   `:compact_after_bytes` → the SDK-declared value the class shipped in its
   `AddOperative` metadata (persisted in `ClassRegistry`, resolved here the way

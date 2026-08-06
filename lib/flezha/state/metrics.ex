@@ -1,8 +1,8 @@
 defmodule Flezha.State.Metrics do
   @moduledoc """
-  Per-Segment `:counters` references for the persistence subsystem.
+  Per-Entity `:counters` references for the persistence subsystem.
 
-  Six counter slots per Segment (see `operative-state-persistence-controller`
+  Six counter slots per Entity (see `operative-state-persistence`
   `design.md` Decision 9):
 
     1. `:persisted_changes_total` — monotonic
@@ -16,7 +16,7 @@ defmodule Flezha.State.Metrics do
   `:wal_shed_total` (appends dropped past the hard in-memory bound), and
   `:stale_writer_refused_total` (frames refused from a takeover-superseded
   session), for a total of 10. Allocations are lazy and stored in a
-  module-level `:ets` table keyed by `segment_id`.
+  module-level `:ets` table keyed by `entity_id`.
   """
 
   alias Flezha.State.Registry
@@ -41,20 +41,20 @@ defmodule Flezha.State.Metrics do
   @spec counters() :: [atom()]
   def counters(), do: @counters
 
-  @spec for_segment(Registry.segment_id()) :: :counters.counters_ref()
-  def for_segment(segment_id) do
+  @spec for_entity(Registry.entity_id()) :: :counters.counters_ref()
+  def for_entity(entity_id) do
     ensure_table()
 
-    case :ets.lookup(@table, segment_id) do
-      [{^segment_id, ref}] ->
+    case :ets.lookup(@table, entity_id) do
+      [{^entity_id, ref}] ->
         ref
 
       [] ->
         ref = :counters.new(length(@counters), [:write_concurrency])
         # `:ets.insert_new/2` keeps the first writer's ref under races.
-        case :ets.insert_new(@table, {segment_id, ref}) do
+        case :ets.insert_new(@table, {entity_id, ref}) do
           true -> ref
-          false -> :ets.lookup_element(@table, segment_id, 2)
+          false -> :ets.lookup_element(@table, entity_id, 2)
         end
     end
   end
@@ -79,24 +79,24 @@ defmodule Flezha.State.Metrics do
     Map.new(@counters, fn name -> {name, :counters.get(ref, index!(name))} end)
   end
 
-  @spec drop_segment(Registry.segment_id()) :: :ok
-  def drop_segment(segment_id) do
+  @spec drop_entity(Registry.entity_id()) :: :ok
+  def drop_entity(entity_id) do
     ensure_table()
-    :ets.delete(@table, segment_id)
+    :ets.delete(@table, entity_id)
     :ok
   end
 
   @doc """
-  Snapshot every Segment's counter set. Returns
-  `[{segment_id, %{counter_name => value}}]`. Used by the metrics
+  Snapshot every Entity's counter set. Returns
+  `[{entity_id, %{counter_name => value}}]`. Used by the metrics
   exporter and by `flz state list`.
   """
-  @spec snapshot_all() :: [{Registry.segment_id(), %{atom() => integer()}}]
+  @spec snapshot_all() :: [{Registry.entity_id(), %{atom() => integer()}}]
   def snapshot_all() do
     ensure_table()
 
     :ets.tab2list(@table)
-    |> Enum.map(fn {segment_id, ref} -> {segment_id, to_map(ref)} end)
+    |> Enum.map(fn {entity_id, ref} -> {entity_id, to_map(ref)} end)
   end
 
   defp index!(name) do

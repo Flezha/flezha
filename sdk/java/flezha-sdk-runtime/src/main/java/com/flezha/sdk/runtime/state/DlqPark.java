@@ -12,9 +12,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Dead-letter park: retry-exhausted payloads ship to the controller's
- * durable DLQ store and the segment advances only once the park is durable
- * ({@code platform-dead-letter-queue}). Mirrors the Rust SDK's
- * {@code segment::park}: a {@code park_payload} data-stream frame on the
+ * durable DLQ store and the entity advances only once the park is durable
+ * ({@code dead-letter-queue}). Mirrors the Rust SDK's
+ * {@code entity::park}: a {@code park_payload} data-stream frame on the
  * reliable sink plus a monitor wait for the controller's
  * {@code ParkPayloadAck} control command, re-sending until acked — delay,
  * never loss.
@@ -43,7 +43,7 @@ public final class DlqPark {
     /**
      * The park's dead-letter record — the same shape a tier-on park embeds
      * in its effect record (Rust {@code DlqEntryBody}). {@code payload} is
-     * empty when the input type is not byte-representable (inter-operation
+     * empty when the input type is not byte-representable (inter-procedure
      * payloads other than {@code byte[]}/{@code String}); such entries are
      * inspectable but not replayable.
      */
@@ -59,8 +59,8 @@ public final class DlqPark {
 
     /** Mint a process-unique park id. */
     @Nonnull
-    public static String mintParkId(@Nonnull String segmentLabel) {
-        return segmentLabel + "#" + PARK_SEQ.getAndIncrement();
+    public static String mintParkId(@Nonnull String entityLabel) {
+        return entityLabel + "#" + PARK_SEQ.getAndIncrement();
     }
 
     /**
@@ -116,14 +116,14 @@ public final class DlqPark {
 
     /**
      * Ship a park frame and block until the controller acks it as durable.
-     * Re-sends on the resend cadence forever — the segment must not advance
+     * Re-sends on the resend cadence forever — the entity must not advance
      * past an unparked poison payload. Transport-less runs (no sink ever
      * installed) cannot park; they log loudly and drop, preserving the
      * pre-DLQ standalone behaviour. An interrupt (process shutdown) also
      * abandons the wait with an error log.
      */
-    public static void parkBlocking(@Nonnull SegmentId segmentId, @Nonnull ParkBody body) {
-        if (!SegmentStateSink.everInstalled()) {
+    public static void parkBlocking(@Nonnull EntityId entityId, @Nonnull ParkBody body) {
+        if (!EntityStateSink.everInstalled()) {
             LOG.error(
                     "DLQ park impossible without a controller transport; dropping poison payload"
                             + " on channel `{}` after {} attempts: {}",
@@ -132,15 +132,15 @@ public final class DlqPark {
                     body.entry().error());
             return;
         }
-        byte[] frame = SegmentFlusher.buildSegmentStateChangeFrame(
-                segmentId, PARK_SEQ.get(), new byte[16], encodeParkBody(body));
+        byte[] frame =
+                EntityFlusher.buildEntityStateChangeFrame(entityId, PARK_SEQ.get(), new byte[16], encodeParkBody(body));
 
         // Register before the first send: the ack can then never outrun the
         // waiter, which is what lets the shared registry stay race-free.
         CompletableFuture<String> ack = AckRegistry.register(body.parkId());
         long resends = 0;
         while (true) {
-            SegmentStateSink.send(PAYLOAD_ID_PARK, frame);
+            EntityStateSink.send(PAYLOAD_ID_PARK, frame);
             if (AckRegistry.await(body.parkId(), ack, ACK_RESEND_INTERVAL_MS)) {
                 return;
             }
@@ -151,7 +151,7 @@ public final class DlqPark {
             resends++;
             if (resends % WARN_EVERY_RESENDS == 0) {
                 LOG.warn(
-                        "dead-letter park `{}` on channel `{}` still unacked after {} re-sends;" + " segment held",
+                        "dead-letter park `{}` on channel `{}` still unacked after {} re-sends;" + " entity held",
                         body.parkId(),
                         body.entry().channel(),
                         resends);

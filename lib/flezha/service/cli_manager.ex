@@ -103,7 +103,7 @@ defmodule Flezha.Service.CliManager do
   re-delivered.
 
   Refused, changing nothing, when the target has not committed or when an unwound
-  operation emitted plugin output it cannot compensate.
+  procedure emitted plugin output it cannot compensate.
   """
   def operative_rewind(namespace, operative_id, to_iter) do
     case OperativeManager.get_operative_pid(normalize_namespace(namespace), operative_id) do
@@ -133,7 +133,7 @@ defmodule Flezha.Service.CliManager do
   defp print_rewind(_operative_id, _to_iter, {:error, {:uncovered, channels}}) do
     cli_error!(
       "Error: refusing to rewind — these channels were written by an unwound " <>
-        "operation that declares no `compensate` hook, so the output cannot be " <>
+        "procedure that declares no `compensate` hook, so the output cannot be " <>
         "undone: #{Enum.join(channels, ", ")}"
     )
   end
@@ -177,10 +177,10 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc "Get operative state."
-  def segment_state(namespace, operative_id) do
+  def entity_state(namespace, operative_id) do
     namespace_display = normalize_namespace(namespace)
 
-    case OperativeManager.get_segment_state(
+    case OperativeManager.get_entity_state(
            normalize_namespace(namespace),
            operative_id
          ) do
@@ -197,7 +197,7 @@ defmodule Flezha.Service.CliManager do
 
       {:error, {:unsupported_for_kind, :persistent_state}} ->
         cli_error!(
-          "Operative '#{operative_id}' in namespace '#{namespace_display}' has no per-segment state: " <>
+          "Operative '#{operative_id}' in namespace '#{namespace_display}' has no per-entity state: " <>
             "its kind does not support state introspection."
         )
 
@@ -1264,7 +1264,7 @@ defmodule Flezha.Service.CliManager do
   # ---------- `flz state` subcommand handlers ----------
 
   @doc """
-  `flz state list <operative_class>` — print one row per Segment under
+  `flz state list <operative_class>` — print one row per Entity under
   `<operative_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
   def state_list(operative_class, output_format \\ "text") do
@@ -1279,8 +1279,8 @@ defmodule Flezha.Service.CliManager do
 
         %{
           operative_class: rc,
-          operation_id: sh,
-          segment_key: pk,
+          procedure_id: sh,
+          entity_key: pk,
           wal_seq: counters.wal_seq,
           snapshot_seq: counters.snapshot_seq,
           wal_bytes: wal_bytes,
@@ -1292,16 +1292,16 @@ defmodule Flezha.Service.CliManager do
 
     case output_format do
       "json" ->
-        IO.puts(Jason.encode!(%{operative_class: operative_class, segments: rows}))
+        IO.puts(Jason.encode!(%{operative_class: operative_class, entities: rows}))
 
       _ ->
-        IO.puts("Segments under operative #{operative_class}:\n")
+        IO.puts("Entities under operative #{operative_class}:\n")
         Enum.each(rows, &print_state_row/1)
     end
   end
 
   defp print_state_row(row) do
-    IO.puts("  #{row.operation_id}/#{row.segment_key}")
+    IO.puts("  #{row.procedure_id}/#{row.entity_key}")
     IO.puts("    wal_seq:                 #{row.wal_seq}")
     IO.puts("    snapshot_seq:            #{row.snapshot_seq}")
     IO.puts("    wal_bytes:               #{row.wal_bytes}")
@@ -1312,19 +1312,19 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz state at <operative/operation/segment> <seq | timestamp>` — point-in-time
+  `flz state at <operative/procedure/entity> <seq | timestamp>` — point-in-time
   query. Resolves the path string into a `(runner_id, operative,
-  operation, segment_key)` by scanning the on-disk state tree (one match
+  procedure, entity_key)` by scanning the on-disk state tree (one match
   expected; ambiguous paths print all matches and exit non-zero).
   """
   def state_at(path_string, target_string, output_format \\ "text") do
     case parse_state_path(path_string) do
-      {:ok, segment_id} ->
+      {:ok, entity_id} ->
         target = parse_state_target(target_string)
 
-        case Flezha.State.TimeTravel.query(segment_id, target) do
+        case Flezha.State.TimeTravel.query(entity_id, target) do
           {:ok, result} ->
-            print_state_at(segment_id, target, result, output_format)
+            print_state_at(entity_id, target, result, output_format)
 
           {:error, %{kind: kind, message: msg, earliest_available: earliest}} ->
             cli_error!(
@@ -1338,7 +1338,7 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp print_state_at(_segment_id, _target, result, "json") do
+  defp print_state_at(_entity_id, _target, result, "json") do
     IO.puts(
       Jason.encode!(%{
         terminal_seq: result.terminal_seq,
@@ -1348,8 +1348,8 @@ defmodule Flezha.Service.CliManager do
     )
   end
 
-  defp print_state_at(segment_id, target, result, _) do
-    {rc, sh, pk} = segment_id
+  defp print_state_at(entity_id, target, result, _) do
+    {rc, sh, pk} = entity_id
 
     IO.puts("state at #{rc}/#{sh}/#{pk} target=#{inspect(target)}:")
     IO.puts("  terminal_seq:    #{result.terminal_seq}")
@@ -1358,15 +1358,15 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz state rotate <operative/operation/segment>` — force a compaction by
-  asking Overwatch to dispatch a `CompactSegment` to the SDK.
+  `flz state rotate <operative/procedure/entity>` — force a compaction by
+  asking Overwatch to dispatch a `CompactEntity` to the SDK.
   """
   def state_rotate(path_string) do
     case parse_state_path(path_string) do
       {:ok, {rc, sh, pk}} ->
-        case lookup_runner_for_segment(rc, sh, pk) do
+        case lookup_runner_for_entity(rc, sh, pk) do
           {:ok, runner_id} ->
-            case Flezha.Operative.Overwatch.dispatch_compact_segment(runner_id, {rc, sh, pk}) do
+            case Flezha.Operative.Overwatch.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
               {:ok, _ref} ->
                 IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
 
@@ -1383,46 +1383,46 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp lookup_runner_for_segment(rc, sh, pk) do
+  defp lookup_runner_for_entity(rc, sh, pk) do
     Flezha.State.Recovery.resolve_runner({rc, sh, pk})
   end
 
   @doc """
-  `flz state delete <operative/operation/key>` — hard-delete one Segment's
+  `flz state delete <operative/procedure/key>` — hard-delete one Entity's
   persisted state (WAL + snapshots + outbox-dedup). Idempotent: deleting
-  a segment with no on-disk state still succeeds. This is the
+  an entity with no on-disk state still succeeds. This is the
   operator-driven, confirmation-returning counterpart to the SDK reaper's
-  fire-and-forget `delete_segment_state` send (Decision 8).
+  fire-and-forget `delete_entity_state` send (Decision 8).
   """
   def state_delete(path_string) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        {:ok, _} = Flezha.State.Supervisor.delete_segment({rc, sh, pk})
+        {:ok, _} = Flezha.State.Supervisor.delete_entity({rc, sh, pk})
         IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
 
       _ ->
         cli_error!(
-          "state delete: expected <operative>/<operation>/<segment_key>; got #{path_string}",
+          "state delete: expected <operative>/<procedure>/<entity_key>; got #{path_string}",
           :stderr
         )
     end
   end
 
   @doc """
-  `flz state outbox <operative/operation/key>` — effectively-once outbox
-  status for one Segment: durable seq, flush cursor, epoch, undispatched
+  `flz state outbox <operative/procedure/key>` — effectively-once outbox
+  status for one Entity: durable seq, flush cursor, epoch, undispatched
   lag, and the operative's input-log min-watermark.
   """
   def state_outbox(path_string) do
     case parse_state_path(path_string) do
-      {:ok, {rc, sh, pk} = segment_id} ->
+      {:ok, {rc, sh, pk} = entity_id} ->
         status =
-          case Flezha.State.Supervisor.lookup(segment_id) do
+          case Flezha.State.Supervisor.lookup(entity_id) do
             {:ok, pid} ->
               Flezha.State.WalWriter.outbox_status(pid)
 
             :error ->
-              dedup = Flezha.State.Outbox.read(segment_id)
+              dedup = Flezha.State.Outbox.read(entity_id)
 
               %{
                 last_persisted_seq: dedup.last_persisted_seq,
@@ -1434,7 +1434,7 @@ defmodule Flezha.Service.CliManager do
 
         watermark = Flezha.State.InputLog.watermark(rc)
 
-        IO.puts("segment            #{rc}/#{sh}/#{pk}")
+        IO.puts("entity            #{rc}/#{sh}/#{pk}")
         IO.puts("last_persisted_seq #{status.last_persisted_seq}")
         IO.puts("outbox_flushed_seq #{status.outbox_flushed_seq}")
         IO.puts("epoch              #{status.epoch}")
@@ -1447,20 +1447,20 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz operative replay <operative/operation/key> --from <seq|ts>` — re-run a
-  Segment's retained inputs from a point in the past through the current code.
+  `flz operative replay <operative/procedure/key> --from <seq|ts>` — re-run a
+  Entity's retained inputs from a point in the past through the current code.
 
   The same transaction a late input triggers automatically, with the operator
-  choosing the baseline instead of a late event: rewind the Segment there, bump
+  choosing the baseline instead of a late event: rewind the Entity there, bump
   the epoch, and replay the input log forward. A conforming keyed sink overwrites
   the stale rows by natural key, which is what makes "deploy a fix, heal the
   recent past" a single verb rather than a migration.
   """
   def operative_replay(namespace, path_string, from_string) do
-    with {:ok, {operative_class, _, _} = segment_id} <- parse_state_path(path_string),
+    with {:ok, {operative_class, _, _} = entity_id} <- parse_state_path(path_string),
          {:ok, overwatch} <- resolve_replay_overwatch(namespace, operative_class),
-         {:ok, target_seq} <- resolve_replay_seq(segment_id, from_string) do
-      Overwatch.replay_from(overwatch, segment_id, target_seq)
+         {:ok, target_seq} <- resolve_replay_seq(entity_id, from_string) do
+      Overwatch.replay_from(overwatch, entity_id, target_seq)
 
       IO.puts(
         "Replaying #{path_string} from seq #{target_seq}. Outputs republish under a " <>
@@ -1490,8 +1490,8 @@ defmodule Flezha.Service.CliManager do
 
   # A `--from` is a WAL seq or a point in time; the same `TimeTravel` resolution
   # `flz state at` uses, which is now exact rather than an mtime approximation.
-  defp resolve_replay_seq(segment_id, from_string) do
-    case Flezha.State.TimeTravel.query(segment_id, parse_state_target(from_string)) do
+  defp resolve_replay_seq(entity_id, from_string) do
+    case Flezha.State.TimeTravel.query(entity_id, parse_state_target(from_string)) do
       {:ok, %{terminal_seq: seq}} -> {:ok, seq}
       {:error, err} -> {:error, err}
     end
@@ -1499,15 +1499,15 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   `flz state journal <operative/instance>` — render a bounded instance's
-  op-journal entries (`bounded-op-journal`) in append order: seq, type,
-  op index, iteration, the segments that ran, and the handoff batch size.
+  proc-journal entries (`bounded-proc-journal`) in append order: seq, type,
+  proc index, iteration, the entities that ran, and the handoff batch size.
   """
   def state_journal(instance_id, output_format \\ "text") do
-    {:ok, entries} = Flezha.State.OpJournal.read(instance_id)
+    {:ok, entries} = Flezha.State.ProcJournal.read(instance_id)
 
     rows = Enum.map(entries, &journal_row/1)
-    leaf_ops = Flezha.Operative.ClassRegistry.leaf_ops(instance_id)
-    complete = Flezha.State.OpJournal.complete?(instance_id, leaf_ops)
+    leaf_procs = Flezha.Operative.ClassRegistry.leaf_procs(instance_id)
+    complete = Flezha.State.ProcJournal.complete?(instance_id, leaf_procs)
 
     case output_format do
       "json" ->
@@ -1515,18 +1515,18 @@ defmodule Flezha.Service.CliManager do
           Jason.encode!(%{
             instance: instance_id,
             entries: rows,
-            leaf_ops: leaf_ops,
+            leaf_procs: leaf_procs,
             complete: complete
           })
         )
 
       _ ->
         if rows == [] do
-          IO.puts("no op-journal for instance #{instance_id}")
+          IO.puts("no proc-journal for instance #{instance_id}")
         else
-          IO.puts("op-journal for instance #{instance_id}:\n")
+          IO.puts("proc-journal for instance #{instance_id}:\n")
           Enum.each(rows, &print_journal_row/1)
-          print_journal_completion(leaf_ops, complete)
+          print_journal_completion(leaf_procs, complete)
         end
     end
   end
@@ -1535,17 +1535,17 @@ defmodule Flezha.Service.CliManager do
   # complete when the in-flight iteration has committed every leaf. A class that
   # declared none (run-sugar, unbounded, an older SDK) leaves it underivable.
   defp print_journal_completion(nil, _complete),
-    do: IO.puts("\n  complete: unknown (class declares no leaf operations)")
+    do: IO.puts("\n  complete: unknown (class declares no leaf procedures)")
 
-  defp print_journal_completion(leaf_ops, complete),
-    do: IO.puts("\n  leaves: #{Enum.join(leaf_ops, ",")}  complete: #{complete}")
+  defp print_journal_completion(leaf_procs, complete),
+    do: IO.puts("\n  leaves: #{Enum.join(leaf_procs, ",")}  complete: #{complete}")
 
-  defp journal_row(%{type: :op_committed, payload: payload} = entry) do
+  defp journal_row(%{type: :proc_committed, payload: payload} = entry) do
     entry
     |> base_journal_row()
     |> Map.merge(journal_handoff(payload.handoff))
     |> Map.merge(%{
-      segments_ran: Enum.map(payload.segments_ran, &Flezha.State.Wire.segment_label/1),
+      entities_ran: Enum.map(payload.entities_ran, &Flezha.State.Wire.entity_label/1),
       outbox: journal_outbox(payload.outbox)
     })
   end
@@ -1569,14 +1569,12 @@ defmodule Flezha.Service.CliManager do
     |> Map.put(:wake_deadline_ms, payload.wake_deadline_ms)
   end
 
-  # `for_type` names which entry's outbox this marks delivered — an operation
-  # can have both a forward `op_committed` outbox and a `compensated` undo one.
+  # `for_type` names which entry's outbox this marks delivered — a procedure
+  # can have both a forward `proc_committed` outbox and a `compensated` undo one.
   defp journal_row(%{type: :outbox_flushed, payload: %{for_type: for_type}} = entry) do
-    flushes = if for_type == 5, do: "compensated", else: "op_committed"
-
     entry
     |> base_journal_row()
-    |> Map.put(:flushes, flushes)
+    |> Map.put(:flushes, to_string(for_type))
   end
 
   # A `rewound` entry's `iter` IS the iteration it rewound to; spell that out
@@ -1593,7 +1591,7 @@ defmodule Flezha.Service.CliManager do
     %{
       seq: entry.seq,
       type: Atom.to_string(entry.type),
-      op_idx: entry.op_idx,
+      proc_idx: entry.proc_idx,
       iter: entry.iter,
       epoch: entry.epoch
     }
@@ -1621,8 +1619,8 @@ defmodule Flezha.Service.CliManager do
   defp journal_outbox(outbox) do
     Enum.map(outbox, fn item ->
       %{
-        segment: Flezha.State.Wire.segment_label(item.segment_id),
-        seq_in_op: item.seq_in_op,
+        entity: Flezha.State.Wire.entity_label(item.entity_id),
+        seq_in_proc: item.seq_in_proc,
         channel: item.channel,
         bytes: byte_size(item.payload)
       }
@@ -1631,10 +1629,10 @@ defmodule Flezha.Service.CliManager do
 
   defp print_journal_row(row) do
     IO.puts(
-      "  seq=#{row.seq} #{row.type} op_idx=#{row.op_idx} iter=#{row.iter} epoch=#{row.epoch}"
+      "  seq=#{row.seq} #{row.type} proc_idx=#{row.proc_idx} iter=#{row.iter} epoch=#{row.epoch}"
     )
 
-    Enum.each(Map.get(row, :segments_ran, []), fn seg -> IO.puts("    ran: #{seg}") end)
+    Enum.each(Map.get(row, :entities_ran, []), fn seg -> IO.puts("    ran: #{seg}") end)
 
     if Map.has_key?(row, :handoff_items) do
       IO.puts("    handoff: #{row.handoff_items} item(s), #{row.handoff_bytes} byte(s)")
@@ -1648,7 +1646,7 @@ defmodule Flezha.Service.CliManager do
 
     Enum.each(Map.get(row, :outbox, []), fn item ->
       IO.puts(
-        "    outbox: #{item.segment} seq_in_op=#{item.seq_in_op} " <>
+        "    outbox: #{item.entity} seq_in_proc=#{item.seq_in_proc} " <>
           "channel=#{item.channel} #{item.bytes} byte(s)"
       )
     end)
@@ -1679,8 +1677,8 @@ defmodule Flezha.Service.CliManager do
   iteration recorded).
   """
   def state_inbox(instance_id, output_format \\ "text") do
-    entries = Flezha.State.OpInbox.read(instance_id)
-    consumed = Flezha.State.OpJournal.consumed_offset(instance_id)
+    entries = Flezha.State.ProcInbox.read(instance_id)
+    consumed = Flezha.State.ProcJournal.consumed_offset(instance_id)
 
     rows =
       Enum.map(entries, fn entry ->
@@ -1748,12 +1746,12 @@ defmodule Flezha.Service.CliManager do
         end
 
       _ ->
-        {:error, "expected <operative>/<operation>/<segment_key>; got #{path_string}"}
+        {:error, "expected <operative>/<procedure>/<entity_key>; got #{path_string}"}
     end
   end
 
   defp has_persisted_state?(rc, sh, pk) do
-    Enum.any?(Flezha.State.Registry.all_segments(), fn {r, s, p} ->
+    Enum.any?(Flezha.State.Registry.all_entities(), fn {r, s, p} ->
       r == rc and s == sh and p == pk
     end)
   end
@@ -2931,7 +2929,7 @@ defmodule Flezha.Service.CliManager do
     cli_error!("error: #{inspect(reason)}", :stderr)
   end
 
-  # ---------- Dead-letter queue (platform-dead-letter-queue) ----------
+  # ---------- Dead-letter queue (dead-letter-queue) ----------
 
   # How long `dlq replay` waits for a re-park before declaring the replay
   # successful and removing the entry. A re-park after the grace window
@@ -2953,19 +2951,19 @@ defmodule Flezha.Service.CliManager do
     else
       IO.puts(
         String.pad_trailing("ENTRY", 60) <>
-          String.pad_trailing("SEGMENT", 16) <>
+          String.pad_trailing("ENTITY", 16) <>
           String.pad_trailing("CHANNEL", 12) <>
           String.pad_trailing("GEN", 5) <>
           String.pad_trailing("AGE", 10) <> "ERROR"
       )
 
       Enum.each(entries, fn e ->
-        ref = "#{e["operative_class"]}/#{e["operation_id"]}/#{e["id"]}"
+        ref = "#{e["operative_class"]}/#{e["procedure_id"]}/#{e["id"]}"
         age_s = div(System.system_time(:millisecond) - (e["ts_ms"] || 0), 1000)
 
         IO.puts(
           String.pad_trailing(ref, 60) <>
-            String.pad_trailing(e["segment_key"] || "", 16) <>
+            String.pad_trailing(e["entity_key"] || "", 16) <>
             String.pad_trailing(e["channel"] || "", 12) <>
             String.pad_trailing(Integer.to_string(e["generation"] || 1), 5) <>
             String.pad_trailing("#{age_s}s", 10) <> String.slice(e["error"] || "", 0, 60)
@@ -2975,13 +2973,13 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz dlq show <operative/operation/id>` — entry metadata + payload preview.
+  `flz dlq show <operative/procedure/id>` — entry metadata + payload preview.
   """
   def dlq_show(entry_ref) do
     case Flezha.Dlq.Store.get(entry_ref) do
       {:ok, entry, payload} ->
         Enum.each(
-          ~w(id operative_class operation_id segment_key channel origin_offset error attempts generation status ts_ms payload_bytes),
+          ~w(id operative_class procedure_id entity_key channel origin_offset error attempts generation status ts_ms payload_bytes),
           fn key ->
             IO.puts(String.pad_trailing(key, 18) <> to_string(inspect(entry[key])))
           end
@@ -3008,7 +3006,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz dlq replay <operative/operation/id>` — re-dispatch a parked payload
+  `flz dlq replay <operative/procedure/id>` — re-dispatch a parked payload
   to its operative through the ordinary input path. A successful replay
   removes the entry; a failing one re-parks it with `generation`
   incremented (the store correlates on content identity). Replay identity
@@ -3038,7 +3036,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz dlq drop <operative/operation/id>` — discard a parked entry and its
+  `flz dlq drop <operative/procedure/id>` — discard a parked entry and its
   payload. Audited: the drop is deliberate data loss.
   """
   def dlq_drop(entry_ref) do
@@ -3049,7 +3047,7 @@ defmodule Flezha.Service.CliManager do
         :telemetry.execute([:flezha, :dlq, :operator_drop], %{count: 1}, %{
           entry: entry_ref,
           channel: entry["channel"],
-          segment_key: entry["segment_key"],
+          entity_key: entry["entity_key"],
           error: entry["error"],
           caller_source: :cli
         })
@@ -3100,12 +3098,12 @@ defmodule Flezha.Service.CliManager do
   end
 
   defp render_dlq_error(:bad_entry_ref) do
-    cli_error!("error: expected <operative>/<operation>/<entry-id>", :stderr)
+    cli_error!("error: expected <operative>/<procedure>/<entry-id>", :stderr)
   end
 
   defp render_dlq_error(:payload_not_replayable) do
     cli_error!(
-      "error: entry carries no payload bytes (inter-operation input); inspect or drop it",
+      "error: entry carries no payload bytes (inter-procedure input); inspect or drop it",
       :stderr
     )
   end

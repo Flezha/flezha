@@ -3,7 +3,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   End-to-end proof for `effectively-once-checkpoint-granularity` against a live
   Rust runner: a source drives `checkpoint_store` (declared
   `effectively_once()` + `checkpoint_ack()`), whose keyed outputs land on a
-  conforming changelog sink. Every input folds into the Segment's state, but
+  conforming changelog sink. Every input folds into the Entity's state, but
   only a `commit:` input closes the interval — so the durable consumed-offset
   stands still for a whole interval while the outputs of that interval are
   already flowing.

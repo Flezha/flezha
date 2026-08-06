@@ -1,19 +1,19 @@
 defmodule Flezha.Integration.JavaStatePersistenceTest do
   @moduledoc """
-  Integration tests for `operative-state-persistence-java`.
+  Integration tests for `operative-state-persistence`.
 
   Delegates to the JUnit suite in
   `test/apps/java_runner/src/test/java/com/flezha/test/JavaStatePersistenceTest.java`
   and to the SDK module's own unit tests:
 
-  - `flezha-sdk-api/.../OperationDefaultsTest` — Operation interface defaults
+  - `flezha-sdk-api/.../ProcedureDefaultsTest` — Procedure interface defaults
   - `flezha-sdk-runtime/.../KryoCodecTest` — Kryo round-trip + cross-format
     detection (postcard `format_id = 1` rejected by Java SDK)
   - `flezha-sdk-runtime/.../HeaderTemplateTest` — header byte-equality with
     the Rust SDK's stamp (only `sdk_lang` and `format_id` differ)
-  - `flezha-sdk-runtime/.../SegmentFlusherTest` — coalescing, toggle-off
+  - `flezha-sdk-runtime/.../EntityFlusherTest` — coalescing, toggle-off
     drain, NoChange skip-registration
-  - `flezha-sdk-testing/.../OperationTestHarnessSmokeTest` — determinism gate
+  - `flezha-sdk-testing/.../ProcedureTestHarnessSmokeTest` — determinism gate
 
   End-to-end coverage with the controller-side WAL (round-trip
   `RestoreInitState` after controller restart, time-travel queries, retention

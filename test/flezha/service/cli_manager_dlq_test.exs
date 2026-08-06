@@ -34,8 +34,8 @@ defmodule Flezha.Service.CliManagerDlqTest do
 
     entry = %{
       operative_class: rc,
-      operation_id: "op",
-      segment_key: "k",
+      procedure_id: "proc",
+      entity_key: "k",
       channel: "input",
       origin_offset: nil,
       error: "kaboom",

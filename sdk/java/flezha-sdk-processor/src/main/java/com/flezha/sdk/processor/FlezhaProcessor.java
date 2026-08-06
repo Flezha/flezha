@@ -1,10 +1,10 @@
 package com.flezha.sdk.processor;
 
+import com.flezha.sdk.authoring.EntitiesFor;
+import com.flezha.sdk.authoring.EntityKey;
 import com.flezha.sdk.authoring.InitState;
 import com.flezha.sdk.authoring.Journal;
-import com.flezha.sdk.authoring.Operation;
-import com.flezha.sdk.authoring.OperationKey;
-import com.flezha.sdk.authoring.SegmentFor;
+import com.flezha.sdk.authoring.Procedure;
 import com.flezha.sdk.authoring.State;
 import com.flezha.sdk.authoring.UnboundedOperative;
 import java.io.IOException;
@@ -33,19 +33,19 @@ import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 
 /**
- * Generates {@code Operation} / {@code UnboundedOperative} implementations from the
- * {@code @Operation} / {@code @State} / {@code @UnboundedOperative} authoring annotations,
+ * Generates {@code Procedure} / {@code UnboundedOperative} implementations from the
+ * {@code @Procedure} / {@code @State} / {@code @UnboundedOperative} authoring annotations,
  * mirroring the Rust SDK macros. See {@code docs/sdk_authoring_contract.md}.
  *
  * <p>Per round: {@code @State} classes generate a {@code <Name>Change}
- * (field-granular variants + {@code apply} + {@code kryoTypes}); {@code @Operation}
- * classes generate a {@code <Name>Operation} (and, with a {@code sink}, a
- * single-operation {@code <Name>UnboundedOperative}); {@code @UnboundedOperative} classes are collected. On
+ * (field-granular variants + {@code apply} + {@code kryoTypes}); {@code @Procedure}
+ * classes generate a {@code <Name>Procedure} (and, with a {@code sink}, a
+ * single-procedure {@code <Name>UnboundedOperative}); {@code @UnboundedOperative} classes are collected. On
  * the final round a {@code com.flezha.generated.GeneratedUnboundedOperatives.defineAll(FlezhaRunner)}
  * aggregator is emitted so authors register every sugared operative with one call.
  */
 @SupportedAnnotationTypes({
-    "com.flezha.sdk.authoring.Operation",
+    "com.flezha.sdk.authoring.Procedure",
     "com.flezha.sdk.authoring.State",
     "com.flezha.sdk.authoring.UnboundedOperative"
 })
@@ -76,8 +76,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
         for (Element e : roundEnv.getElementsAnnotatedWith(State.class)) {
             generateState((TypeElement) e);
         }
-        for (Element e : roundEnv.getElementsAnnotatedWith(Operation.class)) {
-            generateOperation((TypeElement) e);
+        for (Element e : roundEnv.getElementsAnnotatedWith(Procedure.class)) {
+            generateProcedure((TypeElement) e);
         }
         for (Element e : roundEnv.getElementsAnnotatedWith(UnboundedOperative.class)) {
             if (implementsUnboundedOperative((TypeElement) e)) {
@@ -165,7 +165,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 continue;
             }
             // A map field without @Journal is an unsupported mutation: there is
-            // no single per-entry op to record. Direct to a hand-written Change.
+            // no single per-entry proc to record. Direct to a hand-written Change.
             if (kv != null) {
                 error(
                         f,
@@ -348,8 +348,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
 
                 String drainVar = "Drain" + pascal + "Front";
                 variantClasses.add(drainVar);
-                b.append(intOpFactory(changeSimple, "drain" + pascal + "Front", keyType, drainVar));
-                b.append(intOpVariant(changeSimple, drainVar, keyType));
+                b.append(intProcFactory(changeSimple, "drain" + pascal + "Front", keyType, drainVar));
+                b.append(intProcVariant(changeSimple, drainVar, keyType));
                 applyBody
                         .append("        if (change instanceof ")
                         .append(drainVar)
@@ -358,7 +358,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                         .append(".computeIfAbsent(c.k, __k -> ")
                         .append(newColl)
                         .append("); int __n = Math.min(c.n, __l.size()); __l.subList(0, __n).clear(); return; }\n");
-                handleMethods.append(intOpHandleMutator(changeSimple, "drain" + pascal + "Front", keyType));
+                handleMethods.append(intProcHandleMutator(changeSimple, "drain" + pascal + "Front", keyType));
             }
             case MAP_DEQUE -> {
                 TypeMirror elem = dequeElement(valMirror);
@@ -388,8 +388,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
 
                 String popVar = "PopFront" + pascal;
                 variantClasses.add(popVar);
-                b.append(intOpFactory(changeSimple, "popFront" + pascal, keyType, popVar));
-                b.append(intOpVariant(changeSimple, popVar, keyType));
+                b.append(intProcFactory(changeSimple, "popFront" + pascal, keyType, popVar));
+                b.append(intProcVariant(changeSimple, popVar, keyType));
                 applyBody
                         .append("        if (change instanceof ")
                         .append(popVar)
@@ -399,7 +399,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                         .append(newColl)
                         .append("); int __n = Math.min(c.n, __d.size()); for (int __i = 0; __i < __n; __i++) { "
                                 + "__d.pollFirst(); } return; }\n");
-                handleMethods.append(intOpHandleMutator(changeSimple, "popFront" + pascal, keyType));
+                handleMethods.append(intProcHandleMutator(changeSimple, "popFront" + pascal, keyType));
             }
         }
         return true;
@@ -430,14 +430,14 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 + "." + method + "(key, value)); }\n";
     }
 
-    /** Two-arg `(key, int n)` factory for a count-based map op (drain / pop). */
-    private static String intOpFactory(String changeSimple, String method, String keyType, String variant) {
+    /** Two-arg `(key, int n)` factory for a count-based map proc (drain / pop). */
+    private static String intProcFactory(String changeSimple, String method, String keyType, String variant) {
         return "    public static " + changeSimple + " " + method + "(" + keyType + " key, int n) { return new "
                 + variant + "(key, n); }\n";
     }
 
     /** Two-field `(K k, int n)` variant with structural equality. */
-    private static String intOpVariant(String changeSimple, String name, String keyType) {
+    private static String intProcVariant(String changeSimple, String name, String keyType) {
         return "    public static final class " + name + " extends " + changeSimple + " {\n"
                 + "        public final " + keyType + " k;\n"
                 + "        public final int n;\n"
@@ -449,7 +449,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 + "    }\n\n";
     }
 
-    private static String intOpHandleMutator(String changeSimple, String method, String keyType) {
+    private static String intProcHandleMutator(String changeSimple, String method, String keyType) {
         return "    public void " + method + "(" + keyType + " key, int n) { h.apply(" + changeSimple + "." + method
                 + "(key, n)); }\n";
     }
@@ -510,24 +510,24 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 + "    }\n\n";
     }
 
-    // ---- @Operation -> <Name>Operation (+ <Name>UnboundedOperative) ---------------------------
+    // ---- @Procedure -> <Name>Procedure (+ <Name>UnboundedOperative) ---------------------------
 
-    private void generateOperation(TypeElement operation) {
-        String pkg = packageOf(operation);
-        String userFqn = operation.getQualifiedName().toString();
-        String operationSimple = operation.getSimpleName() + "Operation";
-        String operationFqn = pkg.isEmpty() ? operationSimple : pkg + "." + operationSimple;
+    private void generateProcedure(TypeElement procedure) {
+        String pkg = packageOf(procedure);
+        String userFqn = procedure.getQualifiedName().toString();
+        String procedureSimple = procedure.getSimpleName() + "Procedure";
+        String procedureFqn = pkg.isEmpty() ? procedureSimple : pkg + "." + procedureSimple;
 
-        ExecutableElement run = findRun(operation);
+        ExecutableElement run = findRun(procedure);
         if (run == null) {
-            error(operation, "@Operation requires exactly one public method named `run`");
+            error(procedure, "@Procedure requires exactly one public method named `run`");
             return;
         }
         List<? extends VariableElement> params = run.getParameters();
         if (params.isEmpty() || params.size() > 2) {
             error(
                     run,
-                    "@Operation `run` must be `Output run(Input)` or `Output run(Input, StateHandle<State, Change>)`");
+                    "@Procedure `run` must be `Output run(Input)` or `Output run(Input, StateHandle<State, Change>)`");
             return;
         }
 
@@ -543,7 +543,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
         } else if (isOptional(returnType)) {
             TypeMirror oe = optionalElement(returnType);
             if (oe == null) {
-                error(run, "@Operation `run` returning Optional must be parameterized as Optional<Output>");
+                error(run, "@Procedure `run` returning Optional must be parameterized as Optional<Output>");
                 return;
             }
             emits = true;
@@ -557,7 +557,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
         boolean stateful = params.size() == 2;
         String stateType;
         String changeType;
-        // What the generated operation passes to the user's run as the state arg.
+        // What the generated procedure passes to the user's run as the state arg.
         String handleArg = "state";
         if (stateful) {
             TypeMirror p1 = params.get(1).asType();
@@ -578,7 +578,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 if (!handleName.endsWith("Handle")) {
                     error(
                             run,
-                            "@Operation stateful `run` second parameter must be a @State-generated `<State>Handle` "
+                            "@Procedure stateful `run` second parameter must be a @State-generated `<State>Handle` "
                                     + "or `StateHandle<State, Change>`");
                     return;
                 }
@@ -592,36 +592,36 @@ public final class FlezhaProcessor extends AbstractProcessor {
             changeType = "com.flezha.sdk.state.NoChange";
         }
 
-        // Segment mode: @SegmentFor (static) xor @OperationKey (dynamic).
-        ExecutableElement segmentFor = findAnnotated(operation, SegmentFor.class);
-        ExecutableElement operationKey = findAnnotated(operation, OperationKey.class);
-        if (segmentFor != null && operationKey != null) {
-            error(operation, "@SegmentFor (static) and @OperationKey (dynamic) are mutually exclusive");
+        // Entity mode: @EntitiesFor (static) xor @EntityKey (dynamic).
+        ExecutableElement entitiesFor = findAnnotated(procedure, EntitiesFor.class);
+        ExecutableElement entityKey = findAnnotated(procedure, EntityKey.class);
+        if (entitiesFor != null && entityKey != null) {
+            error(procedure, "@EntitiesFor (static) and @EntityKey (dynamic) are mutually exclusive");
             return;
         }
 
-        // Per-segment state init: @InitState maps the operation key to State.
-        ExecutableElement initState = findAnnotated(operation, InitState.class);
+        // Per-entity state init: @InitState maps the procedure key to State.
+        ExecutableElement initState = findAnnotated(procedure, InitState.class);
         if (initState != null && !stateful) {
             error(
-                    operation,
-                    "@InitState requires a stateful run (a @State handle parameter); a stateless operation "
+                    procedure,
+                    "@InitState requires a stateful run (a @State handle parameter); a stateless procedure "
                             + "has no state to initialize");
             return;
         }
 
-        Operation ann = operation.getAnnotation(Operation.class);
+        Procedure ann = procedure.getAnnotation(Procedure.class);
         List<String> keys = List.of(ann.keys());
-        if (segmentFor != null && keys.isEmpty()) {
-            error(operation, "static segmenting requires @Operation(keys = {...}) alongside the @SegmentFor method");
+        if (entitiesFor != null && keys.isEmpty()) {
+            error(procedure, "static entity requires @Procedure(keys = {...}) alongside the @EntitiesFor method");
             return;
         }
-        if (!keys.isEmpty() && segmentFor == null) {
-            error(operation, "@Operation(keys = {...}) requires a @SegmentFor method");
+        if (!keys.isEmpty() && entitiesFor == null) {
+            error(procedure, "@Procedure(keys = {...}) requires a @EntitiesFor method");
             return;
         }
 
-        String id = ann.id().isEmpty() ? snake(operation.getSimpleName().toString()) : ann.id();
+        String id = ann.id().isEmpty() ? snake(procedure.getSimpleName().toString()) : ann.id();
         String sink = ann.sink();
         int capacity = ann.capacity();
         String onFull = ann.onFull();
@@ -630,21 +630,21 @@ public final class FlezhaProcessor extends AbstractProcessor {
         if (!pkg.isEmpty()) {
             b.append("package ").append(pkg).append(";\n\n");
         }
-        b.append("import com.flezha.sdk.operation.Operation;\n");
-        b.append("import com.flezha.sdk.operation.OperationCtx;\n");
-        b.append("import com.flezha.sdk.operation.OperationException;\n");
+        b.append("import com.flezha.sdk.procedure.Procedure;\n");
+        b.append("import com.flezha.sdk.procedure.ProcedureCtx;\n");
+        b.append("import com.flezha.sdk.procedure.ProcedureException;\n");
         b.append("import com.flezha.sdk.state.RestoreInitPayload;\n");
         b.append("import com.flezha.sdk.state.StateHandle;\n");
         b.append("import com.flezha.sdk.state.WallClock;\n");
         b.append("import java.util.List;\n");
         b.append("import java.util.Optional;\n\n");
 
-        b.append("/** Generated by FlezhaProcessor from @Operation on ")
+        b.append("/** Generated by FlezhaProcessor from @Procedure on ")
                 .append(userFqn)
                 .append(". */\n");
         b.append("public final class ")
-                .append(operationSimple)
-                .append(" implements Operation<")
+                .append(procedureSimple)
+                .append(" implements Procedure<")
                 .append(inputType)
                 .append(", ")
                 .append(stateType)
@@ -660,7 +660,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append("();\n\n");
 
         b.append("    @Override public String name() { return \"")
-                .append(snake(operation.getSimpleName().toString()))
+                .append(snake(procedure.getSimpleName().toString()))
                 .append("\"; }\n");
         b.append("    @Override public Class<")
                 .append(inputType)
@@ -681,10 +681,10 @@ public final class FlezhaProcessor extends AbstractProcessor {
         b.append("    @Override public Class<Void> configType() { return Void.class; }\n");
 
         String initBody =
-                initState != null ? "impl." + initState.getSimpleName() + "(operationKey)" : "new " + stateType + "()";
+                initState != null ? "impl." + initState.getSimpleName() + "(entityKey)" : "new " + stateType + "()";
         b.append("    @Override public ")
                 .append(stateType)
-                .append(" initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) { return ")
+                .append(" initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) { return ")
                 .append(initBody)
                 .append("; }\n");
 
@@ -701,24 +701,24 @@ public final class FlezhaProcessor extends AbstractProcessor {
                     .append(".kryoTypes(); }\n");
         }
 
-        if (segmentFor != null) {
-            b.append("    @Override public List<String> operationKeys() { return List.of(")
+        if (entitiesFor != null) {
+            b.append("    @Override public List<String> entityKeys() { return List.of(")
                     .append(quotedJoin(keys))
                     .append("); }\n");
-            b.append("    @Override public boolean segmentForOverridden() { return true; }\n");
-            b.append("    @Override public List<String> segmentFor(")
+            b.append("    @Override public boolean entitiesForOverridden() { return true; }\n");
+            b.append("    @Override public List<String> entitiesFor(")
                     .append(inputType)
                     .append(" input) { return impl.")
-                    .append(segmentFor.getSimpleName())
+                    .append(entitiesFor.getSimpleName())
                     .append("(input); }\n");
         }
-        if (operationKey != null) {
-            b.append("    @Override public Optional<String> operationKey(")
+        if (entityKey != null) {
+            b.append("    @Override public Optional<String> entityKey(")
                     .append(inputType)
                     .append(" input) { return impl.")
-                    .append(operationKey.getSimpleName())
+                    .append(entityKey.getSimpleName())
                     .append("(input); }\n");
-            b.append("    @Override public boolean operationKeyOverridden() { return true; }\n");
+            b.append("    @Override public boolean entityKeyOverridden() { return true; }\n");
         }
         if (capacity > 0) {
             b.append("    @Override public int mailboxCapacity() { return ")
@@ -734,7 +734,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(stateType)
                 .append(", ")
                 .append(changeType)
-                .append("> state, OperationCtx ctx) throws OperationException {\n");
+                .append("> state, ProcedureCtx ctx) throws ProcedureException {\n");
         String call = stateful ? "impl.run(input, " + handleArg + ")" : "impl.run(input)";
         if (!emits) {
             b.append("        ").append(call).append(";\n");
@@ -756,29 +756,29 @@ public final class FlezhaProcessor extends AbstractProcessor {
         b.append("    }\n");
         b.append("}\n");
 
-        write(operationFqn, b.toString(), operation);
+        write(procedureFqn, b.toString(), procedure);
 
-        // Single-operation auto-wire operative.
+        // Single-procedure auto-wire operative.
         if (!sink.isEmpty()) {
             if (!emits) {
-                error(operation, "@Operation(sink = ...) requires a non-void return type to feed the plugin");
+                error(procedure, "@Procedure(sink = ...) requires a non-void return type to feed the plugin");
                 return;
             }
-            generateSingleOperationUnboundedOperative(
-                    pkg, operationSimple, id, sink, inputType.toString(), outputType, onFull, operation);
+            generateSingleProcedureUnboundedOperative(
+                    pkg, procedureSimple, id, sink, inputType.toString(), outputType, onFull, procedure);
         }
     }
 
-    private void generateSingleOperationUnboundedOperative(
+    private void generateSingleProcedureUnboundedOperative(
             String pkg,
-            String operationSimple,
+            String procedureSimple,
             String id,
             String sink,
             String inputType,
             String outputType,
             String onFull,
             Element origin) {
-        String operativeSimple = operationSimple.replaceFirst("Operation$", "") + "UnboundedOperative";
+        String operativeSimple = procedureSimple.replaceFirst("Procedure$", "") + "UnboundedOperative";
         String operativeFqn = pkg.isEmpty() ? operativeSimple : pkg + "." + operativeSimple;
         String onFullCall = onFullCall(onFull, origin);
 
@@ -788,8 +788,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
         }
         b.append("import com.flezha.sdk.channel.ChannelBuilder;\n");
         b.append("import com.flezha.sdk.operative.UnboundedOperative;\n\n");
-        b.append("/** Generated single-operation auto-wire operative for ")
-                .append(operationSimple)
+        b.append("/** Generated single-procedure auto-wire operative for ")
+                .append(procedureSimple)
                 .append(". */\n");
         b.append("public final class ").append(operativeSimple).append(" implements UnboundedOperative {\n");
         b.append("    @Override public String factoryId() { return \"")
@@ -801,7 +801,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(", \"input\")")
                 .append(onFullCall)
                 .append(".into(")
-                .append(operationSimple)
+                .append(procedureSimple)
                 .append(".class).named(\"")
                 .append(sink)
                 .append("\").output(\"")
@@ -830,9 +830,9 @@ public final class FlezhaProcessor extends AbstractProcessor {
 
     // ---- helpers ----------------------------------------------------------
 
-    private ExecutableElement findRun(TypeElement operation) {
+    private ExecutableElement findRun(TypeElement procedure) {
         ExecutableElement found = null;
-        for (Element e : operation.getEnclosedElements()) {
+        for (Element e : procedure.getEnclosedElements()) {
             if (e.getKind() == ElementKind.METHOD
                     && e.getSimpleName().contentEquals("run")
                     && e.getModifiers().contains(Modifier.PUBLIC)
@@ -846,8 +846,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
         return found;
     }
 
-    private ExecutableElement findAnnotated(TypeElement operation, Class<? extends Annotation> ann) {
-        for (Element e : operation.getEnclosedElements()) {
+    private ExecutableElement findAnnotated(TypeElement procedure, Class<? extends Annotation> ann) {
+        for (Element e : procedure.getEnclosedElements()) {
             if (e.getKind() == ElementKind.METHOD && e.getAnnotation(ann) != null) {
                 return (ExecutableElement) e;
             }
@@ -880,7 +880,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                     default -> null;
                 };
         if (variant == null) {
-            error(origin, "@Operation onFull must be one of: block, drop_newest, drop_oldest");
+            error(origin, "@Procedure onFull must be one of: block, drop_newest, drop_oldest");
             return "";
         }
         return ".onFull(com.flezha.sdk.channel.OverflowPolicy." + variant + ")";

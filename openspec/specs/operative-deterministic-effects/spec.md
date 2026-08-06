@@ -7,30 +7,30 @@ The determinism contract for operative code: ctx-mediated time (`ctx.now()` serv
 
 ### Requirement: Determinism contract for operative code
 
-The SDK SHALL define a determinism contract binding `Operation::run`,
-`apply_change`, and `compensate`: given the same Segment state and the same input
+The SDK SHALL define a determinism contract binding `Procedure::run`,
+`apply_change`, and `compensate`: given the same Entity state and the same input
 sequence, the code SHALL produce identical state changes and identical emitted
 outputs. Ambient non-determinism (wall-clock reads, random number / UUID
 generation, reads of external mutable state) inside these functions is a contract
-violation; time and identifiers SHALL be obtained through `OperationCtx`. The
+violation; time and identifiers SHALL be obtained through `ProcedureCtx`. The
 contract SHALL bind all current and future SDK languages.
 
 #### Scenario: Contract is documented on the authoring surface
 
-- **WHEN** an author reads the `Operation` trait / `run` documentation
+- **WHEN** an author reads the `Procedure` trait / `run` documentation
 - **THEN** the determinism contract is stated, including the ctx-mediated
   alternatives for time (`ctx.now()`) and identifiers (`ctx.stable_id()`)
 
 #### Scenario: Violation surfaces as a replay difference in the harness
 
-- **WHEN** an Operation whose `run` calls `SystemTime::now()` to build its output
+- **WHEN** a Procedure whose `run` calls `SystemTime::now()` to build its output
   is checked with the harness replay-emit verification
 - **THEN** the check fails because the two replay passes emit different bytes
 
 ### Requirement: Runtime-evaluated Clock served via `ctx.now()`
 
-The dispatcher SHALL evaluate the Operation's declared `Clock` exactly once per
-`run` invocation, before user code executes, and `OperationCtx::now()` SHALL return
+The dispatcher SHALL evaluate the Procedure's declared `Clock` exactly once per
+`run` invocation, before user code executes, and `ProcedureCtx::now()` SHALL return
 that single value for the entire invocation. The static `Clock::now()` entry point
 SHALL NOT exist on the trait surface.
 
@@ -41,7 +41,7 @@ SHALL NOT exist on the trait surface.
 
 #### Scenario: WallClock reads dispatch-entry time
 
-- **WHEN** an Operation declares `type Clock = WallClock` and `run` calls
+- **WHEN** a Procedure declares `type Clock = WallClock` and `run` calls
   `ctx.now()`
 - **THEN** the value is the system time read at dispatch entry for that invocation
 
@@ -55,7 +55,7 @@ SHALL depend only on the input.
 #### Scenario: Event time is replay-stable
 
 - **WHEN** the same input is dispatched twice (original run and replay) to an
-  Operation declaring `EventTimeFrom<F>`
+  Procedure declaring `EventTimeFrom<F>`
 - **THEN** `ctx.now()` returns the identical value in both invocations
 
 #### Scenario: Extractor sees the dispatched input
@@ -65,7 +65,7 @@ SHALL depend only on the input.
 
 ### Requirement: LogicalClock serves the durable change sequence
 
-`LogicalClock` SHALL be fully wired: `ctx.now()` returns the Segment's current
+`LogicalClock` SHALL be fully wired: `ctx.now()` returns the Entity's current
 durable change sequence (the same counter that orders WAL records and is re-armed
 from the WAL on restore). The semantics (version-like, advances with applied
 changes, replay-stable across crash-restore) SHALL be stated in the spec-level
@@ -73,7 +73,7 @@ documentation.
 
 #### Scenario: Logical time survives crash-restore
 
-- **WHEN** a Segment with `LogicalClock` has applied changes up to seq 42, the
+- **WHEN** an Entity with `LogicalClock` has applied changes up to seq 42, the
   runner restarts, and state is restored via the restore handshake
 - **THEN** the next invocation's `ctx.now()` reflects seq 42, not a reset counter
 
@@ -85,8 +85,8 @@ documentation.
 
 ### Requirement: Deterministic stable identifiers via `ctx.stable_id()`
 
-`OperationCtx::stable_id()` SHALL return a 128-bit identifier derived by a frozen,
-library-independent algorithm from the Segment identity, the current change
+`ProcedureCtx::stable_id()` SHALL return a 128-bit identifier derived by a frozen,
+library-independent algorithm from the Entity identity, the current change
 sequence, and a per-invocation call ordinal. Repeated calls within one invocation
 SHALL return distinct values; the n-th call in a replayed invocation SHALL return
 the identical value as the n-th call in the original invocation.
@@ -114,23 +114,23 @@ build-time clock rejection.
 - **WHEN** an operative is built whose declared Clock configuration cannot be
   served by the runtime
 - **THEN** registration fails with a typed error naming the clock type, and no
-  Segment is started
+  Entity is started
 
 ### Requirement: Harness verifies replay-equal emits with an injectable clock
 
-`OperationTestHarness` SHALL provide a replay-emit verification that runs the same
+`ProcedureTestHarness` SHALL provide a replay-emit verification that runs the same
 input sequence twice from equivalent starting state and asserts the two serialized
 emit streams are byte-identical. The harness SHALL be able to inject a fixed or
 scripted wall-clock source so WallClock operatives are testable deterministically.
 
 #### Scenario: Deterministic operative passes
 
-- **WHEN** an Operation using only ctx-mediated time and identifiers is checked
+- **WHEN** a Procedure using only ctx-mediated time and identifiers is checked
 - **THEN** the replay-emit verification passes
 
 #### Scenario: Injected clock makes WallClock testable
 
-- **WHEN** the harness injects a fixed wall-clock value and a WallClock Operation
+- **WHEN** the harness injects a fixed wall-clock value and a WallClock Procedure
   is checked
 - **THEN** both passes observe the same `ctx.now()` value and the verification
   compares emits meaningfully

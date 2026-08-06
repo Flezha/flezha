@@ -192,8 +192,8 @@ of its own. The published map includes:
   (all subtract from `producing_operatives`; `/healthz` composes the degraded
   reason from `output_stalled` / `plugin_unhealthy` / `intent_mismatch`)
 - `stuck_operatives` — the producing-liveness verdicts
-  (`StallClassifier.classify_producing/3` over per-Segment durable progress
-  markers read from `Flezha.State.Watchdog.segment_statuses/0` at tick
+  (`StallClassifier.classify_producing/3` over per-Entity durable progress
+  markers read from `Flezha.State.Watchdog.entity_statuses/0` at tick
   cadence). Every verdict carries the fed precondition: an operative whose
   markers are flat with no input arriving is **IDLE** and counts as
   producing (`/healthz` stays healthy); one that is fed but whose markers
@@ -254,7 +254,7 @@ of its own. The published map includes:
 | `[:flezha, :convergence, :tick]` | `%{operatives_total, actions_issued, duration_ms}` | `%{state: :ticking \| :error}` |
 | `[:flezha, :convergence, :heal]` | `%{count}` | `%{primitive, namespace, target}` |
 | `[:flezha, :convergence, :safe_call]` | `%{count}` | `%{result, server, …probe fields}` |
-| `[:flezha, :convergence, :operative_stuck]` | `%{count: 1}` | `%{operative_id, detail, segment}` — emitted once per fresh STUCK verdict, not on steady state |
+| `[:flezha, :convergence, :operative_stuck]` | `%{count: 1}` | `%{operative_id, detail, entity}` — emitted once per fresh STUCK verdict, not on steady state |
 | `[:flezha, :convergence, :intent_mismatch]` | `%{count}` | `%{operatives}` — emitted when the mismatch list changes to a non-empty value |
 
 Both new events are bridged onto the observability bus as `:flezha_convergence`

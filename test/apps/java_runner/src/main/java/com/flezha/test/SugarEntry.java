@@ -1,15 +1,15 @@
 package com.flezha.test;
 
-import com.flezha.sdk.authoring.Operation;
-import com.flezha.sdk.authoring.SegmentFor;
+import com.flezha.sdk.authoring.Procedure;
+import com.flezha.sdk.authoring.EntitiesFor;
 import java.util.List;
 
-/** Static-segmented entry operation of the 2-operation reference operative. */
-@Operation(id = "sugar_static_entry_operation", keys = {"a", "b", "c", "d"})
+/** Static-entity entry procedure of the 2-procedure reference operative. */
+@Procedure(id = "sugar_static_entry_procedure", keys = {"a", "b", "c", "d"})
 public class SugarEntry {
 
-    @SegmentFor
-    public List<String> segmentFor(String input) {
+    @EntitiesFor
+    public List<String> entitiesFor(String input) {
         char c = input.isEmpty() ? ' ' : input.charAt(0);
         return switch (c) {
             case 'a' -> List.of("a");

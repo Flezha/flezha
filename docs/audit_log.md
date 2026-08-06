@@ -1,4 +1,4 @@
-# Durable audit log (`platform-audit-log`)
+# Durable audit log (`audit-log`)
 
 The audit-log subsystem layers a durable, append-only sink on top of
 the observability foundation. It subscribes to a configurable

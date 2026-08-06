@@ -21,9 +21,9 @@ import java.util.TreeSet;
 import javax.annotation.Nonnull;
 
 /**
- * Kryo-backed serializer for per-Segment state and per-Segment Change
+ * Kryo-backed serializer for per-Entity state and per-Entity Change
  * payloads. Constructed once per {@code UnboundedOperativeInstance}; the {@code userTypes}
- * list aggregates the {@code Operation.kryoTypes()} returns across every Operation in
+ * list aggregates the {@code Procedure.kryoTypes()} returns across every Procedure in
  * the UnboundedOperative class.
  *
  * <p>Stable type IDs are essential for cross-version compatibility under
@@ -50,7 +50,7 @@ public final class KryoCodec {
 
     /**
      * Built-in registrations. Stable IDs occupy the low IDs (0-N); user types
-     * land at N+1, N+2, ... in the order returned by {@code Operation.kryoTypes()}.
+     * land at N+1, N+2, ... in the order returned by {@code Procedure.kryoTypes()}.
      */
     private static void registerBuiltins(Kryo kryo) {
         // Common containers and primitives. Kryo's defaults handle primitives

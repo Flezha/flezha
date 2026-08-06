@@ -1,13 +1,13 @@
 package com.flezha.sdk.channel;
 
-import com.flezha.sdk.operation.Operation;
+import com.flezha.sdk.procedure.Procedure;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import javax.annotation.Nonnull;
 
 /**
- * An operation's output stream handle, returned by {@code .into(Op.class)}:
+ * A procedure's output stream handle, returned by {@code .into(Proc.class)}:
  * a lightweight reference into the operative's topology builder.
  *
  * <ul>
@@ -28,11 +28,11 @@ import javax.annotation.Nonnull;
  * </ul>
  *
  * <p>The channel out of a node is created lazily on first use of the handle
- * and named by the node's identity string (the operation's {@code name()}, or
+ * and named by the node's identity string (the procedure's {@code name()}, or
  * the explicit node name given at wiring time) unless {@link #named(String)}
  * overrides it.
  *
- * <p>Handles are only usable inside {@code channels()} / {@code operations()}:
+ * <p>Handles are only usable inside {@code channels()} / {@code procedures()}:
  * the topology freezes at registration and a retained handle used afterwards
  * throws {@link IllegalStateException} naming the operative.
  *
@@ -44,30 +44,30 @@ import javax.annotation.Nonnull;
 public abstract class Stream<T> {
 
     /**
-     * Wire a consumer operation onto this stream's channel and return
+     * Wire a consumer procedure onto this stream's channel and return
      * <b>the consumer's</b> output stream handle. The runtime verifies at
-     * registration that the operation's {@code inputType()} equals this
+     * registration that the procedure's {@code inputType()} equals this
      * stream's payload type (the producer's declared {@code outputType()});
-     * a mismatch fails registration naming both operations and both types.
+     * a mismatch fails registration naming both procedures and both types.
      *
      * <p>Calling {@code .into} on the same held handle repeatedly declares
      * fan-out; wiring the same unnamed class from two streams declares fan-in.
      */
     @Nonnull
-    public abstract <O> Stream<O> into(@Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operation);
+    public abstract <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure);
 
     /**
      * Like {@link #into(Class)}, but the consumer is a distinct <b>named
      * node</b>: its identity string is {@code nodeName} instead of the
-     * operation's {@code name()}, for every purpose identity serves —
-     * per-segment state directories, journal entries, the derived channel
-     * name, diagnostics. This lets one Operation class appear at several
+     * procedure's {@code name()}, for every purpose identity serves —
+     * per-entity state directories, journal entries, the derived channel
+     * name, diagnostics. This lets one Procedure class appear at several
      * graph positions with independent state. Node identity strings are
      * unique per operative; a collision fails registration.
      */
     @Nonnull
     public abstract <O> Stream<O> into(
-            @Nonnull Class<? extends Operation<T, ?, O, ?, ?, ?>> operation, @Nonnull String nodeName);
+            @Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure, @Nonnull String nodeName);
 
     /**
      * Override the auto-derived channel name (the producer node's identity)
@@ -89,9 +89,9 @@ public abstract class Stream<T> {
 
     /**
      * Declare a codec for this channel's payload, using the SDK's default
-     * JSON serialization. <b>Required</b> on every inter-operation channel of
+     * JSON serialization. <b>Required</b> on every inter-procedure channel of
      * a durable structured bounded operative — the handoff between two
-     * operations is journaled at the op barrier and re-seeded from that blob
+     * procedures is journaled at the proc barrier and re-seeded from that blob
      * on crash-resume.
      */
     @Nonnull
@@ -102,7 +102,7 @@ public abstract class Stream<T> {
     public abstract Stream<T> codecWith(@Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder);
 
     /**
-     * Override the per-kind default {@link OverflowPolicy}. Inter-operation
+     * Override the per-kind default {@link OverflowPolicy}. Inter-procedure
      * channels default to {@link OverflowPolicy#BLOCK}; switch to a drop
      * policy when ordering can be sacrificed for liveness.
      */
@@ -124,7 +124,7 @@ public abstract class Stream<T> {
     public abstract Stream<T> retryBackoffMs(long baseMs);
 
     /**
-     * Attach a plugin sink alongside inter-operation fan-out: typed values
+     * Attach a plugin sink alongside inter-procedure fan-out: typed values
      * still reach {@code .into(...)} consumers, and a serialized copy is
      * published to the named plugin. The serializer is invoked once per emit
      * regardless of consumer count. Declaring a second sink on the same

@@ -7,21 +7,21 @@ import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.handlers.AddOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.AssignRunnerIdHandler;
 import com.flezha.sdk.runtime.control.handlers.BoundedStopHandler;
-import com.flezha.sdk.runtime.control.handlers.CompactSegmentHandler;
+import com.flezha.sdk.runtime.control.handlers.CompactEntityHandler;
 import com.flezha.sdk.runtime.control.handlers.ConnectSocketHandler;
 import com.flezha.sdk.runtime.control.handlers.CreditGrantHandler;
 import com.flezha.sdk.runtime.control.handlers.CreditWindowInitHandler;
+import com.flezha.sdk.runtime.control.handlers.EntityApplyStateHandler;
+import com.flezha.sdk.runtime.control.handlers.EntityMailboxStatusHandler;
+import com.flezha.sdk.runtime.control.handlers.EntityStateHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationDeserializationHandler;
 import com.flezha.sdk.runtime.control.handlers.MigrationSerializationHandler;
-import com.flezha.sdk.runtime.control.handlers.OperationMessageHandler;
+import com.flezha.sdk.runtime.control.handlers.OperativeMessageHandler;
 import com.flezha.sdk.runtime.control.handlers.ParkPayloadAckHandler;
 import com.flezha.sdk.runtime.control.handlers.PingHandler;
 import com.flezha.sdk.runtime.control.handlers.RemOperativeHandler;
 import com.flezha.sdk.runtime.control.handlers.RestoreInitStateHandler;
 import com.flezha.sdk.runtime.control.handlers.RunnerDisconnectHandler;
-import com.flezha.sdk.runtime.control.handlers.SegmentApplyStateHandler;
-import com.flezha.sdk.runtime.control.handlers.SegmentMailboxStatusHandler;
-import com.flezha.sdk.runtime.control.handlers.SegmentStateHandler;
 import com.flezha.sdk.runtime.framing.Frame;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.google.protobuf.ByteString;
@@ -53,19 +53,19 @@ public final class CommandRouter {
         mut.put(CommandRequest.CommandCase.CONNECT_SOCKET, new ConnectSocketHandler());
         mut.put(CommandRequest.CommandCase.ADD_OPERATIVE, new AddOperativeHandler());
         mut.put(CommandRequest.CommandCase.REM_OPERATIVE, new RemOperativeHandler());
-        mut.put(CommandRequest.CommandCase.SEGMENT_STATE, new SegmentStateHandler());
+        mut.put(CommandRequest.CommandCase.ENTITY_STATE, new EntityStateHandler());
         mut.put(CommandRequest.CommandCase.MIGRATION_SERIALIZATION, new MigrationSerializationHandler());
         mut.put(CommandRequest.CommandCase.MIGRATION_DESERIALIZATION, new MigrationDeserializationHandler());
         mut.put(CommandRequest.CommandCase.RUNNER_DISCONNECT, new RunnerDisconnectHandler());
-        mut.put(CommandRequest.CommandCase.OPERATION_MESSAGE, new OperationMessageHandler());
-        mut.put(CommandRequest.CommandCase.SEGMENT_APPLY_STATE, new SegmentApplyStateHandler());
-        // State-persistence handlers added by operative-state-persistence-java.
+        mut.put(CommandRequest.CommandCase.OPERATIVE_MESSAGE, new OperativeMessageHandler());
+        mut.put(CommandRequest.CommandCase.ENTITY_APPLY_STATE, new EntityApplyStateHandler());
+        // State-persistence handlers added by operative-state-persistence.
         // The matching CommandCase enum constants land in the protobuf
         // codegen once the .proto regenerates; the lookups are resolved
         // reflectively to keep this file resilient to a stale codegen jar.
         registerCase(mut, "RESTORE_INIT_STATE", new RestoreInitStateHandler());
-        registerCase(mut, "COMPACT_SEGMENT", new CompactSegmentHandler());
-        registerCase(mut, "SEGMENT_MAILBOX_STATUS", new SegmentMailboxStatusHandler());
+        registerCase(mut, "COMPACT_ENTITY", new CompactEntityHandler());
+        registerCase(mut, "ENTITY_MAILBOX_STATUS", new EntityMailboxStatusHandler());
         // Cold-restart end-to-end health probe (fix-overwatch-restart-storm).
         // Resolved reflectively because the protobuf codegen jar may lag the
         // .proto file in a partial-deploy window.
@@ -109,15 +109,15 @@ public final class CommandRouter {
         // SDK is the sender of. Both short-circuit the response write.
         switch (request.getCommandCase()) {
             case RUNNER_SHUTDOWN_ACK:
-                // The bounded driver blocks on these at its op / iteration barriers;
+                // The bounded driver blocks on these at its proc / iteration barriers;
                 // they carry the originating request's reference_id so the right
                 // waiter wakes.
-            case OP_COMMIT_RESPONSE:
+            case PROC_COMMIT_RESPONSE:
             case ITER_COMMIT_RESPONSE:
                 AckRegistry.complete(request.getReferenceId());
                 return;
             case SPAWN_BOUNDED_RESPONSE:
-                // Operation-requested spawn resolved: wake the requester's
+                // Procedure-requested spawn resolved: wake the requester's
                 // SpawnHandle with the outcome the controller settled on.
                 com.flezha.sdk.proto.SpawnBoundedResponse spawn = request.getSpawnBoundedResponse();
                 if (spawn.getError().isEmpty()) {
@@ -125,7 +125,7 @@ public final class CommandRouter {
                 } else {
                     AckRegistry.fail(
                             request.getReferenceId(),
-                            new com.flezha.sdk.operation.SpawnException.Refused(spawn.getError()));
+                            new com.flezha.sdk.procedure.SpawnException.Refused(spawn.getError()));
                 }
                 return;
             case RUNNER_SHUTDOWN_NOTIFICATION:

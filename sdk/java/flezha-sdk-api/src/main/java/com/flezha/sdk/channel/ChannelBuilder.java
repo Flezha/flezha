@@ -6,17 +6,17 @@ import javax.annotation.Nonnull;
 /**
  * Producer-first fluent graph builder consumed by
  * {@link com.flezha.sdk.operative.UnboundedOperative#channels(ChannelBuilder)}
- * (and by bounded {@code operations(...)} authoring).
+ * (and by bounded {@code procedures(...)} authoring).
  *
  * <p>{@code c.input(T.class, "name").into(A.class).into(B.class).output("sink")}
- * — {@code .into} wires a consumer and returns that operation's <b>output
+ * — {@code .into} wires a consumer and returns that procedure's <b>output
  * stream handle</b> ({@link Stream}), so a linear pipeline is one chained
  * expression. Branching is handle reuse (hold the handle in a variable and
  * wire it twice) or the equivalent {@link Stream#branch} sugar. Fan-in is two
  * streams naming the same consumer class.
  *
  * <p>Entry channel names stay explicit and mandatory — they are the
- * operative's external input address. Inter-operation channel names
+ * operative's external input address. Inter-procedure channel names
  * auto-derive from the producer node's identity, with {@link Stream#named}
  * as the override. Declarations land in a per-operative topology the runtime
  * freezes at registration.
@@ -49,7 +49,7 @@ public interface ChannelBuilder {
     <T> EntryChannel<T> input(@Nonnull Class<T> type, @Nonnull String name, @Nonnull Function<byte[], T> parser);
 
     /**
-     * Open a <b>merged</b> subscription: one operation whose {@code Input} is
+     * Open a <b>merged</b> subscription: one procedure whose {@code Input} is
      * the sum type {@code type}, fed by two or more source channels that each
      * supply a mapping into it. See {@link Merge}.
      */
@@ -59,7 +59,7 @@ public interface ChannelBuilder {
     /**
      * Opt this Operative into the <b>effectively-once output tier</b>: each
      * invocation's state changes, plugin outputs and consumed input offset ship
-     * as ONE {@code segment_effect_record}, which the controller persists as one
+     * as ONE {@code entity_effect_record}, which the controller persists as one
      * WAL record under one fsync. A crash can then never advance the consumed
      * offset while losing the state or the output it was advanced for.
      *
@@ -75,7 +75,7 @@ public interface ChannelBuilder {
      * {@code ctx.checkpoint()}, rather than after every invocation.
      *
      * <p>The interval between checkpoints is the work a crash replays and the
-     * work the controller's input log must retain. In exchange, a Segment whose
+     * work the controller's input log must retain. In exchange, an Entity whose
      * state is only coherent at a boundary (a closed window, a completed batch)
      * never persists a half-built view of it.
      *
@@ -87,9 +87,9 @@ public interface ChannelBuilder {
 
     /**
      * Declare that this Operative corrects itself when an input arrives late:
-     * an input whose event time falls behind the Segment's event-time high-water
+     * an input whose event time falls behind the Entity's event-time high-water
      * mark, but by less than {@code windowMs}, triggers the controller to rewind
-     * the Segment to a baseline before that event time and replay the affected
+     * the Entity to a baseline before that event time and replay the affected
      * slice in event-time order.
      *
      * <p>The window is a promise the controller must be able to keep: it sizes

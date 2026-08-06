@@ -6,18 +6,18 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks the per-segment state-init method on a {@link Operation} class:
- * {@code State name(java.util.Optional<String> operationKey)}. The generated operation
- * delegates {@code initState} to it, passing the segment's operation key (absent
- * in single-segment mode and the test-harness default), instead of returning
+ * Marks the per-entity state-init method on a {@link Procedure} class:
+ * {@code State name(java.util.Optional<String> entityKey)}. The generated procedure
+ * delegates {@code initState} to it, passing the entity's procedure key (absent
+ * in single-entity mode and the test-harness default), instead of returning
  * {@code new State()}.
  *
- * <p>Use it when a segment's starting state is a function of its key — e.g. a
- * statically-segmented operation whose window length or bucket span is encoded in
- * the operation key. Requires a stateful {@code run} (a {@code @State} handle
- * parameter); declaring it on a stateless operation is a compile-time error. The
+ * <p>Use it when an entity's starting state is a function of its key — e.g. a
+ * statically-entity procedure whose window length or bucket span is encoded in
+ * the procedure key. Requires a stateful {@code run} (a {@code @State} handle
+ * parameter); declaring it on a stateless procedure is a compile-time error. The
  * restore payload stays runtime-applied after {@code initState} returns, so the
- * method never sees it. Mirrors Rust's {@code #[flezha::operation(init = fn)]}.
+ * method never sees it. Mirrors Rust's {@code #[flezha::procedure(init = fn)]}.
  */
 @Retention(RetentionPolicy.SOURCE)
 @Target(ElementType.METHOD)

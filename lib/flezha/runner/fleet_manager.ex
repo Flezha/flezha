@@ -120,7 +120,7 @@ defmodule Flezha.Runner.FleetManager do
 
   @doc """
   Clear the `stream_ref` on this runner's `ControlChannel` so the existing
-  rebind machinery (see `executor-controller-connection-healing`) picks up
+  rebind machinery (see `runner-controller-connection-healing`) picks up
   the next data stream the SDK opens. Called by
   `Flezha.Operative.Overwatch` after an end-to-end ping fails, indicating the
   controller-side `ControlChannel` is alive but its underlying transport
@@ -137,7 +137,7 @@ defmodule Flezha.Runner.FleetManager do
   @doc """
   Re-issue `ConnectSocket` to `runner_id` so the SDK re-opens its data
   sockets; the `StreamAcceptor` binds the fresh streams to the unbound
-  `StreamChannel`s (see `executor-controller-connection-healing`). Used by the
+  `StreamChannel`s (see `runner-controller-connection-healing`). Used by the
   reconciler to heal a operative whose data stream dropped (`stream_ref: nil`).
 
   Returns `:ok`, or `{:error, :no_control_unit}` when the runner's control
@@ -461,7 +461,7 @@ defmodule Flezha.Runner.FleetManager do
   # session token, so a reconnect re-points the prior session's bindings onto
   # the new token (flip the Registry tag + seed the new StreamChannels — the
   # same primitives the convergence Heal uses) and then closes the old session
-  # (newest-wins, `executor-identity-and-session` D5). A first connect just
+  # (newest-wins, `runner-identity-and-session` D5). A first connect just
   # records the mapping; a degraded runner with no stable id connects fresh.
   defp resolve_stable_identity(state, _namespace, nil, _session_token), do: state
 
@@ -470,7 +470,7 @@ defmodule Flezha.Runner.FleetManager do
       case Map.get(state.stable_sessions, stable_id) do
         old_session when is_binary(old_session) and old_session != session_token ->
           # Unbind-old BEFORE bind-new: once the fence returns, nothing the
-          # superseded session forwards can land in any Segment WAL, so no
+          # superseded session forwards can land in any Entity WAL, so no
           # window exists in which both sessions hold a writable binding.
           fence_superseded_session(old_session)
           swap_bindings(namespace, old_session, session_token)
@@ -485,7 +485,7 @@ defmodule Flezha.Runner.FleetManager do
 
   # The write-path fence, in refusal order: mark the session superseded (the
   # WalWriter-side gate), then synchronously flip each of its StreamChannels
-  # off the Segment write path. Bounded calls — a wedged channel must not
+  # off the Entity write path. Bounded calls — a wedged channel must not
   # block the connect; its late-flushed frames are refused by the mark instead.
   defp fence_superseded_session(old_session) do
     mark_session_superseded(old_session)

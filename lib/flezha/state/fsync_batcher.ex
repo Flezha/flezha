@@ -38,18 +38,18 @@ defmodule Flezha.State.FsyncBatcher do
   # `server` defaults to the shared singleton; tests pass an isolated
   # instance to assert coalescing without the 5 ms background tick.
   @spec mark_dirty(tuple(), GenServer.server()) :: :ok
-  def mark_dirty(segment_id, server \\ __MODULE__) do
-    GenServer.cast(server, {:mark_dirty, segment_id})
+  def mark_dirty(entity_id, server \\ __MODULE__) do
+    GenServer.cast(server, {:mark_dirty, entity_id})
   end
 
   @doc """
-  Drop any pending dirty mark for `segment_id`. Called when a Segment
+  Drop any pending dirty mark for `entity_id`. Called when an Entity
   is hard-deleted so the next tick does not try to fsync a writer that is
   being torn down.
   """
   @spec forget(tuple(), GenServer.server()) :: :ok
-  def forget(segment_id, server \\ __MODULE__) do
-    GenServer.cast(server, {:forget, segment_id})
+  def forget(entity_id, server \\ __MODULE__) do
+    GenServer.cast(server, {:forget, entity_id})
   end
 
   @doc """
@@ -100,12 +100,12 @@ defmodule Flezha.State.FsyncBatcher do
   end
 
   @impl true
-  def handle_cast({:mark_dirty, segment_id}, state) do
-    {:noreply, %{state | dirty_set: MapSet.put(state.dirty_set, segment_id)}}
+  def handle_cast({:mark_dirty, entity_id}, state) do
+    {:noreply, %{state | dirty_set: MapSet.put(state.dirty_set, entity_id)}}
   end
 
-  def handle_cast({:forget, segment_id}, state) do
-    {:noreply, %{state | dirty_set: MapSet.delete(state.dirty_set, segment_id)}}
+  def handle_cast({:forget, entity_id}, state) do
+    {:noreply, %{state | dirty_set: MapSet.delete(state.dirty_set, entity_id)}}
   end
 
   @impl true
@@ -133,8 +133,8 @@ defmodule Flezha.State.FsyncBatcher do
   defp drain(state) do
     count = MapSet.size(state.dirty_set)
 
-    Enum.each(state.dirty_set, fn segment_id ->
-      case Supervisor.lookup(segment_id) do
+    Enum.each(state.dirty_set, fn entity_id ->
+      case Supervisor.lookup(entity_id) do
         {:ok, pid} ->
           # `try` because a writer can exit between `mark_dirty/1` and the tick.
           try do

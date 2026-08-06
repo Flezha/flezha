@@ -261,7 +261,7 @@ every call returns `{:error, :observability_disabled}`.
 `subscribe/2`, `enable_source/2`, and `disable_source/2` emit an
 audit `:event` signal on the `:observability_service` source
 recording the action, the caller `:source`, and the optional
-`request_id`. This is the seam that the future `platform-audit-log`
+`request_id`. This is the seam that the future `audit-log`
 change consumes.
 
 ## Configuration knobs

@@ -1,10 +1,10 @@
 package com.flezha.examples;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.RestoreInitPayload;
@@ -13,25 +13,25 @@ import com.flezha.sdk.state.WallClock;
 import java.util.Optional;
 
 /**
- * <b>09 — one operation, two input channels.</b>
+ * <b>09 — one procedure, two input channels.</b>
  *
- * <p>An operation whose behaviour must change while it runs has, without a
+ * <p>A procedure whose behaviour must change while it runs has, without a
  * merge, only bad options: restart the operative with new environment (losing
  * the state it was accumulating), or staple the configuration onto every data
  * payload (coupling the producer to the consumer's knobs).
  *
- * <p>{@code c.merge(I.class)} declares the operation's input as one sum type
+ * <p>{@code c.merge(I.class)} declares the procedure's input as one sum type
  * and gives each source channel a mapping into it. Everything downstream —
- * {@code run}, {@code segmentFor}, state, emit — sees exactly one type, so
- * nothing else about the operation changes. Sources may be entry channels (as
- * here) or other operations' output streams, freely mixed.
+ * {@code run}, {@code entitiesFor}, state, emit — sees exactly one type, so
+ * nothing else about the procedure changes. Sources may be entry channels (as
+ * here) or other procedures' output streams, freely mixed.
  *
  * <p>Two things worth knowing before reaching for it:
  *
  * <ul>
  *   <li><b>Per-source FIFO only.</b> Readings arrive in order and thresholds
  *       arrive in order, but nothing orders one against the other. Correlate in
- *       state, as {@code DetectorOperation} does by remembering the last
+ *       state, as {@code DetectorProcedure} does by remembering the last
  *       threshold it saw.</li>
  *   <li><b>The mappings must be pure.</b> They run again on WAL replay, and a
  *       replay that mapped differently would rebuild a state the live run never
@@ -63,7 +63,7 @@ public final class E09_MergedInput {
         }
     }
 
-    /** Mutable per-Segment state, folded from the changes below. */
+    /** Mutable per-Entity state, folded from the changes below. */
     public static final class DetectorState {
         /** The safe default until the config channel says otherwise: an
          * operative that starts before its config must not alert on everything. */
@@ -79,8 +79,8 @@ public final class E09_MergedInput {
         }
     }
 
-    public static final class DetectorOperation
-            implements Operation<DetectorInput, DetectorState, String, DetectorChange, WallClock, Void> {
+    public static final class DetectorProcedure
+            implements Procedure<DetectorInput, DetectorState, String, DetectorChange, WallClock, Void> {
 
         @Override
         public String name() {
@@ -113,7 +113,7 @@ public final class E09_MergedInput {
         }
 
         @Override
-        public DetectorState initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public DetectorState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new DetectorState();
         }
 
@@ -126,8 +126,8 @@ public final class E09_MergedInput {
         }
 
         @Override
-        public void run(DetectorInput input, StateHandle<DetectorState, DetectorChange> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(DetectorInput input, StateHandle<DetectorState, DetectorChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
             if (input.threshold().isPresent()) {
                 state.apply(
                         new DetectorChange(Optional.of(input.threshold().get().maxCelsius()), false));
@@ -150,11 +150,11 @@ public final class E09_MergedInput {
         @Override
         public void channels(ChannelBuilder c) {
             // Two entry channels, one consumer. Either source may equally be
-            // another operation's output stream — `from` takes both.
+            // another procedure's output stream — `from` takes both.
             c.merge(DetectorInput.class)
                     .from(c.input(Reading.class, "readings"), DetectorInput::ofReading)
                     .from(c.input(Threshold.class, "config"), DetectorInput::ofThreshold)
-                    .into(DetectorOperation.class)
+                    .into(DetectorProcedure.class)
                     .named("alerts")
                     .output("alerts_sink");
         }

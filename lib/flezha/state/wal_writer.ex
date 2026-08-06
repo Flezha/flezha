@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalWriter do
   @moduledoc """
-  Per-Segment `GenServer` wrapping a single open WAL file handle.
+  Per-Entity `GenServer` wrapping a single open WAL file handle.
 
   Each appended record is `<<seq::64-big, len::32-big, header::binary,
   change_bytes::binary, crc32::32-big>>` where `len = 16 + byte_size(change_bytes)`
@@ -10,7 +10,7 @@ defmodule Flezha.State.WalWriter do
   `Flezha.State.FsyncBatcher` which drives the actual `:file.datasync/1`
   on its tick cadence. High-watermark crossings emit a telemetry event
   (`[:flezha, :state, :wal, :backpressure]`) that section-9 wiring picks
-  up to ship the wire-level `SegmentMailboxStatus`.
+  up to ship the wire-level `EntityMailboxStatus`.
   """
 
   use GenServer, restart: :transient
@@ -23,10 +23,10 @@ defmodule Flezha.State.WalWriter do
 
   @header_size 16
   @reservoir_capacity 1024
-  @reserved_segment_keys Registry.reserved_segment_keys()
+  @reserved_entity_keys Registry.reserved_entity_keys()
 
   defstruct [
-    :segment_id,
+    :entity_id,
     :file_handle,
     :wal_path,
     :last_persisted_seq,
@@ -61,13 +61,13 @@ defmodule Flezha.State.WalWriter do
     # Highest seq of an OUTPUT-BEARING effect record queued. Producing-liveness
     # compares it against `outbox_flushed_seq` to see an outbox that accumulates
     # without draining. It must count only output-bearing records:
-    # `outbox_durable_seq` advances on every fsynced record, so a Segment that
+    # `outbox_durable_seq` advances on every fsynced record, so an Entity that
     # persists state but emits nothing would read as a frozen outbox forever.
     :outbox_last_seq
   ]
 
   @type t :: %__MODULE__{
-          segment_id: Registry.segment_id(),
+          entity_id: Registry.entity_id(),
           file_handle: :file.io_device(),
           wal_path: binary(),
           last_persisted_seq: integer(),
@@ -95,7 +95,7 @@ defmodule Flezha.State.WalWriter do
   Liveness view consumed by `Flezha.State.Watchdog`. `last_advance_at`
   moves only when `last_persisted_seq` increases; `last_change_seen_at`
   moves on every received Change frame (append, duplicate, or gap). A
-  Segment is *stalled* (vs idle) when Changes are still arriving but
+  Entity is *stalled* (vs idle) when Changes are still arriving but
   the persisted seq has stopped advancing. `wal_size_bytes` /
   `oldest_unsnapshotted_at` / `owning_runner` feed the Watchdog's
   size+age compaction triggers without a second disk scan.
@@ -113,8 +113,8 @@ defmodule Flezha.State.WalWriter do
 
   # ---------- Public API ----------
 
-  def start_link(segment_id) do
-    GenServer.start_link(__MODULE__, segment_id, name: via(segment_id))
+  def start_link(entity_id) do
+    GenServer.start_link(__MODULE__, entity_id, name: via(entity_id))
   end
 
   @doc """
@@ -171,7 +171,7 @@ defmodule Flezha.State.WalWriter do
   def truncate_up_to(server, seq), do: GenServer.call(server, {:truncate_up_to, seq})
 
   @doc """
-  Rewind the Segment to `seq` under `epoch`: keep the records at or below it,
+  Rewind the Entity to `seq` under `epoch`: keep the records at or below it,
   drop the snapshots above it, and re-seat the outbox on the survivors.
 
   The non-destructive sibling of the realign wipe. A realign discards a stale
@@ -206,7 +206,7 @@ defmodule Flezha.State.WalWriter do
   the replay too, which is what re-ordering it means.
 
   `{:error, :nothing_to_correct}` when no record is at or after the target —
-  the input is not actually late for this Segment.
+  the input is not actually late for this Entity.
   """
   @spec correction_baseline(GenServer.server(), non_neg_integer()) ::
           {:ok, %{seq: integer(), consumed_offset: integer()}} | {:error, :nothing_to_correct}
@@ -235,8 +235,8 @@ defmodule Flezha.State.WalWriter do
   @spec close(GenServer.server()) :: :ok
   def close(server), do: GenServer.stop(server, :normal)
 
-  defp via(segment_id) do
-    {:via, Elixir.Registry, {Flezha.State.Supervisor.registry_name(), segment_id}}
+  defp via(entity_id) do
+    {:via, Elixir.Registry, {Flezha.State.Supervisor.registry_name(), entity_id}}
   end
 
   # ---------- Encode / decode ----------
@@ -300,7 +300,7 @@ defmodule Flezha.State.WalWriter do
   # ---------- GenServer ----------
 
   @impl true
-  def init(segment_id) do
+  def init(entity_id) do
     Process.flag(:trap_exit, true)
     now = :erlang.monotonic_time(:millisecond)
 
@@ -310,9 +310,9 @@ defmodule Flezha.State.WalWriter do
     # continue runs before any queued append, so appends queue in this writer's
     # mailbox — never the channel's. `-1` is the "no records yet" seq sentinel.
     state = %__MODULE__{
-      segment_id: segment_id,
+      entity_id: entity_id,
       file_handle: nil,
-      wal_path: Registry.wal_path(segment_id),
+      wal_path: Registry.wal_path(entity_id),
       last_persisted_seq: -1,
       last_advance_at: now,
       last_change_seen_at: now,
@@ -323,7 +323,7 @@ defmodule Flezha.State.WalWriter do
       low_watermark: low_watermark(),
       hard_watermark: hard_watermark(),
       pending_msg_cap: pending_msg_cap(),
-      metrics: Metrics.for_segment(segment_id),
+      metrics: Metrics.for_entity(entity_id),
       latency_reservoir: :queue.new(),
       backpressured?: false,
       shedding?: false,
@@ -364,12 +364,12 @@ defmodule Flezha.State.WalWriter do
     # Restart re-drive (effectively-once): every durable effect record above
     # the flush cursor re-enters the outbox queue with identical identity —
     # a stale cursor widens the re-drive (sink dedup absorbs), never skips.
-    dedup = Outbox.read(state.segment_id)
+    dedup = Outbox.read(state.entity_id)
     {redrive, max_consumed} = scan_effect_records_above(file, dedup.outbox_flushed_seq)
 
     if is_integer(max_consumed) do
-      {rc, _sh, _pk} = state.segment_id
-      InputLog.record_consumed(rc, state.segment_id, max_consumed)
+      {rc, _sh, _pk} = state.entity_id
+      InputLog.record_consumed(rc, state.entity_id, max_consumed)
     end
 
     state = %{
@@ -400,7 +400,7 @@ defmodule Flezha.State.WalWriter do
   def handle_call({:append, seq, header, change_bytes, runner_id}, _from, state) do
     # Every received Change frame — accepted, deduped, realigned, or rejected
     # as a gap — proves the SDK is still emitting, which distinguishes a
-    # stalled Segment from a genuinely idle one for the watchdog.
+    # stalled Entity from a genuinely idle one for the watchdog.
     now = :erlang.monotonic_time(:millisecond)
     state = %{state | last_change_seen_at: now}
 
@@ -430,9 +430,9 @@ defmodule Flezha.State.WalWriter do
 
       seq != state.last_persisted_seq + 1 and state.last_persisted_seq == -1 ->
         # Empty-WAL gap: a cold takeover — this controller holds no baseline
-        # for a Segment the live runner already has state for. Not a
+        # for an Entity the live runner already has state for. Not a
         # protocol violation: shed the frame and pull a full-state baseline
-        # via CompactSegment instead of disconnecting the SDK.
+        # via CompactEntity instead of disconnecting the SDK.
         {:reply, :awaiting_baseline, await_baseline(state, seq, runner_id)}
 
       seq != state.last_persisted_seq + 1 ->
@@ -492,7 +492,7 @@ defmodule Flezha.State.WalWriter do
     # Only the snapshots ABOVE the boundary die. The ones at or below it are
     # exactly the baselines a restore to `seq` needs — dropping them all, as a
     # realign does, would be a wipe, not a rewind.
-    Enum.each(Registry.snapshot_paths(state.segment_id), fn {snap_seq, path} ->
+    Enum.each(Registry.snapshot_paths(state.entity_id), fn {snap_seq, path} ->
       if snap_seq > seq, do: File.rm(path)
     end)
 
@@ -513,8 +513,8 @@ defmodule Flezha.State.WalWriter do
     now = :erlang.monotonic_time(:millisecond)
     Metrics.put(state.metrics, :wal_size_bytes, size)
     Metrics.put(state.metrics, :wal_seq, seq)
-    Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.segment_id))
-    emit_rewind(state.segment_id, state.last_persisted_seq, seq, epoch)
+    Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.entity_id))
+    emit_rewind(state.entity_id, state.last_persisted_seq, seq, epoch)
 
     state = %{
       state
@@ -629,21 +629,21 @@ defmodule Flezha.State.WalWriter do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
       {:reply, {:error, {:gap, expected: expected, got: got}}, new_state} ->
         release_credit(credit_opts)
-        {rc, sh, pk} = new_state.segment_id
+        {rc, sh, pk} = new_state.entity_id
 
         :telemetry.execute(
           [:flezha, :state, :seq_gap],
           %{expected: expected, got: got},
-          %{operative: rc, operation: sh, key: pk}
+          %{operative: rc, procedure: sh, key: pk}
         )
 
         # Resync (a RestoreInitState handshake / WAL replay) runs in a separate
         # process so it never blocks this writer's append queue — and so the
         # test resync fun may re-enter `append/5` without self-deadlock.
-        segment_id = new_state.segment_id
+        entity_id = new_state.entity_id
 
         spawn(fn ->
-          Recovery.resync(segment_id, runner_id: runner_id, reason: :seq_gap)
+          Recovery.resync(entity_id, runner_id: runner_id, reason: :seq_gap)
         end)
 
         {:noreply, new_state}
@@ -700,7 +700,7 @@ defmodule Flezha.State.WalWriter do
     # from the WAL scan on boot).
     state = maybe_queue_effect(state, seq, header, change_bytes)
 
-    FsyncBatcher.mark_dirty(state.segment_id)
+    FsyncBatcher.mark_dirty(state.entity_id)
 
     new_pending = state.pending_bytes + size
 
@@ -743,10 +743,10 @@ defmodule Flezha.State.WalWriter do
           }
 
         {:error, reason} ->
-          {rc, sh, pk} = state.segment_id
+          {rc, sh, pk} = state.entity_id
 
           Logger.warning(
-            "[wal] effect record body undecodable segment=#{rc}/#{sh}/#{pk} " <>
+            "[wal] effect record body undecodable entity=#{rc}/#{sh}/#{pk} " <>
               "seq=#{seq}: #{inspect(reason)} — outputs not flushed"
           )
 
@@ -758,7 +758,7 @@ defmodule Flezha.State.WalWriter do
   end
 
   # Dispatch every leading durable entry, in seq order, to the operative's
-  # `:on_output` chain with the durable identity `(flz.segment, outbox_seq,
+  # `:on_output` chain with the durable identity `(flz.entity, outbox_seq,
   # epoch)`. Undispatchable (Overwatch not yet bound) → bounded retry timer;
   # the queue is bounded by the credit window like the un-fsynced buffer.
   defp try_dispatch_outbox(state) do
@@ -770,7 +770,7 @@ defmodule Flezha.State.WalWriter do
         state
 
       {:value, _entry} ->
-        {rc, _sh, _pk} = state.segment_id
+        {rc, _sh, _pk} = state.entity_id
 
         case ClassRegistry.overwatch_pid(rc) do
           {:ok, pid} -> dispatch_outbox_entries(state, pid)
@@ -798,14 +798,14 @@ defmodule Flezha.State.WalWriter do
   end
 
   defp dispatch_one_effect(state, pid, entry) do
-    {rc, sh, pk} = state.segment_id
+    {rc, sh, pk} = state.entity_id
 
     entry.outputs
     |> Enum.with_index()
     |> Enum.each(fn {output, ordinal} ->
       stamps =
         Wire.output_stamps(%{
-          segment: state.segment_id,
+          entity: state.entity_id,
           seq: "#{entry.seq}.#{ordinal}",
           epoch: state.outbox_epoch,
           channel: output.channel,
@@ -830,8 +830,8 @@ defmodule Flezha.State.WalWriter do
         {:ok, _ref} =
           Flezha.Dlq.Store.append(%{
             operative_class: rc,
-            operation_id: sh,
-            segment_key: pk,
+            procedure_id: sh,
+            entity_key: pk,
             channel: dlq.channel,
             origin_offset: entry.consumed_offset,
             error: dlq.error,
@@ -842,7 +842,7 @@ defmodule Flezha.State.WalWriter do
 
     # Durable consumed-offset: advances the input-log min-watermark.
     if is_integer(entry.consumed_offset) do
-      InputLog.record_consumed(rc, state.segment_id, entry.consumed_offset)
+      InputLog.record_consumed(rc, state.entity_id, entry.consumed_offset)
     end
   end
 
@@ -855,15 +855,15 @@ defmodule Flezha.State.WalWriter do
 
   # Advance the dedup file (persistence watermark + flush cursor + epoch)
   # with one atomic tmp+rename — at most once per fsync batch. The reserved
-  # per-instance identities (op-journal, durable inbox) skip it: neither carries
-  # effect records, and the dedup side-file would register a phantom Segment
+  # per-instance identities (proc-journal, durable inbox) skip it: neither carries
+  # effect records, and the dedup side-file would register a phantom Entity
   # with `Registry.scan_dir/1`.
-  defp persist_dedup(%{segment_id: {_, _, key}} = state) when key in @reserved_segment_keys,
+  defp persist_dedup(%{entity_id: {_, _, key}} = state) when key in @reserved_entity_keys,
     do: state
 
   defp persist_dedup(state) do
     _ =
-      Outbox.write(state.segment_id, %{
+      Outbox.write(state.entity_id, %{
         last_persisted_seq: max(state.last_persisted_seq, 0),
         outbox_flushed_seq: state.outbox_flushed_seq,
         epoch: state.outbox_epoch
@@ -890,12 +890,12 @@ defmodule Flezha.State.WalWriter do
     if MapSet.member?(state.refused_sessions, runner_id) do
       state
     else
-      {rc, sh, pk} = state.segment_id
+      {rc, sh, pk} = state.entity_id
 
       :telemetry.execute(
         [:flezha, :state, :stale_writer_refused],
         %{count: 1},
-        %{operative: rc, operation: sh, key: pk, session: runner_id}
+        %{operative: rc, procedure: sh, key: pk, session: runner_id}
       )
 
       %{state | refused_sessions: MapSet.put(state.refused_sessions, runner_id)}
@@ -923,9 +923,9 @@ defmodule Flezha.State.WalWriter do
     {:ok, _} = :file.position(state.file_handle, 0)
     :ok = :file.truncate(state.file_handle)
 
-    Enum.each(Registry.snapshot_paths(state.segment_id), fn {_seq, path} -> File.rm(path) end)
+    Enum.each(Registry.snapshot_paths(state.entity_id), fn {_seq, path} -> File.rm(path) end)
 
-    emit_realign(state.segment_id, state.last_persisted_seq, seq, runner_id)
+    emit_realign(state.entity_id, state.last_persisted_seq, seq, runner_id)
 
     Metrics.put(state.metrics, :wal_size_bytes, 0)
     Metrics.put(state.metrics, :snapshot_seq, 0)
@@ -954,7 +954,7 @@ defmodule Flezha.State.WalWriter do
 
   # The half a realign and a rewind share: re-seat the outbox cursors on the new
   # lineage and persist the epoch bump **synchronously**. That `persist_dedup`
-  # is the commit point of both operations — it is what stops an output
+  # is the commit point of both procedures — it is what stops an output
   # regenerated above the boundary from colliding with its own pre-boundary
   # delivery, because the two now key under different epochs.
   #
@@ -974,8 +974,8 @@ defmodule Flezha.State.WalWriter do
   end
 
   # Cold-takeover shed: no baseline on this controller, so the frame can't
-  # append. Count it and, once per episode, drive a CompactSegment pull via
-  # `Recovery.resync` (routes to the pull because the Segment has no
+  # append. Count it and, once per episode, drive a CompactEntity pull via
+  # `Recovery.resync` (routes to the pull because the Entity has no
   # persisted state). The pulled snapshot encodes the shed deltas' effects.
   defp await_baseline(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
@@ -983,18 +983,18 @@ defmodule Flezha.State.WalWriter do
     if state.awaiting_baseline? do
       state
     else
-      {rc, sh, pk} = state.segment_id
+      {rc, sh, pk} = state.entity_id
 
       :telemetry.execute(
         [:flezha, :state, :baseline_seed],
         %{first_seq: seq},
-        %{operative: rc, operation: sh, key: pk, runner: runner_id}
+        %{operative: rc, procedure: sh, key: pk, runner: runner_id}
       )
 
-      segment_id = state.segment_id
+      entity_id = state.entity_id
 
       spawn(fn ->
-        Recovery.resync(segment_id, runner_id: runner_id, reason: :baseline_seed)
+        Recovery.resync(entity_id, runner_id: runner_id, reason: :baseline_seed)
       end)
 
       %{state | awaiting_baseline?: true}
@@ -1017,7 +1017,7 @@ defmodule Flezha.State.WalWriter do
     :telemetry.execute(
       [:flezha, :state, :wal_realign],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operative: rc, operation: sh, key: pk, runner: runner_id}
+      %{operative: rc, procedure: sh, key: pk, runner: runner_id}
     )
   end
 
@@ -1041,7 +1041,7 @@ defmodule Flezha.State.WalWriter do
       {:ok, _} = ok -> ok
       {:error, _} = err -> err
       # The fold ran off the end: nothing is at or after the target, so the input
-      # is not actually late for this Segment.
+      # is not actually late for this Entity.
       {_seq, _offset} -> {:error, :nothing_to_correct}
     end
   end
@@ -1066,24 +1066,24 @@ defmodule Flezha.State.WalWriter do
     :telemetry.execute(
       [:flezha, :state, :wal_rewind],
       %{from_seq: from_seq, to_seq: to_seq},
-      %{operative: rc, operation: sh, key: pk, epoch: epoch}
+      %{operative: rc, procedure: sh, key: pk, epoch: epoch}
     )
   end
 
-  defp highest_snapshot_seq(segment_id) do
-    case Registry.snapshot_paths(segment_id) do
+  defp highest_snapshot_seq(entity_id) do
+    case Registry.snapshot_paths(entity_id) do
       [] -> 0
       paths -> paths |> List.last() |> elem(0)
     end
   end
 
-  # The rewound records are the ones that reported this Segment's consumed
+  # The rewound records are the ones that reported this Entity's consumed
   # offsets, so the input-log watermark it advanced is now a claim about inputs
   # nothing has consumed. Lower it, or the next retention sweep truncates away
   # the very inputs the correction is about to replay.
   defp rewind_input_watermark(state, max_consumed) do
-    {operative_class, _, _} = state.segment_id
-    InputLog.rewind_consumed(operative_class, state.segment_id, max_consumed || -1)
+    {operative_class, _, _} = state.entity_id
+    InputLog.rewind_consumed(operative_class, state.entity_id, max_consumed || -1)
   end
 
   # ---------- Scan / rewrite helpers ----------
@@ -1096,7 +1096,7 @@ defmodule Flezha.State.WalWriter do
   contract every reader here shares.
 
   The one place the `decode_record/2` recursion lives. The framing is shared by
-  the Segment WAL, the input log, the op-journal and the retention rewriter, and
+  the Entity WAL, the input log, the proc-journal and the retention rewriter, and
   each of them used to carry its own copy of this loop.
   """
   @spec fold_records(:file.io_device(), acc, ({non_neg_integer(), binary(), binary()}, acc ->
@@ -1128,7 +1128,7 @@ defmodule Flezha.State.WalWriter do
   """
   @spec scan_for_last_valid_seq(:file.io_device(), binary()) :: integer()
   def scan_for_last_valid_seq(device, _wal_path) do
-    # `-1`, not `0`, for an empty WAL: the SDK's per-Segment seq is 0-based
+    # `-1`, not `0`, for an empty WAL: the SDK's per-Entity seq is 0-based
     # (`change_seq` starts at 0), so a `0` floor makes the dedup guard
     # (`seq <= last_persisted_seq`) drop the very first change (seq 0) of every
     # operative. `-1` is the same "no records yet" sentinel `realign_epoch` uses.
@@ -1157,7 +1157,7 @@ defmodule Flezha.State.WalWriter do
   # re-drive set (already durable, dispatched once the Overwatch resolves).
   # One pass over the WAL's effect records: the re-drive set (records above
   # the flush cursor, oldest first, already durable) plus the highest
-  # consumed-offset across ALL effect records — the Segment's durable
+  # consumed-offset across ALL effect records — the Entity's durable
   # input-log watermark, repopulated at open (the ETS is a rebuildable cache).
   defp scan_effect_records_above(device, cursor) do
     {acc, max_consumed} =
@@ -1231,7 +1231,7 @@ defmodule Flezha.State.WalWriter do
   # ---------- Hard bound (shed) ----------
 
   # Last-resort safety net above the soft watermark: cooperative SDKs throttle on
-  # `SegmentMailboxStatus` first; only a slow disk or a non-cooperating SDK
+  # `EntityMailboxStatus` first; only a slow disk or a non-cooperating SDK
   # reaches here. Covers un-fsynced bytes AND mailbox depth — a cast flood grows
   # the mailbox even when bytes-per-record is small.
   defp over_hard_bound?(state) do
@@ -1257,28 +1257,28 @@ defmodule Flezha.State.WalWriter do
     # (the stream ledger refuses the overrun first) — a shed here is a
     # protocol anomaly, not back-pressure.
     if state.credit_active? do
-      {rc, sh, pk} = state.segment_id
+      {rc, sh, pk} = state.entity_id
 
       :telemetry.execute(
         [:flezha, :state, :credit_anomaly],
         %{count: 1},
-        %{kind: :shed, operative: rc, operation: sh, key: pk, runner: runner_id}
+        %{kind: :shed, operative: rc, procedure: sh, key: pk, runner: runner_id}
       )
     end
 
     if state.shedding? do
       state
     else
-      {rc, sh, pk} = state.segment_id
+      {rc, sh, pk} = state.entity_id
 
       :telemetry.execute(
         [:flezha, :state, :seq_gap],
         %{expected: state.last_persisted_seq + 1, got: seq},
-        %{operative: rc, operation: sh, key: pk}
+        %{operative: rc, procedure: sh, key: pk}
       )
 
-      segment_id = state.segment_id
-      spawn(fn -> Recovery.resync(segment_id, runner_id: runner_id, reason: :shed) end)
+      entity_id = state.entity_id
+      spawn(fn -> Recovery.resync(entity_id, runner_id: runner_id, reason: :shed) end)
       %{state | shedding?: true}
     end
   end
@@ -1301,7 +1301,7 @@ defmodule Flezha.State.WalWriter do
 
   # Emit the telemetry event AND ship the wire signal. The telemetry
   # event is for in-process observers (metrics, debug); the wire signal
-  # routes through the producing Operation's `OverflowPolicy` machinery on
+  # routes through the producing Procedure's `OverflowPolicy` machinery on
   # the SDK side. A credit-speaking session gets no wire signal: its
   # back-pressure is carried entirely by the credit ledger (the sender parks
   # on window exhaustion), so only the telemetry event is emitted.
@@ -1309,16 +1309,16 @@ defmodule Flezha.State.WalWriter do
     :telemetry.execute(
       [:flezha, :state, :wal, :backpressure],
       %{pending_bytes: pending},
-      %{segment_id: state.segment_id, status: status}
+      %{entity_id: state.entity_id, status: status}
     )
 
     # Routing needs the owning runner (`nil` until the first Change lands,
     # in which case there is no session to signal).
     with false <- state.credit_active?,
-         {rc, sh, pk} <- state.segment_id,
+         {rc, sh, pk} <- state.entity_id,
          runner_id when is_binary(runner_id) <- state.owning_runner do
       _ =
-        Flezha.Operative.Overwatch.notify_segment_backpressure(
+        Flezha.Operative.Overwatch.notify_entity_backpressure(
           {runner_id, rc, sh, pk},
           status
         )

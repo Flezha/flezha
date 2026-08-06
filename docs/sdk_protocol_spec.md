@@ -199,46 +199,46 @@ For each (key, value) pair:
 |---|---|---|
 | `input_type` | Controller → SDK | Wire format of the entry-channel payload — `"1"` for binary (default), `"2"` for UTF-8 text. The SDK converts the payload bytes to the entry channel's declared payload type: `Vec<u8>`/`byte[]` passthrough, `String` UTF-8, any other type via the channel's entry parser (default JSON or a custom `input_with` parser — `sdk-graph-authoring` typed entries). |
 | `channel` | Controller → SDK | Names the Operative's entry channel that should receive this input. If absent, the SDK falls back to the Operative's first declared input channel. |
-| `channel` | SDK → Controller | Set by `OperationCtx::emit` on plugin-bound and hybrid channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
-| `flz.segment` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the emitting Segment as `<operative_instance_id>/<operation_name>/<segment_key>` (empty key for single-mode). Replay-stable. |
-| `flz.seq` | SDK → Controller | Output-identity stamp on `.keyed()` channels: `<change_seq>.<emit_ordinal>` — the Segment's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation. See "Output identity stamps" below for the exactness boundary. |
-| `flz.key` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the caller's natural key from `OperationCtx::emit_keyed(key, value)`. Replay-stable by the determinism contract. |
-| `flz.offset` | Controller → SDK | Effectively-once tier: the durable input-log offset assigned to this forwarded input. The SDK threads it through dispatch (including inter-operation emits) so the invocation's effect record carries it back as its consumed-offset. Absent outside the tier. |
-| `flz.epoch` | Controller → plugins | Effectively-once tier: the Segment's WAL realign epoch, stamped (with `flz.segment` and the durable `flz.seq` = `outbox_seq`) on every output the fsync-gated outbox flush dispatches. Its presence marks a tier output; `(flz.segment, flz.seq, flz.epoch)` is the exact dedup identity. |
+| `channel` | SDK → Controller | Set by `ProcedureCtx::emit` on plugin-bound and hybrid channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
+| `flz.entity` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the emitting Entity as `<operative_instance_id>/<procedure_name>/<entity_key>` (empty key for single-mode). Replay-stable. |
+| `flz.seq` | SDK → Controller | Output-identity stamp on `.keyed()` channels: `<change_seq>.<emit_ordinal>` — the Entity's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation. See "Output identity stamps" below for the exactness boundary. |
+| `flz.key` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the caller's natural key from `ProcedureCtx::emit_keyed(key, value)`. Replay-stable by the determinism contract. |
+| `flz.offset` | Controller → SDK | Effectively-once tier: the durable input-log offset assigned to this forwarded input. The SDK threads it through dispatch (including inter-procedure emits) so the invocation's effect record carries it back as its consumed-offset. Absent outside the tier. |
+| `flz.epoch` | Controller → plugins | Effectively-once tier: the Entity's WAL realign epoch, stamped (with `flz.entity` and the durable `flz.seq` = `outbox_seq`) on every output the fsync-gated outbox flush dispatches. Its presence marks a tier output; `(flz.entity, flz.seq, flz.epoch)` is the exact dedup identity. |
 
 The `channel` metadata key replaces the pre-`operative-mvp-rust` `plugin_group: u8` integer key. v1 sends the channel name as a UTF-8 string; an integer fast-path is reserved for a future change.
 
 Channel names on the wire are unchanged in shape by the graph-builder
 authoring surface (`sdk-graph-authoring`): a non-entry channel's name is
-auto-derived from the producer node's identity (the operation's `name()`, or
+auto-derived from the producer node's identity (the procedure's `name()`, or
 the explicit node name) unless `.named(...)` overrides it, and entry names
 stay explicit. Derived names come from hand-written identity strings, so
 renaming a language class never changes a wire or on-disk name.
 
 The `flz.` prefix is a protected namespace: user-supplied metadata keys
 beginning with `flz.` are rejected at emit time with a typed
-`OperationError::ReservedMetadataKey`, on every emit variant, so runtime
+`ProcedureError::ReservedMetadataKey`, on every emit variant, so runtime
 stamps can never be spoofed or clobbered. Stamps are appended after user
 metadata. Channels not declared `.keyed()` carry no stamps and their wire
 frames are byte-identical to the pre-identity layout.
 
-Hybrid channels (declared with `also_output_with(...)` / `alsoOutput(...)` — see `docs/operative_architecture.md` "Hybrid channels: inter-operation fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`output(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
+Hybrid channels (declared with `also_output_with(...)` / `alsoOutput(...)` — see `docs/operative_architecture.md` "Hybrid channels: inter-procedure fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`output(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
 
-#### Per-Segment mailbox is bounded; on full, the channel's `OverflowPolicy` applies
+#### Per-Entity mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 
-The SDK's per-Segment mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue` allocated at operative startup. When the controller dispatches a frame to an Operative whose targeted Segment's mailbox is full, the SDK applies the channel's declared `OverflowPolicy`: `Block` (producer drains the full mailbox inline when no drainer is actively running, else parks briefly and retries — no frame is lost), `DropNewest` (frame discarded, counter incremented), or `DropOldest` (consumer's mailbox evicts its oldest item and accepts the new one, counter incremented). The default entry-channel policy is `DropNewest` — **the SDK silently drops frames when an Operative's entry mailbox is saturated**, and the wire-reader thread continues servicing sibling Operatives sharing the same physical connection. Under `Block` a producer never parks indefinitely: when the slot's drain exists only as a queued pool task, the producer becomes the drainer itself (parking there self-deadlocks a fully-blocked worker pool — the 2026-06-10 production freeze). `Block` requires an acyclic operation graph. See `docs/operative_architecture.md` "Backpressure and bounded mailboxes" for the full contract — capacity declaration, default policies by channel kind, and the per-Segment counter set.
+The SDK's per-Entity mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue` allocated at operative startup. When the controller dispatches a frame to an Operative whose targeted Entity's mailbox is full, the SDK applies the channel's declared `OverflowPolicy`: `Block` (producer drains the full mailbox inline when no drainer is actively running, else parks briefly and retries — no frame is lost), `DropNewest` (frame discarded, counter incremented), or `DropOldest` (consumer's mailbox evicts its oldest item and accepts the new one, counter incremented). The default entry-channel policy is `DropNewest` — **the SDK silently drops frames when an Operative's entry mailbox is saturated**, and the wire-reader thread continues servicing sibling Operatives sharing the same physical connection. Under `Block` a producer never parks indefinitely: when the slot's drain exists only as a queued pool task, the producer becomes the drainer itself (parking there self-deadlocks a fully-blocked worker pool — the 2026-06-10 production freeze). `Block` requires an acyclic procedure graph. See `docs/operative_architecture.md` "Backpressure and bounded mailboxes" for the full contract — capacity declaration, default policies by channel kind, and the per-Entity counter set.
 
 #### State migration JSON shape
 
-`MigrationSerialization` / `MigrationDeserialization` / `SegmentState` / `SegmentApplyState` carry a JSON blob whose shape is:
+`MigrationSerialization` / `MigrationDeserialization` / `EntityState` / `EntityApplyState` carry a JSON blob whose shape is:
 
-- Single-mode operations (no `operation_keys()` declared):
+- Single-mode procedures (no `entity_keys()` declared):
   ```json
-  {"<operation_name>": <state>}
+  {"<procedure_name>": <state>}
   ```
-- Static-mode operations (`operation_keys()` non-empty):
+- Static-mode procedures (`entity_keys()` non-empty):
   ```json
-  {"<operation_name>": {"<operation_key>": <state>, ...}}
+  {"<procedure_name>": {"<entity_key>": <state>, ...}}
   ```
 
 This is a wire-format break vs the pre-`operative-mvp-rust` flat `<state>` shape. State portability across the cutover is out of scope (umbrella Non-Goal 2 / `operative-state-migration`); the hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs.
@@ -281,10 +281,10 @@ message CommandRequest {
         RemOperative rem_operative = 5;
         MigrationSerialization migration_serialization = 6;
         MigrationDeserialization migration_deserialization = 7;
-        SegmentState segment_state = 8;
+        EntityState entity_state = 8;
         RunnerDisconnect runner_disconnect = 9;
-        OperationMessage operation_message = 10;
-        SegmentApplyState segment_apply_state = 11;
+        OperativeMessage operative_message = 10;
+        EntityApplyState entity_apply_state = 11;
         RunnerShutdownNotification runner_shutdown_notification = 12;
         RunnerShutdownAck runner_shutdown_ack = 13;
     }
@@ -336,23 +336,23 @@ message MigrationDeserialization {
     bytes serialized_state = 3;
 }
 
-message SegmentState {
+message EntityState {
     string operative_id = 1;
 }
 
 message RunnerDisconnect {}
 
-message OperationMessage {
+message OperativeMessage {
     string operative_id = 1;
     bytes payload = 2;
 }
 
-message OperationMessageResponse {
+message OperativeMessageResponse {
     bytes payload = 1;
     string error = 2;
 }
 
-message SegmentApplyState {
+message EntityApplyState {
     string operative_id = 1;
     string factory_id = 2;
     bytes state_binary = 3;
@@ -638,7 +638,7 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 |-------|-------|
 | Direction | SDK -> Controller (same `control_command` envelope as `RunnerReconnected`) |
 | Proto message | `BoundedCompleted { operative_id: string, status: string, error: string }` |
-| Behavior | Emitted when a bounded-kind operative's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished operative leaves the durable registry; an errored operative is torn down identically (terminal — the platform never re-runs the operative; a structured chain's per-segment retry ladder runs *inside* the run, before this) and surfaced via `[:flezha, :bounded, :failed]`. |
+| Behavior | Emitted when a bounded-kind operative's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished operative leaves the durable registry; an errored operative is torn down identically (terminal — the platform never re-runs the operative; a structured chain's per-entity retry ladder runs *inside* the run, before this) and surfaced via `[:flezha, :bounded, :failed]`. |
 | Response | None (one-way notification; old Controllers ignore the unknown variant) |
 
 Both SDKs are at parity on this contract: the Rust and Java SDKs each read the
@@ -659,12 +659,12 @@ stream — identical across both SDKs.
 | Response raw_data | empty |
 | Possible errors | `"Operative not found"` |
 
-### SegmentState
+### EntityState
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `SegmentState { operative_id: string }` |
+| Proto message | `EntityState { operative_id: string }` |
 | Behavior | SDK serializes the operative's current state using `bin_serialize_state()` and returns the JSON bytes |
 | Response status | `"success"` on success, `"error"` if operative not found |
 | Response raw_data | JSON-serialized operative state bytes |
@@ -700,18 +700,18 @@ stream — identical across both SDKs.
 | Response status | `"success"` |
 | Response raw_data | empty |
 
-### OperationMessage
+### OperativeMessage
 
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `OperationMessage { operative_id: string, payload: bytes }` |
-| Behavior | SDK locates the operative by id and invokes the factory's `handle_message(payload)` hook. The return value (reply bytes on success, error string on failure) is wrapped into a protobuf-encoded `OperationMessageResponse` and written as the outer `CommandResponse.raw_data`. Factories that do not override `handle_message` return the default "unsupported" error — mis-routing is loud, not silent. |
+| Proto message | `OperativeMessage { operative_id: string, payload: bytes }` |
+| Behavior | SDK locates the operative by id and invokes the factory's `handle_message(payload)` hook. The return value (reply bytes on success, error string on failure) is wrapped into a protobuf-encoded `OperativeMessageResponse` and written as the outer `CommandResponse.raw_data`. Factories that do not override `handle_message` return the default "unsupported" error — mis-routing is loud, not silent. |
 | Response status | `"success"` when the operative was found; `"error"` only when the operative id is unknown |
-| Response raw_data | Protobuf-encoded `OperationMessageResponse { payload: bytes, error: string }` — an empty `error` means success and the controller reads `payload`; a non-empty `error` means the factory reported a failure and the controller discards `payload` |
-| Possible errors | `"Operative with id {id} not found"` (CommandResponse.errors); factory-supplied error string (OperationMessageResponse.error) |
+| Response raw_data | Protobuf-encoded `OperativeMessageResponse { payload: bytes, error: string }` — an empty `error` means success and the controller reads `payload`; a non-empty `error` means the factory reported a failure and the controller discards `payload` |
+| Possible errors | `"Operative with id {id} not found"` (CommandResponse.errors); factory-supplied error string (OperativeMessageResponse.error) |
 
-The controller SHALL treat a non-empty `OperationMessageResponse.error` as an
+The controller SHALL treat a non-empty `OperativeMessageResponse.error` as an
 error condition regardless of `payload` contents. Used by the
 [operative-message-handlers](../docs/operative_message_handlers.md)
 mechanism — specifically the first-party
@@ -1119,23 +1119,23 @@ The SDK automatically reconnects when the control channel drops unexpectedly. Se
 **Controller-side keepalive:** The controller preserves runner state for a configurable window (default 30000ms, via `FLEZHA_RUNNER_KEEPALIVE`) after detecting a disconnect. If a new SDK process with the same namespace connects within this window, the controller may migrate preserved operatives to the new runner.
 
 
-## Per-Segment State Persistence
+## Per-Entity State Persistence
 
 The persistence subsystem reserves the data-stream payload-ids below and
 eight control commands. Both directions and all wire shapes are settled
-here and implemented in `operative-state-persistence-controller`
+here and implemented in `operative-state-persistence`
 (credit-grant flow control added the three `Credit*` commands;
-`effectively-once-output` added `segment_effect_record`).
+`effectively-once-output` added `entity_effect_record`).
 
-### Data-stream payload-id `segment_state_change`
+### Data-stream payload-id `entity_state_change`
 
-SDK → controller. Carries one Change record destined for the per-Segment
+SDK → controller. Carries one Change record destined for the per-Entity
 WAL. Frame layout (matches `Flezha.State.Wire.decode_frame/1` and
-`flezha_runner::segment::flusher::build_segment_state_change_frame`):
+`flezha_runner::entity::flusher::build_entity_state_change_frame`):
 
 ```
-[segment_id_len: u16 BE]
-[segment_id_bytes]
+[entity_id_len: u16 BE]
+[entity_id_bytes]
 [seq:              u64 BE]
 [header:           16 B  ]    <- HeaderTemplate::stamp output
 [body_len:         u32 BE]
@@ -1143,17 +1143,17 @@ WAL. Frame layout (matches `Flezha.State.Wire.decode_frame/1` and
 [crc32:            u32 BE]    <- crc32 over body
 ```
 
-`segment_id_bytes` is structured so the controller can route the record to
-the right per-Segment WAL file without a side-table mapping:
+`entity_id_bytes` is structured so the controller can route the record to
+the right per-Entity WAL file without a side-table mapping:
 
 ```
 [operative_class_len: u8   ][operative_class]
-[operation_id_len:    u8   ][operation_id]
-[segment_key_len:     u16 BE][segment_key]
+[procedure_id_len:    u8   ][procedure_id]
+[entity_key_len:     u16 BE][entity_key]
 ```
 
 The 16-byte header carries `sdk_lang = 1` (Rust) / `2` (Java), SDK
-version (BE u32), Operation `SCHEMA_VERSION` (BE u32), `format_id` (1 =
+version (BE u32), Procedure `SCHEMA_VERSION` (BE u32), `format_id` (1 =
 postcard for Rust, 4 = Kryo for Java), reserved bytes, and a CRC32
 over the body.
 
@@ -1163,10 +1163,10 @@ a Java SDK reading a header with `sdk_lang = 1` raises
 in reverse. Both SDKs reject unknown `format_id` values via the
 matching typed error.
 
-### Data-stream payload-id `segment_effect_record`
+### Data-stream payload-id `entity_effect_record`
 
 SDK → controller, effectively-once tier only. Same wire shape as
-`segment_state_change` with header `format_id = 2`; `body` is the postcard
+`entity_state_change` with header `format_id = 2`; `body` is the postcard
 `EffectRecordBody` — one invocation's state change(s), plugin outputs, and
 consumed input-log offset, persisted by the controller as ONE WAL record
 under ONE fsync window (the atomic effect record: state, outputs, and
@@ -1196,7 +1196,7 @@ DlqEntryBody {                           -- Some only for a parked poison payloa
 }
 ```
 
-`event_time` is the value the Operation's declared `Clock` evaluated to for that
+`event_time` is the value the Procedure's declared `Clock` evaluated to for that
 invocation — the extracted event time under `EventTimeFrom`, wall-clock ms under
 `WallClock`, the change seq under `LogicalClock`. It is what makes the
 controller's event-time → seq → input-offset lookup a *read*: late-input
@@ -1208,33 +1208,33 @@ A tier-on dead-letter park rides the SAME atomic
 record as its consumed-offset advance — typically `{no state change, dlq
 entry, consumed offset}` — so a crash can never advance the offset while
 losing the park. The controller materializes the DLQ store entry from
-the record after its fsync (idempotent on `segment_key@consumed_offset`)
+the record after its fsync (idempotent on `entity_key@consumed_offset`)
 and never sends a `ParkPayloadAck` for it: input-log crash-replay
 already guarantees the poison payload re-parks.
 
 In tier mode plugin emits never ride the primary stream — the controller
 dispatches them to the `:on_output` plugin chain only after the record's
-fsync completes, stamped with the durable identity `flz.segment`,
+fsync completes, stamped with the durable identity `flz.entity`,
 `flz.seq = <record WAL seq>.<emit ordinal>` (the `outbox_seq`), and
 `flz.epoch`. Effect records are never coalesced at drain time. Decoded
 controller-side by `Flezha.State.Wire.decode_effect_body/1`.
 
-### Data-stream payload-id `segment_state_snapshot`
+### Data-stream payload-id `entity_state_snapshot`
 
-SDK → controller. Same wire shape as `segment_state_change`; `body` is the
+SDK → controller. Same wire shape as `entity_state_change`; `body` is the
 postcard-encoded `Self::State` (full snapshot) instead of one Change.
-The controller writes the body to `<segment_key>.snap.<seq>` via the
+The controller writes the body to `<entity_key>.snap.<seq>` via the
 `.tmp → fsync → rename → truncate WAL up to seq` sequence.
 
 ### Data-stream payload-id `park_payload` (SDK → controller)
 
-Dead-letter park for tier-off sessions (`platform-dead-letter-queue`).
-When an operation invocation exhausts its input channel's retry budget
+Dead-letter park for tier-off sessions (`dead-letter-queue`).
+When a procedure invocation exhausts its input channel's retry budget
 (`retry_max`, default 3 total attempts, exponential backoff + jitter) —
 or returns a non-retryable error — the SDK ships this frame and holds
-the segment until the controller acks the park as durable
+the entity until the controller acks the park as durable
 (`ParkPayloadAck` below), re-sending on a 2 s cadence: park-then-advance,
-never a drop. Same outer frame layout as `segment_state_change` with a
+never a drop. Same outer frame layout as `entity_state_change` with a
 zero header; `body` is the postcard `ParkBody`:
 
 ```
@@ -1248,7 +1248,7 @@ ParkBody {
 ```
 
 The controller appends the entry to the durable DLQ store
-(`app_data/dlq/<operative_class>/<operation_id>/`), fsyncs, and only
+(`app_data/dlq/<operative_class>/<procedure_id>/`), fsyncs, and only
 then sends the ack. Appends are idempotent on origin identity
 (`channel:sha256(payload)` for tier-off parks), so ack-lost re-sends
 never duplicate an entry. Decoded controller-side by
@@ -1260,7 +1260,7 @@ field above.
 
 ```protobuf
 message RestoreInitState {
-    bytes segment_id             = 1;
+    bytes entity_id             = 1;
     bytes snapshot_bytes         = 2;
     bytes change_log_bytes       = 3;
     bool  has_compensation_intent = 4;  // saga crash-resume markers
@@ -1268,41 +1268,41 @@ message RestoreInitState {
 }
 ```
 
-The op-journal is **not** here — it is instance-scoped and rides
-`AddOperative.op_journal` (below). A durable bounded class with no
-per-Segment state has no Segment WAL, so it receives no
+The proc-journal is **not** here — it is instance-scoped and rides
+`AddOperative.proc_journal` (below). A durable bounded class with no
+per-Entity state has no Entity WAL, so it receives no
 `RestoreInitState` at all; a journal delivered on this frame would never
 arrive and the driver would resume at iteration 0 on every bind.
 
-### Control command `AddOperative.op_journal` (controller → SDK)
+### Control command `AddOperative.proc_journal` (controller → SDK)
 
-`op_journal` (absent unless the instance has a non-empty op-journal)
-carries the committed op indexes so a resumed durable structured bounded
-driver skips the operations already committed in the in-flight iteration
+`proc_journal` (absent unless the instance has a non-empty proc-journal)
+carries the committed proc indexes so a resumed durable structured bounded
+driver skips the procedures already committed in the in-flight iteration
 and enters the iteration after the last committed one, plus two handoff
 views:
 
 ```protobuf
-message OpEdgeHandoff {
-    uint32 op_idx                  = 1;
-    repeated OpHandoffItem handoff = 2;
+message ProcEdgeHandoff {
+    uint32 proc_idx                  = 1;
+    repeated ProcHandoffItem handoff = 2;
 }
 
-message OpJournalState {
-    repeated uint32 committed_op_idxs  = 1;
+message ProcJournalState {
+    repeated uint32 committed_proc_idxs  = 1;
     uint32 iter                        = 2;
-    repeated OpHandoffItem handoff     = 3;  // previous iteration's terminal batch
-    repeated OpCommittedOp committed_ops = 4;
+    repeated ProcHandoffItem handoff     = 3;  // previous iteration's terminal batch
+    repeated ProcCommittedProc committed_procs = 4;
     uint64 consumed_offset             = 5;
     bool   parked                      = 6;
     uint64 wake_deadline_ms            = 7;
-    repeated OpCommittedOp rewind_undo = 8;
-    repeated OpEdgeHandoff op_handoffs = 9;  // in-flight iteration, per op
+    repeated ProcCommittedProc rewind_undo = 8;
+    repeated ProcEdgeHandoff proc_handoffs = 9;  // in-flight iteration, per proc
 }
 ```
 
-- `op_handoffs` — what **each** operation committed in the in-flight
-  iteration released, keyed by its `op_idx`. An operation tree
+- `proc_handoffs` — what **each** procedure committed in the in-flight
+  iteration released, keyed by its `proc_idx`. A procedure tree
   (`bounded-branching`) re-seeds every uncommitted child branch from its
   own parent's edge, filtered to the channel that child consumes, so the
   latest commit's handoff alone would strand a sibling.
@@ -1310,7 +1310,7 @@ message OpJournalState {
   iteration N+1 of a handoff-chained loop.
 
 Both are channel-id-tagged codec bytes, decoded by the producing channel's
-inter-op codec at seed time — see `OpCommit` below.
+inter-proc codec at seed time — see `ProcCommit` below.
 
 Each record inside `change_log_bytes` uses the controller's on-disk WAL
 framing:
@@ -1323,51 +1323,51 @@ framing:
 [crc32:         u32 BE]    <- crc32 over header + change_bytes
 ```
 
-The SDK's `Operation::init_state(operation_key, Some(payload))` is invoked with
+The SDK's `Procedure::init_state(entity_key, Some(payload))` is invoked with
 the payload borrowed; the runtime decodes `snapshot_bytes` (when
 non-empty) into `Self::State` and folds the change-log records via
-`Operation::apply_change`.
+`Procedure::apply_change`.
 
 ### Control command `RestoreInitStateResponse` (SDK → controller)
 
 ```protobuf
 message RestoreInitStateResponse {
-    bytes  segment_id    = 1;
+    bytes  entity_id    = 1;
     uint64 terminal_seq  = 2;
 }
 ```
 
-The controller unblocks the Segment's input streaming after the response
-arrives. The next `segment_state_change` is expected to carry
+The controller unblocks the Entity's input streaming after the response
+arrives. The next `entity_state_change` is expected to carry
 `seq = terminal_seq + 1`.
 
-### Control command `CompactSegment` (controller → SDK)
+### Control command `CompactEntity` (controller → SDK)
 
 ```protobuf
-message CompactSegment {
-    bytes segment_id = 1;
+message CompactEntity {
+    bytes entity_id = 1;
 }
 ```
 
-Issued when `wal_size_bytes` exceeds `compact_after_bytes` (per-Operation,
+Issued when `wal_size_bytes` exceeds `compact_after_bytes` (per-Procedure,
 default 64 MiB) or when the runner runs `flz state rotate`. The SDK
-clones `Self::State` under the segment's sticky CAS, postcard-
-serializes it, ships the bytes via `segment_state_snapshot`, then
+clones `Self::State` under the entity's sticky CAS, postcard-
+serializes it, ships the bytes via `entity_state_snapshot`, then
 replies with:
 
 ```protobuf
-message CompactSegmentResponse {
-    bytes  segment_id          = 1;
+message CompactEntityResponse {
+    bytes  entity_id          = 1;
     uint64 snapshot_seq        = 2;
     uint64 snapshot_bytes_size = 3;
 }
 ```
 
-### Control command `SegmentMailboxStatus` (controller → SDK)
+### Control command `EntityMailboxStatus` (controller → SDK)
 
 ```protobuf
-message SegmentMailboxStatus {
-    bytes  segment_id   = 1;
+message EntityMailboxStatus {
+    bytes  entity_id   = 1;
     string status       = 2;   // "full" | "open"
 }
 ```
@@ -1375,7 +1375,7 @@ message SegmentMailboxStatus {
 One-way notification (no `CommandResponse`). The controller's `WalWriter`
 emits `"full"` when `pending_bytes` exceeds `wal_high_watermark_bytes`
 (default 16 MiB) and `"open"` when it falls below
-`wal_low_watermark_bytes` (default `high / 2`). The SDK's per-Segment
+`wal_low_watermark_bytes` (default `high / 2`). The SDK's per-Entity
 mailbox observer translates the signal into the channel's declared
 `OverflowPolicy`.
 
@@ -1395,13 +1395,13 @@ message CreditWindowInit {
 ```
 
 Offers credit-grant flow control for the runner's state stream. Emitted
-on the first `segment_state_change` frame of a stream attach (so the
+on the first `entity_state_change` frame of a stream attach (so the
 offer originates from the channel on the actual state path, and the
 window resolves per-Operative from that frame's class —
 `:credit_window_bytes`, default `wal_high_watermark_bytes`). The SDK
 acknowledges by returning an encoded `CreditWindowAck` as the
 `CommandResponse.raw_data`; on that ack the controller marks the session
-credit-speaking, stops shipping `SegmentMailboxStatus`, and enforces the
+credit-speaking, stops shipping `EntityMailboxStatus`, and enforces the
 per-stream byte ledger. A pre-credit SDK drops the unknown variant and
 never acks — the controller times out and the session keeps the legacy
 behaviour byte-for-byte. `FLEZHA_CREDIT_FLOW_CONTROL=false` (controller)
@@ -1418,7 +1418,7 @@ message CreditWindowAck {
 Returned as the `CommandResponse.raw_data` of `CreditWindowInit` (not as
 a standalone `CommandRequest`). Arming the window and sending the ack
 happen on the SDK's control coordinator; from then on every
-`segment_state_change` frame debits its full wire size from the window
+`entity_state_change` frame debits its full wire size from the window
 before the sink write, and an exhausted window parks the sending thread
 — park, never drop.
 
@@ -1456,98 +1456,98 @@ One-way durability ack for a `park_payload` data-stream frame (the
 generic `CommandResponse` it solicits is ignored). Sent only after the
 dead-letter entry is fsynced in the DLQ store; on receipt the SDK wakes
 the dispatch thread blocked in the park, drops the poison payload, and
-the segment advances to the next input. An SDK that never receives the
-ack (controller down, reconnect window) keeps the segment held and
+the entity advances to the next input. An SDK that never receives the
+ack (controller down, reconnect window) keeps the entity held and
 re-sends the park frame — delay, never loss.
 
-### Control command `OpCommit` (SDK → controller)
+### Control command `ProcCommit` (SDK → controller)
 
 ```protobuf
-message OpHandoffItem {
+message ProcHandoffItem {
     uint32 channel_id = 1;
     bytes  payload    = 2;   // channel codec bytes of one collected value
 }
 
-message OpOutboxItem {
-    bytes  segment_id = 1;   // wire identity of the producing segment
-    uint32 seq_in_op  = 2;   // that segment's emit order within the operation
+message ProcOutboxItem {
+    bytes  entity_id = 1;   // wire identity of the producing entity
+    uint32 seq_in_proc  = 2;   // that entity's emit order within the procedure
     string channel    = 3;   // producing plugin channel's name
     bytes  payload    = 4;   // serialized plugin-bound output
 }
 
-message OpCommit {
+message ProcCommit {
     string operative_id            = 1;
-    uint32 op_idx                  = 2;
+    uint32 proc_idx                  = 2;
     uint32 iter                    = 3;   // 0 for the single-pass chain
-    repeated bytes segments_ran    = 4;   // wire segment identities
-    repeated OpHandoffItem handoff = 5;
-    repeated OpOutboxItem outbox   = 6;   // staged plugin output
+    repeated bytes entities_ran    = 4;   // wire entity identities
+    repeated ProcHandoffItem handoff = 5;
+    repeated ProcOutboxItem outbox   = 6;   // staged plugin output
     bool compensating              = 7;   // undo record, not forward progress
 }
 ```
 
-Emitted at each operation barrier of a **durable structured** bounded
-operative (`bounded-op-journal`): operation `op_idx` completed forward
-and released the inter-op handoff batch, serialized through the
+Emitted at each procedure barrier of a **durable structured** bounded
+operative (`bounded-proc-journal`): procedure `proc_idx` completed forward
+and released the inter-proc handoff batch, serialized through the
 producing channel's byte codec (`.codec()` / `.codec_with(...)`,
 required at registration for durable structured classes). Direction is
 reversed like `RunnerShutdownNotification`: SDK → controller over the
 `"control_command"` payload_id. The driver **blocks** until the
-`OpCommitResponse` — the next operation must not race ahead of the
+`ProcCommitResponse` — the next procedure must not race ahead of the
 committed record. Opted-out classes (`PERSISTENCE_ENABLED = false`)
 skip the handshake entirely.
 
-`outbox` carries the operation's **staged** plugin-bound output
-(`bounded-transactional-outbox`). Inside a structured operation
-`ctx.emit` does not reach the wire: each segment buffers its serialized
-plugin output and it travels here, so a failed or aborted operation
+`outbox` carries the procedure's **staged** plugin-bound output
+(`bounded-transactional-outbox`). Inside a structured procedure
+`ctx.emit` does not reach the wire: each entity buffers its serialized
+plugin output and it travels here, so a failed or aborted procedure
 leaks nothing. The controller journals handoff AND outbox in ONE
-`op_committed` record (they cannot tear apart), and flushes the outbox
-to the bound plugins only after that fsync — see `OpCommitResponse`. The
+`proc_committed` record (they cannot tear apart), and flushes the outbox
+to the bound plugins only after that fsync — see `ProcCommitResponse`. The
 frame bound applies to the combined payload: an oversized handoff+outbox
 is refused with the same typed error. The `run`-sugar form (no
-operations, hence no barrier and no journal entry to gate on) keeps the
+procedures, hence no barrier and no journal entry to gate on) keeps the
 direct at-least-once wire path, as do opted-out classes.
 
 `compensating = true` marks the undo twin: a `compensate` hook's staged
-output for the already-committed operation `op_idx`, journaled as a
+output for the already-committed procedure `proc_idx`, journaled as a
 `compensated` entry and flushed with comp-marked keys. It is shipped
-BEFORE that segment's `compensation_done` marker, so a crash between the
+BEFORE that entity's `compensation_done` marker, so a crash between the
 two re-runs the (idempotent) hook rather than losing its undo output. The
-per-segment compensation markers remain the sole mechanism deciding
+per-entity compensation markers remain the sole mechanism deciding
 which hooks run on resume.
 
-### Control command `OpCommitResponse` (controller → SDK)
+### Control command `ProcCommitResponse` (controller → SDK)
 
 ```protobuf
-message OpCommitResponse {
+message ProcCommitResponse {
     string operative_id = 1;
-    uint32 op_idx       = 2;
+    uint32 proc_idx       = 2;
     string error        = 3;   // empty = journaled durably
 }
 ```
 
-Reply to `OpCommit` under the request's `reference_id`, emitted only
-AFTER the `op_committed` entry is fsynced in the instance's
-`op.journal` (journal-then-ack). A non-empty `error` (journal write
+Reply to `ProcCommit` under the request's `reference_id`, emitted only
+AFTER the `proc_committed` entry is fsynced in the instance's
+`proc.journal` (journal-then-ack). A non-empty `error` (journal write
 failure, oversized handoff past the WAL-watermark-scale frame bound)
 terminates the run abnormally through the existing terminal-error path,
 including saga compensation. A timed-out ack (30 s) is treated as
 mid-run channel loss: the run terminates and crash-resume re-drives
-from the last committed op (the un-acked op re-runs — at-least-once).
+from the last committed proc (the un-acked proc re-runs — at-least-once).
 
 On crash-resume the journal state ships back on
-`AddOperative.op_journal` (`OpJournalState`): committed operations
-are skipped and the first uncommitted operation's input batch is seeded
+`AddOperative.proc_journal` (`ProcJournalState`): committed procedures
+are skipped and the first uncommitted procedure's input batch is seeded
 from the journaled handoff via the channel codec's decode half. Inspect
 a journal with `flz state journal <operative/instance>`.
 
-`OpJournalState.rewind_undo` (`repeated OpCommittedOp`, tag 8) carries the
-operations a **rewind** unwound that nothing has compensated yet
+`ProcJournalState.rewind_undo` (`repeated ProcCommittedProc`, tag 8) carries the
+procedures a **rewind** unwound that nothing has compensated yet
 (`bounded-loop-rewind`). The driver runs them through the ordinary compensation
 planner — reverse iteration, reverse chain position — before resuming forward at
 `iter`, which the journal has already folded back to the rewound-to iteration.
-Each undo journals a `compensated` entry (an empty one for a hookless operation),
+Each undo journals a `compensated` entry (an empty one for a hookless procedure),
 so the list shrinks across a crash and re-planning never double-compensates. An
 empty list means no rewind is pending. The rewind itself is a `rewound` journal
 entry (type 6, target = the entry's `iter`), appended with `epoch + 1`; it never
@@ -1555,14 +1555,14 @@ crosses the wire as a command — the controller writes it and rebinds the
 instance, and the folded journal is what the SDK sees.
 
 **Outbox flush.** The response is the durable point past which the
-operation's staged output may be seen, so the controller flushes it
+procedure's staged output may be seen, so the controller flushes it
 immediately AFTER emitting the ack, in journal order, through the same
 `:on_output` plugin fan-out live bounded output uses — stamping each
 frame with the identity below. A successful flush appends an
 `outbox_flushed` entry; a delivery that cannot happen yet (the operative
-is not bound) is retried, never dropped. The next operation is free to
+is not bound) is retried, never dropped. The next procedure is free to
 run while the flush lands: the chain hands data forward through the
-handoff, never through the sink. On restore, every `op_committed` /
+handoff, never through the sink. On restore, every `proc_committed` /
 `compensated` entry without a matching `outbox_flushed` is re-driven with
 its original keys before the resumed run advances — so a crash between
 commit and flush duplicates at worst (at-least-once with stable keys) and
@@ -1573,14 +1573,14 @@ loses nothing.
 
 | Key | Value |
 |---|---|
-| `flz.segment` | `<instance_id>/<operation_name>/<segment_key>` of the producing segment |
-| `flz.seq` | `<op_idx>.<seq_in_op>` — the operation index and the segment's emit order within it |
+| `flz.entity` | `<instance_id>/<procedure_name>/<entity_key>` of the producing entity |
+| `flz.seq` | `<proc_idx>.<seq_in_proc>` — the procedure index and the entity's emit order within it |
 | `flz.epoch` | per-instance journal epoch; `0` at first start, carried verbatim across crash re-drives (only a future rewind bumps it) |
 | `channel` | the producing plugin channel's name |
 
 The tuple is a pure function of the journal, so a re-drive replays
 byte-identical stamps. An undo output's `flz.seq` carries a trailing
-`.1` component (`<op_idx>.<seq_in_op>.1`) — the compensation marker —
+`.1` component (`<proc_idx>.<seq_in_proc>.1`) — the compensation marker —
 so it can never collide with the forward output it reverses while
 remaining a numeric dotted sequence a keyed sink can order.
 
@@ -1591,13 +1591,13 @@ message IterCommit {
     string operative_id            = 1;
     uint32 iter                    = 2;
     uint64 consumed_offset         = 3;   // durable-inbox offset this iteration consumed
-    repeated OpHandoffItem handoff = 4;   // the iteration's terminal batch
+    repeated ProcHandoffItem handoff = 4;   // the iteration's terminal batch
 }
 ```
 
 Emitted at each **iteration** boundary of a looping durable structured
-bounded operative (`bounded-durable-loop`), after the last operation's
-`OpCommit` has been acked. A class opts into looping with
+bounded operative (`bounded-durable-loop`), after the last procedure's
+`ProcCommit` has been acked. A class opts into looping with
 `loop_mode()`: `PerInput` runs one iteration per inbox item (the
 chat-turn shape), `Chained` seeds each iteration from the previous one's
 terminal handoff (the refinement shape). The single-pass default
@@ -1607,15 +1607,15 @@ pre-loop protocol.
 The controller appends ONE `iter_committed(iter, consumed_offset)`
 journal entry — carrying the terminal handoff, so a crash can re-seed
 iteration `iter + 1` — fsyncs, and acks. Everything after the ack is
-cleanup the commit does not depend on: a boundary `CompactSegment` for
-each of the instance's segments (so a rehydrate loads iteration-`iter`
+cleanup the commit does not depend on: a boundary `CompactEntity` for
+each of the instance's entities (so a rehydrate loads iteration-`iter`
 state instead of replaying the WAL tail), the flush of whatever the
-iteration's operations staged, and the release of the inbox prefix at or
+iteration's procedures staged, and the release of the inbox prefix at or
 below `consumed_offset`. A failure in any of them costs work, never
 correctness.
 
-Every `OpCommit` inside iteration `N` carries `iter = N`, so redo-vs-skip
-works at both the operation and the iteration granularity from one scan.
+Every `ProcCommit` inside iteration `N` carries `iter = N`, so redo-vs-skip
+works at both the procedure and the iteration granularity from one scan.
 
 ### Control command `IterCommitResponse` (controller → SDK)
 
@@ -1629,15 +1629,15 @@ message IterCommitResponse {
 
 Reply under the request's `reference_id`, emitted only after the
 `iter_committed` entry is fsynced. Same terminal-error and 30 s-timeout
-contract as `OpCommitResponse`. The driver enters iteration `iter + 1`
+contract as `ProcCommitResponse`. The driver enters iteration `iter + 1`
 only on success, so a crash re-runs at most the whole in-flight
 iteration — never a committed one.
 
-On crash-resume `AddOperative.op_journal` carries `iter` (the
+On crash-resume `AddOperative.proc_journal` carries `iter` (the
 iteration to resume at: the one after the highest journaled
-`iter_committed`), `committed_op_idxs` (the operations already committed
+`iter_committed`), `committed_proc_idxs` (the procedures already committed
 *inside* that still-in-flight iteration, which are skipped),
-`committed_ops` (every forward op commit with its iteration — the
+`committed_procs` (every forward proc commit with its iteration — the
 compensation planner's per-iteration `committed` input, which is what
 makes `RollbackMode::KeepProgress` keep journaled iterations), and
 `consumed_offset`.
@@ -1698,7 +1698,7 @@ list (remove-then-store in FleetManager), scoped to the sending runner; an
 empty set is legal and leaves the runner connected with zero placeable
 factories.
 
-**Fire-and-forget: no ack.** Unlike `OpCommit` it gates no durability
+**Fire-and-forget: no ack.** Unlike `ProcCommit` it gates no durability
 barrier — a stale placement racing a removal fails at the SDK's
 `AddOperative` handler and convergence re-places it, the same failure
 mode as a runner dying mid-placement. A lost frame is corrected by the
@@ -1722,8 +1722,8 @@ message SpawnBoundedRequest {
 }
 ```
 
-An operation asked for a bounded instance (`ctx.spawn_bounded` /
-`ctx.spawnBounded`, `add-operation-requested-spawn`). The controller spawns
+A procedure asked for a bounded instance (`ctx.spawn_bounded` /
+`ctx.spawnBounded`, `procedure-requested-spawn`). The controller spawns
 `factory_id` under `instance_id` when that id is free — with `payload` as the
 instance's first input — and otherwise applies `if_running`: `deliver` feeds
 `payload` to the running instance's inbox, `error` refuses. An unrecognised
@@ -1750,7 +1750,7 @@ message SpawnBoundedResponse {
 ```
 
 Carries the originating request's `reference_id` so the SDK wakes that
-requester's result handle. The reply never faults the requesting operation —
+requester's result handle. The reply never faults the requesting procedure —
 it only resolves its handle; an unobserved handle logs the failure once.
 
 ### Data frame metadata: durable-inbox offset (`flz.inbox_offset`)
@@ -1772,14 +1772,14 @@ cannot produce a duplicate turn.
 
 ### Data payload `correction_request` (SDK → controller)
 
-Late-input correction (`unbounded-late-input-correction`). A Segment saw an
+Late-input correction (`unbounded-late-input-correction`). An Entity saw an
 input whose extracted event time is behind its event-time high-water but inside
 the declared `correction_window`. Only the SDK can know that — the event time
 comes from the user's `TimeExtractor` — so detection is the SDK's half and
 orchestration is the controller's.
 
 Same outer frame as `park_payload` (a zero 16-byte header, a postcard body); the
-Segment identity rides the frame envelope.
+Entity identity rides the frame envelope.
 
 ```rust
 struct CorrectionRequestBody {
@@ -1792,7 +1792,7 @@ the late input is already in the durable input log at its arrival offset — the
 controller re-reads the range and finds it there. There is no offset to send and
 no slice to splice.
 
-Fire-and-forget: the controller coalesces concurrent requests per Segment into
+Fire-and-forget: the controller coalesces concurrent requests per Entity into
 one replay, so a duplicate costs nothing, and a lost one is re-raised the moment
 the input is re-delivered (it is still in the log, still unconsumed). A
 transport-less run has nobody to ask and falls back to processing the input as
@@ -1800,7 +1800,7 @@ an arrival.
 
 ### Data frame metadata: replayed slice (`flz.replay`, `flz.replay_end`)
 
-The controller marks every input of a re-forwarded slice so the Segment can hold
+The controller marks every input of a re-forwarded slice so the Entity can hold
 it, order it by event time, and only then dispatch — an arrival-ordered replay
 would put the late input back after the inputs that overtook it and recompute
 the same wrong answer.
@@ -1811,13 +1811,13 @@ the same wrong answer.
 | `flz.replay_end` | `"1"` on a **payload-less broadcast frame** that closes the slice |
 
 `flz.replay_end` is a broadcast, not a flag on the slice's last input, and it has
-to be: an input routes to exactly one Segment by key, so a marker riding the last
-one would reach one Segment and leave every *other* Segment that buffered slice
+to be: an input routes to exactly one Entity by key, so a marker riding the last
+one would reach one Entity and leave every *other* Entity that buffered slice
 members holding them forever. The broadcast frame carries no payload, never
-reaches an Operation, and arrives after every frame of the slice.
+reaches a Procedure, and arrives after every frame of the slice.
 
 A `RestoreInitState` clears any half-filled replay buffer, so an abandoned slice
-(controller crash mid-replay) cannot strand a Segment — every replay is preceded
+(controller crash mid-replay) cannot strand an Entity — every replay is preceded
 by a restore.
 
 ### Plugin metadata: output identity stamps (`flz.*`)
@@ -1829,9 +1829,9 @@ reserved metadata keys, appended after user metadata:
 
 | Key | Value | Stability |
 |---|---|---|
-| `flz.segment` | `<operative_instance_id>/<operation_name>/<segment_key>` | replay-stable |
+| `flz.entity` | `<operative_instance_id>/<procedure_name>/<entity_key>` | replay-stable |
 | `flz.seq` | `<change_seq>.<emit_ordinal>` — durable change seq at emit time (post flush-before-emit drain) + emit ordinal within the invocation | replay-stable while state advances |
-| `flz.key` | caller's natural key from `OperationCtx::emit_keyed(key, value)` | replay-stable by the determinism contract |
+| `flz.key` | caller's natural key from `ProcedureCtx::emit_keyed(key, value)` | replay-stable by the determinism contract |
 
 On a keyed channel, plain `emit` / `emit_with_meta` fail with
 `KeyRequiredOnKeyedChannel`; on a non-keyed channel `emit_keyed` fails

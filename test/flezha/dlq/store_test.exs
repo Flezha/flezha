@@ -25,8 +25,8 @@ defmodule Flezha.Dlq.StoreTest do
     Map.merge(
       %{
         operative_class: "MarketOperative",
-        operation_id: "ohlc",
-        segment_key: "BTC",
+        procedure_id: "ohlc",
+        entity_key: "BTC",
         channel: "input",
         origin_offset: nil,
         error: "boom",
@@ -74,7 +74,7 @@ defmodule Flezha.Dlq.StoreTest do
     assert listed["generation"] == 1
   end
 
-  test "tier-on parks dedup on segment@offset identity", %{store: store} do
+  test "tier-on parks dedup on entity@offset identity", %{store: store} do
     e = entry(%{origin_offset: 42, park_id: nil})
     assert {:ok, ref} = Store.append(store, e)
     assert {:ok, ^ref} = Store.append(store, e)
@@ -142,7 +142,7 @@ defmodule Flezha.Dlq.StoreTest do
     Process.sleep(5)
     assert :ok = Store.sweep(store)
 
-    assert_receive {:dropped, %{count: 1}, %{operation_id: "ohlc", reason: :age}}, 2_000
+    assert_receive {:dropped, %{count: 1}, %{procedure_id: "ohlc", reason: :age}}, 2_000
     assert Store.list(store, nil) == []
   end
 

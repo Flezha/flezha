@@ -4,15 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
-import com.flezha.sdk.runtime.operative.StatelessTestOperation;
+import com.flezha.sdk.runtime.operative.StatelessTestProcedure;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
@@ -33,22 +33,22 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Java port of {@code sdk/rust/tests/merged_input.rs}
- * ({@code multi-input-operations}): an operation fed by two or more source
+ * ({@code multi-input-procedures}): a procedure fed by two or more source
  * channels, each subscription mapping its payload into one sum-type input.
  *
  * <p>Mirrors the Rust scenarios one for one — merged delivery through typed
- * inter-operation channels, entry channels as sources, per-source FIFO under
+ * inter-procedure channels, entry channels as sources, per-source FIFO under
  * interleaving, a replayed slice mapped exactly as live delivery mapped it,
- * {@code segmentFor} on the mapped value, and the definition-time refusals.
+ * {@code entitiesFor} on the mapped value, and the definition-time refusals.
  */
 class MergedInputTest {
 
-    // Operations are re-instantiated reflectively (no-arg ctor), so captures
+    // Procedures are re-instantiated reflectively (no-arg ctor), so captures
     // are static. Cleared in @BeforeEach so test order does not bleed.
     private static final List<SignalInput> SIGNALS = new CopyOnWriteArrayList<>();
     private static final List<String> SIGNAL_SINK = new CopyOnWriteArrayList<>();
     private static final List<TunedInput> TUNED = new CopyOnWriteArrayList<>();
-    private static final List<String> PER_SEGMENT = new CopyOnWriteArrayList<>();
+    private static final List<String> PER_ENTITY = new CopyOnWriteArrayList<>();
 
     private RunnerContext ctx;
 
@@ -57,7 +57,7 @@ class MergedInputTest {
         SIGNALS.clear();
         SIGNAL_SINK.clear();
         TUNED.clear();
-        PER_SEGMENT.clear();
+        PER_ENTITY.clear();
         UnboundedOperativeClassRegistry.reset();
 
         FlezhaEnv.ResolvedConfig cfg = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "2"));
@@ -79,7 +79,7 @@ class MergedInputTest {
 
     public record Candle(long close) {}
 
-    /** The author-declared sum type a merged operation consumes. */
+    /** The author-declared sum type a merged procedure consumes. */
     public record SignalInput(Optional<Ticker> ticker, Optional<Candle> candle) {
         static SignalInput ofTicker(Ticker t) {
             return new SignalInput(Optional.of(t), Optional.empty());
@@ -101,17 +101,17 @@ class MergedInputTest {
         }
     }
 
-    // ---------- 1: two typed channels feed one operation ----------
+    // ---------- 1: two typed channels feed one procedure ----------
 
     @Test
-    @DisplayName("two typed channels feed one operation, whose own output still fans out")
-    void twoTypedChannelsFeedOneOperation() {
+    @DisplayName("two typed channels feed one procedure, whose own output still fans out")
+    void twoTypedChannelsFeedOneProcedure() {
         UnboundedOperativeInstance instance = instantiate(TypedMergeOperative.class, "typed_merge_operative");
         PrimaryStreamReader reader = reader();
 
         reader.onData(FrameEncoder.build(instance.instanceId(), "abc".getBytes(), Map.of("channel", "raw")));
 
-        // One raw frame fans out to both producers, so the merged operation
+        // One raw frame fans out to both producers, so the merged procedure
         // sees one value per source — through its ordinary run, as one type.
         assertThat(waitFor(() -> SIGNALS.size() == 2 && SIGNAL_SINK.size() == 2, 5_000))
                 .as("merged delivery did not complete: %s / %s", SIGNALS, SIGNAL_SINK)
@@ -125,7 +125,7 @@ class MergedInputTest {
     // ---------- 2: entry channels as merge sources ----------
 
     @Test
-    @DisplayName("entry channels are merge sources, delivered mapped with no parser operation")
+    @DisplayName("entry channels are merge sources, delivered mapped with no parser procedure")
     void entryChannelsAreMergeSources() {
         UnboundedOperativeInstance instance = instantiate(EntryMergeOperative.class, "entry_merge_operative");
         PrimaryStreamReader reader = reader();
@@ -213,35 +213,35 @@ class MergedInputTest {
                 .containsExactlyInAnyOrderElementsOf(live);
     }
 
-    // ---------- 3: segment derivation runs on the MAPPED value ----------
+    // ---------- 3: entity derivation runs on the MAPPED value ----------
 
     @Test
-    @DisplayName("segmentFor is evaluated on the mapped value, not the source payload")
-    void segmentForIsEvaluatedOnTheMappedValue() {
-        UnboundedOperativeInstance instance = instantiate(SegmentedMergeOperative.class, "segmented_merge_operative");
+    @DisplayName("entitiesFor is evaluated on the mapped value, not the source payload")
+    void entitiesForIsEvaluatedOnTheMappedValue() {
+        UnboundedOperativeInstance instance = instantiate(EntityMergeOperative.class, "entity_merge_operative");
         PrimaryStreamReader reader = reader();
 
         reader.onData(FrameEncoder.build(instance.instanceId(), "d0".getBytes(), Map.of("channel", "data")));
         reader.onData(FrameEncoder.build(instance.instanceId(), "c0".getBytes(), Map.of("channel", "config")));
 
-        assertThat(waitFor(() -> PER_SEGMENT.size() == 2, 5_000))
-                .as("segmented merge did not drain: %s", PER_SEGMENT)
+        assertThat(waitFor(() -> PER_ENTITY.size() == 2, 5_000))
+                .as("entity merge did not drain: %s", PER_ENTITY)
                 .isTrue();
-        // The routing key came from the sum type: segmentFor never sees the
+        // The routing key came from the sum type: entitiesFor never sees the
         // pre-map payload.
-        assertThat(PER_SEGMENT).containsExactlyInAnyOrder("data/d0", "config/c0");
+        assertThat(PER_ENTITY).containsExactlyInAnyOrder("data/d0", "config/c0");
     }
 
     // ---------- 4: definition-time validation ----------
 
     @Test
-    @DisplayName("a merge with fewer than two sources is refused, naming the operation")
+    @DisplayName("a merge with fewer than two sources is refused, naming the procedure")
     void aMergeWithFewerThanTwoSourcesIsRefused() {
         UnboundedOperativeConfigurationException ex = assertThrows(
                 UnboundedOperativeConfigurationException.class,
                 () -> UnboundedOperativeClassRegistry.registerClass(OneSourceMergeOperative.class));
         assertThat(ex.getMessage()).contains("MergeTooFewSources");
-        assertThat(ex.getMessage()).contains("merge_tuned_operation");
+        assertThat(ex.getMessage()).contains("merge_tuned_procedure");
     }
 
     @Test
@@ -267,7 +267,7 @@ class MergedInputTest {
                 () -> UnboundedOperativeClassRegistry.registerClass(RewiredMergeSourceOperative.class));
         assertThat(ex.getMessage()).contains("MergeSourceAlreadyWired");
         assertThat(ex.getMessage()).contains("`data`");
-        assertThat(ex.getMessage()).contains("merge_tuned_operation");
+        assertThat(ex.getMessage()).contains("merge_tuned_procedure");
     }
 
     @Test
@@ -283,13 +283,13 @@ class MergedInputTest {
     @Test
     @DisplayName("a merged type that is not the consumer's inputType is refused at registration")
     void aMergedTypeMismatchIsRefused() {
-        // What Rust rejects at the `.into::<Op>()` call site with an
+        // What Rust rejects at the `.into::<Proc>()` call site with an
         // `Input = I` bound, erasure forces Java to reject at registration.
         UnboundedOperativeConfigurationException ex = assertThrows(
                 UnboundedOperativeConfigurationException.class,
                 () -> UnboundedOperativeClassRegistry.registerClass(MismatchedMergeOperative.class));
         assertThat(ex.getMessage()).contains("merge maps into");
-        assertThat(ex.getMessage()).contains("merge_tuned_operation");
+        assertThat(ex.getMessage()).contains("merge_tuned_procedure");
     }
 
     // =========================================================================
@@ -332,10 +332,10 @@ class MergedInputTest {
     // Test topologies
     // =========================================================================
 
-    public static final class TickerOperation extends StatelessTestOperation<String, Void, Ticker> {
+    public static final class TickerProcedure extends StatelessTestProcedure<String, Void, Ticker> {
         @Override
         public String name() {
-            return "merge_ticker_operation";
+            return "merge_ticker_procedure";
         }
 
         @Override
@@ -349,20 +349,20 @@ class MergedInputTest {
         }
 
         @Override
-        protected Void initState(Optional<String> operationKey) {
+        protected Void initState(Optional<String> entityKey) {
             return null;
         }
 
         @Override
-        public void run(String input, StateHandle<Void, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Void, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit(new Ticker(input));
         }
     }
 
-    public static final class CandleOperation extends StatelessTestOperation<String, Void, Candle> {
+    public static final class CandleProcedure extends StatelessTestProcedure<String, Void, Candle> {
         @Override
         public String name() {
-            return "merge_candle_operation";
+            return "merge_candle_procedure";
         }
 
         @Override
@@ -376,20 +376,20 @@ class MergedInputTest {
         }
 
         @Override
-        protected Void initState(Optional<String> operationKey) {
+        protected Void initState(Optional<String> entityKey) {
             return null;
         }
 
         @Override
-        public void run(String input, StateHandle<Void, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Void, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             ctx.emit(new Candle(input.length()));
         }
     }
 
-    public static final class DetectorOperation extends StatelessTestOperation<SignalInput, Void, String> {
+    public static final class DetectorProcedure extends StatelessTestProcedure<SignalInput, Void, String> {
         @Override
         public String name() {
-            return "merge_detector_operation";
+            return "merge_detector_procedure";
         }
 
         @Override
@@ -403,13 +403,13 @@ class MergedInputTest {
         }
 
         @Override
-        protected Void initState(Optional<String> operationKey) {
+        protected Void initState(Optional<String> entityKey) {
             return null;
         }
 
         @Override
-        public void run(SignalInput input, StateHandle<Void, NoChange> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(SignalInput input, StateHandle<Void, NoChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
             SIGNALS.add(input);
             String label = input.ticker()
                     .map(t -> "ticker:" + t.symbol())
@@ -418,10 +418,10 @@ class MergedInputTest {
         }
     }
 
-    public static final class SignalSinkOperation extends StatelessTestOperation<String, Void, String> {
+    public static final class SignalSinkProcedure extends StatelessTestProcedure<String, Void, String> {
         @Override
         public String name() {
-            return "merge_signal_sink_operation";
+            return "merge_signal_sink_procedure";
         }
 
         @Override
@@ -435,12 +435,12 @@ class MergedInputTest {
         }
 
         @Override
-        protected Void initState(Optional<String> operationKey) {
+        protected Void initState(Optional<String> entityKey) {
             return null;
         }
 
         @Override
-        public void run(String input, StateHandle<Void, NoChange> state, OperationCtx ctx) {
+        public void run(String input, StateHandle<Void, NoChange> state, ProcedureCtx ctx) {
             SIGNAL_SINK.add(input);
         }
     }
@@ -454,20 +454,20 @@ class MergedInputTest {
         @Override
         public void channels(ChannelBuilder c) {
             var raw = c.input(String.class, "raw");
-            var ticker = raw.into(TickerOperation.class).named("ticker_out");
-            var candles = raw.into(CandleOperation.class).named("ohlc_out");
+            var ticker = raw.into(TickerProcedure.class).named("ticker_out");
+            var candles = raw.into(CandleProcedure.class).named("ohlc_out");
             c.merge(SignalInput.class)
                     .from(ticker, SignalInput::ofTicker)
                     .from(candles, SignalInput::ofCandle)
-                    .into(DetectorOperation.class)
-                    .into(SignalSinkOperation.class);
+                    .into(DetectorProcedure.class)
+                    .into(SignalSinkProcedure.class);
         }
     }
 
-    public static final class TunedOperation extends StatelessTestOperation<TunedInput, Void, String> {
+    public static final class TunedProcedure extends StatelessTestProcedure<TunedInput, Void, String> {
         @Override
         public String name() {
-            return "merge_tuned_operation";
+            return "merge_tuned_procedure";
         }
 
         @Override
@@ -481,12 +481,12 @@ class MergedInputTest {
         }
 
         @Override
-        protected Void initState(Optional<String> operationKey) {
+        protected Void initState(Optional<String> entityKey) {
             return null;
         }
 
         @Override
-        public void run(TunedInput input, StateHandle<Void, NoChange> state, OperationCtx ctx) {
+        public void run(TunedInput input, StateHandle<Void, NoChange> state, ProcedureCtx ctx) {
             TUNED.add(input);
         }
     }
@@ -502,14 +502,14 @@ class MergedInputTest {
             c.merge(TunedInput.class)
                     .from(c.input(String.class, "data"), TunedInput::data)
                     .from(c.input(String.class, "config"), TunedInput::config)
-                    .into(TunedOperation.class);
+                    .into(TunedProcedure.class);
         }
     }
 
-    public static final class SegmentedTunedOperation extends StatelessTestOperation<TunedInput, String, String> {
+    public static final class EntityTunedProcedure extends StatelessTestProcedure<TunedInput, String, String> {
         @Override
         public String name() {
-            return "merge_segmented_tuned_operation";
+            return "merge_entity_tuned_procedure";
         }
 
         @Override
@@ -523,35 +523,35 @@ class MergedInputTest {
         }
 
         @Override
-        public List<String> operationKeys() {
+        public List<String> entityKeys() {
             return List.of("data", "config");
         }
 
         @Override
-        public boolean segmentForOverridden() {
+        public boolean entitiesForOverridden() {
             return true;
         }
 
         @Override
-        public List<String> segmentFor(TunedInput input) {
+        public List<String> entitiesFor(TunedInput input) {
             return List.of(input.kind());
         }
 
         @Override
-        protected String initState(Optional<String> operationKey) {
-            return operationKey.orElse("?");
+        protected String initState(Optional<String> entityKey) {
+            return entityKey.orElse("?");
         }
 
         @Override
-        public void run(TunedInput input, StateHandle<String, NoChange> state, OperationCtx ctx) {
-            PER_SEGMENT.add(state.get() + "/" + input.value());
+        public void run(TunedInput input, StateHandle<String, NoChange> state, ProcedureCtx ctx) {
+            PER_ENTITY.add(state.get() + "/" + input.value());
         }
     }
 
-    public static final class SegmentedMergeOperative implements UnboundedOperative {
+    public static final class EntityMergeOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
-            return "segmented_merge_operative";
+            return "entity_merge_operative";
         }
 
         @Override
@@ -559,7 +559,7 @@ class MergedInputTest {
             c.merge(TunedInput.class)
                     .from(c.input(String.class, "data"), TunedInput::data)
                     .from(c.input(String.class, "config"), TunedInput::config)
-                    .into(SegmentedTunedOperation.class);
+                    .into(EntityTunedProcedure.class);
         }
     }
 
@@ -573,7 +573,7 @@ class MergedInputTest {
         public void channels(ChannelBuilder c) {
             c.merge(TunedInput.class)
                     .from(c.input(String.class, "data"), TunedInput::data)
-                    .into(TunedOperation.class);
+                    .into(TunedProcedure.class);
         }
     }
 
@@ -589,7 +589,7 @@ class MergedInputTest {
             c.merge(TunedInput.class)
                     .from(data, TunedInput::data)
                     .from(data, TunedInput::config)
-                    .into(TunedOperation.class);
+                    .into(TunedProcedure.class);
         }
     }
 
@@ -597,7 +597,7 @@ class MergedInputTest {
      * Two merges closing on ONE consumer that share a source channel — the
      * shape a graph assembled by helper methods falls into. The second
      * {@code from} cannot be honoured (an edge carries one mapping), so it is
-     * refused rather than dropped: the operation would otherwise receive the
+     * refused rather than dropped: the procedure would otherwise receive the
      * first declaration's value forever, silently.
      */
     public static final class RewiredMergeSourceOperative implements UnboundedOperative {
@@ -612,11 +612,11 @@ class MergedInputTest {
             c.merge(TunedInput.class)
                     .from(data, TunedInput::data)
                     .from(c.input(String.class, "config"), TunedInput::config)
-                    .into(TunedOperation.class);
+                    .into(TunedProcedure.class);
             c.merge(TunedInput.class)
                     .from(data, TunedInput::config)
                     .from(c.input(String.class, "extra"), TunedInput::data)
-                    .into(TunedOperation.class);
+                    .into(TunedProcedure.class);
         }
     }
 
@@ -630,11 +630,11 @@ class MergedInputTest {
         @Override
         public void channels(ChannelBuilder c) {
             var data = c.input(TunedInput.class, "data", b -> TunedInput.data(new String(b)));
-            data.into(TunedOperation.class);
+            data.into(TunedProcedure.class);
             c.merge(TunedInput.class)
                     .from(data, v -> v)
                     .from(c.input(String.class, "config"), TunedInput::config)
-                    .into(TunedOperation.class);
+                    .into(TunedProcedure.class);
         }
     }
 
@@ -646,7 +646,7 @@ class MergedInputTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            // `TunedOperation.inputType()` is TunedInput, not String.
+            // `TunedProcedure.inputType()` is TunedInput, not String.
             c.merge(String.class)
                     .from(c.input(String.class, "data"), s -> s)
                     .from(c.input(String.class, "config"), s -> s)
@@ -654,8 +654,8 @@ class MergedInputTest {
         }
 
         @SuppressWarnings({"unchecked", "rawtypes"})
-        private static Class<? extends Operation<String, ?, String, ?, ?, ?>> mismatched() {
-            return (Class) TunedOperation.class;
+        private static Class<? extends Procedure<String, ?, String, ?, ?, ?>> mismatched() {
+            return (Class) TunedProcedure.class;
         }
     }
 }

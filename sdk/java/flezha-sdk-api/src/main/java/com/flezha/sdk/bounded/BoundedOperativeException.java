@@ -4,12 +4,12 @@ package com.flezha.sdk.bounded;
  * A terminal bounded failure. Thrown from {@link BoundedOperative#run} (or {@link BoundedOperativeCtx#emit})
  * to signal that the job failed; the SDK reports it to the controller as a
  * {@code BoundedCompleted} with {@code status = "error"} and tears the bounded
- * down without retry. Checked, mirroring {@code OperationException}.
+ * down without retry. Checked, mirroring {@code ProcedureException}.
  */
 public class BoundedOperativeException extends Exception {
 
     /**
-     * Whether the segment's batch may be re-run. Retryable by default: an author
+     * Whether the entity's batch may be re-run. Retryable by default: an author
      * who has not classified the failure has not claimed it is permanent, and a
      * thrown {@code RuntimeException} carries no classification at all.
      */

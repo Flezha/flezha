@@ -115,7 +115,7 @@ When dropped, sends `CloseStream` command to the driver thread.
 
 ## FrameBuffer (frame_buffer.rs)
 
-Port of Elixir's `Payloader.parse_frame/3` state machine. Accumulates bytes and handles partial headers/payloads across segment boundaries.
+Port of Elixir's `Payloader.parse_frame/3` state machine. Accumulates bytes and handles partial headers/payloads across entity boundaries.
 
 ### States
 
@@ -286,7 +286,7 @@ Each stream has an `active` flag:
 | `start_quic_server` | `(bind_address, cert_path, key_path, acceptor_pid) → {:ok, server_ref}` | Start QUIC server |
 | `stop_server` | `(server_ref) → :ok` | Stop server, close all streams |
 
-### Stream Operations
+### Stream Procedures
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

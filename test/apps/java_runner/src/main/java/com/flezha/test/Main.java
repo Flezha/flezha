@@ -26,7 +26,7 @@ public final class Main {
                 .defineUnbounded(PersistenceOffUnboundedOperative.class)
                 .defineUnbounded(HybridChannelUnboundedOperative.class)
                 .defineUnbounded(PoisonProbeUnboundedOperative.class)
-                // EchoMessageUnboundedOperative is reintroduced once per-Operation `handleMessage` lands.
+                // EchoMessageUnboundedOperative is reintroduced once per-Procedure `handleMessage` lands.
                 .defineBounded(EchoBoundedOperative.class)
                 .defineBounded(CommitBlockBoundedOperative.class)
                 .defineBounded(SagaBlockBoundedOperative.class)

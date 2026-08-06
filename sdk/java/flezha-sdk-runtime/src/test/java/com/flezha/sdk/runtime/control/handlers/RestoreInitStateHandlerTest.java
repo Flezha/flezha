@@ -3,24 +3,24 @@ package com.flezha.sdk.runtime.control.handlers;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.proto.AddOperative;
 import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.proto.RestoreInitState;
 import com.flezha.sdk.proto.RestoreInitStateResponse;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
+import com.flezha.sdk.runtime.entity.EntityCounters;
+import com.flezha.sdk.runtime.entity.EntitySlot;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
-import com.flezha.sdk.runtime.segment.SegmentCounters;
-import com.flezha.sdk.runtime.segment.SegmentSlot;
+import com.flezha.sdk.runtime.state.EntityFlusher;
+import com.flezha.sdk.runtime.state.EntityId;
+import com.flezha.sdk.runtime.state.EntityStateSink;
 import com.flezha.sdk.runtime.state.HeaderTemplate;
 import com.flezha.sdk.runtime.state.KryoCodec;
-import com.flezha.sdk.runtime.state.SegmentFlusher;
-import com.flezha.sdk.runtime.state.SegmentId;
-import com.flezha.sdk.runtime.state.SegmentStateSink;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -47,7 +47,7 @@ import org.junit.jupiter.api.Test;
 class RestoreInitStateHandlerTest {
 
     private static final String FACTORY = "restore_counter";
-    private static final String OPERATION = "restore_counter_operation";
+    private static final String PROCEDURE = "restore_counter_procedure";
     private static final String INSTANCE = "inst-A";
     private static final String TIER_FACTORY = "restore_counter_tier";
     private static final String TIER_INSTANCE = "inst-tier";
@@ -56,29 +56,29 @@ class RestoreInitStateHandlerTest {
     @AfterEach
     void reset() {
         UnboundedOperativeClassRegistry.reset();
-        SegmentFlusher.resetForTesting();
-        SegmentStateSink.resetForTesting();
+        EntityFlusher.resetForTesting();
+        EntityStateSink.resetForTesting();
     }
 
     @Test
     void pureReplayResumesAtN() throws Exception {
         RunnerContext ctx = newContextWithUnboundedOperative();
-        KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
+        KryoCodec codec = new KryoCodec(new CounterProcedure().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
         int n = 5;
         ByteArrayOutputStream log = new ByteArrayOutputStream();
         for (long seq = 0; seq < n; seq++) {
             byte[] body = codec.serialize(new CounterChange(1L));
-            byte[] header = template.stamp(new CounterOperation().schemaVersion(), body);
+            byte[] header = template.stamp(new CounterProcedure().schemaVersion(), body);
             log.writeBytes(walRecord(seq, header, body));
         }
 
-        byte[] segmentId = SegmentId.of(INSTANCE, OPERATION, Optional.empty()).encodedBytes();
+        byte[] entityId = EntityId.of(INSTANCE, PROCEDURE, Optional.empty()).encodedBytes();
         CommandRequest req = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setSegmentId(ByteString.copyFrom(segmentId))
+                        .setEntityId(ByteString.copyFrom(entityId))
                         .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
                         .build())
                 .build();
@@ -87,8 +87,8 @@ class RestoreInitStateHandlerTest {
         byte[] resp = new RestoreInitStateHandler().handle(ctx, req, errors);
 
         assertThat(errors).isEmpty();
-        SegmentSlot slot = slot(ctx);
-        assertThat(((CounterOperation.State) slot.state().get()).value)
+        EntitySlot slot = slot(ctx);
+        assertThat(((CounterProcedure.State) slot.state().get()).value)
                 .as("resume must land at N, not 0")
                 .isEqualTo((long) n);
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo((long) (n - 1));
@@ -100,11 +100,11 @@ class RestoreInitStateHandlerTest {
     @Test
     void snapshotPlusChangeLogDoesNotDoubleApply() throws Exception {
         RunnerContext ctx = newContextWithUnboundedOperative();
-        KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
+        KryoCodec codec = new KryoCodec(new CounterProcedure().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
         long k = 3L; // snapshot already accounts for changes 0..k
-        CounterOperation.State snapState = new CounterOperation.State();
+        CounterProcedure.State snapState = new CounterProcedure.State();
         snapState.value = k;
         byte[] snapshot = codec.serialize(snapState);
 
@@ -117,11 +117,11 @@ class RestoreInitStateHandlerTest {
             log.writeBytes(walRecord(seq, header, body));
         }
 
-        byte[] segmentId = SegmentId.of(INSTANCE, OPERATION, Optional.empty()).encodedBytes();
+        byte[] entityId = EntityId.of(INSTANCE, PROCEDURE, Optional.empty()).encodedBytes();
         CommandRequest req = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setSegmentId(ByteString.copyFrom(segmentId))
+                        .setEntityId(ByteString.copyFrom(entityId))
                         .setSnapshotBytes(ByteString.copyFrom(snapshot))
                         .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
                         .build())
@@ -132,14 +132,14 @@ class RestoreInitStateHandlerTest {
 
         assertThat(errors).isEmpty();
         // Snapshot REPLACES (value=k); change-log adds `extra`. No re-fold of 0..k.
-        assertThat(((CounterOperation.State) slot(ctx).state().get()).value).isEqualTo(k + extra);
+        assertThat(((CounterProcedure.State) slot(ctx).state().get()).value).isEqualTo(k + extra);
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo(k + extra);
     }
 
     @Test
     void noLiveSlotValidatesAndAcksWithoutMutating() throws Exception {
         RunnerContext ctx = newContextWithUnboundedOperative();
-        KryoCodec codec = new KryoCodec(new CounterOperation().kryoTypes());
+        KryoCodec codec = new KryoCodec(new CounterProcedure().kryoTypes());
         HeaderTemplate template = new HeaderTemplate();
 
         ByteArrayOutputStream log = new ByteArrayOutputStream();
@@ -149,12 +149,12 @@ class RestoreInitStateHandlerTest {
         }
 
         // Identity for an instance that was never added — no live slot matches.
-        byte[] segmentId =
-                SegmentId.of("unknown-inst", OPERATION, Optional.empty()).encodedBytes();
+        byte[] entityId =
+                EntityId.of("unknown-inst", PROCEDURE, Optional.empty()).encodedBytes();
         CommandRequest req = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setSegmentId(ByteString.copyFrom(segmentId))
+                        .setEntityId(ByteString.copyFrom(entityId))
                         .setChangeLogBytes(ByteString.copyFrom(log.toByteArray()))
                         .build())
                 .build();
@@ -165,7 +165,7 @@ class RestoreInitStateHandlerTest {
         assertThat(errors).isEmpty();
         assertThat(RestoreInitStateResponse.parseFrom(resp).getTerminalSeq()).isEqualTo(1L);
         // The real (unmatched) slot stays at its cold-start value.
-        assertThat(((CounterOperation.State) slot(ctx).state().get()).value).isZero();
+        assertThat(((CounterProcedure.State) slot(ctx).state().get()).value).isZero();
     }
 
     /**
@@ -188,16 +188,16 @@ class RestoreInitStateHandlerTest {
                 .build();
         new AddOperativeHandler().handle(ctx, addTier, new ArrayList<>());
 
-        SegmentSlot plain = slot(ctx);
-        SegmentSlot tier = ctx.operativeInstanceRegistry()
+        EntitySlot plain = slot(ctx);
+        EntitySlot tier = ctx.operativeInstanceRegistry()
                 .getUnboundedOperative(TIER_INSTANCE)
-                .segments()
+                .entities()
                 .get(0)
                 .get(0);
         plain.mailbox().push("queued");
         tier.mailbox().push("queued");
 
-        long before = SegmentCounters.restoreDiscardedInputs();
+        long before = EntityCounters.restoreDiscardedInputs();
         restore(ctx, INSTANCE);
         restore(ctx, TIER_INSTANCE);
 
@@ -208,18 +208,18 @@ class RestoreInitStateHandlerTest {
                 .as("a tier input is durable in the input log the controller re-forwards;"
                         + " keeping it would double-apply it")
                 .isTrue();
-        assertThat(SegmentCounters.restoreDiscardedInputs() - before)
+        assertThat(EntityCounters.restoreDiscardedInputs() - before)
                 .as("every discard must be counted, or the loss leaves no trace")
                 .isEqualTo(1L);
     }
 
-    /** Drive an empty-change-log restore of {@code instanceId}'s only Segment. */
+    /** Drive an empty-change-log restore of {@code instanceId}'s only Entity. */
     private static void restore(RunnerContext ctx, String instanceId) {
-        byte[] segmentId = SegmentId.of(instanceId, OPERATION, Optional.empty()).encodedBytes();
+        byte[] entityId = EntityId.of(instanceId, PROCEDURE, Optional.empty()).encodedBytes();
         CommandRequest req = CommandRequest.newBuilder()
                 .setReferenceId("r")
                 .setRestoreInitState(RestoreInitState.newBuilder()
-                        .setSegmentId(ByteString.copyFrom(segmentId))
+                        .setEntityId(ByteString.copyFrom(entityId))
                         .build())
                 .build();
         List<String> errors = new ArrayList<>();
@@ -243,10 +243,10 @@ class RestoreInitStateHandlerTest {
         return ctx;
     }
 
-    private static SegmentSlot slot(RunnerContext ctx) {
+    private static EntitySlot slot(RunnerContext ctx) {
         return ctx.operativeInstanceRegistry()
                 .getUnboundedOperative(INSTANCE)
-                .segments()
+                .entities()
                 .get(0)
                 .get(0);
     }
@@ -268,9 +268,9 @@ class RestoreInitStateHandlerTest {
         }
     }
 
-    // --- Test operative: single changeful Operation whose State holds a running total. ---
+    // --- Test operative: single changeful Procedure whose State holds a running total. ---
 
-    /** Same Operation, effectively-once tier: the controller journals its inputs. */
+    /** Same Procedure, effectively-once tier: the controller journals its inputs. */
     public static final class TierUnboundedOperative implements UnboundedOperative {
         @Override
         public String factoryId() {
@@ -280,7 +280,7 @@ class RestoreInitStateHandlerTest {
         @Override
         public void channels(ChannelBuilder c) {
             c.effectivelyOnce();
-            c.input(String.class, "input").into(CounterOperation.class);
+            c.input(String.class, "input").into(CounterProcedure.class);
         }
     }
 
@@ -292,14 +292,14 @@ class RestoreInitStateHandlerTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(CounterOperation.class);
+            c.input(String.class, "input").into(CounterProcedure.class);
         }
     }
 
     public record CounterChange(long delta) implements Change {}
 
-    public static final class CounterOperation
-            implements Operation<String, CounterOperation.State, Void, CounterChange, WallClock, Void> {
+    public static final class CounterProcedure
+            implements Procedure<String, CounterProcedure.State, Void, CounterChange, WallClock, Void> {
 
         public static final class State {
             public long value;
@@ -307,7 +307,7 @@ class RestoreInitStateHandlerTest {
 
         @Override
         public String name() {
-            return OPERATION;
+            return PROCEDURE;
         }
 
         @Override
@@ -336,7 +336,7 @@ class RestoreInitStateHandlerTest {
         }
 
         @Override
-        public State initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new State();
         }
 
@@ -351,8 +351,8 @@ class RestoreInitStateHandlerTest {
         }
 
         @Override
-        public void run(String input, StateHandle<State, CounterChange> state, OperationCtx ctx)
-                throws OperationException {
+        public void run(String input, StateHandle<State, CounterChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
             try {
                 state.apply(new CounterChange(Long.parseLong(input)));
             } catch (NumberFormatException ignored) {

@@ -132,7 +132,7 @@ The system SHALL maintain a small binary catalog `app_data/audit/INDEX` containi
 
 ### Requirement: Service-API surface
 
-The system SHALL provide a service module `Flezha.Service.AuditLog` callable from both the CLI (via thin wrappers on `Flezha.Service.CliManager`) and the planned Phoenix UI directly, without routing through CliManager. The module SHALL expose at minimum `list_files/1`, `read/2`, `tail/2`, `stats/1`, `rotate/1`. Every public function SHALL accept a `caller_context` argument with the same shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk, :internal]`). When `:authn_authz, :enabled` is `true` every public function SHALL call `Flezha.AuthZ.authorize/3` before any side effect. Read operations (`list_files`, `read`, `tail`, `stats`) SHALL require at least `viewer`; `rotate` SHALL require at least `operator`. Read operations SHALL filter returned records to those whose `namespace` field matches the caller's bound namespace, except that `admin@_system` SHALL see all records across all namespaces.
+The system SHALL provide a service module `Flezha.Service.AuditLog` callable from both the CLI (via thin wrappers on `Flezha.Service.CliManager`) and the planned Phoenix UI directly, without routing through CliManager. The module SHALL expose at minimum `list_files/1`, `read/2`, `tail/2`, `stats/1`, `rotate/1`. Every public function SHALL accept a `caller_context` argument with the same shape and validation as `Flezha.Service.Observability` (`source` in `[:cli, :ui, :sdk, :internal]`). When `:authn_authz, :enabled` is `true` every public function SHALL call `Flezha.AuthZ.authorize/3` before any side effect. Read procedures (`list_files`, `read`, `tail`, `stats`) SHALL require at least `viewer`; `rotate` SHALL require at least `operator`. Read procedures SHALL filter returned records to those whose `namespace` field matches the caller's bound namespace, except that `admin@_system` SHALL see all records across all namespaces.
 
 #### Scenario: list_files returns catalog entries
 - **WHEN** the caller invokes `Flezha.Service.AuditLog.list_files(%{source: :cli, principal: "alice", namespace: "_system", role: :viewer})` and three rotated files exist
@@ -208,7 +208,7 @@ The system SHALL provide a `flz audit` CLI command tree exposing the audit-log s
 
 ### Requirement: Audit reads are themselves auditable
 
-Every public function of `Flezha.Service.AuditLog` SHALL emit an `:event` signal on the `:audit_log` source recording the called function name, the caller `:source`, and the optional `:request_id`. The emit SHALL happen synchronously inside the service call so the record reaches the sink in the same logical operation.
+Every public function of `Flezha.Service.AuditLog` SHALL emit an `:event` signal on the `:audit_log` source recording the called function name, the caller `:source`, and the optional `:request_id`. The emit SHALL happen synchronously inside the service call so the record reaches the sink in the same logical procedure.
 
 #### Scenario: `tail` invocation is audited
 - **WHEN** the caller invokes `tail/2` with a `caller_context` of `%{source: :cli, request_id: "r"}`

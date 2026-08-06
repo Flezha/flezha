@@ -133,13 +133,13 @@ defmodule Flezha.Convergence.Heal do
       _ = HubManager.operative_set_runner(namespace, operative_id, target)
       _ = HubManager.hook_insert_local_pid(target, operative_id, pid)
 
-      # Replay the per-Segment WAL into the new binding. The `runner_migrate`
+      # Replay the per-Entity WAL into the new binding. The `runner_migrate`
       # above is a HotSwap handover, which only carries state when the previous
       # runner is alive to serialise it; when the previous runner died (the
-      # common rebind trigger) the new runner's operation would otherwise init
+      # common rebind trigger) the new runner's procedure would otherwise init
       # empty and the operative's persisted state is lost (state resets to 0).
       # resync routes a `RestoreInitState` handshake for each persisted
-      # segment to `target`, rebuilding state from the durable WAL.
+      # entity to `target`, rebuilding state from the durable WAL.
       _ = Flezha.State.Recovery.resync_for_overwatch(pid, target)
 
       emit_reconnected(namespace, operative_id, prev, target)

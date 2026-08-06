@@ -1,9 +1,9 @@
 package com.flezha.test;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.operative.UnboundedOperative;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
@@ -15,8 +15,8 @@ import java.util.Optional;
 
 /**
  * Java mirror of the Rust test app's {@code HybridChannelUnboundedOperative}.
- * Demonstrates {@code alsoToPluginWith(...)}: the producer Operation emits a
- * {@code Long} value that fans out to an inter-operation consumer and is also
+ * Demonstrates {@code alsoToPluginWith(...)}: the producer Procedure emits a
+ * {@code Long} value that fans out to an inter-procedure consumer and is also
  * serialized to bytes for the {@code hybrid_indicators} plugin. The
  * serializer throws on the sentinel {@code 0xDEADBEEF} so an operator can
  * observe the failure-isolation guarantee end-to-end.
@@ -30,16 +30,16 @@ public final class HybridChannelUnboundedOperative implements UnboundedOperative
 
     @Override
     public void channels(ChannelBuilder c) {
-        var sHybridProducerOperation = c.input(String.class, "input").into(HybridProducerOperation.class);
-        sHybridProducerOperation.named("hybrid_indicator").alsoOutput("hybrid_indicators", v -> { if (v == 0xDEAD_BEEFL) { throw new RuntimeException("hybrid_indicators: serializer rejected sentinel 0xDEADBEEF"); } return ByteBuffer.allocate(4) .order(ByteOrder.BIG_ENDIAN) .putInt(v.intValue()) .array(); }).into(HybridConsumerOperation.class);
+        var sHybridProducerProcedure = c.input(String.class, "input").into(HybridProducerProcedure.class);
+        sHybridProducerProcedure.named("hybrid_indicator").alsoOutput("hybrid_indicators", v -> { if (v == 0xDEAD_BEEFL) { throw new RuntimeException("hybrid_indicators: serializer rejected sentinel 0xDEADBEEF"); } return ByteBuffer.allocate(4) .order(ByteOrder.BIG_ENDIAN) .putInt(v.intValue()) .array(); }).into(HybridConsumerProcedure.class);
     }
 
-    public static final class HybridProducerOperation
-            implements Operation<String, HybridProducerOperation.State, Long, NoChange, WallClock, Void> {
+    public static final class HybridProducerProcedure
+            implements Procedure<String, HybridProducerProcedure.State, Long, NoChange, WallClock, Void> {
 
         @Override
         public String name() {
-            return "hybrid_producer_operation";
+            return "hybrid_producer_procedure";
         }
 
         @Override
@@ -68,12 +68,12 @@ public final class HybridChannelUnboundedOperative implements UnboundedOperative
         }
 
         @Override
-        public State initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new State();
         }
 
         @Override
-        public void run(String input, StateHandle<State, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<State, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             long n;
             try {
                 n = Long.parseLong(input);
@@ -82,8 +82,8 @@ public final class HybridChannelUnboundedOperative implements UnboundedOperative
             }
             try {
                 ctx.emit(n);
-            } catch (OperationException.PluginSerializerFailure e) {
-                System.err.println("hybrid_producer_operation: serializer failed on `" + e.channel() + "`: "
+            } catch (ProcedureException.PluginSerializerFailure e) {
+                System.err.println("hybrid_producer_procedure: serializer failed on `" + e.channel() + "`: "
                         + e.getMessage());
             }
         }
@@ -91,12 +91,12 @@ public final class HybridChannelUnboundedOperative implements UnboundedOperative
         public record State() {}
     }
 
-    public static final class HybridConsumerOperation
-            implements Operation<Long, HybridConsumerOperation.State, Void, NoChange, WallClock, Void> {
+    public static final class HybridConsumerProcedure
+            implements Procedure<Long, HybridConsumerProcedure.State, Void, NoChange, WallClock, Void> {
 
         @Override
         public String name() {
-            return "hybrid_consumer_operation";
+            return "hybrid_consumer_procedure";
         }
 
         @Override
@@ -125,13 +125,13 @@ public final class HybridChannelUnboundedOperative implements UnboundedOperative
         }
 
         @Override
-        public State initState(Optional<String> operationKey, Optional<RestoreInitPayload> initPayload) {
+        public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new State();
         }
 
         @Override
-        public void run(Long input, StateHandle<State, NoChange> state, OperationCtx ctx) {
-            System.out.println("hybrid_consumer_operation: received " + input);
+        public void run(Long input, StateHandle<State, NoChange> state, ProcedureCtx ctx) {
+            System.out.println("hybrid_consumer_procedure: received " + input);
         }
 
         public record State() {}

@@ -7,7 +7,7 @@ import java.util.OptionalLong;
 import javax.annotation.Nonnull;
 
 /**
- * Wire body of a {@code segment_effect_record} frame (header
+ * Wire body of a {@code entity_effect_record} frame (header
  * {@code format_id = 2}): one invocation's state changes, plugin emits,
  * consumed input offset, and — for a parked poison payload — its dead-letter
  * entry, all persisted by the controller as ONE WAL record under ONE fsync.
@@ -18,7 +18,7 @@ import javax.annotation.Nonnull;
  *
  * <p><b>Two codecs, deliberately.</b> The body is postcard, because the
  * controller decodes it. The {@code changes} elements are the SDK's own change
- * bytes (Kryo, exactly what a plain {@code segment_state_change} record
+ * bytes (Kryo, exactly what a plain {@code entity_state_change} record
  * carries) — the controller stores them opaquely and re-ships them on restore,
  * where this SDK folds them back through {@code applyChange}. Rust puts its own
  * postcard change bytes in the same slot for the same reason.

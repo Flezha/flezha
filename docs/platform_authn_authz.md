@@ -41,7 +41,7 @@ config :flezha, :authn_authz,
   token_ttl_default_seconds: 86_400,              # CLI tokens, 1 day
   sdk_token_ttl_seconds: 2_592_000,               # SDK tokens, 30 days
   namespaces: %{
-    "tenant-a" => %{max_operatives: 50, max_segments_per_operative: 256}
+    "tenant-a" => %{max_operatives: 50, max_entities_per_operative: 256}
   }
 ```
 
@@ -127,7 +127,7 @@ $ flz ns create tenant-a
 # create with per-namespace caps
 $ flz ns create tenant-b \
     --quota max_operatives=20 \
-    --quota max_segments_per_operative=128
+    --quota max_entities_per_operative=128
 
 $ flz ns list
 $ flz ns show tenant-a
@@ -144,7 +144,7 @@ Enforced quota kinds and their defaults:
 | Key                            | Default        | Enforced at                       |
 | ------------------------------ | -------------- | --------------------------------- |
 | `max_operatives`               | `100`          | `OperativeManager.start_operative/2` |
-| `max_segments_per_operative`   | `1_024`        | `OperativeManager.start_operative/2` |
+| `max_entities_per_operative`   | `1_024`        | `OperativeManager.start_operative/2` |
 | `max_mailbox_bytes_total`      | `256 MiB`      | follow-up (`-namespace-state`)    |
 | `max_message_rate_per_second`  | `100_000`      | follow-up (`-namespace-state`)    |
 | `max_disk_bytes_total`         | `100 GiB`      | follow-up (`-namespace-state`)    |
@@ -284,5 +284,5 @@ backup purposes. Copy it alongside `app_data/state/` and
     — module map, supervision-tree placement, internal contracts.
   * [`docs/audit_log.md`](audit_log.md) — JSONL record schema,
     `:platform_authz` subscription, principal denormalisation.
-  * `docs/glossary.md` — Controller / Runner / Operative / Operation /
-    Segment vocabulary used in role-action names.
+  * `docs/glossary.md` — Controller / Runner / Operative / Procedure /
+    Entity vocabulary used in role-action names.

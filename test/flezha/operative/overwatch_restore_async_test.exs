@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
   @moduledoc """
-  The per-Segment restore replay must run off the Overwatch process so its
+  The per-Entity restore replay must run off the Overwatch process so its
   blocking disk reads cannot freeze the GenServer mailbox.
   """
   use ExUnit.Case, async: false
@@ -14,7 +14,7 @@ defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
   test "kick_restore does not block the Overwatch on a slow restore disk scan" do
     # Private stub bites only the in-process (regression) path; the spawned
     # worker calls through to the real (fast) scan.
-    stub(Flezha.State.Registry, :all_segments, fn ->
+    stub(Flezha.State.Registry, :all_entities, fn ->
       Process.sleep(@slow_read_ms)
       []
     end)

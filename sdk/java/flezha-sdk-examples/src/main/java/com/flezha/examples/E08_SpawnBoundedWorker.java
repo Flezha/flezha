@@ -4,11 +4,11 @@ import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.bounded.BoundedOperativeCtx;
 import com.flezha.sdk.bounded.BoundedOperativeException;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operation.IfRunning;
-import com.flezha.sdk.operation.Operation;
-import com.flezha.sdk.operation.OperationCtx;
-import com.flezha.sdk.operation.OperationException;
 import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.procedure.IfRunning;
+import com.flezha.sdk.procedure.Procedure;
+import com.flezha.sdk.procedure.ProcedureCtx;
+import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
 /**
- * <b>08 — an operation that asks for a worker.</b>
+ * <b>08 — a procedure that asks for a worker.</b>
  *
  * <p>The pattern this exists for: a stream operative notices something worth
  * doing real work about, and wants a worker for it — without an external
@@ -26,13 +26,13 @@ import java.util.Optional;
  * <p>{@code ctx.spawnBounded} is spawn-<i>or</i>-deliver on one id. The first
  * alert for {@code ACME} starts {@code triage@ACME} with that alert as its first
  * input; every later alert for {@code ACME} is fed to the instance already
- * working on it. Concurrent alerts — from other Segments, other runners —
+ * working on it. Concurrent alerts — from other Entities, other runners —
  * resolve controller-side to exactly one instance, so there is no
  * check-then-create race to write around.
  *
  * <p>The call is fire-and-forget. It returns before the controller has decided
  * anything, and a refusal (quota, an unknown factory, an unreachable
- * controller) never becomes this operation's failure: it resolves the returned
+ * controller) never becomes this procedure's failure: it resolves the returned
  * handle, and logs itself if nobody reads it. That is deliberate — a detector's
  * own correctness must not depend on worker availability.
  *
@@ -56,7 +56,7 @@ public final class E08_SpawnBoundedWorker {
         }
     }
 
-    public static final class Detect implements Operation<String, Void, String, NoChange, WallClock, Void> {
+    public static final class Detect implements Procedure<String, Void, String, NoChange, WallClock, Void> {
         @Override
         public String name() {
             return "detect";
@@ -88,19 +88,19 @@ public final class E08_SpawnBoundedWorker {
         }
 
         @Override
-        public Void initState(Optional<String> segmentKey, Optional<RestoreInitPayload> initPayload) {
+        public Void initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return null;
         }
 
         @Override
-        public void run(String input, StateHandle<Void, NoChange> state, OperationCtx ctx) throws OperationException {
+        public void run(String input, StateHandle<Void, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
             if (!input.startsWith("alert:")) {
                 return;
             }
             String subject = input.substring("alert:".length());
 
             // One worker per subject. The handle is ignored: a failed request
-            // logs itself and this operation carries on emitting.
+            // logs itself and this procedure carries on emitting.
             ctx.spawnBounded("triage@" + subject, "triage", input.getBytes(StandardCharsets.UTF_8), IfRunning.DELIVER);
 
             ctx.emit("detected:" + subject);

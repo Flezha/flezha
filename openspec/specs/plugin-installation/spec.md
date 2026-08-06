@@ -222,7 +222,7 @@ The installer SHALL write installed plugin files to `app_data/plugins/installed/
 
 ### Requirement: Installed-plugin catalog persistence
 
-The system SHALL maintain a DETS-backed catalog at `app_data/recovery/installed_plugins.dets` via `Flezha.Plugin.Installer.Store`. Rows MUST be keyed by `plugin_id` (binary) and MUST contain at least: `version` (binary), `status` (`:enabled | :disabled | :load_failed`), `path` (binary — the `installed/<id>/<version>` absolute path), `manifest_digest` (SHA-256 of `manifest.exs` bytes), `modules` (list of atoms), `installed_at` (integer monotonic), `source_checksums` (map of relative-path → hex digest). Writes MUST fsync to disk via `:dets.sync/1` at the end of each install, upgrade, enable, disable, and uninstall operation before the operation returns.
+The system SHALL maintain a DETS-backed catalog at `app_data/recovery/installed_plugins.dets` via `Flezha.Plugin.Installer.Store`. Rows MUST be keyed by `plugin_id` (binary) and MUST contain at least: `version` (binary), `status` (`:enabled | :disabled | :load_failed`), `path` (binary — the `installed/<id>/<version>` absolute path), `manifest_digest` (SHA-256 of `manifest.exs` bytes), `modules` (list of atoms), `installed_at` (integer monotonic), `source_checksums` (map of relative-path → hex digest). Writes MUST fsync to disk via `:dets.sync/1` at the end of each install, upgrade, enable, disable, and uninstall procedure before the procedure returns.
 
 #### Scenario: Install writes a :disabled row
 - **WHEN** an install completes successfully
@@ -338,9 +338,9 @@ On agent startup, `Flezha.Plugin.Installer.Loader` SHALL iterate every row in `F
 
 ### Requirement: Public service API
 
-`Flezha.Plugin.Installer` SHALL expose exactly these public functions, each reachable from in-node callers (CLI via `Flezha.Service.CliManager`, future Phoenix UI, and test code): `install/2`, `upgrade/3`, `uninstall/2`, `enable/2`, `disable/2`, `list/0`, and `info/1`. All calls MUST be serialized through a single GenServer; concurrent invocations of mutating operations (`install`, `upgrade`, `uninstall`, `enable`, `disable`) MUST queue rather than race. Read-only operations (`list`, `info`) MAY be served without queuing but MUST observe the most recent successful write.
+`Flezha.Plugin.Installer` SHALL expose exactly these public functions, each reachable from in-node callers (CLI via `Flezha.Service.CliManager`, future Phoenix UI, and test code): `install/2`, `upgrade/3`, `uninstall/2`, `enable/2`, `disable/2`, `list/0`, and `info/1`. All calls MUST be serialized through a single GenServer; concurrent invocations of mutating procedures (`install`, `upgrade`, `uninstall`, `enable`, `disable`) MUST queue rather than race. Read-only procedures (`list`, `info`) MAY be served without queuing but MUST observe the most recent successful write.
 
-#### Scenario: Mutating operations are serialized
+#### Scenario: Mutating procedures are serialized
 - **WHEN** two callers invoke `install/2` concurrently
 - **THEN** exactly one install MUST be in flight at a time and the second MUST wait for the first to complete before starting
 

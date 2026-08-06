@@ -4,11 +4,11 @@ import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import javax.annotation.Nonnull;
 
 /**
- * Resolves a Operation's per-Segment mailbox capacity per the Rust SDK's
+ * Resolves a Procedure's per-Entity mailbox capacity per the Rust SDK's
  * three-tier precedence rule:
  *
  * <ol>
- *   <li>Explicit Operation override ({@code mailboxCapacityOverridden() == true}).</li>
+ *   <li>Explicit Procedure override ({@code mailboxCapacityOverridden() == true}).</li>
  *   <li>{@code FLEZHA_MAILBOX_CAPACITY} env var (parsed as a positive int).</li>
  *   <li>Built-in default ({@link #DEFAULT_MAILBOX_CAPACITY}).</li>
  * </ol>
@@ -29,8 +29,8 @@ public final class MailboxCapacityResolver {
     private MailboxCapacityResolver() {}
 
     /** Resolve using the live process environment for the env-var tier. */
-    public static int resolve(@Nonnull String operationName, int declared, boolean overridden) {
-        return resolveInner(operationName, declared, overridden, System.getenv(ENV_MAILBOX_CAPACITY));
+    public static int resolve(@Nonnull String procedureName, int declared, boolean overridden) {
+        return resolveInner(procedureName, declared, overridden, System.getenv(ENV_MAILBOX_CAPACITY));
     }
 
     /**
@@ -41,7 +41,7 @@ public final class MailboxCapacityResolver {
      * @throws UnboundedOperativeConfigurationException if the resolved value is out of
      *     range {@code [1, 1_048_576]}.
      */
-    static int resolveInner(@Nonnull String operationName, int declared, boolean overridden, String envValue) {
+    static int resolveInner(@Nonnull String procedureName, int declared, boolean overridden, String envValue) {
         int resolved;
         if (overridden) {
             resolved = declared;
@@ -50,10 +50,10 @@ public final class MailboxCapacityResolver {
             resolved = parsed != null ? parsed : DEFAULT_MAILBOX_CAPACITY;
         }
         if (resolved <= 0) {
-            throw UnboundedOperativeConfigurationException.mailboxCapacityZero(operationName);
+            throw UnboundedOperativeConfigurationException.mailboxCapacityZero(procedureName);
         }
         if (resolved > MAX_MAILBOX_CAPACITY) {
-            throw UnboundedOperativeConfigurationException.mailboxCapacityTooLarge(operationName, resolved);
+            throw UnboundedOperativeConfigurationException.mailboxCapacityTooLarge(procedureName, resolved);
         }
         return resolved;
     }

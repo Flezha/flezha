@@ -5,3 +5,4 @@ recovery/*
 certs/*
 auth/*
 process_hub/*
+schedules/*

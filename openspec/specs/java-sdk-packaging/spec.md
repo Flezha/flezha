@@ -78,7 +78,7 @@ The `flezha-sdk-protobuf` module SHALL generate Java classes from the existing `
 
 #### Scenario: Build regenerates protobuf classes
 - **WHEN** `mvn -f sdk/java/flezha-sdk-protobuf/pom.xml generate-sources` is run
-- **THEN** Java classes for `CommandRequest`, `CommandResponse`, `AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `SegmentState`, `MigrationSerialization`, `MigrationDeserialization`, `RunnerDisconnect` SHALL be produced under `target/generated-sources/protobuf/`
+- **THEN** Java classes for `CommandRequest`, `CommandResponse`, `AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `EntityState`, `MigrationSerialization`, `MigrationDeserialization`, `RunnerDisconnect` SHALL be produced under `target/generated-sources/protobuf/`
 
 #### Scenario: Proto changes are picked up without manual regeneration
 - **WHEN** a field is added to a `.proto` file in `flz_transport/protobufs/` and the Java SDK is rebuilt
@@ -98,7 +98,7 @@ CI SHALL include a Java SDK workflow that (a) cross-builds `flz_transport` for t
 
 ### Requirement: Java SDK artifact identifiers use canonical vocabulary
 
-Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary. Modules previously named with `processor`, `operator`, or `compute-engine` segments SHALL use `operative` and `runner` segments respectively. Existing module names that do not carry those terms (e.g., `flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`) keep their names.
+Java SDK Maven artifact IDs and module names SHALL use canonical vocabulary. Modules previously named with `processor`, `operator`, or `compute-engine` entities SHALL use `operative` and `runner` entities respectively. Existing module names that do not carry those terms (e.g., `flezha-sdk-api`, `flezha-sdk-runtime`, `flezha-sdk-native`) keep their names.
 
 #### Scenario: Built artifacts use canonical names
 - **WHEN** `mvn -f sdk/java verify` produces SDK jars

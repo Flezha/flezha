@@ -5,7 +5,7 @@ import com.flezha.sdk.proto.CommandRequest;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.control.CommandHandler;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
-import com.flezha.sdk.runtime.state.SegmentStateSink;
+import com.flezha.sdk.runtime.state.EntityStateSink;
 import com.flezha.sdk.runtime.stream.PrimaryStreamReader;
 import com.flezha.sdk.runtime.stream.StreamRegistry;
 import java.util.List;
@@ -26,11 +26,11 @@ public final class ConnectSocketHandler implements CommandHandler {
             ctx.primaryReaders().put(primary, new PrimaryStreamReader(ctx, primary));
         }
 
-        // Install the per-Segment flusher's send sink over a secondary stream.
+        // Install the per-Entity flusher's send sink over a secondary stream.
         // Resolves the live stream on each send so a reconnect's fresh stream is
-        // used without re-registering segments; the sink replays any frames
+        // used without re-registering entities; the sink replays any frames
         // buffered while it was absent.
-        SegmentStateSink.installGlobalSink((payloadId, frame) -> {
+        EntityStateSink.installGlobalSink((payloadId, frame) -> {
             long secondary = streams.anySecondary();
             if (secondary == 0L) {
                 return false;

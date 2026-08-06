@@ -1,18 +1,18 @@
 defmodule Flezha.State.RecordLog do
   @moduledoc """
-  Per-instance append-only record log on the Segment persistence substrate.
+  Per-instance append-only record log on the Entity persistence substrate.
 
   The shared core behind a bounded instance's two durable logs — its
-  `op.journal` (`Flezha.State.OpJournal`) and its `inbox.wal`
-  (`Flezha.State.OpInbox`). Both are WAL-framed record streams written through
+  `proc.journal` (`Flezha.State.ProcJournal`) and its `inbox.wal`
+  (`Flezha.State.ProcInbox`). Both are WAL-framed record streams written through
   the existing `WalWriter` + `FsyncBatcher` path under a reserved
-  `Flezha.State.Registry` identity, and both need exactly two operations from
+  `Flezha.State.Registry` identity, and both need exactly two procedures from
   that substrate: a **durable append** (assign the next seq, write, fsync before
   the caller proceeds) and a **torn-tail-tolerant read**. Those live here, so
   neither log owns a copy of the substrate protocol and the next per-instance
   log gets both for free.
 
-  A log is not a Segment: its reserved identity carries no effect records and no
+  A log is not an Entity: its reserved identity carries no effect records and no
   dedup side-file (`WalWriter` skips it), and `Registry.scan_dir/1` never
   surfaces it.
   """
@@ -30,7 +30,7 @@ defmodule Flezha.State.RecordLog do
   seq it was assigned. The seq comes from the log's own tail, so callers never
   track it.
   """
-  @spec append(Registry.segment_id(), binary(), binary()) ::
+  @spec append(Registry.entity_id(), binary(), binary()) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def append(log_id, header, body) when is_binary(header) and is_binary(body) do
     with {:ok, pid} <- Supervisor.find_or_start(log_id),

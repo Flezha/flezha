@@ -13,7 +13,7 @@
     <artifactId>flezha-sdk-testing</artifactId>
     <packaging>jar</packaging>
     <name>Flezha SDK Testing</name>
-    <description>Test fixtures and harnesses for Operation authors. Includes OperationTestHarness.</description>
+    <description>Test fixtures and harnesses for Procedure authors. Includes ProcedureTestHarness.</description>
 
     <dependencies>
         <dependency>

@@ -1,30 +1,30 @@
 # operative-output-identity Specification
 
 ## Purpose
-Replay-stable identity on emitted outputs: per-channel `.keyed()` opt-in, `emit_keyed`, the `flz.segment`/`flz.seq`/`flz.key` reserved stamps, the protected `flz.` metadata namespace, and the `flz.seq` exactness boundary. Non-keyed channels stay byte-identical and cost-free.
+Replay-stable identity on emitted outputs: per-channel `.keyed()` opt-in, `emit_keyed`, the `flz.entity`/`flz.seq`/`flz.key` reserved stamps, the protected `flz.` metadata namespace, and the `flz.seq` exactness boundary. Non-keyed channels stay byte-identical and cost-free.
 ## Requirements
 ### Requirement: Keyed channel declaration
 
 The channel builder SHALL support a `.keyed()` declaration on plugin-bound
 (`output`) and hybrid (`also_output` / `also_output_with`) channels, recorded on
-the channel entry. Declaring `.keyed()` on a pure inter-operation channel (no
+the channel entry. Declaring `.keyed()` on a pure inter-procedure channel (no
 plugin wire) SHALL be a build error. The channel declaration is the single
 source of truth for whether output identity exists on that channel.
 
 #### Scenario: Keyed plugin channel accepted
 
 - **WHEN** a topology declares `.also_output_with("kafka", ser).keyed()` on an
-  `OhlcOp` output stream
+  `OhlcProc` output stream
 - **THEN** the operative builds and the channel entry is marked keyed
 
-#### Scenario: Keyed inter-operation channel rejected
+#### Scenario: Keyed inter-procedure channel rejected
 
 - **WHEN** a topology declares `.keyed()` on a channel with no plugin sink
 - **THEN** the build fails with a typed error naming the channel
 
 ### Requirement: `emit_keyed` supplies the natural key on keyed channels
 
-`OperationCtx::emit_keyed(key, value)` SHALL emit on the invocation's channel with
+`ProcedureCtx::emit_keyed(key, value)` SHALL emit on the invocation's channel with
 the caller-supplied natural key. On a keyed channel, plain `emit` /
 `emit_with_meta` (no key) SHALL fail with a typed error; on a non-keyed channel,
 `emit_keyed` SHALL fail with a typed error. The key SHALL be replay-stable by the
@@ -39,19 +39,19 @@ determinism contract (derived from input/state/ctx, never from ambient sources).
 #### Scenario: Un-keyed emit on keyed channel rejected
 
 - **WHEN** `run` calls `ctx.emit(candle)` on a keyed channel
-- **THEN** the call returns a typed `OperationError` and nothing is emitted
+- **THEN** the call returns a typed `ProcedureError` and nothing is emitted
 
 #### Scenario: Keyed emit on non-keyed channel rejected
 
 - **WHEN** `run` calls `ctx.emit_keyed(key, value)` on a channel not declared
   `.keyed()`
-- **THEN** the call returns a typed `OperationError` and nothing is emitted
+- **THEN** the call returns a typed `ProcedureError` and nothing is emitted
 
 ### Requirement: Identity stamps on keyed-channel output frames
 
 Every plugin-wire emit on a keyed channel SHALL carry reserved metadata stamps:
-`flz.segment` (the emitting Segment's identity as
-`operative_class/operation_id/segment_key`), `flz.seq` (the current durable change
+`flz.entity` (the emitting Entity's identity as
+`operative_class/procedure_id/entity_key`), `flz.seq` (the current durable change
 sequence plus the emit ordinal within the invocation, formatted
 `<change_seq>.<emit_ordinal>`), and `flz.key` (the natural key from `emit_keyed`).
 Stamps SHALL be appended after user metadata so they cannot be clobbered. The
@@ -62,7 +62,7 @@ state reproduces identical stamp values.
 
 - **WHEN** a keyed-channel emit is produced, the runner crashes, state is
   restored, and the same input is replayed
-- **THEN** the re-emitted frame carries `flz.segment`, `flz.seq`, and `flz.key`
+- **THEN** the re-emitted frame carries `flz.entity`, `flz.seq`, and `flz.key`
   values identical to the original emission
 
 #### Scenario: Controller passes stamps through to the plugin chain
@@ -81,7 +81,7 @@ building append-only dedup on `flz.seq` alone.
 
 #### Scenario: Collision case is documented and detectable
 
-- **WHEN** two consecutive invocations of a Segment emit without applying any
+- **WHEN** two consecutive invocations of an Entity emit without applying any
   state change
 - **THEN** their `flz.seq` stamps may collide, and the documented guidance directs
   exact append-dedup consumers to the effectively-once outbox capability
@@ -95,7 +95,7 @@ clobbered by operative code.
 #### Scenario: Spoofed stamp rejected
 
 - **WHEN** `run` calls `ctx.emit_with_meta(value, {"flz.seq": "999.0"})`
-- **THEN** the call returns a typed `OperationError` and nothing is emitted
+- **THEN** the call returns a typed `ProcedureError` and nothing is emitted
 
 ### Requirement: Non-keyed channels are unchanged and cost-free
 

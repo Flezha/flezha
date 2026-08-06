@@ -1,9 +1,9 @@
 # Rust SDK Operative State Persistence
 
 This doc covers the state-persistence trait surface added by the
-`operative-state-persistence-rust` change. The controller-side WAL writer,
+`operative-state-persistence` change. The controller-side WAL writer,
 fsync batcher, snapshot lifecycle, retention sweeper, and time-travel
-CLI ship in `operative-state-persistence-controller`; this doc describes the
+CLI ship in `operative-state-persistence`; this doc describes the
 SDK-side contract and what runs where today.
 
 For the architecture rationale and the eight Tier-1 commitments that
@@ -14,22 +14,22 @@ this change implements, see the umbrella in
 
 - **Change** — one logical state-mutation record. Implementors describe a
   semantic edit ("`delta: i64`", "`Push(input)`"), declare it as
-  `Operation::Change`, and the runtime persists it via the per-Segment
-  flusher. Default is `NoChange` (uninhabited) which opts the Operation out
+  `Procedure::Change`, and the runtime persists it via the per-Entity
+  flusher. Default is `NoChange` (uninhabited) which opts the Procedure out
   of persistence machinery entirely.
 
 - **`state.apply(change)`** — the only mutation chokepoint. Replaces
-  `state.field = value` and `state.field.push(item)` in v1 Operations.
-  Routes the mutation through `Operation::apply_change` (the user's
-  deterministic fold) and pushes the Change onto the per-Segment
+  `state.field = value` and `state.field.push(item)` in v1 Procedures.
+  Routes the mutation through `Procedure::apply_change` (the user's
+  deterministic fold) and pushes the Change onto the per-Entity
   flush buffer for the per-process flusher to drain. Hot path is
-  exactly one `Operation::apply_change` call plus one `Vec::push`.
+  exactly one `Procedure::apply_change` call plus one `Vec::push`.
 
 - **`apply_change`** — the deterministic fold. MUST be pure: same
   state + same Change ⇒ same resulting state. Determinism is convention-
   enforced; the type system does not prevent
   `state.seed = SystemTime::now().subsec_nanos()`. Tests catch
-  divergence via `OperationTestHarness::replay_equals`.
+  divergence via `ProcedureTestHarness::replay_equals`.
 
 - **`coalesce_key`** — opt-in batching. Records sharing a non-`None`
   key within one linger window collapse to the most recent record.
@@ -41,16 +41,16 @@ this change implements, see the umbrella in
   changes only take effect on the next `stop_operative` + `start_operative`
   cycle.
 
-- **`SegmentFlusher`** — single OS thread per process, lazy-
+- **`EntityFlusher`** — single OS thread per process, lazy-
   initialized on first non-`NoChange` registration. Drains every
-  registered Segment's buffer on the linger cadence
+  registered Entity's buffer on the linger cadence
   (`FLEZHA_FLUSH_LINGER_MS`, default 5 ms). Toggle-aware: when
   `persistence_enabled == false`, drains-and-discards.
 
 ## Trait surface
 
 ```rust
-use flezha_runner::operation::{Operation, OperationCtx, OperationError};
+use flezha_runner::procedure::{Procedure, ProcedureCtx, ProcedureError};
 use flezha_runner::state::{
     Change, NoChange, RestoreInitPayload, StateHandle, WallClock,
 };
@@ -64,8 +64,8 @@ struct CounterChange { delta: i64 }
 impl Change for CounterChange {}
 
 #[derive(Default)]
-struct CounterOperation;
-impl Operation for CounterOperation {
+struct CounterProcedure;
+impl Procedure for CounterProcedure {
     type Input = i64;
     type Output = ();
     type State = CounterState;
@@ -73,7 +73,7 @@ impl Operation for CounterOperation {
     type Clock = WallClock;
     type Config = ();
 
-    fn name() -> &'static str { "counter_operation" }
+    fn name() -> &'static str { "counter_procedure" }
 
     fn init_state(_: Option<&str>, _: Option<RestoreInitPayload<'_>>) -> CounterState {
         CounterState::default()
@@ -87,8 +87,8 @@ impl Operation for CounterOperation {
         &mut self,
         input: i64,
         mut state: StateHandle<'_, Self>,
-        _ctx: &mut OperationCtx<'_>,
-    ) -> Result<(), OperationError> {
+        _ctx: &mut ProcedureCtx<'_>,
+    ) -> Result<(), ProcedureError> {
         state.apply(CounterChange { delta: input });
         Ok(())
     }
@@ -132,19 +132,19 @@ impl UnboundedOperative for MarketOperative {
 ```
 
 When `PERSISTENCE_ENABLED == false` (or the runner override sets it
-to `false` at start time), the per-Segment flusher still drains the
+to `false` at start time), the per-Entity flusher still drains the
 buffer on each linger tick — the buffer is cleared, coalescing runs,
 seq counters advance — but `send_frame` is never invoked. Tests can
 assert the wire stub was not called.
 
-## OperationTestHarness
+## ProcedureTestHarness
 
 ```rust
-use flezha_runner::testing::OperationTestHarness;
+use flezha_runner::testing::ProcedureTestHarness;
 
 #[test]
 fn counter_replays_deterministically() {
-    let mut harness = OperationTestHarness::<CounterOperation>::new();
+    let mut harness = ProcedureTestHarness::<CounterProcedure>::new();
     harness.apply_inputs(vec![1i64, 2, 3, 4]);
     assert_eq!(harness.state().value, 10);
     harness.replay_equals().expect("deterministic replay");
@@ -157,14 +157,14 @@ with the harness's terminal state via `serde::Serialize` round-trip.
 Returns `Err(ReplayMismatch { expected_serialized, actual_serialized })`
 on divergence; `Display` renders a hex-diff for visual inspection.
 
-`OperationTestHarness` is gated behind `cfg(any(test, feature = "testing"))`.
+`ProcedureTestHarness` is gated behind `cfg(any(test, feature = "testing"))`.
 Downstream crates that want the harness in their non-test code paths
 add `flezha_runner = { ..., features = ["testing"] }`.
 
 ## Restoration flow (warm restart)
 
-When a Segment reconnects with persisted state, the runtime invokes
-`Operation::init_state(operation_key, Some(payload))`. The user MAY inspect
+When an Entity reconnects with persisted state, the runtime invokes
+`Procedure::init_state(entity_key, Some(payload))`. The user MAY inspect
 `payload.snapshot_bytes` and `payload.change_log_bytes` for
 instrumentation but does not have to decode them. After `init_state`
 returns, the runtime:
@@ -174,7 +174,7 @@ returns, the runtime:
    decoded snapshot.
 2. Iterates `payload.change_log_bytes` records, validates each header
    + CRC, deserializes the Change body, and folds via
-   `Operation::apply_change`.
+   `Procedure::apply_change`.
 
 The end state is identical to the controller-side state at the time of the
 last persisted record (modulo CRC failures, which fail loud).
@@ -185,7 +185,7 @@ Per record (16-byte header per umbrella spec; full frame per
 `rust-sdk-dispatch` delta):
 
 ```
-[segment_id:      u32 BE]
+[entity_id:      u32 BE]
 [seq:             u64 BE]
 [header:          16 B  ]   <- HeaderTemplate::stamp output
 [change_bytes_len:u32 BE]
@@ -194,22 +194,22 @@ Per record (16-byte header per umbrella spec; full frame per
 ```
 
 The 16-byte header carries `sdk_lang = 1` (Rust), the SDK version, the
-Operation's `SCHEMA_VERSION`, the `format_id = 1` (postcard), and a CRC32
+Procedure's `SCHEMA_VERSION`, the `format_id = 1` (postcard), and a CRC32
 over the change bytes. The trailing CRC32 is the same value, repeated
 on the wire so the controller's WAL reader can validate framing before
 decoding the header.
 
 ## What ships where
 
-| Concern | This change | `operative-state-persistence-controller` |
+| Concern | This change | `operative-state-persistence` |
 |---|---|---|
 | `Change` trait, `apply_change`, `StateHandle` | ✅ | — |
-| Per-Segment flusher (single OS thread) | ✅ | — |
+| Per-Entity flusher (single OS thread) | ✅ | — |
 | Wire-frame builder | ✅ (stub `send_frame`) | replaces with NIF |
-| `OperationTestHarness::<S>::replay_equals` | ✅ | — |
+| `ProcedureTestHarness::<S>::replay_equals` | ✅ | — |
 | 16-byte header, CRC32 validation | ✅ | — |
 | `UnboundedOperative::PERSISTENCE_ENABLED` resolution | ✅ | runner override wired |
-| Per-Operation `compact_after_bytes` reported to controller | ✅ | consumes value |
+| Per-Procedure `compact_after_bytes` reported to controller | ✅ | consumes value |
 | Controller-side WAL writer + fsync batcher | — | ✅ |
 | Snapshot lifecycle + retention | — | ✅ |
 | Time-travel CLI | — | ✅ |
@@ -221,15 +221,15 @@ durability lands when the controller change wires the real `send_frame`.
 ## Tunables
 
 - `FLEZHA_FLUSH_LINGER_MS` — flusher linger between drains. Default 5.
-- `Operation::compact_after_bytes()` — per-Segment WAL size threshold
+- `Procedure::compact_after_bytes()` — per-Entity WAL size threshold
   reported to the controller at operative start. Default 64 MiB.
-- `Operation::SCHEMA_VERSION` — bump on non-additive Change-schema edits;
+- `Procedure::SCHEMA_VERSION` — bump on non-additive Change-schema edits;
   the runtime fails loud on mismatch (registered migrators are
   reserved by the umbrella but not implemented in this change).
 
 ## See also
 
 - Umbrella spec: `openspec/specs/operative-state-persistence/`
-- Rust trait deltas: `openspec/changes/operative-state-persistence-rust/`
+- Rust trait deltas: `openspec/changes/operative-state-persistence/`
 - Wire-format hex: `docs/sdk_protocol_spec.md`
 - Bench baselines: `docs/benchmarking.md`

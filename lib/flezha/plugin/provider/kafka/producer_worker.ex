@@ -1047,12 +1047,12 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   # the Kafka message key — stable partitioning across replays, upsert
   # semantics on compacted/changelog topics — and the full durable identity
   # travels as the `flezha.dedup_key` header
-  # (`<flz.segment>/<outbox_seq>/<epoch>`) for consumer-side exact dedup on
+  # (`<flz.entity>/<outbox_seq>/<epoch>`) for consumer-side exact dedup on
   # append-only topics. Re-driven entries carry identical identity.
   defp record_identity(
-         %{"flz.epoch" => epoch, "flz.segment" => segment, "flz.seq" => outbox_seq} = metadata
+         %{"flz.epoch" => epoch, "flz.entity" => entity, "flz.seq" => outbox_seq} = metadata
        ) do
-    {Map.get(metadata, "flz.key"), "#{segment}/#{outbox_seq}/#{epoch}"}
+    {Map.get(metadata, "flz.key"), "#{entity}/#{outbox_seq}/#{epoch}"}
   end
 
   # At-least-once records: caller-supplied key behaviour unchanged, no

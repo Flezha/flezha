@@ -1,11 +1,11 @@
 # Controller state persistence
 
-Implementation notes for the per-Segment WAL, snapshot, and
+Implementation notes for the per-Entity WAL, snapshot, and
 time-travel infrastructure on the Elixir controller. Settles the
-details of the per-Segment WAL infrastructure; keep this in sync
+details of the per-Entity WAL infrastructure; keep this in sync
 with `lib/flezha/state/`.
 
-> Per-Segment WAL persistence (this doc) is independent of and
+> Per-Entity WAL persistence (this doc) is independent of and
 > complementary to **plugin-subscription persistence** (cspec-driven;
 > see `docs/process_hub_architecture.md` "Plugin subscriptions
 > persistence" and
@@ -22,34 +22,34 @@ app_data/
       input.log                        # durable input log (effectively-once tier)
       effectively_once                 # declaration sidecars, written once at bind
       checkpoint_ack
-      {operation_id}/
-        {segment_key}.wal
-        {segment_key}.snap.{seq}
-        {segment_key}.outbox.dedup
+      {procedure_id}/
+        {entity_key}.wal
+        {entity_key}.snap.{seq}
+        {entity_key}.outbox.dedup
     {instance_id}/
       {instance_id}/
-        op.journal                     # bounded step progress
+        proc.journal                     # bounded step progress
         inbox.wal                      # bounded durable inbox
 ```
 
-The path triple `(operative_class, operation_id, segment_key)` uniquely
-identifies a Segment's state. Persistence does not include the
+The path triple `(operative_class, procedure_id, entity_key)` uniquely
+identifies an Entity's state. Persistence does not include the
 `runner_id` — that is an addressing concern at the SDK boundary. When
 a runner pod restarts and rotates its `runner_id`, state under the
-flat layout is preserved and shipped to the new runner on Segment
+flat layout is preserved and shipped to the new runner on Entity
 attach via `RestoreInitState`. The one-time
 `Flezha.Boot.StatePathMigrator` runs at `Application.start/2` to migrate
 an older runner-keyed layout into the flat one.
 
-`segment_key` is URL-safe-base64-encoded with a leading `_` when it
+`entity_key` is URL-safe-base64-encoded with a leading `_` when it
 contains characters outside `[A-Za-z0-9_.-]`. Round-trippable via
-`Flezha.State.Registry.encode_segment_key/1` and `decode_segment_key/1`.
+`Flezha.State.Registry.encode_entity_key/1` and `decode_entity_key/1`.
 
-A bounded instance's `op.journal` and `inbox.wal` ride the **same**
-WalWriter + FsyncBatcher substrate as a Segment, under two reserved
-segment keys (`_op_journal`, `_op_inbox`). They write no dedup side-file,
+A bounded instance's `proc.journal` and `inbox.wal` ride the **same**
+WalWriter + FsyncBatcher substrate as an Entity, under two reserved
+entity keys (`_proc_journal`, `_proc_inbox`). They write no dedup side-file,
 which is what keeps `Registry.scan_dir/1` from ever surfacing one as a
-phantom Segment.
+phantom Entity.
 
 Configurable root via `:flezha, :state_root` (default `app_data/state`).
 
@@ -58,19 +58,19 @@ Configurable root via `:flezha, :state_root` (default `app_data/state`).
 | Module | Role |
 |---|---|
 | `Flezha.State.Registry` | Path resolution + directory enumeration. No GenServer, no I/O beyond `File.ls/1`. |
-| `Flezha.State.Wire` | Wire-frame codec for `segment_state_change` / `segment_effect_record` / `segment_state_snapshot` payload-ids (+ the postcard `EffectRecordBody` codec). |
-| `Flezha.State.Metrics` | Per-Segment `:counters` references; lazy allocation in a `:ets` table. |
-| `Flezha.State.Outbox` | Per-Segment dedup file (`<segment_key>.outbox.dedup`): `last_persisted_seq` + `outbox_flushed_seq` + realign `epoch`. A rebuildable cache advanced at fsync-batch cadence (never per record); boot repairs it from the WAL scan. |
+| `Flezha.State.Wire` | Wire-frame codec for `entity_state_change` / `entity_effect_record` / `entity_state_snapshot` payload-ids (+ the postcard `EffectRecordBody` codec). |
+| `Flezha.State.Metrics` | Per-Entity `:counters` references; lazy allocation in a `:ets` table. |
+| `Flezha.State.Outbox` | Per-Entity dedup file (`<entity_key>.outbox.dedup`): `last_persisted_seq` + `outbox_flushed_seq` + realign `epoch`. A rebuildable cache advanced at fsync-batch cadence (never per record); boot repairs it from the WAL scan. |
 | `Flezha.State.InputLog` | Effectively-once tier: per-operative durable ingest journal (`<class>/input.log`), min-watermark tracker + truncation, and the source-ingestion credit ledger. |
 | `Flezha.State.PersistenceResolver` | Per-Operative config resolution (`operative_persistence`, `time_travel_retention_hours`, `compact_after_bytes`). |
-| `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Segment `WalWriter` GenServers + a process registry for name lookup. |
-| `Flezha.State.WalWriter` | One GenServer per Segment. Owns the WAL file handle; opens it in `handle_continue/2` so creation never blocks the caller. |
+| `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Entity `WalWriter` GenServers + a process registry for name lookup. |
+| `Flezha.State.WalWriter` | One GenServer per Entity. Owns the WAL file handle; opens it in `handle_continue/2` so creation never blocks the caller. |
 | `Flezha.State.FsyncBatcher` | Single shared GenServer driving `:file.datasync/1` across dirty writers on a fixed cadence. |
 | `Flezha.State.Snapshot` | Snapshot file lifecycle (`.tmp → fsync → rename → truncate`). |
 | `Flezha.State.Retention` | Periodic sweeper enforcing `time_travel_retention_hours`. |
 | `Flezha.State.Restore` | Assembles `RestoreInitState` payload (snapshot + tail WAL). |
 | `Flezha.State.TimeTravel` | Point-in-time query engine backing `flz state at`. |
-| `Flezha.State.WalTransfer` | Cross-controller, destination-pulled copy of one Segment's durable files at migration time. See below. |
+| `Flezha.State.WalTransfer` | Cross-controller, destination-pulled copy of one Entity's durable files at migration time. See below. |
 
 ## Cross-controller transfer
 
@@ -83,16 +83,16 @@ A HotSwap handover normally carries the state in-band — but
 migration triggered by a runner's death (`hub_migrate`, when a controller loses
 its last runner for a namespace) necessarily ships an empty payload. That is
 where `Flezha.State.WalTransfer` runs: the handover stamps `source_node`, and an
-empty payload makes the destination pull every Segment of the operative from
+empty payload makes the destination pull every Entity of the operative from
 that node before driving the ordinary replay.
 
 The transfer is **destination-driven** — the source only answers reads
-(`segments/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source that
+(`entities/1`, `manifest/1`, `read_chunk/3` over `:erpc`) — so a source that
 dies mid-transfer fails the pull rather than stranding a partial file. Each file
 is written to a `.transferring` sibling, fsynced, then atomically renamed;
-any failure removes the artefact and leaves that Segment cold rather than
+any failure removes the artefact and leaves that Entity cold rather than
 half-restored. A requested name is resolved against
-`Registry.segment_files/1`, never joined onto the state directory, so a peer
+`Registry.entity_files/1`, never joined onto the state directory, so a peer
 cannot read arbitrary paths off the node. Telemetry:
 `[:flezha, :state, :wal_pulled]` / `[:flezha, :state, :wal_pull_failed]`.
 
@@ -119,7 +119,7 @@ bytes past the last valid record are truncated.
 ## Writer startup
 
 `StreamChannel` resolves a writer with `Supervisor.find_or_start/1` on
-every `segment_state_change` frame. To keep the channel's loop off the
+every `entity_state_change` frame. To keep the channel's loop off the
 disk, `WalWriter.init/1` only builds the struct and returns
 `{:continue, :open}`; the process is already Registry-registered, so
 `find_or_start` returns in microseconds. All disk work — `mkdir`,
@@ -132,7 +132,7 @@ unchanged.
 ## fsync batching
 
 `Flezha.State.FsyncBatcher` is one GenServer (`name: __MODULE__`).
-`WalWriter.handle_call({:append, ...})` casts `mark_dirty(segment_id)`
+`WalWriter.handle_call({:append, ...})` casts `mark_dirty(entity_id)`
 after each write; the batcher coalesces casts into a single per-tick
 fsync per writer. Tick interval defaults to `5 ms` (≈ 200 Hz),
 configurable via `:flezha, :agent_fsync_interval_ms`. Legal range
@@ -146,14 +146,14 @@ sweep on **size or age** (plus manually via `flz state rotate`):
 * **Size** — un-snapshotted WAL bytes past the resolved
   `compact_after_bytes` (default **8 MiB**). The SDK's declared
   `compact_after_bytes()` rides the `AddOperative` metadata (the smallest
-  across the operative's operations, when it differs from the default),
+  across the operative's procedures, when it differs from the default),
   is persisted in `ClassRegistry`, and is resolved per operative class by
   `PersistenceResolver.compact_after_bytes/2` ahead of the global
   `:flezha, :default_compact_after_bytes`; an operator
   `:compact_after_bytes => %{class => bytes}` map overrides both.
 * **Age** — the oldest un-snapshotted WAL record is older than
   `:flezha, :compact_after_age_ms` (default 300 000 ms; `0` disables),
-  so low-throughput Operations still get periodic baselines.
+  so low-throughput Procedures still get periodic baselines.
 
 Both read the `WalWriter`'s in-memory accounting (no extra disk scan),
 share the Watchdog's in-flight `compactions` map as the re-enqueue guard
@@ -161,14 +161,14 @@ share the Watchdog's in-flight `compactions` map as the re-enqueue guard
 `[:flezha, :state, :compaction_trigger]` with `trigger: :size | :age`.
 
 1. Runner (or compaction trigger) requests a snapshot — controller ships
-   `CompactSegment` to the SDK over the control channel.
-2. The SDK locates the addressed live Segment, **drains any pending changes
+   `CompactEntity` to the SDK over the control channel.
+2. The SDK locates the addressed live Entity, **drains any pending changes
    first** (so its in-memory state equals the shipped WAL), serializes
    `Self::State` under the state lock — **postcard** in Rust, **Kryo** in Java,
    the same codec the restore path decodes, never the JSON migration
-   serializer — and ships the bytes via `segment_state_snapshot` stamped with
+   serializer — and ships the bytes via `entity_state_snapshot` stamped with
    the highest change seq the snapshot already folds. It answers
-   `CompactSegmentResponse{snapshot_seq, snapshot_bytes_size}`.
+   `CompactEntityResponse{snapshot_seq, snapshot_bytes_size}`.
 3. `StreamChannel` decodes the frame and calls
    `Flezha.State.Snapshot.write_snapshot/4`:
    - opens `<key>.snap.{seq}.tmp`
@@ -189,20 +189,20 @@ already-folded WAL records is idempotent (umbrella commitment on
 
 ### The compaction failure path
 
-`Overwatch.dispatch_compact_segment/2` inspects the `CompactSegmentResponse`:
+`Overwatch.dispatch_compact_entity/2` inspects the `CompactEntityResponse`:
 a `{snapshot_seq: 0, snapshot_bytes_size: 0}` answer against a **non-empty**
 WAL is a failed handshake (never a completion), reported as
 `[:flezha, :state, :compaction_failed]`. A snapshot that never arrives is
 bounded by `:flezha, :compaction_timeout_ms` (default 30 s).
 
-Repeated failure for a Segment is not retried at the sweep interval forever:
+Repeated failure for an Entity is not retried at the sweep interval forever:
 the Watchdog holds one `Flezha.Convergence.Backoff` keyed
-`{:compaction, segment_id}` (schedule 5 s → 30 s → 60 s → 300 s). Below the
-give-up threshold a still-live, still-correct Segment is **not** resynced (a
+`{:compaction, entity_id}` (schedule 5 s → 30 s → 60 s → 300 s). Below the
+give-up threshold a still-live, still-correct Entity is **not** resynced (a
 re-restore fixes nothing and risks availability); the backoff-gated trigger
 sweep is the retry. At the give-up threshold the WAL has grown across every
 rung, so the Watchdog emits `[:flezha, :state, :compaction_gave_up]` (an
-operator-alertable alarm naming the Segment and attempt count) **and**
+operator-alertable alarm naming the Entity and attempt count) **and**
 dispatches a real resync with the `runner_id` the `WalWriter` status carries.
 Completion (`compaction_completed`) resets the strike.
 
@@ -210,7 +210,7 @@ Completion (`compaction_completed`) resets the strike.
 
 `Flezha.State.Retention` runs every `:flezha,
 :time_travel_retention_check_interval_ms` (default 60 000 ms). For each
-Segment under `Registry.all_segments/0`:
+Entity under `Registry.all_entities/0`:
 
 1. `retention_hours = Flezha.State.PersistenceResolver.retention_hours(operative_class)`
 2. If 0: keep only the latest snapshot, truncate WAL to its seq.
@@ -219,7 +219,7 @@ Segment under `Registry.all_segments/0`:
    reap older snapshots and rewrite the WAL keeping records with
    `seq > kept_seq`.
 
-WAL rewrite is `segment.wal.rewriting → rename` so a mid-rewrite crash
+WAL rewrite is `entity.wal.rewriting → rename` so a mid-rewrite crash
 leaves the original WAL intact.
 
 ## Flow control
@@ -227,7 +227,7 @@ leaves the original WAL intact.
 ### Credit-grant (primary)
 
 Runner→controller flow control on the state stream is credit-based:
-park, never drop. On the first `segment_state_change` frame of a stream
+park, never drop. On the first `entity_state_change` frame of a stream
 attach, the `StreamChannel` offers `CreditWindowInit{stream_id,
 window_bytes, low_watermark_bytes}` over the control channel (kill
 switch: `FLEZHA_CREDIT_FLOW_CONTROL=false` skips the offer). The window
@@ -249,7 +249,7 @@ ledger:
   stale-refusal drops that never occupy the buffer). One batched `CreditGrant` goes out when
   the freed credit brings the un-fsynced buffer below
   `low_watermark_bytes` — never per record; a stalled fsync mints nothing.
-* **Sender parks on exhaustion** — the SDK (`sdk/rust/src/segment/credit.rs`,
+* **Sender parks on exhaustion** — the SDK (`sdk/rust/src/entity/credit.rs`,
   `sdk/java .../state/CreditWindow.java`) debits each frame before the
   sink write and parks the flush path (under the buffer lock, so
   producers throttle at the buffer boundary) until the next grant. Parks
@@ -276,7 +276,7 @@ For sessions that never complete the credit handshake, `WalWriter`
 keeps the advisory path byte-for-byte: crossing
 `:flezha, :wal_high_watermark_bytes` (default 16 MiB) emits a
 `[:flezha, :state, :wal, :backpressure]` telemetry event AND ships
-`SegmentMailboxStatus{status: "full"}` to the SDK (routed via the
+`EntityMailboxStatus{status: "full"}` to the SDK (routed via the
 writer's `owning_runner`); draining below `wal_low_watermark_bytes`
 (default `high_watermark / 2`) ships `"open"`. The hysteresis prevents
 oscillation. Credit-speaking sessions get the telemetry event only —
@@ -292,9 +292,9 @@ memory: `append_async/6` sheds (drops) the incoming Change when either
 `4 ×` the soft watermark) **or** the writer's mailbox depth reaches
 `:flezha, :wal_pending_msg_cap` (default `5_000` — a cast flood grows
 the mailbox even when each record is tiny). Each shed increments
-`wal_shed_total` (per-Segment `Metrics` counter); the resulting seq
+`wal_shed_total` (per-Entity `Metrics` counter); the resulting seq
 gap drives the existing `Recovery.resync` handshake (once per shed
-episode), so the SDK — authoritative for segment state — re-sends the
+episode), so the SDK — authoritative for entity state — re-sends the
 missing Changes. Back-pressure sheds, never blocks: the async cast path
 stays non-blocking so a slow disk cannot stall the data-plane channel.
 
@@ -310,16 +310,16 @@ back-pressure.
 
 ```
 flz state list <operative_class>
-flz state at <operative/operation/segment_key> <seq | iso8601-timestamp>
-flz state rotate <operative/operation/segment_key>
+flz state at <operative/procedure/entity_key> <seq | iso8601-timestamp>
+flz state rotate <operative/procedure/entity_key>
 flz state retention <operative_class> <hours>
-flz state delete <operative/operation/segment_key>
+flz state delete <operative/procedure/entity_key>
 ```
 
 Implemented in `cli/src/state.rs` (Rust binary) which RPCs into
 `Flezha.Service.CliManager.state_*/N` on the running controller. Path
-strings like `MarketOperative/OhlcOperation/M1` are resolved against
-`Flezha.State.Registry.all_segments/0` to confirm a Segment exists
+strings like `MarketOperative/OhlcProcedure/M1` are resolved against
+`Flezha.State.Registry.all_entities/0` to confirm an Entity exists
 on disk; the live runner binding (when needed for `state rotate`) is
 looked up from the runtime ProcessHub registry.
 
@@ -333,25 +333,25 @@ this engine.
 the next `Retention` tick reads the new value. Persistence across an
 Application boot requires writing it to `runtime.exs`.
 
-## Dynamic-segment hard delete
+## Dynamic-entity hard delete
 
-Dynamic segmenting adds a destructive delete path. When a
-dynamic-mode Operation opts into an idle TTL (`segment_idle_ttl() ->
+Dynamic entity mode adds a destructive delete path. When a
+dynamic-mode Procedure opts into an idle TTL (`entity_idle_ttl() ->
 Some(ttl)`; default is `None` = no eviction), the SDK reaper evicts an
-idle, persistence-enabled Segment by shipping a fire-and-forget
-`delete_segment_state` frame on the secondary stream (payload-id
-`Flezha.State.Wire.payload_id_delete_segment_state/0`; body is the bare
-structured `segment_id`). `Flezha.Runner.StreamChannel` routes it to
-`Flezha.State.Supervisor.delete_segment/1`, which stops the per-Segment
+idle, persistence-enabled Entity by shipping a fire-and-forget
+`delete_entity_state` frame on the secondary stream (payload-id
+`Flezha.State.Wire.payload_id_delete_entity_state/0`; body is the bare
+structured `entity_id`). `Flezha.Runner.StreamChannel` routes it to
+`Flezha.State.Supervisor.delete_entity/1`, which stops the per-Entity
 `WalWriter`, drops any pending `FsyncBatcher` dirty mark, and unlinks the
 `{key}.wal`, `{key}.snap.{seq}`, and `{key}.outbox.dedup` files
 (`Flezha.State.Registry.delete_files/1`). The delete is **idempotent** —
-deleting a never-seen or already-gone segment succeeds.
+deleting a never-seen or already-gone entity succeeds.
 
-A later input for the same key cold-starts a fresh Segment (new WAL from
+A later input for the same key cold-starts a fresh Entity (new WAL from
 seq 0); there is **no** restore-from-disk on recreate. The operator-driven
-counterpart, `flz state delete <operative/operation/key>`, calls the same
-`delete_segment/1` and returns a confirmation (the reaper path is
+counterpart, `flz state delete <operative/procedure/key>`, calls the same
+`delete_entity/1` and returns a confirmation (the reaper path is
 fire-and-forget and reads no reply).
 
 ## Crash-recovery semantics
@@ -367,7 +367,7 @@ fire-and-forget and reads no reply).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `:flezha, :state_root` | `"app_data/state"` | Root for per-Segment files. |
+| `:flezha, :state_root` | `"app_data/state"` | Root for per-Entity files. |
 | `:flezha, :agent_fsync_interval_ms` | `5` | `FsyncBatcher` tick cadence. Range [1, 1000]. |
 | `:flezha, :wal_high_watermark_bytes` | `16 * 1024 * 1024` | Soft back-pressure trigger (signals SDK). |
 | `:flezha, :wal_low_watermark_bytes` | `high / 2` | Back-pressure release. |
@@ -376,17 +376,17 @@ fire-and-forget and reads no reply).
 | `:flezha, :time_travel_retention_check_interval_ms` | `60_000` | `Retention` tick cadence. |
 | `:flezha, :time_travel_retention_hours` | `%{}` (default 6 from PersistenceResolver) | Per-Operative retention overrides. |
 | `:flezha, :default_time_travel_retention_hours` | `6` | Global default when no override. |
-| `:flezha, :default_compact_after_bytes` | `8 * 1024 * 1024` | Per-Operation compaction size threshold (env `FLEZHA_COMPACT_AFTER_BYTES`). |
+| `:flezha, :default_compact_after_bytes` | `8 * 1024 * 1024` | Per-Procedure compaction size threshold (env `FLEZHA_COMPACT_AFTER_BYTES`). |
 | `:flezha, :compact_after_age_ms` | `300_000` | Age floor for compaction; `0` disables (env `FLEZHA_COMPACT_AFTER_AGE_MS`; `0` in `:test`). |
 | `:flezha, :operative_persistence` | `%{}` | Per-Operative-class runner override (`true` / `false`). |
 | `:flezha, :output_watchdog_interval_ms` | `10_000` | `Watchdog` sweep cadence. Min 100 ms. |
 | `:flezha, :output_stall_timeout_ms` | `%{}` (default 60 000) | Per-Operative-class output-staleness window; `0` disables. |
 | `:flezha, :default_output_stall_timeout_ms` | `60_000` | Global default when no per-class override. |
-| `:flezha, :compaction_timeout_ms` | `30_000` | `CompactSegment` → snapshot handshake bound; `0` disables. |
+| `:flezha, :compaction_timeout_ms` | `30_000` | `CompactEntity` → snapshot handshake bound; `0` disables. |
 
 ### Self-healing recovery (`Flezha.State.Watchdog` + `Flezha.State.Recovery`)
 
-A live Segment's persistence/output path must not be able to stall
+A live Entity's persistence/output path must not be able to stall
 silently and permanently. Three failure edges now recover via the shared
 `RestoreInitState` resync (`Flezha.State.Recovery.resync/2`) and emit
 telemetry:
@@ -396,12 +396,12 @@ telemetry:
   `{:error, {:gap}}`; `Flezha.Runner.StreamChannel` emits
   `[:flezha, :state, :seq_gap]` and resyncs so the SDK rewinds and
   resends from `terminal_seq + 1`.
-* **Output staleness** — `Watchdog` flags a Segment that is still
+* **Output staleness** — `Watchdog` flags an Entity that is still
   receiving Changes but whose persisted seq froze past
   `output_stall_timeout_ms`, emits `[:flezha, :state, :output_stall]`,
-  and resyncs. A genuinely idle Segment (no Changes arriving) is not
+  and resyncs. A genuinely idle Entity (no Changes arriving) is not
   flagged.
-* **Compaction timeout** — a `CompactSegment` whose snapshot does not
+* **Compaction timeout** — a `CompactEntity` whose snapshot does not
   return within `compaction_timeout_ms` emits
   `[:flezha, :state, :compaction_timeout]` and resyncs; compaction stays
   retriable.
@@ -414,20 +414,20 @@ The resync direction is chosen by who holds authoritative history
 * **Controller holds a baseline** (snapshot and/or WAL records) →
   **push** `RestoreInitState` (the existing handshake).
 * **Controller holds no baseline** while the runner is live → **pull**
-  a full-state snapshot via `CompactSegment`. The dispatch path never
+  a full-state snapshot via `CompactEntity`. The dispatch path never
   ships a `RestoreInitState` whose assembled payload is empty
   (`Restore.has_persisted_state?/1`, which treats a zero-byte WAL as no
-  state) — an empty payload would rebuild the live Segment to
+  state) — an empty payload would rebuild the live Entity to
   `init_state` and wipe its accumulated state.
 
 The pull is data-plane-triggered on cold takeover: the first
-`segment_state_change` arriving with an empty WAL
+`entity_state_change` arriving with an empty WAL
 (`last_persisted_seq == -1`), `seq > 0`, and no runner-restart realign
 puts the `WalWriter` into **awaiting-baseline** — the frame is shed
 (counted in `wal_shed_total`, not an error, and the SDK is NOT
 disconnected), `[:flezha, :state, :baseline_seed]` fires once, and one
-`CompactSegment` is dispatched per episode. Further gap frames shed
-quietly until the pulled `segment_state_snapshot` lands; its seq becomes
+`CompactEntity` is dispatched per episode. Further gap frames shed
+quietly until the pulled `entity_state_snapshot` lands; its seq becomes
 `last_persisted_seq` (the snapshot encodes the shed deltas' effects) and
 the runner's next delta appends contiguously. A stuck pull is bounded
 by the compaction-timeout sweep. A gap on a *populated* WAL remains a
@@ -435,14 +435,14 @@ protocol violation (`{:error, {:gap, ...}}`).
 
 ## What a restore does to input already queued
 
-A `RestoreInitState` lands on a Segment that may be holding inputs in its
+A `RestoreInitState` lands on an Entity that may be holding inputs in its
 mailbox — a rebind does not stop the runner, and `AddOperative` is
 idempotent, so the live instance and its queue survive into the restore.
 What happens to that queue depends on whether the Controller can hand it
 back:
 
 * **Classes whose inputs are journaled before forwarding** — the
-  effectively-once tier (input log) and durable bounded instances (op
+  effectively-once tier (input log) and durable bounded instances (proc
   inbox) — have their mailbox **cleared**. The queue is a subset of the
   durable log the Controller re-forwards, so keeping it would double-apply
   it and, during a correction, re-order it behind the replayed slice.
@@ -453,10 +453,10 @@ back:
   they have and discarding them is loss with nothing to recover from.
 
 Both SDKs implement this rule
-(`SegmentSlot::discard_queued_input_on_restore` /
-`SegmentSlot.discardQueuedInputOnRestore`). Discards are counted and
+(`EntitySlot::discard_queued_input_on_restore` /
+`EntitySlot.discardQueuedInputOnRestore`). Discards are counted and
 shipped as `restore_discarded_inputs` in `data_heartbeat` metadata, and
-each one logs the Segment it emptied.
+each one logs the Entity it emptied.
 
 The replay buffer, replay flags, and any open checkpoint interval are
 cleared on **every** class: those belong to a past the restore replaced.
@@ -469,14 +469,14 @@ and fires with an empty mailbox too.
 
 ## Runner-restart realign is owner-bound
 
-Within one runner's lifetime the per-Segment seq is monotonic, so a
+Within one runner's lifetime the per-Entity seq is monotonic, so a
 Change from a *different* session than the one that wrote the current
 epoch, at a non-contiguous seq, signals a runner restart: the
 `WalWriter` realigns — truncates the WAL, drops snapshots, adopts the
 new seq base — and emits `[:flezha, :state, :wal_realign]`. A
 same-session low seq stays a legitimate dedup.
 
-The realign is honoured **only from the Segment's current owner
+The realign is honoured **only from the Entity's current owner
 binding**. A newest-wins takeover unbinds the superseded session from
 the write path before binding the new one (see
 `docs/resilience/runner_identity.md` "The WAL binds to the owner"):
@@ -486,7 +486,7 @@ and the `WalWriter` refuses frames from a session marked superseded
 — consulted only when the frame's session differs from the epoch
 owner, so the owning session's append path pays no per-record cost.
 Refusals emit `[:flezha, :state, :stale_writer_refused]` once per
-(Segment, superseded session) episode and count into
+(Entity, superseded session) episode and count into
 `stale_writer_refused_total`; they never spawn a resync (the zombie is
 not a party worth repairing toward) and release any credit debit
 immediately.

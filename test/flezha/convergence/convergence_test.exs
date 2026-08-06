@@ -719,8 +719,8 @@ defmodule Flezha.ConvergenceTest do
       {:ok, root: root}
     end
 
-    defp seed_segment(root, operative, operation, key) do
-      dir = Path.join([root, operative, operation])
+    defp seed_entity(root, operative, procedure, key) do
+      dir = Path.join([root, operative, procedure])
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "#{key}.wal"), <<1, 2, 3>>)
     end
@@ -739,8 +739,8 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "wiped registry with on-disk evidence → mismatch names the operatives", %{root: root} do
-      seed_segment(root, "btc_kraken", "op", "k1")
-      seed_segment(root, "eth_kraken", "op", "k1")
+      seed_entity(root, "btc_kraken", "op", "k1")
+      seed_entity(root, "eth_kraken", "op", "k1")
 
       assert {["btc_kraken", "eth_kraken"], cache} = Loop.intent_mismatch(intent_for([]), nil)
 
@@ -755,11 +755,11 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "flz state delete clears the entry", %{root: root} do
-      seed_segment(root, "btc_kraken", "op", "k1")
+      seed_entity(root, "btc_kraken", "op", "k1")
       assert {["btc_kraken"], cache} = Loop.intent_mismatch(intent_for([]), nil)
 
       # The CLI `flz state delete btc_kraken/op/k1` path.
-      {:ok, _} = Flezha.State.Supervisor.delete_segment({"btc_kraken", "op", "k1"})
+      {:ok, _} = Flezha.State.Supervisor.delete_entity({"btc_kraken", "op", "k1"})
 
       assert {[], _} = Loop.intent_mismatch(intent_for([]), cache)
     end
@@ -801,7 +801,7 @@ defmodule Flezha.ConvergenceTest do
 
     defp effect_hdr(), do: <<1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0>>
 
-    test "a tier-on Segment's markers carry its OWN consumed offset and the log tail" do
+    test "a tier-on Entity's markers carry its OWN consumed offset and the log tail" do
       rc = "tiered-#{System.unique_integer([:positive])}"
       seg = {rc, "op", "k1"}
       ClassRegistry.put_overwatch(rc, self())
@@ -815,21 +815,21 @@ defmodule Flezha.ConvergenceTest do
 
       marker = Enum.find(Loop.progress_markers(), &(&1.operative_id == rc))
 
-      assert marker.segment == {"op", "k1"}
+      assert marker.entity == {"op", "k1"}
       assert marker.input_log_tail == 1
-      assert marker.consumed_offset == 0, "the Segment's own offset, not the class-wide min"
+      assert marker.consumed_offset == 0, "the Entity's own offset, not the class-wide min"
 
       # The record was dispatched (its consumed offset landed), so the flush cursor
       # advanced past it — but it bore no outputs, so out_pending_seq did NOT move.
       # That asymmetry is precisely what keeps `outbox_flat?` from firing on a
-      # Segment that persists state and emits nothing.
+      # Entity that persists state and emits nothing.
       assert marker.out_pending_seq == -1
       assert marker.outbox_flushed_seq == 0
 
       :ok = WalWriter.close(pid)
     end
 
-    test "a tier-off Segment gets no cursor fields and no input log is created" do
+    test "a tier-off Entity gets no cursor fields and no input log is created" do
       rc = "plain-#{System.unique_integer([:positive])}"
       seg = {rc, "op", "k1"}
 
@@ -848,7 +848,7 @@ defmodule Flezha.ConvergenceTest do
       :ok = WalWriter.close(pid)
     end
 
-    test "a Segment that stops consuming while the log grows classifies STUCK, naming it" do
+    test "an Entity that stops consuming while the log grows classifies STUCK, naming it" do
       rc = "stalling-#{System.unique_integer([:positive])}"
       seg = {rc, "op", "poisoned"}
       ClassRegistry.put_overwatch(rc, self())
@@ -860,14 +860,14 @@ defmodule Flezha.ConvergenceTest do
 
       baseline = Enum.filter(Loop.progress_markers(), &(&1.operative_id == rc))
 
-      # The source keeps feeding, but this Segment never consumes another offset —
-      # a poison payload mid-retry, or an operation wedged on it.
+      # The source keeps feeding, but this Entity never consumes another offset —
+      # a poison payload mid-retry, or a procedure wedged on it.
       {:ok, 1} = InputLog.append(rc, "i1", %{})
       {:ok, 2} = InputLog.append(rc, "i2", %{})
 
       current = Enum.filter(Loop.progress_markers(), &(&1.operative_id == rc))
 
-      assert %{^rc => {:stuck, :watermark_frozen, %{segment: {"op", "poisoned"}}}} =
+      assert %{^rc => {:stuck, :watermark_frozen, %{entity: {"op", "poisoned"}}}} =
                StallClassifier.classify_producing(current, baseline, %{
                  now: System.monotonic_time(:millisecond),
                  grace_ms: 60_000
@@ -922,12 +922,12 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "freshly-stuck operatives emit operative_stuck once, not on steady state", %{ref: ref} do
-      stuck = %{"btc" => %{detail: :wal_frozen, segment: "op/k1"}}
+      stuck = %{"btc" => %{detail: :wal_frozen, entity: "op/k1"}}
 
       Loop.note_stuck_transitions(%{}, stuck)
 
       assert_receive {^ref, [:flezha, :convergence, :operative_stuck], %{count: 1},
-                      %{operative_id: "btc", detail: :wal_frozen, segment: "op/k1"}}
+                      %{operative_id: "btc", detail: :wal_frozen, entity: "op/k1"}}
 
       Loop.note_stuck_transitions(stuck, stuck)
       refute_receive {^ref, [:flezha, :convergence, :operative_stuck], _, _}, 50
