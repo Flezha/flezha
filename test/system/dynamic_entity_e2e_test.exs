@@ -1,26 +1,32 @@
 defmodule FlezhaTest.System.DynamicEntityE2ETest do
   @moduledoc """
-  End-to-end proof for dynamic entity mode against a live Rust
-  runner: an input for a fresh key lazily creates an Entity whose state
-  is shipped (controller writes a WAL file); after the 200ms TTL the reaper
-  evicts it, ships `delete_entity_state`, and the controller drops the
-  files — the SDK reaper → delete-RPC → agent-handler path with no other
-  end-to-end coverage. Tagged `:system` (boots a real subprocess); run with
-  `mix test --include system test/system/dynamic_entity_e2e_test.exs`.
+  End-to-end proof for dynamic entity mode against a live runner, on BOTH
+  runtimes: an input for a fresh key lazily creates an Entity whose state is
+  shipped (controller writes a WAL file) at the identity
+  `{operative_id, procedure, key}`; after the 200 ms TTL the reaper evicts it,
+  ships `delete_entity_state`, and the controller drops the files — the SDK
+  reaper → delete-RPC → agent-handler path with no other end-to-end coverage.
+
+  The key is declared on the WIRING (`.key_by` / `.keyBy`), so this is also
+  what pins `stream-transforms`' promise that an equivalent topology reaches
+  byte-identical Entity identities on disk: the assertions below are unchanged
+  from when the key was a Procedure trait hook.
+
+  Tagged `:system` (boots a real subprocess); the Java arm additionally needs
+  `:java_sdk` and the committed jar. Run with
+  `mix test --include system --include java_sdk test/system/dynamic_entity_e2e_test.exs`.
   """
 
   use ExUnit.Case, async: false
 
-  alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
-  alias Flezha.Service.EventManager
-  alias Flezha.Service.PortPilot
+  alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Registry
 
   @moduletag :system
   @namespace "dynamic_entity_e2e"
-  @factory "dynamic_entity"
   @procedure "dynamic_entity_procedure"
 
   setup do
@@ -42,56 +48,105 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
   end
 
   @tag :dynamic_entity_e2e
-  test "lazy-created Entity's state is shipped, then reaped + deleted controller-side" do
-    {port, ce_id} = start_runner()
-    on_exit(fn -> ensure_port_dead(port) end)
+  test "lazy-created Entity's state is shipped, then reaped + deleted controller-side (rust)" do
+    run_dynamic_entity_case(:rust, "dynamic_entity")
+  end
+
+  @tag :dynamic_entity_e2e
+  @tag :java_sdk
+  test "a keyed edge routes to one Entity per key, created on first sight (java)" do
+    jar = Path.join(File.cwd!(), "test/apps/java_runner/dist/java_runner.jar")
+
+    if not File.exists?(jar) do
+      flunk("committed java_runner.jar missing — run scripts/build-dist.sh")
+    end
+
+    {port, ce_id} =
+      NodeTestHelper.start_runner_port(@namespace, runtime: :java, connect_timeout: 120_000)
+
+    on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
+
+    operative_id = "dyn_e2e_java_#{System.unique_integer([:positive])}"
+    key = "k#{System.unique_integer([:positive])}"
+
+    builder = %Builder{
+      id: operative_id,
+      factory_id: "java_dynamic_entity",
+      init_values: %{},
+      opts: []
+    }
+
+    assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
+    assert info.runner_id == ce_id
+
+    # Two keys and one filtered value: the edge's key function is what creates
+    # the Entities, and the filter is what discards — there is no keyless-drop
+    # path left to fall through.
+    OperativeManager.send_io(operative_id, @namespace, "#{key}:one", %{"input_type" => "2"})
+    OperativeManager.send_io(operative_id, @namespace, "drop", %{"input_type" => "2"})
+    OperativeManager.send_io(operative_id, @namespace, "#{key}b:two", %{"input_type" => "2"})
+
+    assert wait_until(
+             fn -> entity_keys(@namespace, operative_id) == [key, "#{key}b"] end,
+             15_000
+           ),
+           "expected one Entity per key seen, got #{inspect(entity_keys(@namespace, operative_id))}"
+  end
+
+  # The Java arm asserts against LIVE Entity state rather than the WAL: the
+  # Java SDK does not register a lazily-created Entity with its flusher, so a
+  # dynamic Entity's state never reaches disk there. That gap predates edge
+  # keying (it was reached identically through the deleted `entityKey` hook)
+  # and closing it is a Java durability change, not an authoring-surface one.
+  defp entity_keys(namespace, operative_id) do
+    with {:ok, json} <- OperativeManager.get_entity_state(namespace, operative_id),
+         %{@procedure => by_key} when is_map(by_key) <-
+           Flezha.Service.Payloader.json_to_map(json) do
+      by_key |> Map.keys() |> Enum.sort()
+    else
+      _ -> nil
+    end
+  end
+
+  defp run_dynamic_entity_case(runtime, factory) do
+    # 200 ms idle TTL so the operative's reaper evicts + ships
+    # delete_entity_state within the test (default is no eviction).
+    {port, ce_id} =
+      NodeTestHelper.start_runner_port(@namespace,
+        runtime: runtime,
+        connect_timeout: 120_000,
+        env: [{"DYN_TEST_TTL_MS", "200"}]
+      )
+
+    on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     operative_id = "dyn_e2e_#{System.unique_integer([:positive])}"
     key = "k#{System.unique_integer([:positive])}"
     entity_id = {operative_id, @procedure, key}
 
-    builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
+    builder = %Builder{id: operative_id, factory_id: factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
 
-    # An input for a never-seen key: the SDK lazily creates the Entity,
-    # runs it, and ships the Change. The controller writes a WAL file.
+    # An input for a never-seen key: the edge's key function names the Entity,
+    # the SDK lazily creates it, runs it, and ships the Change. The controller
+    # writes a WAL file — at the identity the trait hook used to produce.
     OperativeManager.send_io(operative_id, @namespace, "#{key}:hello", %{"input_type" => "2"})
 
-    assert wait_until(fn -> File.exists?(Registry.wal_path(entity_id)) end, 5_000),
+    assert wait_until(fn -> File.exists?(Registry.wal_path(entity_id)) end, 15_000),
            "controller never wrote a WAL file for the lazily-created Entity"
 
-    # No further input: after the 200ms idle TTL the reaper evicts the
-    # Entity and ships delete_entity_state; the controller removes
+    # A filtered input reaches no Entity at all — there is no keyless-drop path
+    # to fall through any more.
+    OperativeManager.send_io(operative_id, @namespace, "drop", %{"input_type" => "2"})
+
+    # No further input for the live key: after the 200 ms idle TTL the reaper
+    # evicts the Entity and ships delete_entity_state; the controller removes
     # the file. Generous budget for sweep cadence + wire + teardown.
-    assert wait_until(fn -> not File.exists?(Registry.wal_path(entity_id)) end, 5_000),
+    assert wait_until(fn -> not File.exists?(Registry.wal_path(entity_id)) end, 15_000),
            "reaper/delete-RPC never removed the evicted Entity's WAL file"
 
     assert Registry.snapshot_paths(entity_id) == []
-  end
-
-  defp start_runner() do
-    {:ok, current_path} = :file.get_cwd()
-
-    command =
-      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml " <>
-        "--target-dir=./target -- " <> @namespace
-
-    EventManager.add_handler(:runner_connected_event)
-    # 200ms idle TTL so the dynamic_entity operative's reaper evicts + ships
-    # delete_entity_state within the test (default is no eviction).
-    {port, _command} =
-      PortPilot.open_port(command, transport: :uds, env: [{"DYN_TEST_TTL_MS", "200"}])
-
-    ce_id =
-      receive do
-        {:runner_connected_event, {@namespace, ce_id}} -> ce_id
-      after
-        120_000 -> raise "compute engine never connected"
-      end
-
-    EventManager.rem_handler(:runner_connected_event)
-    {port, ce_id}
   end
 
   defp wait_until(fun, timeout_ms) do
@@ -110,16 +165,6 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
       true ->
         Process.sleep(25)
         do_wait_until(fun, deadline)
-    end
-  end
-
-  defp ensure_port_dead(port) do
-    if is_port(port) and Enum.member?(:erlang.ports(), port) do
-      try do
-        Port.close(port)
-      catch
-        _, _ -> :ok
-      end
     end
   end
 end
