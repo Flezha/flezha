@@ -4,6 +4,39 @@
 
 ### Added
 
+- **An Entity's current value is readable without a serving tier**
+  (`entity-state-live-query`). `flz state get <operative/procedure[/entity_key]>`
+  returns one live Entity's in-memory state as JSON together with the
+  `change_seq` it was serialized at. Until now the only read was
+  `flz state at`, which serves the controller's WAL at a point in the *past*, so
+  anything needing the current value had to wait for it to reach a sink and read
+  that copy — a second source of truth, always behind, free to diverge.
+
+  The value is the freshest one there is: the SDK serializes under the Entity's
+  state lock and does **not** drain pending changes, so the reply includes
+  changes applied but not yet flushed, and is therefore at or ahead of what is
+  durable. The seq is how a caller tells versions apart and sees how far ahead of
+  durability it is. A read triggers no compaction, snapshot or WAL truncation.
+
+  An Entity that is not held in memory is **refused naming why** — idle-evicted,
+  instance suspended, no Entity by that key, or Operative unbound — and points at
+  `flz state at` as the durable path. There is deliberately no durable fallback:
+  dynamic-mode eviction is destructive (the recreate cold-starts), the controller
+  cannot decode the SDK's WAL bytes, and a fallback would mean binding a runner
+  and restoring an Entity as a side effect of a read. `entity_evicted` and
+  `entity_not_found` are distinguished by a bounded per-SDK trace of what the
+  reaper evicted, since eviction otherwise leaves nothing behind.
+
+  The reply is bounded by the existing `:wal_high_watermark_bytes`; over it the
+  read is refused with the byte count and the selector that would narrow it. No
+  new configuration key, no new control command, no new payload-id: `EntityState`
+  gained two optional selector fields, and an unset selector encodes
+  byte-identically, so the migration/handover caller is untouched. Dynamic-mode
+  Entities are covered on both runtimes, closing a gap in the serialization
+  requirement. Authorized as `:"state.get"` (viewer). Docs:
+  `docs/entity_state_live_query.md`; examples:
+  `sdk/rust/examples/live_state_read.rs`, Java `E11_LiveStateRead`.
+
 - **An operative can be fed from an HTTP resource**
   (`add-http-poll-source-provider`). The built-in `operative_http_poll` source
   provider (`Flezha.Plugin.Provider.HttpPoll`) polls a URL on an interval and

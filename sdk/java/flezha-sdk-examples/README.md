@@ -1,6 +1,6 @@
 # Flezha Java SDK — worked examples
 
-Ten examples, in the order worth reading them. Each is a real compiled source
+Eleven examples, in the order worth reading them. Each is a real compiled source
 file in this module, not a snippet — the reactor builds them, so an example that
 drifts from the SDK **breaks the build** instead of quietly lying to you.
 
@@ -20,6 +20,7 @@ mvn -f sdk/java/pom.xml test -pl flezha-sdk-examples -am
 | 08 | [`E08_SpawnBoundedWorker`](src/main/java/com/flezha/examples/E08_SpawnBoundedWorker.java) | Asking the cluster for a bounded worker from inside a Procedure. |
 | 09 | [`E09_MergedInput`](src/main/java/com/flezha/examples/E09_MergedInput.java) | One Procedure over two Channels: a data feed plus a live config feed. |
 | 10 | [`E10_StreamTransforms`](src/main/java/com/flezha/examples/E10_StreamTransforms.java) | `filter` → `flatMap` → `keyBy` on the wiring: one trade, four timeframes, four Entities, one Procedure. |
+| 11 | [`E11_LiveStateRead`](src/main/java/com/flezha/examples/E11_LiveStateRead.java) | Reading one Entity's current value with `flz state get` — and what its `change_seq` promises. |
 
 ## The one idea worth internalising first
 
@@ -68,6 +69,7 @@ Then, for an unbounded operative, work down this list and stop at the first "no"
 | Is the state only coherent at a boundary (a closed window, a finished batch)? | `c.checkpointAck()` → **03** |
 | Do inputs arrive out of order, and does that corrupt earlier results? | `c.correctionWindow(ms)` → **04** |
 | Does it need a second feed — live config, an enrichment stream, a join? | `c.merge(I.class)` → **09** |
+| Does something outside the pipeline need one Entity's current value? | nothing to declare — `flz state get` → **11** |
 
 Each of those is a declaration on the topology, and each is a promise the
 controller has to keep — so declare the ones you need, not the ones that sound

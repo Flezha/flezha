@@ -58,6 +58,7 @@ contains Entities.**
   (`flz state at <operative/procedure/key> <seq|timestamp>`) asks the
   controller's own WAL for the value at a past point, and needs no runner. Live
   reads are for "what is it now"; time-travel reads are for "what was it then".
+  See [`entity_state_live_query.md`](entity_state_live_query.md).
 
 - **Channel** — a typed input/output edge of an Operative. Channels can be entry
   points (input from outside), internal (Procedure → Procedure), or sink (output
@@ -139,4 +140,6 @@ Runner.
   Controller.
 - `docs/process_hub_architecture.md` — Two-level distribution (ProcessHub picks
   a Controller node; the Controller picks a Runner).
+- `docs/entity_state_live_query.md` — reading one Entity's current value
+  (`flz state get`), its freshness contract and its refusals.
 - `docs/resilience/state_persistence.md` — Per-Entity WAL/snapshot/retention.

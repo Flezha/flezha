@@ -64,9 +64,14 @@
   cases take a namespace PER RUNTIME — placement is HRW over every runner in the
   namespace, so a peer case's runner (which lacks the factory) must not be a
   candidate.
-- **Docs**: `docs/sdk_protocol_spec.md` (`EntityState` selector + metadata +
-  refusal table), `docs/resilience/state_persistence.md` "Live read",
-  `docs/glossary.md` "Live read vs time-travel read".
+- **Docs/examples**: `docs/entity_state_live_query.md` (the capability page —
+  selector, freshness contract, refusal table, the programmatic seam a later
+  HTTP surface consumes), `docs/sdk_protocol_spec.md` (`EntityState` selector +
+  metadata + wire refusal tokens), `docs/resilience/state_persistence.md`
+  "Live read", `docs/glossary.md` "Live read vs time-travel read", root +
+  `sdk/rust/CHANGELOG.md`. Examples: `sdk/rust/examples/live_state_read.rs`,
+  Java `E11_LiveStateRead` (both declare a `.key_by` Operative and show the
+  exact `flz state get` invocations and refusals against it).
 
 ## Stream transforms + edge keying (`stream-dsl-keyby-and-transforms`)
 

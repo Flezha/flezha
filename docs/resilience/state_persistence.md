@@ -338,6 +338,9 @@ The reply is bounded by `:wal_high_watermark_bytes` — the same ceiling the
 bounded handoff uses. Over it, the read is refused with the byte count and the
 selector that would narrow it; no new configuration key.
 
+Full surface, refusal table and worked examples:
+[`../entity_state_live_query.md`](../entity_state_live_query.md).
+
 ## Time-travel CLI
 
 ```

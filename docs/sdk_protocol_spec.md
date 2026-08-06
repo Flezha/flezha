@@ -703,6 +703,10 @@ maps it without parsing prose:
 | `entity_not_found` | that Procedure holds no Entity by that key |
 | `entity_evicted` | the Entity was idle-evicted; eviction is destructive, so there is no durable value either |
 
+The operator-facing surface these serve — `flz state get`, its output formats
+and the controller-side refusals — is documented in
+`docs/entity_state_live_query.md`.
+
 ### MigrationSerialization
 
 | Field | Value |
