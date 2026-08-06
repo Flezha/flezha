@@ -49,9 +49,17 @@ Full examples: `sdk/rust/examples/merged_input.rs`,
   the same guarantee two independent consumers of two Channels already had.
   Correlation between feeds is the Procedure's own state's job; there are no
   windowed joins, buffering, or alignment primitives here.
-- **`entities_for` / `entity_key` are evaluated on the MAPPED value.** One
-  routing function, total over the sum type. Per-source entity mode is
-  something you encode in the enum, not a per-edge setting.
+- **`entities_for` and the merge's `key_by` are evaluated on the MAPPED
+  value.** One routing function, total over the sum type. Per-source entity
+  mode is something you encode in the enum, not a per-edge setting — which is
+  why a merge declares its keying **once, on the merge** (`.key_by` /
+  `.keyBy`), and declaring it on a source handle instead is refused: by the
+  time keying runs, that source's value has already become the sum type.
+- **A source handle may carry its own transforms.** `map` / `filter` /
+  `flat_map` declared on a source run BEFORE that source's mapping, on the
+  source's own payload type; transforms declared on the merge run after, on the
+  sum type. Both live on the same edge as one composed closure — a merge
+  mapping is simply one link of it (`stream-transforms`).
 - **Mappings MUST be pure, and total.** They run on live delivery and again on
   WAL replay, and the two must agree — the purity half is the same contract
   entry parsers and output serializers carry, and a mapping that read the clock
@@ -68,11 +76,11 @@ Full examples: `sdk/rust/examples/merged_input.rs`,
   | Where the mapping sits | What a panic does |
   | --- | --- |
   | unbounded, inter-procedure source | Runs under `ctx.emit`, inside the producing Procedure's invocation `catch_unwind`. Caught, attributed to that producer, rides **its** retry→DLQ ladder. |
-  | unbounded, entry-Channel source | Runs on the wire-reader path (`runner/fast.rs` → `route_to_consumers`), and on the entry-parse retry ladder's own thread (`dispatcher.rs` `run_entry_parse_ladder`) when a parse is being re-attempted. Neither has an unwind guard — the same exposure the entry **parser** on that seam already has. |
+  | unbounded, entry-Channel source | Runs on the wire-reader path (`runner/fast.rs` → `route_to_consumers`). `stream-transforms` closed the guard gap here: the edge closure is contained at the routing seam and the value climbs the Channel's own retry→DLQ ladder, the same one a failing entry **parse** rides. |
   | bounded, inter-procedure source — forward | Runs on the driver thread in `extend_mapped`, outside any entity invocation. Contained there and turned into a terminal chain error: the saga unwinds the stages **recorded as completed** at that point, and the instance still reports `BoundedCompleted` (status `error`). Both SDKs unwind the same procedures in the same order. |
   | bounded, inter-procedure source — crash-resume re-seed | Contained the same way and the instance still reports `error`. The **undo scope differs by SDK**: Rust seeds the resumed iteration's completed list from the journal, so the journaled producer is unwound; Java's resumed iteration does not, so nothing is unwound. See [Known limitation](#known-limitation-java-resumed-chains-do-not-compensate-journaled-procedures). |
 
-  The bounded rows are a guard this capability had to add: a merge mapping is the
+  The bounded rows are a guard this capability had to add: an edge closure is the
   only author closure on a bounded chain that runs on the driver thread rather
   than inside an entity invocation, so without it an unwind would skip
   `emit_bounded_completed` and strand the instance with no terminal frame. It is
@@ -120,7 +128,7 @@ Definition-time, alongside every other topology issue:
 | --- | --- | --- |
 | fewer than two sources | `TopologyIssue::MergeTooFewSources` | `MergeTooFewSources` in the accumulated `UnboundedOperativeConfigurationException` |
 | same Channel subscribed twice | `TopologyIssue::DuplicateMergeSource` (names the Channel) | `DuplicateMergeSource` (names the Channel) |
-| source re-wiring an edge `.into` or another merge already declared | `TopologyIssue::MergeSourceAlreadyWired` (names Channel + Procedure) | `MergeSourceAlreadyWired` (names both) |
+| source re-wiring an edge `.into` or another merge already declared | `TopologyIssue::EdgeAlreadyWired` (names Channel + Procedure) | `EdgeAlreadyWired` (names both) |
 | an entry Channel as a **bounded** merge source | `BuildBoundedError::MergeFromEntryChannel` | `MergeFromEntryChannel` in the `BoundedOperativeConfigurationException` |
 | mapped type ≠ the Procedure's `Input` | compile error at `.into::<Proc>()` (`Procedure<Input = I>` bound) | registration error naming both types |
 

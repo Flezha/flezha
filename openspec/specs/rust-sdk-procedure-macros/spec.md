@@ -44,15 +44,15 @@ The `#[flezha::procedure]` macro SHALL accept attribute opt-ins that map to the 
 - **WHEN** a `clock` attribute names a supported clock
 - **THEN** the generated `Procedure` uses that clock instead of `WallClock`
 
-#### Scenario: Dynamic-mode opt-in
+#### Scenario: Dynamic-mode knobs
 
-- **WHEN** `#[flezha::procedure(id = "rsi", entity_key = coin_of)]` is used with a free function `coin_of(&Trade) -> Option<String>`, optionally with `idle_ttl` and `max_entities`
-- **THEN** the generated impl sets `ENTITY_KEY_OVERRIDDEN = true`, delegates `entity_key` to `coin_of`, leaves `entity_keys()` empty, and applies the `idle_ttl` / `max_entities` overrides — producing a valid dynamic-mode procedure per the dynamic entity-mode rules
+- **WHEN** `#[flezha::procedure(id = "rsi", idle_ttl = 5000, max_entities = 10)]` is used
+- **THEN** the generated impl applies the `entity_idle_ttl()` / `max_entities()` overrides, leaves `entity_keys()` empty, and declares no key of its own — the key is `key_by` on the wiring
 
-#### Scenario: Static and dynamic opt-ins are mutually exclusive
+#### Scenario: The sugar offers no dynamic key hook
 
-- **WHEN** a `#[flezha::procedure]` declares both `keys`/`entities_for` (static) and `entity_key` (dynamic)
-- **THEN** the macro fails to compile with a message that the two modes are mutually exclusive (composite mode is not supported)
+- **WHEN** a `#[flezha::procedure]` declares an `entity_key` attribute
+- **THEN** the macro fails to compile with a message directing the author to declare `.key_by(f)` on the stream that feeds the procedure
 
 ### Requirement: `#[derive(flezha::State)]` change derivation
 

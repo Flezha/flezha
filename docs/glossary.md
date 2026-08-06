@@ -53,6 +53,19 @@ contains Entities.**
   points (input from outside), internal (Procedure → Procedure), or sink (output
   back to the Controller / pipe to another Operative).
 
+- **Edge transform** — a `map` / `filter` / `flat_map` declared on a stream
+  handle between two `.into` calls. It costs no Procedure, Entity, mailbox or
+  dispatch hop: every transform before the closing `.into` composes into ONE
+  closure stored on that consumer edge and evaluated at the routing seam.
+  Fusion is therefore structural — `.into` IS the boundary, so there is no
+  optimizer and no way to disable chaining. See `docs/stream_transforms.md`.
+
+- **Edge keying (`key_by` / `keyBy`)** — the Entity key function, declared on
+  the consumer edge rather than on the Procedure, so a reader of `channels()`
+  can see where work fans out. A Procedure reached by a keyed edge is
+  dynamic-mode. Total by signature: discard inputs with `filter`, never with a
+  keyless return.
+
 - **Merge** — a subscription of two or more Channels to ONE Procedure, each
   supplying a pure mapping from its payload into the Procedure's declared sum
   type `Input` (`c.merge::<I>().from(a, map_a).from(b, map_b).into::<Proc>()`).
@@ -111,6 +124,7 @@ Runner.
 - `docs/architecture/` — The architectural map: the durable-compute kernel, the
   two profiles, and the diagrams.
 - `docs/operative_architecture.md` — Operative/Procedure/Entity deep dive.
+- `docs/stream_transforms.md` — edge transforms + edge keying (`key_by`).
 - `docs/sdk_protocol_spec.md` — Wire protocol between Runners and the
   Controller.
 - `docs/process_hub_architecture.md` — Two-level distribution (ProcessHub picks

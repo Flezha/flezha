@@ -4,8 +4,8 @@
 
 The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared procedure/operative declaration to the existing `UnboundedOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit entity-mode opt-ins (single/static/dynamic), single-procedure input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared procedures compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
 ## Requirements
-### Requirement: Sugar expands to existing trait surface
 
+### Requirement: Sugar expands to existing trait surface
 The authoring sugar in every SDK SHALL be pure expansion over the existing `UnboundedOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
 
 #### Scenario: Generated code equals hand-written impl
@@ -25,7 +25,6 @@ The authoring sugar in every SDK SHALL be pure expansion over the existing `Unbo
 - **THEN** the operative behaves identically with no other change required
 
 ### Requirement: Canonical signature-to-types inference
-
 The contract SHALL define one canonical mapping from a sugared `run` declaration to the procedure's associated types, and every SDK MUST implement it identically.
 
 #### Scenario: Input and Output inferred from signature
@@ -44,7 +43,6 @@ The contract SHALL define one canonical mapping from a sugared `run` declaration
 - **THEN** `Clock` defaults to the wall clock and `Config` defaults to the unit type
 
 ### Requirement: State parameter drives stateful inference
-
 A mutable-state parameter on the `run` declaration SHALL be the single signal that a procedure is stateful, and its type SHALL become the procedure `State`.
 
 #### Scenario: Mutable state parameter sets State type
@@ -58,7 +56,6 @@ A mutable-state parameter on the `run` declaration SHALL be the single signal th
 - **THEN** `State` is the unit type and `Change` is the no-op change type
 
 ### Requirement: State-to-Change derivation with explicit boundary
-
 The contract SHALL define how a state type's field mutations derive a `Change` type and `apply_change`, and SHALL define the explicit boundary beyond which a hand-written `Change` is required.
 
 #### Scenario: Field mutation auto-derives a change
@@ -72,28 +69,31 @@ The contract SHALL define how a state type's field mutations derive a `Change` t
 - **THEN** the SDK requires a hand-written `Change` and reports a clear error rather than journaling incorrectly
 
 ### Requirement: Entity mode is an explicit opt-in, never inferred
+The contract SHALL express a procedure's entity mode (single, static, dynamic) through explicit declarations that map 1:1 to the existing runtime surface, and SHALL NOT infer the mode from the `run` body. Static and dynamic declarations are mutually exclusive (composite mode is out of scope).
 
-The contract SHALL express a procedure's entity mode (single, static, dynamic) through explicit attribute/annotation opt-ins that map 1:1 to the existing trait surface, and SHALL NOT infer the mode from the `run` body. Static and dynamic opt-ins are mutually exclusive (composite mode is out of scope).
+The declarations are named for the Entity, not the Procedure. Static mode is declared **on the procedure**: the keyset is `entity_keys`, its routing is `entities_for`. Dynamic mode is declared **on the wiring**: the key function is `key_by` / `keyBy` on the consumer edge, and the eviction window remains `entity_idle_ttl` on the procedure. A procedure declaring neither a static keyset nor being reached by a keyed edge is single-mode.
 
-The opt-ins are named for the Entity, not the Procedure: the static keyset is `entity_keys`, the dynamic hook is `entity_key`, static routing is `entities_for`, and the eviction window is `entity_idle_ttl`.
+#### Scenario: Dynamic keying is declared on the wiring
 
-#### Scenario: Dynamic opt-in maps to the existing trait surface
+- **WHEN** an operative wires a procedure through an edge declaring a key function, and the procedure declares optional idle-TTL / max-entities
+- **THEN** the SDK SHALL produce a dynamic-mode procedure against the existing runtime surface (lazily created Entities, empty static key list) with no new runtime path and no keying member on the procedure itself
 
-- **WHEN** a procedure declares a dynamic key opt-in (an `entity_key`-style hook plus optional idle-TTL / max-entities)
-- **THEN** the SDK generates a dynamic-mode procedure against the existing trait surface (dynamic-key override set, static key list empty) with no new runtime path
+#### Scenario: Static and dynamic declarations together are rejected
 
-#### Scenario: Static and dynamic opt-ins together are rejected
-
-- **WHEN** a procedure declares both a static key opt-in and a dynamic key opt-in
-- **THEN** the SDK reports a compile-time error that the modes are mutually exclusive
+- **WHEN** a procedure declares a static keyset and is also wired through an edge declaring a key function
+- **THEN** the SDK SHALL report a build-time error that the modes are mutually exclusive, naming the procedure
 
 #### Scenario: Static routing may name several entities
 
 - **WHEN** a static-mode procedure's `entities_for` declaration returns more than one key for one input
 - **THEN** the input MUST be routed to the Entity for each returned key
 
-### Requirement: Single-procedure auto-wiring and registration
+#### Scenario: The authoring sugar offers no dynamic key hook
 
+- **WHEN** the attribute/annotation sugar is generated for a procedure
+- **THEN** it SHALL offer no `entity_key`-style hook, and declaring one SHALL fail at compile time (Rust) or annotation processing (Java) with an error directing the author to `key_by` on the wiring
+
+### Requirement: Single-procedure auto-wiring and registration
 The contract SHALL define exactly one topology that may be auto-wired — a single procedure from a controller input to one sink — and SHALL define auto-registration so the user writes no explicit registration call for that case.
 
 #### Scenario: Single-procedure input-to-sink is auto-wired
@@ -112,7 +112,6 @@ The contract SHALL define exactly one topology that may be auto-wired — a sing
 - **THEN** startup fails with an error naming the colliding id
 
 ### Requirement: Contract binds all current and future SDKs
-
 The contract SHALL be the single source of truth for authoring sugar across Rust, Java, and future Python and Elixir SDKs, including non-normative target sketches for the not-yet-built bindings. Every SDK's unbounded and bounded authoring surfaces SHALL be rooted in the shared `Computation` base (see below).
 
 #### Scenario: Reference operative expands identically across SDKs
@@ -126,7 +125,6 @@ The contract SHALL be the single source of truth for authoring sugar across Rust
 - **THEN** it follows the contract's documented decorator/macro sketch and inference rules without changing the contract
 
 ### Requirement: Keyed and collection state journaling
-
 The authoring contract SHALL define journaling mutators for per-key map state so a stateful procedure whose state is a `HashMap`-of-values or `HashMap`-of-collections can be authored without a hand-written `Change` or `apply_change`. Every SDK realization SHALL generate, from a journal-annotated map field, named mutators whose calls are the journaled changes, and a generated change-application that replays them.
 
 The defined modes are:
@@ -151,7 +149,6 @@ The defined modes are:
 - **THEN** the SDK reports a clear authoring error directing the author to a hand-written `Change`, and SHALL NOT generate silent or incorrect journaling
 
 ### Requirement: Emit-or-skip output return
-
 The authoring contract SHALL define an optional-output return shape for the logic function: a `run` returning an optional `Output` emits when present and emits nothing when absent. The unit return (no output channel) and the unconditional `Output` return (always emit) are unchanged.
 
 #### Scenario: Optional output emits on present, skips on absent
@@ -160,7 +157,6 @@ The authoring contract SHALL define an optional-output return shape for the logi
 - **THEN** the generated procedure emits the value when present and emits nothing when absent, without the author touching the procedure context
 
 ### Requirement: Single hand-written path determinism
-
 The authoring contract SHALL state that a procedure mutating state only through generated journaling mutators has exactly one hand-written path (`run`) and one generated replay path (the generated change-application); the two cannot diverge because the replay path is generated from the same mutator definitions. The replay-determinism conformance test remains the gate for all procedures (sugared and hand-written).
 
 #### Scenario: Sugared procedure cannot drift between live and replay
@@ -174,7 +170,6 @@ The authoring contract SHALL state that a procedure mutating state only through 
 - **THEN** the guard is unnecessary because replay re-assigns the computed value rather than re-folding an input, and removing it does not change replay equality
 
 ### Requirement: Per-entity state init opt-in
-
 The procedure authoring sugar SHALL offer an opt-in that maps an entity's key to its initial state, replacing the default `init_state` that returns the state's default value. The opt-in names a function of the entity key returning the state (`fn(Option<&str>) -> State` in Rust; an `@InitState`-annotated `State name(Optional<String> entityKey)` method in Java). The generated `init_state` SHALL delegate to it, passing the entity key — absent in single-entity mode and in the test-harness default construction. The opt-in is pure expansion onto the existing `Procedure::init_state` trait method; it SHALL NOT receive the restore payload, which the runtime continues to apply after `init_state` returns. The opt-in SHALL require a stateful procedure; declaring it on a stateless procedure SHALL be a compile-time error (never silently ignored).
 
 #### Scenario: Entity key maps to per-entity state
@@ -193,7 +188,6 @@ The procedure authoring sugar SHALL offer an opt-in that maps an entity's key to
 - **THEN** the SDK reports a compile-time error directing the author to remove it, and generates no init delegation
 
 ### Requirement: Unbounded and bounded share a `Computation` authoring base
-
 Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `UnboundedOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The declaration siblings (`defineUnbounded`/`defineBounded` in Java, `define_unbounded`/`define_bounded` in Rust) and their removal inverses (`removeUnbounded`/`removeBounded`, `remove_unbounded`/`remove_bounded`) SHALL be methods on the concrete `FlezhaRunner` handle — not free functions, static methods, or methods on a builder type (there is no builder) — and SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and adding a corresponding `define_*`/`defineX` (and `remove_*`/`removeX`) runner method, without editing the existing two authoring surfaces.
 
 #### Scenario: Both kinds implement the base
@@ -212,7 +206,6 @@ Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rus
 - **THEN** its variants MAY remain asymmetric (a rich unbounded instance vs an id-only bounded instance), and the `Computation` base SHALL NOT require inventing a common instance type
 
 ### Requirement: Each SDK SHALL name the state-mutation enforcement level it actually provides
-
 The authoring contract SHALL record, per SDK, the state-mutation enforcement level that SDK actually provides, so that an asymmetry between SDKs is a deliberate documented choice rather than an accident of each language's ergonomics.
 
 The contract is written once and implemented per language, but the languages do not offer equal enforcement. Rust forecloses direct State mutation at compile time by withholding `DerefMut`. Java cannot — its handle must return a readable object — and today provides only convention plus opt-in test-time detection, while documenting the Rust guarantee. Python is closing the same hole by rejecting direct attribute assignment. Three different enforcement levels honestly stated is correct; three identical claims of which one is true is not.
@@ -233,4 +226,3 @@ The contract is written once and implemented per language, but the languages do 
 
 - **WHEN** a new SDK is added to the contract
 - **THEN** it SHALL declare its state-mutation enforcement level rather than inheriting the strongest one by default
-

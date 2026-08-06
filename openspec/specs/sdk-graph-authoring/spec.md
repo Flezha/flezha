@@ -3,21 +3,33 @@
 ## Purpose
 TBD - created by archiving change sdk-graph-authoring-api. Update Purpose after archive.
 ## Requirements
-### Requirement: Producer-first stream-handle graph builder
 
+### Requirement: Producer-first stream-handle graph builder
 Both SDKs SHALL author operative topologies through a producer-first fluent builder in which `.into(<procedure>)` wires a consumer onto the current stream and returns the **consumed procedure's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. The handle SHALL be a lightweight, copyable reference into the operative's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`codec()`, `keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the operative.
 
-The payload type of every non-entry channel SHALL be taken from the producing procedure's declared `Output` type — the builder SHALL NOT accept a redundant type token for inter-procedure channels. Wiring a consumer whose `Input` type differs from the stream's payload type SHALL fail to compile in Rust and SHALL fail registration in Java with an error naming both procedures and both types.
+A chain MAY additionally carry **edge transforms** (`map`, `filter`, `flat_map` / `flatMap`) and **edge keying** (`key_by` / `keyBy`) between one `.into(...)` and the next. These SHALL return a stream handle of the same kind, SHALL NOT introduce a Procedure node into the topology, and SHALL be stored on the consumer edge the chain terminates in. Both the entry-stream handle and the output-stream handle SHALL expose the same transform, keying, and per-channel configuration surface; the two handles SHALL NOT drift.
+
+The payload type of every non-entry channel SHALL be taken from the producing procedure's declared `Output` type, as reshaped by any edge transforms declared after it — the builder SHALL NOT accept a redundant type token for inter-procedure channels, except where Java erasure prevents inferring a transform's result type. Wiring a consumer whose `Input` type differs from the stream's payload type SHALL fail to compile in Rust and SHALL fail registration in Java with an error naming both procedures and both types.
 
 #### Scenario: Linear chain is one expression
 
 - **WHEN** an operative declares `c.input(OrderEvent.class, "orders").into(Validate.class).into(Alert.class).output("alerts")` (Java) or the equivalent `c.input::<OrderEvent>("orders").into::<Validate>().into::<Alert>().output("alerts")` (Rust)
 - **THEN** registration SHALL succeed with the topology entry→Validate→Alert→sink, and the channel between Validate and Alert SHALL carry Validate's declared `Output` type with no type token in the declaration
 
+#### Scenario: Transforms sit between consumers without adding nodes
+
+- **WHEN** an operative declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).keyBy(Trade::symbol).into(Candle.class).output("sink")`
+- **THEN** registration SHALL succeed with a topology containing exactly one Procedure node, and the entry→Candle edge SHALL carry the predicate and the key function
+
 #### Scenario: Type-mismatched consumer is refused
 
 - **WHEN** `stream.into(B)` is declared where B's `Input` type differs from the stream's payload type
 - **THEN** the program SHALL fail to compile (Rust) or registration SHALL throw naming both procedures and both types (Java)
+
+#### Scenario: Both handles carry the same surface
+
+- **WHEN** a transform or keying method is declared on an entry-stream handle and on an output-stream handle
+- **THEN** both SHALL accept it with identical semantics, and neither handle SHALL offer a transform the other lacks
 
 #### Scenario: Handle used after freeze is refused
 
@@ -25,7 +37,6 @@ The payload type of every non-entry channel SHALL be taken from the producing pr
 - **THEN** the call SHALL fail with an error naming the operative and stating the topology is frozen
 
 ### Requirement: Branching is handle reuse; `branch()` is equivalent sugar
-
 Using one stream handle to wire more than one consumer SHALL declare fan-out: every consumer receives every value released on that stream's channel. The builder SHALL also expose `branch(arm1, arm2, ...)` taking two or more lambdas, each invoked with a copy of the same handle; `branch` SHALL be pure sugar — the resulting topology SHALL be identical to the equivalent handle-reuse declaration, and the two spellings SHALL be freely mixable.
 
 #### Scenario: Handle reuse fans out
@@ -44,7 +55,6 @@ Using one stream handle to wire more than one consumer SHALL declare fan-out: ev
 - **THEN** registration SHALL fail with an error stating branch requires at least two arms
 
 ### Requirement: Channel names auto-derive from the producer node's identity
-
 A channel created by wiring out of a node SHALL be named by that node's identity string (the procedure's `name()`, or the explicit node name per the node-identity requirement) unless `.named("...")` overrides it. Entry channels SHALL keep an explicit, mandatory name (they are the operative's external input address). Derived, overridden, and entry names SHALL all live in the existing per-operative channel namespace with its duplicate check; a collision SHALL fail registration naming both declarations. Because derived names come from hand-written identity strings, renaming a language class SHALL NOT change any on-disk or on-wire name.
 
 #### Scenario: Derived name ships on the wire
@@ -63,7 +73,6 @@ A channel created by wiring out of a node SHALL be named by that node's identity
 - **THEN** registration SHALL fail with an error naming both colliding declarations
 
 ### Requirement: Node identity permits reusing one Procedure class at several graph positions
-
 A graph node SHALL be identified by its Procedure class unless an explicit node name is supplied at wiring time (`.into(Filter.class, "spam_filter")` in Java, `into_named::<Filter>("spam_filter")` in Rust). Two unnamed mentions of the same class SHALL resolve to the same node. An explicit node name SHALL create a distinct node whose identity string replaces the procedure's `name()` for every purpose identity serves today: per-entity state directories, journal entries, derived channel names, and diagnostics. Node identity strings SHALL be unique per operative; a collision (with another node name or a procedure `name()`) SHALL fail registration.
 
 #### Scenario: Same class reused as two named nodes
@@ -82,7 +91,6 @@ A graph node SHALL be identified by its Procedure class unless an explicit node 
 - **THEN** registration SHALL fail naming both nodes
 
 ### Requirement: Graphs are DAGs; fan-in accumulates in both SDKs
-
 The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channels feeding the graph, every node reachable from some entry channel, at most one output channel per node, any number of incoming channels per node, and no cycles. Multiple entry channels let a single operative ingest several external sources (e.g. a market pipeline consuming a trade feed and an order-book feed on distinct channels); the controller routes each inbound frame to its entry channel by the `metadata["channel"]` name, falling back to the first-declared entry channel when that metadata is absent. Validation SHALL use a topological ordering (all of a node's producers precede it); a cycle SHALL be rejected naming a node on it. A node with several incoming channels (fan-in) SHALL receive the **accumulated** contributions of all its producers — no producer's output may be overwritten or dropped. In bounded operatives a fan-in node SHALL be dispatched only after every one of its producers has completed and committed, and its input batch SHALL be the concatenation of all producers' released outputs. In unbounded operatives the existing per-channel dispatch SHALL deliver both producers' values to the shared consumer as they arrive.
 
 #### Scenario: Bounded join runs once with both contributions
@@ -101,7 +109,6 @@ The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channe
 - **THEN** both SHALL accept it with identical accumulate semantics — the former Rust fan-in rejection SHALL NOT exist
 
 ### Requirement: Typed entry inputs with default and custom deserialization
-
 `input(<type>, "name")` SHALL accept any payload type. `byte[]`/`Vec<u8>` SHALL be delivered unchanged and `String` UTF-8-decoded, byte-identical to current behavior. Any other type SHALL be deserialized at the entry edge from the wire bytes using the SDK's default JSON codec (Jackson in Java; `serde_json` behind a `DeserializeOwned` bound in Rust), with an overload/variant accepting a custom `bytes → T` parser. The parser SHALL run before dispatch on the consumer path: a parse failure SHALL be classified like a failing invocation and ride the entry channel's existing retry→DLQ ladder under the channel's origin identity. The parser SHALL be deterministic (same bytes → same value; no ambient reads), the same contract output serializers carry.
 
 #### Scenario: Typed entry with default JSON
@@ -125,7 +132,6 @@ The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channe
 - **THEN** delivery behavior (passthrough / UTF-8 decode, invalid-UTF-8 drop-and-log) SHALL be unchanged from the pre-change contract
 
 ### Requirement: Destination-neutral `output` / `alsoOutput` vocabulary
-
 The plugin-bound terminal SHALL be `output(name[, serializer])` (Rust: `output`) and the hybrid tap SHALL be `alsoOutput(name[, serializer])` (Rust: `also_output` / `also_output_with`). `alsoOutput(name)` without a serializer SHALL use the same default serialization rules as `output` (passthrough for bytes, UTF-8 for strings, JSON otherwise). The former `toPlugin` / `to_plugin` / `alsoToPluginWith` / `also_to_plugin_with` method names SHALL NOT exist. The rename SHALL be scoped to user-called builder methods: wire frames, descriptor fields, plugin bindings, controller configuration, and error identifiers keep their existing names.
 
 #### Scenario: output replaces toPlugin
@@ -139,7 +145,6 @@ The plugin-bound terminal SHALL be `output(name[, serializer])` (Rust: `output`)
 - **THEN** the tap SHALL publish the default-JSON bytes of each emitted value to `audit_sink`, and inter-procedure consumers SHALL receive the typed values unchanged
 
 ### Requirement: The channel-declaration API is replaced with no coexistence
-
 `ChannelDecl`, `.from(...)`, and the typed-and-named inter-procedure `channel(<type>, "name")` declaration SHALL be removed from both SDKs' public surface in the same change that introduces the graph builder. There SHALL be no transitional period in which both APIs are usable.
 
 #### Scenario: Old spellings do not compile
@@ -148,11 +153,9 @@ The plugin-bound terminal SHALL be `output(name[, serializer])` (Rust: `output`)
 - **THEN** the code SHALL fail to compile — the methods do not exist
 
 ### Requirement: One contract across SDKs, per-language spelling allowed
-
 The graph builder's semantics — handle model, branching, node identity, DAG rule, fan-in accumulation, derived names, typed inputs, `output` vocabulary — SHALL be identical in Rust and Java, and the shared e2e matrix SHALL exercise one contract with no per-runtime branching. Per-language surface differences SHALL be limited to spelling (`Proc.class` vs turbofish, lambdas vs closures, `into(Proc.class, "name")` vs `into_named::<Proc>("name")`). Where Rust enforces a rule at compile time, Java SHALL enforce the same rule at registration with an error carrying the same diagnostic content.
 
 #### Scenario: Same graph, both SDKs, same behavior
 
 - **WHEN** the shared e2e branching fixture topology is authored in both SDKs with the new builder
 - **THEN** both runtimes SHALL produce the same sink outputs, journal shapes, and compensation order for the same scenario script
-

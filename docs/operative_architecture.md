@@ -53,9 +53,9 @@ decisions, and capability spec deltas, see
 - **Entity** — a "lane" of a Procedure. Single-mode (default) means one
   entity per Procedure; static mode declares fixed `entity_keys()` and
   routes inputs to one or more named entities via `entities_for`;
-  dynamic mode overrides `entity_key()` (with empty `entity_keys()`) to
-  create entities lazily per key seen at runtime (see "Dynamic
-  entity mode" below). At most one drain task runs per entity at any
+  dynamic mode is declared on the WIRING — a consumer edge carrying
+  `.key_by(f)` — and creates entities lazily per key seen at runtime (see
+  "Dynamic entity mode" below). At most one drain task runs per entity at any
   time (sticky ordering).
 
 - **Channel** — the typed wire between producers/consumers. Three kinds:
@@ -239,9 +239,10 @@ flezha_runner::operative! {
 
 Single-procedure `input → sink` operatives add `sink = "…"` to `#[flezha::procedure]` and
 need no `operative!` and no `define_unbounded`. Attribute opt-ins: `id`, `sink`,
-`keys` + `entities_for` (static mode), `entity_key` + `idle_ttl` +
-`max_entities` (dynamic mode), `capacity`, `on_full`, `clock`. Static and
-dynamic opt-ins are mutually exclusive (a compile error). Anything beyond a
+`keys` + `entities_for` (static mode), `idle_ttl` + `max_entities` (the
+dynamic-mode knobs — the KEY itself is declared on the wiring with
+`.key_by(f)`, not on the procedure), `capacity`, `on_full`, `clock`. Anything
+beyond a
 single procedure or a linear chain — fan-out, multi-input — stays on an explicit
 `channels()` body (the escape hatch below).
 
@@ -343,9 +344,9 @@ The Java SDK is a port of the same model. Idiomatic differences:
   enforces at compile time become runtime-checked
   `UnboundedOperativeConfigurationException`s thrown by
   `FlezhaRunner.defineUnbounded(...)`).
-- `entitiesForOverridden()` / `entityKeyOverridden()` boolean default
-  methods replace Rust's `const ENTITIES_FOR_OVERRIDDEN: bool` /
-  `const ENTITY_KEY_OVERRIDDEN: bool` sentinels.
+- `entitiesForOverridden()` replaces Rust's
+  `const ENTITIES_FOR_OVERRIDDEN: bool` sentinel. There is no dynamic-mode
+  sentinel on either side: dynamic mode is read off the wiring.
 - `ProcedureException` is a checked exception subclass of `Exception`;
   `Procedure.run` declares `throws ProcedureException`.
 - Inter-procedure "zero-copy" passes the value by reference (Java has no
@@ -445,9 +446,11 @@ The dispatch path is engineered to keep the per-message cost low:
    - Single-mode: jump straight to entity index 0.
    - Static-mode: one HashMap lookup per entity key returned by
      `S::entities_for(&input)`.
-   - Dynamic-mode: one `S::entity_key(&input)` call, then one DashMap
-     lookup on the per-Procedure `DynamicEntityRegistry` (lazily creating
-     the entity on a miss). `None` from `entity_key` drops the input.
+   - Dynamic-mode: one call to the consumer edge's `key_by` closure, then
+     one DashMap lookup on the per-Procedure `DynamicEntityRegistry`
+     (lazily creating the entity on a miss). The key function is total —
+     an input is discarded by a `filter` declared before it, never by a
+     keyless return.
 3. **Mailbox push + counter + inflight CAS** — one `ArrayQueue::try_push`,
    one Relaxed `pushes_total` increment, and one atomic compare-exchange.
    If the CAS wins, submit a drain task to the pool; otherwise an
@@ -477,16 +480,18 @@ values, the floor-update protocol, and CI triage instructions when the
 
 ## Dynamic entity mode
 
-Dynamic mode lifts the compile-time-keyset requirement: a Procedure opts in by
-overriding `entity_key()` (with `ENTITY_KEY_OVERRIDDEN = true`) and an empty
-`entity_keys()`. Use it only when the keyset is genuinely unbounded
-(per-user, per-session, per-arbitrary-symbol); for a bounded keyset, static
-mode is simpler and cheaper.
+Dynamic mode lifts the compile-time-keyset requirement, and it is declared on
+the **wiring**, not on the Procedure: an edge carrying `.key_by(f)` makes its
+consumer dynamic, and the consumer declares no keying member at all. That is
+what lets a reader of `channels()` see where work fans out. Use it only when
+the keyset is genuinely unbounded (per-user, per-session, per-arbitrary-symbol);
+for a bounded keyset, static mode is simpler and cheaper.
 
-A dynamic Procedure owns zero Entities at startup. The first input with
-`entity_key(&input) == Some(key)` lazily creates an `EntitySlot` (cold
+A dynamic Procedure owns zero Entities at startup. The first input whose edge
+key function returns `key` lazily creates an `EntitySlot` (cold
 `init_state(Some(key), None)`) under a per-Procedure `DynamicEntityRegistry`
-(`DashMap`); `None` drops the input. Concurrent producers for a fresh key
+(`DashMap`). The key function is total, so there is no keyless-drop path —
+discard inputs with a `filter` before the keying. Concurrent producers for a fresh key
 share one slot (the DashMap insert serializes), and the inflight CAS then
 serializes dispatch as in static mode.
 
@@ -505,12 +510,11 @@ Two per-Procedure knobs:
   controller round-trip that could stall a pool worker.)
 - `max_entities() -> usize` (default `100_000`) — soft cap. At the cap,
   new-key inputs are dropped (`inputs_dropped_capped_total`); existing keys
-  are unaffected. Bounds memory against a runaway `entity_key`, not
+  are unaffected. Bounds memory against a runaway `.key_by`, not
   admission.
 
 Per-Procedure counters (`DynamicEntityCounters`): `entities_created_total`,
-`entities_evicted_total`, `inputs_dropped_no_key_total`,
-`inputs_dropped_capped_total`.
+`entities_evicted_total`, `inputs_dropped_capped_total`.
 
 ## Backpressure and bounded mailboxes
 
@@ -764,8 +768,7 @@ The umbrella enumerates non-goals (`operative-architecture/proposal.md`
 
 - **Bounded mailboxes / cross-procedure backpressure** — `crossbeam::SegQueue`
   is unbounded. Tracked in `operative-bounded-mailbox`.
-- **Dynamic entity mode** — `Procedure::entity_key` is reserved; v1 rejects
-  Operatives that override it without `entity_keys()`. Tracked in
+- **Dynamic entity mode** — v1 rejected it outright. Tracked in
   dynamic entity mode.
 - **Per-Procedure `handle_message`** — the wire command exists, but the SDK
   side returns the canonical "unsupported" error until

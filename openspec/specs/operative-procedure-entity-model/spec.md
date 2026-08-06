@@ -4,8 +4,8 @@
 This capability defines the structural execution model for Operatives: bounded per-Entity mailboxes with a per-channel overflow policy, the `Procedure` stage trait surface (state, change, clock, config, persistence), typed compile-checked channels, and dynamic entity mode (lazy creation, idle-TTL eviction, and soft caps).
 It also names the three-level workload vocabulary itself — Operative → Procedure → Entity — and the rule that every declaration, wire name, and on-disk name is named for the level it describes.
 ## Requirements
-### Requirement: Hierarchy and placement
 
+### Requirement: Hierarchy and placement
 The system SHALL realize the role relationship as follows:
 
 ```
@@ -35,7 +35,6 @@ The Controller SHALL hold the authoritative placement table. Runners SHALL regis
 - **THEN** ProcessHub SHALL ensure no concurrent `AddOperative` for the same `operative_id` is issued to any other Runner; migrations SHALL go through the documented HotSwap-with-handover path
 
 ### Requirement: Per-Entity mailbox is bounded with declared capacity
-
 Each EntitySlot's mailbox SHALL have a fixed capacity declared at operative startup. The mailbox SHALL refuse a push that would exceed this capacity; the SDK then applies the source channel's `OverflowPolicy` (see "Overflow policy declared per channel"). Capacity SHALL NOT change at runtime once the operative is started.
 
 The capacity SHALL be the value returned by the consumer Procedure's `mailbox_capacity()` trait method, evaluated once per Procedure at `register_unbounded::<R>()` time after applying the precedence rules in "Mailbox capacity precedence". Static-mode Procedures SHALL apply the same capacity to every Entity declared by `entity_keys()`.
@@ -67,14 +66,13 @@ The mailbox SHALL refuse capacity values of 0 (which would always overflow) and 
 - **THEN** Operative startup SHALL fail with an error naming the Procedure
 
 ### Requirement: Mailbox capacity precedence
-
 The SDK SHALL resolve a Procedure's mailbox capacity at `register_unbounded::<R>()` time using the following ordered rule:
 
 1. If `Procedure::MAILBOX_CAPACITY_OVERRIDDEN` is `true`, use the value returned by `Procedure::mailbox_capacity()`.
 2. Otherwise, if the `FLEZHA_MAILBOX_CAPACITY` environment variable is set to a non-empty string parseable as `usize`, use that value.
 3. Otherwise, use the built-in default of 1024.
 
-The override-detection const `MAILBOX_CAPACITY_OVERRIDDEN` SHALL exist on the `Procedure` trait alongside the existing `ENTITIES_FOR_OVERRIDDEN` and `ENTITY_KEY_OVERRIDDEN` consts; users overriding `mailbox_capacity()` MUST also set `MAILBOX_CAPACITY_OVERRIDDEN = true`.
+The override-detection const `MAILBOX_CAPACITY_OVERRIDDEN` SHALL exist on the `Procedure` trait alongside the existing `ENTITIES_FOR_OVERRIDDEN` const; users overriding `mailbox_capacity()` MUST also set `MAILBOX_CAPACITY_OVERRIDDEN = true`. `ENTITY_KEY_OVERRIDDEN` SHALL NOT exist, because dynamic keying is no longer a trait override.
 
 #### Scenario: Override-flag false is treated as "not overridden"
 - **WHEN** a Procedure overrides `mailbox_capacity() -> usize { 4096 }` but leaves `MAILBOX_CAPACITY_OVERRIDDEN` at its `false` default and `FLEZHA_MAILBOX_CAPACITY=2048` is set
@@ -85,7 +83,6 @@ The override-detection const `MAILBOX_CAPACITY_OVERRIDDEN` SHALL exist on the `P
 - **THEN** the resolved capacity SHALL fall through to the default 1024
 
 ### Requirement: Overflow policy declared per channel
-
 Each channel declared via `c.input::<T>(...)` (entry) or `c.channel::<T>(...).from::<S>()` (inter-procedure) SHALL carry an `OverflowPolicy` value applied at the producer-side push site when the consumer's mailbox is full. Plugin-bound channels (`.to_plugin(...)`) SHALL NOT carry an `OverflowPolicy` because no SDK-side mailbox sits between the producer Procedure and the wire; declaring `.on_full(...)` on a plugin-bound channel SHALL be a compile error (the chained-builder shape after `.to_plugin(...)` MUST NOT expose `.on_full(...)`).
 
 `OverflowPolicy` SHALL be an enum with exactly three variants:
@@ -114,7 +111,6 @@ The policy SHALL be declared via the channel-builder method `.on_full(OverflowPo
 - **THEN** the Rust compiler SHALL emit a "no method named `on_full`" error and the program MUST NOT build
 
 ### Requirement: Default overflow policy by channel kind
-
 When a channel does not call `.on_full(...)`, the runtime SHALL apply a default policy determined by the channel's kind:
 
 - Entry channels: `OverflowPolicy::DropNewest`.
@@ -132,7 +128,6 @@ These defaults SHALL be reflected in the `ChannelDescriptor.overflow_policy` fie
 - **THEN** the OhlcProcedure's calling thread SHALL park until IndicatorProcedure drains an item, and then the push SHALL retry until success; OhlcProcedure's `pushes_blocked_total` SHALL increase by at least 1
 
 ### Requirement: Per-Entity backpressure counters
-
 Each EntitySlot's mailbox SHALL expose four `AtomicU64` counters readable via an `EntityCounters` accessor:
 
 - `pushes_total` — incremented on every successful push.
@@ -155,7 +150,6 @@ The counters SHALL use `Ordering::Relaxed` for both reads and writes. The counte
 - **THEN** `drops_newest_total` SHALL increase by 5; `drops_oldest_total` SHALL be unchanged; `pushes_blocked_total` SHALL be unchanged; `pushes_total` SHALL be unchanged
 
 ### Requirement: Block parking does not violate sticky per-entity ordering
-
 When a producer thread is parked on a full consumer mailbox under `OverflowPolicy::Block`, the runtime SHALL preserve the existing "Sticky per-entity ordering" requirement on the *consumer* Entity. Specifically:
 
 - The consumer Entity's drain loop SHALL continue to run on whichever worker thread holds its inflight CAS; no parked producer SHALL block consumer drain.
@@ -172,7 +166,6 @@ This requirement is in addition to and does not modify the "Sticky per-entity or
 - **THEN** the consumer's first three pops SHALL unpark A, B, C respectively (best-effort under MPMC contention; the *intent* is FIFO order via a `VecDeque<Unparker>` implementation)
 
 ### Requirement: Mailbox-full handling does not stall sibling Operatives at the entry edge under default policy
-
 Under the default entry-channel policy (`DropNewest`), the SDK's wire-reader thread (the per-stream loop in `command/streams_connect.rs`) SHALL NOT block on a full mailbox. The frame's typed payload SHALL be discarded; the loop SHALL immediately attempt to read the next frame from the wire.
 
 If a runner opts into `OverflowPolicy::Block` on an entry channel by explicit `.on_full(OverflowPolicy::Block)` declaration, the wire-reader thread MAY park while pushing to that channel's consumer mailbox. The SDK SHALL document this co-tenancy hazard in `docs/operative_architecture.md` and `docs/sdk_protocol_spec.md`. No runtime mechanism prevents a runner from making this choice.
@@ -186,7 +179,6 @@ If a runner opts into `OverflowPolicy::Block` on an entry channel by explicit `.
 - **THEN** the wire-reader thread SHALL park on the push; Operative B sharing the same connection SHALL NOT receive new frames until the parked push completes (this is documented behavior under explicit opt-in, not a defect)
 
 ### Requirement: Procedure declares Change associated type and apply_change function (Rust SDK)
-
 The Rust SDK's `Procedure` trait SHALL declare an associated `type Change: flezha_runner::state::Change` with default `flezha_runner::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
 
 The `Procedure` trait SHALL declare a function `fn apply_change(state: &mut Self::State, change: &Self::Change)` whose default implementation panics with a descriptive error string for any `Change` other than `NoChange`, and is a no-op for `NoChange`. Procedures declaring a non-`NoChange` Change SHALL override `apply_change` to make their state mutation deterministic.
@@ -214,7 +206,6 @@ The `Procedure` trait SHALL declare a function `fn apply_change(state: &mut Self
 - **THEN** the returned `Result<(), ReplayMismatch>` SHALL be `Ok(())` and the test SHALL pass; for a non-deterministic `apply_change` (e.g. one that reads `SystemTime::now()`), the result SHALL be `Err(ReplayMismatch { ... })` carrying serialized expected and actual states
 
 ### Requirement: Procedure declares Clock associated type with default WallClock (Rust SDK)
-
 The Rust SDK's `Procedure` trait SHALL declare an associated `type Clock: flezha_runner::state::Clock` with default `WallClock`. `Clock` SHALL be a sealed trait with v1 implementations `WallClock`, `LogicalClock`, and `EventTimeFrom<F>`. v1 of the Rust SDK SHALL fully wire only `WallClock`; Procedures declaring a non-default Clock SHALL fail Operative startup with `OperativeStartError::ClockNotImplementedYet { clock_type }` until a follow-up change wires `LogicalClock` and `EventTimeFrom`.
 
 #### Scenario: Default Clock is WallClock
@@ -228,7 +219,6 @@ The Rust SDK's `Procedure` trait SHALL declare an associated `type Clock: flezha
 - **THEN** `register_unbounded::<R>()` SHALL fail with `OperativeStartError::ClockNotImplementedYet { clock_type: "LogicalClock" }` and the operative SHALL NOT be registered
 
 ### Requirement: Procedure declares Config associated type with typed constructor (Rust SDK)
-
 The Rust SDK's `Procedure` trait SHALL declare an associated `type Config: DeserializeOwned + Send + Sync + 'static` with default `()`, and a constructor `fn from_config(cfg: Self::Config) -> Self`. When `Config = ()` (the default), `from_config(())` SHALL invoke `Self::default()` (requiring `Procedure: Default` for unit-Config procedures; this is satisfied by the existing `operative-mvp-rust` requirement).
 
 #### Scenario: Default unit Config
@@ -242,7 +232,6 @@ The Rust SDK's `Procedure` trait SHALL declare an associated `type Config: Deser
 - **THEN** the runtime SHALL deserialize the bytes into `MyConfig` (postcard) and SHALL invoke `MyProcedure::from_config(cfg)` to construct the Procedure at Entity init; deserialization failure SHALL produce `OperativeStartError::ConfigDeserializeFailed { procedure, source }`
 
 ### Requirement: Procedure declares SCHEMA_VERSION const
-
 The Rust SDK's `Procedure` trait SHALL declare `const SCHEMA_VERSION: u32 = 1`. The runtime SHALL stamp this value into the 16-byte header of every persisted Change record for this Procedure. Users SHALL bump `SCHEMA_VERSION` when they make a non-additive Change-schema edit (e.g. removing or renaming a Change variant).
 
 #### Scenario: Default SCHEMA_VERSION is 1
@@ -251,7 +240,6 @@ The Rust SDK's `Procedure` trait SHALL declare `const SCHEMA_VERSION: u32 = 1`. 
 - **THEN** the trait default `1` SHALL be inherited and stamped into headers
 
 ### Requirement: Procedure declares compact_after_bytes per-Entity WAL threshold (Rust SDK)
-
 The Rust SDK's `Procedure` trait SHALL declare `fn compact_after_bytes() -> usize { 64 * 1024 * 1024 }` (default 64 MiB). The runtime SHALL report this value to the agent at operative startup in the existing operative-start metadata so the agent's compaction trigger uses the per-Procedure value.
 
 #### Scenario: Default 64 MiB threshold reported
@@ -265,7 +253,6 @@ The Rust SDK's `Procedure` trait SHALL declare `fn compact_after_bytes() -> usiz
 - **THEN** the operative-start metadata SHALL carry `compact_after_bytes = 16777216` for this Procedure
 
 ### Requirement: Procedure run receives StateHandle, not direct mutable reference (Rust SDK)
-
 The Rust SDK's `Procedure::run` SHALL receive `state: StateHandle<'_, Self>` instead of `state: &mut Self::State`. `StateHandle<'a, S: Procedure>` SHALL implement `std::ops::Deref<Target = S::State>` for read access and SHALL expose a single mutation method `apply(&mut self, change: S::Change)` that runs `S::apply_change(state, &change)` and pushes the Change onto the per-Entity flush buffer. `StateHandle` SHALL NOT implement `DerefMut`.
 
 #### Scenario: Direct mutation does not compile
@@ -284,7 +271,6 @@ The Rust SDK's `Procedure::run` SHALL receive `state: StateHandle<'_, Self>` ins
 - **THEN** the read SHALL succeed via `StateHandle`'s `Deref` impl with no Change recording, no buffer mutation, and zero heap allocations
 
 ### Requirement: Operative declares PERSISTENCE_ENABLED const, frozen at instance start (Rust SDK)
-
 The Rust SDK's `UnboundedOperative` trait SHALL declare `const PERSISTENCE_ENABLED: bool = true`. The runtime SHALL resolve a per-Operative-instance `persistence_enabled: bool` at `start_operative(factory_id, instance_id)` time using:
 
 1. If the operative-start metadata from the agent contains `operative_persistence.<OperativeClass>` with a boolean value, use that.
@@ -314,7 +300,6 @@ The resolved value SHALL be bound to the `UnboundedInstance` and SHALL be propag
 - **THEN** the running `UnboundedInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operative(instance_id)` and a subsequent `start_operative(...)` invocation
 
 ### Requirement: init_state accepts optional restoration payload (Rust SDK)
-
 The Rust SDK's `Procedure::init_state` signature SHALL be `fn init_state(entity_key: Option<&str>, init_payload: Option<RestoreInitPayload<'_>>) -> Self::State`. When `init_payload = None`, `init_state` SHALL behave as a fresh-start constructor. When `init_payload = Some(payload)`, the user MAY inspect or ignore the payload bytes; the runtime SHALL automatically apply the payload (snapshot decode + change-log fold via `Procedure::apply_change`) AFTER `init_state` returns, replacing the user-constructed state with the restored state.
 
 #### Scenario: Cold start passes None
@@ -333,7 +318,6 @@ The Rust SDK's `Procedure::init_state` signature SHALL be `fn init_state(entity_
 - **THEN** the read SHALL succeed; the runtime SHALL still apply the payload after `init_state` returns; the user's instrumentation SHALL not affect the restored state
 
 ### Requirement: Per-Entity flush buffer registered for non-NoChange Procedures
-
 The Rust SDK's `EntitySlot` SHALL hold a type-erased flush buffer (`Arc<Mutex<Box<dyn FlushableBuffer>>>`) for any Entity whose Procedure's `Change` type is not `NoChange`. The buffer SHALL be a `Vec<S::Change>` initially empty; `state.apply(...)` SHALL push onto it. The per-process flusher SHALL acquire the Mutex on each linger tick to drain the buffer.
 
 For Entities whose Procedure's `Change == NoChange`, the runtime SHALL NOT allocate a flush buffer or register the Entity with the flusher.
@@ -349,7 +333,6 @@ For Entities whose Procedure's `Change == NoChange`, the runtime SHALL NOT alloc
 - **THEN** the `EntityFlusher`'s registry SHALL contain an entry keyed by `(operative_instance_id, procedure_id, entity_key)` with the typed buffer reference, the resolved `persistence_enabled` flag, the `change_seq: AtomicU64`, and the wire-frame send fn pointer
 
 ### Requirement: Four-layer abstraction with defined responsibilities
-
 The SDK SHALL expose a four-layer abstraction comprising Operative, Procedure, Entity, and Runner. Each layer SHALL have the following exclusive responsibilities and no others SHALL be implicitly added:
 
 - **Operative** — a user-defined struct implementing the `UnboundedOperative` trait. Spawned by the agent once per `flz operative start` invocation. Owns the channel topology declaration and the registered Procedures. Holds no domain state of its own.
@@ -366,19 +349,18 @@ The SDK SHALL expose a four-layer abstraction comprising Operative, Procedure, E
 - **THEN** the trait MUST NOT include a state-init or state-handle method; all stateful behavior MUST live on Procedures
 
 ### Requirement: Static and single entity modes are supported in v1
-
 A Procedure SHALL run in one of exactly three entity modes (the v1 title is retained for MODIFIED-matcher binding; the body below replaces the v1 wording end-to-end and adds dynamic mode):
 
-- **Single entity (default)**: when the Procedure implements neither `entity_keys()` nor `entity_key()` (i.e. `ENTITY_KEY_OVERRIDDEN = false` and `entity_keys()` returns empty). The runtime SHALL create exactly one Entity with `entity_key = None` at operative startup, and SHALL call `Procedure::init_state(None)` to initialize its state.
+- **Single entity (default)**: when the Procedure declares no `entity_keys()` and no consumer edge into it declares a key function. The runtime SHALL create exactly one Entity with `entity_key = None` at operative startup, and SHALL call `Procedure::init_state(None)` to initialize its state.
 - **Static entities**: when the Procedure implements `fn entity_keys() -> Vec<&'static str>` returning a non-empty list. The runtime SHALL create one Entity per declared key at operative startup, and SHALL call `Procedure::init_state(Some(key))` for each.
-- **Dynamic entities**: when the Procedure overrides `entity_key(input: &Input) -> Option<String>` AND sets `ENTITY_KEY_OVERRIDDEN = true` AND leaves `entity_keys()` empty. The runtime SHALL own zero Entities for the Procedure at operative startup; Entities SHALL be created lazily on the first input whose `entity_key(&input)` returns `Some(k)` (see "Dynamic-mode lazy entity creation"). Inputs whose `entity_key(&input)` returns `None` SHALL be dropped without allocating an Entity; the per-Procedure `inputs_dropped_no_key_total` counter SHALL be incremented.
+- **Dynamic entities**: when a consumer edge into the Procedure declares a key function (`key_by` / `keyBy` on the wiring) and the Procedure leaves `entity_keys()` empty. The runtime SHALL own zero Entities for the Procedure at operative startup; Entities SHALL be created lazily on the first input for which the edge's key function returns a key with no live Entity (see "Dynamic-mode lazy entity creation"). The key function is total, so there SHALL be no keyless-drop path: discarding an input is expressed with `filter` declared before the keying.
 
 The Operative startup SHALL fail with a clear error message if a Procedure:
 
-- declares both `entity_keys()` and `entity_key()` simultaneously (i.e. `entity_keys()` non-empty AND `ENTITY_KEY_OVERRIDDEN = true`).
+- declares a non-empty `entity_keys()` while a consumer edge into it declares a key function (static and dynamic keying are mutually exclusive).
 
 #### Scenario: Single entity for a Procedure with no entity declared
-- **WHEN** a Procedure implements neither `entity_keys()` nor `entity_key()` and the Operative is started
+- **WHEN** a Procedure declares no `entity_keys()`, no edge into it is keyed, and the Operative is started
 - **THEN** the SDK SHALL create exactly one Entity for that Procedure with `entity_key = None`, and `Procedure::init_state(None)` SHALL be called exactly once during startup
 
 #### Scenario: Static entities created at operative startup
@@ -386,15 +368,14 @@ The Operative startup SHALL fail with a clear error message if a Procedure:
 - **THEN** the SDK SHALL create exactly four Entities for that Procedure at startup, with `entity_key = Some("1m")`, `Some("1h")`, `Some("1d")`, `Some("1w")` respectively; `init_state` SHALL be called exactly once for each
 
 #### Scenario: Dynamic-mode declaration is accepted at operative startup
-- **WHEN** a Procedure overrides `entity_key()` and sets `ENTITY_KEY_OVERRIDDEN = true` while leaving `entity_keys()` empty
+- **WHEN** a consumer edge declares a key function into a Procedure that leaves `entity_keys()` empty
 - **THEN** the Operative startup SHALL succeed and the Procedure SHALL be registered in dynamic mode with zero Entities
 
-#### Scenario: Both entity_keys and entity_key declared is rejected
-- **WHEN** a Procedure returns a non-empty `entity_keys()` AND sets `ENTITY_KEY_OVERRIDDEN = true`
+#### Scenario: Static keyset plus a keyed edge is rejected
+- **WHEN** a Procedure returns a non-empty `entity_keys()` AND a consumer edge into it declares a key function
 - **THEN** Operative startup SHALL fail with an error naming the conflicting Procedure
 
 ### Requirement: Sticky per-entity ordering
-
 For any single Entity, two invocations of its Procedure's `run(...)` method SHALL NOT execute concurrently, and invocations SHALL observe their inputs in the order those inputs were enqueued onto the Entity's mailbox. This invariant MUST hold across all dispatch modes, all runner pool sizes, and all transport types.
 
 #### Scenario: Same entity is never concurrent
@@ -410,7 +391,6 @@ For any single Entity, two invocations of its Procedure's `run(...)` method SHAL
 - **THEN** the Entity's State SHALL end with `[a, b, c]` in exactly that order
 
 ### Requirement: Typed channels with compile-time wiring checks
-
 All inter-Procedure and Procedure-to-plugin routing SHALL go through Channels declared on the Operative via the producer-first graph builder (`sdk-graph-authoring`). Each Channel SHALL carry a phantom type parameter `Channel<T>`, where `T` is taken from the producing Procedure's `Output` type — there is no user-supplied type token and no `.from(...)` clause for inter-procedure channels. The wiring API SHALL refuse to build in any of these cases:
 
 - A consumer Procedure whose `Input` associated type is not `T` is wired via `.into::<X>()` / `.into(X.class)` onto a stream of payload type `T`.
@@ -431,7 +411,6 @@ In Rust these refusals SHALL be compile-time where the builder shape permits, ot
 - **THEN** the program MUST fail at compile time (or at registration time if compile-time enforcement is impossible for the chosen builder shape) with an error naming the node
 
 ### Requirement: Per-operative channel namespace
-
 Channel names SHALL be scoped to a single Operative instance. Two Operative instances (for example the BTC Operative and the ETH Operative) SHALL each have their own independent channel namespace; a channel named `"trade.raw"` on one Operative SHALL be a distinct logical channel from a channel of the same name on another Operative. Auto-derived channel names (from the producer node's identity, per `sdk-graph-authoring`), `.named(...)` overrides, and explicit entry names SHALL all share this namespace and its duplicate check; a collision SHALL fail registration naming both declarations.
 
 #### Scenario: Same-named channels on different operatives are independent
@@ -443,7 +422,6 @@ Channel names SHALL be scoped to a single Operative instance. Two Operative inst
 - **THEN** registration SHALL fail with a duplicate-channel-name error naming both declarations
 
 ### Requirement: Hot-path channel dispatch uses interned u32 IDs
-
 At Operative startup, channel names SHALL be interned to `u32` IDs once. Runtime input-routing decisions inside the SDK hot path SHALL use the integer ID, not the string name. Channel-name strings SHALL appear only in: the user-facing API, registration time, and the on-the-wire metadata field crossing the NIF boundary.
 
 #### Scenario: Hot path is allocation-free with respect to channel names
@@ -451,7 +429,6 @@ At Operative startup, channel names SHALL be interned to `u32` IDs once. Runtime
 - **THEN** no per-message allocation of `String` for the channel name SHALL be observable in profiling
 
 ### Requirement: Inter-procedure transport is in-process zero-copy
-
 When a Channel connects two Procedures inside the same Operative, the SDK SHALL transport values as `Arc<T>` references between Entities, performing no serialization, no allocation of an output buffer, and no NIF-boundary crossing for that transport.
 
 #### Scenario: Pipeline between two procedures does not serialize
@@ -459,7 +436,6 @@ When a Channel connects two Procedures inside the same Operative, the SDK SHALL 
 - **THEN** the IndicatorProcedure's `run(...)` SHALL receive the same `Arc<Candle>` instance OhlcProcedure emitted (or an `Arc` to byte-identical content with no intermediate serialization step)
 
 ### Requirement: Plugin emission semantics
-
 Channels declared with `.output("name")` (pure-plugin) and channels declared with `.also_output_with("name", serializer)` / `.also_output("name")` (hybrid) — in **either** the Rust SDK or the Java SDK (`.output(...)` / `.alsoOutput(...)`) — SHALL both route a value through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1. A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
 
 For pure-plugin channels, the wire bytes are produced by the channel's `pluginSerializer`/`plugin_serializer` (set by `output(...)`). For hybrid channels, the wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_sink.serializer` (set by `alsoOutput(...)` / `also_output_with(...)`). In both cases the byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name. **Furthermore, the agent's plugin layer SHALL NOT distinguish between Rust-SDK and Java-SDK frames** — hybrid frames produced by either SDK are byte-indistinguishable for the same plugin name and serializer-output bytes.
@@ -488,7 +464,6 @@ For pure-plugin channels, the wire bytes are produced by the channel's `pluginSe
 - **AND** the SDK's topology builder on either side SHALL NOT reject either declaration, because each channel still has exactly one producer Procedure within its own SDK
 
 ### Requirement: ProcedureCtx emit semantics
-
 A Procedure's `run` method SHALL receive a mutable reference to a `ProcedureCtx`. The Procedure SHALL emit zero, one, or more outputs by calling `ctx.emit::<C>(value)` for each output, where `C` is the channel-payload type (which the compiler resolves to the matching channel via the wiring declaration). For outputs that need a string-keyed user metadata bag attached, the Procedure SHALL call `ctx.emit_with_meta::<C>(value, HashMap<String, String>)` instead. The `run` method's return type SHALL be `Result<(), ProcedureError>` for success / hard-error signaling. Producing no output SHALL be expressed by simply not calling `ctx.emit` (or `ctx.emit_with_meta`); there SHALL be no explicit "no-output" return variant.
 
 `ctx.emit_with_meta` SHALL be valid only for channels declared with `.to_plugin("name")`. Calling `emit_with_meta` on a channel that flows to another Procedure inside the same Operative SHALL return a `ProcedureError` and SHALL NOT propagate the value or the metadata. The error message SHALL name the offending channel and instruct the user to either move the metadata into the typed value or add `.to_plugin(...)` to the channel.
@@ -516,7 +491,6 @@ When `emit_with_meta` is used on a plugin-bound channel, the supplied `HashMap<S
 - **THEN** the call SHALL return `Err(ProcedureError::MetadataNotAllowedOnInterProcedureChannel { channel })`, and the value `p` SHALL NOT be propagated to the downstream Procedure
 
 ### Requirement: Hybrid channel builder method
-
 The Rust SDK SHALL expose `also_output_with<F>(plugin_name: &'static str, serializer: F)` where `F: Fn(&T) -> Vec<u8> + Send + Sync + 'static`, and `also_output(plugin_name: &'static str)` (default serialization: passthrough for `Vec<u8>`, UTF-8 for `String`, the SDK's default JSON codec otherwise), on the graph builder's stream handle. Calling either SHALL leave the channel's `kind = ChannelKind::InterProcedure` and SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `PluginSerializeFn`) alongside the channel's existing consumer fan-out. After the call, further `.into::<S>()` consumer wiring SHALL chain naturally — the method returns the same stream handle.
 
 The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Option<PluginSink>` field where `PluginSink { name: &'static str, serializer: PluginSerializeFn }`. Pure-`PluginBound` channels (produced by `output(...)`) SHALL continue to populate the existing `plugin_name` and `plugin_serializer` fields and SHALL NOT populate `plugin_sink`. Hybrid channels SHALL populate `plugin_sink` and SHALL NOT populate `plugin_name`/`plugin_serializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
@@ -545,7 +519,6 @@ The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Opt
 - **AND** a trybuild test under `sdk/rust/tests/build_failures/` SHALL pin this as a stable compile error
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call
-
 When a Procedure's `Procedure::run` calls `ctx.emit(value)` on a hybrid channel (`kind = InterProcedure, plugin_sink = Some(_)`), the dispatcher SHALL execute the following sequence on the producer thread:
 
 1. Fan out the typed `Arc<dyn Any + Send + Sync>` value to every consumer mailbox listed in the channel's `consumers` per the channel's `OverflowPolicy`. This step SHALL complete (modulo `OverflowPolicy::Block` parking) before step 2 begins.
@@ -578,7 +551,6 @@ The serializer SHALL run exactly once per `ctx.emit` invocation regardless of co
 - **AND** when the producer unparks, the serializer SHALL be invoked exactly once and the plugin sink SHALL receive the corresponding bytes
 
 ### Requirement: emit_with_meta is valid on hybrid channels
-
 `ProcedureCtx::emit_with_meta(value, meta)` SHALL accept the call when either:
 
 - the channel is `kind = PluginBound` (existing rule), OR
@@ -603,7 +575,6 @@ On a pure-`InterProcedure` channel with no plugin sink, `emit_with_meta` SHALL c
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
 ### Requirement: New BuildTopologyError variant — `DuplicatePluginSink`
-
 `BuildTopologyError` (in `sdk/rust/src/channel/builder.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_unbounded::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_unbounded::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
 
 #### Scenario: Second also_to_plugin_with call is rejected at registration
@@ -612,7 +583,6 @@ On a pure-`InterProcedure` channel with no plugin sink, `emit_with_meta` SHALL c
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: New ProcedureError variant — `PluginSerializerPanic`
-
 `ProcedureError` (in `sdk/rust/src/procedure/error.rs`) SHALL gain a `PluginSerializerPanic { channel: String, message: String }` variant. The variant SHALL be returned from `ctx.emit(...)` (and `ctx.emit_with_meta(...)`) on a hybrid channel when the user-supplied serializer panics. `channel` SHALL be the channel name as declared in `ChannelBuilder`; `message` SHALL be the panic payload formatted via the existing panic-message helper (a string description, not the raw `Box<dyn Any>` payload).
 
 The producing Procedure's `Procedure::run` SHALL receive the error via the normal `Result<(), ProcedureError>` return path of `ctx.emit`. Returning `Err` from `Procedure::run` continues to discard partial emits per the existing trait contract; ignoring the error is also valid and SHALL leave the inter-procedure consumers' delivery intact.
@@ -624,7 +594,6 @@ The producing Procedure's `Procedure::run` SHALL receive the error via the norma
 - **AND** the inter-procedure consumer fan-out SHALL have already completed before the panic was caught
 
 ### Requirement: Hybrid channel builder method (Java SDK)
-
 The Java SDK SHALL expose `alsoOutput(String pluginName, Function<T, byte[]> serializer)` and `alsoOutput(String pluginName)` (default serialization: passthrough for `byte[]`, UTF-8 for `String`, Jackson JSON otherwise) on the graph builder's stream handle. Calling either SHALL leave the channel's `kind = ChannelKind.INTER_PROCEDURE` and SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `Function<Object, byte[]>`) alongside the channel's existing consumer fan-out. After the call, further `.into(...)` consumer wiring SHALL chain naturally — the method returns the same stream handle.
 
 The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSink> pluginSink` where `PluginSink` is a public record `(String name, Function<Object, byte[]> serializer)`. Pure-`PLUGIN_BOUND` channels (produced by `output(...)`) SHALL continue to populate the existing `pluginName` and `pluginSerializer` fields and SHALL NOT populate `pluginSink`. Hybrid channels SHALL populate `pluginSink` and SHALL NOT populate `pluginName`/`pluginSerializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
@@ -648,7 +617,6 @@ The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSin
 - **THEN** the code SHALL fail to compile because `output` returns a finalized `Channel<T>` handle that exposes no further methods
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call (Java SDK)
-
 When a Procedure's `Procedure.run` calls `ctx.emit(value)` on a hybrid channel (`kind == INTER_PROCEDURE`, `pluginSink.isPresent()`), the dispatcher SHALL execute the following sequence on the producer thread:
 
 1. Fan out the typed value to every consumer mailbox listed in `descriptor.consumers()`. This step SHALL complete before step 2 begins.
@@ -675,7 +643,6 @@ The serializer SHALL run exactly once per `ctx.emit` invocation regardless of co
 - **AND** the dispatcher thread SHALL remain alive — a subsequent `ctx.emit` call SHALL execute normally
 
 ### Requirement: emitWithMeta is valid on hybrid channels (Java SDK)
-
 `ProcedureCtx.emitWithMeta(value, meta)` SHALL accept the call when either:
 
 - the channel is `kind == PLUGIN_BOUND` (existing rule), OR
@@ -700,7 +667,6 @@ On a pure-`INTER_PROCEDURE` channel with no plugin sink, `emitWithMeta` SHALL co
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
 ### Requirement: New OperativeConfigurationException factory — `duplicatePluginSink` (Java SDK)
-
 `OperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/OperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `OperativeRegistry.registerUnbounded(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `OperativeRegistry.registerUnbounded(...)` validation SHALL throw a `OperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
 
 #### Scenario: Second alsoToPluginWith call is rejected at registration (Java)
@@ -709,7 +675,6 @@ On a pure-`INTER_PROCEDURE` channel with no plugin sink, `emitWithMeta` SHALL co
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: New ProcedureException subclass — `PluginSerializerFailure` (Java SDK)
-
 `ProcedureException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/ProcedureException.java`) SHALL gain a nested `final class PluginSerializerFailure extends ProcedureException`. Constructor: `(String channel, String message, Throwable cause)`. The class SHALL be thrown from `ctx.emit(...)` (and `ctx.emitWithMeta(...)`) on a hybrid channel when the user-supplied serializer throws `RuntimeException` or `Error`. `channel()` accessor SHALL return the channel name as declared in `ChannelBuilder`; `getMessage()` SHALL include the underlying exception's `toString()` and the channel name; `getCause()` SHALL be the original throwable.
 
 The producing Procedure's `Procedure.run` SHALL receive the exception via the normal `throws ProcedureException` declaration on `ctx.emit`. Catching the exception and continuing is valid; rethrowing from `Procedure.run` continues to discard partial emits per the existing trait contract.
@@ -726,7 +691,6 @@ The producing Procedure's `Procedure.run` SHALL receive the exception via the no
 - **AND** the consumer fan-out for that emit SHALL have already completed
 
 ### Requirement: Worker pool reuses existing dispatch infrastructure
-
 The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementation (`sdk/rust/src/runner/work_stealing_pool.rs`). The `FLEZHA_WORKER_POOL_SIZE` environment variable SHALL continue to control pool size, defaulting to `Runtime.availableOperatives()`. The per-Entity `inflight` CAS guard SHALL be the same mechanism the existing per-`OperativeSlot` guard uses.
 
 #### Scenario: Default pool sizing
@@ -738,7 +702,6 @@ The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementatio
 - **THEN** the runner pool SHALL contain exactly 4 OS threads
 
 ### Requirement: No coexistence with OperativeHandler API
-
 The `OperativeHandler` trait, `OperativeResult` enum, `OperativeRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `UnboundedOperative` / `Procedure` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
 
 **Reason**: The library is unpublished, the only known runner-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-operative-id baggage that the new model deliberately leaves behind.
@@ -754,29 +717,27 @@ The `OperativeHandler` trait, `OperativeResult` enum, `OperativeRunner` enum, `r
 - **THEN** the compilation SHALL fail with an unresolved-name error
 
 ### Requirement: Dynamic-mode lazy entity creation
-
-For dynamic-mode Procedures, the runtime SHALL create an `EntitySlot` for a key on the first input whose `entity_key(&input)` returns `Some(k)` and for which no slot already exists. Slot creation SHALL be synchronous within the dispatch path: allocate the slot, allocate the mailbox at the Procedure's declared `mailbox_capacity()`, push the triggering input, submit a runner job. The per-Procedure `entities_created_total` counter SHALL be incremented on each create.
+For dynamic-mode Procedures, the runtime SHALL create an `EntitySlot` for a key on the first input whose consumer edge's key function returns a key for which no slot already exists. The key function is declared on the wiring via `key_by` / `keyBy` and is total — it returns a `String`, never an absence — so there is no keyless-drop path; discarding an input is expressed with `filter` before the keying. Slot creation SHALL be synchronous within the dispatch path: allocate the slot, allocate the mailbox at the Procedure's declared `mailbox_capacity()`, push the triggering input, submit a runner job. The per-Procedure `entities_created_total` counter SHALL be incremented on each create.
 
 Concurrent producers pushing inputs for the same brand-new key SHALL all observe the same `EntitySlot` instance after creation. The runtime SHALL NOT allocate two distinct slots for the same key under any concurrency pattern.
 
 #### Scenario: First input with a fresh key creates the entity
-- **WHEN** a dynamic-mode Procedure receives an input whose `entity_key()` returns `Some("user-42")` and no Entity for `"user-42"` exists
+- **WHEN** a Procedure reached by a keyed edge receives an input whose key function returns `"user-42"` and no Entity for `"user-42"` exists
 - **THEN** the runtime SHALL create an Entity keyed `"user-42"`, push the input onto its mailbox, increment `entities_created_total`, and submit a runner job
 
 #### Scenario: Subsequent inputs with the same key reuse the entity
-- **WHEN** a second input arrives with `entity_key()` returning `Some("user-42")` after the first one created the slot
+- **WHEN** a second input arrives whose key function returns `"user-42"` after the first one created the slot
 - **THEN** the runtime SHALL push onto the existing Entity's mailbox; `entities_created_total` SHALL NOT increment
 
-#### Scenario: entity_key returning None drops the input
-- **WHEN** a dynamic-mode Procedure's `entity_key(&input)` returns `None` for a given input
-- **THEN** the runtime SHALL drop the input without allocating an Entity and SHALL increment `inputs_dropped_no_key_total`
+#### Scenario: Filtering, not a null key, discards an input
+- **WHEN** an author wants inputs of a given shape not to reach any Entity
+- **THEN** they SHALL declare `filter` before `key_by` on the edge, and the runtime SHALL offer no keyless-drop path
 
 #### Scenario: Concurrent producers for the same fresh key share one slot
 - **WHEN** N producer threads simultaneously push the first inputs for the same brand-new key `"user-99"`
 - **THEN** the runtime SHALL allocate exactly one `EntitySlot` for `"user-99"` and all N inputs SHALL land on its single mailbox in some serial order
 
 ### Requirement: Per-Procedure idle-TTL eviction is opt-in (no eviction by default)
-
 `Procedure::entity_idle_ttl()` SHALL return `Option<Duration>` and SHALL default to `None`. When it returns `None`, the Procedure's dynamic Entities SHALL NOT be evicted — they live for the lifetime of the Operative (as static Entities do) and no reaper thread SHALL be spawned for the Procedure.
 
 When `entity_idle_ttl()` returns `Some(ttl)`, the SDK SHALL run one reaper thread for the Procedure that periodically evicts Entities whose time since last input push exceeds `ttl`. The reaper SHALL acquire the Entity's `inflight` CAS before evicting and SHALL confirm its mailbox is empty; if the CAS is contended, the reaper SHALL skip the Entity and try again on the next sweep. Eviction SHALL increment the per-Procedure `entities_evicted_total` counter.
@@ -800,7 +761,6 @@ The reaper SHALL sweep on a cadence derived as `min(ttl / 4, 30s)`, overridable 
 - **THEN** the reaper SHALL NOT evict it on this sweep
 
 ### Requirement: Eviction is destructive; recreate is a cold start
-
 Eviction of a dynamic-mode Entity SHALL be destructive. When an Entity is evicted AND persistence is enabled for the Operative class, the SDK SHALL ship a fire-and-forget `delete_entity_state{entity_id}` frame to the controller so its on-disk WAL/snapshot/outbox files are removed. The SDK SHALL NOT block the reaper on a response.
 
 When a dynamic-mode Entity has been evicted and a subsequent input arrives for the same key, the runtime SHALL recreate the `EntitySlot` synchronously (per "Dynamic-mode lazy entity creation") and SHALL call `Procedure::init_state(Some(key), None)` — a fresh cold start. The runtime SHALL NOT restore the evicted Entity's state from disk on recreate. (This is a deliberate decision: it keeps the recreate path off any blocking controller round-trip, so a recreate can never stall a work-stealing pool worker.)
@@ -818,17 +778,16 @@ When a dynamic-mode Entity has been evicted and a subsequent input arrives for t
 - **THEN** the runtime SHALL call `Procedure::init_state(Some(key), None)` and the Procedure's `run` SHALL observe the freshly-initialized state
 
 ### Requirement: Soft cap on dynamic entities per Procedure
-
-Each dynamic-mode Procedure SHALL declare a maximum entity count via `fn max_entities() -> usize` (default `100_000`). When the per-Procedure entity count reaches this cap, the runtime SHALL drop new-key inputs without allocating an Entity and SHALL increment `inputs_dropped_capped_total`. Inputs whose `entity_key()` resolves to a key with an existing Entity SHALL NOT be affected by the cap; they SHALL be processed normally.
+Each dynamic-mode Procedure SHALL declare a maximum entity count via `fn max_entities() -> usize` (default `100_000`). When the per-Procedure entity count reaches this cap, the runtime SHALL drop new-key inputs without allocating an Entity and SHALL increment `inputs_dropped_capped_total`. Inputs whose edge key function resolves to a key with an existing Entity SHALL NOT be affected by the cap; they SHALL be processed normally.
 
 The cap is soft: enforcement is best-effort against concurrent inserts. The runtime SHALL NOT propagate an over-cap rejection back to the agent; the input is silently dropped and the counter is incremented.
 
 #### Scenario: Cap reached drops new-key inputs
-- **WHEN** a dynamic-mode Procedure with `max_entities = 5` already owns 5 Entities and an input arrives whose `entity_key()` returns a 6th unseen key
+- **WHEN** a dynamic-mode Procedure with `max_entities = 5` already owns 5 Entities and an input arrives whose edge key function returns a 6th unseen key
 - **THEN** the runtime SHALL drop the input, SHALL NOT allocate an Entity, and SHALL increment `inputs_dropped_capped_total`
 
 #### Scenario: Cap does not affect inputs for existing keys
-- **WHEN** a dynamic-mode Procedure is at its cap and an input arrives whose `entity_key()` returns a key that already has an Entity
+- **WHEN** a dynamic-mode Procedure is at its cap and an input arrives whose edge key function returns a key that already has an Entity
 - **THEN** the runtime SHALL push to that Entity's mailbox normally; `inputs_dropped_capped_total` SHALL NOT increment
 
 #### Scenario: Cap recovers as TTLs elapse
@@ -836,12 +795,10 @@ The cap is soft: enforcement is best-effort against concurrent inserts. The runt
 - **THEN** subsequent new-key inputs SHALL allocate Entities normally up to the cap
 
 ### Requirement: Per-Procedure dynamic-mode counters
-
 Each dynamic-mode Procedure SHALL expose the following monotonically-increasing counters on its registry, backed by `AtomicU64`:
 
 - `entities_created_total` — incremented once per `EntitySlot` allocation (including a cold recreate after eviction).
 - `entities_evicted_total` — incremented once per eviction.
-- `inputs_dropped_no_key_total` — incremented when `entity_key(&input)` returns `None`.
 - `inputs_dropped_capped_total` — incremented when an input is dropped due to the soft cap.
 
 Counters SHALL be observable via the same per-Entity / per-Procedure observability surface as the bounded-mailbox counters from `operative-procedure-entity-model`'s "Per-Entity mailbox is bounded with declared capacity" requirement. Export to a metrics sink is not in scope for this requirement; this requirement only mandates the data is captured.
@@ -852,7 +809,6 @@ Counters SHALL be observable via the same per-Entity / per-Procedure observabili
 - **THEN** `entities_created_total = 110` (100 initial + 10 cold recreates), `entities_evicted_total = 30`
 
 ### Requirement: The workload model names exactly three levels
-
 The system SHALL name the workload hierarchy **Operative → Procedure → Entity**, and every artifact — source, comment, document, specification, wire name, and on-disk name — SHALL use those names for those levels.
 
 An **Operative** is the deployable unit: it has an id and a namespace, is placed on a Runner, and is started, stopped, migrated, suspended, and crash-resumed. It carries a kind (`bounded`, `unbounded`) and MUST remain able to accept further kinds as a qualifier.
@@ -870,17 +826,16 @@ An **Entity** is one keyed instance of a Procedure. It owns its mailbox, its sta
 - **THEN** it MUST be expressible as a qualifier on `Operative` (for example "scheduled Operative") with no change to the level's name
 
 ### Requirement: A Procedure resolves to exactly one entity mode
-
-Each Procedure SHALL resolve, once at registration, to exactly one of three entity modes, and the resolution SHALL be derived from the author's declarations rather than configured separately.
+Each Procedure SHALL resolve, once at registration, to exactly one of three entity modes. Single and Static modes SHALL be derived from the Procedure's own declarations; Dynamic mode SHALL be derived from the wiring — a Procedure reached by a consumer edge carrying a key function is Dynamic.
 
 - **Single** — exactly one Entity, carrying no key.
 - **Static** — a fixed keyset declared by the Procedure; one input MAY be routed to several Entities.
 - **Dynamic** — an unbounded keyset; Entities are created on first sight of a key and MAY be idle-evicted.
 
-Declaring both a static keyset and a dynamic key hook SHALL be a registration error.
+Wiring a key function onto a Procedure that declares a static keyset SHALL be a build error.
 
 #### Scenario: Single mode carries no key
-- **WHEN** a Procedure declares neither a static keyset nor a dynamic key hook
+- **WHEN** a Procedure declares no static keyset and is reached only by edges carrying no key function
 - **THEN** it resolves to Single mode and holds exactly one Entity, and every diagnostic, path, and document referring to that Entity MUST remain correct without naming a key
 
 #### Scenario: Static mode may fan one input out
@@ -888,14 +843,17 @@ Declaring both a static keyset and a dynamic key hook SHALL be a registration er
 - **THEN** that input MUST be delivered to the Entity for each returned key
 
 #### Scenario: Dynamic mode creates and evicts
-- **WHEN** a Dynamic-mode Procedure receives an input whose key has no live Entity
+- **WHEN** a Procedure reached by a keyed edge receives an input whose key has no live Entity
 - **THEN** an Entity for that key MUST be created before the input is enqueued, and MUST be eligible for idle eviction if the Procedure declares an idle TTL
 
-### Requirement: Declarations are named for the level they describe
+#### Scenario: Keying a static-mode Procedure is refused
+- **WHEN** an edge carrying a key function wires a Procedure declaring a non-empty static keyset
+- **THEN** the build SHALL fail naming the Procedure, rather than one declaration silently winning
 
+### Requirement: Declarations are named for the level they describe
 A declaration SHALL be named for the level whose values it produces or consumes, not for the level that hosts it.
 
-Entity selection and lifetime declarations SHALL therefore be named for the Entity: `entity_keys()` (the static keyset), `entity_key()` (the dynamic key hook), `entities_for()` (static routing, plural because one input may fan out), and `entity_idle_ttl()`. A control-plane message addressed to an Operative SHALL be named for the Operative.
+Entity selection and lifetime declarations SHALL therefore be named for the Entity: `entity_keys()` (the static keyset), `entities_for()` (static routing, plural because one input may fan out), `key_by` (the dynamic key, declared on the wiring), and `entity_idle_ttl()`. A control-plane message addressed to an Operative SHALL be named for the Operative.
 
 #### Scenario: Entity-key declarations name the Entity
 - **WHEN** an author declares a Procedure's static keyset or dynamic key hook
@@ -910,7 +868,6 @@ Entity selection and lifetime declarations SHALL therefore be named for the Enti
 - **THEN** it MUST be named for the Operative
 
 ### Requirement: Durable and wire artifacts are named for the level that owns them
-
 Wire message names, data-stream payload ids, and on-disk filenames SHALL use the same vocabulary as the source and the documentation, with no separate protocol-level or storage-level spelling.
 
 Per-Entity durable state SHALL live at `state/{operative_class}/{procedure_id}/{entity_key}.*`. Per-Procedure journal and inbox artifacts SHALL be named for the Procedure.
@@ -928,7 +885,6 @@ Per-Entity durable state SHALL live at `state/{operative_class}/{procedure_id}/{
 - **THEN** that state is not recovered, and the documented upgrade path is a full reset of runtime data
 
 ### Requirement: Retired vocabulary does not survive anywhere
-
 The terms `Operation`, `Segment`, and the `Op*` abbreviation family SHALL NOT appear as domain vocabulary in any tracked file — source, comment, test, fixture identifier, document, specification, protobuf definition, payload id, or on-disk name.
 
 No alias, deprecated spelling, or compatibility shim for the retired terms SHALL be introduced. Subsequent work SHALL NOT reintroduce them, including when referring to behaviour that predates this change.
@@ -948,7 +904,6 @@ The word "Operator" remains reserved for ProcessHub's ring-node jargon and is un
 - **THEN** it MUST describe that behaviour in the current vocabulary and MUST NOT reference the retired names
 
 ### Requirement: The architecture documentation states the model as a diagram
-
 `docs/architecture/README.md` SHALL carry a diagram of the containment model — Controller and Runner above, then Operative, then Procedure, then Entity, with Channels as the edges between Procedures — and SHALL show the three entity modes and what distinguishes them.
 
 #### Scenario: The diagram shows containment

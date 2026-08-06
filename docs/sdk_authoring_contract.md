@@ -144,13 +144,15 @@ explicit author choice — never inferred from the `run` body. Each opt-in maps
 | ---------------------------------------------- | ----------------------- |
 | none                                           | single-entity (empty `entity_keys()`) |
 | `keys = [..]` + `entities_for` (static)         | `entity_keys()` = keys, `ENTITIES_FOR_OVERRIDDEN = true`, `entities_for` delegates |
-| `entity_key` (+ `idle_ttl`, `max_entities`) | `ENTITY_KEY_OVERRIDDEN = true`, `entity_key` delegates, `entity_keys()` empty, TTL / cap overrides |
+| `idle_ttl` / `max_entities` (dynamic knobs) | `entity_idle_ttl()` / `max_entities()` overrides; the KEY is not here |
 
-Static and dynamic opt-ins are **mutually exclusive** — declaring both is a
-compile-time error (composite static×dynamic keys are out of scope). The
-dynamic opt-ins target the trait surface introduced by
-dynamic entity mode (`ENTITY_KEY_OVERRIDDEN`, `entity_idle_ttl`,
-`max_entities`).
+Static keying is declared **on the procedure**; dynamic keying is declared
+**on the wiring** — `.key_by(f)` / `.keyBy(f)` on the stream that feeds it
+(`docs/stream_transforms.md`). The sugar therefore offers no `entity_key`
+hook at all: declaring one is a compile error (Rust) / annotation-processing
+error (Java) naming `key_by` as its replacement. The two modes stay mutually
+exclusive — a keyed edge into a procedure declaring `entity_keys()` fails the
+build with `KeyByOnUnkeyableTarget`.
 
 **Per-entity state init (`init`).** By default a stateful procedure's
 `init_state` returns `State::default()`. When an entity's starting state is a
@@ -336,5 +338,5 @@ end
 `use Flezha.Procedure` injects the six type declarations and the `run` wrapper;
 `run/2` returning `{:emit, value}` maps to `Output`, `:noemit` to a unit
 output. `use Flezha.State` generates the `Change` variants and `apply_change`.
-Entity opt-ins (`keys:` + `entities_for:`, or `entity_key:`) and the
-single-procedure `sink:` auto-wire follow §4 and §5 unchanged.
+Entity opt-ins (`keys:` + `entities_for:` on the procedure; `key_by` on the
+wiring) and the single-procedure `sink:` auto-wire follow §4 and §5 unchanged.
