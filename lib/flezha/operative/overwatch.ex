@@ -32,6 +32,10 @@ defmodule Flezha.Operative.Overwatch do
   # within one burst without spinning the supervisor.
   @default_retry_backoff_ms [200, 500, 1_000, 2_000, 5_000, 10_000]
 
+  # Reply-frame metadata key carrying the `change_seq` a single selected Entity
+  # was serialized at (stamped by both SDKs' `EntityState` handler).
+  @change_seq_meta_key "flz.change_seq"
+
   require Logger
 
   use GenServer
@@ -1177,11 +1181,20 @@ defmodule Flezha.Operative.Overwatch do
     }
   end
 
-  defp parse_window(nil), do: nil
+  # A decimal declaration string as an integer, or nil when absent/malformed.
+  # Declarations and the reply-frame `flz.change_seq` both arrive this way.
+  defp parse_int(raw) when is_binary(raw) do
+    case Integer.parse(raw) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp parse_int(_), do: nil
 
   defp parse_window(raw) do
-    case Integer.parse(raw) do
-      {ms, ""} when ms > 0 -> ms
+    case parse_int(raw) do
+      ms when is_integer(ms) and ms > 0 -> ms
       _ -> nil
     end
   end
@@ -1459,31 +1472,15 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, state, state}
   end
 
+  # Live read of Entity state, narrowed by `selector` (`%{}` = every Procedure,
+  # the migration/handover shape). Always answered as `{:ok, json, change_seq}`
+  # — the seq rides the reply frame's metadata, so the JSON body stays the shape
+  # the whole-Operative caller already decodes; `OperativeManager` drops the seq
+  # for callers that predate it.
   @impl true
-  def handle_call(:get_entity_state, from, %__MODULE__{} = state) do
-    if PersistenceResolver.persistent_state?(state.builder.kind, operative_class(state)) do
-      # Query the runner off the GenServer loop so a slow reply can't back up
-      # the mailbox; `from` is answered when the round-trip completes.
-      operative_id = state.id
-      runner_id = state.runner_id
-
-      spawn(fn ->
-        result =
-          with_proc_span(:entity_state, operative_id, fn ->
-            send_control(
-              runner_id,
-              {:entity_state, %RunnerCommands.EntityState{operative_id: operative_id}}
-            )
-          end)
-
-        GenServer.reply(from, result)
-      end)
-
-      {:noreply, state}
-    else
-      # The kind has no per-entity state; fail cleanly without the round-trip.
-      {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, state}
-    end
+  def handle_call({:get_entity_state, selector}, from, %__MODULE__{} = state)
+      when is_map(selector) do
+    read_entity_state(state, from, selector)
   end
 
   # Async `:runner_migrate` for the PARKED un-park path only — that's
@@ -2069,15 +2066,65 @@ defmodule Flezha.Operative.Overwatch do
   # operative — `ControlUnit.send_control_await/2` catches the exit; here we add
   # the operative-facing "not available yet" message for a control unit that has
   # not been started, which the callers log/park on.
-  defp send_control(runner_id, command) do
+  defp send_control(runner_id, command, opts \\ []) do
     case GenServer.whereis(Identificator.control_unit(runner_id)) do
       nil ->
         {:error, "control unit not available for runner #{runner_id} with payload"}
 
       _ ->
-        ControlUnit.send_control_await(runner_id, command)
+        ControlUnit.send_control_await(runner_id, command, opts)
     end
   end
+
+  # One `EntityState` round-trip, off the GenServer loop so a slow reply cannot
+  # back up the mailbox; `from` is answered when it completes.
+  #
+  # An Entity that is not held in memory is refused, never served from the
+  # durable store: the controller cannot decode the SDK's WAL bytes, and a
+  # fallback would mean binding a runner and restoring an Entity as a side
+  # effect of a read. `flz state at` is the durable-read path.
+  defp read_entity_state(%__MODULE__{} = state, from, selector) do
+    cond do
+      not PersistenceResolver.persistent_state?(state.builder.kind, operative_class(state)) ->
+        # The kind has no per-entity state; fail cleanly without the round-trip.
+        {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, state}
+
+      state.suspended ->
+        {:reply, {:error, {:not_resident, :suspended}}, state}
+
+      is_nil(state.runner_id) ->
+        {:reply, {:error, {:not_resident, :unbound}}, state}
+
+      true ->
+        operative_id = state.id
+        runner_id = state.runner_id
+
+        command = %RunnerCommands.EntityState{
+          operative_id: operative_id,
+          procedure: Map.get(selector, :procedure) || "",
+          entity_key: Map.get(selector, :entity_key) || ""
+        }
+
+        spawn(fn ->
+          result =
+            with_proc_span(:entity_state, operative_id, fn ->
+              send_control(runner_id, {:entity_state, command}, metadata: true)
+            end)
+
+          GenServer.reply(from, with_change_seq(result))
+        end)
+
+        {:noreply, state}
+    end
+  end
+
+  # `{:ok, json, metadata}` (a metadata-carrying reply) becomes
+  # `{:ok, json, change_seq}`; every other shape passes through.
+  defp with_change_seq({:ok, json, metadata}) when is_map(metadata) do
+    {:ok, json, parse_int(Map.get(metadata, @change_seq_meta_key))}
+  end
+
+  defp with_change_seq(result), do: result
 
   defp start_operative_sdk(runner_id, operative) do
     with_proc_span(:start_operative, operative.id, fn ->
@@ -2284,7 +2331,9 @@ defmodule Flezha.Operative.Overwatch do
   # error.
   defp inspect_compact_response(runner_id, {rc, sh, pk} = entity_id, command) do
     with {:ok, raw_data} <-
-           ControlUnit.send_control_await(runner_id, command, @compact_response_timeout_ms),
+           ControlUnit.send_control_await(runner_id, command,
+             timeout: @compact_response_timeout_ms
+           ),
          {:ok, %RunnerCommands.CompactEntityResponse{snapshot_seq: 0, snapshot_bytes_size: 0}} <-
            RunnerCommands.CompactEntityResponse.decode(raw_data),
          true <- Restore.has_persisted_state?(entity_id) do

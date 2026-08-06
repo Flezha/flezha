@@ -627,7 +627,7 @@ defmodule Flezha.Runner.StreamChannel do
         ControlUnit.send_control_await(
           runner_id,
           {:credit_window_init, init},
-          @credit_handshake_timeout_ms
+          timeout: @credit_handshake_timeout_ms
         )
 
       case outcome do

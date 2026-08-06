@@ -429,10 +429,21 @@ On agent boot, after `Flezha.Boot.StatePathMigrator.migrate/0` runs, `Flezha.Sta
 
 The agent SHALL expose a `flz state` CLI subcommand tree, using operative vocabulary in every path argument:
 
+- `flz state get <operative/procedure/entity>` — current in-memory state of one live Entity, with the `change_seq` it was read at. Refuses a non-resident Entity naming the reason.
 - `flz state at <operative/procedure/entity> <seq | timestamp>` — point-in-time state query per the time-travel requirement. Returns JSON-encoded state.
 - `flz state list <operative>` — for each Entity of the Operative, prints `wal_seq`, `snapshot_seq`, `wal_bytes`, `flush_latency_ms_p99`, `fsync_durability_lag_ms`. Reads `Metrics.to_map/1`.
 - `flz state rotate <operative/procedure/entity>` — forces compaction by enqueuing the per-Entity compaction continuation on the Overwatch. Returns immediately ("compaction queued"); the snapshot completes asynchronously.
 - `flz state retention <operative> <hours>` — sets `time_travel_retention_hours.<OperativeClass>` in runtime config (`persistent: true`); the next retention-sweeper tick reads the new value.
+
+#### Scenario: flz state get returns the live value
+
+- **WHEN** the runner runs `flz state get MarketOperative/OhlcProcedure/M1` against a live Entity
+- **THEN** the CLI SHALL print that Entity's state as JSON with its `change_seq` and exit 0
+
+#### Scenario: flz state get refuses a non-resident Entity
+
+- **WHEN** the runner runs `flz state get` against an idle-evicted Entity
+- **THEN** the CLI SHALL exit non-zero naming eviction and pointing at `flz state at`
 
 #### Scenario: flz state list enumerates Entities
 
@@ -472,24 +483,44 @@ The protobuf message carrying inbound state application SHALL be named `EntityAp
 
 ### Requirement: SDK serializes Operative state on `EntityState` request via the Decision-10 JSON shape
 
-When the SDK receives an `EntityState{operative_id}` command, it SHALL respond with a JSON object whose top-level keys are the Operative's Procedure names and whose values are:
+When the SDK receives an `EntityState{operative_id, procedure, entity_key}` command, it SHALL respond with a JSON object whose top-level keys are the Operative's Procedure names and whose values are:
 
 - For single-mode Procedures (one Entity per Procedure): the serialized `Self::State` of that Entity.
-- For static-mode Procedures (`entity_keys() = [...]`): an inner JSON object whose keys are the Procedure's `entity_key` values and whose values are each Entity's serialized `Self::State`.
+- For static-mode Procedures (`entity_keys() = [...]`): an inner JSON object whose keys are the Procedure's Entity keys and whose values are each Entity's serialized `Self::State`.
+- For dynamic-mode Procedures: an inner JSON object of the same shape as the static case, whose keys are the live Entity keys held in the dynamic Entity registry at serialization time.
 
-The wire payload SHALL be `entity_state` payload-id with the JSON object as the message bytes. Empty Operatives (no live Entities) SHALL produce `{}`.
+`procedure` and `entity_key` are optional selectors. When both are absent, the reply SHALL cover every Procedure of the Operative — the pre-existing behaviour, byte-identical. When `procedure` is present, serialization SHALL be restricted to that Procedure's Entities. When `entity_key` is also present, serialization SHALL be restricted to that one Entity. `entity_key` present without `procedure` SHALL be refused, because an Entity key is unique only within its Procedure.
+
+The wire payload SHALL be `entity_state` payload-id with the JSON object as the message bytes. Empty Operatives (no live Entities) SHALL produce `{}`. The reply frame's metadata SHALL carry `flz.change_seq` for the serialized Entity when a selector names exactly one.
+
+Serialization SHALL take the Entity's state lock, SHALL NOT drain pending changes, and SHALL NOT trigger compaction or WAL truncation; the serialized value therefore includes applied-but-unflushed changes.
 
 State serialization SHALL go through a per-Procedure fn pointer captured at `register_unbounded::<R>()` time. The fn pointer downcasts the type-erased state held in `EntitySlot::state` to its statically-known `EntityState<S>` and emits `serde_json::Value` via the `S::State: Serialize` bound on the trait. No additional user-facing trait machinery is required beyond the existing `Serialize + DeserializeOwned` bounds on `Procedure::State`.
 
 #### Scenario: Single-mode Procedure returns its state at the procedure-name key
 
-- **WHEN** the SDK receives `EntityState{operative_id}` for an Operative whose only Procedure is `"counter"` (single-mode) with state `{"value": 42}`
+- **WHEN** the SDK receives `EntityState{operative_id}` with no selector for an Operative whose only Procedure is `"counter"` (single-mode) with state `{"value": 42}`
 - **THEN** the wire reply payload SHALL be `{"counter": {"value": 42}}`
 
 #### Scenario: Static-mode Procedure returns a key-keyed object
 
-- **WHEN** the SDK receives `EntityState{operative_id}` for an Operative whose only Procedure is `"ohlc"` (static-mode, keys `["1m", "1h"]`) with `1m` state `{"high": 10}` and `1h` state `{"high": 20}`
+- **WHEN** the SDK receives `EntityState{operative_id}` with no selector for an Operative whose only Procedure is `"ohlc"` (static-mode, keys `["1m", "1h"]`) with `1m` state `{"high": 10}` and `1h` state `{"high": 20}`
 - **THEN** the wire reply payload SHALL be `{"ohlc": {"1m": {"high": 10}, "1h": {"high": 20}}}`
+
+#### Scenario: Dynamic-mode Procedure returns its live Entities
+
+- **WHEN** the SDK receives `EntityState{operative_id}` for an Operative whose `"candle"` Procedure holds lazily created Entities `BTCUSD@1m` and `ETHUSD@1m`
+- **THEN** the reply SHALL be `{"candle": {"BTCUSD@1m": {...}, "ETHUSD@1m": {...}}}`
+
+#### Scenario: A selector narrows the serialization
+
+- **WHEN** the SDK receives `EntityState{operative_id, procedure: "candle", entity_key: "BTCUSD@1m"}` for an Operative holding two Procedures and two thousand Entities
+- **THEN** exactly one Entity SHALL be serialized, the reply SHALL be `{"candle": {"BTCUSD@1m": {...}}}`, and the frame metadata SHALL carry that Entity's `flz.change_seq`
+
+#### Scenario: An entity_key without a procedure is refused
+
+- **WHEN** the SDK receives `EntityState{operative_id, entity_key: "BTCUSD@1m"}` with no `procedure`
+- **THEN** the SDK SHALL refuse the command rather than searching Procedures for a matching key
 
 ### Requirement: SDK applies `AddOperative.init_values` JSON to per-Entity state
 

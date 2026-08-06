@@ -93,6 +93,77 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
            "expected one Entity per key seen, got #{inspect(entity_keys(@namespace, operative_id))}"
   end
 
+  @tag :dynamic_entity_e2e
+  test "a live dynamic Entity is readable by name, narrowed to one key (rust)" do
+    run_live_read_case(:rust, "dynamic_entity")
+  end
+
+  @tag :dynamic_entity_e2e
+  @tag :java_sdk
+  test "a live dynamic Entity is readable by name, narrowed to one key (java)" do
+    run_live_read_case(:java, "java_dynamic_entity")
+  end
+
+  # `flz state get`'s round-trip against a real runner: a lazily-created Entity
+  # is readable by name, the reply carries the seq it was serialized at, and the
+  # selector really narrows — the other live key is not serialized. No TTL is
+  # armed here, so nothing races the read.
+  defp run_live_read_case(runtime, factory) do
+    # Own namespace per runtime: placement is HRW over every runner active in
+    # the namespace, so a peer case's runner (which does not declare this
+    # factory) must not be a candidate.
+    namespace = "dyn_live_read_#{runtime}"
+
+    {port, ce_id} =
+      NodeTestHelper.start_runner_port(namespace, runtime: runtime, connect_timeout: 120_000)
+
+    on_exit(fn ->
+      NodeTestHelper.ensure_port_dead(port)
+
+      try do
+        OperativeManager.stop_all_operatives(namespace)
+        FleetManager.stop_namespace(namespace)
+      catch
+        _, _ -> :ok
+      end
+    end)
+
+    operative_id = "dyn_read_e2e_#{System.unique_integer([:positive])}"
+    key = "k#{System.unique_integer([:positive])}"
+    other = "#{key}b"
+
+    builder = %Builder{id: operative_id, factory_id: factory, init_values: %{}, opts: []}
+    assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+    assert info.runner_id == ce_id
+
+    OperativeManager.send_io(operative_id, namespace, "#{key}:hello", %{"input_type" => "2"})
+    OperativeManager.send_io(operative_id, namespace, "#{other}:bye", %{"input_type" => "2"})
+
+    assert wait_until(fn -> entity_keys(namespace, operative_id) == [key, other] end, 15_000),
+           "both keys should be live before the read is narrowed"
+
+    assert {:ok, json, seq} =
+             OperativeManager.get_entity_state(namespace, operative_id, %{
+               procedure: @procedure,
+               entity_key: key
+             })
+
+    assert Flezha.Service.Payloader.json_to_map(json) == %{
+             @procedure => %{key => %{"seen" => ["#{key}:hello"]}}
+           },
+           "the read must return exactly the Entity asked for, holding what run() just applied"
+
+    assert is_integer(seq), "a single-Entity read reports the change_seq it was serialized at"
+
+    assert {:error, refusal} =
+             OperativeManager.get_entity_state(namespace, operative_id, %{
+               procedure: @procedure,
+               entity_key: "never-seen"
+             })
+
+    assert refusal =~ "entity_not_found"
+  end
+
   # The Java arm asserts against LIVE Entity state rather than the WAL: the
   # Java SDK does not register a lazily-created Entity with its flusher, so a
   # dynamic Entity's state never reaches disk there. That gap predates edge

@@ -29,6 +29,7 @@ defmodule Flezha.AuthZ.Policy do
     :"controller.status",
     :"boot.status",
     :"boot.await",
+    :"state.get",
     :"state.list",
     :"state.at"
   ]

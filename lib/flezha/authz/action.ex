@@ -53,6 +53,7 @@ defmodule Flezha.AuthZ.Action do
     :"boot.status",
     :"boot.await",
     :"boot.import_legacy_snapshot",
+    :"state.get",
     :"state.list",
     :"state.at",
     :"state.rotate",

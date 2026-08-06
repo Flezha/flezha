@@ -82,7 +82,7 @@ defmodule Flezha.State.ProcJournal do
   require Logger
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{RecordLog, Registry, Wire}
+  alias Flezha.State.{PersistenceResolver, RecordLog, Registry, Wire}
 
   @type_proc_committed 1
   @type_outbox_flushed 2
@@ -526,9 +526,7 @@ defmodule Flezha.State.ProcJournal do
   handoff + outbox payload.
   """
   @spec max_entry_bytes() :: pos_integer()
-  def max_entry_bytes() do
-    Application.get_env(:flezha, :wal_high_watermark_bytes, 16 * 1024 * 1024)
-  end
+  def max_entry_bytes(), do: PersistenceResolver.wal_high_watermark_bytes()
 
   # ---------- Append ----------
 

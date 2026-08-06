@@ -32,6 +32,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, ForwardWorker}
   alias Flezha.Plugin.ProviderBehaviour
   alias Flezha.Service.HubManager
+  alias Flezha.Service.OperativeManager
 
   use ProviderBehaviour
 
@@ -154,10 +155,10 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   end
 
   defp foreign_namespace(namespace, target) do
-    HubManager.get_running_namespaces()
-    |> Enum.map(&to_string/1)
-    |> Enum.reject(&(&1 == to_string(namespace)))
-    |> Enum.find(&resolves_in?(&1, target))
+    case OperativeManager.namespace_of(target, except: namespace) do
+      {:ok, foreign} -> foreign
+      :error -> nil
+    end
   end
 
   defp default_plugin_id(source, target), do: "#{source}->#{target}"

@@ -7,6 +7,8 @@ defmodule Flezha.Runner.ControlUnit do
 
   require Logger
 
+  @default_reply_timeout_ms 5_000
+
   @spec start_link({binary(), binary()}) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link({namespace, runner_id}) do
     GenServer.start_link(
@@ -85,10 +87,22 @@ defmodule Flezha.Runner.ControlUnit do
   timeout, transport failure, or dead ControlUnit. `send_operative_message/3`,
   the credit-window handshake, and the compaction response inspection all use
   it.
+
+  Options: `:timeout` (default #{@default_reply_timeout_ms} ms) and
+  `:metadata`. With `metadata: true` the reply is
+  `{:ok, raw_data, frame_metadata}` — the reply frame's own metadata map, which
+  is where an SDK answer carries anything that must not change the payload's
+  shape (`EntityState` stamps `flz.change_seq` there for a single selected
+  Entity).
   """
-  @spec send_control_await(binary(), tuple(), timeout()) :: {:ok, binary()} | {:error, term()}
-  def send_control_await(runner_id, command, timeout \\ 5_000) when is_binary(runner_id) do
-    GenServer.call(Identificator.control_unit(runner_id), {:send_control, command}, timeout)
+  @spec send_control_await(binary(), tuple(), keyword()) ::
+          {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
+  def send_control_await(runner_id, command, opts \\ []) when is_binary(runner_id) do
+    GenServer.call(
+      Identificator.control_unit(runner_id),
+      {:send_control, command, Keyword.get(opts, :metadata, false)},
+      Keyword.get(opts, :timeout, @default_reply_timeout_ms)
+    )
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
     :exit, reason -> {:error, {:control_unit_exit, reason}}
@@ -166,29 +180,12 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_call({:get_entity_state, operative_id}, from, state) do
-    case ControlChannel.send_control(
-           state.runner_id,
-           {
-             :get_entity_state,
-             %RunnerCommands.EntityState{operative_id: operative_id}
-           }
-         ) do
-      {:ok, ref} ->
-        {:noreply, store_ref(state, ref, from)}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  @impl true
-  def handle_call({:send_control, command}, from, state) do
+  def handle_call({:send_control, command, want_metadata}, from, state) do
     res = ControlChannel.send_control(state.runner_id, command)
 
     case res do
       {:ok, ref} ->
-        {:noreply, store_ref(state, ref, from)}
+        {:noreply, store_ref(state, ref, from, want_metadata)}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -351,11 +348,11 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:handle_payload, payload}, state) do
-    {:noreply, handle_payload(state, payload)}
+  def handle_cast({:handle_payload, payload, metadata}, state) do
+    {:noreply, handle_payload(state, payload, metadata)}
   end
 
-  defp handle_payload(state, payload) do
+  defp handle_payload(state, payload, metadata) do
     {:ok, response} = RunnerCommands.CommandResponse.decode(payload)
     ref = Map.get(response, :reference_id, nil)
 
@@ -374,21 +371,23 @@ defmodule Flezha.Runner.ControlUnit do
           {:error, reason}
       end
 
-    new_refs = handle_refs(state[:response_refs], ref, reply)
+    new_refs = handle_refs(state[:response_refs], ref, reply, metadata)
 
     Map.put(state, :response_refs, new_refs)
   end
 
   # Register the caller against the control-channel reference so the matching
-  # `CommandResponse` (delivered later via `handle_payload/2`) is routed back.
+  # `CommandResponse` (delivered later via `handle_payload/3`) is routed back.
   # The monotonic timestamp lets the heartbeat report the age of the oldest
   # outstanding reply — the backlog that grows silently on a dead transport.
-  defp store_ref(state, ref, from) do
-    entry = {:reply, from, System.monotonic_time(:millisecond)}
+  # `want_metadata` decides whether the reply also carries the reply frame's
+  # metadata map.
+  defp store_ref(state, ref, from, want_metadata \\ false) do
+    entry = {:reply, from, System.monotonic_time(:millisecond), want_metadata}
     Map.put(state, :response_refs, Map.put(state.response_refs, ref, entry))
   end
 
-  defp handle_refs(refs, ref, reply) do
+  defp handle_refs(refs, ref, reply, metadata) do
     case Map.get(refs, ref, nil) do
       nil ->
         refs
@@ -403,11 +402,14 @@ defmodule Flezha.Runner.ControlUnit do
 
         Map.delete(refs, ref)
 
-      {:reply, from, _inserted_at} ->
-        GenServer.reply(from, reply)
+      {:reply, from, _inserted_at, want_metadata} ->
+        GenServer.reply(from, with_metadata(reply, metadata, want_metadata))
         Map.delete(refs, ref)
     end
   end
+
+  defp with_metadata({:ok, raw_data}, metadata, true), do: {:ok, raw_data, metadata || %{}}
+  defp with_metadata(reply, _metadata, _want), do: reply
 
   @impl true
   def handle_info({:ping_timeout, ref}, state) do
@@ -453,13 +455,13 @@ defmodule Flezha.Runner.ControlUnit do
   defp stuck_reply_refs(_refs, _now, timeout_ms) when timeout_ms <= 0, do: []
 
   defp stuck_reply_refs(refs, now, timeout_ms) do
-    for {ref, {:reply, _from, at}} <- refs, now - at >= timeout_ms, do: ref
+    for {ref, {:reply, _from, at, _want_metadata}} <- refs, now - at >= timeout_ms, do: ref
   end
 
   defp fail_stuck_refs(refs, stuck) do
     Enum.reduce(stuck, refs, fn ref, acc ->
       case Map.get(acc, ref) do
-        {:reply, from, _at} ->
+        {:reply, from, _at, _want_metadata} ->
           GenServer.reply(from, {:error, :timeout})
           Map.delete(acc, ref)
 

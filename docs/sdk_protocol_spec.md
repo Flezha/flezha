@@ -240,6 +240,13 @@ The SDK's per-Entity mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue` 
   ```json
   {"<procedure_name>": {"<entity_key>": <state>, ...}}
   ```
+- Dynamic-mode procedures (keyed on the wiring with `.key_by` / `.keyBy`): the same
+  key-keyed object, whose keys are the Entities the SDK holds live at
+  serialization time.
+
+Both SDKs sort object keys, so an equivalent state serializes byte-identically on
+either runtime (pinned by `the_json_shape_matches_the_java_sdk_byte_for_byte` and
+its Java twin).
 
 This is a wire-format break vs the pre-`operative-mvp-rust` flat `<state>` shape. State portability across the cutover is out of scope (umbrella Non-Goal 2 / `operative-state-migration`); the hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs.
 
@@ -338,6 +345,8 @@ message MigrationDeserialization {
 
 message EntityState {
     string operative_id = 1;
+    string procedure = 2;
+    string entity_key = 3;
 }
 
 message RunnerDisconnect {}
@@ -664,11 +673,35 @@ stream — identical across both SDKs.
 | Field | Value |
 |-------|-------|
 | Direction | Controller -> SDK |
-| Proto message | `EntityState { operative_id: string }` |
-| Behavior | SDK serializes the operative's current state using `bin_serialize_state()` and returns the JSON bytes |
-| Response status | `"success"` on success, `"error"` if operative not found |
-| Response raw_data | JSON-serialized operative state bytes |
-| Possible errors | `"Operative with id {id} not found"` |
+| Proto message | `EntityState { operative_id: string, procedure: string, entity_key: string }` |
+| Behavior | SDK serializes live in-memory Entity state as JSON, narrowed by the selector |
+| Response status | `"success"` on success, `"error"` if the operative is not found or the selector is refused |
+| Response raw_data | JSON-serialized state bytes (the shape above) |
+| Response metadata | `flz.change_seq` — the seq the state was serialized at, present only when the selector names exactly one Entity |
+| Possible errors | `"UnboundedOperative instance with id {id} not found"`, plus the refusal set below |
+
+**Selector.** `procedure` and `entity_key` are optional; an empty string is
+absent, so a selector-less command encodes byte-identically to the pre-selector
+one and the migration/handover caller is unaffected. Absent selector = every
+Procedure; `procedure` = that Procedure's Entities; `procedure` + `entity_key` =
+that one Entity.
+
+**Freshness.** Serialization takes each Entity's state lock and does NOT drain
+pending changes, so the value returned includes changes not yet flushed to the
+WAL and is at or ahead of the durable state — `flz.change_seq` is how a reader
+tells which version it got. A read triggers no compaction, snapshot, or WAL
+truncation. (Compaction drains first because its seq becomes a truncation point;
+a read has no such obligation.)
+
+**Refusals.** Each error string leads with a canonical token so the controller
+maps it without parsing prose:
+
+| Token | Meaning |
+|-------|---------|
+| `entity_key_without_procedure` | an Entity key is unique only within its Procedure |
+| `procedure_not_found` | the Operative declares no Procedure by that name |
+| `entity_not_found` | that Procedure holds no Entity by that key |
+| `entity_evicted` | the Entity was idle-evicted; eviction is destructive, so there is no durable value either |
 
 ### MigrationSerialization
 

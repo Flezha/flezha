@@ -31,7 +31,11 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     def init(state), do: {:ok, state}
 
     @impl true
-    def handle_call({:send_control, {:credit_window_init, init}}, _from, {mode, notify} = state) do
+    def handle_call(
+          {:send_control, {:credit_window_init, init}, _want_metadata},
+          _from,
+          {mode, notify} = state
+        ) do
       send(notify, {:init_offered, init})
 
       case mode do

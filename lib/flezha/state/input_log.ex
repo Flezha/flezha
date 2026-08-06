@@ -28,7 +28,15 @@ defmodule Flezha.State.InputLog do
   use GenServer
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{CreditLedger, FsyncBatcher, Registry, Supervisor, WalWriter}
+
+  alias Flezha.State.{
+    CreditLedger,
+    FsyncBatcher,
+    PersistenceResolver,
+    Registry,
+    Supervisor,
+    WalWriter
+  }
 
   # Input-log records reuse the WalWriter framing, so they carry its 16-byte
   # header slot. The wire never fills it, which leaves it free for the append
@@ -411,7 +419,7 @@ defmodule Flezha.State.InputLog do
     Application.get_env(
       :flezha,
       :source_credit_window_bytes,
-      Application.get_env(:flezha, :wal_high_watermark_bytes, 16 * 1024 * 1024)
+      PersistenceResolver.wal_high_watermark_bytes()
     )
   end
 
@@ -528,8 +536,7 @@ defmodule Flezha.State.InputLog do
     max(configured, declared)
   end
 
-  defp frozen_size_threshold(),
-    do: Application.get_env(:flezha, :wal_high_watermark_bytes, 16 * 1024 * 1024)
+  defp frozen_size_threshold(), do: PersistenceResolver.wal_high_watermark_bytes()
 
   defp maybe_warn_frozen(operative_class, path, watermark) do
     size =

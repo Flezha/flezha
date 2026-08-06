@@ -19,7 +19,17 @@ defmodule Flezha.State.WalWriter do
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{FsyncBatcher, InputLog, Metrics, Outbox, Recovery, Registry, Wire}
+
+  alias Flezha.State.{
+    FsyncBatcher,
+    InputLog,
+    Metrics,
+    Outbox,
+    PersistenceResolver,
+    Recovery,
+    Registry,
+    Wire
+  }
 
   @header_size 16
   @reservoir_capacity 1024
@@ -1400,9 +1410,7 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
-  defp high_watermark() do
-    Application.get_env(:flezha, :wal_high_watermark_bytes, 16 * 1024 * 1024)
-  end
+  defp high_watermark(), do: PersistenceResolver.wal_high_watermark_bytes()
 
   defp low_watermark() do
     Application.get_env(

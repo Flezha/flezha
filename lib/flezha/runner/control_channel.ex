@@ -208,7 +208,7 @@ defmodule Flezha.Runner.ControlChannel do
   # SDK-initiated command, dispatch it here and skip the `ControlUnit`
   # handover.
   @impl true
-  def handle_info({:flz_data, _stream_id, _payload_id, message, _metadata}, state) do
+  def handle_info({:flz_data, _stream_id, _payload_id, message, metadata}, state) do
     state = bump_last_seen(state)
 
     case decode_sdk_initiated(message) do
@@ -241,7 +241,7 @@ defmodule Flezha.Runner.ControlChannel do
         {:noreply, state}
 
       :not_sdk_initiated ->
-        GenServer.cast(state.control_unit, {:handle_payload, message})
+        GenServer.cast(state.control_unit, {:handle_payload, message, metadata})
         {:noreply, state}
     end
   end

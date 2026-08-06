@@ -145,23 +145,23 @@ public final class CommandRouter {
         }
 
         List<String> errors = new ArrayList<>();
-        byte[] rawData;
+        CommandHandler.Reply reply;
         try {
-            rawData = handler.handle(ctx, request, errors);
+            reply = handler.reply(ctx, request, errors);
         } catch (Exception e) {
             LOG.error("Command handler threw for {}: {}", request.getCommandCase(), e.toString());
             errors.add(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-            rawData = new byte[0];
+            reply = new CommandHandler.Reply(new byte[0], Map.of());
         }
 
         CommandResponse response = CommandResponse.newBuilder()
                 .setReferenceId(request.getReferenceId())
                 .setStatus(errors.isEmpty() ? "success" : "error")
                 .addAllErrors(errors)
-                .setRawData(ByteString.copyFrom(rawData))
+                .setRawData(ByteString.copyFrom(reply.rawData()))
                 .build();
 
-        byte[] frameBytes = FrameEncoder.build(frame.payloadId(), response.toByteArray(), Map.of());
+        byte[] frameBytes = FrameEncoder.build(frame.payloadId(), response.toByteArray(), reply.metadata());
 
         int writeStatus = NativeTransport.streamWrite(ctx.nativeHandle(), controlStreamId, frameBytes);
         if (writeStatus != 0) {

@@ -585,13 +585,61 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
+  @doc """
+  The running namespace holding `operative_id`, or `:error` when no running
+  namespace does. `:except` skips one namespace, which is how a caller asks
+  "does this id resolve somewhere OTHER than here" (the cross-namespace
+  refusals) rather than "where does it resolve" (the CLI's read verbs).
+  """
+  @spec namespace_of(binary(), keyword()) :: {:ok, binary()} | :error
+  def namespace_of(operative_id, opts \\ []) when is_binary(operative_id) do
+    except = opts |> Keyword.get(:except) |> normalize_namespace()
+
+    HubManager.get_running_namespaces()
+    |> Enum.map(&to_string/1)
+    |> Enum.reject(&(&1 == except))
+    |> Enum.find(&exist?(&1, operative_id))
+    |> case do
+      nil -> :error
+      namespace -> {:ok, namespace}
+    end
+  end
+
+  defp normalize_namespace(nil), do: nil
+  defp normalize_namespace(namespace), do: to_string(namespace)
+
+  @doc """
+  Whole-Operative read: every Procedure's Entity state as one JSON blob. The
+  seq-less shape the migration/handover and introspection callers predate the
+  selector with.
+  """
   def get_entity_state(namespace, operative_id) do
+    case get_entity_state(namespace, operative_id, %{}) do
+      {:ok, json, _change_seq} -> {:ok, json}
+      err -> err
+    end
+  end
+
+  @doc """
+  Live read narrowed by `selector` (`%{procedure: name}` or
+  `%{procedure: name, entity_key: key}`; `%{}` covers every Procedure). Answers
+  `{:ok, json, change_seq}` — the seq the state was serialized at, which may be
+  ahead of what is durable — or `{:error, reason}`, including the
+  `{:not_resident, reason}` refusals for an Entity that is not held in memory.
+  """
+  @spec get_entity_state(binary(), binary(), map()) ::
+          {:ok, binary(), non_neg_integer() | nil} | {:error, term()}
+  def get_entity_state(namespace, operative_id, selector) when is_map(selector) do
     case get_operative_pid(namespace, operative_id) do
       {:ok, operative_pid} ->
-        # Unwrap one level: the operative's own reply is already `{:ok, json} |
-        # {:error, reason}`, so collapse `SafeCall`'s outer `{:ok, _}` to preserve
-        # the existing contract; a bounded timeout/noproc stays `{:error, reason}`.
-        case SafeCall.bounded(operative_pid, :get_entity_state, overwatch_call_timeout_ms()) do
+        # Unwrap one level: the operative's own reply is already
+        # `{:ok, json, seq} | {:error, reason}`, so collapse `SafeCall`'s outer
+        # `{:ok, _}`; a bounded timeout/noproc stays `{:error, reason}`.
+        case SafeCall.bounded(
+               operative_pid,
+               {:get_entity_state, selector},
+               overwatch_call_timeout_ms()
+             ) do
           {:ok, reply} -> reply
           {:error, _} = err -> err
         end

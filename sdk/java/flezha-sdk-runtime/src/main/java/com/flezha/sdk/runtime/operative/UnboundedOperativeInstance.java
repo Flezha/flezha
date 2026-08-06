@@ -42,6 +42,13 @@ import javax.annotation.Nonnull;
  */
 public final class UnboundedOperativeInstance implements Operative {
 
+    /**
+     * How many evicted keys the instance remembers so a live read can say
+     * "idle-evicted" rather than "never existed". Bounded — the trace is a
+     * diagnosis aid, not a record.
+     */
+    private static final int EVICTED_TRACE_CAP = 1024;
+
     private final UnboundedOperativeTopology topology;
     private final String instanceId;
     private final List<List<EntitySlot>> entities;
@@ -49,6 +56,8 @@ public final class UnboundedOperativeInstance implements Operative {
     private final List<ProcedureDispatcher> dispatchers;
     private final boolean persistenceEnabled;
     private final List<Class<?>> kryoTypes;
+    /** {@code "<procedure>/<key>"} of reaper-evicted Entities, newest last. */
+    private final LinkedHashSet<String> evicted = new LinkedHashSet<>();
 
     private UnboundedOperativeInstance(
             UnboundedOperativeTopology topology,
@@ -238,6 +247,7 @@ public final class UnboundedOperativeInstance implements Operative {
                                     new byte[16],
                                     new byte[0]));
                     keyMap.remove(e.getKey());
+                    noteEvicted(desc.name(), e.getKey());
                     evicted++;
                 }
             }
@@ -362,6 +372,30 @@ public final class UnboundedOperativeInstance implements Operative {
     @Nonnull
     public List<Map<String, Integer>> entityKeyToIdx() {
         return entityKeyToIdx;
+    }
+
+    /**
+     * True when {@code key} of {@code procedureName} is in the bounded eviction
+     * trace. False for a key that never had an Entity — and for one evicted
+     * longer than {@link #EVICTED_TRACE_CAP} evictions ago, which then reads as
+     * "no Entity by that key", the safe direction: it claims no eviction it
+     * cannot show.
+     */
+    public boolean recentlyEvicted(@Nonnull String procedureName, @Nonnull String key) {
+        synchronized (evicted) {
+            return evicted.contains(procedureName + "/" + key);
+        }
+    }
+
+    private void noteEvicted(String procedureName, String key) {
+        synchronized (evicted) {
+            evicted.add(procedureName + "/" + key);
+            if (evicted.size() > EVICTED_TRACE_CAP) {
+                java.util.Iterator<String> eldest = evicted.iterator();
+                eldest.next();
+                eldest.remove();
+            }
+        }
     }
 
     public ProcedureDispatcher dispatcher(int procedureId) {

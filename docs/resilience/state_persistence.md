@@ -306,6 +306,38 @@ credit-speaking session emits `[:flezha, :state, :credit_anomaly]`
 (kind `:shed`) and is an alerting condition, never expected
 back-pressure.
 
+## Live read (`flz state get`)
+
+```
+flz state get <operative/procedure[/entity_key]>
+```
+
+The current in-memory state of one live Entity (or of one Procedure's
+Entities), as JSON, with the `change_seq` it was read at.
+`Flezha.Service.CliManager.state_get/3` resolves the namespace holding the
+Operative, authorizes it as `:"state.get"`, and issues the existing
+`EntityState` control round-trip narrowed by the selector; the seq rides the
+reply frame's `flz.change_seq` metadata, so the JSON body keeps the shape the
+migration/handover caller already decodes.
+
+**The value is the freshest one there is, and may be ahead of durability.**
+The SDK serializes under the Entity's state lock without draining pending
+changes, so the reply includes changes not yet flushed to the WAL. That is
+strictly better than a durable read provided the caller knows which version it
+got — hence the seq. The read triggers no compaction, snapshot, or truncation.
+
+**A non-resident Entity is refused, never served from disk.** The refusal names
+which of: idle-evicted, instance suspended, no Entity by that key, Operative
+unbound — and points at `flz state at`. There is deliberately no durable
+fallback: dynamic-mode eviction is destructive (the recreate cold-starts, so
+there is no older value), the controller cannot decode the SDK's WAL bytes
+(postcard/Kryo, stored opaquely), and a fallback would mean binding a runner and
+restoring an Entity as a side effect of a read.
+
+The reply is bounded by `:wal_high_watermark_bytes` — the same ceiling the
+bounded handoff uses. Over it, the read is refused with the byte count and the
+selector that would narrow it; no new configuration key.
+
 ## Time-travel CLI
 
 ```

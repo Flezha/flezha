@@ -9,6 +9,12 @@ pub fn handle_state_command(args: &[String]) {
     }
 
     match args[0].as_str() {
+        "get" => handle_read(
+            args,
+            "get",
+            "<operative/procedure[/entity_key]>",
+            "state_get",
+        ),
         "list" => handle_read(args, "list", "<operative_class>", "state_list"),
         "at" => handle_at(args),
         "rotate" => handle_entity_verb(args, "rotate", "state_rotate"),
@@ -20,7 +26,7 @@ pub fn handle_state_command(args: &[String]) {
         "help" | "--help" | "-h" => print_state_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', 'journal', 'inbox', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'get', 'list', 'at', 'rotate', 'retention', 'delete', 'outbox', 'journal', 'inbox', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -93,6 +99,9 @@ fn print_state_help() {
     println!("    flz state <SUBCOMMAND>");
     println!();
     println!("SUBCOMMANDS:");
+    println!(
+        "    get <operative/procedure[/key]>          Current in-memory state of a live Entity, with its change_seq"
+    );
     println!("    list <operative>                         List Entities under an Operative class");
     println!("    at <operative/procedure/key> <seq|ts>    Query state at a point in time");
     println!("    rotate <operative/procedure/key>         Force a compaction snapshot");
@@ -111,6 +120,8 @@ fn print_state_help() {
     );
     println!();
     println!("EXAMPLES:");
+    println!("    flz state get MarketOperative/OhlcProcedure/M1");
+    println!("    flz state get MarketOperative/OhlcProcedure --output json");
     println!("    flz state list MarketOperative");
     println!("    flz state at MarketOperative/OhlcProcedure/M1 12345");
     println!("    flz state at MarketOperative/OhlcProcedure/M1 2026-05-01T12:00:00Z");

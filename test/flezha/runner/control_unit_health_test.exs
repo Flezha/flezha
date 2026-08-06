@@ -28,7 +28,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
       namespace: "default",
       runner_id: "ex_dead",
       response_refs: %{
-        make_ref() => {:reply, {self(), reply_ref}, now - 120_000}
+        make_ref() => {:reply, {self(), reply_ref}, now - 120_000, false}
       }
     }
 
@@ -48,7 +48,7 @@ defmodule FlezhaTest.Runner.ControlUnitHealthTest do
       namespace: "default",
       runner_id: "ex_ok",
       response_refs: %{
-        ref => {:reply, {self(), make_ref()}, now - 1_000}
+        ref => {:reply, {self(), make_ref()}, now - 1_000, false}
       }
     }
 

@@ -113,8 +113,16 @@ message MigrationDeserialization {
     bytes serialized_state = 3;
 }
 
+// Serialize live in-memory Entity state as JSON. Both selector fields are
+// optional (empty = absent): absent selector covers every Procedure of the
+// Operative (the migration/handover shape), `procedure` narrows to one
+// Procedure's Entities, `procedure` + `entity_key` to one Entity. An
+// `entity_key` without a `procedure` is refused — an Entity key is unique
+// only within its Procedure.
 message EntityState {
     string operative_id = 1;
+    string procedure = 2;
+    string entity_key = 3;
 }
 
 message RunnerDisconnect {}

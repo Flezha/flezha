@@ -49,6 +49,16 @@ contains Entities.**
   snapshot, outbox dedup) lives at the Entity level on disk:
   `app_data/state/{operative_class}/{procedure_id}/{entity_key}.*`.
 
+- **Live read vs time-travel read** — two different questions about one Entity's
+  state. A **live read** (`flz state get <operative/procedure[/key]>`) asks the
+  runner holding the Entity for its current in-memory value: the freshest value
+  there is, possibly *ahead* of what is durable (it includes changes not yet
+  flushed), stamped with the `change_seq` it was serialized at. It refuses —
+  naming why — when nothing holds the Entity. A **time-travel read**
+  (`flz state at <operative/procedure/key> <seq|timestamp>`) asks the
+  controller's own WAL for the value at a past point, and needs no runner. Live
+  reads are for "what is it now"; time-travel reads are for "what was it then".
+
 - **Channel** — a typed input/output edge of an Operative. Channels can be entry
   points (input from outside), internal (Procedure → Procedure), or sink (output
   back to the Controller / pipe to another Operative).

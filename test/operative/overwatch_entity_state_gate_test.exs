@@ -34,14 +34,14 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
     # {:noreply, state} == the gate passed and the handler went on to contact
     # the runner off-loop (replies later via GenServer.reply), as it does today.
     assert {:noreply, ^state} =
-             Overwatch.handle_call(:get_entity_state, {self(), make_ref()}, state)
+             Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
   end
 
   test "a durable :bounded kind proceeds to query the runner" do
     state = state_for(:bounded)
 
     assert {:noreply, ^state} =
-             Overwatch.handle_call(:get_entity_state, {self(), make_ref()}, state)
+             Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
   end
 
   test "an opted-out :bounded class is rejected and does not contact the runner" do
@@ -51,13 +51,13 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
     # A synchronous {:reply, error, state} (no spawn) proves the runner was not
     # contacted for state.
     assert {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, ^state} =
-             Overwatch.handle_call(:get_entity_state, {self(), make_ref()}, state)
+             Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
   end
 
   test "a stateless kind is rejected and does not contact the runner" do
     state = state_for(:made_up_kind)
 
     assert {:reply, {:error, {:unsupported_for_kind, :persistent_state}}, ^state} =
-             Overwatch.handle_call(:get_entity_state, {self(), make_ref()}, state)
+             Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
   end
 end

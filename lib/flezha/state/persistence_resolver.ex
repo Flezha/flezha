@@ -42,6 +42,7 @@ defmodule Flezha.State.PersistenceResolver do
 
   @default_persistence_enabled true
   @default_retention_hours 6
+  @default_wal_high_watermark_bytes 16 * 1024 * 1024
   @default_compact_after_bytes 8 * 1024 * 1024
   @default_output_stall_timeout_ms 60_000
   @default_compaction_timeout_ms 30_000
@@ -172,13 +173,25 @@ defmodule Flezha.State.PersistenceResolver do
   def credit_window_bytes(operative_class, metadata \\ %{}) when is_binary(operative_class) do
     resolve(:credit_window_bytes, :credit_window_bytes, operative_class, metadata,
       valid: &(is_integer(&1) and &1 > 0),
-      default: fn -> Application.get_env(:flezha, :wal_high_watermark_bytes, 16 * 1024 * 1024) end
+      default: &wal_high_watermark_bytes/0
     )
   end
 
   @spec compaction_timeout_ms() :: non_neg_integer()
   def compaction_timeout_ms(),
     do: global_non_neg(:compaction_timeout_ms, @default_compaction_timeout_ms)
+
+  @doc """
+  The WAL soft watermark (`:wal_high_watermark_bytes`) — the one definition of
+  "how many bytes is too many for one Entity-scale payload".
+
+  It bounds the per-Entity WAL, the input log, a bounded journal entry, the
+  default credit window, and a live state read, so it lives here rather than as
+  a literal at each of those.
+  """
+  @spec wal_high_watermark_bytes() :: pos_integer()
+  def wal_high_watermark_bytes(),
+    do: Application.get_env(:flezha, :wal_high_watermark_bytes, @default_wal_high_watermark_bytes)
 
   @doc """
   WAL age at which the Watchdog triggers a compaction, per operative.

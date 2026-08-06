@@ -1264,6 +1264,127 @@ defmodule Flezha.Service.CliManager do
   # ---------- `flz state` subcommand handlers ----------
 
   @doc """
+  `flz state get <operative/procedure[/entity_key]>` — the CURRENT in-memory
+  state of one live Entity (or of one Procedure's Entities), as JSON, with the
+  `change_seq` it was read at.
+
+  The value is the freshest one there is: it includes changes applied but not
+  yet flushed, so it is at or ahead of the durable state, and the seq is how a
+  caller tells versions apart. An Entity that is not held in memory is refused
+  naming why — never served from the durable store, which is what
+  `flz state at` is for.
+  """
+  def state_get(path_string, output_format \\ "text", opts \\ []) do
+    with {:ok, {operative_id, procedure, entity_key}} <- parse_live_path(path_string),
+         {:ok, namespace} <- running_namespace(operative_id),
+         :ok <-
+           Flezha.AuthZ.authorize(
+             cli_context(opts),
+             :"state.get",
+             Flezha.AuthZ.Scope.build(namespace)
+           ),
+         {:ok, json, change_seq} <-
+           OperativeManager.get_entity_state(namespace, operative_id, %{
+             procedure: procedure,
+             entity_key: entity_key
+           }),
+         :ok <- within_read_ceiling(json) do
+      print_state_get(path_string, json, change_seq, output_format)
+    else
+      {:error, reason} -> cli_error!("state get: #{render_state_get_error(reason)}", :stderr)
+    end
+  end
+
+  # The read authorizes and resolves against the namespace that actually holds
+  # the Operative rather than assuming `default`.
+  defp running_namespace(operative_id) do
+    case OperativeManager.namespace_of(operative_id) do
+      {:ok, namespace} -> {:ok, namespace}
+      :error -> {:error, {:no_operative, operative_id}}
+    end
+  end
+
+  # `<operative>/<procedure>[/<entity_key>]` for a LIVE read. No on-disk check,
+  # unlike `parse_state_path/1`: a resident Entity may have no WAL yet, and a
+  # persistence-disabled one never will.
+  defp parse_live_path(path_string) do
+    case String.split(path_string, "/", parts: 3) do
+      [operative, procedure, entity_key] when operative != "" and procedure != "" ->
+        {:ok, {operative, procedure, entity_key}}
+
+      [operative, procedure] when operative != "" and procedure != "" ->
+        {:ok, {operative, procedure, nil}}
+
+      _ ->
+        {:error,
+         {:bad_path, "expected <operative>/<procedure>[/<entity_key>]; got #{path_string}"}}
+    end
+  end
+
+  # Same ceiling the bounded handoff uses — a whole-Procedure read of a big
+  # Operative is the way to blow it, and naming the narrowing selector is the
+  # way out.
+  defp within_read_ceiling(json) do
+    limit = Flezha.State.PersistenceResolver.wal_high_watermark_bytes()
+
+    case byte_size(json) do
+      bytes when bytes > limit -> {:error, {:oversized_state, bytes}}
+      _ -> :ok
+    end
+  end
+
+  defp print_state_get(path_string, json, change_seq, "json") do
+    IO.puts(
+      Jason.encode!(%{
+        path: path_string,
+        change_seq: change_seq,
+        state: Jason.decode!(json)
+      })
+    )
+  end
+
+  defp print_state_get(path_string, json, change_seq, _) do
+    IO.puts("state get #{path_string}:")
+    IO.puts("  change_seq: #{change_seq || "-"}")
+    IO.puts("  state:      #{json}")
+  end
+
+  defp render_state_get_error({:bad_path, message}), do: message
+
+  defp render_state_get_error({:no_operative, operative_id}),
+    do: "no running operative `#{operative_id}` in any namespace"
+
+  defp render_state_get_error({:not_resident, :suspended}),
+    do:
+      "the instance is suspended and holds no live Entity — " <>
+        "read its durable state with `flz state at`"
+
+  defp render_state_get_error({:not_resident, :unbound}),
+    do:
+      "the Operative is not bound to a runner, so nothing holds its state — " <>
+        "read its durable state with `flz state at`"
+
+  defp render_state_get_error({:unsupported_for_kind, :persistent_state}),
+    do: "this Operative kind holds no per-Entity state, so there is nothing to read"
+
+  defp render_state_get_error({:oversized_state, bytes}),
+    do:
+      "the selected state is #{bytes} bytes, over the :wal_high_watermark_bytes " <>
+        "ceiling — narrow the read with <operative>/<procedure>/<entity_key>"
+
+  defp render_state_get_error(reason) when is_binary(reason) do
+    # SDK refusals lead with a canonical token; the not-resident family points
+    # at the durable-read path, which the SDK cannot know about.
+    if String.starts_with?(reason, ["entity_evicted", "entity_not_found"]) do
+      reason <> " — read its durable state with `flz state at`"
+    else
+      reason
+    end
+  end
+
+  defp render_state_get_error(reason), do: inspect(reason)
+
+  @doc """
   `flz state list <operative_class>` — print one row per Entity under
   `<operative_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
