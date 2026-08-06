@@ -1,5 +1,6 @@
 package com.flezha.sdk.runtime.state;
 
+import com.flezha.sdk.channel.RetryPolicy;
 import com.flezha.sdk.runtime.control.AckRegistry;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
@@ -122,6 +123,61 @@ public final class DlqPark {
      * pre-DLQ standalone behaviour. An interrupt (process shutdown) also
      * abandons the wait with an error log.
      */
+    /** One re-attempt of the step a {@link #retryThenPark} ladder is climbing. */
+    @FunctionalInterface
+    public interface Step {
+        /** Re-run and, on success, deliver. Throws to report another failure. */
+        void run();
+    }
+
+    /**
+     * Re-attempt one failed step off the routing thread per the channel's retry
+     * budget, then park what still fails under {@code identity}. The one ladder
+     * both poison entry payloads and unwinding edge closures climb — the step
+     * re-runs AND delivers on success, so the two differ only in what that step
+     * is. Mirror of the Rust SDK's {@code run_retry_park_ladder}.
+     */
+    public static void retryThenPark(
+            @Nonnull String label,
+            @Nonnull String channelName,
+            @Nonnull RetryPolicy retry,
+            @Nonnull EntityId identity,
+            @Nonnull OptionalLong offset,
+            @Nonnull Optional<byte[]> payload,
+            @Nonnull String firstError,
+            @Nonnull Step step) {
+        int maxAttempts = Math.max(1, retry.maxAttempts());
+        int attempt = 1; // the routing-thread run was attempt 1
+        String error = firstError;
+        while (attempt < maxAttempts) {
+            RETRIES_TOTAL.incrementAndGet();
+            LOG.warn("{} attempt {}/{} failed (retrying): {}", label, attempt, maxAttempts, error);
+            sleepQuietly(retry.backoffFor(attempt));
+            attempt++;
+            try {
+                step.run();
+                return;
+            } catch (RuntimeException e) {
+                error = e.getMessage() != null ? e.getMessage() : e.toString();
+            }
+        }
+
+        PARKED_TOTAL.incrementAndGet();
+        LOG.error("{} parking payload to DLQ after {} attempt(s): {}", label, attempt, error);
+        parkBlocking(
+                identity,
+                new ParkBody(
+                        mintParkId(identity.encoded()), offset, new DlqEntry(channelName, error, attempt, payload)));
+    }
+
+    private static void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     public static void parkBlocking(@Nonnull EntityId entityId, @Nonnull ParkBody body) {
         if (!EntityStateSink.everInstalled()) {
             LOG.error(

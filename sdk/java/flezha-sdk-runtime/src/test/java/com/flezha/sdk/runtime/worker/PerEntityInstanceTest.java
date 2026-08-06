@@ -17,6 +17,7 @@ import com.flezha.sdk.state.StateHandle;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -58,9 +59,9 @@ class PerEntityInstanceTest {
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, "max-inst", ctx, ctx.workerPool());
 
-        instance.dispatcher(0).fanoutEntities("A:100", 100L);
-        instance.dispatcher(0).fanoutEntities("B:999", 100L);
-        instance.dispatcher(0).fanoutEntities("A:50", 100L);
+        instance.dispatcher(0).fanoutEntities("A:100", "A", 100L, OptionalLong.empty(), false);
+        instance.dispatcher(0).fanoutEntities("B:999", "B", 100L, OptionalLong.empty(), false);
+        instance.dispatcher(0).fanoutEntities("A:50", "A", 100L, OptionalLong.empty(), false);
         drainPool();
 
         MaxProc opA = instanceFor(instance, "A");
@@ -82,9 +83,9 @@ class PerEntityInstanceTest {
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, "dyn-max-inst", ctx, ctx.workerPool());
 
-        instance.dispatcher(0).fanoutEntities("BTC:5", 100L);
-        instance.dispatcher(0).fanoutEntities("ETH:9", 100L);
-        instance.dispatcher(0).fanoutEntities("BTC:3", 100L);
+        instance.dispatcher(0).fanoutEntities("BTC:5", "BTC", 100L, OptionalLong.empty(), false);
+        instance.dispatcher(0).fanoutEntities("ETH:9", "ETH", 100L, OptionalLong.empty(), false);
+        instance.dispatcher(0).fanoutEntities("BTC:3", "BTC", 100L, OptionalLong.empty(), false);
         drainPool();
 
         assertThat(instance.entities().get(0)).hasSize(2);
@@ -128,7 +129,7 @@ class PerEntityInstanceTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(DynMaxProc.class);
+            c.input(String.class, "in").keyBy(input -> input.split(":")[0]).into(DynMaxProc.class);
         }
     }
 
@@ -198,16 +199,6 @@ class PerEntityInstanceTest {
         @Override
         public boolean entitiesForOverridden() {
             return false;
-        }
-
-        @Override
-        public Optional<String> entityKey(String input) {
-            return Optional.of(input.split(":")[0]);
-        }
-
-        @Override
-        public boolean entityKeyOverridden() {
-            return true;
         }
     }
 }

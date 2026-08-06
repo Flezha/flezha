@@ -1237,33 +1237,36 @@ public final class BoundedOperativeRunner {
     }
 
     /**
-     * Extend {@code dest} with a producer's released batch, lifted through the
-     * edge's merge mapping when it declares one. Shared by the forward
-     * accumulate and the journal re-seed so a resumed merge sees exactly what
-     * the live one did; an unmapped edge — every single-input chain — moves its
-     * values straight in.
+     * Extend {@code dest} with a producer's released batch, put through the
+     * edge's transform when it declares one. Shared by the forward accumulate
+     * and the journal re-seed so a resumed chain sees exactly what the live one
+     * did; a bare edge — every single-input chain — moves its values straight
+     * in.
      *
-     * <p>The mapping is author code, and unlike every other author callback on
-     * a bounded chain it runs on the driver thread rather than inside an entity
-     * invocation. Left uncontained, an exception would unwind the driver before
-     * it can emit {@code BoundedCompleted} and the instance would be stranded
-     * with no terminal frame; rethrowing as {@link BoundedOperativeException}
-     * routes it into the chain's existing abort-and-compensate path. Retrying
-     * is not offered: a mapping is required to be pure, so a re-run would throw
-     * identically. Mirrors the Rust driver's {@code extend_mapped}.
+     * <p>The transform is author code, and unlike every other author callback
+     * on a bounded chain it runs on the driver thread rather than inside an
+     * entity invocation. Left uncontained, an exception would unwind the driver
+     * before it can emit {@code BoundedCompleted} and the instance would be
+     * stranded with no terminal frame; rethrowing as
+     * {@link BoundedOperativeException} routes it into the chain's existing
+     * abort-and-compensate path. Retrying is not offered: an edge closure is
+     * required to be pure, so a re-run would throw identically. An edge key
+     * never reaches here — a keyed edge makes its consumer dynamic, and
+     * {@code BoundedSpec} refuses a dynamic bounded procedure. Mirrors the Rust
+     * driver's {@code extend_mapped}.
      */
     private static void extendMapped(List<Object> dest, ConsumerEdge edge, List<Object> batch)
             throws BoundedOperativeException {
-        if (edge.map().isEmpty()) {
+        if (edge.transform().isEmpty()) {
             dest.addAll(batch);
             return;
         }
         try {
             for (Object value : batch) {
-                dest.add(edge.mapValue(value));
+                dest.addAll(edge.transformValue(value).values());
             }
         } catch (RuntimeException | Error e) {
-            throw new BoundedOperativeException("merge mapping threw: " + messageOf(e));
+            throw new BoundedOperativeException("edge transform threw: " + messageOf(e));
         }
     }
 

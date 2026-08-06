@@ -1,6 +1,5 @@
 package com.flezha.sdk.channel;
 
-import com.flezha.sdk.procedure.Procedure;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -41,33 +40,7 @@ import javax.annotation.Nonnull;
  * {@code @SafeVarargs} on abstract or default methods, and callers would get
  * unchecked-generic-array warnings).
  */
-public abstract class Stream<T> {
-
-    /**
-     * Wire a consumer procedure onto this stream's channel and return
-     * <b>the consumer's</b> output stream handle. The runtime verifies at
-     * registration that the procedure's {@code inputType()} equals this
-     * stream's payload type (the producer's declared {@code outputType()});
-     * a mismatch fails registration naming both procedures and both types.
-     *
-     * <p>Calling {@code .into} on the same held handle repeatedly declares
-     * fan-out; wiring the same unnamed class from two streams declares fan-in.
-     */
-    @Nonnull
-    public abstract <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure);
-
-    /**
-     * Like {@link #into(Class)}, but the consumer is a distinct <b>named
-     * node</b>: its identity string is {@code nodeName} instead of the
-     * procedure's {@code name()}, for every purpose identity serves —
-     * per-entity state directories, journal entries, the derived channel
-     * name, diagnostics. This lets one Procedure class appear at several
-     * graph positions with independent state. Node identity strings are
-     * unique per operative; a collision fails registration.
-     */
-    @Nonnull
-    public abstract <O> Stream<O> into(
-            @Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedure, @Nonnull String nodeName);
+public abstract class Stream<T> implements EdgeStream<T> {
 
     /**
      * Override the auto-derived channel name (the producer node's identity)
@@ -102,24 +75,22 @@ public abstract class Stream<T> {
     public abstract Stream<T> codecWith(@Nonnull Function<T, byte[]> encoder, @Nonnull Function<byte[], T> decoder);
 
     /**
-     * Override the per-kind default {@link OverflowPolicy}. Inter-procedure
-     * channels default to {@link OverflowPolicy#BLOCK}; switch to a drop
-     * policy when ordering can be sacrificed for liveness.
+     * {@inheritDoc}
+     *
+     * <p>Refined to {@link Stream} so the producer-side surface stays
+     * chainable in any order relative to channel configuration.
      */
+    @Override
     @Nonnull
     public abstract Stream<T> onFull(@Nonnull OverflowPolicy policy);
 
-    /**
-     * Override the consumer-side retry budget (total attempts, default 3)
-     * applied before a failing payload is parked to the dead-letter queue.
-     */
+    /** {@inheritDoc} Refined to {@link Stream} — see {@link #onFull}. */
+    @Override
     @Nonnull
     public abstract Stream<T> retryMax(int maxAttempts);
 
-    /**
-     * Override the exponential-backoff base (milliseconds, default 50)
-     * slept between failed attempts.
-     */
+    /** {@inheritDoc} Refined to {@link Stream} — see {@link #onFull}. */
+    @Override
     @Nonnull
     public abstract Stream<T> retryBackoffMs(long baseMs);
 

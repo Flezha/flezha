@@ -191,55 +191,24 @@ public final class PrimaryStreamReader {
             boolean replay) {
         java.util.function.Function<byte[], Object> parser =
                 channel.entryParser().orElseThrow();
-        int maxAttempts = Math.max(1, channel.retry().maxAttempts());
-        int attempt = 1; // the wire-path parse was attempt 1
-        String error = firstError;
-        while (attempt < maxAttempts) {
-            DlqPark.RETRIES_TOTAL.incrementAndGet();
-            LOG.warn(
-                    "entry channel `{}` parse attempt {}/{} failed (retrying): {}",
-                    channel.name(),
-                    attempt,
-                    maxAttempts,
-                    error);
-            sleepQuietly(channel.retry().backoffFor(attempt));
-            attempt++;
-            try {
-                // A parser violating the determinism contract may succeed on a
-                // re-attempt; deliver rather than drop.
-                Object typed = parser.apply(bytes);
-                ProcedureDispatcher.routeToConsumers(instance, channel, typed, streamId, offset, replay);
-                return;
-            } catch (RuntimeException e) {
-                error = describe(e);
-            }
-        }
-
-        DlqPark.PARKED_TOTAL.incrementAndGet();
-        LOG.error(
-                "entry channel `{}` parking unparseable payload to DLQ after {} attempt(s): {}",
+        DlqPark.retryThenPark(
+                "entry channel `" + channel.name() + "`",
                 channel.name(),
-                attempt,
-                error);
-        EntityId identity = EntityId.of(instance.instanceId(), channel.name(), Optional.of("_entry"));
-        DlqPark.parkBlocking(
-                identity,
-                new DlqPark.ParkBody(
-                        DlqPark.mintParkId(identity.encoded()),
-                        offset,
-                        new DlqPark.DlqEntry(channel.name(), error, attempt, Optional.of(bytes.clone()))));
+                channel.retry(),
+                EntityId.of(instance.instanceId(), channel.name(), Optional.of("_entry")),
+                offset,
+                Optional.of(bytes.clone()),
+                firstError,
+                () -> {
+                    // A parser violating the determinism contract may succeed on
+                    // a re-attempt; deliver rather than drop.
+                    Object typed = parser.apply(bytes);
+                    ProcedureDispatcher.routeToConsumers(instance, channel, typed, streamId, offset, replay);
+                });
     }
 
     private static String describe(RuntimeException e) {
         return e.getMessage() != null ? e.getMessage() : e.toString();
-    }
-
-    private static void sleepQuietly(long ms) {
-        try {
-            Thread.sleep(ms);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     private static ChannelDescriptor resolveEntryChannel(UnboundedOperativeTopology topology, String channelName) {

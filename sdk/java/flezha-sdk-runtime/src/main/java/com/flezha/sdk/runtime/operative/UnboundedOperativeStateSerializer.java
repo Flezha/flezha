@@ -40,7 +40,16 @@ public final class UnboundedOperativeStateSerializer {
         for (int procedureId = 0; procedureId < instance.topology().procedures().size(); procedureId++) {
             ProcedureDescriptor desc = instance.topology().procedures().get(procedureId);
             List<EntitySlot> entities = instance.entities().get(procedureId);
-            if (desc.entityKeys().isEmpty()) {
+            if (desc.dynamic()) {
+                // Keyed by the edge, not declared: the live slot table IS the
+                // keyset. Reading `entities.get(0)` here would report only the
+                // first Entity a dynamic procedure ever created.
+                Map<String, Object> perKey = new LinkedHashMap<>();
+                for (EntitySlot slot : entities) {
+                    perKey.put(slot.entityKey().orElse(""), slot.state().get());
+                }
+                root.put(desc.name(), perKey);
+            } else if (desc.entityKeys().isEmpty()) {
                 Object state = entities.get(0).state().get();
                 root.put(desc.name(), state);
             } else {
@@ -78,7 +87,17 @@ public final class UnboundedOperativeStateSerializer {
                 continue;
             }
             List<EntitySlot> entities = instance.entities().get(procedureId);
-            if (desc.entityKeys().isEmpty()) {
+            if (desc.dynamic()) {
+                if (!(procedureEntry instanceof Map<?, ?> perKey)) {
+                    continue;
+                }
+                for (EntitySlot slot : entities) {
+                    Object encoded = perKey.get(slot.entityKey().orElse(""));
+                    if (encoded != null) {
+                        slot.state().set(decodeState(encoded, slot.state().get()));
+                    }
+                }
+            } else if (desc.entityKeys().isEmpty()) {
                 Object state =
                         decodeState(procedureEntry, entities.get(0).state().get());
                 entities.get(0).state().set(state);

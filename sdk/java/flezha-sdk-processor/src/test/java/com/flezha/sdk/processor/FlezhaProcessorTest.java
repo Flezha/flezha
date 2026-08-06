@@ -25,21 +25,19 @@ class FlezhaProcessorTest {
     Path out;
 
     @Test
-    void rejectsStaticAndDynamicTogether() {
+    void rejectsEntityKeyAndNamesItsReplacement() {
         String code =
                 """
                 package t;
                 import com.flezha.sdk.authoring.*;
-                import java.util.List;
                 import java.util.Optional;
-                @Procedure(id = "bad", keys = {"a"})
+                @Procedure(id = "bad")
                 public class Bad {
-                    @EntitiesFor public List<String> p(String in) { return List.of("a"); }
                     @EntityKey public Optional<String> s(String in) { return Optional.empty(); }
                     public String run(String in) { return in; }
                 }
                 """;
-        assertThat(diagnose("t.Bad", code)).anyMatch(m -> m.contains("mutually exclusive"));
+        assertThat(diagnose("t.Bad", code)).anyMatch(m -> m.contains(".keyBy(f)"));
     }
 
     @Test

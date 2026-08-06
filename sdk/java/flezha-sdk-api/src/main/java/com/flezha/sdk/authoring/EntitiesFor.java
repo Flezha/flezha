@@ -10,7 +10,7 @@ import java.lang.annotation.Target;
  * {@code List<String> name(Input input)}. The generated procedure delegates
  * {@code entitiesFor} to it, sets {@code entitiesForOverridden()} to true, and
  * exposes the {@link Procedure#keys()} as {@code entityKeys()}. Mutually exclusive
- * with {@link EntityKey}.
+ * with edge keying (`.keyBy(f)` on the wiring).
  */
 @Retention(RetentionPolicy.SOURCE)
 @Target(ElementType.METHOD)

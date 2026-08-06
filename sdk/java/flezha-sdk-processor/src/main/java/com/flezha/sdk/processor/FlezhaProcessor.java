@@ -592,11 +592,14 @@ public final class FlezhaProcessor extends AbstractProcessor {
             changeType = "com.flezha.sdk.state.NoChange";
         }
 
-        // Entity mode: @EntitiesFor (static) xor @EntityKey (dynamic).
+        // Entity mode: static keying is the only mode a procedure can declare
+        // — dynamic keying moved to the wiring.
         ExecutableElement entitiesFor = findAnnotated(procedure, EntitiesFor.class);
-        ExecutableElement entityKey = findAnnotated(procedure, EntityKey.class);
-        if (entitiesFor != null && entityKey != null) {
-            error(procedure, "@EntitiesFor (static) and @EntityKey (dynamic) are mutually exclusive");
+        if (findAnnotated(procedure, EntityKey.class) != null) {
+            error(
+                    procedure,
+                    "@EntityKey no longer exists; declare the Entity key on the wiring instead — "
+                            + "`.keyBy(f)` on the stream that feeds this procedure");
             return;
         }
 
@@ -711,14 +714,6 @@ public final class FlezhaProcessor extends AbstractProcessor {
                     .append(" input) { return impl.")
                     .append(entitiesFor.getSimpleName())
                     .append("(input); }\n");
-        }
-        if (entityKey != null) {
-            b.append("    @Override public Optional<String> entityKey(")
-                    .append(inputType)
-                    .append(" input) { return impl.")
-                    .append(entityKey.getSimpleName())
-                    .append("(input); }\n");
-            b.append("    @Override public boolean entityKeyOverridden() { return true; }\n");
         }
         if (capacity > 0) {
             b.append("    @Override public int mailboxCapacity() { return ")

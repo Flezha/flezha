@@ -121,9 +121,7 @@ public final class UnboundedOperativeInstance implements Operative {
             int mailboxCapacity = desc.mailboxCapacity();
             OverflowPolicy policy = overflowPolicyFor(topology, desc);
 
-            boolean dynamicMode =
-                    desc.entityKeyOverridden() && desc.entityKeys().isEmpty();
-            if (dynamicMode) {
+            if (desc.dynamic()) {
                 // No Entities up front: a dynamic Procedure's keys are whatever the
                 // input stream turns out to carry, so each is created on first sight.
                 Procedure<?, ?, ?, ?, ?, ?> procedureInstance = instantiate(desc.procedureClass());
@@ -194,8 +192,9 @@ public final class UnboundedOperativeInstance implements Operative {
             }
             // A dynamic-mode Procedure creates its Entities lazily, one per key
             // seen, so its slot table must stay mutable.
-            entities.add(dynamicMode ? new java.util.concurrent.CopyOnWriteArrayList<>(slots) : slots);
-            entityKeyToIdx.add(dynamicMode ? new java.util.concurrent.ConcurrentHashMap<>(keyMap) : Map.copyOf(keyMap));
+            entities.add(desc.dynamic() ? new java.util.concurrent.CopyOnWriteArrayList<>(slots) : slots);
+            entityKeyToIdx.add(
+                    desc.dynamic() ? new java.util.concurrent.ConcurrentHashMap<>(keyMap) : Map.copyOf(keyMap));
         }
         return shell;
     }
@@ -214,7 +213,7 @@ public final class UnboundedOperativeInstance implements Operative {
         int evicted = 0;
         for (int procedureId = 0; procedureId < topology.procedures().size(); procedureId++) {
             ProcedureDescriptor desc = topology.procedure(procedureId);
-            if (!desc.entityKeyOverridden() || !desc.entityKeys().isEmpty()) {
+            if (!desc.dynamic()) {
                 continue;
             }
             Optional<java.time.Duration> ttl = desc.entityIdleTtl();

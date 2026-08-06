@@ -1,6 +1,6 @@
 # Flezha Java SDK — worked examples
 
-Nine examples, in the order worth reading them. Each is a real compiled source
+Ten examples, in the order worth reading them. Each is a real compiled source
 file in this module, not a snippet — the reactor builds them, so an example that
 drifts from the SDK **breaks the build** instead of quietly lying to you.
 
@@ -19,6 +19,7 @@ mvn -f sdk/java/pom.xml test -pl flezha-sdk-examples -am
 | 07 | [`E07_TestingYourProcedureTest`](src/test/java/com/flezha/examples/E07_TestingYourProcedureTest.java) | Testing a Procedure — and proving it is replay-safe. |
 | 08 | [`E08_SpawnBoundedWorker`](src/main/java/com/flezha/examples/E08_SpawnBoundedWorker.java) | Asking the cluster for a bounded worker from inside a Procedure. |
 | 09 | [`E09_MergedInput`](src/main/java/com/flezha/examples/E09_MergedInput.java) | One Procedure over two Channels: a data feed plus a live config feed. |
+| 10 | [`E10_StreamTransforms`](src/main/java/com/flezha/examples/E10_StreamTransforms.java) | `filter` → `flatMap` → `keyBy` on the wiring: one trade, four timeframes, four Entities, one Procedure. |
 
 ## The one idea worth internalising first
 
@@ -88,7 +89,7 @@ start, before a single input is served, with the same error names:
 - A loop on `run`-sugar → `LoopWithoutChain` (there is no chain to iterate).
 - A `merge(...)` with fewer than two sources, the same Channel twice, or a source
   re-wiring an already-declared edge → `MergeTooFewSources` /
-  `DuplicateMergeSource` / `MergeSourceAlreadyWired`.
+  `DuplicateMergeSource` / `EdgeAlreadyWired`.
 - A **bounded** merge over an entry Channel → `MergeFromEntryChannel` (the
   spawn-args seed names no Channel; merge its procedures' output streams).
 

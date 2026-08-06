@@ -6,20 +6,12 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks the dynamic-mode key method on a {@link Procedure} class:
- * {@code Optional<String> name(Input input)}. The generated procedure sets
- * {@code entityKeyOverridden()} to true, delegates {@code entityKey} to it, leaves
- * {@code entityKeys()} empty, and applies the optional TTL / cap overrides per
- * dynamic entity mode. Mutually exclusive with
- * {@link EntitiesFor}.
+ * <b>Removed.</b> Dynamic Entity keying is declared on the wiring —
+ * {@code .keyBy(f)} on the stream that feeds the procedure — so a reader of
+ * {@code channels()} can see where work fans out. This annotation survives only
+ * so that declaring it fails annotation processing with that instruction
+ * instead of a bare unknown-symbol error; it generates nothing.
  */
 @Retention(RetentionPolicy.SOURCE)
 @Target(ElementType.METHOD)
-public @interface EntityKey {
-
-    /** Idle-eviction window in milliseconds. {@code -1} disables eviction. */
-    long idleTtl() default -1L;
-
-    /** Soft cap on live entities. {@code 0} keeps the runtime default. */
-    int maxEntities() default 0;
-}
+public @interface EntityKey {}

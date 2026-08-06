@@ -163,12 +163,76 @@ public class UnboundedOperativeConfigurationException extends RuntimeException {
     /**
      * Raised when a merge source would re-wire a channel→procedure edge that
      * {@code into(...)} or another merge already declared. Carries the Rust
-     * error name {@code MergeSourceAlreadyWired}.
+     * error name {@code EdgeAlreadyWired}.
      */
-    public static UnboundedOperativeConfigurationException mergeSourceAlreadyWired(String channel, String procedure) {
-        return new UnboundedOperativeConfigurationException("MergeSourceAlreadyWired: channel `" + channel
-                + "` already feeds procedure `" + procedure + "`; an edge carries exactly one merge mapping or"
-                + " none, so a merge source may not re-wire an edge declared by `into` or by another merge");
+    public static UnboundedOperativeConfigurationException edgeAlreadyWired(String channel, String procedure) {
+        return new UnboundedOperativeConfigurationException("EdgeAlreadyWired: channel `" + channel
+                + "` already feeds procedure `" + procedure + "`; an edge carries exactly one transform and one"
+                + " key or neither, so a re-declaration where either side carries one is refused rather than"
+                + " silently keeping the first");
+    }
+
+    /**
+     * Raised when a {@code keyBy(...)} edge wires a procedure that declares a
+     * non-empty {@code entityKeys()}. Carries the Rust error name
+     * {@code KeyByOnUnkeyableTarget}.
+     */
+    public static UnboundedOperativeConfigurationException keyByOnUnkeyableTarget(String channel, String procedure) {
+        return new UnboundedOperativeConfigurationException("KeyByOnUnkeyableTarget: channel `" + channel
+                + "` declares .keyBy(...) into procedure `" + procedure + "`, which declares a non-empty"
+                + " entityKeys() (static mode); static keying routes by entitiesFor and may name several"
+                + " Entities, edge keying names exactly one — declare one OR the other, not both");
+    }
+
+    /**
+     * Raised when one consumer edge declares two key functions. Carries the
+     * Rust error name {@code DuplicateKeyBy}.
+     */
+    public static UnboundedOperativeConfigurationException duplicateKeyBy(String channel) {
+        return new UnboundedOperativeConfigurationException(
+                "DuplicateKeyBy: channel `" + channel + "` declares .keyBy(...) twice before one `.into(...)`");
+    }
+
+    /**
+     * Raised when a transform or key is declared on a handle already closed by
+     * a plugin sink. Carries the Rust error name {@code TransformAfterTerminal}.
+     */
+    public static UnboundedOperativeConfigurationException transformAfterTerminal(String channel) {
+        return new UnboundedOperativeConfigurationException("TransformAfterTerminal: channel `" + channel
+                + "` declares a transform or .keyBy(...) after a plugin sink; the sink serializes the channel's"
+                + " own value, so nothing downstream of it can be reshaped");
+    }
+
+    /**
+     * Raised when a transform is declared after the key it would feed. Carries
+     * the Rust error name {@code TransformAfterKeyBy}.
+     */
+    public static UnboundedOperativeConfigurationException transformAfterKeyBy(String channel) {
+        return new UnboundedOperativeConfigurationException("TransformAfterKeyBy: channel `" + channel
+                + "` declares a transform after .keyBy(...); the key is evaluated on the final post-transform"
+                + " value, so it must be the last link before `.into(...)`");
+    }
+
+    /**
+     * Raised when a transform chain is never closed by an {@code into(...)}.
+     * Carries the Rust error name {@code DanglingTransformChain}.
+     */
+    public static UnboundedOperativeConfigurationException danglingTransformChain(String channel) {
+        return new UnboundedOperativeConfigurationException("DanglingTransformChain: channel `" + channel
+                + "` declares a transform or .keyBy(...) that is never closed by `.into(...)`; a transform chain"
+                + " is stored on the consumer edge it terminates in, so a dangling one would silently do nothing");
+    }
+
+    /**
+     * Raised when a keyless edge feeds a procedure another edge keyed into
+     * dynamic mode. Carries the Rust error name
+     * {@code UnkeyedEdgeIntoDynamicProcedure}.
+     */
+    public static UnboundedOperativeConfigurationException unkeyedEdgeIntoDynamicProcedure(
+            String channel, String procedure) {
+        return new UnboundedOperativeConfigurationException("UnkeyedEdgeIntoDynamicProcedure: channel `" + channel
+                + "` feeds procedure `" + procedure + "` without a .keyBy(...), but another edge keys it into"
+                + " dynamic mode; every edge into a dynamic-mode procedure must name the Entity its inputs reach");
     }
 
     /**

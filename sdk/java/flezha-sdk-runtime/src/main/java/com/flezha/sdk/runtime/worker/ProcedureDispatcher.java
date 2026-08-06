@@ -11,6 +11,7 @@ import com.flezha.sdk.runtime.entity.EntitySlot;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
+import com.flezha.sdk.runtime.operative.EdgeYield;
 import com.flezha.sdk.runtime.operative.PluginSink;
 import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeInstance;
@@ -32,6 +33,7 @@ import java.util.OptionalLong;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BiConsumer;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -139,8 +141,7 @@ public final class ProcedureDispatcher {
         this.retryPolicy = inputChannel == null ? RetryPolicy.DEFAULT : inputChannel.retry();
         this.inputChannelName = inputChannel == null ? "<unwired>" : inputChannel.name();
         this.routingInstance = routingInstance;
-        this.dynamic = procedureDescriptor.entityKeyOverridden()
-                && procedureDescriptor.entityKeys().isEmpty();
+        this.dynamic = procedureDescriptor.dynamic();
         this.tier = topology.effectivelyOnce();
         this.checkpointAck = topology.checkpointAck();
         this.correctionWindowMs = topology.correctionWindowMs();
@@ -190,6 +191,21 @@ public final class ProcedureDispatcher {
     @SuppressWarnings({"unchecked", "rawtypes"})
     public void fanoutEntities(
             @Nonnull Object value, long primaryStreamId, @Nonnull OptionalLong offset, boolean replay) {
+        fanoutEntities(value, null, primaryStreamId, offset, replay);
+    }
+
+    /**
+     * {@code entityKey} is the key the consumer edge's {@code keyBy} produced,
+     * and is what makes this a dynamic-mode delivery — the Procedure itself
+     * carries no keying member.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public void fanoutEntities(
+            @Nonnull Object value,
+            @Nullable String entityKey,
+            long primaryStreamId,
+            @Nonnull OptionalLong offset,
+            boolean replay) {
         UnboundedOperativeInstance ri = instance.get();
         if (ri == null) {
             return;
@@ -198,14 +214,16 @@ public final class ProcedureDispatcher {
         // Dynamic mode: one Entity per key the input stream actually carries,
         // created on first sight rather than declared up front.
         if (dynamic) {
-            Optional<String> key = routingInstance.entityKey(value);
-            if (key.isEmpty()) {
+            // The key is total — the builder refuses an unkeyed edge into a
+            // dynamic consumer — so an absent one cannot happen in a built
+            // topology.
+            if (entityKey == null) {
                 LOG.warn(
-                        "procedure `{}`: dynamic entityKey() returned empty; dropping input",
+                        "procedure `{}`: dynamic-mode delivery carried no edge key; dropping input",
                         procedureDescriptor.name());
                 return;
             }
-            int idx = ri.getOrCreateDynamicEntity(procedureId, key.get());
+            int idx = ri.getOrCreateDynamicEntity(procedureId, entityKey);
             enqueue(ri.entities().get(procedureId).get(idx), value, primaryStreamId, offset, replay);
             return;
         }
@@ -698,11 +716,80 @@ public final class ProcedureDispatcher {
             @Nonnull OptionalLong offset,
             boolean replay) {
         for (ConsumerEdge edge : channel.consumers()) {
-            ProcedureDispatcher consumer = instance.dispatcher(edge.procedure());
-            if (consumer != null) {
-                consumer.fanoutEntities(edge.mapValue(value), primaryStreamId, offset, replay);
+            try {
+                deliverEdge(instance, edge, value, primaryStreamId, offset, replay);
+            } catch (RuntimeException e) {
+                spawnEdgeLadder(instance, channel, edge, value, primaryStreamId, offset, replay, e);
             }
         }
+    }
+
+    /**
+     * Put one value through one edge's transform and deliver everything it
+     * yields. The ONE place a {@link ConsumerEdge}'s closures become mailbox
+     * pushes: live routing and the retry ladder's re-attempt both call it, so a
+     * re-attempt cannot deliver differently from the attempt it retries.
+     *
+     * <p>Every transform declared before the closing {@code into} — a merge
+     * mapping among them — is one composed closure, applied here so that
+     * {@code entitiesFor}, the edge key and the mailbox all carry the
+     * transformed value, on live delivery and on replay alike.
+     */
+    private static void deliverEdge(
+            UnboundedOperativeInstance instance,
+            ConsumerEdge edge,
+            Object value,
+            long primaryStreamId,
+            OptionalLong offset,
+            boolean replay) {
+        ProcedureDispatcher consumer = instance.dispatcher(edge.procedure());
+        if (consumer == null) {
+            return;
+        }
+        EdgeYield yielded = edge.transformValue(value);
+        if (yielded == null) {
+            // Transform-free edge: the channel's payload already IS the input.
+            consumer.fanoutEntities(value, edge.keyOf(value), primaryStreamId, offset, replay);
+            return;
+        }
+        for (Object v : yielded.values()) {
+            consumer.fanoutEntities(v, edge.keyOf(v), primaryStreamId, offset, replay);
+        }
+    }
+
+    /**
+     * Climb this channel's retry→DLQ ladder for one edge whose transform or key
+     * threw. The closures are pure by contract, so a re-attempt is expected to
+     * fail identically — the ladder is there so the failure is parked and
+     * observable rather than silently taking the routing thread down, exactly as
+     * it is for a poison entry payload. Mirrors the Rust SDK's
+     * {@code spawn_edge_ladder}.
+     */
+    private static void spawnEdgeLadder(
+            UnboundedOperativeInstance instance,
+            ChannelDescriptor channel,
+            ConsumerEdge edge,
+            Object value,
+            long primaryStreamId,
+            OptionalLong offset,
+            boolean replay,
+            RuntimeException failure) {
+        ProcedureDispatcher consumer = instance.dispatcher(edge.procedure());
+        String procedureName = consumer == null ? "<gone>" : consumer.procedureDescriptor.name();
+        String firstError = failure.getMessage() != null ? failure.getMessage() : failure.toString();
+        Thread t = new Thread(
+                () -> DlqPark.retryThenPark(
+                        "channel `" + channel.name() + "` edge into `" + procedureName + "`",
+                        channel.name(),
+                        channel.retry(),
+                        EntityId.of(instance.instanceId(), channel.name(), Optional.of("_edge")),
+                        offset,
+                        DlqPark.extractPayloadBytes(value),
+                        firstError,
+                        () -> deliverEdge(instance, edge, value, primaryStreamId, offset, replay)),
+                "flezha-edge-transform-park");
+        t.setDaemon(true);
+        t.start();
     }
 
     private void fanoutInterProcedure(ChannelDescriptor descriptor, Object value, long primaryStreamId) {

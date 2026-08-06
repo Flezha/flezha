@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.Channel;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.ChannelKind;
+import com.flezha.sdk.channel.EdgeStream;
 import com.flezha.sdk.channel.EntryChannel;
 import com.flezha.sdk.channel.Merge;
 import com.flezha.sdk.channel.OverflowPolicy;
@@ -13,6 +14,7 @@ import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
+import com.flezha.sdk.runtime.operative.EdgeYield;
 import com.flezha.sdk.runtime.operative.PluginSink;
 import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
@@ -63,6 +65,12 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
     private final List<ChannelEntry> channels = new ArrayList<>();
     private final List<ProcedureEntry> procedures = new ArrayList<>();
+    /**
+     * Transform/key chains under construction, indexed by the id the stream
+     * handles carry. A chain neither superseded nor consumed is dangling.
+     */
+    private final List<PendingEdge> pending = new ArrayList<>();
+
     private final Map<String, Integer> procedureNameToId = new LinkedHashMap<>();
     private final List<String> errors = new ArrayList<>();
     private boolean effectivelyOnce;
@@ -126,7 +134,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         ChannelEntry entry = channels.get(id);
         entry.entryParser = parser;
         entry.entryParsed = parsed;
-        return new EntryChannelImpl<>(id, name);
+        return new EntryChannelImpl<>(id, name, null, type);
     }
 
     @Override
@@ -187,7 +195,47 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
             validateGraphShape();
         }
 
-        // Validate each Procedure's static-mode / dynamic-mode declaration.
+        // A transform chain is stored on the consumer edge it terminates in,
+        // so one that no `.into(...)` ever closed would silently do nothing.
+        // Only a chain's tip can dangle — every earlier link was superseded.
+        for (PendingEdge chain : pending) {
+            if (!chain.superseded && !chain.consumed) {
+                errors.add(UnboundedOperativeConfigurationException.danglingTransformChain(
+                                channels.get(chain.channel).name)
+                        .getMessage());
+            }
+        }
+
+        // Entity mode is read off the WIRING: a procedure reached by an edge
+        // carrying a key function is dynamic. Static keying routes by
+        // entitiesFor and may name several Entities, edge keying names exactly
+        // one, so declaring both is a contradiction — and because the key is
+        // total, a dynamic procedure has no keyless path, which means every
+        // edge into one must carry a key.
+        for (ChannelEntry channel : channels) {
+            for (ConsumerEdge edge : channel.consumers) {
+                if (edge.key().isPresent()) {
+                    procedures.get(edge.procedure()).dynamic = true;
+                }
+            }
+        }
+        for (ChannelEntry channel : channels) {
+            for (ConsumerEdge edge : channel.consumers) {
+                ProcedureEntry target = procedures.get(edge.procedure());
+                if (edge.key().isPresent() && !target.entityKeys.isEmpty()) {
+                    errors.add(
+                            UnboundedOperativeConfigurationException.keyByOnUnkeyableTarget(channel.name, target.name)
+                                    .getMessage());
+                }
+                if (edge.key().isEmpty() && target.dynamic) {
+                    errors.add(UnboundedOperativeConfigurationException.unkeyedEdgeIntoDynamicProcedure(
+                                    channel.name, target.name)
+                            .getMessage());
+                }
+            }
+        }
+
+        // Validate each Procedure's static-mode declaration.
         for (ProcedureEntry procedure : procedures) {
             if (!procedure.entityKeys.isEmpty() && !procedure.entitiesForOverridden) {
                 errors.add("procedure `" + procedure.name
@@ -296,7 +344,7 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                     entry.procedureClass,
                     entry.entityKeys,
                     entry.entitiesForOverridden,
-                    entry.entityKeyOverridden,
+                    entry.dynamic,
                     entry.inputChannelId == null ? OptionalInt.empty() : OptionalInt.of(entry.inputChannelId),
                     entry.outputChannelId == null ? OptionalInt.empty() : OptionalInt.of(entry.outputChannelId),
                     entry.inputType,
@@ -409,7 +457,6 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         entry.named = named;
         entry.entityKeys = List.copyOf(probe.entityKeys());
         entry.entitiesForOverridden = probe.entitiesForOverridden();
-        entry.entityKeyOverridden = probe.entityKeyOverridden();
         entry.inputType = probe.inputType();
         entry.outputType = probe.outputType();
         entry.changeType = probe.changeType();
@@ -502,12 +549,121 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
     /**
      * Wire {@code channelId} into a consumer node (created/resolved by
-     * identity). Returns the consumer's node id so its handle can continue
-     * the chain.
+     * identity), closing {@code pendingChain} onto the resulting edge. Returns
+     * the consumer's node id so its handle can continue the chain.
      */
     private int wireConsumer(
-            int channelId, Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass, String nodeName) {
-        return wireConsumer(channelId, procedureClass, nodeName, null, null);
+            int channelId,
+            Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
+            String nodeName,
+            Integer pendingChain) {
+        return wireConsumer(channelId, procedureClass, nodeName, null, pendingChain);
+    }
+
+    /**
+     * A transform/key chain declared on a stream handle but not yet closed by
+     * {@code into(...)}. Every link pushes a NEW entry composing the previous
+     * one, which is what makes reusing a handle mid-chain branch cleanly
+     * instead of aliasing. Mirror of the Rust SDK's {@code PendingEdge}.
+     */
+    static final class PendingEdge {
+        int channel;
+        /** The payload type after this chain's transforms. */
+        Class<?> payloadType;
+        /**
+         * Every transform declared so far, composed into ONE closure.
+         * Composition is the whole of "fusion": the runtime applies one closure
+         * per edge and never learns that a chain existed.
+         */
+        Function<Object, EdgeYield> transform;
+
+        Function<Object, String> key;
+        /** Set when a later link built on this one, so only a tip can dangle. */
+        boolean superseded;
+        /** Set when {@code into(...)} closed the chain onto an edge. */
+        boolean consumed;
+    }
+
+    /**
+     * Extend the chain at {@code base} (or open one on {@code channel}) with
+     * one more link, returning the new chain's id.
+     */
+    private int extendPending(
+            int channel,
+            Integer base,
+            Class<?> payloadType,
+            Function<Object, EdgeYield> link,
+            Function<Object, String> key) {
+        ChannelEntry entry = channels.get(channel);
+        if (entry.pluginSinkName != null || entry.kind == ChannelKind.PLUGIN_BOUND) {
+            errors.add(UnboundedOperativeConfigurationException.transformAfterTerminal(entry.name)
+                    .getMessage());
+        }
+        Function<Object, EdgeYield> priorTransform = null;
+        Function<Object, String> priorKey = null;
+        if (base != null) {
+            PendingEdge prior = pending.get(base);
+            prior.superseded = true;
+            priorTransform = prior.transform;
+            priorKey = prior.key;
+        }
+        // The key is evaluated on the final post-transform value, so a
+        // transform declared after it would hand it a value of a type it was
+        // never written against.
+        if (priorKey != null && link != null) {
+            errors.add(UnboundedOperativeConfigurationException.transformAfterKeyBy(entry.name)
+                    .getMessage());
+        }
+        if (priorKey != null && key != null) {
+            errors.add(UnboundedOperativeConfigurationException.duplicateKeyBy(entry.name)
+                    .getMessage());
+        }
+        PendingEdge chain = new PendingEdge();
+        chain.channel = channel;
+        chain.payloadType = payloadType;
+        chain.transform = compose(priorTransform, link);
+        chain.key = key != null ? key : priorKey;
+        pending.add(chain);
+        return pending.size() - 1;
+    }
+
+    /** Take a chain's closures and mark it closed; {@code null} for a bare handle. */
+    private PendingEdge closePending(Integer pendingChain) {
+        if (pendingChain == null) {
+            return null;
+        }
+        PendingEdge chain = pending.get(pendingChain);
+        chain.consumed = true;
+        return chain;
+    }
+
+    /**
+     * Compose two edge transforms into one. A drop short-circuits; a fan-out
+     * feeds each of its values through the next link and concatenates.
+     */
+    private static Function<Object, EdgeYield> compose(
+            Function<Object, EdgeYield> first, Function<Object, EdgeYield> second) {
+        if (first == null) {
+            return second;
+        }
+        if (second == null) {
+            return first;
+        }
+        return value -> {
+            EdgeYield yielded = first.apply(value);
+            List<Object> values = yielded.values();
+            if (values.isEmpty()) {
+                return EdgeYield.DROP;
+            }
+            if (values.size() == 1) {
+                return second.apply(values.get(0));
+            }
+            List<Object> out = new ArrayList<>(values.size());
+            for (Object v : values) {
+                out.addAll(second.apply(v).values());
+            }
+            return EdgeYield.many(out);
+        };
     }
 
     /**
@@ -522,37 +678,50 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
             int channelId,
             Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
             String nodeName,
-            Class<?> mergeInputType,
-            Function<Object, Object> map) {
+            Class<?> deliveredTypeOverride,
+            Integer pendingChain) {
         int procedureId = registerNode(procedureClass, nodeName);
         ProcedureEntry procedure = procedures.get(procedureId);
         ChannelEntry channel = channels.get(channelId);
-        // A merged subscription's payload is the mapping's result, not the
-        // channel's — that is exactly what the merge exists to allow.
-        Class<?> deliveredType = mergeInputType != null ? mergeInputType : channel.payloadType;
+        // The delivered payload is what the edge's transforms produce, not what
+        // the channel carries — a merge mapping and a `.map(...)` chain are the
+        // same thing here, and both reshape what the consumer observes.
+        Class<?> chainType = pendingChain == null ? null : pending.get(pendingChain).payloadType;
+        Class<?> declared = deliveredTypeOverride != null ? deliveredTypeOverride : chainType;
+        Class<?> deliveredType = declared != null ? declared : channel.payloadType;
         if (!deliveredType.equals(procedure.inputType)) {
-            String producedBy = mergeInputType != null
+            String producedBy = deliveredTypeOverride != null
                     ? "merge maps into"
-                    : channel.producer == null
-                            ? "payload type"
-                            : "producer procedure `" + procedures.get(channel.producer).name + "` outputType() =";
+                    : chainType != null
+                            ? "edge transforms produce"
+                            : channel.producer == null
+                                    ? "payload type"
+                                    : "producer procedure `" + procedures.get(channel.producer).name
+                                            + "` outputType() =";
             errors.add("channel `" + channel.name + "`: " + producedBy + " "
                     + describe(deliveredType)
                     + " does not match consumer procedure `" + procedure.name
                     + "` inputType() = " + describe(procedure.inputType));
         }
-        // Re-declaring an existing mapping-free edge is the fan-in / repeated
-        // `.into` case and stays a no-op. Re-declaring one where either side
-        // carries a merge mapping is refused rather than silently dropped — the
-        // edge would otherwise keep whichever mapping was declared first and
-        // deliver the wrong value forever.
+        // Re-declaring an existing bare edge is the fan-in / repeated `.into`
+        // case and stays a no-op. Re-declaring one where either side carries a
+        // transform or a key is refused rather than silently dropped — the edge
+        // would otherwise keep whichever closure was declared first and deliver
+        // the wrong value, to the wrong Entity, forever.
+        PendingEdge chain = closePending(pendingChain);
+        boolean declares = chain != null && (chain.transform != null || chain.key != null);
         Optional<ConsumerEdge> existing = channel.consumers.stream()
                 .filter(e -> e.procedure() == procedureId)
                 .findFirst();
         if (existing.isEmpty()) {
-            channel.consumers.add(new ConsumerEdge(procedureId, Optional.ofNullable(map)));
-        } else if (existing.get().map().isPresent() || map != null) {
-            errors.add(UnboundedOperativeConfigurationException.mergeSourceAlreadyWired(channel.name, procedure.name)
+            channel.consumers.add(new ConsumerEdge(
+                    procedureId,
+                    Optional.ofNullable(chain == null ? null : chain.transform),
+                    Optional.ofNullable(chain == null ? null : chain.key)));
+        } else if (existing.get().transform().isPresent()
+                || existing.get().key().isPresent()
+                || declares) {
+            errors.add(UnboundedOperativeConfigurationException.edgeAlreadyWired(channel.name, procedure.name)
                     .getMessage());
             return procedureId;
         }
@@ -652,7 +821,13 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass;
         List<String> entityKeys;
         boolean entitiesForOverridden;
-        boolean entityKeyOverridden;
+        /**
+         * Set during validation when some consumer edge into this node carries
+         * a key function — Entity mode is read off the WIRING now, not off the
+         * procedure.
+         */
+        boolean dynamic;
+
         Class<?> inputType;
         Class<?> outputType;
         Class<? extends com.flezha.sdk.state.Change> changeType;
@@ -671,56 +846,170 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
     // ---- Builder handle types ----------------------------------------------
 
-    private final class EntryChannelImpl<T> implements EntryChannel<T> {
-        private final int channelId;
-        private final String name;
+    /**
+     * The transform / keying / consumer-side-configuration surface, implemented
+     * ONCE. The entry handle and a procedure's output handle differ only in how
+     * they resolve their channel ({@link #siteChannelId}) — everything else is
+     * shared, which is what keeps the two from drifting.
+     */
+    private abstract class EdgeStreamImpl<T> implements EdgeStream<T>, EdgeSite {
+        /** The chain declared on this handle, {@code null} for a bare one. */
+        final Integer pending;
+        /** The payload type after this handle's transforms. */
+        final Class<?> payloadType;
 
-        EntryChannelImpl(int channelId, String name) {
-            this.channelId = channelId;
-            this.name = name;
+        EdgeStreamImpl(Integer pending, Class<?> payloadType) {
+            this.pending = pending;
+            this.payloadType = payloadType;
+        }
+
+        @Override
+        public Integer sitePending() {
+            return pending;
+        }
+
+        /** This handle with a new payload type and a new pending chain. */
+        abstract <U> EdgeStream<U> relink(Integer pending, Class<?> payloadType);
+
+        private <U> EdgeStream<U> link(
+                Class<?> newPayloadType, Function<Object, EdgeYield> transform, Function<Object, String> key) {
+            checkMutable();
+            int chain = extendPending(siteChannelId(), pending, newPayloadType, transform, key);
+            return relink(chain, newPayloadType);
+        }
+
+        @Override
+        @Nonnull
+        @SuppressWarnings("unchecked")
+        public <U> EdgeStream<U> map(@Nonnull Class<U> type, @Nonnull Function<T, U> mapper) {
+            return link(type, value -> EdgeYield.one(mapper.apply((T) value)), null);
+        }
+
+        @Override
+        @Nonnull
+        @SuppressWarnings("unchecked")
+        public <U> EdgeStream<U> flatMap(@Nonnull Class<U> type, @Nonnull Function<T, ? extends Iterable<U>> mapper) {
+            return link(
+                    type,
+                    value -> {
+                        List<Object> out = new ArrayList<>();
+                        mapper.apply((T) value).forEach(out::add);
+                        return EdgeYield.many(out);
+                    },
+                    null);
+        }
+
+        @Override
+        @Nonnull
+        @SuppressWarnings("unchecked")
+        public EdgeStream<T> filter(@Nonnull java.util.function.Predicate<T> predicate) {
+            return link(payloadType, value -> predicate.test((T) value) ? EdgeYield.one(value) : EdgeYield.DROP, null);
+        }
+
+        @Override
+        @Nonnull
+        @SuppressWarnings("unchecked")
+        public EdgeStream<T> keyBy(@Nonnull Function<T, String> key) {
+            return link(payloadType, null, value -> key.apply((T) value));
         }
 
         @Override
         @Nonnull
         public <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass) {
-            return wire(procedureClass, null);
+            return wireInto(procedureClass, null);
         }
 
         @Override
         @Nonnull
         public <O> Stream<O> into(
                 @Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, @Nonnull String nodeName) {
-            return wire(procedureClass, nodeName);
+            return wireInto(procedureClass, nodeName);
         }
 
-        private <O> Stream<O> wire(Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
+        <O> Stream<O> wireInto(Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
             checkMutable();
-            int node = wireConsumer(channelId, procedureClass, nodeName);
-            return new StreamImpl<>(node);
+            return new StreamImpl<>(wireConsumer(siteChannelId(), procedureClass, nodeName, pending));
         }
 
         @Override
         @Nonnull
-        public EntryChannel<T> onFull(@Nonnull OverflowPolicy policy) {
+        public EdgeStream<T> onFull(@Nonnull OverflowPolicy policy) {
             checkMutable();
-            channels.get(channelId).overflowPolicy = policy;
+            channels.get(siteChannelId()).overflowPolicy = policy;
             return this;
         }
 
         @Override
         @Nonnull
-        public EntryChannel<T> retryMax(int maxAttempts) {
+        public EdgeStream<T> retryMax(int maxAttempts) {
             checkMutable();
-            setRetryMax(channelId, maxAttempts);
+            setRetryMax(siteChannelId(), maxAttempts);
             return this;
         }
 
         @Override
         @Nonnull
-        public EntryChannel<T> retryBackoffMs(long baseMs) {
+        public EdgeStream<T> retryBackoffMs(long baseMs) {
             checkMutable();
-            channels.get(channelId).retryBackoffBaseMs = baseMs;
+            channels.get(siteChannelId()).retryBackoffBaseMs = baseMs;
             return this;
+        }
+    }
+
+    /**
+     * What a merge source resolves to: the channel it subscribes on and the
+     * chain declared on the handle — the erasure-side stand-in for Rust's
+     * {@code MergeSource::merge_site}.
+     */
+    private interface EdgeSite {
+        int siteChannelId();
+
+        Integer sitePending();
+    }
+
+    /**
+     * The producer side of the shared surface: its channel is the node's output
+     * channel, created lazily. {@link StreamImpl} holds one of these rather than
+     * extending it, because {@link Stream} must stay an abstract class (for
+     * {@code @SafeVarargs branch}) and Java has no second superclass to spend.
+     */
+    private final class NodeEdge<T> extends EdgeStreamImpl<T> {
+        private final int node;
+
+        NodeEdge(int node, Integer pending, Class<?> payloadType) {
+            super(pending, payloadType != null ? payloadType : procedures.get(node).outputType);
+            this.node = node;
+        }
+
+        @Override
+        public int siteChannelId() {
+            return ensureOutputChannel(node);
+        }
+
+        @Override
+        <U> EdgeStream<U> relink(Integer chain, Class<?> newPayloadType) {
+            return new NodeEdge<U>(node, chain, newPayloadType);
+        }
+    }
+
+    private final class EntryChannelImpl<T> extends EdgeStreamImpl<T> implements EntryChannel<T> {
+        private final int channelId;
+        private final String name;
+
+        EntryChannelImpl(int channelId, String name, Integer pending, Class<?> payloadType) {
+            super(pending, payloadType);
+            this.channelId = channelId;
+            this.name = name;
+        }
+
+        @Override
+        public int siteChannelId() {
+            return channelId;
+        }
+
+        @Override
+        <U> EdgeStream<U> relink(Integer pending, Class<?> payloadType) {
+            return new EntryChannelImpl<>(channelId, name, pending, payloadType);
         }
 
         @Override
@@ -742,6 +1031,13 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
          * as a duplicate — not also as a merge that declared too few.
          */
         private int declared;
+        /**
+         * The one key function a merge declares, applied to the merged value on
+         * every source's edge.
+         */
+        private Function<Object, String> key;
+
+        private boolean duplicateKey;
 
         MergeImpl(Class<I> mergedType) {
             this.mergedType = mergedType;
@@ -749,41 +1045,38 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public <S> Merge<I> from(@Nonnull EntryChannel<S> source, @Nonnull Function<S, I> map) {
-            return addSource(sourceChannelId(source), map);
-        }
-
-        @Override
-        @Nonnull
-        public <S> Merge<I> from(@Nonnull Stream<S> source, @Nonnull Function<S, I> map) {
-            return addSource(sourceChannelId(source), map);
-        }
-
-        /**
-         * The channel a merge source subscribes on, whichever handle kind it
-         * is — the erasure-side stand-in for Rust's {@code MergeSource} trait,
-         * which the two public {@code from} overloads exist to cover.
-         */
-        private int sourceChannelId(Object source) {
-            if (source instanceof UnboundedOperativeTopologyBuilder.EntryChannelImpl<?> entry) {
-                return entry.channelId;
-            }
-            if (source instanceof UnboundedOperativeTopologyBuilder.StreamImpl<?> stream) {
-                return stream.channelId();
-            }
-            throw new IllegalArgumentException("merge source was not declared on this operative's builder");
-        }
-
         @SuppressWarnings("unchecked")
-        private <S> Merge<I> addSource(int channelId, Function<S, I> map) {
+        public <S> Merge<I> from(@Nonnull EdgeStream<S> source, @Nonnull Function<S, I> map) {
             checkMutable();
+            if (!(source instanceof EdgeSite site)) {
+                throw new IllegalArgumentException("merge source was not declared on this operative's builder");
+            }
+            int channelId = site.siteChannelId();
             declared++;
             if (sources.stream().anyMatch(src -> src.channelId() == channelId)) {
                 errors.add(UnboundedOperativeConfigurationException.duplicateMergeSource(channels.get(channelId).name)
                         .getMessage());
                 return this;
             }
-            sources.add(new MergeSourceEntry(channelId, value -> map.apply((S) value)));
+            // The mapping composes AFTER any transform declared on the source
+            // handle, which is what makes a source transform see that source's
+            // own payload type — and what makes a key declared there trip the
+            // transform-after-key refusal, i.e. "keying is declared once, on
+            // the merge".
+            int chain = extendPending(
+                    channelId, site.sitePending(), mergedType, value -> EdgeYield.one(map.apply((S) value)), null);
+            sources.add(new MergeSourceEntry(channelId, chain));
+            return this;
+        }
+
+        @Override
+        @Nonnull
+        public Merge<I> keyBy(@Nonnull Function<I, String> key) {
+            checkMutable();
+            if (this.key != null) {
+                duplicateKey = true;
+            }
+            this.key = value -> key.apply(mergedType.cast(value));
             return this;
         }
 
@@ -812,25 +1105,48 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
                         UnboundedOperativeConfigurationException.mergeTooFewSources(procedures.get(node).name, declared)
                                 .getMessage());
             }
+            if (duplicateKey && !sources.isEmpty()) {
+                errors.add(UnboundedOperativeConfigurationException.duplicateKeyBy(
+                                channels.get(sources.get(0).channelId()).name)
+                        .getMessage());
+            }
             for (MergeSourceEntry source : sources) {
-                wireConsumer(source.channelId(), procedureClass, nodeName, mergedType, source.map());
+                // The key rides each source's chain, so it is evaluated on the
+                // mapped value.
+                Integer chain = key == null
+                        ? source.chain()
+                        : extendPending(source.channelId(), source.chain(), mergedType, null, key);
+                wireConsumer(source.channelId(), procedureClass, nodeName, mergedType, chain);
             }
             return new StreamImpl<>(node);
         }
     }
 
-    /** One declared merge source: the channel and the mapping off it. */
-    private record MergeSourceEntry(int channelId, Function<Object, Object> map) {}
+    /** One declared merge source: the channel and the chain ending in its mapping. */
+    private record MergeSourceEntry(int channelId, int chain) {}
 
     /**
      * The procedure's output stream handle: a node id into the enclosing
      * builder. The channel out of the node is created lazily on first use.
      */
-    private final class StreamImpl<T> extends Stream<T> {
+    private final class StreamImpl<T> extends Stream<T> implements EdgeSite {
         private final int node;
 
+        /**
+         * The shared surface, held rather than inherited: {@link Stream} is an
+         * abstract class (so {@code branch} can be {@code @SafeVarargs}) and
+         * Java has no second superclass to spend, so the producer-side handle
+         * forwards to the one implementation instead of re-stating it.
+         */
+        private final EdgeStreamImpl<T> edge;
+
         StreamImpl(int node) {
+            this(node, null, null);
+        }
+
+        StreamImpl(int node, Integer pending, Class<?> payloadType) {
             this.node = node;
+            this.edge = new NodeEdge<>(node, pending, payloadType);
         }
 
         private int channelId() {
@@ -838,22 +1154,50 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         }
 
         @Override
+        public int siteChannelId() {
+            return channelId();
+        }
+
+        @Override
+        public Integer sitePending() {
+            return edge.pending;
+        }
+
+        @Override
         @Nonnull
         public <O> Stream<O> into(@Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass) {
-            return wire(procedureClass, null);
+            return edge.into(procedureClass);
         }
 
         @Override
         @Nonnull
         public <O> Stream<O> into(
                 @Nonnull Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, @Nonnull String nodeName) {
-            return wire(procedureClass, nodeName);
+            return edge.into(procedureClass, nodeName);
         }
 
-        private <O> Stream<O> wire(Class<? extends Procedure<T, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
-            checkMutable();
-            int consumer = wireConsumer(channelId(), procedureClass, nodeName);
-            return new StreamImpl<>(consumer);
+        @Override
+        @Nonnull
+        public <U> EdgeStream<U> map(@Nonnull Class<U> type, @Nonnull Function<T, U> mapper) {
+            return edge.map(type, mapper);
+        }
+
+        @Override
+        @Nonnull
+        public <U> EdgeStream<U> flatMap(@Nonnull Class<U> type, @Nonnull Function<T, ? extends Iterable<U>> mapper) {
+            return edge.flatMap(type, mapper);
+        }
+
+        @Override
+        @Nonnull
+        public EdgeStream<T> filter(@Nonnull java.util.function.Predicate<T> predicate) {
+            return edge.filter(predicate);
+        }
+
+        @Override
+        @Nonnull
+        public EdgeStream<T> keyBy(@Nonnull Function<T, String> key) {
+            return edge.keyBy(key);
         }
 
         @Override
@@ -907,24 +1251,21 @@ public final class UnboundedOperativeTopologyBuilder implements ChannelBuilder {
         @Override
         @Nonnull
         public Stream<T> onFull(@Nonnull OverflowPolicy policy) {
-            checkMutable();
-            channels.get(channelId()).overflowPolicy = policy;
+            edge.onFull(policy);
             return this;
         }
 
         @Override
         @Nonnull
         public Stream<T> retryMax(int maxAttempts) {
-            checkMutable();
-            setRetryMax(channelId(), maxAttempts);
+            edge.retryMax(maxAttempts);
             return this;
         }
 
         @Override
         @Nonnull
         public Stream<T> retryBackoffMs(long baseMs) {
-            checkMutable();
-            channels.get(channelId()).retryBackoffBaseMs = baseMs;
+            edge.retryBackoffMs(baseMs);
             return this;
         }
 

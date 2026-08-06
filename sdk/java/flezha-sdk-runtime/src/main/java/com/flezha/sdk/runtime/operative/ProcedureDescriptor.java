@@ -21,7 +21,7 @@ public final class ProcedureDescriptor {
     private final Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass;
     private final List<String> entityKeys;
     private final boolean entitiesForOverridden;
-    private final boolean entityKeyOverridden;
+    private final boolean dynamic;
     private final OptionalInt inputChannelId;
     private final OptionalInt outputChannelId;
     private final Class<?> inputType;
@@ -42,7 +42,7 @@ public final class ProcedureDescriptor {
             @Nonnull Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
             @Nonnull List<String> entityKeys,
             boolean entitiesForOverridden,
-            boolean entityKeyOverridden,
+            boolean dynamic,
             @Nonnull OptionalInt inputChannelId,
             @Nonnull OptionalInt outputChannelId,
             @Nonnull Class<?> inputType,
@@ -63,7 +63,7 @@ public final class ProcedureDescriptor {
         this.procedureClass = procedureClass;
         this.entityKeys = List.copyOf(entityKeys);
         this.entitiesForOverridden = entitiesForOverridden;
-        this.entityKeyOverridden = entityKeyOverridden;
+        this.dynamic = dynamic;
         this.inputChannelId = inputChannelId;
         this.outputChannelId = outputChannelId;
         this.inputType = inputType;
@@ -141,8 +141,12 @@ public final class ProcedureDescriptor {
         return entityIdleTtl;
     }
 
-    public boolean entityKeyOverridden() {
-        return entityKeyOverridden;
+    /**
+     * Whether some consumer edge into this node declares a {@code keyBy} —
+     * dynamic Entity mode is read off the WIRING, not off the procedure.
+     */
+    public boolean dynamic() {
+        return dynamic;
     }
 
     @Nonnull

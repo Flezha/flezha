@@ -265,7 +265,7 @@ class MergedInputTest {
         UnboundedOperativeConfigurationException ex = assertThrows(
                 UnboundedOperativeConfigurationException.class,
                 () -> UnboundedOperativeClassRegistry.registerClass(RewiredMergeSourceOperative.class));
-        assertThat(ex.getMessage()).contains("MergeSourceAlreadyWired");
+        assertThat(ex.getMessage()).contains("EdgeAlreadyWired");
         assertThat(ex.getMessage()).contains("`data`");
         assertThat(ex.getMessage()).contains("merge_tuned_procedure");
     }
@@ -276,7 +276,7 @@ class MergedInputTest {
         UnboundedOperativeConfigurationException ex = assertThrows(
                 UnboundedOperativeConfigurationException.class,
                 () -> UnboundedOperativeClassRegistry.registerClass(PlainThenMergedOperative.class));
-        assertThat(ex.getMessage()).contains("MergeSourceAlreadyWired");
+        assertThat(ex.getMessage()).contains("EdgeAlreadyWired");
         assertThat(ex.getMessage()).contains("`data`");
     }
 

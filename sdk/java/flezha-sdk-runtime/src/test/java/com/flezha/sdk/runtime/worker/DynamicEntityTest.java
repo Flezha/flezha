@@ -20,6 +20,7 @@ import com.flezha.sdk.state.WallClock;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -76,9 +77,9 @@ class DynamicEntityTest {
         // No Entities exist up front — the keys are not declared anywhere.
         assertThat(instance.entities().get(0)).isEmpty();
 
-        instance.dispatcher(0).fanoutEntities("BTC:1", 100L);
-        instance.dispatcher(0).fanoutEntities("ETH:2", 100L);
-        instance.dispatcher(0).fanoutEntities("BTC:3", 100L);
+        instance.dispatcher(0).fanoutEntities("BTC:1", "BTC", 100L, OptionalLong.empty(), false);
+        instance.dispatcher(0).fanoutEntities("ETH:2", "ETH", 100L, OptionalLong.empty(), false);
+        instance.dispatcher(0).fanoutEntities("BTC:3", "BTC", 100L, OptionalLong.empty(), false);
 
         ctx.workerPool().shutdown();
         assertThat(ctx.workerPool().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
@@ -98,7 +99,7 @@ class DynamicEntityTest {
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, "no-ttl-inst", ctx, ctx.workerPool());
 
-        instance.dispatcher(0).fanoutEntities("BTC:1", 100L);
+        instance.dispatcher(0).fanoutEntities("BTC:1", "BTC", 100L, OptionalLong.empty(), false);
         ctx.workerPool().shutdown();
         assertThat(ctx.workerPool().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
 
@@ -122,7 +123,7 @@ class DynamicEntityTest {
         UnboundedOperativeInstance instance =
                 UnboundedOperativeInstance.create(topology, "ttl-inst", ctx, ctx.workerPool());
 
-        instance.dispatcher(0).fanoutEntities("BTC:1", 100L);
+        instance.dispatcher(0).fanoutEntities("BTC:1", "BTC", 100L, OptionalLong.empty(), false);
         ctx.workerPool().shutdown();
         assertThat(ctx.workerPool().awaitTermination(5, TimeUnit.SECONDS)).isTrue();
 
@@ -141,7 +142,7 @@ class DynamicEntityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(TtlProc.class);
+            c.input(String.class, "in").keyBy(input -> input.split(":")[0]).into(TtlProc.class);
         }
     }
 
@@ -168,7 +169,7 @@ class DynamicEntityTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(DynamicProc.class);
+            c.input(String.class, "in").keyBy(input -> input.split(":")[0]).into(DynamicProc.class);
         }
     }
 
@@ -204,16 +205,6 @@ class DynamicEntityTest {
         @Override
         public Class<Void> configType() {
             return Void.class;
-        }
-
-        @Override
-        public Optional<String> entityKey(String input) {
-            return Optional.of(input.split(":")[0]);
-        }
-
-        @Override
-        public boolean entityKeyOverridden() {
-            return true;
         }
 
         @Override

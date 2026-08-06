@@ -167,23 +167,6 @@ public interface Procedure<
     }
 
     /**
-     * Dynamic-mode reservation. v1 runtime rejects Procedure impls whose
-     * {@link #entityKeyOverridden()} returns {@code true} unless
-     * {@link #entityKeys()} is non-empty. Reserved for the future
-     * dynamic entity mode; v1 SHALL NOT call this
-     * on the hot path.
-     */
-    @Nonnull
-    default Optional<String> entityKey(@Nonnull Input input) {
-        return Optional.empty();
-    }
-
-    /** Sentinel for dynamic-mode-default detection. */
-    default boolean entityKeyOverridden() {
-        return false;
-    }
-
-    /**
      * Per-Entity mailbox capacity. The consumer Entity allocates one
      * bounded ring buffer of this size at operative startup. Static-mode Procedures
      * allocate one mailbox per declared entity key, all sharing the same

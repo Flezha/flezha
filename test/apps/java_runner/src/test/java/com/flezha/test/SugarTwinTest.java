@@ -68,15 +68,6 @@ class SugarTwinTest {
                 .contains("java_sugar_do_nothing", "java_sugar_store", "java_sugar_static_entity");
     }
 
-    @Test
-    void sugarDynamicGeneratesDynamicSurface() {
-        var s = new SugarDynamicProcedure();
-        assertThat(s.entityKeyOverridden()).isTrue();
-        assertThat(s.entityKeys()).isEmpty();
-        assertThat(s.entityKey("btc:1")).contains("btc");
-        assertThat(s.entityKey("drop")).isEmpty();
-    }
-
     /**
      * Cross-SDK conformance: the reference operative's associated-type mapping
      * matches the contract table (and the Rust expansion of the same operative).

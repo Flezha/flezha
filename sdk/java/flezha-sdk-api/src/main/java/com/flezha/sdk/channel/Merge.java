@@ -25,8 +25,9 @@ import javax.annotation.Nonnull;
  * is refused at registration ({@code MergeFromEntryChannel}); its sources are
  * the output streams of two or more of its procedures.
  *
- * <p>{@code entitiesFor} is evaluated on the <b>mapped</b> value, so per-source
- * entity mode is encoded in the sum type. Per-source FIFO order is preserved;
+ * <p>{@code entitiesFor} and the merge's own {@link #keyBy} are evaluated on
+ * the <b>mapped</b> value, so per-source entity mode is encoded in the sum
+ * type. Per-source FIFO order is preserved;
  * nothing is guaranteed across sources — correlate in the procedure's own state.
  *
  * <p>The mappings MUST be pure: they run on live delivery and again on WAL
@@ -56,18 +57,22 @@ import javax.annotation.Nonnull;
 public interface Merge<I> {
 
     /**
-     * Add an entry channel as a merge source, with the mapping that lifts its
-     * payload into the merged input.
+     * Add one source — an entry channel or another procedure's output stream —
+     * with the mapping that lifts its payload into the merged input. Any
+     * transform declared on the source handle runs <b>before</b> that mapping,
+     * on the source's own payload type.
      */
     @Nonnull
-    <S> Merge<I> from(@Nonnull EntryChannel<S> source, @Nonnull Function<S, I> map);
+    <S> Merge<I> from(@Nonnull EdgeStream<S> source, @Nonnull Function<S, I> map);
 
     /**
-     * Add another procedure's output stream as a merge source, with the
-     * mapping that lifts its payload into the merged input.
+     * Declare the Entity key for the merged procedure — once, on the merge,
+     * because by the time keying runs every source has been mapped into the
+     * one input type. Declaring one on a <i>source</i> handle instead is
+     * refused: the key would be handed the merged value, not that source's.
      */
     @Nonnull
-    <S> Merge<I> from(@Nonnull Stream<S> source, @Nonnull Function<S, I> map);
+    Merge<I> keyBy(@Nonnull Function<I, String> key);
 
     /**
      * Close the merge on its consumer and return <b>the consumer's</b> output

@@ -268,16 +268,18 @@ public final class BoundedSpec {
                     "bounded operative `" + factoryId + "` declares an entry channel with no consumer");
         }
         // The seed is a bare payload naming no channel — the spawn args, or a
-        // PER_INPUT loop's inbox item — so a merge mapping on an entry edge
-        // could never be selected and every entry channel past the first would
-        // be unreadable. Refuse the shape rather than accept one that cannot
-        // run (`multi-input-procedures`). Mirrors Rust's MergeFromEntryChannel.
+        // PER_INPUT loop's inbox item — and it bypasses the routing seam
+        // entirely, so no edge closure declared there could ever be selected:
+        // a merge mapping (every entry channel past the first would be
+        // unreadable) or a plain transform (it would silently never run).
+        // Refuse the shape rather than accept one that cannot run. Mirrors
+        // Rust's MergeFromEntryChannel.
         for (ChannelDescriptor ch : topology.channels()) {
             if (ch.kind() != ChannelKind.ENTRY) {
                 continue;
             }
             for (ConsumerEdge edge : ch.consumers()) {
-                if (edge.map().isPresent()) {
+                if (edge.transform().isPresent() || edge.key().isPresent()) {
                     throw new BoundedOperativeConfigurationException("MergeFromEntryChannel: bounded operative `"
                             + factoryId + "` merges entry channel `" + ch.name() + "` into procedure `"
                             + topology.procedures().get(edge.procedure()).name()
@@ -323,7 +325,7 @@ public final class BoundedSpec {
         }
         for (ProcedureDescriptor proc : topology.procedures()) {
             // Bounded has no dynamic-entities capability.
-            if (proc.entityKeyOverridden()) {
+            if (proc.dynamic()) {
                 throw new BoundedOperativeConfigurationException("bounded operative `" + factoryId
                         + "` declares a dynamic-entity procedure `" + proc.name()
                         + "`; bounded operatives do not support dynamic entity mode");

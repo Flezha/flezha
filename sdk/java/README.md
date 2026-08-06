@@ -324,7 +324,8 @@ with `ProcedureTestHarness.replayEquals()` (state) **and** `replayEmitsEqual()`
 | Checkpointed intervals | `c.checkpointAck()` + `ctx.checkpoint()` | The offset is withheld until the state is coherent, so a half-built window is never persisted. |
 | Late-input correction | `c.correctionWindow(ms)` | A late input rewinds the Entity and replays the slice in event-time order, repairing the earlier result. |
 | Dead-letter queue | `.retryMax(n)` on the channel | A poison payload is retried, then parked durably — never silently dropped. |
-| Dynamic entity mode | `entityKey(input)` | One Entity per key the stream actually carries, created on first sight. |
+| Edge transforms | `.map(T.class, f)` / `.filter(p)` / `.flatMap(T.class, f)` on the wiring | Reshape, drop or fan out values without a Procedure — no Entity, no mailbox, no dispatch hop. |
+| Dynamic entity mode | `.keyBy(f)` on the wiring | One Entity per key the stream actually carries, created on first sight — and visible where the graph is declared. |
 | Bounded transaction | `implements BoundedOperative` + `procedures(...)` | Resumable chain: a committed step is skipped on resume, not re-run. Failure unwinds via `compensate`. |
 | Durable loop / suspension | `loopMode()` + `wakeAfter()` | One durable iteration per message; parks when idle, holding its journal. |
 | Entity retry | `retryAttempts()` / `retryBackoff()` | Only the failing entity re-runs; a failed attempt's output is dropped, not double-emitted. |

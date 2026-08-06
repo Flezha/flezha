@@ -1774,7 +1774,12 @@ class BoundedKindTest {
 
         @Override
         public void procedures(ChannelBuilder c) {
-            c.input(String.class, "in").into(DynProc.class);
+            // The key rides an inter-procedure edge: a keyed ENTRY edge is
+            // refused earlier, by the bounded seed's own rule.
+            c.input(String.class, "in")
+                    .into(EchoProc.class)
+                    .keyBy(input -> input)
+                    .into(DynProc.class);
         }
     }
 
@@ -2000,16 +2005,6 @@ class BoundedKindTest {
         @Override
         public String name() {
             return "bounded_dyn_op";
-        }
-
-        @Override
-        public Optional<String> entityKey(String input) {
-            return Optional.of(input);
-        }
-
-        @Override
-        public boolean entityKeyOverridden() {
-            return true;
         }
 
         @Override
@@ -2501,7 +2496,7 @@ class BoundedKindTest {
 
         BoundedCompleted completion = cap.decodeCompletion();
         assertThat(completion.getStatus()).isEqualTo("error");
-        assertThat(completion.getError()).contains("merge mapping threw");
+        assertThat(completion.getError()).contains("edge transform threw");
         assertThat(completion.getError()).contains("merge mapping blew up");
         // The saga fires over exactly what was RECORDED as completed when the
         // abort began: the producer whose edge threw (B) and its parent (A),
@@ -2554,7 +2549,7 @@ class BoundedKindTest {
                 .isTrue();
         BoundedCompleted completion = cap.decodeCompletion();
         assertThat(completion.getStatus()).isEqualTo("error");
-        assertThat(completion.getError()).contains("merge mapping threw");
+        assertThat(completion.getError()).contains("edge transform threw");
         assertThat(completion.getError()).contains("merge mapping blew up");
         // The undo list is deliberately NOT asserted here. A resumed Java chain
         // does not seed its completed list from the proc-journal, so nothing is

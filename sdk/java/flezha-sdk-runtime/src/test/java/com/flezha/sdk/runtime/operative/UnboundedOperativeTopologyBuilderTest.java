@@ -77,16 +77,16 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Test
-        @DisplayName("a dynamic-mode-only declaration builds (Entities are created per key at dispatch)")
+        @DisplayName("a keyed edge builds a dynamic-mode consumer (Entities are created per key at dispatch)")
         void dynamicModeOnlyBuilds() {
-            // Formerly refused ("dynamic mode is reserved … and rejected in v1").
-            // Dynamic Procedures now register and allocate their Entities lazily,
-            // one per key the input stream carries.
+            // The keying is on the WIRING: the procedure declares nothing, and
+            // the edge's key function is what classifies it as dynamic.
             UnboundedOperativeTopology topology =
                     UnboundedOperativeTopologyBuilder.build(new DynamicModeOnlyUnboundedOperative());
             assertThat(topology.procedures()).hasSize(1);
-            assertThat(topology.procedures().get(0).entityKeyOverridden()).isTrue();
+            assertThat(topology.procedures().get(0).dynamic()).isTrue();
             assertThat(topology.procedures().get(0).entityKeys()).isEmpty();
+            assertThat(topology.channels().get(0).consumers().get(0).key()).isPresent();
         }
     }
 
@@ -355,16 +355,6 @@ class UnboundedOperativeTopologyBuilderTest {
         }
 
         @Override
-        public boolean entityKeyOverridden() {
-            return true;
-        }
-
-        @Override
-        public Optional<String> entityKey(String input) {
-            return Optional.of(input);
-        }
-
-        @Override
         public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
@@ -376,7 +366,7 @@ class UnboundedOperativeTopologyBuilderTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "input").into(DynamicModeOnlyProcedure.class);
+            c.input(String.class, "input").keyBy(input -> input).into(DynamicModeOnlyProcedure.class);
         }
     }
 
