@@ -88,6 +88,51 @@ public interface Procedure<
                         + " but does not override applyChange. Override Procedure.applyChange to implement state mutation.");
     }
 
+    /**
+     * Handle a timer this Procedure registered via
+     * {@link ProcedureCtx#timerAtEventTime} / {@link ProcedureCtx#timerAfter}.
+     * Receives the same {@link StateHandle} and {@link ProcedureCtx} as
+     * {@link #run}, so it may apply Changes, emit, and register further timers.
+     *
+     * <p>{@code firedAt} is the timestamp the timer was <b>scheduled at</b>,
+     * never the wall clock at which it actually fired: a processing-time timer
+     * set for T that fires at T+δ still reports T. Passing T+δ would make a
+     * replay observe a different value and break the determinism contract in
+     * exactly the way {@code System.currentTimeMillis()} inside {@code run}
+     * does. For the same reason {@link ProcedureCtx#now} equals {@code firedAt}
+     * inside this call, so a chained {@code ctx.timerAfter(..)} schedules off
+     * the timer that woke it.
+     *
+     * <p>A failure here climbs the input channel's retry ladder and parks to the
+     * dead-letter queue exactly as a failing {@code run} does. The fired timer's
+     * removal is durable either way, so a poison timer parks once instead of
+     * firing forever.
+     *
+     * <p>The default throws naming the Procedure: registering a timer without
+     * handling it is an authoring error, and registration is a runtime call, so
+     * no build-time check can catch it.
+     */
+    default void onTimer(
+            long firedAt,
+            @Nonnull com.flezha.sdk.state.TimerKind kind,
+            @Nonnull StateHandle<State, ChangeT> state,
+            @Nonnull ProcedureCtx ctx)
+            throws ProcedureException {
+        throw new UnsupportedOperationException("Procedure '" + name()
+                + "' registered a timer but does not override onTimer. Override"
+                + " Procedure.onTimer(firedAt, kind, state, ctx) to handle the firing.");
+    }
+
+    /**
+     * Per-Entity bound on pending timers. Registering past it throws
+     * {@link ProcedureException.TimerCapExceeded} naming this Procedure and the
+     * bound, rather than allocating — the same posture as the soft cap the
+     * dynamic-entity registry puts on Entities per Procedure.
+     */
+    default int maxTimersPerEntity() {
+        return 10_000;
+    }
+
     /** Optional coalesce key. Default: dispatches to the Change's own key. */
     @Nonnull
     default Optional<CoalesceKey> coalesceKey(@Nonnull ChangeT change) {

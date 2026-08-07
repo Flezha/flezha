@@ -23,13 +23,22 @@ public final class EntityStateRestore {
 
     private EntityStateRestore() {}
 
-    /** Rebuilt state plus the terminal (highest) WAL seq (0 when the change-log is empty). */
-    public record Rebuilt(@Nonnull Object state, long terminalSeq) {}
+    /**
+     * Rebuilt state, the Entity's pending timers, and the terminal (highest) WAL
+     * seq (0 when the change-log is empty). Timers come back through the same
+     * walk as the state: the pending set is folded state, not a store of its own.
+     */
+    public record Rebuilt(@Nonnull Object state, @Nonnull PendingTimers timers, long terminalSeq) {}
 
     /**
      * Rebuild an Entity's state from the shipped {@code snapshot} + {@code changeLog}.
      * {@code procedure} / {@code codec} / {@code entityKey} come from the entity
      * being restored.
+     *
+     * <p>One change log carries three record kinds, discriminated by the header's
+     * {@code format_id}: Kryo changes, effect records (whose enclosed change
+     * bytes fold identically, and whose {@code timers} mutate the pending set),
+     * and standalone timer-op records.
      */
     @Nonnull
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -44,11 +53,27 @@ public final class EntityStateRestore {
         if (snapshot.length > 0) {
             state = codec.deserialize(snapshot, Object.class);
         }
+        PendingTimers timers = new PendingTimers();
         List<ChangeLogReader.Record> records = ChangeLogReader.parse(changeLog, headerTemplate);
         for (ChangeLogReader.Record record : records) {
-            Change change = codec.deserialize(record.changeBytes(), Change.class);
-            procedure.applyChange(state, change);
+            switch (record.header()[9]) {
+                case HeaderTemplate.FORMAT_ID_EFFECT_RECORD -> {
+                    EffectRecord body = EffectRecord.decode(record.changeBytes());
+                    for (byte[] changeBytes : body.changes()) {
+                        procedure.applyChange(state, codec.deserialize(changeBytes, Change.class));
+                    }
+                    for (TimerOp op : body.timers()) {
+                        timers.apply(op);
+                    }
+                }
+                case HeaderTemplate.FORMAT_ID_TIMER_OPS -> {
+                    for (TimerOp op : TimerOp.decodeList(record.changeBytes())) {
+                        timers.apply(op);
+                    }
+                }
+                default -> procedure.applyChange(state, codec.deserialize(record.changeBytes(), Change.class));
+            }
         }
-        return new Rebuilt(state, ChangeLogReader.terminalSeq(records));
+        return new Rebuilt(state, timers, ChangeLogReader.terminalSeq(records));
     }
 }

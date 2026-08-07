@@ -1194,6 +1194,14 @@ version (BE u32), Procedure `SCHEMA_VERSION` (BE u32), `format_id` (1 =
 postcard for Rust, 4 = Kryo for Java), reserved bytes, and a CRC32
 over the body.
 
+Two further `format_id` values share this frame and this payload-id, so the
+controller stores, truncates and re-ships all three identically and decodes
+only what it needs: `2` marks an effect record (below), and `3` marks a
+**timer-ops record**, whose body is a postcard `Vec<TimerOp>` mutating the
+Entity's pending-timer set. The controller never decodes a timer-ops record —
+the pending set is SDK-owned state, exactly like the change bytes inside an
+effect record. See [`entity_timers.md`](entity_timers.md).
+
 Cross-language load is rejected loud-and-clear per umbrella Decision 9:
 a Java SDK reading a header with `sdk_lang = 1` raises
 `StateLoadException.sdkLangMismatch`; the same applies to the Rust SDK
@@ -1218,6 +1226,14 @@ EffectRecordBody {
     consumed_offset: Option<u64>,        -- flz.offset of the input
     dlq:             Option<DlqEntryBody>,
     event_time:      u64,                -- the invocation's declared clock value
+    timers:          Vec<TimerOp>,       -- this invocation's pending-timer
+                                            mutations; a firing's removal rides
+                                            HERE, beside the effects it produced
+}
+TimerOp {
+    kind:         u32,                   -- 0 = event time, 1 = processing time
+    scheduled_at: u64,                   -- absolute ms
+    register:     bool,                  -- false removes (a cancel, or a firing)
 }
 OutputRecord {
     channel:  String,
@@ -1240,6 +1256,12 @@ controller's event-time → seq → input-offset lookup a *read*: late-input
 correction resolves its rewind baseline against it, and `TimeTravel`'s
 `{:timestamp, ts}` target resolves per-record against it instead of
 approximating from the WAL file's mtime.
+
+`timers` is what makes a **firing** exactly-once under the tier: the Changes
+`on_timer` applied, the values it emitted and the removal of the timer that
+fired are one record, so a crash between "fired" and "durable" replays the whole
+thing. Such a record carries **no** `consumed_offset` — a firing consumes no
+input — and every controller reader already tolerates that.
 
 A tier-on dead-letter park rides the SAME atomic
 record as its consumed-offset advance — typically `{no state change, dlq

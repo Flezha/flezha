@@ -3,6 +3,9 @@ package com.flezha.sdk.runtime.entity;
 import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.runtime.state.EffectRecord;
+import com.flezha.sdk.runtime.state.FlusherEntry;
+import com.flezha.sdk.runtime.state.PendingTimers;
+import com.flezha.sdk.runtime.state.TimerOp;
 import com.flezha.sdk.runtime.worker.ProcedureDispatcher;
 import com.flezha.sdk.state.Change;
 import java.util.ArrayList;
@@ -44,6 +47,25 @@ public final class EntitySlot {
     private final AtomicLong changeSeq = new AtomicLong(0L);
     private final List<EffectRecord> effectBuffer = new ArrayList<>();
     private final List<byte[]> stagedChanges = new ArrayList<>();
+    private final List<TimerOp> timerOps = new ArrayList<>();
+    private final List<TimerOp> stagedTimers = new ArrayList<>();
+
+    /**
+     * Pending timers, folded from the TimerOp records in this Entity's own
+     * change log. Mutated only under {@link #stateLock()} — the same exclusion
+     * {@code run} holds — so a firing observes exactly the set the invocation
+     * that registered it left behind.
+     */
+    private final PendingTimers timers = new PendingTimers();
+
+    /**
+     * This Entity's flusher entry. Always built, but registered with the
+     * background flusher only when the Procedure is changeful — a Procedure with
+     * nothing to persist has no reason to be woken every linger tick. Timers
+     * give one something to persist anyway, so the dispatcher drains through
+     * this entry on the spot instead.
+     */
+    private volatile FlusherEntry flusherEntry;
 
     /** Max event time this Entity has ever observed. NEVER lowered — see {@link #observeEventTime}. */
     private final AtomicLong eventTimeHighWater = new AtomicLong(Long.MIN_VALUE);
@@ -153,6 +175,46 @@ public final class EntitySlot {
     @Nonnull
     public List<byte[]> stagedChanges() {
         return stagedChanges;
+    }
+
+    /** @see #flusherEntry */
+    @javax.annotation.Nullable
+    public FlusherEntry flusherEntry() {
+        return flusherEntry;
+    }
+
+    public void flusherEntry(@Nonnull FlusherEntry entry) {
+        this.flusherEntry = entry;
+    }
+
+    /**
+     * This Entity's pending timers. Read and mutated under
+     * {@link #stateLock()}; the compaction and restore paths take that lock too.
+     */
+    @Nonnull
+    public PendingTimers timers() {
+        return timers;
+    }
+
+    /**
+     * Timer ops awaiting their own {@code format_id = 3} record. The tier-off
+     * home for pending-set mutations: outside the effectively-once tier there is
+     * no effect record for them to ride.
+     */
+    @Nonnull
+    public List<TimerOp> timerOps() {
+        return timerOps;
+    }
+
+    /**
+     * {@link #stagedChanges()}'s counterpart for timer ops: an open checkpoint
+     * interval's registrations are as unacknowledged as the changes beside them,
+     * and shipping one alone would leave a timer pending for a state the restore
+     * never rebuilds.
+     */
+    @Nonnull
+    public List<TimerOp> stagedTimers() {
+        return stagedTimers;
     }
 
     /** Monotonic per-Entity sequence number applied to flushed Change frames. */
@@ -270,6 +332,7 @@ public final class EntitySlot {
     public void discardStagedInterval() {
         synchronized (changeBufferLock) {
             stagedChanges.clear();
+            stagedTimers.clear();
         }
     }
 

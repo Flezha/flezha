@@ -115,7 +115,17 @@ class EntityStateWireTest {
         List<Change> buffer = new ArrayList<>();
         AtomicLong seq = new AtomicLong(0L);
         FlusherEntry entry = new FlusherEntry(
-                lock, buffer, List.of(), true, seq, EntityStateSink::send, new HeaderTemplate(), pid, 1, codec);
+                lock,
+                buffer,
+                List.of(),
+                List.of(),
+                true,
+                seq,
+                EntityStateSink::send,
+                new HeaderTemplate(),
+                pid,
+                1,
+                codec);
 
         EntityFlusher flusher = EntityFlusher.getOrStart();
         flusher.register(pid, entry, AddChange.class);

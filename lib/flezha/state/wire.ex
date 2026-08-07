@@ -257,10 +257,16 @@ defmodule Flezha.State.Wire do
   consumed_offset: Option<u64>
   dlq:             Option<DlqEntryBody>    — {channel, error, attempts, payload}
   event_time:      u64                     — the invocation's declared clock value
+  timers:          Vec<TimerOp>            — {kind, scheduled_at, register}
   ```
 
   `event_time` is the extracted event time under an `EventTimeFrom` clock —
   the column a late-input correction resolves its baseline seq against.
+
+  `timers` carries the SDK's mutations of the Entity's pending-timer set. The
+  controller stores them and hands them back on restore without interpreting
+  them — the same property that makes `changes` SDK-owned bytes — but decoding
+  the field is what keeps the body's trailing-byte check honest.
 
   Postcard encodes `Vec`/`String` as a LEB128 varint length + contents,
   tuples/structs as concatenated fields, and `Option` as `0x00 | 0x01 ++ T`.
@@ -279,7 +285,14 @@ defmodule Flezha.State.Wire do
              ],
              consumed_offset: non_neg_integer() | nil,
              dlq: map() | nil,
-             event_time: non_neg_integer()
+             event_time: non_neg_integer(),
+             timers: [
+               %{
+                 kind: :event_time | :processing_time,
+                 scheduled_at: non_neg_integer(),
+                 register: boolean()
+               }
+             ]
            }}
           | {:error, term()}
   def decode_effect_body(body) when is_binary(body) do
@@ -287,14 +300,16 @@ defmodule Flezha.State.Wire do
          {:ok, outputs, rest} <- decode_vec(rest, &decode_output/1),
          {:ok, consumed_offset, rest} <- decode_option(rest, &decode_varint/1),
          {:ok, dlq, rest} <- decode_option(rest, &decode_dlq_entry/1),
-         {:ok, event_time, <<>>} <- decode_varint(rest) do
+         {:ok, event_time, rest} <- decode_varint(rest),
+         {:ok, timers, <<>>} <- decode_vec(rest, &decode_timer_op/1) do
       {:ok,
        %{
          changes: changes,
          outputs: outputs,
          consumed_offset: consumed_offset,
          dlq: dlq,
-         event_time: event_time
+         event_time: event_time,
+         timers: timers
        }}
     else
       {:ok, _, _trailing} -> {:error, :trailing_bytes}
@@ -318,7 +333,8 @@ defmodule Flezha.State.Wire do
           ],
           required(:consumed_offset) => non_neg_integer() | nil,
           optional(:dlq) => map() | nil,
-          optional(:event_time) => non_neg_integer()
+          optional(:event_time) => non_neg_integer(),
+          optional(:timers) => [map()]
         }) :: binary()
   def encode_effect_body(%{changes: changes, outputs: outputs, consumed_offset: offset} = body) do
     IO.iodata_to_binary([
@@ -326,7 +342,8 @@ defmodule Flezha.State.Wire do
       encode_vec(outputs, &encode_output/1),
       encode_option(offset, &encode_varint/1),
       encode_option(Map.get(body, :dlq), &encode_dlq_entry/1),
-      encode_varint(Map.get(body, :event_time, 0))
+      encode_varint(Map.get(body, :event_time, 0)),
+      encode_vec(Map.get(body, :timers, []), &encode_timer_op/1)
     ])
   end
 
@@ -461,6 +478,36 @@ defmodule Flezha.State.Wire do
       encode_option(payload, &encode_bytes/1)
     ]
   end
+
+  # One pending-timer mutation: `[kind varint][scheduled_at varint][register u8]`.
+  # The kind's ordinal order is the SDKs' `TimerKind`: 0 event time, 1 processing
+  # time.
+  defp decode_timer_op(bin) do
+    with {:ok, kind, rest} <- decode_varint(bin),
+         {:ok, scheduled_at, rest} <- decode_varint(rest),
+         <<register::8, rest::binary>> <- rest,
+         true <- register <= 1 do
+      {:ok, %{kind: timer_kind(kind), scheduled_at: scheduled_at, register: register == 1}, rest}
+    else
+      {:error, _} = err -> err
+      _ -> {:error, :bad_timer_op}
+    end
+  end
+
+  defp timer_kind(0), do: :event_time
+  defp timer_kind(1), do: :processing_time
+  defp timer_kind(other), do: {:unknown, other}
+
+  defp encode_timer_op(%{kind: kind, scheduled_at: scheduled_at, register: register}) do
+    [
+      encode_varint(timer_kind_ordinal(kind)),
+      encode_varint(scheduled_at),
+      <<if(register, do: 1, else: 0)>>
+    ]
+  end
+
+  defp timer_kind_ordinal(:event_time), do: 0
+  defp timer_kind_ordinal(:processing_time), do: 1
 
   defp decode_option(<<0, rest::binary>>, _item_fun), do: {:ok, nil, rest}
   defp decode_option(<<1, rest::binary>>, item_fun), do: item_fun.(rest)

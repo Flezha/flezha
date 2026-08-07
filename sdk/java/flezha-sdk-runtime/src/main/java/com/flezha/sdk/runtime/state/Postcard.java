@@ -80,6 +80,18 @@ public final class Postcard {
             return new String(bytes(), StandardCharsets.UTF_8);
         }
 
+        /** {@code bool} — one byte, {@code 0x00} false / {@code 0x01} true. */
+        public boolean bool() {
+            if (pos >= buf.length) {
+                throw new IllegalArgumentException("postcard: truncated bool");
+            }
+            int b = buf[pos++] & 0xFF;
+            if (b > 1) {
+                throw new IllegalArgumentException("postcard: bad bool byte " + b);
+            }
+            return b == 1;
+        }
+
         public boolean some() {
             if (pos >= buf.length) {
                 throw new IllegalArgumentException("postcard: truncated option tag");
@@ -138,6 +150,13 @@ public final class Postcard {
         @Nonnull
         public Writer string(@Nonnull String value) {
             return bytes(value.getBytes(StandardCharsets.UTF_8));
+        }
+
+        /** {@code bool} — one byte, {@code 0x00} false / {@code 0x01} true. */
+        @Nonnull
+        public Writer bool(boolean value) {
+            out.write(value ? 1 : 0);
+            return this;
         }
 
         /** {@code Option<u64>} — {@code 0x00}, or {@code 0x01} + varint. */

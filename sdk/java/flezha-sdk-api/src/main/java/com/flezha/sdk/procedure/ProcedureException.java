@@ -121,6 +121,47 @@ public class ProcedureException extends Exception {
     }
 
     /**
+     * Thrown when a Procedure whose declared Clock does not derive time from
+     * the input registers an event-time timer: without an event-time clock
+     * there is no high-water for it to fire against.
+     */
+    public static final class EventTimeTimerWithoutEventTimeClock extends ProcedureException {
+
+        public EventTimeTimerWithoutEventTimeClock(String procedure, String clock) {
+            super("procedure `" + procedure + "` declares clock `" + clock
+                    + "`, which does not derive time from the input; an event-time timer needs"
+                    + " an EventTimeFrom clock");
+        }
+    }
+
+    /**
+     * Thrown when an Entity already holds {@code maxTimersPerEntity()} pending
+     * timers and registers one more. A per-Entity timer set is author-controlled
+     * memory multiplied by an unbounded Entity count; the cap is what keeps a
+     * runaway registration a refusal rather than an OOM.
+     */
+    public static final class TimerCapExceeded extends ProcedureException {
+
+        public TimerCapExceeded(String procedure, int max) {
+            super("procedure `" + procedure + "` already holds its maximum of " + max
+                    + " pending timers for this Entity; cancel one or raise maxTimersPerEntity()");
+        }
+    }
+
+    /**
+     * Thrown where timers do not apply — a bounded operative's stage (it has its
+     * own wake model) and a {@code compensate} hook. The refusal is structural:
+     * those contexts carry no timer session at all.
+     */
+    public static final class TimersUnavailable extends ProcedureException {
+
+        public TimersUnavailable() {
+            super("timers are not available in this context; only an unbounded operative's `run` /"
+                    + " `onTimer` may register them");
+        }
+    }
+
+    /**
      * Thrown when a hybrid channel's user-supplied plugin serializer throws.
      * Consumer fan-out has already completed by the time this surfaces — the
      * inter-procedure consumers received the typed value; only the plugin-wire

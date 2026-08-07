@@ -134,6 +134,39 @@ no longer need it. Journaling an idempotent `set` proc means replay re-assigns t
 computed value rather than re-folding an input, so removing the guard does not
 change replay equality.
 
+### 3.4 The `on_timer` contract
+
+A Procedure can act because time passed, not only because an input arrived:
+`ctx.timer_at_event_time(ts)` / `ctx.timer_after(d)` (Rust) —
+`ctx.timerAtEventTime(ts)` / `ctx.timerAfter(d)` (Java) — register a per-Entity
+deadline, and `Procedure::on_timer` / `Procedure.onTimer` handles the firing
+with the same `StateHandle` and `ProcedureCtx` `run` gets. Registration returns
+the absolute timestamp it is scheduled at; that value is the handle a
+cancellation takes.
+
+Three rules make the callback part of the determinism contract rather than a
+hole in it:
+
+1. **`fired_at` is the SCHEDULED timestamp**, never the wall clock at firing. A
+   processing-time timer set for T that fires at T+δ still reports T; passing
+   T+δ would make a replay observe a different value, exactly as
+   `SystemTime::now()` inside `run` does. `ctx.now()` equals `fired_at` inside
+   the callback, so a chained `ctx.timer_after(..)` schedules off the timer that
+   woke it.
+2. **`timer_after(d)` is anchored on `ctx.now()`**, not on an ambient read —
+   which is what makes a replayed invocation register the same absolute
+   timestamp the live one did.
+3. **A registration made during a replay IS registered.** `ctx.spawn_bounded`
+   answers `SkippedOnReplay` because it is an external side effect that must not
+   happen twice; a timer is internal state, and skipping it on replay would
+   rebuild a pending set the live run never had. The two calls sit on the same
+   `ProcedureCtx`, so the contrast is the trap to remember.
+
+`on_timer`'s default panics (Rust) / throws (Java) naming the Procedure:
+registration is a runtime call, so a Procedure that registers a timer without
+handling it cannot be refused at build time. Full contract, including which kind
+to reach for, in [`entity_timers.md`](entity_timers.md).
+
 ## 4. Entity mode is an explicit opt-in, never inferred
 
 The mode changes lifecycle and on-disk state layout, so it is always an

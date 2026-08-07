@@ -920,6 +920,8 @@ public final class BoundedOperativeRunner {
                     // their durability contract is the proc-journal, not the
                     // effect record.
                     List.of(),
+                    // Nor timers: a bounded operative has its own wake model.
+                    List.of(),
                     persistenceEnabled,
                     new AtomicLong(0L),
                     EntityStateSink::send,

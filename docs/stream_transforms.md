@@ -164,3 +164,5 @@ implements. Producer-side methods (`named`, `codec`, `keyed`, `also_output`,
   cost model, and the Entity lifecycle the key selects.
 - `docs/sdk_authoring_contract.md` — how the attribute/annotation sugar maps
   onto the trait surface, now that it offers no key hook.
+- `docs/entity_timers.md` — the other half of a windowing library: a keyed
+  Entity that can also act on the passage of time.

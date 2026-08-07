@@ -115,6 +115,12 @@ public final class DlqPark {
                 .optionalBytes(entry.payload());
     }
 
+    /** Inverse of {@link #encodeDlqEntry}; used by the effect-record decoder on restore. */
+    @Nonnull
+    public static DlqEntry decodeDlqEntry(@Nonnull Postcard.Reader r) {
+        return new DlqEntry(r.string(), r.string(), Math.toIntExact(r.varint()), r.optionalBytes());
+    }
+
     /**
      * Ship a park frame and block until the controller acks it as durable.
      * Re-sends on the resend cadence forever — the entity must not advance

@@ -40,6 +40,15 @@ public final class HeaderTemplate {
      */
     public static final byte FORMAT_ID_EFFECT_RECORD = 2;
 
+    /**
+     * A timer-ops record: the body is a postcard {@code Vec<TimerOp>} mutating
+     * the Entity's pending-timer set. Rides the ordinary
+     * {@code entity_state_change} payload-id, so the controller stores and
+     * truncates it exactly as it does a change record and needs to know nothing
+     * about timers.
+     */
+    public static final byte FORMAT_ID_TIMER_OPS = 3;
+
     private static final int SDK_VERSION = parseVersion();
 
     /** Stamp a Kryo change/snapshot header. */
@@ -87,7 +96,10 @@ public final class HeaderTemplate {
         if (sdkLang != SDK_LANG_JAVA) {
             throw StateLoadException.sdkLangMismatch(sdkLang & 0xFF);
         }
-        if (formatId != FORMAT_ID_KRYO) {
+        // Three record kinds share one change log: Kryo changes, postcard effect
+        // records, and postcard timer ops. The caller branches on `formatId`;
+        // anything else is genuinely unreadable.
+        if (formatId != FORMAT_ID_KRYO && formatId != FORMAT_ID_EFFECT_RECORD && formatId != FORMAT_ID_TIMER_OPS) {
             throw StateLoadException.formatNotSupported(formatId & 0xFF);
         }
         return new Header(sdkLang, sdkVersion, schemaVersion, formatId, crc);

@@ -159,6 +159,7 @@ public final class EntityFlusher {
      */
     public static void flushEntry(FlusherEntry entry) {
         synchronized (entry.bufferLock()) {
+            flushTimerOps(entry);
             if (!entry.effects().isEmpty()) {
                 flushEffects(entry);
                 return;
@@ -217,6 +218,33 @@ public final class EntityFlusher {
             byte[] frame = buildEntityStateChangeFrame(entry.entityId(), seq, header, payload);
             ship(entry, EntityStateSink.PAYLOAD_ID_EFFECT_RECORD, frame);
         }
+    }
+
+    /**
+     * Drain the tier-off timer ops as ONE {@code format_id = 3} record. The
+     * controller stores and truncates it exactly as it does a change record and
+     * never decodes it — the pending set is SDK-owned state, like the change
+     * bytes inside an effect record.
+     *
+     * <p>Caller holds {@code bufferLock}.
+     */
+    private static void flushTimerOps(FlusherEntry entry) {
+        if (entry.timerOps().isEmpty()) {
+            return;
+        }
+        List<TimerOp> ops = new ArrayList<>(entry.timerOps());
+        entry.timerOps().clear();
+        if (!entry.persistenceEnabled()) {
+            return;
+        }
+        long seq = entry.changeSeq().getAndIncrement();
+        byte[] payload = TimerOp.encodeList(ops);
+        byte[] header =
+                entry.headerTemplate().stamp(entry.schemaVersion(), HeaderTemplate.FORMAT_ID_TIMER_OPS, payload);
+        ship(
+                entry,
+                EntityStateSink.PAYLOAD_ID_CHANGE,
+                buildEntityStateChangeFrame(entry.entityId(), seq, header, payload));
     }
 
     /** Debit the credit window, then send. Caller holds {@code bufferLock}. */

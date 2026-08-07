@@ -130,6 +130,7 @@ public final class RestoreInitStateHandler implements CommandHandler {
             EntityStateRestore.Rebuilt rebuilt =
                     EntityStateRestore.rebuild(procedure, codec, slot.entityKey(), snapshot, changeLog, headerTemplate);
             slot.state().set(rebuilt.state());
+            slot.timers().replaceWith(rebuilt.timers());
             slot.changeSeq().set(rebuilt.terminalSeq() + 1);
             // A restore re-seats the Entity on a different past. An open
             // checkpoint interval's changes were never acknowledged, so the
@@ -147,6 +148,15 @@ public final class RestoreInitStateHandler implements CommandHandler {
                                 + " re-forwards them from the durable input log",
                         discarded,
                         located.entityId().encoded());
+            }
+            // Pending timers came back with the state; the processing-time ones
+            // need an entry on the wheel again. Anything already past its
+            // deadline fires on the next pass, ascending. Event-time timers need
+            // nothing — the restored high-water is their trigger.
+            com.flezha.sdk.runtime.worker.ProcedureDispatcher dispatcher =
+                    located.instance().dispatcher(slot.procedureId());
+            if (dispatcher != null) {
+                dispatcher.rearmRestoredTimers(slot, 0L);
             }
             return rebuilt.terminalSeq();
         } finally {

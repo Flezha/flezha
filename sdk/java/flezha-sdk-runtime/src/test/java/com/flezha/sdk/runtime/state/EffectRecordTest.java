@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.state;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.flezha.sdk.state.TimerKind;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,7 +28,8 @@ class EffectRecordTest {
                 List.of(new EffectRecord.OutputRecord("out", "k", List.of(Map.entry("a", "b")), new byte[] {1, 2})),
                 OptionalLong.of(4711),
                 Optional.empty(),
-                1_700_000_000_123L);
+                1_700_000_000_123L,
+                List.of(TimerOp.register(TimerKind.PROCESSING_TIME, 31_000)));
 
         assertThat(body.encode())
                 .containsExactly(
@@ -37,7 +39,8 @@ class EffectRecordTest {
                         0x02, 0x01, 0x02, // payload [1,2]
                         0x01, 0xE7, 0x24, // Some(4711)
                         0x00, // dlq: None
-                        0xFB, 0xD0, 0x95, 0xFF, 0xBC, 0x31); // event_time: 1700000000123
+                        0xFB, 0xD0, 0x95, 0xFF, 0xBC, 0x31, // event_time: 1700000000123
+                        0x01, 0x01, 0x98, 0xF2, 0x01, 0x01); // timers: 1 × register ProcessingTime @ 31000
     }
 
     @Test
@@ -62,6 +65,7 @@ class EffectRecordTest {
         assertThat(r.varint()).isEqualTo(3);
         assertThat(r.optionalBytes()).get().isEqualTo(new byte[] {7});
         assertThat(r.varint()).isEqualTo(42);
+        assertThat(r.vec(TimerOp::decode)).isEmpty(); // timers
         assertThat(r.exhausted()).isTrue();
     }
 }

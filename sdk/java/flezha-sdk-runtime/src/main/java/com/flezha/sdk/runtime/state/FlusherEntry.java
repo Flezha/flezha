@@ -23,6 +23,11 @@ import javax.annotation.Nonnull;
  *       effect record would take its outputs and its consumed offset with it.
  * </ul>
  *
+ * <p>{@code timerOps} is drained beside whichever of the two is in play: timer
+ * ops fold into the pending-timer set, never into the State, so their order
+ * relative to the change records is immaterial — only their order among
+ * themselves is.
+ *
  * <p>{@code sendFrame} takes the payload-id because those two paths ship under
  * different ones.
  *
@@ -35,6 +40,7 @@ public record FlusherEntry(
         @Nonnull Object bufferLock,
         @Nonnull List<Change> buffer,
         @Nonnull List<EffectRecord> effects,
+        @Nonnull List<TimerOp> timerOps,
         boolean persistenceEnabled,
         @Nonnull AtomicLong changeSeq,
         @Nonnull BiFunction<String, byte[], Boolean> sendFrame,

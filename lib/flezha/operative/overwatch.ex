@@ -560,19 +560,23 @@ defmodule Flezha.Operative.Overwatch do
 
   defp await_restore_init_state(runner_id, entity_id) do
     with {:ok, command} <- restore_command(entity_id) do
-      GenServer.call(
-        Identificator.control_unit(runner_id),
-        {:send_control, command},
-        restore_await_timeout_ms()
-      )
-    end
-  catch
-    :exit, reason ->
-      Logger.warning(
-        "[Overwatch] awaited restore failed entity=#{inspect(entity_id)}: #{inspect(reason)}"
-      )
+      # The ONE awaited-control-round-trip seam; it owns the reply-ref
+      # bookkeeping and the timeout, so a caller must never hand the
+      # ControlUnit a raw `{:send_control, _}` of its own shape.
+      case ControlUnit.send_control_await(runner_id, command,
+             timeout: restore_await_timeout_ms()
+           ) do
+        {:error, reason} = err ->
+          Logger.warning(
+            "[Overwatch] awaited restore failed entity=#{inspect(entity_id)}: #{inspect(reason)}"
+          )
 
-      {:error, reason}
+          err
+
+        ok ->
+          ok
+      end
+    end
   end
 
   defp restore_await_timeout_ms(),

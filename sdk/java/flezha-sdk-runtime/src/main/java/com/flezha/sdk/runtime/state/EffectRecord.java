@@ -23,6 +23,12 @@ import javax.annotation.Nonnull;
  * where this SDK folds them back through {@code applyChange}. Rust puts its own
  * postcard change bytes in the same slot for the same reason.
  *
+ * <p>{@code timers} carries the invocation's mutations of the Entity's
+ * pending-timer set. A firing's removal rides here beside the Changes and
+ * outputs it produced, which is what makes the firing exactly-once under the
+ * tier: a crash between "fired" and "durable" replays the whole thing, because
+ * neither the effects nor the removal landed.
+ *
  * <p>Field order is the wire contract; it must match the Rust
  * {@code EffectRecordBody} exactly, and is pinned by
  * {@code EffectRecordTest}.
@@ -32,7 +38,18 @@ public record EffectRecord(
         @Nonnull List<OutputRecord> outputs,
         @Nonnull OptionalLong consumedOffset,
         @Nonnull Optional<DlqPark.DlqEntry> dlq,
-        long eventTime) {
+        long eventTime,
+        @Nonnull List<TimerOp> timers) {
+
+    /** An effect record with no timer ops — the shape every non-timer invocation produces. */
+    public EffectRecord(
+            @Nonnull List<byte[]> changes,
+            @Nonnull List<OutputRecord> outputs,
+            @Nonnull OptionalLong consumedOffset,
+            @Nonnull Optional<DlqPark.DlqEntry> dlq,
+            long eventTime) {
+        this(changes, outputs, consumedOffset, dlq, eventTime, List.of());
+    }
 
     /**
      * One plugin output captured inside an effect record. {@code metadata}
@@ -58,6 +75,26 @@ public record EffectRecord(
         w.optionalVarint(consumedOffset);
         w.optional(dlq, DlqPark::encodeDlqEntry);
         w.varint(eventTime);
+        w.vec(timers, TimerOp::encode);
         return w.toBytes();
+    }
+
+    /**
+     * Inverse of {@link #encode}. A restore folds an effect record's change
+     * bytes and its timer ops exactly as it folds the standalone records of each
+     * kind, so the change log stays readable however the tier was configured
+     * over the Entity's life.
+     */
+    @Nonnull
+    public static EffectRecord decode(@Nonnull byte[] body) {
+        Postcard.Reader r = new Postcard.Reader(body);
+        List<byte[]> changes = r.vec(Postcard.Reader::bytes);
+        List<OutputRecord> outputs = r.vec(reader -> new OutputRecord(
+                reader.string(), reader.string(), reader.vec(m -> Map.entry(m.string(), m.string())), reader.bytes()));
+        OptionalLong consumedOffset = r.optionalVarint();
+        Optional<DlqPark.DlqEntry> dlq = r.some() ? Optional.of(DlqPark.decodeDlqEntry(r)) : Optional.empty();
+        long eventTime = r.varint();
+        List<TimerOp> timers = r.vec(TimerOp::decode);
+        return new EffectRecord(changes, outputs, consumedOffset, dlq, eventTime, timers);
     }
 }

@@ -69,7 +69,8 @@ defmodule Flezha.State.WireTest do
     # the SDK side by flusher::tests::
     # effect_record_body_postcard_bytes_are_the_cross_language_fixture.
     @rust_fixture <<0x01, 0x01, 0xAA, 0x01, 0x03, ?o, ?u, ?t, 0x01, ?k, 0x01, 0x01, ?a, 0x01, ?b,
-                    0x02, 0x01, 0x02, 0x01, 0xE7, 0x24, 0x00, 0xFB, 0xD0, 0x95, 0xFF, 0xBC, 0x31>>
+                    0x02, 0x01, 0x02, 0x01, 0xE7, 0x24, 0x00, 0xFB, 0xD0, 0x95, 0xFF, 0xBC, 0x31,
+                    0x01, 0x01, 0x98, 0xF2, 0x01, 0x01>>
 
     test "decodes the Rust SDK's postcard bytes" do
       assert {:ok, body} = Wire.decode_effect_body(@rust_fixture)
@@ -80,6 +81,10 @@ defmodule Flezha.State.WireTest do
 
       assert [%{channel: "out", key: "k", metadata: [{"a", "b"}], payload: <<1, 2>>}] =
                body.outputs
+
+      assert body.timers == [
+               %{kind: :processing_time, scheduled_at: 31_000, register: true}
+             ]
     end
 
     test "encode is the byte-exact inverse" do
@@ -88,9 +93,33 @@ defmodule Flezha.State.WireTest do
     end
 
     test "round-trips empty and None fields" do
-      body = %{changes: [], outputs: [], consumed_offset: nil, dlq: nil, event_time: 0}
+      body = %{
+        changes: [],
+        outputs: [],
+        consumed_offset: nil,
+        dlq: nil,
+        event_time: 0,
+        timers: []
+      }
+
       encoded = Wire.encode_effect_body(body)
       assert {:ok, ^body} = Wire.decode_effect_body(encoded)
+    end
+
+    test "round-trips a firing's pending-timer mutations" do
+      body = %{
+        changes: [<<7>>],
+        outputs: [],
+        consumed_offset: nil,
+        dlq: nil,
+        event_time: 1_720_000_000_000,
+        timers: [
+          %{kind: :processing_time, scheduled_at: 1_720_000_060_000, register: false},
+          %{kind: :event_time, scheduled_at: 1_720_000_120_000, register: true}
+        ]
+      }
+
+      assert {:ok, ^body} = body |> Wire.encode_effect_body() |> Wire.decode_effect_body()
     end
 
     test "round-trips a dead-letter park entry (atomic tier-on park)" do
@@ -99,7 +128,8 @@ defmodule Flezha.State.WireTest do
         outputs: [],
         consumed_offset: 99,
         dlq: %{channel: "in", error: "boom", attempts: 3, payload: <<1, 2>>},
-        event_time: 1_720_000_000_000
+        event_time: 1_720_000_000_000,
+        timers: []
       }
 
       assert {:ok, ^body} = body |> Wire.encode_effect_body() |> Wire.decode_effect_body()
@@ -122,7 +152,8 @@ defmodule Flezha.State.WireTest do
         ],
         consumed_offset: 1_000_000_007,
         dlq: nil,
-        event_time: 1_720_000_000_000
+        event_time: 1_720_000_000_000,
+        timers: []
       }
 
       assert {:ok, ^body} = body |> Wire.encode_effect_body() |> Wire.decode_effect_body()

@@ -59,6 +59,21 @@ public final class UnboundedOperativeInstance implements Operative {
     /** {@code "<procedure>/<key>"} of reaper-evicted Entities, newest last. */
     private final LinkedHashSet<String> evicted = new LinkedHashSet<>();
 
+    /**
+     * Processing-time timer wheel, created on the first registration. An
+     * Operative that never uses one never pays for a thread — which is also why
+     * {@link #timerWheelIfStarted()} exists for the removal-only callers.
+     */
+    private volatile com.flezha.sdk.runtime.entity.TimerWheel timerWheel;
+
+    /**
+     * Primary stream a timer firing's plugin emits ride, remembered from the
+     * last input this instance dispatched. A firing has no originating frame to
+     * inherit a connection from, and the stream pairing is per-connection, not
+     * per-input.
+     */
+    private volatile long primaryStreamForTimers;
+
     private UnboundedOperativeInstance(
             UnboundedOperativeTopology topology,
             String instanceId,
@@ -247,6 +262,13 @@ public final class UnboundedOperativeInstance implements Operative {
                                     new byte[16],
                                     new byte[0]));
                     keyMap.remove(e.getKey());
+                    // Eviction is destructive and a recreate cold-starts, so the
+                    // Entity's timers go with its state. Dropping them here
+                    // releases the wheel memory now, not at each deadline.
+                    com.flezha.sdk.runtime.entity.TimerWheel wheel = timerWheelIfStarted();
+                    if (wheel != null) {
+                        wheel.discardEntity(procedureId, e.getKey());
+                    }
                     noteEvicted(desc.name(), e.getKey());
                     evicted++;
                 }
@@ -299,7 +321,8 @@ public final class UnboundedOperativeInstance implements Operative {
     /**
      * Register a changeful Entity with the per-process flusher so its
      * recorded Changes are framed and shipped to the controller's per-Entity
-     * WAL. {@code NoChange} Procedures are skipped (the flusher no-ops them too).
+     * WAL. {@code NoChange} Procedures get an entry but no background
+     * registration — nothing would ever be there to drain until a timer op is.
      * The identity is keyed by the operative INSTANCE id so two operatives of the same
      * factory never collide on one Entity's WAL.
      */
@@ -312,14 +335,12 @@ public final class UnboundedOperativeInstance implements Operative {
             KryoCodec codec,
             HeaderTemplate headerTemplate,
             BiFunction<String, byte[], Boolean> sendFrame) {
-        if (!slot.changeful()) {
-            return;
-        }
         EntityId entityId = EntityId.of(instanceId, desc.name(), slot.entityKey());
         FlusherEntry entry = new FlusherEntry(
                 slot.changeBufferLock(),
                 slot.changeBuffer(),
                 slot.effectBuffer(),
+                slot.timerOps(),
                 persistenceEnabled,
                 slot.changeSeq(),
                 sendFrame,
@@ -327,7 +348,13 @@ public final class UnboundedOperativeInstance implements Operative {
                 entityId,
                 procedureInstance.schemaVersion(),
                 codec);
-        EntityFlusher.getOrStart().register(entityId, entry, desc.changeType());
+        // Held on the slot either way: a `NoChange` Procedure that registers a
+        // timer still has a record to ship, and drains through this entry
+        // directly rather than joining the background pass.
+        slot.flusherEntry(entry);
+        if (slot.changeful()) {
+            EntityFlusher.getOrStart().register(entityId, entry, desc.changeType());
+        }
     }
 
     /** Whether a Procedure persists state (declares a non-{@code NoChange} Change). */
@@ -395,6 +422,59 @@ public final class UnboundedOperativeInstance implements Operative {
                 eldest.next();
                 eldest.remove();
             }
+        }
+    }
+
+    /**
+     * This instance's processing-time timer wheel, starting its thread on the
+     * first call. One wheel per Operative: it keys entries by
+     * {@code (procedure, entityKey, scheduledAt)}, so one thread serves every
+     * Entity the instance owns.
+     */
+    @Nonnull
+    public com.flezha.sdk.runtime.entity.TimerWheel timerWheel() {
+        com.flezha.sdk.runtime.entity.TimerWheel existing = timerWheel;
+        if (existing != null) {
+            return existing;
+        }
+        synchronized (this) {
+            if (timerWheel == null) {
+                com.flezha.sdk.runtime.entity.TimerWheel wheel =
+                        new com.flezha.sdk.runtime.entity.TimerWheel((slot, scheduledAt) -> {
+                            ProcedureDispatcher d = dispatcher(slot.procedureId());
+                            if (d != null) {
+                                d.deliverTimer(slot, scheduledAt, primaryStreamForTimers);
+                            }
+                        });
+                wheel.start();
+                timerWheel = wheel;
+            }
+            return timerWheel;
+        }
+    }
+
+    /**
+     * The wheel if one exists. For callers that only ever REMOVE entries —
+     * creating a wheel (and its thread) to drop timers that cannot exist would
+     * be backwards.
+     */
+    @javax.annotation.Nullable
+    public com.flezha.sdk.runtime.entity.TimerWheel timerWheelIfStarted() {
+        return timerWheel;
+    }
+
+    /** Stop the wheel thread. Called when the instance is torn down. */
+    public void stopTimerWheel() {
+        com.flezha.sdk.runtime.entity.TimerWheel wheel = timerWheel;
+        if (wheel != null) {
+            wheel.stop();
+        }
+    }
+
+    /** Remember the connection a firing's emits should leave on. */
+    public void notePrimaryStream(long primaryStreamId) {
+        if (primaryStreamId != 0L) {
+            primaryStreamForTimers = primaryStreamId;
         }
     }
 

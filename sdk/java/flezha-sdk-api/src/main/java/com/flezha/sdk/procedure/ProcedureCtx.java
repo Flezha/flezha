@@ -1,5 +1,6 @@
 package com.flezha.sdk.procedure;
 
+import java.time.Duration;
 import java.util.Map;
 import javax.annotation.Nonnull;
 
@@ -80,6 +81,10 @@ public interface ProcedureCtx {
      * crash-resume or a late-input correction re-running this invocation —
      * issues no request and answers {@link SpawnOutcome#SKIPPED_ON_REPLAY}, so a
      * replay never doubles the workers a run created.
+     *
+     * <p>The timer calls on this same context behave the OPPOSITE way and
+     * deliberately so: a timer is internal state, so a replay registers it,
+     * where skipping would rebuild a pending set the live run never had.
      */
     @Nonnull
     default SpawnHandle spawnBounded(
@@ -97,6 +102,55 @@ public interface ProcedureCtx {
      */
     default boolean replaying() {
         return false;
+    }
+
+    /**
+     * Register an <b>event-time</b> timer at an absolute timestamp, returning
+     * that timestamp. It fires when this Entity's event-time high-water reaches
+     * it — so an Entity that stops receiving input never fires one, however much
+     * wall-clock time passes. That is inherent to event time;
+     * {@link #timerAfter} is the answer to "nothing has arrived".
+     *
+     * <p>Refused with
+     * {@link ProcedureException.EventTimeTimerWithoutEventTimeClock} unless the
+     * Procedure declares {@code EventTimeFrom} as its Clock.
+     *
+     * <p>Registering the same timestamp twice is idempotent — pending timers are
+     * a set. Handle the firing in {@link Procedure#onTimer}.
+     */
+    default long timerAtEventTime(long scheduledAt) throws ProcedureException {
+        throw new ProcedureException.TimersUnavailable();
+    }
+
+    /**
+     * Register a <b>processing-time</b> timer {@code delay} after {@link #now},
+     * returning the absolute timestamp it is scheduled at.
+     *
+     * <p>The anchor is {@code ctx.now()} — the declared Clock — not an ambient
+     * read, which is what makes a replayed invocation register the same absolute
+     * timestamp the live one did. Under an {@code EventTimeFrom} clock the
+     * anchor is therefore the input's event time: a stream that is caught up
+     * schedules the same instant a wall clock would, and one replaying history
+     * schedules a past instant, which fires at once.
+     */
+    default long timerAfter(@Nonnull Duration delay) throws ProcedureException {
+        throw new ProcedureException.TimersUnavailable();
+    }
+
+    /**
+     * Cancel a pending event-time timer by the timestamp
+     * {@link #timerAtEventTime} returned. {@code false} if none was pending.
+     */
+    default boolean cancelEventTimeTimer(long scheduledAt) throws ProcedureException {
+        throw new ProcedureException.TimersUnavailable();
+    }
+
+    /**
+     * Cancel a pending processing-time timer by the timestamp
+     * {@link #timerAfter} returned. {@code false} if none was pending.
+     */
+    default boolean cancelProcessingTimeTimer(long scheduledAt) throws ProcedureException {
+        throw new ProcedureException.TimersUnavailable();
     }
 
     /**

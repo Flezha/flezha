@@ -88,6 +88,18 @@ public final class CompactEntityHandler implements CommandHandler {
             long changeSeq = slot.changeSeq().get();
             long snapshotSeq = Math.max(0L, changeSeq - 1L);
 
+            // The snapshot body is the State alone, so the timer ops the coming
+            // truncation would delete are re-stated as a full set AFTER the seq
+            // is read — landing at snapshotSeq + 1, which truncate_up_to keeps.
+            // A crash between the two leaves an untruncated log that still holds
+            // the originals, so neither order can lose a timer.
+            if (!slot.timers().isEmpty() && slot.flusherEntry() != null) {
+                synchronized (slot.changeBufferLock()) {
+                    slot.timerOps().addAll(slot.timers().asRegisterOps());
+                }
+                EntityFlusher.flushEntry(slot.flusherEntry());
+            }
+
             byte[] body = codec.serialize(slot.state().get());
             byte[] header = headerTemplate.stamp(schemaVersion, body);
             byte[] frame = EntityFlusher.buildEntityStateChangeFrame(entityId, snapshotSeq, header, body);

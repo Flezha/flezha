@@ -8,6 +8,7 @@ import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.procedure.StableId;
 import com.flezha.sdk.runtime.RunnerContext;
 import com.flezha.sdk.runtime.entity.EntitySlot;
+import com.flezha.sdk.runtime.entity.TimerWheel;
 import com.flezha.sdk.runtime.framing.FrameEncoder;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
@@ -20,9 +21,14 @@ import com.flezha.sdk.runtime.state.DlqPark;
 import com.flezha.sdk.runtime.state.EffectRecord;
 import com.flezha.sdk.runtime.state.EntityId;
 import com.flezha.sdk.runtime.state.KryoCodec;
+import com.flezha.sdk.runtime.state.TimerOp;
+import com.flezha.sdk.runtime.state.TimerPolicy;
+import com.flezha.sdk.runtime.state.TimerSession;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.StateHandle;
+import com.flezha.sdk.state.TimerKind;
 import java.lang.ref.WeakReference;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -102,6 +108,16 @@ public final class ProcedureDispatcher {
     /** Declared late-input correction window; 0 = corrections are off. */
     private final long correctionWindowMs;
 
+    /**
+     * Whether the declared Clock derives time from the input. It gates both the
+     * event-time high-water and the event-time timers that fire against it — a
+     * wall-clock or logical value folded into that mark would be a lie.
+     */
+    private final boolean eventTimeClock;
+
+    /** What this Procedure declares about its timers, resolved once. */
+    private final TimerPolicy timerPolicy;
+
     private final BeyondWindowPolicy beyondWindowPolicy;
 
     /** Serializes Changes into an effect record's opaque change bytes (tier only). */
@@ -145,6 +161,9 @@ public final class ProcedureDispatcher {
         this.tier = topology.effectivelyOnce();
         this.checkpointAck = topology.checkpointAck();
         this.correctionWindowMs = topology.correctionWindowMs();
+        this.eventTimeClock = procedureDescriptor.clockType() == com.flezha.sdk.state.EventTimeFrom.class;
+        this.timerPolicy = TimerPolicy.of(
+                routingInstance.maxTimersPerEntity(), procedureDescriptor.name(), procedureDescriptor.clockType());
         this.beyondWindowPolicy = topology.beyondWindowPolicy();
         this.codec = new KryoCodec(routingInstance.kryoTypes());
     }
@@ -323,8 +342,17 @@ public final class ProcedureDispatcher {
             while (true) {
                 Object item = slot.mailbox().pop();
                 while (item != null) {
-                    InputEnvelope env = (InputEnvelope) item;
-                    runOnce(slot, env.input, env.primaryStreamId, env.offset, env.replay);
+                    slot.stateLock().lock();
+                    try {
+                        if (item instanceof TimerFire fire) {
+                            fireProcessingTimeTimer(slot, fire);
+                        } else {
+                            InputEnvelope env = (InputEnvelope) item;
+                            runOnce(slot, env.input, env.primaryStreamId, env.offset, env.replay);
+                        }
+                    } finally {
+                        slot.stateLock().unlock();
+                    }
                     item = slot.mailbox().pop();
                 }
                 slot.mailbox().releaseInflight();
@@ -362,9 +390,55 @@ public final class ProcedureDispatcher {
         return System.currentTimeMillis();
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
+    /** Caller holds {@link EntitySlot#stateLock()}. */
     private void runOnce(EntitySlot slot, Object input, long primaryStreamId, OptionalLong offset, boolean replay) {
-        slot.stateLock().lock();
+        long clockValue = evaluateClock(input, slot.changeSeq().get());
+        // Event-time timers fire on the high-water this input just advanced,
+        // ascending, and BEFORE the input itself — otherwise a window would
+        // close after the record that belongs to the next one.
+        if (eventTimeClock) {
+            long highWater = slot.observeEventTime(clockValue);
+            for (long firedAt : slot.timers().due(TimerKind.EVENT_TIME, highWater)) {
+                invoke(slot, new Invocation.OnTimer(firedAt, TimerKind.EVENT_TIME), firedAt, primaryStreamId);
+            }
+        }
+        invoke(slot, new Invocation.OnInput(input, offset, replay), clockValue, primaryStreamId);
+    }
+
+    /**
+     * Run one timer the wheel released. The pending set is the authority: the
+     * wheel holds no lock on it, so an entry can outlive the timer (a
+     * cancellation, a restore that re-armed it, an Entity restored without it)
+     * and a stale entry fires nothing.
+     *
+     * <p>Caller holds {@link EntitySlot#stateLock()}.
+     */
+    private void fireProcessingTimeTimer(EntitySlot slot, TimerFire fire) {
+        if (!slot.timers().contains(TimerKind.PROCESSING_TIME, fire.scheduledAt())) {
+            return;
+        }
+        invoke(
+                slot,
+                new Invocation.OnTimer(fire.scheduledAt(), TimerKind.PROCESSING_TIME),
+                fire.scheduledAt(),
+                fire.primaryStreamId());
+    }
+
+    /**
+     * Run ONE invocation — {@code run} on an input, or {@code onTimer} on a
+     * firing — through the emit context, the retry→DLQ ladder, the timer session
+     * and the durable record it produces. The two differ only in the call into
+     * the author's code; everything a failure has to be contained by is shared,
+     * which is what makes a poison timer park exactly like a poison input.
+     *
+     * <p>{@code now} is the invocation's {@code ctx.now()}: the declared Clock's
+     * value for an input, the scheduled timestamp for a firing. Caller holds
+     * {@link EntitySlot#stateLock()}.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void invoke(EntitySlot slot, Invocation what, long clockValue, long primaryStreamId) {
+        OptionalLong offset = what.consumedOffset();
+        boolean replay = what.replaying();
         try {
             // run / applyChange execute on the Entity's OWN instance, so a
             // mutable field on a user's Procedure is per-Entity scratch — the
@@ -378,7 +452,6 @@ public final class ProcedureDispatcher {
             // serves that single value for the whole invocation. The change seq
             // is the replay-stable half of ctx.stableId().
             long invocationSeq = slot.changeSeq().get();
-            long clockValue = evaluateClock(input, invocationSeq);
             EmitContext ctxImpl = new EmitContext(primaryStreamId, slot, entityId, clockValue, invocationSeq, replay);
             // Build a StateHandle that records Changes onto the Entity's
             // flush buffer under the bufferLock. The runtime's flusher owns
@@ -409,13 +482,23 @@ public final class ProcedureDispatcher {
             int maxAttempts = Math.max(1, retryPolicy.maxAttempts());
             int attempt = 0;
             String parkError = null;
+            List<TimerOp> timerOps = List.of();
             while (true) {
                 attempt++;
                 boolean isFinal = attempt >= maxAttempts;
                 String error;
                 boolean retryable;
+                // A fresh session per attempt: the ladder re-runs a failed one,
+                // and a registration that attempt made must not survive it.
+                TimerSession session = openTimerSession(slot, clockValue, what);
+                ctxImpl.timers = session;
                 try {
-                    entityProcedure.run(input, handle, ctxImpl);
+                    if (what instanceof Invocation.OnTimer timer) {
+                        entityProcedure.onTimer(timer.firedAt(), timer.kind(), handle, ctxImpl);
+                    } else {
+                        entityProcedure.run(((Invocation.OnInput) what).input(), handle, ctxImpl);
+                    }
+                    timerOps = session.commit(slot.timers());
                     break;
                 } catch (ProcedureException e) {
                     error = e.getMessage();
@@ -426,6 +509,20 @@ public final class ProcedureDispatcher {
                 }
                 if (!retryable || isFinal) {
                     parkError = error;
+                    // A firing that exhausted its budget still records the
+                    // removal: a poison timer must park once, not fire forever —
+                    // the same reason a park closes a checkpoint interval.
+                    if (what instanceof Invocation.OnTimer timer) {
+                        TimerSession closing = openTimerSession(slot, clockValue, what);
+                        timerOps = closing.commit(slot.timers());
+                        LOG.error(
+                                "procedure `{}` entity `{}` timer at {} failed after {} attempt(s): {}",
+                                procedureDescriptor.name(),
+                                slot.entityKey().orElse("<single>"),
+                                timer.firedAt(),
+                                attempt,
+                                error);
+                    }
                     break;
                 }
                 DlqPark.RETRIES_TOTAL.incrementAndGet();
@@ -438,17 +535,112 @@ public final class ProcedureDispatcher {
                         error);
                 sleepQuietly(retryPolicy.backoffFor(attempt));
             }
+            Object parkPayload = what instanceof Invocation.OnInput onInput ? onInput.input() : null;
             if (tier) {
-                stageEffectRecord(slot, input, bufferView, ctxImpl, offset, parkError, attempt);
-            } else if (parkError != null) {
-                parkPoison(slot, input, parkError, attempt);
+                stageEffectRecord(slot, parkPayload, bufferView, ctxImpl, offset, parkError, attempt, timerOps);
+            } else {
+                if (!timerOps.isEmpty()) {
+                    // Outside the tier there is no effect record to ride: the
+                    // pending set's mutations drain as their own record.
+                    synchronized (slot.changeBufferLock()) {
+                        slot.timerOps().addAll(timerOps);
+                    }
+                    // A `NoChange` Procedure is not registered with the
+                    // background flusher — there was nothing to drain until
+                    // timers gave it something. Drain here rather than wake
+                    // every such Entity every linger tick.
+                    if (!slot.changeful() && slot.flusherEntry() != null) {
+                        com.flezha.sdk.runtime.state.EntityFlusher.flushEntry(slot.flusherEntry());
+                    }
+                }
+                if (parkError != null) {
+                    parkPoison(slot, parkPayload, parkError, attempt);
+                }
             }
+            armTimerOps(slot, timerOps, primaryStreamId);
         } finally {
             // Progress, whatever the outcome: the invocation ran. A frozen pool is
             // exactly the case where this stops advancing.
             com.flezha.sdk.runtime.entity.EntityCounters.noteDispatch();
-            slot.stateLock().unlock();
         }
+    }
+
+    /**
+     * A fresh {@link TimerSession} over a copy of the Entity's pending set. A
+     * firing's session opens with the removal of the timer that fired, so it
+     * rides the SAME durable record as whatever {@code onTimer} goes on to apply
+     * and emit — and its {@code now} IS {@code firedAt}, so a chained
+     * {@code timerAfter} schedules off the timer that woke it.
+     */
+    private TimerSession openTimerSession(EntitySlot slot, long now, Invocation what) {
+        return what instanceof Invocation.OnTimer timer
+                ? timerPolicy.firingSession(slot.timers(), timer.firedAt(), timer.kind())
+                : timerPolicy.session(slot.timers(), now);
+    }
+
+    /**
+     * Reflect an invocation's committed timer ops onto the Operative's wheel.
+     * Event-time timers need nothing here — the high-water fires them — so a
+     * Procedure that only uses those never causes a wheel thread to exist.
+     */
+    private void armTimerOps(EntitySlot slot, List<TimerOp> ops, long primaryStreamId) {
+        boolean anyProcessingTime = false;
+        for (TimerOp op : ops) {
+            if (op.kind() == TimerKind.PROCESSING_TIME) {
+                anyProcessingTime = true;
+                break;
+            }
+        }
+        if (!anyProcessingTime) {
+            return;
+        }
+        UnboundedOperativeInstance ri = instance.get();
+        if (ri == null) {
+            return;
+        }
+        ri.notePrimaryStream(primaryStreamId);
+        TimerWheel wheel = ri.timerWheel();
+        String key = slot.entityKey().orElse("");
+        for (TimerOp op : ops) {
+            if (op.kind() != TimerKind.PROCESSING_TIME) {
+                continue;
+            }
+            if (op.register()) {
+                wheel.arm(procedureId, key, op.scheduledAt(), slot);
+            } else {
+                wheel.disarm(procedureId, key, op.scheduledAt());
+            }
+        }
+    }
+
+    /**
+     * Push one expired processing-time timer onto an Entity's mailbox. The
+     * wheel's delivery seam — the whole point is that it enqueues rather than
+     * invokes, so firing obeys the same drain exclusion an input does.
+     */
+    public void deliverTimer(@Nonnull EntitySlot slot, long scheduledAt, long primaryStreamId) {
+        slot.touch();
+        if (slot.mailbox().push(new TimerFire(scheduledAt, primaryStreamId))) {
+            pool.execute(() -> drain(slot));
+        }
+    }
+
+    /**
+     * Re-arm a restored Entity's processing-time timers. The pending set came
+     * back through the change-log fold; anything already past its deadline fires
+     * on the wheel's next pass, in ascending order. Event-time timers need
+     * nothing — the restored high-water is their trigger.
+     */
+    public void rearmRestoredTimers(@Nonnull EntitySlot slot, long primaryStreamId) {
+        List<Long> pending = slot.timers().all(TimerKind.PROCESSING_TIME);
+        if (pending.isEmpty()) {
+            return;
+        }
+        List<TimerOp> ops = new ArrayList<>(pending.size());
+        for (long at : pending) {
+            ops.add(TimerOp.register(TimerKind.PROCESSING_TIME, at));
+        }
+        armTimerOps(slot, ops, primaryStreamId);
     }
 
     /**
@@ -463,12 +655,13 @@ public final class ProcedureDispatcher {
      */
     private void stageEffectRecord(
             EntitySlot slot,
-            Object input,
+            @Nullable Object input,
             List<Change> changes,
             EmitContext ec,
             OptionalLong offset,
             String parkError,
-            int attempts) {
+            int attempts,
+            List<TimerOp> timerOps) {
         Optional<DlqPark.DlqEntry> dlq = Optional.empty();
         if (parkError != null) {
             DlqPark.PARKED_TOTAL.incrementAndGet();
@@ -479,8 +672,11 @@ public final class ProcedureDispatcher {
                     slot.entityKey().orElse("<single>"),
                     attempts,
                     parkError);
-            dlq = Optional.of(
-                    new DlqPark.DlqEntry(inputChannelName, parkError, attempts, DlqPark.extractPayloadBytes(input)));
+            dlq = Optional.of(new DlqPark.DlqEntry(
+                    inputChannelName,
+                    parkError,
+                    attempts,
+                    input == null ? Optional.empty() : DlqPark.extractPayloadBytes(input)));
         }
 
         List<byte[]> changeBytes = new ArrayList<>(changes.size());
@@ -490,7 +686,7 @@ public final class ProcedureDispatcher {
 
         synchronized (slot.changeBufferLock()) {
             if (!checkpointAck) {
-                slot.effectBuffer().add(new EffectRecord(changeBytes, ec.collected, offset, dlq, ec.now()));
+                slot.effectBuffer().add(new EffectRecord(changeBytes, ec.collected, offset, dlq, ec.now(), timerOps));
                 return;
             }
 
@@ -499,12 +695,16 @@ public final class ProcedureDispatcher {
             // must close it: otherwise the poison offset would be acknowledged
             // while the state built before it is still not durable.
             slot.stagedChanges().addAll(changeBytes);
+            slot.stagedTimers().addAll(timerOps);
             boolean closing = ec.checkpointed || dlq.isPresent();
 
             if (closing) {
                 List<byte[]> interval = new ArrayList<>(slot.stagedChanges());
                 slot.stagedChanges().clear();
-                slot.effectBuffer().add(new EffectRecord(interval, ec.collected, offset, dlq, ec.now()));
+                List<TimerOp> intervalTimers = new ArrayList<>(slot.stagedTimers());
+                slot.stagedTimers().clear();
+                slot.effectBuffer()
+                        .add(new EffectRecord(interval, ec.collected, offset, dlq, ec.now(), intervalTimers));
             } else if (!ec.collected.isEmpty()) {
                 // Mid-interval emits flush immediately, carrying NO offset: the
                 // interval's inputs are re-forwarded on replay, so the outputs
@@ -522,7 +722,7 @@ public final class ProcedureDispatcher {
      * hold the drain thread until the park is acked — park-then-advance,
      * never a drop.
      */
-    private void parkPoison(EntitySlot slot, Object input, String error, int attempts) {
+    private void parkPoison(EntitySlot slot, @Nullable Object input, String error, int attempts) {
         DlqPark.PARKED_TOTAL.incrementAndGet();
         UnboundedOperativeInstance ri = instance.get();
         String instanceId = ri == null ? "<gone>" : ri.instanceId();
@@ -538,7 +738,11 @@ public final class ProcedureDispatcher {
                 new DlqPark.ParkBody(
                         DlqPark.mintParkId(entityId.encoded()),
                         OptionalLong.empty(),
-                        new DlqPark.DlqEntry(inputChannelName, error, attempts, DlqPark.extractPayloadBytes(input))));
+                        new DlqPark.DlqEntry(
+                                inputChannelName,
+                                error,
+                                attempts,
+                                input == null ? Optional.empty() : DlqPark.extractPayloadBytes(input))));
     }
 
     private static void sleepQuietly(long ms) {
@@ -550,6 +754,34 @@ public final class ProcedureDispatcher {
     }
 
     private record InputEnvelope(Object input, long primaryStreamId, OptionalLong offset, boolean replay) {}
+
+    /**
+     * A processing-time timer the wheel has released onto an Entity's mailbox.
+     * Queued rather than invoked where it expires, so the single-active-drainer
+     * gate that already serializes inputs serializes {@code onTimer} against
+     * {@code run} too — no second lock, no second concurrency model.
+     */
+    private record TimerFire(long scheduledAt, long primaryStreamId) {}
+
+    /**
+     * What one invocation runs: an input through {@code run}, or a timer through
+     * {@code onTimer}. The consumed offset and the replay mark are INPUT facts —
+     * a firing acknowledges no input — so they live on the variant rather than
+     * beside it.
+     */
+    private sealed interface Invocation {
+        record OnInput(Object input, OptionalLong offset, boolean replay) implements Invocation {}
+
+        record OnTimer(long firedAt, TimerKind kind) implements Invocation {}
+
+        default OptionalLong consumedOffset() {
+            return this instanceof OnInput in ? in.offset() : OptionalLong.empty();
+        }
+
+        default boolean replaying() {
+            return this instanceof OnInput in && in.replay();
+        }
+    }
 
     /**
      * Per-invocation {@link ProcedureCtx}. Single allocation per Procedure.run call.
@@ -579,6 +811,29 @@ public final class ProcedureDispatcher {
 
         /** Re-running already-processed input: {@code ctx.spawnBounded} issues nothing. */
         private final boolean replay;
+
+        /** This invocation's timer session; replaced per retry attempt. */
+        private TimerSession timers;
+
+        @Override
+        public long timerAtEventTime(long scheduledAt) throws ProcedureException {
+            return timers.registerAtEventTime(scheduledAt);
+        }
+
+        @Override
+        public long timerAfter(@Nonnull Duration delay) throws ProcedureException {
+            return timers.registerAfter(delay);
+        }
+
+        @Override
+        public boolean cancelEventTimeTimer(long scheduledAt) {
+            return timers.cancel(TimerKind.EVENT_TIME, scheduledAt);
+        }
+
+        @Override
+        public boolean cancelProcessingTimeTimer(long scheduledAt) {
+            return timers.cancel(TimerKind.PROCESSING_TIME, scheduledAt);
+        }
 
         @Override
         public void checkpoint() {

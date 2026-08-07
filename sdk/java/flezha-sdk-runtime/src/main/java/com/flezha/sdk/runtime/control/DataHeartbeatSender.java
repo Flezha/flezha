@@ -84,7 +84,15 @@ public final class DataHeartbeatSender {
                         "credit_parked",
                         Long.toString(com.flezha.sdk.runtime.state.CreditWindow.creditParked()),
                         "restore_discarded_inputs",
-                        Long.toString(EntityCounters.restoreDiscardedInputs())));
+                        Long.toString(EntityCounters.restoreDiscardedInputs()),
+                        // Wheel occupancy: a runaway registration shows here long
+                        // before it is fatal, and a `timers_fired` that stops
+                        // moving while `timers_armed` climbs is the wheel wedged
+                        // rather than the Operative idle.
+                        "timers_armed",
+                        Long.toString(com.flezha.sdk.runtime.entity.TimerCounters.armed()),
+                        "timers_fired",
+                        Long.toString(com.flezha.sdk.runtime.entity.TimerCounters.firedTotal())));
         for (long sid : ctx.streamRegistry().secondaries()) {
             if (sid > 0) {
                 try {

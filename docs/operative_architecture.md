@@ -516,6 +516,36 @@ Two per-Procedure knobs:
 Per-Procedure counters (`DynamicEntityCounters`): `entities_created_total`,
 `entities_evicted_total`, `inputs_dropped_capped_total`.
 
+## Per-Entity timers: the two trigger paths
+
+A Procedure registers a deadline on its own Entity and handles it in
+`on_timer`. There are two kinds, and they reach the callback by different
+routes — but through the *same* seam, which is the design's whole point.
+
+**Event time** rides the dispatch path. After an input advances the Entity's
+event-time high-water (the mark late-input correction already maintains), every
+pending event-time timer at or below it fires in ascending order, **before**
+that input is dispatched — closing a window after the record that belongs to
+the next one would be wrong. It follows that an Entity nothing arrives at never
+fires one: nothing advances its clock.
+
+**Processing time** rides one **timer wheel per Operative**, keyed
+`(procedure, entity_key, scheduled_at)`. On expiry the wheel does not invoke
+`on_timer`; it pushes a timer item onto the target Entity's **existing
+mailbox**. So a firing obeys the same FIFO ordering, the same overflow policy
+and the same single-active-drainer exclusion an input does, and `on_timer` can
+never run concurrently with `run` on one Entity — with no second lock and no
+second concurrency model. The wheel's thread is created on the first
+processing-time registration, so an Operative that never uses one never pays
+for it.
+
+The pending set is folded state, mutated under the Entity's state lock and
+rebuilt by the ordinary change-log fold on restore; the restore re-arms the
+wheel, and anything already past its deadline fires at once, ascending. Dynamic
+eviction discards an Entity's timers with its state — the wheel entry holds a
+weak reference and the reaper drops it eagerly. Full contract in
+[`entity_timers.md`](entity_timers.md).
+
 ## Backpressure and bounded mailboxes
 
 Each Entity's mailbox is a fixed-size lock-free

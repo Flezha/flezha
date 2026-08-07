@@ -363,6 +363,47 @@ second durable ledger beside the outbox that already exists.
 See [`../operative_forward_plugin.md`](../operative_forward_plugin.md) for the
 verdicts, refusals, and telemetry.
 
+## Per-Entity timers: folded state, not a scheduler
+
+A timer registration, cancellation and firing are each a durable record in the
+Entity's **own change log**, so the pending set is rebuilt by the ordinary fold
+on restore. There is no timer side-file, no timer journal entry type, no crash
+marker and no completeness oracle — and therefore nothing new to make
+crash-consistent.
+
+What falls out of that, rather than being built:
+
+| Crash point | Outcome |
+| --- | --- |
+| before the registration is durable | the timer was never owed |
+| after the registration, before firing | the timer is pending and fires when its condition is next met |
+| after firing | the removal folded in; it does not re-fire |
+| mid-firing, before the record is durable (tier) | neither the effects nor the removal landed — the whole firing repeats |
+
+The ops ride the wire two ways, both of which the controller already stores
+verbatim and never decodes: outside the effectively-once tier as a
+`format_id = 3` record under the ordinary `entity_state_change` payload-id
+(body: a postcard `Vec<TimerOp>`), and inside the tier as
+`EffectRecordBody.timers`.
+
+**Under the tier a firing is atomic with its effects.** One firing writes ONE
+effect record carrying the Changes `on_timer` applied, the values it emitted,
+and the removal of the fired timer. Its `consumed_offset` is **absent** — a
+firing consumes no input offset, so the input-log watermark does not advance on
+it, and every reader already tolerates a nil offset.
+
+**Without the tier, firing degrades to at-least-once**, exactly as input
+processing does under the same conditions; `on_timer` bodies carry the same
+idempotence advice as `run`. A firing that exhausts its retry budget parks to
+the dead-letter queue like a poison input — and its removal is durable either
+way, so a poison timer parks once instead of firing forever.
+
+Compaction is the one place the fold needs help: a snapshot covers `State`
+alone, so the SDK re-states the full pending set as a fresh record at a seq
+ABOVE `snapshot_seq`. Truncation keeps it, and a crash between the two leaves
+the untruncated log, which still holds the originals. See
+[`../entity_timers.md`](../entity_timers.md).
+
 ## Dead-letter queue: poison payloads park, never drop
 
 A permanently-failing (poison) payload in an Unbounded operative is never
