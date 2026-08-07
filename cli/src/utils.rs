@@ -190,11 +190,19 @@ pub fn serialize_flags(flags: &[(String, String)]) -> String {
     let json_pairs: Vec<String> = flags
         .iter()
         .map(|(key, value)| {
-            // Check if value looks like JSON (starts with { or [)
-            if value.trim_start().starts_with('{') || value.trim_start().starts_with('[') {
+            // Inline a value as raw JSON only when it actually parses. Looking
+            // merely JSON-shaped is not enough: a subscription template is a
+            // JSON-shaped string carrying `{{items}}` / `{{req_id}}`
+            // placeholders, which no JSON parser accepts, and inlining it
+            // produced a document the controller could not decode.
+            let inline = matches!(value.trim_start().chars().next(), Some('{') | Some('['))
+                && serde_json::from_str::<serde_json::Value>(value).is_ok();
+            if inline {
                 format!("\"{}\": {}", key, value)
             } else {
-                format!("\"{}\": \"{}\"", key, value)
+                // Serialize as a JSON string so quotes and backslashes in the
+                // value cannot break out of it.
+                format!("\"{}\": {}", key, serde_json::Value::String(value.clone()))
             }
         })
         .collect();
@@ -411,6 +419,35 @@ pub fn extract_opts_with_default_namespace(args: &[String]) -> Vec<(String, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A subscription template is JSON-shaped but carries `{{items}}` /
+    /// `{{req_id}}` placeholders. Inlining it raw produced a document the
+    /// controller rejected with a Jason.DecodeError, so the plugin could never
+    /// be enabled from its own documented invocation.
+    #[test]
+    fn json_shaped_but_unparsable_values_are_quoted_as_strings() {
+        let template = r#"{"method":"subscribe","params":{"symbol":{{items}}},"req_id":{{req_id}}}"#;
+        let out = serialize_flags(&[("subscribe_template".to_string(), template.to_string())]);
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("must stay decodable");
+        assert_eq!(parsed["subscribe_template"], serde_json::Value::String(template.to_string()));
+    }
+
+    /// Real JSON must still be inlined as JSON — `payload_metadata` and
+    /// `subscription_headers` are objects the controller reads structurally.
+    #[test]
+    fn parsable_json_values_are_still_inlined() {
+        let out = serialize_flags(&[("payload_metadata".to_string(), r#"{"channel":"trades_in"}"#.to_string())]);
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("decodable");
+        assert_eq!(parsed["payload_metadata"]["channel"], "trades_in");
+    }
+
+    /// A plain value containing a quote must not break out of its own string.
+    #[test]
+    fn quotes_in_plain_values_are_escaped() {
+        let out = serialize_flags(&[("ignore_pattern".to_string(), r#""event":"heartbeat""#.to_string())]);
+        let parsed: serde_json::Value = serde_json::from_str(&out).expect("decodable");
+        assert_eq!(parsed["ignore_pattern"], r#""event":"heartbeat""#);
+    }
 
     fn v(args: &[&str]) -> Vec<String> {
         args.iter().map(|s| s.to_string()).collect()
