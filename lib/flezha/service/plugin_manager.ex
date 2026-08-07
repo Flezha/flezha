@@ -224,6 +224,26 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
+  @doc """
+  Persist one provider-committed option onto an enabled plugin's cspec record,
+  so a controller restart re-applies the plugin with it. Rides the same
+  registry-write path as enable and disable — there is one place a plugin's
+  cspec row is rewritten.
+
+  Called from the host operative, off its own loop: the write is a cluster-wide
+  registry round-trip with its own retry ladder, and a provider committing state
+  must never be able to stall the operative it feeds.
+  """
+  @spec persist_plugin_opt(binary() | atom(), binary(), binary(), atom(), term()) ::
+          :ok | {:error, term()}
+  def persist_plugin_opt(namespace, operative_id, plugin_id, key, value) do
+    update_cspec_plugins(
+      namespace,
+      operative_id,
+      RegistryUpdate.put_plugin_opt(plugin_id, key, value)
+    )
+  end
+
   defp write_enable_to_cspec(
          %Plugin{namespace: ns, operative_id: operative_id} = plugin,
          plugin_id

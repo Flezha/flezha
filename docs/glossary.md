@@ -109,6 +109,17 @@ contains Entities.**
   and why consumers of a polled channel must be idempotent. See
   [`http_poll_plugin.md`](http_poll_plugin.md).
 
+- **Websocket subscription source** — changing what a live websocket is
+  subscribed to *without reconnecting*, by pointing the `Websocket` plugin at a
+  URL publishing the desired item set. The provider polls it, diffs it against
+  the set it has applied, and sends operator-supplied subscribe/unsubscribe
+  templates for the difference on the connection it already holds. A delta
+  commits only on an acknowledgement bearing its `req_id`, so retry is nothing
+  but re-deriving the same diff next cycle; the applied set is persisted to the
+  plugin cspec, so connect and both watchdog tiers re-assert what the socket
+  actually holds rather than the boot-time `post_connect`. See
+  [`websocket_subscription_source.md`](websocket_subscription_source.md).
+
 - **Dead-letter queue (DLQ)** — the Controller's durable store for poison
   payloads: inputs an Unbounded Procedure failed on every retry
   (`app_data/dlq/{operative_class}/{procedure_id}/`). A payload is parked

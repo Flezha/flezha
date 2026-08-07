@@ -4,6 +4,7 @@ defmodule Flezha.Operative.Overwatch do
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.PluginManager
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
   alias Flezha.Runner.FleetManager
@@ -563,9 +564,7 @@ defmodule Flezha.Operative.Overwatch do
       # The ONE awaited-control-round-trip seam; it owns the reply-ref
       # bookkeeping and the timeout, so a caller must never hand the
       # ControlUnit a raw `{:send_control, _}` of its own shape.
-      case ControlUnit.send_control_await(runner_id, command,
-             timeout: restore_await_timeout_ms()
-           ) do
+      case ControlUnit.send_control_await(runner_id, command, timeout: restore_await_timeout_ms()) do
         {:error, reason} = err ->
           Logger.warning(
             "[Overwatch] awaited restore failed entity=#{inspect(entity_id)}: #{inspect(reason)}"
@@ -1658,6 +1657,22 @@ defmodule Flezha.Operative.Overwatch do
   @impl true
   def handle_cast({:correction_request, entity_id, target}, state) do
     {:noreply, note_correction(state, entity_id, target)}
+  end
+
+  # A provider committed durable state of its own (the websocket provider's
+  # applied subscription set). It lands in two places for two restart kinds:
+  # the extension table, which `attempt_restart/3` re-runs `init_provider/1`
+  # from, and the cspec, which a controller restart re-applies plugins from.
+  # The cspec half is a cluster-wide registry write with its own retry ladder,
+  # so it runs in a task — this loop carries the operative's data path.
+  @impl true
+  def handle_cast({:plugin_opt_persist, plugin_id, key, value}, %__MODULE__{} = state) do
+    Task.start(fn ->
+      PluginManager.persist_plugin_opt(state.namespace, state.id, plugin_id, key, value)
+    end)
+
+    {:noreply,
+     %{state | extensions: Table.put_plugin_opt(state.extensions, plugin_id, key, value)}}
   end
 
   # The SDK parked at a committed iteration boundary and the `parked` journal

@@ -871,7 +871,7 @@ defmodule Flezha.Service.CliManager do
 
   defp operative_uptime_ms(_), do: nil
 
-  defp format_plugins_json(%{plugins: plugins}) do
+  defp format_plugins_json(%{plugins: plugins} = extensions) do
     Enum.map(plugins, fn {plugin_id, plugin} ->
       %{
         id: plugin_id,
@@ -879,12 +879,49 @@ defmodule Flezha.Service.CliManager do
         subscriptions:
           Enum.map(plugin.subscriptions, fn {name, opts} ->
             %{extension: Atom.to_string(name), opts: Map.new(opts)}
-          end)
+          end),
+        state: plugin_state(extensions, plugin_id, plugin)
       }
     end)
   end
 
   defp format_plugins_json(_), do: []
+
+  # A provider's own operator-facing detail, when it exports one. Same shape as
+  # the health contract: the stored opts with the tracked pid injected, and a
+  # provider that raises or has nothing to say reports nothing rather than
+  # failing the whole listing.
+  defp plugin_state(extensions, plugin_id, %{provider: provider, opts: opts}) do
+    if Code.ensure_loaded?(provider) and function_exported?(provider, :inspect_state, 1) do
+      owned_pid =
+        case Map.get(Map.get(extensions, :owned_pids, %{}), plugin_id) do
+          {pid, _ref} -> pid
+          _ -> nil
+        end
+
+      provider.inspect_state(Map.put(opts || %{}, :owned_pid, owned_pid))
+    end
+  catch
+    _, _ -> nil
+  end
+
+  defp display_plugin_state(nil), do: :ok
+
+  defp display_plugin_state(state) when is_map(state) do
+    Enum.each(state, fn {key, value} ->
+      IO.puts("        #{key}: #{format_plugin_state_value(value)}")
+    end)
+  end
+
+  defp display_plugin_state(_), do: :ok
+
+  defp format_plugin_state_value(value) when is_list(value) do
+    if value == [], do: "(none)", else: Enum.join(value, ", ")
+  end
+
+  defp format_plugin_state_value(nil), do: "(none)"
+  defp format_plugin_state_value(value) when is_binary(value), do: value
+  defp format_plugin_state_value(value), do: inspect(value)
 
   defp display_operative_info(operative_id, state) do
     IO.puts("Operative: #{operative_id}")
@@ -897,13 +934,15 @@ defmodule Flezha.Service.CliManager do
     IO.puts("  Plugins:")
 
     case state.extensions do
-      %{plugins: plugins} when map_size(plugins) > 0 ->
+      %{plugins: plugins} = extensions when map_size(plugins) > 0 ->
         Enum.each(plugins, fn {plugin_id, plugin} ->
           IO.puts("    - #{plugin_id}: #{inspect(plugin.provider)}")
 
           Enum.each(plugin.subscriptions, fn {name, opts} ->
             IO.puts("        subscription: #{name} #{inspect(opts)}")
           end)
+
+          display_plugin_state(plugin_state(extensions, plugin_id, plugin))
         end)
 
       _ ->

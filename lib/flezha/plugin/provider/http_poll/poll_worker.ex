@@ -26,6 +26,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   so a poller cannot outlive the operative it feeds.
   """
 
+  alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.ProviderBehaviour
 
   use GenServer
@@ -114,7 +115,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     worker = self()
     request = Map.take(state, [:url, :headers, :etag, :timeout_ms, :max_body_bytes])
 
-    {pid, ref} = spawn_monitor(fn -> send(worker, {:fetch_done, self(), fetch(request)}) end)
+    {pid, ref} =
+      spawn_monitor(fn -> send(worker, {:fetch_done, self(), HttpFetch.fetch(request)}) end)
 
     %{state | fetch: {pid, ref, :erlang.monotonic_time(:millisecond)}}
   end
@@ -224,126 +226,4 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   defp labels(state), do: %{plugin_id: state.plugin_id, channel: state.channel}
 
   defp elapsed(started), do: :erlang.monotonic_time(:millisecond) - started
-
-  # ---------- one request, in the fetch child ----------
-
-  @doc false
-  @spec fetch(map()) :: {:ok, binary(), binary() | nil} | {:ok, :not_modified} | {:error, term()}
-  def fetch(request) do
-    with {:ok, ssl_opts} <- ssl_opts(request.url) do
-      http_opts = [
-        timeout: request.timeout_ms,
-        connect_timeout: request.timeout_ms,
-        ssl: ssl_opts,
-        # Static headers may carry a bearer token, and `:httpc` replays them to
-        # whatever a redirect names — a host this provider never validated. A
-        # 3xx is reported as the ordinary status failure it is.
-        autoredirect: false
-      ]
-
-      case :httpc.request(
-             :get,
-             {String.to_charlist(request.url), request_headers(request)},
-             http_opts,
-             sync: false,
-             stream: :self,
-             body_format: :binary
-           ) do
-        {:ok, id} -> collect(id, request)
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
-
-  # `stream: :self` streams only 2xx-with-a-body; every other response arrives
-  # whole, which is what makes 304 and the error statuses cheap.
-  defp collect(id, request) do
-    receive do
-      {:http, {^id, :stream_start, headers}} ->
-        collect_body(id, request, etag(headers), [], 0)
-
-      {:http, {^id, {{_v, 304, _}, _headers, _body}}} ->
-        {:ok, :not_modified}
-
-      {:http, {^id, {{_v, status, _}, headers, body}}} when status >= 200 and status < 300 ->
-        {:ok, body, etag(headers)}
-
-      {:http, {^id, {{_v, status, _}, _headers, _body}}} ->
-        {:error, {:http_status, status}}
-
-      {:http, {^id, {:error, reason}}} ->
-        {:error, reason}
-    after
-      request.timeout_ms -> cancel(id, :timeout)
-    end
-  end
-
-  # The cap is enforced as the body arrives and the request is cancelled at the
-  # boundary, so an endpoint returning gigabytes costs the controller the cap,
-  # not the response.
-  defp collect_body(id, request, etag, acc, size) do
-    receive do
-      {:http, {^id, :stream, chunk}} ->
-        size = size + byte_size(chunk)
-
-        if size > request.max_body_bytes do
-          cancel(id, {:oversized_body, size, request.max_body_bytes})
-        else
-          collect_body(id, request, etag, [acc, chunk], size)
-        end
-
-      {:http, {^id, :stream_end, _headers}} ->
-        {:ok, IO.iodata_to_binary(acc), etag}
-
-      {:http, {^id, {:error, reason}}} ->
-        {:error, reason}
-    after
-      request.timeout_ms -> cancel(id, :timeout)
-    end
-  end
-
-  defp cancel(id, reason) do
-    :httpc.cancel_request(id)
-    {:error, reason}
-  end
-
-  defp request_headers(request) do
-    configured =
-      Enum.map(request.headers, fn {k, v} ->
-        {String.to_charlist(to_string(k)), String.to_charlist(to_string(v))}
-      end)
-
-    # Conditional GET saves the transfer when the server offers an ETag; the
-    # local hash stays the injection gate, so a server that omits or ignores it
-    # changes nothing but bandwidth.
-    case request.etag do
-      nil -> configured
-      etag -> [{~c"if-none-match", String.to_charlist(etag)} | configured]
-    end
-  end
-
-  defp etag(headers) do
-    Enum.find_value(headers, fn {name, value} ->
-      if String.downcase(to_string(name)) == "etag", do: to_string(value)
-    end)
-  end
-
-  # Plain HTTP needs no TLS options; HTTPS is verified against the system CA
-  # store, and a host with no usable store fails the poll rather than silently
-  # dropping to an unverified connection.
-  defp ssl_opts("http://" <> _), do: {:ok, []}
-
-  defp ssl_opts(_https) do
-    {:ok,
-     [
-       verify: :verify_peer,
-       cacerts: :public_key.cacerts_get(),
-       depth: 3,
-       customize_hostname_check: [
-         match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
-       ]
-     ]}
-  rescue
-    err -> {:error, {:no_ca_store, Exception.message(err)}}
-  end
 end

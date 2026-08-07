@@ -66,7 +66,7 @@ every restart.
 
 | Provider | `init_provider/1` body | `activate/1` body |
 | --- | --- | --- |
-| `Plugin.Provider.Websocket` | normalises opts, validates URI | opens the Fresh WS connection and runs the subscribe handshake |
+| `Plugin.Provider.Websocket` | normalises opts, validates URI and any [subscription source](websocket_subscription_source.md) | opens the Fresh WS connection and runs the subscribe handshake |
 | `Plugin.Provider.HttpPoll` | validates the URL, channel, headers and tunables; performs no request | starts the poller, whose first request is scheduled rather than executed |
 | `Plugin.Provider.Kafka.Producer` | starts a local `ProducerSup` worker | not needed — broker connection is lazy on first publish |
 | `Plugin.Provider.Filter` | validates filter rules | not needed — work runs on `:on_input` / `:on_output` |

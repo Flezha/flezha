@@ -44,6 +44,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   """
 
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.Provider.HttpFetch
   alias Flezha.Plugin.Provider.HttpPoll.PollWorker
   alias Flezha.Plugin.ProviderBehaviour
 
@@ -65,35 +66,15 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   @min_interval_ms 1_000
   @max_body_ceiling_bytes 64 * 1_048_576
 
-  # Host-resolved, never settable by config, and present on a plugin restart
-  # because the previous `init_provider/1` output is what gets re-prepared:
-  # `:overwatcher_pid` here, the identity `Extension.Table.with_host_identity/2`
-  # merges in, and the operative facts `bulk_activate/2` merges.
-  @host_opts [:overwatcher_pid, :source_namespace, :source_operative_id, :effectively_once]
-
   @enforce_keys [:url, :channel]
   defstruct @enforce_keys ++ [:plugin_id, :overwatcher_pid, headers: %{}] ++ @int_opts
 
+  # Declaring `@known_opts` is what makes this provider strict: `use
+  # ProviderBehaviour` generates both the `build/1` refusal and `validate_opts/1`.
   @known_opts [:url, :channel, :plugin_id, :headers | Keyword.keys(@int_opts)]
-  @known_strings Enum.map(@known_opts, &to_string/1)
 
   @impl true
   def plugin_type(), do: :io_binding
-
-  defoverridable build: 1
-
-  @doc """
-  Reject unknown options rather than ignoring them, so a config asking for
-  something this provider does not offer — a POST body, an auth flow, a
-  backoff ladder — fails loudly instead of reading as accepted.
-  """
-  @impl true
-  def build(string_map) when is_map(string_map) do
-    case ProviderBehaviour.reject_unknown(Map.keys(string_map), @known_strings, "http_poll") do
-      :ok -> super(string_map)
-      err -> err
-    end
-  end
 
   @doc """
   Validate and normalise. Deliberately performs no upstream I/O — the first
@@ -106,10 +87,10 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   would never run on the path an operator actually uses.
   """
   def init_provider(opts) do
-    with :ok <- validate_known(opts),
-         {:ok, url} <- validate_url(Map.get(opts, :url)),
+    with :ok <- validate_opts(opts),
+         {:ok, url} <- HttpFetch.validate_url(Map.get(opts, :url), "http_poll"),
          {:ok, channel} <- validate_channel(Map.get(opts, :channel)),
-         {:ok, headers} <- validate_headers(Map.get(opts, :headers)),
+         {:ok, headers} <- HttpFetch.validate_headers(Map.get(opts, :headers), "http_poll"),
          {:ok, tunables} <- validate_tunables(opts),
          :ok <- validate_budget(tunables) do
       opts =
@@ -192,38 +173,9 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   exported to the observability sinks.
   """
   @spec redact(binary()) :: binary()
-  def redact(url) do
-    url
-    |> URI.parse()
-    |> Map.merge(%{userinfo: nil, query: nil, fragment: nil})
-    |> URI.to_string()
-  end
+  defdelegate redact(url), to: HttpFetch
 
   # ---------- attach-time refusals ----------
-
-  defp validate_known(opts),
-    do: ProviderBehaviour.reject_unknown(Map.keys(opts), @known_opts ++ @host_opts, "http_poll")
-
-  defp validate_url(url) when is_binary(url) and url != "" do
-    case URI.parse(url) do
-      # Credentials in the URL would be replayed on every request and echoed
-      # into any error naming it; headers are the place for a secret.
-      %URI{userinfo: userinfo} when is_binary(userinfo) ->
-        {:error, "http_poll url must not embed credentials — use :headers"}
-
-      %URI{scheme: scheme, host: host}
-      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
-        {:ok, url}
-
-      %URI{scheme: scheme} when scheme in ["http", "https"] ->
-        {:error, "http_poll url #{redact(url)} has no host"}
-
-      _ ->
-        {:error, "http_poll url #{redact(url)} must use the http or https scheme"}
-    end
-  end
-
-  defp validate_url(_), do: {:error, "http_poll requires :url"}
 
   defp validate_channel(channel) when is_binary(channel) and channel != "", do: {:ok, channel}
 
@@ -232,25 +184,6 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   defp validate_channel(_),
     do: {:error, "http_poll requires :channel — the entry channel to inject on"}
-
-  defp validate_headers(nil), do: {:ok, %{}}
-
-  defp validate_headers(headers) when is_binary(headers) do
-    case Jason.decode(headers) do
-      {:ok, decoded} when is_map(decoded) -> validate_headers(decoded)
-      _ -> {:error, "http_poll headers must be a JSON object"}
-    end
-  end
-
-  defp validate_headers(headers) when is_map(headers) do
-    if Enum.all?(headers, fn {_k, v} -> is_binary(v) or is_number(v) end) do
-      {:ok, Map.new(headers, fn {k, v} -> {to_string(k), to_string(v)} end)}
-    else
-      {:error, "http_poll headers must map names to scalar values"}
-    end
-  end
-
-  defp validate_headers(_), do: {:error, "http_poll headers must be a map"}
 
   defp validate_tunables(opts) do
     Enum.reduce_while(@int_opts, {:ok, %{}}, fn {field, default}, {:ok, acc} ->

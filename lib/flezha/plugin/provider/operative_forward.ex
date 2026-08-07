@@ -53,25 +53,14 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   @enforce_keys [:target_operative_id]
   defstruct @enforce_keys ++ [:plugin_id] ++ @injected_opts ++ @int_opts
 
-  @known_opts Enum.map([:target_operative_id, :plugin_id | Keyword.keys(@int_opts)], &to_string/1)
+  # Declaring `@known_opts` is what makes this provider strict: `use
+  # ProviderBehaviour` generates the `build/1` refusal from it, so a config
+  # asking for a delivery guarantee this provider deliberately does not offer
+  # fails loudly instead of reading as accepted.
+  @known_opts [:target_operative_id, :plugin_id | Keyword.keys(@int_opts)]
 
   @impl true
   def plugin_type(), do: :io_binding
-
-  defoverridable build: 1
-
-  @doc """
-  Reject unknown options rather than ignoring them, so a config asking for a
-  delivery guarantee this provider deliberately does not offer fails loudly
-  instead of reading as accepted.
-  """
-  @impl true
-  def build(string_map) when is_map(string_map) do
-    case ProviderBehaviour.reject_unknown(Map.keys(string_map), @known_opts, "operative_forward") do
-      :ok -> super(string_map)
-      err -> err
-    end
-  end
 
   def init_provider(opts) do
     source_namespace = Map.get(opts, :source_namespace)

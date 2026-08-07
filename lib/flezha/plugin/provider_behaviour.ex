@@ -40,7 +40,20 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   """
   @callback health(opts :: map()) :: health_verdict()
 
-  @optional_callbacks health: 1
+  @doc """
+  Optional operator-facing detail for a *running* provider instance, rendered
+  by `flz operative info` beneath the plugin that reported it. `opts` is the
+  provider's stored opts with `:owned_pid` injected, exactly as for `health/1`.
+
+  This is for state an operator must be able to see and the plugin's static
+  configuration does not show — the websocket provider's applied subscription
+  set, the outcome of its last reconcile, its last error. Return `nil` when
+  there is nothing to add, so a provider can export it and still stay silent
+  for the instances it does not apply to.
+  """
+  @callback inspect_state(opts :: map()) :: map() | nil
+
+  @optional_callbacks health: 1, inspect_state: 1
 
   @doc """
   Shared `convert_value/2` result helpers: CLI plugin opts arrive as
@@ -144,10 +157,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   """
   @spec worker_health(map(), keyword(), (pid() -> health_verdict())) :: health_verdict()
   def worker_health(opts, reasons, verdict_fun) do
-    pid =
-      reasons
-      |> Keyword.get(:pid, [:owned_pid])
-      |> Enum.find_value(&Map.get(opts, &1))
+    pid = worker_pid(opts, Keyword.get(reasons, :pid, [:owned_pid]))
 
     cond do
       not is_pid(pid) ->
@@ -159,6 +169,17 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       true ->
         bounded_verdict(verdict_fun, pid, Keyword.get(reasons, :budget_ms, @probe_timeout_ms))
     end
+  end
+
+  @doc """
+  The provider-owned process the host is tracking, resolved from `opts` in the
+  order given — a provider that stores its worker under its own key lists that
+  first and `:owned_pid` after. One rule, shared by `worker_health/3` and by
+  any `inspect_state/1` that reaches the same process.
+  """
+  @spec worker_pid(map(), [atom()]) :: pid() | nil
+  def worker_pid(opts, keys \\ [:owned_pid]) do
+    Enum.find_value(keys, &Map.get(opts, &1))
   end
 
   defp bounded_verdict(verdict_fun, pid, budget_ms) do
@@ -212,6 +233,28 @@ defmodule Flezha.Plugin.ProviderBehaviour do
       timeout -> :timeout
     end
   end
+
+  @host_opts [
+    :overwatcher_pid,
+    :source_namespace,
+    :source_operative_id,
+    :source_plugin_id,
+    :effectively_once,
+    :owned_pid
+  ]
+
+  @doc """
+  The options the HOST injects into a provider's opts, never settable by
+  config: the identity `Extension.Table.with_host_identity/2` merges, the
+  operative facts `bulk_activate/2` merges, and the tracked pid `health/1`
+  injects.
+
+  They live in one list because every provider that calls `reject_unknown/3`
+  must allow all of them — a key added to the host side and missed in one
+  provider's private copy turns that provider's every enable into a refusal.
+  """
+  @spec host_opts() :: [atom()]
+  def host_opts(), do: @host_opts
 
   @doc """
   Refuse options a provider does not recognise rather than ignoring them. The
@@ -403,7 +446,67 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     end
   end
 
-  defmacro __before_compile__(_env) do
+  defmacro __before_compile__(env) do
+    case strict_opts(env) do
+      nil -> catch_all()
+      strict -> [strict, catch_all()]
+    end
+  end
+
+  # A provider that declares `@known_opts` gets BOTH halves of the strict-option
+  # contract generated: the `build/1` override (the CLI struct path) and
+  # `validate_opts/1` (the `init_provider/1` path). Both are required and for
+  # different reasons — `Plugin.SpecDecoder` hands a `--plugins` spec straight to
+  # `init_provider/1` without ever constructing the struct, so a check living
+  # only in `build/1` never runs on the path an operator actually uses.
+  #
+  # `@internal_opts` are accepted by `init_provider/1` but never offered to
+  # `build/1`: provider-committed state read back from the cspec, not config.
+  defp strict_opts(env) do
+    case Module.get_attribute(env.module, :known_opts) do
+      nil ->
+        nil
+
+      known ->
+        internal = Module.get_attribute(env.module, :internal_opts) || []
+        name = env.module |> Module.split() |> List.last() |> Macro.underscore()
+        strings = Enum.map(known, &to_string/1)
+
+        behaviour = __MODULE__
+
+        quote do
+          defoverridable build: 1
+
+          @doc """
+          Reject options this provider does not recognise rather than ignoring
+          them. The generated `build/1` silently drops any key that is not a
+          struct field, which would let a config ask for a capability the
+          provider deliberately does not offer and read as accepted.
+          """
+          def build(string_map) when is_map(string_map) do
+            case unquote(behaviour).reject_unknown(
+                   Map.keys(string_map),
+                   unquote(strings),
+                   unquote(name)
+                 ) do
+              :ok -> super(string_map)
+              err -> err
+            end
+          end
+
+          @doc false
+          @spec validate_opts(map()) :: :ok | {:error, binary()}
+          def validate_opts(opts) do
+            allowed =
+              unquote(known) ++ unquote(internal) ++ unquote(behaviour).host_opts()
+
+            unquote(behaviour).reject_unknown(Map.keys(opts), allowed, unquote(name))
+          end
+        end
+    end
+  end
+
+  defp catch_all do
     quote do
       # Default convert_value catch-all clause - injected at the end
       defp convert_value(nil, value), do: {:error, "Empty value provided for field"}

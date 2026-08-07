@@ -4,6 +4,43 @@
 
 ### Added
 
+- **A live websocket's subscription set can change without reconnecting**
+  (`add-websocket-subscription-source`). `Plugin.Provider.Websocket` accepts an
+  optional `subscription_url` publishing the desired item set
+  (`{"version": <integer>, "items": [<string>, …]}`). The provider polls it every
+  `subscription_interval_ms`, diffs it against what it has applied, and sends
+  operator-supplied `subscribe_template` / `unsubscribe_template` frames — with
+  `{{items}}` and `{{req_id}}` substituted — for the difference, on the
+  connection it already holds. Previously the only way to change a subscription
+  was `plugin disable` then `plugin enable`: a full teardown that dropped every
+  other stream on that socket to move one item, and spent the upstream's
+  reconnect budget on a change needing no reconnect.
+
+  Item strings are opaque — never parsed, validated or interpreted — so all
+  exchange vocabulary lives in the templates and in the source's response, not in
+  the framework. A delta commits into the applied set only when an inbound frame
+  bearing its `req_id` reports success; failed, malformed and unanswered
+  requests are simply left uncommitted, so the next cycle re-derives an
+  identical delta. Convergence is the retry mechanism, and there is no bespoke
+  retry state. Protocols echoing no correlation id use
+  `subscription_ack_mode: "none"`, committing on send.
+
+  The applied set is persisted to the plugin cspec after every commit, so a
+  plugin restart, an operative handover and a controller restart all resume with
+  what the socket actually holds. That also fixes a correctness edge predating
+  the feature: the data-liveness watchdog resent `post_connect`, the *boot-time*
+  payload, so any runtime change would have been silently reverted by the very
+  mechanism meant to heal a stalled subscription. Connect and both watchdog
+  tiers now assert the current applied set.
+
+  A failed poll is *no information*, never an empty desired set: it can never
+  cause an unsubscribe. An explicitly empty `items` array is a real instruction
+  and does. `flz operative info` reports the applied set, last reconcile outcome
+  and last error; each reconcile that sent a frame emits
+  `[:flezha, :ws, :reconcile]`. Fully backwards compatible — with no
+  `subscription_url` there is no poll timer, no applied set, and no subscription
+  state on the per-frame path. See `docs/websocket_subscription_source.md`.
+
 - **An Entity's current value is readable without a serving tier**
   (`entity-state-live-query`). `flz state get <operative/procedure[/entity_key]>`
   returns one live Entity's in-memory state as JSON together with the

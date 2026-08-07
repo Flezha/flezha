@@ -563,6 +563,43 @@ defmodule Flezha.Plugin.Extension.Table do
     end
   end
 
+  @doc """
+  Record a value the provider itself committed back onto its stored opts.
+
+  `attempt_restart/3` re-runs `init_provider/1` from exactly this map, so a
+  provider that holds durable state of its own (the websocket provider's
+  applied subscription set) restores it across a plugin restart by writing it
+  here. The subscription entries are updated too: `build_entry/3` copies the
+  opts, and leaving those stale would mean state that survives a restart but
+  not a dispatch. Unknown `plugin_id` is a no-op — a provider whose plugin was
+  disabled mid-flight has nothing to write to.
+  """
+  @spec put_plugin_opt(t(), binary(), atom(), term()) :: t()
+  def put_plugin_opt(%__MODULE__{} = table, plugin_id, key, value) do
+    case Map.get(table.plugins, plugin_id) do
+      nil ->
+        table
+
+      %Plugin{} = plugin ->
+        opts = Map.put(plugin.opts || %{}, key, value)
+
+        subs =
+          Map.new(table.subs, fn {name, entries} ->
+            {name,
+             Enum.map(entries, fn
+               %{plugin_id: ^plugin_id} = entry -> %{entry | provider_opts: opts}
+               entry -> entry
+             end)}
+          end)
+
+        %{
+          table
+          | plugins: Map.put(table.plugins, plugin_id, %Plugin{plugin | opts: opts}),
+            subs: subs
+        }
+    end
+  end
+
   ## Private — subscribe
 
   defp do_subscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin, subs) do
@@ -609,9 +646,14 @@ defmodule Flezha.Plugin.Extension.Table do
   # The host operative's own identity, merged last so stored opts cannot spoof
   # it — the same rule `bulk_activate/2` applies to `activation_env`. A provider
   # whose destination is another operative needs it to refuse a self-target or a
-  # cross-namespace target at enable time.
-  defp with_host_identity(opts, %Plugin{namespace: ns, operative_id: operative_id}) do
-    Map.merge(opts, %{source_namespace: ns, source_operative_id: operative_id})
+  # cross-namespace target at enable time; a provider that persists its own
+  # committed state needs `:source_plugin_id` to name the cspec row to write.
+  defp with_host_identity(opts, %Plugin{id: id, namespace: ns, operative_id: operative_id}) do
+    Map.merge(opts, %{
+      source_namespace: ns,
+      source_operative_id: operative_id,
+      source_plugin_id: id
+    })
   end
 
   defp track_owned_pid(table, _plugin_id, nil), do: table

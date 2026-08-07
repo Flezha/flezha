@@ -274,7 +274,9 @@ Providers whose meaningful work is triggered by `:on_input` / `:on_output` (`Fil
 
 ### Requirement: Websocket data-liveness watchdog re-subscribes in place on a live socket
 
-`Plugin.Provider.Websocket` SHALL maintain a data-liveness timestamp `last_data_frame_at` refreshed only by data frames that do NOT match `ignore_pattern` (the existing classification). The provider SHALL accept an optional `resubscribe_after_ms` opt (default `0`, meaning disabled), normalised from string or integer identically to `idle_timeout_ms`. When `resubscribe_after_ms > 0`, the connection is alive (the connection-liveness watchdog has not fired), and `now - last_data_frame_at >= resubscribe_after_ms`, the provider SHALL resend its `post_connect` payload on the **existing** connection — without exiting the process, tearing down the socket, or reconnecting — and SHALL emit `[:flezha, :ws, :resubscribe]` with measurements `%{data_silence_ms: integer()}` and metadata `%{plugin_id: binary()}`.
+`Plugin.Provider.Websocket` SHALL maintain a data-liveness timestamp `last_data_frame_at` refreshed only by data frames that do NOT match `ignore_pattern` (the existing classification). The provider SHALL accept an optional `resubscribe_after_ms` opt (default `0`, meaning disabled), normalised from string or integer identically to `idle_timeout_ms`. When `resubscribe_after_ms > 0`, the connection is alive (the connection-liveness watchdog has not fired), and `now - last_data_frame_at >= resubscribe_after_ms`, the provider SHALL resend its subscription on the **existing** connection — without exiting the process, tearing down the socket, or reconnecting — and SHALL emit `[:flezha, :ws, :resubscribe]` with measurements `%{data_silence_ms: integer()}` and metadata `%{plugin_id: binary()}`.
+
+What is resent SHALL be the `post_connect` payload when no subscription source is configured, and the rendered `subscribe_template` over the **current applied set** when one is (see `websocket-subscription-source`). The watchdog SHALL NOT resend a boot-time payload that a runtime subscription change has since superseded.
 
 The re-subscribe SHALL be rate-limited by a `last_resubscribe_at` guard so that no more than one re-subscribe is issued per `resubscribe_after_ms` window while data remains stale. When `resubscribe_after_ms` is `0`, `last_data_frame_at` SHALL NOT trigger any action and the provider SHALL behave as connection-liveness-only.
 
@@ -296,9 +298,15 @@ The re-subscribe SHALL be rate-limited by a `last_resubscribe_at` guard so that 
 - **THEN** the provider SHALL NOT resend the subscribe and SHALL NOT emit `[:flezha, :ws, :resubscribe]`
 - **AND** only the connection-liveness watchdog SHALL govern reconnect
 
+#### Scenario: Re-subscribe with a subscription source resends the current applied set
+- **GIVEN** a websocket plugin with `resubscribe_after_ms: 120_000` and a subscription source, booted with `["a"]` and having since applied `["a", "b"]`
+- **WHEN** the data-liveness watchdog fires
+- **THEN** the resent frame SHALL name both `a` and `b`
+- **AND** it SHALL NOT resend the boot-time `post_connect` payload
+
 ### Requirement: Websocket subscribe handshake is issued without a re-entrant send
 
-`Plugin.Provider.Websocket.handle_connect/3` SHALL issue the `post_connect` subscribe frame by returning it through Fresh's reply form (`{:reply, [{type, message}], state}`) so the frame is sent after the connection's websocket is established. The provider SHALL NOT issue the subscribe by calling `Fresh.send/2` re-entrantly from within `handle_connect/3`. Any send issued outside a Fresh callback (the data-liveness re-subscribe) SHALL be guarded so that sending while the underlying websocket is `nil`/unestablished logs at `:warning` and is skipped rather than raising; the subscribe is re-issued on the next successful `handle_connect/3`. Under no inbound condition SHALL the provider terminate with `{:badkey, :extensions, nil}`.
+`Plugin.Provider.Websocket.handle_connect/3` SHALL issue its subscribe frame by returning it through Fresh's reply form (`{:reply, [{type, message}], state}`) so the frame is sent after the connection's websocket is established. The frame SHALL be the `post_connect` payload when no subscription source is configured, and the rendered `subscribe_template` over the current applied set when one is. The provider SHALL NOT issue the subscribe by calling `Fresh.send/2` re-entrantly from within `handle_connect/3`. Any send issued outside a Fresh callback (the data-liveness re-subscribe and the reconcile path) SHALL be guarded so that sending while the underlying websocket is `nil`/unestablished logs at `:warning` and is skipped rather than raising; the subscribe is re-issued on the next successful `handle_connect/3` or the next reconcile cycle. Under no inbound condition SHALL the provider terminate with `{:badkey, :extensions, nil}`.
 
 #### Scenario: Subscribe on connect does not crash on the upgrade race
 - **WHEN** `handle_connect/3` runs and a `post_connect` payload is configured
@@ -309,6 +317,11 @@ The re-subscribe SHALL be rate-limited by a `last_resubscribe_at` guard so that 
 #### Scenario: Re-subscribe against a momentarily-unestablished socket is non-fatal
 - **WHEN** the data-liveness re-subscribe attempts to send while the underlying websocket is transiently `nil`
 - **THEN** the send SHALL be skipped with a `:warning` log and the provider process SHALL stay alive
+
+#### Scenario: Reconcile send against a momentarily-unestablished socket is non-fatal
+- **WHEN** a reconcile cycle attempts to send a delta frame while the underlying websocket is transiently `nil`
+- **THEN** the send SHALL be skipped with a `:warning` log
+- **AND** the delta SHALL remain uncommitted and be retried on the next cycle
 
 ### Requirement: Websocket liveness tracking is O(1) and allocation-free per frame
 

@@ -47,4 +47,24 @@ defmodule Flezha.Service.RegistryUpdate do
       Enum.reject(plugins, fn {id, _plugin} -> id == plugin_id end)
     end
   end
+
+  @doc """
+  Plugin-list transform that sets one option on an existing plugin entry, for
+  provider state that must survive a controller restart. A plugin_id no longer
+  in the manifest is left alone rather than resurrected — it was disabled while
+  the write was in flight, and its state is no longer owed.
+  """
+  @spec put_plugin_opt(binary(), atom(), term()) ::
+          ([{binary(), Plugin.t()}] -> [{binary(), Plugin.t()}])
+  def put_plugin_opt(plugin_id, key, value) do
+    fn plugins ->
+      Enum.map(plugins, fn
+        {^plugin_id, %Plugin{} = plugin} ->
+          {plugin_id, %Plugin{plugin | opts: Map.put(plugin.opts || %{}, key, value)}}
+
+        other ->
+          other
+      end)
+    end
+  end
 end
