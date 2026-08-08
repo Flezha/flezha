@@ -217,11 +217,14 @@ reads as the wheel wedged rather than the Operative idle.
 
 ## Where the code lives
 
-- Rust: `sdk/rust/src/entity/timer.rs` (the pending set, its ops, the policy,
-  the session, the wheel, and the `apply_ops` / `rearm_restored` arming seam),
-  `procedure/ctx.rs` (the surface), `procedure/mod.rs` (`on_timer`),
-  `operative/dispatcher.rs` (`invoke` and the event-time trigger),
-  `entity/restore.rs` (the fold).
+- Rust: `flz_core/src/timer.rs` (the pending set, its ops, the policy, the
+  session, the wheel, and the `apply_ops` / `rearm_restored` arming seam;
+  the typed `timer_policy_for::<S>()` wrapper sits in
+  `sdk/rust/src/entity/timer.rs`), `procedure/ctx.rs` (the surface),
+  `procedure/mod.rs` (`on_timer`), `flz_core/src/poll_core.rs` (the
+  event-time trigger, at batch assembly),
+  `sdk/rust/src/operative/dispatcher.rs` (`invoke_once`),
+  `sdk/rust/src/entity/restore.rs` (the typed fold).
 - Java: `runtime/state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`,
   `runtime/entity/{TimerWheel,TimerCounters}.java`,
   `procedure/ProcedureCtx.java`, `procedure/Procedure.java`,

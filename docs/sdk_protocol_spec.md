@@ -1,5 +1,10 @@
 # Flezha SDK Protocol Specification
 
+> The wire protocol below is spoken by `flz_core` (the poll-based SDK core)
+> on the runner side — the protocol itself is unchanged by that extraction.
+> The host-facing Activation/ActivationResult contract is a separate,
+> SDK-internal boundary documented in `docs/sdk_poll_core.md`.
+
 **Version:** 1.0
 **Status:** Living document
 
@@ -226,7 +231,7 @@ Hybrid channels (declared with `also_output_with(...)` / `alsoOutput(...)` — s
 
 #### Per-Entity mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 
-The SDK's per-Entity mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue` allocated at operative startup. When the controller dispatches a frame to an Operative whose targeted Entity's mailbox is full, the SDK applies the channel's declared `OverflowPolicy`: `Block` (producer drains the full mailbox inline when no drainer is actively running, else parks briefly and retries — no frame is lost), `DropNewest` (frame discarded, counter incremented), or `DropOldest` (consumer's mailbox evicts its oldest item and accepts the new one, counter incremented). The default entry-channel policy is `DropNewest` — **the SDK silently drops frames when an Operative's entry mailbox is saturated**, and the wire-reader thread continues servicing sibling Operatives sharing the same physical connection. Under `Block` a producer never parks indefinitely: when the slot's drain exists only as a queued pool task, the producer becomes the drainer itself (parking there self-deadlocks a fully-blocked worker pool — the 2026-06-10 production freeze). `Block` requires an acyclic procedure graph. See `docs/operative_architecture.md` "Backpressure and bounded mailboxes" for the full contract — capacity declaration, default policies by channel kind, and the per-Entity counter set.
+The SDK's per-Entity mailbox is a fixed-capacity `crossbeam::queue::ArrayQueue` allocated at operative startup. When the controller dispatches a frame to an Operative whose targeted Entity's mailbox is full, the SDK applies the channel's declared `OverflowPolicy`: `Block` (producer drains the full mailbox inline when no drainer is actively running, else parks briefly and retries — no frame is lost), `DropNewest` (frame discarded, counter incremented), or `DropOldest` (consumer's mailbox evicts its oldest item and accepts the new one, counter incremented). The default entry-channel policy is `DropNewest` — **the SDK silently drops frames when an Operative's entry mailbox is saturated**, and the wire-reader thread continues servicing sibling Operatives sharing the same physical connection. Under `Block` a producer never parks indefinitely: when the slot's round exists only as a queued engine round no poll worker has served yet, the producer serves it inline (parking there self-deadlocks fully-blocked poll workers — the 2026-06-10 production freeze). `Block` requires an acyclic procedure graph. See `docs/operative_architecture.md` "Backpressure and bounded mailboxes" for the full contract — capacity declaration, default policies by channel kind, and the per-Entity counter set.
 
 #### State migration JSON shape
 

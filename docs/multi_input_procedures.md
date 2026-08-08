@@ -76,7 +76,7 @@ Full examples: `sdk/rust/examples/merged_input.rs`,
   | Where the mapping sits | What a panic does |
   | --- | --- |
   | unbounded, inter-procedure source | Runs under `ctx.emit`, inside the producing Procedure's invocation `catch_unwind`. Caught, attributed to that producer, rides **its** retry→DLQ ladder. |
-  | unbounded, entry-Channel source | Runs on the wire-reader path (`runner/fast.rs` → `route_to_consumers`). `stream-transforms` closed the guard gap here: the edge closure is contained at the routing seam and the value climbs the Channel's own retry→DLQ ladder, the same one a failing entry **parse** rides. |
+  | unbounded, entry-Channel source | Runs on the wire-reader path (`flz_core/src/fast.rs` → `routing::route_to_consumers`). `stream-transforms` closed the guard gap here: the edge closure is contained at the routing seam and the value climbs the Channel's own retry→DLQ ladder, the same one a failing entry **parse** rides. |
   | bounded, inter-procedure source — forward | Runs on the driver thread in `extend_mapped`, outside any entity invocation. Contained there and turned into a terminal chain error: the saga unwinds the stages **recorded as completed** at that point, and the instance still reports `BoundedCompleted` (status `error`). Both SDKs unwind the same procedures in the same order. |
   | bounded, inter-procedure source — crash-resume re-seed | Contained the same way and the instance still reports `error`. The **undo scope differs by SDK**: Rust seeds the resumed iteration's completed list from the journal, so the journaled producer is unwound; Java's resumed iteration does not, so nothing is unwound. See [Known limitation](#known-limitation-java-resumed-chains-do-not-compensate-journaled-procedures). |
 
@@ -107,7 +107,7 @@ Full examples: `sdk/rust/examples/merged_input.rs`,
 ## Why replay is free
 
 The mapping is applied at the **routing** seam
-(`dispatcher::route_to_consumers` / `ProcedureDispatcher.routeToConsumers`),
+(`flz_core::routing::route_to_consumers` / `ProcedureDispatcher.routeToConsumers`),
 which is the one path both live delivery and the controller's re-forwarded
 replay slice travel. Frames are still journaled per source Channel, unchanged,
 so:
@@ -181,18 +181,19 @@ no mandate to change.
 
 ## Implementation map
 
-- `sdk/rust/src/channel/mod.rs` — `ConsumerEdge` (`procedure` + optional
+- `flz_core/src/channel.rs` — `ConsumerEdge` (`procedure` + optional
   `MergeMapFn`) replaces the bare consumer id on `ChannelDescriptor`.
 - `sdk/rust/src/channel/builder.rs` — `ChannelBuilder::merge`, `Merge`,
   the `MergeSource` trait (implemented for `EntryStream` and `Stream`), and the
   three `TopologyIssue` variants. `attach_consumer` is the one place a
   channel→procedure edge is recorded, so it is also where a second declaration
   on an already-mapped edge is refused.
-- `sdk/rust/src/bounded/spec.rs` — the bounded entry-source refusal, beside the
-  existing single-root rule.
-- `sdk/rust/src/operative/dispatcher.rs` — one mapping site, on the shared
-  routing path.
-- `sdk/rust/src/bounded/driver.rs` — `ChainCtx::edge_map` + `extend_mapped`, applied
+- `sdk/rust/src/bounded/spec.rs` (validation) with the `BuildBoundedError`
+  variants in `flz_core/src/bounded/spec.rs` — the bounded entry-source
+  refusal, beside the existing single-root rule.
+- `flz_core/src/routing.rs` — one mapping site, on the shared routing
+  path.
+- `flz_core/src/bounded/driver.rs` — `ChainCtx::edge_map` + `extend_mapped`, applied
   at the accumulate and journal re-seed sites, and the containment that keeps a
   panicking mapping from taking the driver thread with it.
 - Java mirrors: `com.flezha.sdk.channel.Merge`,

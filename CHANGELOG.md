@@ -4,6 +4,18 @@
 
 ### Added
 
+- **The Rust SDK's kernel is now a language-agnostic poll core**
+  (`extract-sdk-poll-core`). A new `flz_core` crate owns transport,
+  ordering, durability, retries, timers, credit, routing and the bounded
+  driver; host SDKs drive it through one surface — `poll() -> Activation` /
+  `complete(ActivationResult)` — and the core never calls host code. The
+  Rust SDK is rebuilt as a typed layer over the crate (public API
+  unchanged); `flz_core_ffi` exposes the same engine over a versioned C ABI
+  (creation-time schema negotiation, any-thread poll/complete, shutdown
+  wake), with a CI scenario driving connect → inputs → timer → shutdown
+  entirely through the ABI. No wire, controller, or WAL format change.
+  See `docs/sdk_poll_core.md`.
+
 - **A live websocket's subscription set can change without reconnecting**
   (`add-websocket-subscription-source`). `Plugin.Provider.Websocket` accepts an
   optional `subscription_url` publishing the desired item set

@@ -2,6 +2,13 @@
 
 ## Overview
 
+> **`extract-sdk-poll-core`**: the SDK kernel described below now lives in
+> the `flz_core` workspace crate, consumed by `sdk/rust` as a crate and by
+> non-Rust hosts through `flz_core_ffi`'s poll/complete C ABI. The
+> boundary contract and host loop are documented in
+> `docs/sdk_poll_core.md`; the layers below describe the transport tier,
+> which is unchanged.
+
 Flezha uses a **shared Rust library** for all transport-level communication between the Elixir controller and language SDKs. The library handles everything needed to move bytes between the two sides — QUIC, UDS, binary framing, protobuf encoding, and TLS — but **nothing more**.
 
 Each language SDK is responsible for its own runner: running operatives, managing state, worker pools, and command dispatch. A Python SDK runs operatives in Python. A Go SDK runs them in Go. The shared library is the communication layer only.
@@ -68,137 +75,49 @@ On the controller side, the same library replaces `:quicer` (MsQuic NIF) with a 
 | `generated/` | Protobuf types (CommandRequest, CommandResponse, etc.) |
 | `ffi/` | C API: context, config, error handling, logging, frame ops |
 
-### Language SDK (per-language, not shared)
+### The poll core (`flz_core`, shared kernel) and the language SDK
 
-| Module | Purpose |
+Since `extract-sdk-poll-core`, the runner kernel is one Rust crate consumed
+by every SDK:
+
+| Module (`flz_core/src/`) | Purpose |
 |---|---|
-| `runner/mod.rs` | RunnerNode, message loop, worker dispatch |
-| `runner/control_unit.rs` | Control channel open (UDS/QUIC), init handshake |
-| `runner/worker_pool.rs` | Thread pool for operative execution |
-| `command/mod.rs` | Command routing and response building |
-| `command/*.rs` | Individual command handlers (assign, connect, add/rem operative, etc.) |
-| `operative/mod.rs` | Operative trait surface, types, factory registration |
-| `operative/runner.rs` | Operative execution and output piping |
-| `operative/factory_registry.rs` | Global factory registry, OperativeHandle, `OperativeRegistry` (DashMap-backed live instance map under fast-dispatch) |
-| `lib.rs` | `Flezha` struct, public API (`new`, `get_operatives`) |
+| `poll_core.rs` | The activation engine: per-entity handout exclusivity, batch assembly (admission, replay-slice ordering, due-timer generation), the retry→park ladder, `poll`/`complete` |
+| `schema.rs` | The versioned Activation/ActivationResult boundary contract (postcard; hex-pinned fixtures) |
+| `host.rs` | Erased host classes: data-declared topologies, `BytesBuffer`, completion application — what the C ABI drives |
+| `entity.rs`, `mailbox.rs` | `EntitySlot`, bounded mailbox + inflight CAS, `BlockParker`, shared slot assembly |
+| `routing.rs` | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
+| `flusher.rs`, `state_sink.rs`, `credit.rs`, `park.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable sink, credit windows, DLQ parks, late-input machinery, timers, restore payloads, record headers |
+| `fast.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, the 19 command handlers |
+| `bounded/` | The bounded driver, saga machinery, spec/DAG kernel |
+| `work_stealing_pool.rs` | Chase-Lev pool — bounded-driver stage tasks only |
+
+`flz_core_ffi` wraps the same engine in a C ABI (poll/complete, versioned
+schema negotiation) for non-Rust hosts. What stays per-language: the
+authoring surface (traits, graph DSL, codecs), the poll loop's integration
+with the host's concurrency primitives, idiomatic errors, and the test
+harness. See `docs/sdk_poll_core.md`.
 
 ## Rust SDK dispatch
 
-The Rust SDK (`sdk/rust/`) has two dispatch backends selected at compile
-time via the `fast-dispatch` cargo feature. Both preserve the same public
-API and sticky per-operative ordering semantics — the feature flag only
-changes the internal fast path.
+The Rust SDK's typed layer is the first poll host. Stream-reader threads
+push directly into the target Entity's bounded mailbox
+(`crossbeam::queue::ArrayQueue` + `AtomicBool inflight`); the CAS winner
+schedules an engine round, and the typed layer's **poll workers** (N =
+`FLEZHA_WORKER_POOL_SIZE`, default available parallelism) serve it:
+`poll() → run one attempt per item through the typed dispatcher →
+complete` (or hand a failed head back to the engine's ladder).
 
-### Legacy (default: `fast-dispatch` off)
+Sticky per-Entity ordering is preserved: batch assembly runs under the
+single-active-drainer gates, an entity with an outstanding activation is
+never handed out again until its completion, and the inflight flag closes
+the classic push-vs-empty race (see `flz_core/src/mailbox.rs`). The
+work-stealing pool still exists for bounded-driver stage tasks; unbounded
+dispatch no longer runs on it.
 
-`runner/legacy.rs`. Every inbound message crosses the coordinator
-channel (`crossbeam::channel`) into `RunnerNode`'s message loop,
-which performs a lock-heavy check-out: `RwLock<HashMap<operative>>` read
-→ operative `Mutex` acquire for runner type → `operative_workers` /
-`available_workers` / `operative_queues` / `pending_operatives`
-bookkeeping → dispatch to a fixed worker over `Sender<WorkerPoolMessage>`.
-The worker runs the operative and checks back in, which triggers the next
-queued item in FIFO order. Sticky ordering comes from the `operative_workers`
-map that pins one operative to one worker at a time.
-
-### Fast (opt-in: `fast-dispatch` on — per-operative mailboxes)
-
-`runner/fast.rs` + `runner/mailbox.rs` +
-`runner/work_stealing_pool.rs`. Every operative owns:
-  - an `Arc<Mutex<OperativeBox>>` — same inner lock as before (the
-    operative trait uses `&mut self`, so a lock is required).
-  - a `Mailbox<OperativePayload>` — a `crossbeam::queue::SegQueue` plus
-    an `AtomicBool inflight` flag.
-
-Stream-reader threads (one per primary stream) push directly into the
-target operative's mailbox and CAS `inflight false→true`. The CAS winner
-submits a drain closure into a **Chase-Lev work-stealing pool** built on
-`crossbeam-deque::{Injector, Worker, Stealer}`; N worker threads
-(default `num_cpus::get()`, override via `FLEZHA_WORKER_POOL_SIZE`) poll
-their own deque, the shared injector, and steal from siblings.
-
-The drain closure loops: pop one item, take the operative lock, run, pipe
-the `OperativeResult` (PipeToAgent writes the secondary stream, PipeToOperative
-pushes into the target operative's mailbox, preserving downstream
-ordering). On an observed-empty queue, the drain stores `inflight = false`
-and re-checks the queue — this is the classic "re-CAS on wake miss" that
-closes the race where a concurrent push beat the store (see
-`runner/mailbox.rs` docstring for the worked case).
-
-Sticky per-operative ordering is preserved: only the CAS winner drains,
-and the inflight flag guarantees at most one drainer at a time per
-mailbox. Work-stealing provides load balance across operatives; the
-inflight flag is what provides serialization within an operative.
-
-The coordinator thread still exists under fast-dispatch but handles only
-control-plane traffic (`HandleCommandAction`, `ReturnOperatives`,
-`Reconnect`). Under fast-dispatch, the `RunnerMessage` enum has
-the data-plane variants (`WorkerCheckOut` / `WorkerCheckIn` /
-`WorkerInitCheckIn`) removed at the type level — attempting to send one
-is a compile error.
-
-### Feature-flag rollout
-
-The flag defaults OFF on the published `flezha_runner` crate
-during rollout (to give a single-cycle A/B against the legacy path) and
-ON for in-repo consumers (`test/apps/rust_runner`). See
-`openspec/changes/optimize-rust-sdk-dispatch/` for the full proposal,
-design, and tasks. The Criterion suite at `sdk/rust/benches/` pins
-dispatch throughput and contention-read metrics so CI catches future
-regressions.
-
-## C API Surface
-
-The shared library exposes a C API following established patterns from libcurl, gRPC-core, and ZeroMQ.
-
-### Design Principles
-
-1. **Context/Handle Pattern** — All state behind opaque handles. No global state.
-2. **Error Handling** — Every function returns `FlezhaStatus`. Thread-local last-error string.
-3. **Memory Ownership** — Whoever allocates, frees. Library buffers freed via `flezha_*_free()`.
-4. **Configuration via Structs** — Typed config structs, env vars are convenience wrappers.
-5. **Explicit Lifecycle** — `new → configure → connect → use → close → destroy`.
-6. **Logging Callbacks** — Each language routes logs to its own logger.
-7. **Thread Safety** — Context creation/destruction: single-threaded. All other procedures: thread-safe.
-
-### Functions
-
-```c
-// Lifecycle
-FlezhaContext*  flezha_context_new(FlezhaConfig config);
-FlezhaStatus    flezha_context_destroy(FlezhaContext* ctx);
-FlezhaConfig    flezha_config_default(void);
-const char*     flezha_last_error(void);
-const char*     flezha_version(void);
-
-// Logging
-FlezhaStatus    flezha_set_log_callback(FlezhaContext* ctx, FlezhaLogFn fn, void* user_data);
-
-// Transport — Client (SDK side)
-FlezhaStatus    flezha_connect(FlezhaContext* ctx);
-FlezhaStatus    flezha_open_stream(FlezhaContext* ctx, uint8_t stream_type, uint8_t index,
-                    uint64_t* stream_id);
-FlezhaStatus    flezha_stream_write(FlezhaContext* ctx, uint64_t stream_id,
-                    const uint8_t* data, size_t len);
-FlezhaStatus    flezha_stream_read(FlezhaContext* ctx, uint64_t stream_id,
-                    uint8_t* buf, size_t buf_len, size_t* bytes_read);
-FlezhaStatus    flezha_close(FlezhaContext* ctx);
-
-// Transport — Server (controller / Elixir NIF side)
-FlezhaStatus    flezha_server_listen(FlezhaContext* ctx, FlezhaServerCallbacks cbs, void* user_data);
-FlezhaStatus    flezha_server_send(FlezhaContext* ctx, uint64_t conn_id, uint64_t stream_id,
-                    const uint8_t* data, size_t len);
-FlezhaStatus    flezha_server_close_stream(FlezhaContext* ctx, uint64_t conn_id, uint64_t stream_id);
-FlezhaStatus    flezha_server_stop(FlezhaContext* ctx);
-
-// Payloader (standalone, no context needed)
-FlezhaStatus    flezha_frame_build(const char* payload_id, const uint8_t* message, size_t msg_len,
-                    const char* metadata_json, uint8_t** out, size_t* out_len);
-FlezhaStatus    flezha_frame_free(uint8_t* data, size_t len);
-
-// TLS
-FlezhaStatus    flezha_ensure_certs(const char* ca_path, const char* cert_path, const char* key_path);
-```
+The coordinator thread handles only control-plane traffic
+(`HandleCommandAction`, `ReturnOperatives`, `Reconnect`); data-plane
+frames never cross it.
 
 ## Configuration
 
@@ -228,13 +147,18 @@ flezha/
 │       ├── utility/              # Path helpers
 │       ├── generated/            # Protobuf types
 │       └── ffi/                  # C API layer
-├── sdk/rust/                     # Rust SDK
-│   ├── Cargo.toml                # depends on shared lib
+├── flz_core/                     # Poll-based SDK core (shared runner kernel)
+│   └── src/                      # Engine, schema, host layer, durability, commands
+├── flz_core_ffi/                 # C ABI over flz_core (cdylib + staticlib)
+├── sdk/rust/                     # Rust SDK — the typed layer over flz_core
+│   ├── Cargo.toml                # depends on flz_core + flz_transport
 │   └── src/
 │       ├── lib.rs                # Flezha struct, public API
-│       ├── runner/       # Engine lifecycle
-│       ├── command/              # Command handlers
-│       └── operative/        # Operative trait + execution
+│       ├── procedure/            # Procedure trait, ctx, clocks, errors
+│       ├── channel/              # Channel<T> + the builder DSL
+│       ├── operative/            # UnboundedOperative trait, builder, typed dispatcher
+│       ├── entity/               # Typed halves: TypedBuffer, header/timer wrappers, restore fold
+│       └── bounded/              # BoundedOperative trait + spec build/validation
 ├── sdk/java/                     # Java SDK (Maven multi-module)
 ├── sdk/python/                   # Python SDK (future)
 ├── flz_jni/                      # JNI bindings (cdylib, re-exports flz_transport symbols)

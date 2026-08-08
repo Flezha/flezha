@@ -13,8 +13,9 @@ contains Entities.**
 
 - **Runner** — the SDK process (Rust or Java) that connects to a Controller
   and runs user-defined Operatives. Started by the user; opens a control channel +
-  data streams to the Controller; runs the work-stealing pool that dispatches
-  per-Entity mailboxes. One physical machine may run multiple Runners.
+  data streams to the Controller; its poll workers drain the per-Entity
+  mailboxes through the poll core's activation engine. One physical machine
+  may run multiple Runners.
 
 ## Workload abstractions
 
@@ -141,6 +142,25 @@ contains Entities.**
   pending set is folded state — registration, cancellation and firing are each
   durable records in the Entity's change log — so a crash-resume owes exactly
   the timers it owed before. See [`entity_timers.md`](entity_timers.md).
+
+## Poll core vocabulary
+
+- **Poll core (`flz_core`)** — the language-agnostic runner kernel: entity
+  slots, mailboxes and drain gates, the flusher, credit, the DLQ ladder,
+  timers, routing, commands, the bounded driver and the transport loop, in
+  one Rust crate. Host SDKs drive it exclusively through
+  `poll() → Activation` / `complete(ActivationResult)`; the Rust SDK's typed
+  layer is the first host (as a crate), non-Rust SDKs consume the C ABI
+  (`flz_core_ffi`). See `docs/sdk_poll_core.md`.
+- **Activation** — one unit of work the core hands a host: a per-entity
+  batch of inputs and validated timer firings, or one of the five
+  host-participating command kinds (restore fold, snapshot request, live
+  state read, apply-state, migration serialize). Exclusive per entity: the
+  core never hands out two activations for the same entity concurrently.
+- **ActivationResult** — the host's completion: per-item effect records
+  (host-encoded change bytes, outputs, consumed offset, timer ops,
+  checkpoint flag) plus a verdict (`ok | retryable_error |
+  non_retryable_error`) that drives the core's retry→park ladder.
 
 ## Disambiguating "Operator"
 

@@ -245,11 +245,11 @@ control-plane watchdog in [`transport_liveness.md`](transport_liveness.md).
 | Module | Role |
 |--------|------|
 | `shutdown.rs` | On SIGTERM/drop, serializes every running operative's final state and sends it to the controller so the next runner starts from the true last state |
-| `runner/control_unit.rs` | Opens the control channel with full-jitter exponential backoff retry (cap 30 s) and reconnects automatically on disconnect or ack-timeout |
-| `runner/persistent_id.rs` | Creates + persists the runner's durable **stable identity** (`<namespace>-<profile_hash8>-<rand6>`) so a restarted process re-presents it and the controller swaps its bindings onto the new session; degrades to a fresh per-boot id when the path is unwritable |
-| `entity/flusher.rs` | Background thread draining each entity's change buffer on a 5 ms linger and sending framed WAL records to the controller |
-| `entity/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected entity resumes from exactly its last state |
-| `runner/mailbox.rs` | Bounded lock-free per-operative mailbox with configurable overflow policy (block/drop/replace) so a slow operative cannot back-pressure the whole runner |
+| `flz_core/src/control_unit.rs` | Opens the control channel with full-jitter exponential backoff retry (cap 30 s) and reconnects automatically on disconnect or ack-timeout |
+| `flz_core/src/persistent_id.rs` | Creates + persists the runner's durable **stable identity** (`<namespace>-<profile_hash8>-<rand6>`) so a restarted process re-presents it and the controller swaps its bindings onto the new session; degrades to a fresh per-boot id when the path is unwritable |
+| `flz_core/src/flusher.rs` | Background thread draining each entity's change buffer on a 5 ms linger and sending framed WAL records to the controller |
+| `flz_core/src/restore.rs` + the typed fold in `sdk/rust/src/entity/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected entity resumes from exactly its last state |
+| `flz_core/src/mailbox.rs` | Bounded lock-free per-operative mailbox with configurable overflow policy (block/drop/replace) so a slow operative cannot back-pressure the whole runner |
 
 **Control-channel liveness** (`flz_transport/src/transport/liveness.rs`, shared
 by Rust and Java SDKs):

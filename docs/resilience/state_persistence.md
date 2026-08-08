@@ -249,7 +249,7 @@ ledger:
   stale-refusal drops that never occupy the buffer). One batched `CreditGrant` goes out when
   the freed credit brings the un-fsynced buffer below
   `low_watermark_bytes` — never per record; a stalled fsync mints nothing.
-* **Sender parks on exhaustion** — the SDK (`sdk/rust/src/entity/credit.rs`,
+* **Sender parks on exhaustion** — the SDK (`flz_core/src/credit.rs`,
   `sdk/java .../state/CreditWindow.java`) debits each frame before the
   sink write and parks the flush path (under the buffer lock, so
   producers throttle at the buffer boundary) until the next grant. Parks

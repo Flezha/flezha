@@ -22,7 +22,7 @@ deliberately **not** load-bearing — a container hostname churns on recreate),
 and persists it atomically at `FLEZHA_RUNNER_ID_PATH` (default
 `/var/lib/flezha-runner/id`). It is cached per process (so reconnects present
 the same id) and presented in the handshake on **every** connect. Rust:
-`sdk/rust/src/runner/persistent_id.rs`. Java: `RunnerIdStore` (parity).
+`flz_core/src/persistent_id.rs`. Java: `RunnerIdStore` (parity).
 
 **Session token.** Minted fresh by the controller on every accept
 (`Identificator.unique_id/1`, what `runner_id` already was). It names the

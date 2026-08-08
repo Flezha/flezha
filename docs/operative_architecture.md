@@ -10,6 +10,11 @@ decisions, and capability spec deltas, see
 
 ## Concepts at a glance
 
+> Dispatch note (`extract-sdk-poll-core`): the runtime described here is
+> hosted on the poll core — unbounded dispatch is served by the typed
+> layer's poll workers over `flz_core`'s activation engine. See
+> `docs/sdk_poll_core.md` for the boundary contract.
+
 ```
                         Wire (UDS / QUIC)
                                 │
@@ -590,9 +595,10 @@ c.input::<Vec<u8>>("trade.raw")
 `OverflowPolicy` is one of:
 
 - **`Block`** — the producer first drains the full mailbox inline when no
-  drainer is actively running (the slot's drain may exist only as a queued
-  pool task; parking on it self-deadlocks a fully-blocked worker pool —
-  the 2026-06-10 production freeze), otherwise parks briefly on the
+  drainer is actively running (the slot's round may exist only as a queued
+  engine round no poll worker has served yet; parking on it self-deadlocks
+  fully-blocked poll workers — the 2026-06-10 production freeze), otherwise
+  parks briefly on the
   consumer's `BlockParker` and retries. Preserves ordering, loses nothing,
   and never stalls indefinitely; a producer blocked >5 s logs a
   `flezha::mailbox` warning naming the consumer procedure. Requires an
@@ -796,8 +802,9 @@ that the inflight CAS keeps uncontended in practice:
 The umbrella enumerates non-goals (`operative-architecture/proposal.md`
 §Non-Goals); v1 inherits them:
 
-- **Bounded mailboxes / cross-procedure backpressure** — `crossbeam::SegQueue`
-  is unbounded. Tracked in `operative-bounded-mailbox`.
+- **Bounded mailboxes / cross-procedure backpressure** — SHIPPED since
+  `operative-bounded-mailbox`: `crossbeam::ArrayQueue` mailboxes with
+  per-channel `OverflowPolicy` (see "Backpressure and bounded mailboxes").
 - **Dynamic entity mode** — v1 rejected it outright. Tracked in
   dynamic entity mode.
 - **Per-Procedure `handle_message`** — the wire command exists, but the SDK
@@ -816,16 +823,17 @@ The umbrella enumerates non-goals (`operative-architecture/proposal.md`
 |---|---|
 | Unbounded Operative trait | `sdk/rust/src/operative/mod.rs` |
 | Procedure trait + ProcedureCtx | `sdk/rust/src/procedure/mod.rs`, `ctx.rs`, `error.rs` |
-| Channel<T> + ChannelBuilder | `sdk/rust/src/channel/mod.rs`, `builder.rs` |
+| Channel<T> + ChannelBuilder | `sdk/rust/src/channel/mod.rs`, `builder.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder | `sdk/rust/src/operative/builder.rs` |
-| OperativeInstance + entity layout | `sdk/rust/src/operative/instance.rs` |
-| Per-Procedure typed dispatcher | `sdk/rust/src/operative/dispatcher.rs` |
-| EntitySlot + mailbox | `sdk/rust/src/entity/mod.rs`, `runner/mailbox.rs` |
-| Class + instance registries | `sdk/rust/src/operative/registry.rs` |
-| Wire dispatch | `sdk/rust/src/runner/fast.rs::OperativeDispatchHandle` |
-| Wire input routing | `sdk/rust/src/command/streams_connect.rs` |
-| Plugin emit framing | `sdk/rust/src/operative/dispatcher.rs::send_plugin_frame` |
-| State migration JSON shape | `sdk/rust/src/command/entity_state.rs` |
+| Poll engine (handout, admission, ladder) | `flz_core/src/poll_core.rs` |
+| OperativeInstance + entity layout | `flz_core/src/operative/instance.rs` |
+| Per-Procedure typed dispatcher + poll workers | `sdk/rust/src/operative/dispatcher.rs` |
+| EntitySlot + mailbox | `flz_core/src/entity.rs`, `flz_core/src/mailbox.rs` |
+| Class + instance registries | `flz_core/src/operative/registry.rs` |
+| Wire dispatch | `flz_core/src/fast.rs::OperativeDispatchHandle` |
+| Wire input routing | `flz_core/src/command/streams_connect.rs` |
+| Edge routing + ladders | `flz_core/src/routing.rs` (incl. `send_plugin_frame`) |
+| State migration JSON shape | `flz_core/src/command/entity_state.rs` |
 
 ## State persistence
 

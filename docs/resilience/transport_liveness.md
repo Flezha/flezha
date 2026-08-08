@@ -115,7 +115,7 @@ channel's.
 
 **Runner dispatch self-report** (Rust SDK): every `data_heartbeat` frame
 carries `dispatches` (process-global count of payloads dispatched through
-`drain_entity`) and `blocked_parks` (Block-policy full-mailbox episodes) in
+the poll engine's dispatch path) and `blocked_parks` (Block-policy full-mailbox episodes) in
 its metadata. The heartbeat thread outlives a wedged dispatch pool, so without
 this counter a runner can look alive while processing nothing — exactly the
 2026-06-10 freeze. The secondary `StreamChannel` mirrors the values into

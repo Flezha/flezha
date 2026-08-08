@@ -392,6 +392,7 @@ dependencies = [
  "dashmap",
  "erased-serde",
  "flezha-macros",
+ "flz_core",
  "flz_transport",
  "inventory",
  "lazy_static",
@@ -413,6 +414,38 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "flz_core"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "crossbeam",
+ "crossbeam-deque",
+ "dashmap",
+ "flz_transport",
+ "lazy_static",
+ "postcard",
+ "prost",
+ "serde",
+ "serde_json",
+ "signal-hook",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "flz_core_ffi"
+version = "0.1.0"
+dependencies = [
+ "crossbeam",
+ "dashmap",
+ "flz_core",
+ "flz_transport",
+ "prost",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

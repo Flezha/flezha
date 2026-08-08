@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "flz_core",
+    "flz_core_ffi",
     "flz_transport",
     "flz_nif",
     "flz_jni",
