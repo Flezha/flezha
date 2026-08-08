@@ -67,6 +67,18 @@ Each heal primitive MUST re-read the authoritative live state at execution time 
 - **WHEN** the Planner emits a `rebind_operative` op with `reason: :output_stall`
 - **THEN** the Heal migrates the operative to an available runner even though its bound runner is active (the silent-freeze self-heal MUST NOT be skipped by the healthy-target guard).
 
+### Requirement: A failed heal SHALL NOT erase the divergence it failed to fix
+
+`Overwatch.handle_call({:runner_migrate, new_runner_id})` SHALL commit the new binding only after `attempt_ping_and_start/2` reports the runner answered; on failure it SHALL return the state untouched. Runner ownership is node-local — `ControlUnit` and the `StreamChannel` registry live in the per-node `Identificator` registry and `FleetManager` is a per-node GenServer — so a heal handing a local runner to an Overwatch on another node fails by construction, and that failure MUST leave the operative honestly misbound.
+
+Committing the binding first records `bound_runner ∈ active_runners` for a runner the operative cannot reach: `Convergence.Probe` reads it as placed, `Convergence.Diff` stops classifying it misbound, and the delta goes permanently empty. The operative then reports healthy while every frame drops.
+
+#### Scenario: a failed cross-node migrate stays visible to the next tick
+- **GIVEN** operative `btc_kraken` is misbound and the Heal targets a runner on another controller's node
+- **WHEN** `runner_migrate` cannot reach that runner (`{:ping_failed, :no_control_unit}`)
+- **THEN** the operative's `runner_id` and `channel` SHALL be unchanged
+- **AND** the next Diff SHALL still classify it misbound and re-plan the heal under backoff.
+
 ### Requirement: Bounded calls and backoff prevent heal-induced churn
 
 Every cross-process call inside the Loop MUST be wrapped in `Convergence.SafeCall.bounded/3` (timeout + `:exit` catch + telemetry). Repeated heals of the same target MUST be suppressed by per-target exponential backoff so a persistent fault is not re-healed every tick.
