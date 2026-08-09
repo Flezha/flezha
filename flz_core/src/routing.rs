@@ -206,7 +206,7 @@ fn run_entry_parse_ladder(ladder: EntryParseLadder) {
 /// edge closures climb — `attempt` re-runs the step AND delivers on success,
 /// so the two differ only in what that step is.
 #[allow(clippy::too_many_arguments)]
-fn run_retry_park_ladder(
+pub(crate) fn run_retry_park_ladder(
     label: &str,
     channel: &crate::channel::ChannelDescriptor,
     instance_id: &str,
@@ -325,6 +325,36 @@ fn deliver_edge(
     }
 }
 
+/// Deliver one host completion's edge value to its named consumer — the
+/// single-edge form of [`route_to_consumers`] for producer-side-evaluated
+/// outputs (the host already ran the edge's transforms and key).
+pub(crate) fn deliver_host_output(
+    instance: &Arc<UnboundedInstance>,
+    channel_id: u32,
+    consumer: u32,
+    value: &Arc<dyn Any + Send + Sync>,
+    stream: &Arc<FlezhaStream>,
+    consumed_offset: Option<u64>,
+) -> Result<(), String> {
+    let channel = instance
+        .topology
+        .channel(channel_id)
+        .ok_or_else(|| format!("edge output names unknown channel {channel_id}"))?;
+    let edge = channel
+        .consumers
+        .iter()
+        .find(|e| e.procedure == consumer)
+        .ok_or_else(|| {
+            format!(
+                "edge output names procedure {consumer}, not a consumer of channel `{}`",
+                channel.name
+            )
+        })?;
+    // An inter-procedure value is never a replay member: the downstream
+    // Procedure receives corrected outputs already in order.
+    deliver_to_consumer(instance, channel, edge, value, stream, consumed_offset, false)
+}
+
 /// Deliver one post-transform value to one consumer's Entity. `Err` carries an
 /// unwinding key closure up to the ladder; every other outcome — an absent
 /// registry, an unmapped static key — is the pre-existing silent skip.
@@ -355,9 +385,17 @@ fn deliver_to_consumer(
                 Some(r) => r,
                 None => return Ok(()),
             };
-            // The key is total — `build_topology` refuses an unkeyed edge
-            // into a dynamic consumer — so an absent one cannot happen.
-            let Some(key) = edge.key_of(value.as_ref())? else {
+            // The key is total for typed classes — `build_topology` refuses
+            // an unkeyed edge into a dynamic consumer. A host class's key
+            // rides the payload itself (prepare crossing / producer-side
+            // evaluation), so it is consulted when no edge closure exists.
+            let key = match edge.key_of(value.as_ref())? {
+                Some(k) => Some(k),
+                None => value
+                    .downcast_ref::<crate::host::HostPayload>()
+                    .and_then(|p| p.keys.first().cloned()),
+            };
+            let Some(key) = key else {
                 return Ok(());
             };
             if let Ok(slot) = registry.get_or_create(&key) {
@@ -389,19 +427,39 @@ fn deliver_to_consumer(
             let key_to_idx = instance
                 .entity_key_to_idx
                 .get(consumer_procedure_id as usize);
-            for key in (consumer.entities_for_erased)(value.as_ref()) {
-                if let Some(&idx) = key_to_idx.and_then(|m| m.get(key)) {
-                    if let Some(slot) = entities.get(idx) {
-                        enqueue(
-                            slot,
-                            EntityItem::Input(make_entity_payload(
-                                value,
-                                stream,
-                                consumed_offset,
-                                replay,
-                            )),
-                            policy,
-                        );
+            let deliver_idx = |idx: usize| {
+                if let Some(slot) = entities.get(idx) {
+                    enqueue(
+                        slot,
+                        EntityItem::Input(make_entity_payload(
+                            value,
+                            stream,
+                            consumed_offset,
+                            replay,
+                        )),
+                        policy,
+                    );
+                }
+            };
+            if let Some(host_payload) = value.downcast_ref::<crate::host::HostPayload>() {
+                // Host fan-out keys ride the payload (prepare crossing /
+                // producer-side evaluation); an empty set means every
+                // declared entity — the entities-for default.
+                if host_payload.keys.is_empty() {
+                    for idx in 0..entities.len() {
+                        deliver_idx(idx);
+                    }
+                } else {
+                    for key in &host_payload.keys {
+                        if let Some(&idx) = key_to_idx.and_then(|m| m.get(key.as_str())) {
+                            deliver_idx(idx);
+                        }
+                    }
+                }
+            } else {
+                for key in (consumer.entities_for_erased)(value.as_ref()) {
+                    if let Some(&idx) = key_to_idx.and_then(|m| m.get(key)) {
+                        deliver_idx(idx);
                     }
                 }
             }
@@ -448,7 +506,7 @@ fn spawn_edge_ladder(
 /// Run a retry→DLQ ladder off the routing thread. Both ladders spawn here:
 /// the wait between attempts must not stall the wire reader, and a failure to
 /// spawn is reported rather than silently dropping the payload's last chance.
-fn spawn_park_thread(name: &str, run: impl FnOnce() + Send + 'static) {
+pub(crate) fn spawn_park_thread(name: &str, run: impl FnOnce() + Send + 'static) {
     let spawned = std::thread::Builder::new()
         .name(name.to_string())
         .spawn(run);

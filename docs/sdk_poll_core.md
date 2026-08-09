@@ -105,19 +105,53 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 
 The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`) drives connect,
 AddOperative over the real control path, input activations, a timer firing,
-and shutdown entirely through the C ABI — a capability reachable in the
-crate API but not the ABI is a defect, not a backlog item.
+a restore fold, a live state read, a keyed dynamic route through the
+prepare crossing, an effectively-once floor skip, a bounded run-sugar
+lifecycle, and shutdown entirely through the C ABI — a capability reachable
+in the crate API but not the ABI is a defect, not a backlog item.
 
-### Host classes (v1 scope)
+### Host classes (full capability)
 
-`flz_core_declare_class` declares single-mode procedures fed by
-bytes-passthrough entry channels, with optional plugin-bound outputs,
-wall-clock `now` (stamped core-side at translation), processing-time
-timers, and optional persistence (host-encoded change bytes framed by the
-core). Keyed edges, event-time clocks, restore folds, live reads,
-inter-procedure edges and bounded lifecycles for host classes land with the
-first full host SDK; their activation kinds and byte fixtures are already
-part of the schema.
+`flz_core_declare_class` accepts the complete host-class declaration
+(`flz_core::host::HostClassDecl`, JSON with `deny_unknown_fields` — a field
+the core never learned is a refusal, not a silent degrade): the channels
+graph (entry / inter-proc / plugin, per-channel retry, overflow, plugin
+keying), entity modes (single, static with declared keys, dynamic with
+idle-TTL eviction and cap), clock kinds (wall, logical, event-time), the
+effectively-once tier and checkpoint ack-granularity, the late-input
+correction window, the record-header lang/format bytes (`sdk_lang`,
+`change_format_id` — a Java host's durable records claim Kryo), and bounded
+lifecycle facts (`bounded`: loop mode, rollback mode, stage retry,
+max-duration, wake-after; empty `procedures` = run-sugar).
+
+At runtime the full contract crosses the boundary:
+
+- **The five command kinds are real activations.** `RestoreInitState`
+  becomes a `RestoreFold` (the core walks the WAL records, folds cursors and
+  timer ops itself, and hands the host only its own change bodies — effect
+  records unwrapped, plain bodies verbatim); `CompactEntity` a
+  `SnapshotRequest` (the core drains, re-states the pending timer set, and
+  frames the answer); `EntityState` a `LiveStateRead`; migration a
+  `MigrationSerialize` / `ApplyState`. Each runs under the entity's handout
+  gate (`PollCore::host_command`), so a fold completes before inputs flow.
+- **The prepare crossing** (`KeyRequest`, batched per entry channel) asks
+  the host for routing keys and/or extracted event times before anything is
+  enqueued; a per-payload failure climbs the entry channel's retry→park
+  ladder, and the end-of-slice broadcast defers behind staged slice members.
+- **Tiers ride completions.** `ItemEffect` carries changes, outputs,
+  timer ops and `checkpoint`; the core builds effect records (offsets are
+  core-authoritative), stages checkpoint intervals, holds a
+  failed-but-retryable attempt's changes out of the flusher's reach, and
+  mints DLQ entries where the typed layer does.
+- **Inter-procedure edges route on `(edge, key)`**: outputs name their
+  consumer, keys and event times are producer-evaluated (the host holds the
+  typed value and the extractor; the core holds neither).
+- **Bounded lifecycles run under poll**: a run-sugar body is one
+  `BoundedRun` activation plus the session calls (`flz_core_bounded_emit` /
+  `_recv` / `_cancelled`); a structured chain's stage batches cross as work
+  activations from the driver's own seams (`run_collecting`), compensation
+  as `CompensateRun` — barriers, proc-journal, loop modes, suspension and
+  rewind are unchanged driver machinery.
 
 ### In-process residuals
 

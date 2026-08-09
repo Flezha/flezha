@@ -360,6 +360,26 @@ pub fn flush_one(
     }
 }
 
+/// Build one `entity_effect_record` frame from an already-bytes body
+/// (effectively-once tier), stamped `format_id = 2` so mixed WALs stay
+/// readable. The typed layer's generic builder serializes its `S::Change`
+/// values first and produces this exact layout.
+pub fn build_effect_record_frame(
+    entity_identity: &[u8],
+    seq: u64,
+    header: &HeaderTemplate,
+    body: &EffectRecordBody,
+) -> Vec<u8> {
+    let body_bytes =
+        postcard::to_stdvec(body).expect("postcard serialization of EffectRecordBody cannot fail");
+    let effect_header = HeaderTemplate {
+        format_id: crate::header::FORMAT_ID_EFFECT_RECORD,
+        ..*header
+    };
+    let header_bytes = effect_header.stamp(&body_bytes);
+    build_entity_frame(entity_identity, seq, &header_bytes, &body_bytes)
+}
+
 /// Frame pre-encoded change bodies plus a trailing timer-ops record — the
 /// drain tail both buffer kinds (`TypedBuffer<S>` after serializing, the
 /// host's `BytesBuffer` directly) produce identically.

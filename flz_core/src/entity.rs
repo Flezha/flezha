@@ -402,6 +402,15 @@ pub enum ItemDisposition {
 }
 
 pub trait ProcedureDispatcher: Send + Sync + 'static {
+    /// `Some` for host-run procedures (C-ABI classes). Their command
+    /// interactions — restore fold, snapshot, live read, apply-state,
+    /// migration serialize — cross as queued activations
+    /// ([`crate::poll_core::PollCore::host_command`]) instead of the
+    /// in-process calls the typed methods below implement.
+    fn host_facts(&self) -> Option<&crate::host::HostProcedureFacts> {
+        None
+    }
+
     /// Run ONE attempt of one work item — an input through `Procedure::run`,
     /// or a timer firing through `Procedure::on_timer`. Admission,
     /// classification, due-timer generation and the retry ladder live in the

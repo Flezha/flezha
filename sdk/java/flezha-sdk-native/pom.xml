@@ -13,7 +13,7 @@
     <artifactId>flezha-sdk-native</artifactId>
     <packaging>jar</packaging>
     <name>Flezha SDK Native</name>
-    <description>JNI bindings + bundled per-OS flz_jni native binaries.</description>
+    <description>The FlzCore JNI binding + bundled per-OS flz_core_ffi native binaries.</description>
 
     <properties>
         <!-- Directory that contains the build-native.sh helper script. -->
@@ -92,7 +92,7 @@
             </build>
         </profile>
         <!--
-          native-build: Build flz_jni's cdylib for the host triple (linux-x64
+          native-build: Build flz_core_ffi's cdylib for the host triple (linux-x64
           is the only platform the SDK currently ships) and verify the binary
           is present before packaging. Use this for single-machine local
           builds and for the `native-build` GitHub job.
@@ -136,13 +136,13 @@
                                     <rules>
                                         <requireFilesExist>
                                             <files>
-                                                <file>${native.output.dir}/linux-x64/libflz_jni.so</file>
-                                                <file>${native.output.dir}/linux-arm64/libflz_jni.so</file>
-                                                <file>${native.output.dir}/macos-x64/libflz_jni.dylib</file>
-                                                <file>${native.output.dir}/macos-arm64/libflz_jni.dylib</file>
-                                                <file>${native.output.dir}/windows-x64/libflz_jni.dll</file>
+                                                <file>${native.output.dir}/linux-x64/libflz_core_ffi.so</file>
+                                                <file>${native.output.dir}/linux-arm64/libflz_core_ffi.so</file>
+                                                <file>${native.output.dir}/macos-x64/libflz_core_ffi.dylib</file>
+                                                <file>${native.output.dir}/macos-arm64/libflz_core_ffi.dylib</file>
+                                                <file>${native.output.dir}/windows-x64/libflz_core_ffi.dll</file>
                                             </files>
-                                            <message>native-build profile is missing the required linux-x64 libflz_jni.so binary.</message>
+                                            <message>native-build profile is missing a required libflz_core_ffi binary (five platforms).</message>
                                         </requireFilesExist>
                                     </rules>
                                 </configuration>
@@ -176,13 +176,13 @@
                                     <rules>
                                         <requireFilesExist>
                                             <files>
-                                                <file>${native.output.dir}/linux-x64/libflz_jni.so</file>
-                                                <file>${native.output.dir}/linux-arm64/libflz_jni.so</file>
-                                                <file>${native.output.dir}/macos-x64/libflz_jni.dylib</file>
-                                                <file>${native.output.dir}/macos-arm64/libflz_jni.dylib</file>
-                                                <file>${native.output.dir}/windows-x64/libflz_jni.dll</file>
+                                                <file>${native.output.dir}/linux-x64/libflz_core_ffi.so</file>
+                                                <file>${native.output.dir}/linux-arm64/libflz_core_ffi.so</file>
+                                                <file>${native.output.dir}/macos-x64/libflz_core_ffi.dylib</file>
+                                                <file>${native.output.dir}/macos-arm64/libflz_core_ffi.dylib</file>
+                                                <file>${native.output.dir}/windows-x64/libflz_core_ffi.dll</file>
                                             </files>
-                                            <message>native-verify: one or more of the five committed libflz_jni binaries are missing. Refresh them with `scripts/build-dist.sh` and `git add` the result.</message>
+                                            <message>native-verify: one or more of the five committed libflz_core_ffi binaries are missing. Refresh them with `scripts/build-dist.sh` and `git add` the result.</message>
                                         </requireFilesExist>
                                     </rules>
                                 </configuration>

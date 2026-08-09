@@ -48,7 +48,6 @@
     <modules>
         <module>flezha-sdk-api</module>
         <module>flezha-sdk-processor</module>
-        <module>flezha-sdk-protobuf</module>
         <module>flezha-sdk-runtime</module>
         <module>flezha-sdk-native</module>
         <module>flezha-sdk-testing</module>
@@ -66,11 +65,6 @@
             <dependency>
                 <groupId>com.flezha</groupId>
                 <artifactId>flezha-sdk-processor</artifactId>
-                <version>${project.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>com.flezha</groupId>
-                <artifactId>flezha-sdk-protobuf</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

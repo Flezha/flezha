@@ -74,10 +74,12 @@ impl CommandAction for RestoreInitState {
     }
 }
 
-/// Rebuild one live Entity's typed state from the shipped snapshot + change-log
+/// Rebuild one live Entity's state from the shipped snapshot + change-log
 /// and re-arm its `change_seq` so post-restore appends stay contiguous (the
 /// controller then skips epoch realign). Shared by the unbounded and bounded
-/// restore paths. Returns the terminal WAL seq (0 on apply failure).
+/// restore paths; a host-run Entity folds through its `RestoreFold`
+/// activation, a typed one through the dispatcher's in-process
+/// `restore_state`. Returns the terminal WAL seq (0 on apply failure).
 fn restore_into_slot(
     slot: &Arc<EntitySlot>,
     cmd: &RestoreInitState,
@@ -85,15 +87,32 @@ fn restore_into_slot(
 ) -> u64 {
     // The fold runs under the entity's handout exclusivity: no input
     // activation is handed out before it completes.
-    crate::poll_core::global()
-        .with_entity_exclusive(slot, || restore_into_slot_exclusive(slot, cmd, errors))
+    crate::poll_core::global().with_entity_exclusive(slot, || {
+        let terminal = if slot.dispatcher.host_facts().is_some() {
+            crate::host::restore_fold_exclusive(
+                slot,
+                &cmd.snapshot_bytes,
+                &cmd.change_log_bytes,
+                errors,
+            )
+        } else {
+            restore_typed_exclusive(slot, cmd, errors)
+        };
+        match terminal {
+            Some(t) => {
+                reseat_restored(slot, t, &cmd.change_log_bytes);
+                t
+            }
+            None => 0,
+        }
+    })
 }
 
-fn restore_into_slot_exclusive(
+fn restore_typed_exclusive(
     slot: &Arc<EntitySlot>,
     cmd: &RestoreInitState,
     errors: &mut Vec<String>,
-) -> u64 {
+) -> Option<u64> {
     let mut guard = match slot.state.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -106,56 +125,56 @@ fn restore_into_slot_exclusive(
         &cmd.change_log_bytes,
         slot.entity_key.as_deref(),
     ) {
-        Ok(t) => {
-            drop(timers);
-            drop(guard);
-            slot.change_seq.store(t + 1, Ordering::Release);
-
-            // A restore re-seats the Entity on a different past — the crash's,
-            // or (for a correction) a deliberately rewound one. An open
-            // checkpoint interval's changes were never acknowledged, so the
-            // restored state does not contain them and the re-forwarded inputs
-            // produce them again; a half-filled replay buffer belongs to a
-            // slice that was abandoned. Both go, on every class.
-            slot.discard_staged_interval();
-            slot.discard_replay_slice();
-            // The mailbox goes only where the controller re-forwards it; the
-            // slot owns that rule.
-            let discarded = slot.discard_queued_input_on_restore();
-            if discarded > 0 {
-                eprintln!(
-                    "[flezha] restore discarded {discarded} queued input(s) for entity {} \
-                     — the controller re-forwards them from the durable input log",
-                    slot.dispatcher.entity_label()
-                );
-            }
-
-            let cursors = restore_cursors(&cmd.change_log_bytes);
-            // Effectively-once: remember the highest input-log offset the
-            // restored effect records durably consumed, so the crash-replay
-            // re-forward skips already-applied inputs (`drain_entity`).
-            if let Some(floor) = cursors.consumed_offset {
-                slot.consumed_floor.store(floor as i64, Ordering::Release);
-            }
-            // Correction: rebuild the event-time high-water, so a resumed
-            // Entity neither mistakes its own history for a flood of late
-            // inputs (high-water too low) nor misses a genuinely late one.
-            slot.event_time_high_water.store(
-                cursors.event_time_high_water.map_or(-1, |t| t as i64),
-                Ordering::Release,
-            );
-            // Pending timers came back with the state; the processing-time ones
-            // need an entry on the wheel again. Anything already past its
-            // deadline fires on the next pass, ascending. Event-time timers
-            // need nothing — the restored high-water is their trigger.
-            crate::timer::rearm_restored(slot);
-            t
-        }
+        Ok(t) => Some(t),
         Err(e) => {
             errors.push(format!("restore_init_state: apply failed: {e}"));
-            0
+            None
         }
     }
+}
+
+/// The post-fold re-seat every successful restore performs, host or typed.
+fn reseat_restored(slot: &Arc<EntitySlot>, terminal: u64, change_log_bytes: &[u8]) {
+    slot.change_seq.store(terminal + 1, Ordering::Release);
+
+    // A restore re-seats the Entity on a different past — the crash's,
+    // or (for a correction) a deliberately rewound one. An open
+    // checkpoint interval's changes were never acknowledged, so the
+    // restored state does not contain them and the re-forwarded inputs
+    // produce them again; a half-filled replay buffer belongs to a
+    // slice that was abandoned. Both go, on every class.
+    slot.discard_staged_interval();
+    slot.discard_replay_slice();
+    // The mailbox goes only where the controller re-forwards it; the
+    // slot owns that rule.
+    let discarded = slot.discard_queued_input_on_restore();
+    if discarded > 0 {
+        eprintln!(
+            "[flezha] restore discarded {discarded} queued input(s) for entity {} \
+             — the controller re-forwards them from the durable input log",
+            slot.dispatcher.entity_label()
+        );
+    }
+
+    let cursors = restore_cursors(change_log_bytes);
+    // Effectively-once: remember the highest input-log offset the
+    // restored effect records durably consumed, so the crash-replay
+    // re-forward skips already-applied inputs (`drain_entity`).
+    if let Some(floor) = cursors.consumed_offset {
+        slot.consumed_floor.store(floor as i64, Ordering::Release);
+    }
+    // Correction: rebuild the event-time high-water, so a resumed
+    // Entity neither mistakes its own history for a flood of late
+    // inputs (high-water too low) nor misses a genuinely late one.
+    slot.event_time_high_water.store(
+        cursors.event_time_high_water.map_or(-1, |t| t as i64),
+        Ordering::Release,
+    );
+    // Pending timers came back with the state; the processing-time ones
+    // need an entry on the wheel again. Anything already past its
+    // deadline fires on the next pass, ascending. Event-time timers
+    // need nothing — the restored high-water is their trigger.
+    crate::timer::rearm_restored(slot);
 }
 
 /// Per-Entity cursors folded out of a restore payload's change log.

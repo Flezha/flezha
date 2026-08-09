@@ -104,3 +104,66 @@ the completion and SHALL enter the existing retry→park ladder.
 - **WHEN** an entry-channel input arrives for a consumer reached only via a keyed edge
 - **THEN** the core SHALL obtain the key via a `KeyRequest` activation before enqueueing to any entity mailbox, and no keyless drop path SHALL exist
 
+### Requirement: Host classes reach full capability
+
+The host layer (`flz_core::host`) SHALL support, for byte-level host
+classes, everything the typed Rust host can declare: single, static, and
+dynamic entity modes (dynamic with idle-TTL eviction and the bounded
+evicted-keys trace), the effectively-once tier and checkpoint
+ack-granularity (completions carrying `consumed_offset` / `checkpoint`
+drive the same effect-record and interval semantics), late-input
+correction (window declaration, admission classification, slice replay),
+per-entity timers of both kinds, and inter-procedure edges whose values
+cross as bytes routed on `(edge, key)`. Class declarations SHALL carry
+these facts and the core SHALL populate `AddOperative` response metadata
+from them exactly as the typed path does.
+
+#### Scenario: A dynamic host class routes by key and evicts idle entities
+- **WHEN** a host class declares a dynamic procedure with an idle TTL and inputs for keys `a` and `b` arrive
+- **THEN** the core SHALL create the entities lazily via the prepare crossing's keys, hand out per-entity activations exclusively, and after the TTL SHALL evict destructively, recording the key in the eviction trace
+
+#### Scenario: An effectively-once host class holds its watermark to checkpoints
+- **WHEN** a checkpoint-ack host class completes three inputs without `checkpoint` and a fourth with it
+- **THEN** the shipped effect record SHALL carry the accumulated changes with the fourth input's offset, and a crash before it SHALL replay all four inputs
+
+#### Scenario: Inter-procedure values cross as bytes
+- **WHEN** a host procedure's completion carries an output targeting a consumer edge with a key
+- **THEN** the core SHALL enqueue the bytes to the consumer entity selected by `(edge, key)` and the consumer's next activation SHALL carry them as an input item, with no host closure evaluated in routing
+
+### Requirement: The prepare crossing serves keys and event times
+
+The core SHALL batch, for host classes whose edges are keyed or whose
+clock is an event time, the questions it cannot answer from bytes into one
+prepare crossing (the widened `KeyRequest`): per payload the host SHALL
+return the key and/or the extracted event time, and the core SHALL resolve
+the crossing before any mailbox enqueue.
+Admission, classification, the high-water, and due-timer generation remain
+core-side; a prepare failure enters the input channel's retry→park ladder.
+
+#### Scenario: Event time arrives before admission
+- **WHEN** an input for an event-time-clocked host class is received
+- **THEN** the core SHALL obtain its event time via the prepare crossing and classify it against the high-water BEFORE enqueueing, and a Correctable verdict SHALL drop-and-request exactly as for the typed host
+
+#### Scenario: A key failure parks instead of dropping keylessly
+- **WHEN** the host answers a prepare batch with a failure for one payload
+- **THEN** that payload SHALL climb the channel's retry→park ladder and no keyless-drop path SHALL exist
+
+### Requirement: Bounded lifecycles run under poll
+
+Bounded host classes SHALL be driven by the core's bounded driver with
+stage execution handed out as work activations: the driver accumulates a
+stage's per-entity batch, hands it to the host, and its barriers await
+host completions AND controller acks in the same order the driver
+scenarios pin per loop mode (`Once | PerInput | Chained`). Saga
+compensation crosses as a dedicated work-item flavor carrying the recorded
+outputs; the proc-journal, staged outbox, durable loop, suspension,
+entity-retry, and rewind semantics are unchanged. The `run`-sugar class is
+expressible with no journal and no barriers.
+
+#### Scenario: A run-sugar bounded host class completes
+- **WHEN** a bounded host class declaring only a run body is spawned with args
+- **THEN** the host receives one activation carrying the seed, its completion's terminal outcome drives the same `BoundedCompleted` teardown the typed path produces
+
+#### Scenario: A structured chain's barrier waits for the host and the ack
+- **WHEN** a durable structured bounded host class finishes a stage's activations
+- **THEN** the driver SHALL commit the proc boundary only after every entity's completion arrived AND the controller acked `ProcCommit`, and a crash-resume SHALL skip journaled procs exactly as the typed suites pin

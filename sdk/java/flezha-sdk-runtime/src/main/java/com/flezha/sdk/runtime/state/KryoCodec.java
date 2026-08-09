@@ -36,10 +36,19 @@ public final class KryoCodec {
     private final List<Class<?>> registeredTypes;
 
     public KryoCodec(@Nonnull List<Class<?>> userTypes) {
+        this(userTypes, true);
+    }
+
+    /**
+     * {@code requireRegistration = false} builds a class-name-tagged codec for
+     * transient in-process values (edge payloads crossing the poll core), where
+     * arbitrary user types must encode without a declared id table.
+     */
+    public KryoCodec(@Nonnull List<Class<?>> userTypes, boolean requireRegistration) {
         this.registeredTypes = List.copyOf(userTypes);
         this.kryoLocal = ThreadLocal.withInitial(() -> {
             Kryo kryo = new Kryo();
-            kryo.setRegistrationRequired(true);
+            kryo.setRegistrationRequired(requireRegistration);
             registerBuiltins(kryo);
             for (Class<?> c : registeredTypes) {
                 kryo.register(c);

@@ -9,6 +9,9 @@
 //! different `SCHEMA_VERSION` is refused with an error naming both versions,
 //! before any controller connection is attempted.
 
+#[cfg(feature = "jni")]
+mod jni_glue;
+
 use std::ffi::{c_char, CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -116,11 +119,11 @@ pub unsafe extern "C" fn flz_core_last_error(ctx: *const FlzContext) -> *const c
         .unwrap_or(std::ptr::null())
 }
 
-/// Declare a host class from its JSON form:
-/// `{"factory_id": "...", "schema_version": 1, "persistent": false,
-///   "procedures": [{"name": "...", "entry_channel": "...",
-///                   "mailbox_capacity": 1024, "retry_max": 3,
-///                   "retry_backoff_ms": 50, "output_plugin": null}]}`
+/// Declare a host class from its JSON form — the complete host-class
+/// declaration (`flz_core::host::HostClassDecl`): channels graph, entity
+/// modes, clock kinds, delivery tier, correction window, header lang/format,
+/// mailbox/retry/overflow policies. A declaration the core cannot honor is
+/// refused with an error naming the field.
 ///
 /// # Safety
 /// `ctx` must be live; `json`/`json_len` must describe a valid UTF-8 buffer.
@@ -134,73 +137,22 @@ pub unsafe extern "C" fn flz_core_declare_class(
         return FLZ_ERR;
     };
     let bytes = std::slice::from_raw_parts(json, json_len);
-
-    #[derive(serde::Deserialize)]
-    struct ProcJson {
-        name: String,
-        entry_channel: String,
-        #[serde(default = "default_mailbox_capacity")]
-        mailbox_capacity: usize,
-        #[serde(default = "default_retry_max")]
-        retry_max: u32,
-        #[serde(default = "default_retry_backoff_ms")]
-        retry_backoff_ms: u64,
-        #[serde(default)]
-        output_plugin: Option<String>,
-    }
-    fn default_mailbox_capacity() -> usize {
-        1024
-    }
-    fn default_retry_max() -> u32 {
-        flz_core::channel::RetryPolicy::default().max_attempts
-    }
-    fn default_retry_backoff_ms() -> u64 {
-        flz_core::channel::RetryPolicy::default().backoff_base_ms
-    }
-    #[derive(serde::Deserialize)]
-    struct ClassJson {
-        factory_id: String,
-        #[serde(default = "default_schema_version")]
-        schema_version: u32,
-        #[serde(default)]
-        persistent: bool,
-        procedures: Vec<ProcJson>,
-    }
-    fn default_schema_version() -> u32 {
-        1
-    }
-
-    let parsed: ClassJson = match serde_json::from_slice(bytes) {
-        Ok(p) => p,
-        Err(e) => return ctx.fail(format!("class declaration is not valid JSON: {e}")),
+    let factory_id = match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(v) => v
+            .get("factory_id")
+            .and_then(|f| f.as_str())
+            .map(str::to_string),
+        Err(_) => None,
     };
-    let factory_id = parsed.factory_id.clone();
-    let decl = flz_core::host::HostClassDecl {
-        factory_id: parsed.factory_id,
-        schema_version: parsed.schema_version,
-        persistent: parsed.persistent,
-        procedures: parsed
-            .procedures
-            .into_iter()
-            .map(|p| flz_core::host::HostProcedureDecl {
-                name: p.name,
-                entry_channel: p.entry_channel,
-                retry: flz_core::channel::RetryPolicy {
-                    max_attempts: p.retry_max,
-                    backoff_base_ms: p.retry_backoff_ms,
-                },
-                mailbox_capacity: p.mailbox_capacity,
-                output_plugin: p.output_plugin,
-            })
-            .collect(),
-    };
-    if let Err(e) = flz_core::host::register_host_class(decl) {
+    if let Err(e) = flz_core::host::register_host_class_json(bytes) {
         return ctx.fail(e);
     }
-    ctx.declared
-        .write()
-        .unwrap_or_else(|p| p.into_inner())
-        .push(factory_id);
+    if let Some(factory_id) = factory_id {
+        ctx.declared
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(factory_id);
+    }
     FLZ_OK
 }
 
@@ -316,6 +268,149 @@ pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
     {
         let _ = tx.send(RunnerMessage::Reconnect("controller_requested"));
         drop(tx);
+    }
+}
+
+/// Emit one output payload from a live bounded run-sugar body — the ABI form
+/// of `BoundedCtx::emit`. Best-effort and at-least-once, like operative
+/// output.
+///
+/// # Safety
+/// `ctx` must be live; `instance_id` NUL-terminated; `buf`/`len` readable.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_bounded_emit(
+    ctx: *mut FlzContext,
+    instance_id: *const c_char,
+    buf: *const u8,
+    len: usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_mut() else {
+        return FLZ_ERR;
+    };
+    let Ok(instance_id) = CStr::from_ptr(instance_id).to_str() else {
+        return ctx.fail("instance id is not valid UTF-8");
+    };
+    let bytes = std::slice::from_raw_parts(buf, len).to_vec();
+    flz_core::runner::emit_bounded_output(instance_id.to_string(), bytes);
+    FLZ_OK
+}
+
+/// Block up to `timeout_ms` for the next inbox item of a live bounded
+/// run-sugar body — the ABI form of `BoundedCtx::recv`. On
+/// [`FLZ_POLL_ACTIVATION`] the payload is in `buf_out`/`len_out` (free with
+/// [`flz_core_buf_free`]); [`FLZ_POLL_TIMEOUT`] = no item yet; `FLZ_ERR` =
+/// no live body / inbox closed.
+///
+/// # Safety
+/// `ctx` must be live; `instance_id` NUL-terminated; out pointers writable.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_bounded_recv(
+    ctx: *mut FlzContext,
+    instance_id: *const c_char,
+    timeout_ms: u64,
+    buf_out: *mut *mut u8,
+    len_out: *mut usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_mut() else {
+        return FLZ_ERR;
+    };
+    let Ok(instance_id) = CStr::from_ptr(instance_id).to_str() else {
+        return ctx.fail("instance id is not valid UTF-8");
+    };
+    match flz_core::host::bounded_session_recv(instance_id, Duration::from_millis(timeout_ms)) {
+        Ok(Some(payload)) => {
+            let mut bytes = payload.into_boxed_slice();
+            *buf_out = bytes.as_mut_ptr();
+            *len_out = bytes.len();
+            std::mem::forget(bytes);
+            FLZ_POLL_ACTIVATION
+        }
+        Ok(None) => FLZ_POLL_TIMEOUT,
+        Err(e) => ctx.fail(e),
+    }
+}
+
+/// 1 once the named bounded body's cancellation token tripped (external stop
+/// / `max_duration`) — the ABI form of `BoundedCtx::is_cancelled`. Also 1
+/// for an unknown instance (a finished body is as cancelled as it gets).
+///
+/// # Safety
+/// `instance_id` must be NUL-terminated.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_bounded_cancelled(
+    _ctx: *const FlzContext,
+    instance_id: *const c_char,
+) -> i32 {
+    let Ok(instance_id) = CStr::from_ptr(instance_id).to_str() else {
+        return 1;
+    };
+    i32::from(flz_core::host::bounded_session_cancelled(instance_id))
+}
+
+/// Spawn-or-deliver a bounded instance from a live host procedure — the ABI
+/// form of `ctx.spawn_bounded`. `if_running` is the wire string
+/// (`"deliver"` | `"error"`). Blocks for the controller's outcome (one of
+/// `spawned | delivered | already_running | ...`), returned in
+/// `outcome_out`/`outcome_len_out` (free with [`flz_core_buf_free`]).
+///
+/// # Safety
+/// `ctx` must be live; strings NUL-terminated; buffers readable/writable.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_spawn_bounded(
+    ctx: *mut FlzContext,
+    instance_id: *const c_char,
+    factory_id: *const c_char,
+    payload: *const u8,
+    payload_len: usize,
+    if_running: *const c_char,
+    outcome_out: *mut *mut u8,
+    outcome_len_out: *mut usize,
+) -> i32 {
+    let Some(ctx) = ctx.as_mut() else {
+        return FLZ_ERR;
+    };
+    let (Ok(instance_id), Ok(factory_id), Ok(if_running)) = (
+        CStr::from_ptr(instance_id).to_str(),
+        CStr::from_ptr(factory_id).to_str(),
+        CStr::from_ptr(if_running).to_str(),
+    ) else {
+        return ctx.fail("spawn arguments are not valid UTF-8");
+    };
+    let payload = std::slice::from_raw_parts(payload, payload_len).to_vec();
+    let reference_id = format!("spawn-bounded-{}-{}", instance_id, flz_core::util::nonce_suffix());
+    // Register before sending: the reply can then never arrive before its
+    // waiter exists.
+    let rx = flz_core::shutdown::register_pending_ack(reference_id.clone());
+    let sent = flz_core::runner::coordinator_try_send(
+        flz_core::runner::RunnerMessage::EmitControlRequest {
+            reference_id: reference_id.clone(),
+            command: flz_core::pb::command_request::Command::SpawnBoundedRequest(
+                flz_core::pb::SpawnBoundedRequest {
+                    instance_id: instance_id.to_string(),
+                    factory_id: factory_id.to_string(),
+                    payload,
+                    if_running: if_running.to_string(),
+                },
+            ),
+        },
+    );
+    if !sent {
+        flz_core::shutdown::drop_pending_ack(&reference_id);
+        return ctx.fail("no control plane: spawn request could not be routed");
+    }
+    match rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(Ok(outcome)) => {
+            let mut bytes = outcome.into_bytes().into_boxed_slice();
+            *outcome_out = bytes.as_mut_ptr();
+            *outcome_len_out = bytes.len();
+            std::mem::forget(bytes);
+            FLZ_OK
+        }
+        Ok(Err(refusal)) => ctx.fail(refusal),
+        Err(_) => {
+            flz_core::shutdown::drop_pending_ack(&reference_id);
+            ctx.fail("spawn request not answered within 30s")
+        }
     }
 }
 

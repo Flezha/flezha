@@ -52,3 +52,43 @@ this capability, not a backlog item.
 - **WHEN** the SDK test suite runs in CI
 - **THEN** it SHALL include a scenario that connects, processes input activations, fires a timer, and shuts down entirely through the C ABI, failing if any required entry point is missing
 
+### Requirement: The declaration surface covers the full host layer
+
+`flz_core_declare_class` SHALL accept the complete host-class declaration:
+entity mode (single/static with keys, dynamic with TTL and cap), clock
+kind, correction window and beyond-window policy, delivery tier
+(effectively-once, checkpoint ack-granularity), inter-procedure channels
+with edge ids and keying markers, per-channel retry and overflow
+policies, the record-header lang/format bytes, persistence, and bounded
+lifecycle facts (loop mode, rollback mode, retry, wake-after,
+compensable procs). Timer caps stay host-layer policy — in both SDKs the
+cap is enforced where the registration API lives, not in the core. A declaration
+the core cannot honor SHALL be refused at declaration time with an error
+naming the field — never accepted and degraded silently.
+
+#### Scenario: A full declaration round-trips into controller metadata
+- **WHEN** a shim declares a checkpoint-ack, correction-windowed, dynamic-mode class through the ABI and the controller sends `AddOperative`
+- **THEN** the `AddOperativeResponse` metadata SHALL carry the same declarations the typed Rust path would produce for an identical class
+
+#### Scenario: An unsupported declaration is refused loudly
+- **WHEN** a shim declares a field combination the host layer cannot serve
+- **THEN** `flz_core_declare_class` SHALL return an error naming the offending field, and the class SHALL NOT be registered
+
+### Requirement: Widened host capabilities are reachable through the ABI
+
+Every capability the widened host layer supports SHALL be exercisable
+through `flz_core_ffi` alone — the five command activation kinds, the
+prepare crossing, entity modes, tiers, timers, inter-procedure routing,
+and bounded lifecycles. The CI scenario suite SHALL grow to drive at least:
+a restore fold, a live state read, a keyed dynamic route via the prepare
+crossing, an effectively-once completion with offsets, and a bounded
+run-sugar lifecycle — all through the C entry points, failing if any
+required surface is missing.
+
+#### Scenario: A restore fold crosses the ABI
+- **WHEN** the scenario suite ships a persisted change log for an ABI-declared entity and the controller path delivers `RestoreInitState`
+- **THEN** a `RestoreFold` activation SHALL be pollable through `flz_core_poll`, its completion SHALL unblock the entity, and the entity's next input activation SHALL observe the folded state's effects
+
+#### Scenario: The Java shim is a consumer, not a fork
+- **WHEN** the Java SDK's JNI bridge is compared against the ABI's exported symbol set
+- **THEN** it SHALL call only `flz_core_ffi` entry points — any Java-reachable kernel capability that bypasses the ABI is a defect of this capability

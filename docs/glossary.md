@@ -152,6 +152,16 @@ contains Entities.**
   `poll() → Activation` / `complete(ActivationResult)`; the Rust SDK's typed
   layer is the first host (as a crate), non-Rust SDKs consume the C ABI
   (`flz_core_ffi`). See `docs/sdk_poll_core.md`.
+- **Host class** — an operative class declared through the C ABI as data
+  (`flz_core_declare_class` JSON): the core owns its kernel behavior; its
+  user code runs host-side, reached only through activations. The Java SDK's
+  classes are host classes; typed Rust classes are not.
+- **Prepare crossing** — the batched `KeyRequest` activation asking a host
+  for routing keys and/or event times the core cannot derive from bytes,
+  resolved before any mailbox enqueue.
+- **Bounded session calls** — `flz_core_bounded_emit/recv/cancelled`: the
+  ABI surface a live run-sugar bounded body uses mid-activation (emit
+  output, drain the inbox, observe cancellation).
 - **Activation** — one unit of work the core hands a host: a per-entity
   batch of inputs and validated timer firings, or one of the five
   host-participating command kinds (restore fold, snapshot request, live

@@ -22,10 +22,6 @@
         </dependency>
         <dependency>
             <groupId>com.flezha</groupId>
-            <artifactId>flezha-sdk-protobuf</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.flezha</groupId>
             <artifactId>flezha-sdk-native</artifactId>
         </dependency>
         <dependency>

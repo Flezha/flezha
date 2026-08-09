@@ -9,7 +9,8 @@ on:
   pull_request:
     paths:
       - "cli/**"
-      - "flz_jni/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
       - "flz_nif/**"
       - "flz_transport/**"
       - "sdk/rust/**"
@@ -31,7 +32,8 @@ on:
     branches: [main]
     paths:
       - "cli/**"
-      - "flz_jni/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
       - "flz_nif/**"
       - "flz_transport/**"
       - "sdk/rust/**"

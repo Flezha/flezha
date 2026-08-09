@@ -30,7 +30,9 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex, Once, OnceLock};
+#[cfg(not(windows))]
+use std::sync::Once;
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -247,6 +249,7 @@ pub fn register_bridge(bridge: Arc<ShutdownBridge>) {
 /// calls are no-ops via `std::sync::Once`. The handler runs the active
 /// bridge's graceful shutdown synchronously, then exits the process —
 /// Kubernetes' grace period is the outer bound.
+#[cfg(not(windows))]
 fn install_sigterm_handler() {
     static INSTALLED: Once = Once::new();
     INSTALLED.call_once(|| {
@@ -273,6 +276,11 @@ fn install_sigterm_handler() {
         }
     });
 }
+
+/// Windows has no SIGTERM; graceful shutdown rides `Drop` and the
+/// controller-driven disconnect.
+#[cfg(windows)]
+fn install_sigterm_handler() {}
 
 #[cfg(test)]
 mod tests {

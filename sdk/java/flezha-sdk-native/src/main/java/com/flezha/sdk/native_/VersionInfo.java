@@ -2,8 +2,8 @@ package com.flezha.sdk.native_;
 
 /**
  * Build-time SDK version string, mirrored from the Maven {@code project.version}.
- * Used as a path component during native-library extraction and for the version
- * check against {@code flezha_version()} on SDK startup.
+ * Used as a path component during native-library extraction; wire-version drift
+ * is caught by the poll core's schema negotiation at context creation.
  */
 public final class VersionInfo {
     /**

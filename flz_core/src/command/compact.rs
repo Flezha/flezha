@@ -35,25 +35,25 @@ impl CommandAction for CompactEntity {
         match crate::command::restore::find_entity_slot(runner, &self.entity_id) {
             Some(slot) => {
                 // The snapshot runs under the entity's handout exclusivity
-                // (no activation interleaves), holding the slot locks in
-                // dispatch order (state then flush_buffer) while it encodes.
+                // (no activation interleaves). A host-run Entity crosses a
+                // SnapshotRequest activation; a typed one encodes in-process
+                // holding the slot locks in dispatch order (state then
+                // flush_buffer).
                 crate::poll_core::global().with_entity_exclusive(&slot, || {
-                    let mut state_guard = match slot.state.lock() {
-                        Ok(g) => g,
-                        Err(poisoned) => poisoned.into_inner(),
+                    let result = if slot.dispatcher.host_facts().is_some() {
+                        crate::host::snapshot_frame_crossing(&slot)
+                    } else {
+                        let mut state_guard = match slot.state.lock() {
+                            Ok(g) => g,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        let mut buffer_guard = slot.flush_buffer.lock_recover();
+                        let timer_guard = slot.timers.lock_recover();
+                        slot.dispatcher
+                            .snapshot_frame(&mut state_guard, &mut buffer_guard, &timer_guard)
                     };
-                    let mut buffer_guard = slot.flush_buffer.lock_recover();
-                    let timer_guard = slot.timers.lock_recover();
-
-                    match slot.dispatcher.snapshot_frame(
-                        &mut state_guard,
-                        &mut buffer_guard,
-                        &timer_guard,
-                    ) {
+                    match result {
                         Ok((frame, seq, size)) => {
-                            drop(timer_guard);
-                            drop(buffer_guard);
-                            drop(state_guard);
                             // Ship the snapshot AFTER the drained change frames
                             // (both ride the ordered reliable sink), so the
                             // controller sees every record the snapshot folds

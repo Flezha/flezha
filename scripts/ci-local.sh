@@ -62,11 +62,11 @@ require_cmd() {
 # Returns 0 (true) if all five native binaries are committed under resources.
 all_native_binaries_present() {
   local nd="${REPO_ROOT}/sdk/java/flezha-sdk-native/src/main/resources/native"
-  [[ -f "${nd}/linux-x64/libflz_jni.so"      ]] && \
-  [[ -f "${nd}/linux-arm64/libflz_jni.so"    ]] && \
-  [[ -f "${nd}/macos-x64/libflz_jni.dylib"   ]] && \
-  [[ -f "${nd}/macos-arm64/libflz_jni.dylib" ]] && \
-  [[ -f "${nd}/windows-x64/libflz_jni.dll"   ]]
+  [[ -f "${nd}/linux-x64/libflz_core_ffi.so"      ]] && \
+  [[ -f "${nd}/linux-arm64/libflz_core_ffi.so"    ]] && \
+  [[ -f "${nd}/macos-x64/libflz_core_ffi.dylib"   ]] && \
+  [[ -f "${nd}/macos-arm64/libflz_core_ffi.dylib" ]] && \
+  [[ -f "${nd}/windows-x64/libflz_core_ffi.dll"   ]]
 }
 
 # Returns 0 (true) if the test runner jar is committed.

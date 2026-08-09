@@ -36,6 +36,10 @@ pub struct UnboundedInstance {
     /// Processing-time timer wheel, created on the first registration. An
     /// Operative that never uses one never pays for a thread.
     timer_wheel: OnceLock<Arc<TimerWheel>>,
+    /// Per-entry-channel staging for the host prepare crossing (C-ABI
+    /// classes whose consumers need keys/event times before enqueue).
+    /// Lazily populated; typed classes never touch it.
+    pub host_prepare: Mutex<crate::host::HostPrepareState>,
     /// Frozen-at-instance-start persistence flag. Resolved from the
     /// UnboundedOperative class const + runner override; propagated to every
     /// `EntitySlot`. Subsequent runner config changes do not
@@ -146,6 +150,7 @@ impl UnboundedInstance {
             }
 
             UnboundedInstance {
+                host_prepare: Mutex::new(crate::host::HostPrepareState::default()),
                 topology,
                 instance_id,
                 entities,

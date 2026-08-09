@@ -47,6 +47,17 @@ Flezha is a distributed stream-processing platform. The **Controller** (an Elixi
 
 The controller can run both UDS and QUIC transport servers simultaneously (configured via `FLEZHA_TRANSPORTS`). Each runner connects using one transport type, determined by its `FLEZHA_TRANSPORT` environment variable.
 
+**Who implements this spec.** The wire protocol below is implemented once, by
+the shared runner kernel (`flz_core`). The Rust SDK links the crate; the
+Java SDK is a poll host over its C ABI (`flz_core_ffi` + the `FlzCore` JNI
+binding) — no Java code builds frames, encodes protobuf commands, or runs a
+command handler. Of the command surface, only the five host-participating
+interactions reach Java, as activation kinds (`RestoreFold`,
+`SnapshotRequest`, `LiveStateRead`, `ApplyState`, `MigrationSerialize`);
+everything else is answered by the core. The Activation/ActivationResult
+schema (postcard, version-negotiated at context creation) is specified in
+`docs/sdk_poll_core.md` and byte-pinned in both SDKs' fixture suites.
+
 ### Two Communication Layers
 
 | Layer | Purpose | Transport | Encoding |

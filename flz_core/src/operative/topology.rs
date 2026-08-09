@@ -62,6 +62,10 @@ pub struct ProcedureDescriptor {
     /// the per-Entity WAL size threshold the controller resolves for
     /// compaction, announced in the `AddOperative` response metadata.
     pub compact_after_bytes: usize,
+    /// `Some` for host-run (C-ABI) procedures: the declared facts the
+    /// prepare crossing and the completion path read before any entity
+    /// exists. Typed procedures carry `None`.
+    pub host_facts: Option<std::sync::Arc<crate::host::HostProcedureFacts>>,
     pub build_entity: EntityBuilder,
     pub entities_for_erased: EntitiesForFn,
     /// JSON-serialize an Entity's typed state via the per-Procedure fn

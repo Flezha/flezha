@@ -161,58 +161,65 @@ flezha/
 │       └── bounded/              # BoundedOperative trait + spec build/validation
 ├── sdk/java/                     # Java SDK (Maven multi-module)
 ├── sdk/python/                   # Python SDK (future)
-├── flz_jni/                      # JNI bindings (cdylib, re-exports flz_transport symbols)
 └── lib/                          # Elixir controller (uses shared lib via NIF)
 ```
 
-## Java Bindings (`flz_jni`)
+## Java Bindings
 
-The Java SDK binds to `flz_transport` through a thin `flz_jni` crate
-(`crate-type = ["cdylib"]`) that exports `Java_com_flezha_sdk_native_1_NativeTransport_*`
-symbols and delegates to `flz_transport`'s Rust + C FFI APIs. The cdylib is
-named `libflz_jni` so a single shared library lives on the Java
-classpath per platform.
+The Java SDK is a **poll host over `flz_core`**: its runtime binds to
+`flz_core_ffi` (built with the `jni` feature, shipped as `libflz_core_ffi`)
+through the one-to-one `FlzCore` class — context creation with schema
+negotiation, class declaration (JSON), start, blocking poll, complete, the
+bounded session calls, spawn, shutdown. JVM poller threads loop
+`poll → decode Activation → run user code → encode ActivationResult →
+complete`; the kernel (transport, ordering, durability, retries, timers,
+credit, routing, the bounded driver, reconnect) lives entirely in the core.
+See `docs/sdk_poll_core.md`.
+
+### The shipped binary
+
+`flz_core_ffi` is built with `crate-type = ["cdylib"]` and the `jni`
+feature, exporting both the C ABI (`flz_core_*`) and the JNI symbols
+(`Java_com_flezha_sdk_native_1_FlzCore_*`) from one binary, so a single
+shared library lives on the Java classpath per platform:
+`libflz_core_ffi.{so,dylib,dll}`.
 
 ### Layout
 
 ```
 flezha/
-├── flz_jni/                                   # Rust — JNI entry points + reader threads
-│   ├── Cargo.toml                             # cdylib, depends on flz_transport
+├── flz_core/                                  # The language-agnostic runner kernel
+├── flz_core_ffi/                              # C ABI + JNI exports (feature "jni")
 │   └── src/
-│       ├── lib.rs                             # module root + throw_native helper
-│       ├── context.rs                         # JniContext + contextNew/destroy/open/write/close
-│       ├── callbacks.rs                       # on_data / on_stream_closed / on_connection_lost
-│       ├── frame.rs                           # buildFrame — calls flezha_frame_build, copies bytes, frees
-│       ├── logging.rs                         # setLogCallback — routes FFI logs into Java
-│       └── version.rs                         # version() — thin wrapper over flezha_version
+│       ├── lib.rs                             # flz_core_* entry points
+│       └── jni_glue.rs                        # Java_com_flezha_sdk_native_1_FlzCore_*
 └── sdk/java/
-    ├── pom.xml                                # Maven parent (6 modules)
-    ├── flezha-sdk-api/                        # Public types — OperativeHandler, sealed Input/Output/Result
-    ├── flezha-sdk-protobuf/                   # Generated Java classes from protobufs/*.proto
-    ├── flezha-sdk-runtime/                    # Control plane, data plane, worker pool, reconnect
-    ├── flezha-sdk-native/                     # NativeTransport + NativeLibraryLoader + bundled binaries
-    ├── flezha-sdk/                            # Fat-jar aggregator (the published artifact)
-    └── flezha-sdk-integration-tests/          # End-to-end tests driven by the Elixir harness
+    ├── pom.xml                                # Maven parent
+    ├── flezha-sdk-api/                        # Public authoring surface (no runtime deps)
+    ├── flezha-sdk-processor/                  # Annotation processor
+    ├── flezha-sdk-runtime/                    # ActivationDispatcher + codec + FlezhaImpl pollers
+    ├── flezha-sdk-native/                     # FlzCore + NativeLibraryLoader + bundled binaries
+    ├── flezha-sdk-testing/                    # ProcedureTestHarness
+    ├── flezha-sdk-examples/                   # Worked examples
+    └── flezha-sdk/                            # Fat-jar aggregator (the published artifact)
 ```
 
 ### Buffer ownership at the JNI boundary
 
-1. Frames built via `buildFrame(payloadId, message, metadataJson)` call
-   `flezha_frame_build` in `flz_transport`, copy the returned native buffer
-   into a fresh Java `byte[]`, then call `flezha_frame_free`. No native
-   buffer escapes the JNI method.
-2. Incoming stream data (`on_data` callback) reaches Java as a fresh
-   `byte[]` allocated by the JVM; the native reader thread drops its local
-   buffer immediately after the callback returns.
-3. Java-owned arrays handed into native methods (`streamWrite`, etc.) are
-   copied into Rust-side buffers before the call returns; the JVM retains
-   ownership.
+1. Every `byte[]` the binding returns (a polled activation, an inbox
+   payload, a spawn outcome) is copied from the core's buffer into a fresh
+   Java array, and the native buffer is freed through `flz_core_buf_free`
+   before the JNI method returns. No native buffer escapes.
+2. Java-owned arrays handed into native methods (`declareClass`,
+   `complete`, `boundedEmit`, …) are copied into Rust-side buffers before
+   the call returns; the JVM retains ownership.
 
 ### Native binary packaging
 
 The `flezha-sdk-native` module's `native-build` Maven profile drives
 `scripts/build-native.sh` (cargo-zigbuild) to cross-compile
-`libflz_jni.{so,dylib,dll}` for five target triples. The binaries
-land under `src/main/resources/native/<os>-<arch>/` and are extracted +
-`System.load`-ed at SDK init time by `NativeLibraryLoader`.
+`libflz_core_ffi.{so,dylib,dll}` (feature `jni`) for five target triples.
+The binaries land under `src/main/resources/native/<os>-<arch>/` and are
+extracted + `System.load`-ed at SDK init by `NativeLibraryLoader`; schema
+negotiation at `FlzCore.contextNew` refuses a shim/core version mismatch
+before any controller connection.

@@ -1,7 +1,14 @@
 # Flezha Java SDK
 
-Java 21 SDK for authoring Flezha compute engines. Talks to the Elixir controller
-through JNI bindings over `flz_transport`; UDS and QUIC both supported.
+Java 21 SDK for authoring Flezha compute engines. The runtime is a **poll
+host over the shared `flz_core` kernel**: JVM poller threads drive the
+core through a JNI binding over `flz_core_ffi` (`FlzCore` — schema-
+negotiated context, class declaration as JSON, blocking `poll`,
+`complete`), and the core owns transport (UDS and QUIC), ordering,
+durability, retries, timers and reconnection. The Java layer is the
+authoring surface, the Kryo codecs, and a pure `ActivationDispatcher`
+that turns activations into user-code invocations — it reimplements no
+kernel mechanism. See `docs/sdk_poll_core.md`.
 
 Functionally at parity with the Rust SDK (`sdk/rust/`) — every operative shape,
 durability tier, and delivery guarantee available there is available here.
@@ -339,7 +346,6 @@ retention, and a tier without keyed sinks is refused at registration.
 | Module | Purpose |
 |---|---|
 | `flezha-sdk-api` | Public API: `Flezha`, `UnboundedOperative`, `BoundedOperative`, `Procedure`, `ProcedureCtx`, `StableId`, channel builders, clocks. No native dependency. |
-| `flezha-sdk-protobuf` | Generated from `protobufs/runner_commands.proto`. |
 | `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, state persistence, bounded driver. |
 | `flezha-sdk-native` | JNI bindings + bundled per-OS `libflz_transport`. |
 | `flezha-sdk-testing` | `ProcedureTestHarness` — add with `<scope>test</scope>`. |
@@ -353,7 +359,7 @@ mvn -f sdk/java/pom.xml -P native-build package   # portable: bundles all 5 nati
 mvn -f sdk/java/pom.xml -P host-only  package     # fast local iteration (NOT portable)
 ```
 
-Prerequisites: **JDK 21+**, a **Rust stable toolchain** (for the `flz_jni` bridge),
+Prerequisites: **JDK 21+**, a **Rust stable toolchain** (for the `flz_core_ffi` binding),
 and **[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild)** for the
 native cross-build.
 

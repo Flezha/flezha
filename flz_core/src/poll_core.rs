@@ -52,13 +52,65 @@ pub struct WorkItem {
     pub is_final: bool,
 }
 
-/// One handed-out unit of work: a per-entity batch. Holding it IS the
-/// exclusivity token — the slot's `drain_active`/inflight gates stay held
-/// until `complete(token)` / `retry_after_failure(token, ..)`.
+/// One handed-out unit of work. For a [`EnginePayload::Work`] batch,
+/// holding it IS the exclusivity token — the slot's `drain_active`/inflight
+/// gates stay held until `complete(token)` / `retry_after_failure(token, ..)`.
 pub struct EngineActivation {
     pub token: u64,
-    pub slot: Arc<EntitySlot>,
-    pub items: Vec<WorkItem>,
+    pub payload: EnginePayload,
+}
+
+pub enum EnginePayload {
+    /// An ordered per-entity batch of inputs and timer firings.
+    Work {
+        slot: Arc<EntitySlot>,
+        items: Vec<WorkItem>,
+    },
+    /// A host-participating command interaction (restore fold, snapshot
+    /// request, live-state read, apply-state, migration serialize) or a
+    /// bounded crossing (stage batch, compensation, run-sugar seed) queued
+    /// as a real activation for a C-ABI host. It carries no engine items;
+    /// its exclusivity is the caller's — the entity gate a command thread
+    /// holds inside [`PollCore::with_entity_exclusive`], or the bounded
+    /// driver's own stage serialization — and its completion answers the
+    /// enqueuer's rendezvous instead of releasing a slot.
+    Command {
+        target: crate::schema::EntityRef,
+        change_seq: u64,
+        factory: String,
+        kind: crate::schema::ActivationKind,
+        reply: crossbeam::channel::Sender<crate::schema::ActivationOutcome>,
+    },
+    /// A batched prepare crossing for one entry channel — pre-keying work,
+    /// bound to no entity yet.
+    Prepare(crate::host::PrepareCrossing),
+}
+
+impl EngineActivation {
+    /// The work batch's slot. The typed poll workers and the engine tests
+    /// only ever see work activations.
+    pub fn slot(&self) -> &Arc<EntitySlot> {
+        match &self.payload {
+            EnginePayload::Work { slot, .. } => slot,
+            _ => unreachable!("only work activations are bound to a live slot"),
+        }
+    }
+
+    /// The work batch's items (empty for command/prepare payloads).
+    pub fn items(&self) -> &[WorkItem] {
+        match &self.payload {
+            EnginePayload::Work { items, .. } => items,
+            _ => &[],
+        }
+    }
+
+    /// Consume into the work parts, or `None` for a non-work payload.
+    pub fn into_work(self) -> Option<(u64, Arc<EntitySlot>, Vec<WorkItem>)> {
+        match self.payload {
+            EnginePayload::Work { slot, items } => Some((self.token, slot, items)),
+            _ => None,
+        }
+    }
 }
 
 pub enum Polled {
@@ -69,6 +121,10 @@ pub enum Polled {
 
 pub struct PollCore {
     ready: Mutex<VecDeque<Arc<EntitySlot>>>,
+    /// Command activations for host classes, handed out ahead of `ready`.
+    /// Their entity gate is held by the enqueuing command thread, so handing
+    /// them out never races a work assembly for the same entity.
+    direct: Mutex<VecDeque<EngineActivation>>,
     cv: Condvar,
     shutting_down: AtomicBool,
     next_token: AtomicU64,
@@ -85,6 +141,7 @@ impl PollCore {
     pub fn new() -> Self {
         Self {
             ready: Mutex::new(VecDeque::new()),
+            direct: Mutex::new(VecDeque::new()),
             cv: Condvar::new(),
             shutting_down: AtomicBool::new(false),
             next_token: AtomicU64::new(0),
@@ -110,6 +167,9 @@ impl PollCore {
         loop {
             if self.shutting_down.load(Ordering::Acquire) {
                 return Polled::ShuttingDown;
+            }
+            if let Some(act) = self.direct.lock_recover().pop_front() {
+                return Polled::Activation(act);
             }
             while let Some(slot) = ready.pop_front() {
                 drop(ready);
@@ -143,8 +203,10 @@ impl PollCore {
                 self.outstanding.insert(token, Arc::clone(slot));
                 return Some(EngineActivation {
                     token,
-                    slot: Arc::clone(slot),
-                    items,
+                    payload: EnginePayload::Work {
+                        slot: Arc::clone(slot),
+                        items,
+                    },
                 });
             }
             // Nothing runnable (skipped, or buffered into an open slice):
@@ -197,6 +259,28 @@ impl PollCore {
             head.attempt += 1;
             head.is_final = head.attempt >= policy.max_attempts;
         }
+        self.hold_and_reschedule(&slot, items);
+    }
+
+    /// Put back items the host never processed — they sat behind a failed
+    /// head that parked. No attempt bump and no backoff: these items are not
+    /// failures, they are simply owed a fresh round.
+    pub fn rehand_unprocessed(&self, token: u64, items: Vec<WorkItem>) {
+        let Some((_, slot)) = self.outstanding.remove(&token) else {
+            return;
+        };
+        if items.is_empty() {
+            self.release_and_rearm(&slot);
+            return;
+        }
+        self.hold_and_reschedule(&slot, items);
+    }
+
+    /// The holdback tail both re-hand flavors share: park the items in the
+    /// slot's holdback, release the gates, and claim the owed round. The
+    /// holdback is non-empty, so a round is owed regardless of the mailbox;
+    /// a losing CAS means a producer already scheduled one.
+    fn hold_and_reschedule(&self, slot: &Arc<EntitySlot>, items: Vec<WorkItem>) {
         {
             let mut held = slot.pending_retry.lock_recover();
             debug_assert!(held.is_empty(), "holdback refilled while handed out");
@@ -204,10 +288,8 @@ impl PollCore {
         }
         slot.drain_active.store(false, Ordering::Release);
         slot.mailbox.release_inflight();
-        // The holdback is non-empty, so a round is owed regardless of the
-        // mailbox; a losing CAS means a producer already scheduled one.
         if slot.mailbox.try_mark_inflight() {
-            self.schedule(&slot);
+            self.schedule(slot);
         }
     }
 
@@ -233,13 +315,58 @@ impl PollCore {
         }
     }
 
+    /// Queue a non-work payload (command interaction, prepare crossing) for
+    /// a host poller, ahead of the ready queue.
+    pub fn submit_direct(&self, payload: EnginePayload) -> u64 {
+        let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
+        self.direct
+            .lock_recover()
+            .push_back(EngineActivation { token, payload });
+        self.cv.notify_one();
+        token
+    }
+
+    /// Queue a command interaction as a real activation for a host poller
+    /// and block for its completion. MUST be called while the slot's handout
+    /// gate is held (inside [`Self::with_entity_exclusive`]) — that gate is
+    /// what keeps input activations out while the command runs, and it makes
+    /// handing this activation out race-free by construction.
+    pub fn host_command(
+        &self,
+        slot: &Arc<EntitySlot>,
+        kind: crate::schema::ActivationKind,
+    ) -> Result<crate::schema::ActivationOutcome, String> {
+        let describe = command_kind_name(&kind);
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(format!("{describe}: runner is shutting down"));
+        }
+        let (reply, rx) = crossbeam::channel::bounded(1);
+        self.submit_direct(EnginePayload::Command {
+            target: crate::host::entity_ref_of(slot),
+            change_seq: slot.change_seq.load(Ordering::Acquire),
+            factory: slot.topology.factory_id.to_string(),
+            kind,
+            reply,
+        });
+        match rx.recv_timeout(HOST_COMMAND_TIMEOUT) {
+            Ok(outcome) => Ok(outcome),
+            Err(crossbeam::channel::RecvTimeoutError::Timeout) => Err(format!(
+                "{describe}: host did not complete the activation within {}s",
+                HOST_COMMAND_TIMEOUT.as_secs()
+            )),
+            Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
+                Err(format!("{describe}: host context dropped the activation"))
+            }
+        }
+    }
+
     /// Run a host-participating command interaction (restore fold, snapshot
     /// request, live-state read, apply-state, migration serialize) under the
     /// entity's handout exclusivity: it waits out any outstanding activation
     /// and no activation is handed out while it runs — the same gate an
     /// input batch holds, so a fold completes before inputs flow. The
     /// in-process form of the command activation kinds; the C ABI queues
-    /// them as real activations.
+    /// them as real activations via [`Self::host_command`].
     pub fn with_entity_exclusive<R>(&self, slot: &Arc<EntitySlot>, f: impl FnOnce() -> R) -> R {
         let started = Instant::now();
         let mut warned = false;
@@ -266,6 +393,25 @@ impl PollCore {
     pub fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::Release);
         self.cv.notify_all();
+    }
+}
+
+/// How long a command thread waits for a host to answer its queued
+/// activation before reporting the interaction failed.
+const HOST_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn command_kind_name(kind: &crate::schema::ActivationKind) -> &'static str {
+    use crate::schema::ActivationKind;
+    match kind {
+        ActivationKind::Work(_) => "work",
+        ActivationKind::RestoreFold(_) => "restore_fold",
+        ActivationKind::SnapshotRequest => "snapshot_request",
+        ActivationKind::LiveStateRead => "live_state_read",
+        ActivationKind::ApplyState { .. } => "apply_state",
+        ActivationKind::MigrationSerialize => "migration_serialize",
+        ActivationKind::KeyRequest(_) => "key_request",
+        ActivationKind::BoundedRun { .. } => "bounded_run",
+        ActivationKind::CompensateRun { .. } => "compensate_run",
     }
 }
 

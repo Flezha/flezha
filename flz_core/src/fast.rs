@@ -611,7 +611,9 @@ impl OperativeDispatchHandle {
         // one would strand the slice every *other* Entity buffered. It carries
         // no payload and never reaches a Procedure.
         if metadata.contains_key("flz.replay_end") {
-            crate::routing::end_replay_slice(&instance);
+            // Host classes may hold slice members in the prepare crossing;
+            // the broadcast defers behind them instead of overtaking them.
+            crate::host::deferred_end_replay_slice(&instance);
             return;
         }
 
@@ -661,6 +663,21 @@ impl OperativeDispatchHandle {
         // so keep the wire bytes for the re-attempts and the park record.
         // Passthrough `Vec<u8>`/`String` entries keep the pre-change
         // drop-and-log path (no clone on the hot path).
+        // Host classes whose consumers need keys / event times stage the
+        // payload for the prepare crossing instead of enqueueing directly.
+        let payload = match crate::host::maybe_stage_prepare(
+            &instance,
+            channel_id,
+            channel,
+            payload,
+            consumed_offset,
+            replay,
+            &stream,
+        ) {
+            Some(payload) => payload,
+            None => return,
+        };
+
         let retry_bytes = channel.entry_parsed.then(|| payload.clone());
         let typed_payload = match &channel.wrap_input {
             Some(wrap) => match wrap(payload) {

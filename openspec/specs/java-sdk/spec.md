@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines the Java SDK for Flezha compute engines: the public API, protocol layer, command dispatch, transport selection, reconnection, the Operative / Procedure / Entity runtime, and the JNI bridge to `flz_transport`. Conforms to `docs/sdk_protocol_spec.md`.
+Defines the Java SDK for Flezha compute engines: the public authoring API and the Operative / Procedure / Entity runtime, hosted on the shared poll core through the `FlzCore` JNI binding over `flz_core_ffi`. Conforms to `docs/sdk_protocol_spec.md` and `docs/sdk_poll_core.md`.
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
@@ -100,121 +100,66 @@ The runtime SHALL stamp `flz.entity`, `flz.seq`, and (on keyed emits) `flz.key` 
 
 ### Requirement: Sticky Per-Entity Ordering Under ThreadPool Dispatch
 
-The Java SDK's worker pool (sized by `FLEZHA_WORKER_POOL_SIZE`, default = `Runtime.availableOperatives()`) SHALL guarantee that for any single `(operativeInstance, procedure, entity)` triple, two invocations of that Procedure's `run(...)` method on that Entity never execute concurrently, and invocations observe their inputs in the exact order those inputs were enqueued onto the Entity's mailbox. This invariant MUST hold regardless of worker-pool size, number of concurrent Operative instances, number of Entities per Procedure, or transport (UDS/QUIC).
+The runtime SHALL guarantee that for any single `(operativeInstance,
+procedure, entity)` triple, two invocations of that Procedure's `run(...)`
+never execute concurrently, and that invocations observe their inputs in
+enqueue order.
+This invariant is supplied by the core's per-entity handout exclusivity —
+an entity with an outstanding activation is never handed out again until
+its completion — and MUST hold regardless of poller count, Operative count,
+Entity count, or transport.
 
 #### Scenario: Same entity never runs concurrently under load
-- **WHEN** 10,000 inputs targeting the same `(operativeInstance, procedure, entityKey)` triple arrive back-to-back on one or more entry channels while the SDK uses a 16-thread worker pool
-- **THEN** at any wall-clock instant, at most one thread SHALL be inside that Entity's `run(...)` method
+- **WHEN** 10,000 inputs targeting one entity arrive back-to-back while 16 Java pollers poll
+- **THEN** at any wall-clock instant at most one thread SHALL be inside that Entity's `run(...)`
 
 #### Scenario: Different entities of same procedure may run concurrently
-- **WHEN** inputs arrive simultaneously for two distinct entities of the same Procedure (for example `("ohlc", "1m")` and `("ohlc", "1h")`) and the worker pool has ≥ 2 threads
+- **WHEN** inputs arrive simultaneously for two distinct entities of the same Procedure and ≥ 2 pollers are polling
 - **THEN** the two Entities' `run(...)` methods MAY execute concurrently on different threads
 
 #### Scenario: Per-entity inputs delivered in arrival order
-- **WHEN** inputs `"a"`, `"b"`, `"c"` are enqueued onto one Entity's mailbox in that order with an append-to-state Procedure
+- **WHEN** inputs `"a"`, `"b"`, `"c"` are enqueued for one Entity in that order with an append-to-state Procedure
 - **THEN** the Entity's State SHALL end with `["a", "b", "c"]` in exactly that order
 
 ### Requirement: Command Dispatch
 
-The Java SDK SHALL implement handlers for every `CommandRequest` variant defined in `runner_commands.proto` that the Rust SDK handles, including `AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `EntityState`, `MigrationSerialization`, `MigrationDeserialization`, `OperativeMessage`, `RunnerDisconnect`, `RestoreInitState`, `CompactEntity`, `EntityMailboxStatus`, `Ping`, `BoundedStop`, `CreditWindowInit`, `CreditGrant`, `ParkPayloadAck`, `ProcCommitResponse` (tag 29), and `IterCommitResponse` (tag 31). Each handler MUST produce a `CommandResponse` that echoes the original `reference_id` and sets `status = "success"` or `status = "error"` with populated `errors` per `docs/sdk_protocol_spec.md` §6.
+Control commands SHALL be handled by the core. Of the command surface, only
+the five host-participating interactions SHALL reach Java — as activation
+kinds (`RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
+`MigrationSerialize`), subject to per-entity exclusivity; every other
+command (including `Ping`, credit frames, acks, `AssignRunnerId`,
+`ConnectSocket`, `RemOperative`, `BoundedStop`) SHALL be answered by the
+core without surfacing to Java. Class capability declarations
+(`effectively_once`, `ack_granularity`, `correction_window_ms`,
+`beyond_window_policy`, `compensable_procs`, `leaf_procs`,
+`compact_after_bytes`) SHALL ride the declaration the Java layer registers;
+the core SHALL populate `AddOperativeResponse.metadata` from it — a class
+declaring nothing yields an empty map, byte-identical to today.
 
-The SDK SHALL originate the runner→controller commands `RunnerShutdownNotification`, `BoundedCompleted`, `ProcCommit` (tag 28), `IterCommit` (tag 30), and `IterPark` (tag 32).
+#### Scenario: AddOperative spawns a Java-hosted operative instance
+- **WHEN** the controller sends `AddOperative{operative_id:"p1", factory_id:"market"}` for a declared Java class
+- **THEN** the core SHALL instantiate the class's topology, respond `status = "success"` with its declared capability metadata, and subsequent entry inputs SHALL surface to Java as work activations for `"p1"`
 
-`AddOperative` SHALL read the optional `kind` field: an empty or absent value SHALL be interpreted as `:unbounded`; a value resolving to `:bounded` SHALL spawn a `BoundedOperativeInstance`. `RemOperative` SHALL remove either variant by instance id.
+#### Scenario: Ping never reaches Java
+- **WHEN** the controller sends `Ping` while Java pollers are polling
+- **THEN** the core SHALL answer it and no activation SHALL be handed to any poller
 
-**`AddOperative` SHALL respond with a populated `AddOperativeResponse` whose `metadata` map declares the registered class's capabilities**, so that the controller's `Overwatch.decode_declarations/1` learns what the class supports. The map SHALL carry, when and only when the class declares them: `effectively_once`, `ack_granularity` (`"checkpoint"`), `correction_window_ms`, `beyond_window_policy`, `compensable_procs` (comma-separated proc indices), and `leaf_procs`. A class that declares none of these SHALL respond with an empty map, which the controller reads as "declared nothing" — the pre-change behaviour.
-
-#### Scenario: AddOperative spawns an unbounded operative instance
-- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market"}` and UnboundedOperative class `MarketOperative` is registered with `factoryId() == "market"`
-- **THEN** the SDK SHALL allocate an `UnboundedOperativeInstance` keyed by `"p1"`, call `initState(...)` for every Procedure×Entity declared by `MarketOperative`, and respond with `status = "success"`
-
-#### Scenario: AddOperative with unknown factory_id returns error
-- **WHEN** the agent sends `AddOperative{factory_id:"missing"}`
-- **THEN** the SDK SHALL respond with `status = "error"` and `errors` containing a string naming the missing factory id
-
-#### Scenario: AddOperative with kind bounded spawns a bounded variant
-- **WHEN** the agent sends `AddOperative{operative_id:"t1", factory_id:"greet", kind:"bounded"}` and `GreetOperative` is registered as a bounded operative with `factoryId() == "greet"`
-- **THEN** the SDK SHALL register a `BoundedOperativeInstance` keyed by `"t1"` and respond with `status = "success"`
-
-#### Scenario: RemOperative removes either operative variant
-- **WHEN** the agent sends `RemOperative{operative_id:"t1"}` for a live bounded operative instance (and likewise for an unbounded operative instance)
-- **THEN** the SDK SHALL remove the instance from the sealed operative registry by id and respond with `status = "success"`
-
-#### Scenario: AddOperative declaring the effectively-once tier populates the response metadata
-- **WHEN** the agent sends `AddOperative{factory_id:"tier"}` for a class whose channel declaration calls `c.effectivelyOnce()`
-- **THEN** the SDK's `CommandResponse.raw_data` SHALL decode as an `AddOperativeResponse` whose `metadata` contains `"effectively_once" -> "true"`
-
-#### Scenario: AddOperative declaring a correction window populates window and policy
-- **WHEN** a registered class declares `c.correctionWindow(60_000)` and `c.beyondWindowPolicy(DROP)`
-- **THEN** the response `metadata` SHALL contain `"correction_window_ms" -> "60000"` and `"beyond_window_policy" -> "drop"`
-
-#### Scenario: AddOperative declaring checkpoint ack granularity populates ack_granularity
-- **WHEN** a registered class declares `c.effectivelyOnce()` and `c.checkpointAck()`
-- **THEN** the response `metadata` SHALL contain `"ack_granularity" -> "checkpoint"`
-
-#### Scenario: AddOperative for a bounded class declares its compensable procs and leaves
-- **WHEN** a bounded class registers a chain whose procs at index 0 and 2 override `compensate` and whose proc tree has leaves `[2]`
-- **THEN** the response `metadata` SHALL contain `"compensable_procs" -> "0,2"` and `"leaf_procs" -> "2"`
-
-#### Scenario: A class declaring nothing responds with an empty metadata map
-- **WHEN** a registered class declares no tier, no correction window, no checkpoint ack, and is unbounded
-- **THEN** the response `metadata` SHALL be empty, and the controller SHALL treat the class exactly as it did before this change
-
-#### Scenario: RunnerDisconnect halts the reconnect loop
-- **WHEN** the agent sends `RunnerDisconnect{}`
-- **THEN** the SDK SHALL set status to `Stopped`, respond with `status = "success"`, close all sockets, and NOT attempt to reconnect
-
-### Requirement: Binary Framing and Metadata Codec
-
-The Java SDK SHALL implement a frame codec that produces and parses the binary frame format defined in `docs/sdk_protocol_spec.md` §3 (32-byte padded payload id, big-endian `uint32` payload size and message size, big-endian `uint16` metadata size, flat `(key_len, val_len, key, value)` metadata pairs). The parser MUST be a resumable state machine handling `empty`, `incomplete_header`, and `incomplete_payload` states so that frames split across reads are correctly reassembled.
-
-#### Scenario: Building a handshake init frame matches the spec byte layout
-- **WHEN** the SDK builds a frame with `payload_id = "connect_control_channel"`, message = `{"factory_ids":["echo"],"namespace":"my_app"}`, metadata = `{}`
-- **THEN** the produced bytes SHALL match the hex dump in `docs/sdk_protocol_spec.md` §9.1 (total 86 bytes)
-
-#### Scenario: Frame split across two reads is reassembled
-- **WHEN** a 60-byte frame is delivered as two chunks (40 bytes then 20 bytes) to the parser
-- **THEN** the parser SHALL emit exactly one decoded frame after the second chunk, with the original payload id, message, and metadata intact
-
-#### Scenario: Metadata round-trip preserves keys and values
-- **WHEN** metadata `{input_type -> 2, trace_id -> abc123}` is serialized and then parsed
-- **THEN** the parsed metadata SHALL contain both entries with exact byte equality
-
-### Requirement: Protobuf Codec
-
-The Java SDK SHALL use `protobuf-java` to encode `CommandResponse` and decode `CommandRequest` messages generated from the existing `runner_commands.proto` (no new proto definitions, no hand-written wire-format code).
-
-#### Scenario: Encoding AssignRunnerId response matches protocol
-- **WHEN** the SDK encodes `CommandResponse{reference_id:"#Ref<0.1.2.3>", status:"success"}`
-- **THEN** the produced bytes SHALL be valid protobuf decodable by the Elixir agent's `CommandResponse` parser
-
-#### Scenario: Decoding AddOperative request extracts all fields
-- **WHEN** the SDK receives a protobuf-encoded `CommandRequest` with an `AddOperative` oneof case
-- **THEN** the decoder SHALL expose `operative_id`, `factory_id`, and `init_values` as Java strings
-
-### Requirement: Transport Selection
-
-The Java SDK SHALL honor the `FLEZHA_TRANSPORT` environment variable (`uds` or `quic`) for transport selection, defaulting to `uds` when unset. For QUIC, the SDK SHALL also honor `FLEZHA_QUIC_ADDRESS`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_SERVER_CERT_PATH`, `FLEZHA_SERVER_KEY_PATH`. For UDS, the SDK SHALL honor `FLEZHA_SOCKET_FILES_PATH`. All env var names and defaults MUST match `docs/sdk_protocol_spec.md` §2.
-
-#### Scenario: Default transport is UDS
-- **WHEN** `FLEZHA_TRANSPORT` is unset and `Flezha.newInstance(...)` is called
-- **THEN** the SDK SHALL connect to `{FLEZHA_SOCKET_FILES_PATH or app_data/sockets}/runner_control_channel.sock`
-
-#### Scenario: QUIC transport uses configured address and cert paths
-- **WHEN** `FLEZHA_TRANSPORT=quic` and `FLEZHA_QUIC_ADDRESS=127.0.0.1:4433`
-- **THEN** the SDK SHALL open a QUIC connection to that address using the CA cert at the configured path, opening the control channel on the first bidi stream per §2 "QUIC Stream Mapping"
+#### Scenario: Restore is a fold handed to Java
+- **WHEN** the controller ships `RestoreInitState` for an entity with a persisted change log
+- **THEN** Java SHALL receive a `RestoreFold` activation, fold the snapshot and Kryo change records through its existing decode paths, and no input activation for that entity SHALL be handed out before the fold completes
 
 ### Requirement: Auto-Reconnect on Unexpected Disconnect
 
-The Java SDK SHALL distinguish intentional disconnects (`RunnerDisconnect` command handled → status `Stopped`) from unexpected ones (BrokenPipe / UnexpectedEof / ConnectionReset / QUIC connection lost). On an unexpected disconnect the SDK MUST clear `io_streams`, the live operative registry, and work queues; reset `runner_id` to `undefined`; and reconnect with exponential backoff (200 ms, 400 ms, 800 ms, …, capped at 30 s) per `docs/sdk_protocol_spec.md` §5 "Auto-Reconnection".
+Reconnection SHALL be owned by the core: on an unexpected control-channel
+disconnect the core retries with capped exponential backoff and
+re-presents the runner's stable identity, exactly as for the Rust host.
+The Java layer SHALL NOT implement a reconnect loop; its pollers simply
+continue polling across the reconnect (work resumes when the controller
+re-binds and re-forwards).
 
-#### Scenario: Agent crash triggers reconnect
-- **WHEN** the agent process is killed while the SDK has status `Running`
-- **THEN** the SDK SHALL detect the disconnect via the native layer, clear local state, and reconnect once the agent is available again, receiving a fresh `runner_id`
-
-#### Scenario: Intentional disconnect does not reconnect
-- **WHEN** the SDK receives `RunnerDisconnect{}` and responds successfully
-- **THEN** the SDK SHALL close its sockets and NOT attempt any reconnection
+#### Scenario: Controller restart is invisible to Java pollers
+- **WHEN** the controller restarts while a Java runner is idle-polling
+- **THEN** the core SHALL reconnect with backoff and re-handshake, no Java-side reconnect code runs, and the next dispatched input surfaces as an ordinary activation
 
 ### Requirement: Worker Pool and Dispatch Throughput Floor
 
@@ -228,17 +173,29 @@ The Java SDK SHALL operate on a single shared bounded runner sized by `FLEZHA_WO
 - **WHEN** the SDK starts with `FLEZHA_WORKER_POOL_SIZE` unset
 - **THEN** the worker pool SHALL be sized to `Runtime.availableOperatives()`
 
-### Requirement: JNI Bridge to flz_transport
+### Requirement: JNI Bridge to flz_core_ffi
 
-The Java SDK SHALL interact with the transport layer exclusively through a JNI bridge that wraps `flz_transport`'s C FFI. The bridge MUST expose Java-side procedures for: opening a transport context with a `FlezhaConfig`, connecting (client mode), opening streams, reading and writing stream data, registering a log callback, and destroying the context. All native buffers returned by the bridge MUST be copied into Java `byte[]` / `String` before the native memory is freed.
+The Java SDK SHALL interact with the runner kernel exclusively through a
+JNI bridge that wraps `flz_core_ffi`'s C ABI one-to-one: context creation
+with schema-version negotiation, class declaration (JSON), start, blocking
+poll with timeout, complete, shutdown, last-error, and the log callback.
+There SHALL be no other native surface: a capability reachable through the
+ABI but not through the bridge is a defect of the bridge. `poll` SHALL be
+issued as a plain blocking native call on a host thread (the core wakes it
+on shutdown). All native buffers returned by the bridge MUST be copied into
+Java `byte[]` before being freed through the core-provided free function.
+
+#### Scenario: Version mismatch refuses at context creation
+- **WHEN** the Java shim was built against schema version N and the bundled core speaks N+1
+- **THEN** context creation SHALL fail before any controller connection with an error naming both N and N+1
 
 #### Scenario: Native buffer freed after copy into Java byte[]
-- **WHEN** the JNI bridge receives a data callback carrying a native buffer pointer and length
-- **THEN** the bridge SHALL allocate a Java `byte[]` of equal length, copy the native bytes into it, invoke the Java-side handler with the `byte[]`, and ensure the native buffer is freed (or returned to `flz_transport` ownership) before control returns to the native caller
+- **WHEN** `poll` returns an activation buffer pointer and length
+- **THEN** the bridge SHALL copy the bytes into a Java `byte[]`, free the native buffer through the core's free function exactly once, and hand the `byte[]` to the poller
 
-#### Scenario: flezha_version mismatch is logged
-- **WHEN** the SDK starts and `flezha_version()` returns a string that does not equal the SDK's bundled expected version
-- **THEN** the SDK SHALL log a WARNING naming both versions and continue startup
+#### Scenario: Shutdown wakes blocked Java pollers
+- **WHEN** poller threads are blocked in the native `poll` call and the runner shuts down
+- **THEN** every blocked call SHALL return promptly with the distinguishable shutting-down status and the poller threads SHALL exit their loops
 
 ### Requirement: Procedure interface declares Change, Clock, Config generic parameters
 
@@ -255,7 +212,7 @@ The interface SHALL declare lifecycle methods:
 #### Scenario: Default Change is NoChange skips persistence machinery
 
 - **WHEN** a Java Procedure does not declare its `Change` parameter (defaults to `NoChange`)
-- **THEN** the runtime SHALL detect via `changeType() == NoChange.class` (reference equality) at operative-build time and SHALL NOT register a flush buffer or `EntityFlusher` entry for this Entity
+- **THEN** the runtime SHALL detect via `changeType() == NoChange.class` (reference equality) and its completions SHALL carry no change bytes, so the core registers no flusher work for this Entity
 
 #### Scenario: User-defined Change opts the Procedure into persistence
 
@@ -353,7 +310,7 @@ The resolved value SHALL be bound to the `UnboundedOperativeInstance` and SHALL 
 #### Scenario: Code-declared opt-out is honored
 
 - **WHEN** `MarketOperative.persistenceEnabled()` returns `false` (user override) AND no runner override is present
-- **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `false`; the `EntityFlusher` SHALL drain-and-discard for this instance's Entities; `NativeTransport.sendEntityStateChange` SHALL NOT be invoked
+- **THEN** the class declaration SHALL announce `persistent: false` and the core SHALL drain-and-discard this instance's change bytes — no `entity_state_change` frame reaches the wire
 
 #### Scenario: Runner override takes precedence
 
@@ -384,29 +341,21 @@ The Java SDK's `Procedure.initState` signature SHALL be `State initState(Optiona
 
 ### Requirement: Per-Entity flusher with toggle-aware drain
 
-The Java SDK SHALL spawn at most one `EntityFlusher` daemon thread per JVM, lazy-initialized via `AtomicReference<EntityFlusher>` on the first `Flezha.registerUnbounded(...)` call that registers a Procedure with a non-`NoChange` Change. JVMs that register only `NoChange` Procedures SHALL NOT spawn a flusher thread.
+Durable-change flushing SHALL be owned by the core: Kryo-encoded change
+bytes returned in completions are buffered per entity core-side and
+drained to framed WAL records on the core's linger cadence, honoring the
+persistence toggle (drain-and-discard when disabled). The Java layer's
+obligation is exactly its completion contract: hand the invocation's
+change bytes (and timer ops, offsets, outputs) back in the
+`ActivationResult` — it SHALL NOT run a flusher thread of its own.
 
-The flusher SHALL run an infinite loop sleeping `linger_ms` (default 5; configurable via system property `flezha.flush.linger.ms` with env-var fallback `FLEZHA_FLUSH_LINGER_MS`) between iterations. Per iteration: iterate the registered Entities; for each, acquire its `bufferLock`; call `drainToFrames` (applying coalescing per `operative-state-persistence-rust/design.md` Decision 3); release the lock; for each frame, invoke `sendFrame` if `persistenceEnabled = true`, OR discard if `false`.
+#### Scenario: Changes returned in a completion reach the WAL
+- **WHEN** a Java invocation applies two Changes and its completion carries their Kryo bytes with persistence enabled
+- **THEN** the core SHALL frame and ship them as `entity_state_change` records with contiguous seqs, and a subsequent restore SHALL fold them back through Java's `RestoreFold`
 
-#### Scenario: NoChange-only program does not spawn flusher
-
-- **WHEN** a Java program calls `Flezha.registerUnbounded(MyOperative.class)` for Operatives whose Procedures all have `Change = NoChange`
-- **THEN** no thread named `flezha-flusher` SHALL be spawned (verifiable via `Thread.getAllStackTraces().keySet().stream().anyMatch(t -> "flezha-flusher".equals(t.getName())) == false`)
-
-#### Scenario: First non-NoChange registration starts the flusher
-
-- **WHEN** a Java program calls `Flezha.registerUnbounded(...)` for an Operative whose Procedure has `Change = MyChange`
-- **THEN** exactly one daemon thread named `flezha-flusher` SHALL be spawned and remain alive for the JVM's lifetime
-
-#### Scenario: Toggle-off drain discards without wire I/O
-
-- **WHEN** an Operative with `persistenceEnabled = false` records 10 Changes via `state.apply(...)` and the flusher's linger window elapses
-- **THEN** the Entity's flush buffer SHALL be empty after the tick AND `NativeTransport.sendEntityStateChange` SHALL NOT have been invoked AND the Entity's `change_seq` counter SHALL have advanced by the post-coalesce record count
-
-#### Scenario: Toggle-on drain ships frames via JNI
-
-- **WHEN** an Operative with `persistenceEnabled = true` records 10 Changes (no coalescing) via `state.apply(...)` and the flusher's linger elapses
-- **THEN** `NativeTransport.sendEntityStateChange` SHALL have been invoked exactly 10 times with frame bytes built per the umbrella's wire format
+#### Scenario: Persistence disabled drains and discards
+- **WHEN** the same completion arrives for a class with persistence disabled
+- **THEN** no WAL record SHALL ship and the entity's in-memory state SHALL still reflect the applied Changes
 
 ### Requirement: Hot-path cost is bounded
 
@@ -421,50 +370,6 @@ The Java SDK's `state.apply(change)` SHALL pay exactly: one `Procedure.applyChan
 
 - **WHEN** a Procedure's `run` calls `state.apply(MyChange.foo())` 100 times
 - **THEN** zero `NativeTransport.*` JNI calls SHALL be issued from the runner thread during these 100 calls
-
-### Requirement: Coalescing applied at drain time, not on the hot path
-
-The Java SDK SHALL apply coalescing inside `FlushableBuffer.drainToFrames`, AFTER the flusher acquires the buffer's lock. The hot path of `state.apply(...)` SHALL NOT touch any coalescing data structure.
-
-The drain-time coalescing algorithm SHALL match the Rust implementation: build a `HashMap<CoalesceKey, Integer>` mapping each key to the index of the latest record carrying that key; build a parallel `boolean[]` mask marking earlier records with the same key as discarded; emit kept records in their original buffer order.
-
-#### Scenario: Same-key records collapse to latest
-
-- **WHEN** a Procedure records 50 `BarTick(M1, T)` Changes via `state.apply(...)` within one linger window, all returning `Optional.of(CoalesceKey.fromHash(M1, T))` from `coalesceKey()`
-- **THEN** the flusher's drain SHALL emit exactly one frame whose Change is the 50th `BarTick`
-
-#### Scenario: No-key records preserved verbatim
-
-- **WHEN** a Procedure records 10 Changes whose `coalesceKey()` returns `Optional.empty()` within one linger window
-- **THEN** the flusher's drain SHALL emit 10 frames in the same order they were pushed
-
-### Requirement: 16-byte version header stamped on persisted Changes (Java)
-
-The Java SDK SHALL stamp a 16-byte header on every Change record emitted to the wire path:
-
-- bytes 0:1 — `sdk_lang: u8` SHALL equal `2` (Java).
-- bytes 1:5 — `sdk_version: u32 BE` SHALL be parsed from the SDK jar's Manifest.mf `Implementation-Version` field as `(major << 16) | (minor << 8) | patch`.
-- bytes 5:9 — `schema_version: u32 BE` SHALL equal `Procedure.schemaVersion()` for the Procedure owning the Change.
-- bytes 9:10 — `format_id: u8` SHALL equal `4` (Kryo with stable registered type IDs) in v1.
-- bytes 10:12 — reserved, MUST be zero.
-- bytes 12:16 — `crc32: u32 BE` SHALL be `java.util.zip.CRC32.update(change_bytes).getValue()`.
-
-The Java SDK SHALL refuse to deserialize any persisted blob whose header `sdk_lang != 2` (cross-language load) — throws `StateLoadException::CrossLanguageMismatch`. The Java SDK SHALL refuse to deserialize any blob whose `format_id != 4` unless the format is otherwise recognized — throws `StateLoadException::FormatNotSupported`.
-
-#### Scenario: Java header bytes match expectations
-
-- **WHEN** the Java SDK at `version 0.5.3`, Procedure `schemaVersion = 1`, stamps a header for change_bytes `[0x01, 0x02, 0x03]`
-- **THEN** the resulting 16-byte header SHALL equal `[0x02, 0x00, 0x00, 0x05, 0x03, 0x00, 0x00, 0x00, 0x01, 0x04, 0x00, 0x00, <crc32 BE bytes of [0x01, 0x02, 0x03]>]`
-
-#### Scenario: Cross-language load fails loud
-
-- **WHEN** the Java SDK attempts to decode a blob whose `sdk_lang = 1` (Rust)
-- **THEN** the Java SDK SHALL throw `StateLoadException::CrossLanguageMismatch(expected = 2, found = 1)` and SHALL NOT proceed to deserialization
-
-#### Scenario: schema_version mismatch fails loud
-
-- **WHEN** the Java SDK at Procedure `schemaVersion = 2` attempts to decode a record whose header carries `schema_version = 1`
-- **THEN** the Java SDK SHALL throw `StateLoadException::SchemaMismatch(expected = 2, found = 1)` and SHALL NOT proceed to deserialization
 
 ### Requirement: Kryo serialization with stable registered type IDs
 
@@ -488,29 +393,6 @@ Reordering of `Procedure.kryoTypes()` between SDK versions SHALL be an unsupport
 
 - **WHEN** a Procedure's `Change` references a nested class not in `kryoTypes()` (e.g. a nested `record OhlcChange.BarTick(Interval interval, ...)` where `Interval` is a record not registered)
 - **THEN** the first `state.apply(...)` triggering serialization SHALL throw `StateSerializeException::UnregisteredClass("Interval")` and the JVM SHALL NOT silently succeed with auto-IDs
-
-### Requirement: Wire-protocol command handlers (Java)
-
-The Java SDK SHALL register command handlers for `RestoreInitState`, `CompactEntity`, and `EntityMailboxStatus` per `operative-state-persistence`'s wire-protocol additions:
-
-- `RestoreInitStateHandler`: receives the request, decodes payload, invokes `Procedure.initState(entityKey, Optional.of(payload))`, runs the runtime auto-restore (snapshot deserialize + change-log fold), sets the entity state, replies `RestoreInitStateResponse{entity_id, terminal_seq}`.
-- `CompactEntityHandler`: receives the request, acquires the entity's sticky CAS, deep-copies state via Kryo, releases CAS, serializes with header stamping, ships via `NativeTransport.sendEntityStateSnapshot`, replies `CompactEntityResponse{entity_id, snapshot_seq, snapshot_bytes_size}`.
-- `EntityMailboxStatusHandler`: receives the request, updates the per-Entity mailbox observer state used by the existing `OverflowPolicy` machinery (`operative-bounded-mailbox`).
-
-#### Scenario: RestoreInitState handler restores state
-
-- **WHEN** the agent ships `RestoreInitState{entity_id, snapshot_bytes, change_log_bytes}` to a Java SDK
-- **THEN** the SDK's `RestoreInitStateHandler` SHALL invoke `Procedure.initState(entityKey, Optional.of(payload))`, run the auto-restore, set the entity state, AND reply with `RestoreInitStateResponse{entity_id, terminal_seq}` matching the highest seq from the change log
-
-#### Scenario: CompactEntity handler clones state under sticky CAS
-
-- **WHEN** the agent ships `CompactEntity{entity_id}` to a Java SDK
-- **THEN** the SDK SHALL acquire the entity's sticky CAS (existing primitive), deep-copy the state, release the CAS, serialize with header, ship via `NativeTransport.sendEntityStateSnapshot`, AND reply `CompactEntityResponse{entity_id, snapshot_seq, snapshot_bytes_size}`
-
-#### Scenario: EntityMailboxStatus :full pauses producer
-
-- **WHEN** the agent ships `EntityMailboxStatus{entity_id, status: :full}` to a Java SDK
-- **THEN** the SDK's `EntityMailboxStatusHandler` SHALL update the per-Entity observer to "full"; subsequent `ctx.emit(...)` calls on channels feeding this Entity SHALL apply the channel's `OverflowPolicy` (Block parks, DropNewest discards, DropOldest discards-oldest)
 
 ### Requirement: Public Java SDK handler classes use canonical Operative vocabulary
 
@@ -984,7 +866,7 @@ The snapshot body SHALL be encoded with the same codec the restore path decodes 
 
 ### Requirement: The snapshot frame SHALL be stamped with its payload-id
 
-`NativeTransport.sendEntityStateSnapshot` has zero callers and forwards to `streamWrite` without stamping any payload-id, despite a javadoc claiming it "wraps `streamWrite` with the `entity_state_snapshot` payload-id" — payload-id stamping happens in the sink layer, which that method bypasses. A snapshot frame SHALL reach the wire carrying the payload-id the Controller routes on.
+A snapshot answered through the `SnapshotRequest` activation SHALL reach the wire framed by the core under the `entity_state_snapshot` payload-id the Controller routes on — the host returns naked state bytes and never frames.
 
 #### Scenario: The frame is routable by the Controller
 
@@ -1009,3 +891,29 @@ The **default value** itself is owned by `java-state-guard-and-dead-knobs`, whic
 - **THEN** the SDK SHALL ship that value in the `AddOperative` metadata
 - **AND** the Controller SHALL resolve it as that Procedure's size threshold
 
+### Requirement: The Java runtime is a poll host over the shared core
+
+The Java SDK's runtime SHALL be hosted on `flz_core` through the C ABI: a
+fixed pool of JVM poller threads (sized by `FLEZHA_WORKER_POOL_SIZE`,
+default = available processors) SHALL loop `poll → decode Activation →
+dispatch to the typed layer → encode ActivationResult → complete`. The
+runtime SHALL NOT reimplement kernel mechanisms the core owns — command
+handling, flushing, credit, DLQ parks, timer wheels, the bounded driver,
+reconnect, wire framing — and the classes that did (`runtime/control`
+handlers, `EntityFlusher`, `CreditWindow`, `DlqPark`, `TimerWheel`,
+`BoundedOperativeRunner`, the reconnect loop, `AckRegistry`) SHALL be
+deleted, not shimmed. The Java SDK SHALL encode and decode the
+Activation/ActivationResult schema byte-identically to the core's
+hex-pinned fixtures, reproduced in a Java fixture suite.
+
+#### Scenario: Kernel classes are gone
+- **WHEN** user or test code references the deleted kernel classes (for example `com.flezha.sdk.runtime.state.EntityFlusher` or a `runtime/control/handlers` class)
+- **THEN** compilation SHALL fail — the parallel mechanism is removed with no compatibility layer
+
+#### Scenario: Java reproduces the schema fixtures byte-identically
+- **WHEN** the Java fixture suite encodes the canonical work activation, result, and all command-kind fixtures from `flz_core::schema`
+- **THEN** the produced bytes SHALL equal the core's pinned hex literals exactly, and a mismatch SHALL fail the build
+
+#### Scenario: Per-entity state is host-held without host locking
+- **WHEN** two poller threads process activations for two different entities of one Procedure concurrently
+- **THEN** each SHALL touch only its own entity's materialized state — per-entity exclusivity is the core's handout guarantee, and the Java layer performs no entity-level locking of its own

@@ -4,7 +4,6 @@ members = [
     "flz_core_ffi",
     "flz_transport",
     "flz_nif",
-    "flz_jni",
     "flezha-macros",
     "sdk/rust",
     "cli",

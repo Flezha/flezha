@@ -80,6 +80,10 @@ pub struct BoundedSpec {
     /// Class-level persistence toggle; when true, a structured bounded's
     /// per-Entity Changes are flushed to the WAL as they apply.
     pub persistence_enabled: bool,
+    /// A host (C-ABI) class: the run-sugar body and every stage body run
+    /// host-side, crossed through the poll surface. The driver branches on
+    /// this before touching `run`.
+    pub host: bool,
 }
 
 // Manual: `OperativeTopology` holds closures and is not `Debug`. A summary is

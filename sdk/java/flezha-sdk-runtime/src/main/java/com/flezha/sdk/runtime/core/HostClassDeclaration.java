@@ -1,0 +1,224 @@
+package com.flezha.sdk.runtime.core;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.flezha.sdk.channel.ChannelKind;
+import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.bounded.BoundedSpec;
+import com.flezha.sdk.runtime.operative.ChannelDescriptor;
+import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
+import com.flezha.sdk.state.EventTimeFrom;
+import com.flezha.sdk.state.LogicalClock;
+import com.flezha.sdk.state.NoChange;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import javax.annotation.Nonnull;
+
+/**
+ * Builds the poll core's {@code HostClassDecl} JSON from a registered class —
+ * the body of {@code FlzCore.declareClass}. The core's serde denies unknown
+ * fields and defaults absent ones, so optionals that are absent are omitted
+ * entirely.
+ *
+ * <p><b>Id order is the contract:</b> {@code channels} is emitted in Java's
+ * channel-id order and {@code procedures} in procedure-id order, so the core's
+ * indices equal Java's — {@code InputItem.channel} and
+ * {@code Output.target.channel} are these indexes.
+ */
+public final class HostClassDeclaration {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** The SDK/controller-aligned default; emitting it would be redundant. */
+    private static final long DEFAULT_COMPACT_AFTER_BYTES = 8L * 1024 * 1024;
+
+    /** Header lang byte for durable records (Rust = 1, Java = 2). */
+    private static final int SDK_LANG_JAVA = 2;
+
+    /** Header format byte for the host's plain change bodies (Kryo = 4). */
+    private static final int FORMAT_ID_KRYO = 4;
+
+    private HostClassDeclaration() {}
+
+    /** Resolve {@code factoryId} in the class registries and build its declaration. */
+    @Nonnull
+    public static byte[] forFactory(@Nonnull String factoryId) {
+        UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
+        if (topology != null) {
+            return forUnbounded(topology);
+        }
+        BoundedSpec spec = BoundedOperativeClassRegistry.getSpec(factoryId);
+        if (spec != null) {
+            return forBounded(spec);
+        }
+        throw new IllegalStateException("factory `" + factoryId + "` is not registered");
+    }
+
+    @Nonnull
+    public static byte[] forUnbounded(@Nonnull UnboundedOperativeTopology topology) {
+        Map<String, Object> decl = base(topology.factoryId(), topology);
+        // Persistence is what the class's Changes imply: a class whose every
+        // Procedure declares NoChange has nothing to flush.
+        if (topology.procedures().stream().anyMatch(p -> p.changeType() != NoChange.class)) {
+            decl.put("persistent", true);
+        }
+        if (topology.effectivelyOnce()) {
+            decl.put("effectively_once", true);
+        }
+        if (topology.checkpointAck()) {
+            decl.put("ack_granularity", "checkpoint");
+        }
+        if (topology.correctionWindowMs() > 0) {
+            decl.put("correction_window_ms", topology.correctionWindowMs());
+            decl.put("beyond_window_policy", topology.beyondWindowPolicy().wireName());
+        }
+        long compactAfterBytes = topology.procedures().stream()
+                .mapToLong(ProcedureDescriptor::compactAfterBytes)
+                .min()
+                .orElse(DEFAULT_COMPACT_AFTER_BYTES);
+        if (compactAfterBytes != DEFAULT_COMPACT_AFTER_BYTES) {
+            decl.put("compact_after_bytes", compactAfterBytes);
+        }
+        decl.put("channels", channels(topology));
+        decl.put("procedures", procedures(topology));
+        return encode(decl);
+    }
+
+    @Nonnull
+    public static byte[] forBounded(@Nonnull BoundedSpec spec) {
+        UnboundedOperativeTopology topology = spec.topology().orElse(null);
+        Map<String, Object> decl =
+                base(spec.factoryId(), topology != null ? topology : emptyTopology(spec.factoryId()));
+        if (spec.persistenceEnabled()) {
+            decl.put("persistent", true);
+        }
+        decl.put("channels", topology == null ? List.of() : channels(topology));
+        decl.put("procedures", topology == null ? List.of() : procedures(topology));
+
+        Map<String, Object> bounded = new LinkedHashMap<>();
+        bounded.put(
+                "loop_mode",
+                switch (spec.loopMode()) {
+                    case ONCE -> "once";
+                    case PER_INPUT -> "per_input";
+                    case CHAINED -> "chained";
+                });
+        bounded.put(
+                "rollback_mode",
+                switch (spec.rollbackMode()) {
+                    case ALL_OR_NOTHING -> "all_or_nothing";
+                    case KEEP_PROGRESS -> "keep_progress";
+                });
+        bounded.put("retry_attempts", spec.retry().maxAttempts());
+        bounded.put("retry_backoff_ms", spec.retry().backoffBaseMs());
+        spec.maxDuration().ifPresent(d -> bounded.put("max_duration_ms", d.toMillis()));
+        spec.wakeAfter().ifPresent(d -> bounded.put("wake_after_ms", d.toMillis()));
+        decl.put("bounded", bounded);
+        return encode(decl);
+    }
+
+    private static Map<String, Object> base(String factoryId, UnboundedOperativeTopology topology) {
+        Map<String, Object> decl = new LinkedHashMap<>();
+        decl.put("factory_id", factoryId);
+        int schemaVersion = topology.procedures().stream()
+                .mapToInt(ProcedureDescriptor::schemaVersion)
+                .max()
+                .orElse(1);
+        decl.put("schema_version", schemaVersion);
+        decl.put("sdk_lang", SDK_LANG_JAVA);
+        decl.put("change_format_id", FORMAT_ID_KRYO);
+        return decl;
+    }
+
+    private static UnboundedOperativeTopology emptyTopology(String factoryId) {
+        return new UnboundedOperativeTopology(
+                factoryId,
+                List.of(),
+                Map.of(),
+                List.of(),
+                Map.of(),
+                false,
+                false,
+                0,
+                com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL);
+    }
+
+    private static List<Map<String, Object>> channels(UnboundedOperativeTopology topology) {
+        List<Map<String, Object>> out = new ArrayList<>(topology.channels().size());
+        for (ChannelDescriptor channel : topology.channels()) {
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("name", channel.name());
+            c.put("kind", kindOf(channel.kind()));
+            channel.producer().ifPresent(p -> c.put("producer", p));
+            c.put("consumers", channel.consumerIds());
+            c.put("retry_max", channel.retry().maxAttempts());
+            c.put("retry_backoff_ms", channel.retry().backoffBaseMs());
+            c.put(
+                    "overflow",
+                    switch (channel.overflowPolicy()) {
+                        case BLOCK -> "block";
+                        case DROP_NEWEST -> "drop_newest";
+                        case DROP_OLDEST -> "drop_oldest";
+                    });
+            if (channel.keyed()) {
+                c.put("keyed", true);
+            }
+            out.add(c);
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> procedures(UnboundedOperativeTopology topology) {
+        List<Map<String, Object>> out = new ArrayList<>(topology.procedures().size());
+        for (ProcedureDescriptor desc : topology.procedures()) {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("name", desc.name());
+            if (desc.dynamic()) {
+                p.put("entity_mode", "dynamic");
+                desc.entityIdleTtl().ifPresent(ttl -> p.put("idle_ttl_ms", ttl.toMillis()));
+            } else if (!desc.entityKeys().isEmpty()) {
+                p.put("entity_mode", "static");
+                p.put("entity_keys", desc.entityKeys());
+            }
+            if (desc.entitiesForOverridden()) {
+                p.put("entities_for_overridden", true);
+            }
+            if (desc.compensateOverridden()) {
+                p.put("compensate_overridden", true);
+            }
+            p.put("clock", clockOf(desc.clockType()));
+            p.put("mailbox_capacity", desc.mailboxCapacity());
+            out.add(p);
+        }
+        return out;
+    }
+
+    private static String kindOf(ChannelKind kind) {
+        return switch (kind) {
+            case ENTRY -> "entry";
+            case INTER_PROCEDURE -> "inter_proc";
+            case PLUGIN_BOUND -> "plugin";
+        };
+    }
+
+    private static String clockOf(Class<?> clockType) {
+        if (clockType == EventTimeFrom.class) {
+            return "event_time";
+        }
+        if (clockType == LogicalClock.class) {
+            return "logical";
+        }
+        return "wall";
+    }
+
+    private static byte[] encode(Map<String, Object> decl) {
+        try {
+            return JSON.writeValueAsBytes(decl);
+        } catch (Exception e) {
+            throw new IllegalStateException("class declaration encoding failed: " + e.getMessage(), e);
+        }
+    }
+}

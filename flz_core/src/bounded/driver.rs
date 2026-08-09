@@ -229,6 +229,18 @@ fn run(
             run_structured(&spec, &instance, &args, &pool, &inbox_rx)
         }
         // Run-sugar: no Entities, no restore — a crash re-runs from the top.
+        // A host class's body runs host-side, crossed through the poll
+        // surface; a typed one is the in-process `run` fn.
+        None if spec.host => {
+            let (outcome, result) = crate::host::run_bounded_sugar(
+                &instance.instance_id,
+                &instance.factory_id,
+                &args,
+                &instance.cancel,
+                inbox_rx,
+            );
+            classify(outcome, &instance.cancel, result)
+        }
         None => run_sugar(
             spec.run,
             &instance.instance_id,

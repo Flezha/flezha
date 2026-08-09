@@ -1,30 +1,15 @@
 package com.flezha.sdk.native_;
 
 /**
- * Runtime exception raised from the JNI bridge when a native call returns a
- * non-OK {@link FlezhaStatus}. The message is populated from the native
- * thread-local error string (via {@code flezha_last_error()}).
+ * Runtime exception raised from the native binding when a call into the poll
+ * core is refused. The message is the context's last-error string; the
+ * {@code flz_core_ffi} JNI layer throws through the single-argument
+ * constructor via {@code ThrowNew}.
  */
 public final class FlezhaNativeException extends RuntimeException {
     private static final long serialVersionUID = 1L;
 
-    private final FlezhaStatus status;
-
-    public FlezhaNativeException(int statusCode, String message) {
-        super(formatMessage(statusCode, message));
-        this.status = FlezhaStatus.fromCode(statusCode);
-    }
-
-    public FlezhaNativeException(FlezhaStatus status, String message) {
-        super(formatMessage(status.code(), message));
-        this.status = status;
-    }
-
-    public FlezhaStatus getStatus() {
-        return status;
-    }
-
-    private static String formatMessage(int statusCode, String message) {
-        return "[" + FlezhaStatus.fromCode(statusCode) + "] " + message;
+    public FlezhaNativeException(String message) {
+        super(message);
     }
 }

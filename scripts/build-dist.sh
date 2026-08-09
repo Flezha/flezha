@@ -2,8 +2,9 @@
 #
 # Build EVERYTHING that needs to live in git for CI to skip rebuilds:
 #
-#   1. flz_jni cdylib for all 5 platforms ->
-#      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_jni.<ext>
+#   1. flz_core_ffi cdylib (poll-core ABI + JNI, feature "jni") for all 5
+#      platforms ->
+#      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_core_ffi.<ext>
 #   2. SDK fat jar ->
 #      sdk/java/flezha-sdk/dist/flezha-sdk.jar
 #   3. Test runner fat jar ->
@@ -198,22 +199,26 @@ for t in "${TRIPLES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# 4. Build flz_jni for each target and stage the binary into resources/.
+# 4. Build the native crates for each target and stage into resources/.
+#    flz_core_ffi carries the poll-core ABI + JNI exports (feature "jni").
 # ---------------------------------------------------------------------------
 HOST_TRIPLE="$(rustc -vV | awk '/^host:/ {print $2}')"
 mkdir -p "${NATIVE_OUT}"
 
-for t in "${TRIPLES[@]}"; do
-  step "building flz_jni for ${t}"
+build_native() {
+  local crate="$1" features="$2" t="$3"
+  step "building ${crate} for ${t}"
+  local feature_args=()
+  [[ -n "${features}" ]] && feature_args=(--features "${features}")
   if [[ "${t}" == "${HOST_TRIPLE}" ]]; then
-    cargo build --release -p flz_jni --target "${t}"
+    cargo build --release -p "${crate}" "${feature_args[@]}" --target "${t}"
   else
-    cargo zigbuild --release -p flz_jni --target "${t}"
+    cargo zigbuild --release -p "${crate}" "${feature_args[@]}" --target "${t}"
   fi
 
-  src="${CARGO_TARGET_DIR}/${t}/release/${TRIPLE_TO_PREFIX[${t}]}flz_jni.${TRIPLE_TO_EXT[${t}]}"
-  dst_dir="${NATIVE_OUT}/${TRIPLE_TO_DIR[${t}]}"
-  dst="${dst_dir}/libflz_jni.${TRIPLE_TO_EXT[${t}]}"
+  local src="${CARGO_TARGET_DIR}/${t}/release/${TRIPLE_TO_PREFIX[${t}]}${crate}.${TRIPLE_TO_EXT[${t}]}"
+  local dst_dir="${NATIVE_OUT}/${TRIPLE_TO_DIR[${t}]}"
+  local dst="${dst_dir}/lib${crate}.${TRIPLE_TO_EXT[${t}]}"
 
   if [[ ! -f "${src}" ]]; then
     red "expected build output missing: ${src}"
@@ -223,13 +228,19 @@ for t in "${TRIPLES[@]}"; do
   mkdir -p "${dst_dir}"
   cp "${src}" "${dst}"
   echo "  -> ${dst}"
+}
+
+for t in "${TRIPLES[@]}"; do
+  build_native flz_core_ffi jni "${t}"
 done
 
 # ---------------------------------------------------------------------------
 # 5. Build the SDK fat jar (-P native-verify enforces all 5 natives present).
 # ---------------------------------------------------------------------------
 step "building SDK fat jar"
-mvn -B -q -f sdk/java/pom.xml -P native-verify -DskipTests install
+# `clean` is load-bearing: the shade plugin reuses stale target/ output, so
+# without it the fat jar can embed a previous build's native binaries.
+mvn -B -q -f sdk/java/pom.xml -P native-verify -DskipTests clean install
 
 mkdir -p "${SDK_DIST}"
 cp -f sdk/java/flezha-sdk/target/flezha-sdk-*.jar "${SDK_DIST}/flezha-sdk.jar"
@@ -239,7 +250,7 @@ echo "  -> ${SDK_DIST}/flezha-sdk.jar"
 # 6. Build the test runner fat jar.
 # ---------------------------------------------------------------------------
 step "building test runner fat jar"
-mvn -B -q -f test/apps/java_runner/pom.xml -DskipTests package
+mvn -B -q -f test/apps/java_runner/pom.xml -DskipTests clean package
 
 mkdir -p "${TEST_APP_DIST}"
 cp -f test/apps/java_runner/target/java_runner.jar \

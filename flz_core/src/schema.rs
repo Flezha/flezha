@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped on any incompatible change to the types in this module. A core and
 /// a host shim negotiate at context creation and refuse to start on mismatch.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 pub use crate::channel::{ChannelId, ProcedureId};
 
@@ -28,6 +28,14 @@ pub struct Activation {
     pub token: u64,
     pub target: EntityRef,
     pub kind: ActivationKind,
+    /// The entity's durable change seq at handout (0 for pre-keying work).
+    /// One input to the host's `ctx.stable_id()`; the host combines it with
+    /// the entity identity and a per-invocation ordinal.
+    pub change_seq: u64,
+    /// The declared class this instance was built from. An out-of-process
+    /// host resolves the activation to its own typed class through this —
+    /// the in-process Rust host reads it off the slot's topology instead.
+    pub factory: String,
 }
 
 /// The entity an activation is addressed to. `entity_key` is `None` only for
@@ -57,10 +65,19 @@ pub enum ActivationKind {
     ApplyState { state_json: Vec<u8> },
     /// Serialize the current state to JSON for a migration handover.
     MigrationSerialize,
-    /// Batched keying: unkeyed entry payloads bound for a keyed edge. The
-    /// host answers with one key per payload, in order, before the core
-    /// enqueues anything to an entity mailbox.
+    /// The batched prepare crossing: entry payloads whose consumers need a
+    /// key and/or an extracted event time. The host answers one
+    /// [`PrepareAnswer`] per payload, in order, before the core enqueues
+    /// anything to an entity mailbox.
     KeyRequest(KeyRequest),
+    /// A bounded run-sugar body: the seed args cross once; the host runs the
+    /// imperative body (emit/recv/cancelled ride their own ABI calls) and
+    /// completes with [`ActivationOutcome::BoundedDone`].
+    BoundedRun { args: Vec<u8> },
+    /// Saga compensation for one bounded entity: the recorded forward
+    /// outputs cross; the host runs `compensate` and answers a work outcome
+    /// whose single effect carries any undo outputs.
+    CompensateRun { outputs: Vec<Vec<u8>> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,6 +120,21 @@ pub struct RestoreFold {
 pub struct KeyRequest {
     pub channel: ChannelId,
     pub payloads: Vec<Vec<u8>>,
+    /// The host answers routing keys (a dynamic consumer needs exactly one;
+    /// a static fan-out any number, empty = every declared entity).
+    pub want_keys: bool,
+    /// The host answers the payload's extracted event time.
+    pub want_event_time: bool,
+}
+
+/// One payload's prepare answers, in `KeyRequest.payloads` order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrepareAnswer {
+    /// Routing keys (`want_keys`): one for a dynamic consumer, any number
+    /// for a static fan-out (empty = every declared entity).
+    pub keys: Vec<String>,
+    /// The extracted event time (`want_event_time`).
+    pub event_time: Option<u64>,
 }
 
 /// The host's answer to an [`Activation`], addressed by token.
@@ -130,12 +162,15 @@ pub enum ActivationOutcome {
     MigrationState {
         json: Vec<u8>,
     },
-    /// One outcome per `KeyRequest` payload, in order. A key failure enters
-    /// the input channel's retry→park ladder.
-    Keys(Vec<Result<String, WorkError>>),
+    /// One outcome per `KeyRequest` payload, in order. A prepare failure
+    /// enters the input channel's retry→park ladder.
+    Prepared(Vec<Result<PrepareAnswer, WorkError>>),
     /// The whole activation failed before per-item processing (host-side
     /// panic equivalent). The core treats every item per the error's class.
     Failed(WorkError),
+    /// A bounded run-sugar body returned. `completed` mirrors
+    /// `ctx.complete(...)` having been called; `result` is its payload.
+    BoundedDone { completed: bool, result: Vec<u8> },
 }
 
 /// The effect record of one processed item — the same shape the flusher
@@ -177,6 +212,10 @@ pub struct WorkError {
 pub struct Output {
     pub target: OutputTarget,
     pub key: Option<String>,
+    /// For an edge value into an event-time-clocked consumer: the consumer's
+    /// extracted event time, evaluated producer-side (the host holds the
+    /// typed value and the consumer's extractor; the core holds neither).
+    pub event_time: Option<u64>,
     pub metadata: Vec<(String, String)>,
     pub payload: Vec<u8>,
 }
@@ -288,6 +327,8 @@ mod tests {
                     scheduled_at: 2000,
                 }),
             ]),
+            change_seq: 3,
+            factory: "f".into(),
         };
         let decoded = decode_activation(&encode_activation(&a)).unwrap();
         assert_eq!(a, decoded);
@@ -306,6 +347,7 @@ mod tests {
                         consumer: 4,
                     },
                     key: Some("k2".into()),
+                    event_time: None,
                     metadata: vec![],
                     payload: b"v".to_vec(),
                 }],
@@ -349,6 +391,8 @@ mod fixture_tests {
                     scheduled_at: 2_000,
                 }),
             ]),
+            change_seq: 9,
+            factory: "f".into(),
         }
     }
 
@@ -363,6 +407,7 @@ mod fixture_tests {
                         channel: "out".into(),
                     },
                     key: Some("k2".into()),
+                    event_time: None,
                     metadata: vec![],
                     payload: vec![0x02],
                 }],
@@ -382,11 +427,11 @@ mod fixture_tests {
     fn work_activation_bytes_are_pinned() {
         assert_eq!(
             hex(&encode_activation(&work_activation())),
-            "2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e8070100d00f"
+            "2a046f702d310301016b0002000102aabb010a666c7a2e6f66667365740137010701e8070100d00f090166"
         );
         assert_eq!(
             hex(&encode_result(&result_fixture())),
-            "2a0001000101010101036f757401026b320001020107e8070101d00f000100"
+            "2a0001000101010101036f757401026b32000001020107e8070101d00f000100"
         );
         // And they decode back to the same values (shims decode activations,
         // the core decodes results).
@@ -406,23 +451,37 @@ mod fixture_tests {
                     snapshot: Some(vec![0x0F]),
                     changes: vec![vec![0x01], vec![0x02]],
                 }),
-                "0101010f0201010102",
+                "0101010f0201010102000166",
             ),
-            (ActivationKind::SnapshotRequest, "02"),
-            (ActivationKind::LiveStateRead, "03"),
+            (ActivationKind::SnapshotRequest, "02000166"),
+            (ActivationKind::LiveStateRead, "03000166"),
             (
                 ActivationKind::ApplyState {
                     state_json: b"{}".to_vec(),
                 },
-                "04027b7d",
+                "04027b7d000166",
             ),
-            (ActivationKind::MigrationSerialize, "05"),
+            (ActivationKind::MigrationSerialize, "05000166"),
             (
                 ActivationKind::KeyRequest(KeyRequest {
                     channel: 2,
                     payloads: vec![b"p".to_vec()],
+                    want_keys: true,
+                    want_event_time: false,
                 }),
-                "0602010170",
+                "06020101700100000166",
+            ),
+            (
+                ActivationKind::BoundedRun {
+                    args: b"go".to_vec(),
+                },
+                "0702676f000166",
+            ),
+            (
+                ActivationKind::CompensateRun {
+                    outputs: vec![vec![0x0A]],
+                },
+                "0801010a000166",
             ),
         ];
         for (kind, expected) in kinds {
@@ -434,6 +493,8 @@ mod fixture_tests {
                     entity_key: None,
                 },
                 kind,
+                change_seq: 0,
+                factory: "f".into(),
             };
             let bytes = encode_activation(&act);
             // The envelope prefix (token 1, target o/0/None) is 5 bytes:

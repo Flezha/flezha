@@ -4,7 +4,8 @@ on:
   pull_request:
     paths:
       - "sdk/java/**"
-      - "flz_jni/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
       - "flz_transport/**"
       - "protobufs/**"
       - "lib/flezha/runner/fleet_manager.ex"
@@ -18,7 +19,8 @@ on:
     branches: [main]
     paths:
       - "sdk/java/**"
-      - "flz_jni/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
       - "flz_transport/**"
       - "protobufs/**"
       - "lib/flezha/runner/fleet_manager.ex"
@@ -34,7 +36,7 @@ env:
   RUSTFLAGS: "-D warnings"
 
 # Built artifacts that are *committed*:
-#   - Native binaries (libflz_transport.{so,dylib,dll} × 5 platforms) under
+#   - Native binaries (libflz_core_ffi.{so,dylib,dll} × 5 platforms) under
 #       sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/
 #   - SDK fat jar at  sdk/java/flezha-sdk/dist/flezha-sdk.jar
 #   - Test runner fat jar at

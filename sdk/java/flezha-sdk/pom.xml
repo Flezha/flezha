@@ -13,16 +13,12 @@
     <artifactId>flezha-sdk</artifactId>
     <packaging>jar</packaging>
     <name>Flezha SDK (fat jar)</name>
-    <description>Aggregator — the published fat jar containing API, runtime, native bindings, and protobuf generated classes.</description>
+    <description>Aggregator — the published fat jar containing API, runtime, and native bindings.</description>
 
     <dependencies>
         <dependency>
             <groupId>com.flezha</groupId>
             <artifactId>flezha-sdk-api</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.flezha</groupId>
-            <artifactId>flezha-sdk-protobuf</artifactId>
         </dependency>
         <dependency>
             <groupId>com.flezha</groupId>

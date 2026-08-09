@@ -11,34 +11,35 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Extracts {@code libflz_jni.<ext>} from the classpath resource
- * {@code /native/<os>-<arch>/} into a writable directory and loads it via
- * {@link System#load(String)}. Safe under concurrent JVMs because the
- * target path includes a content hash of the binary.
+ * Extracts a bundled native library ({@code libflz_core_ffi}) from the
+ * classpath resource {@code /native/<os>-<arch>/} into a writable directory
+ * and loads it via {@link System#load(String)}. Safe under concurrent JVMs
+ * because the target path includes a content hash of the binary.
  */
 final class NativeLibraryLoader {
 
     static final String RESOURCE_PREFIX = "/native/";
-    static final String LIB_BASE_NAME = "libflz_jni";
     static final String NATIVE_LIB_DIR_ENV = "FLEZHA_NATIVE_LIB_DIR";
 
     private static final Set<String> SUPPORTED =
             Set.of("linux-x64", "linux-arm64", "macos-x64", "macos-arm64", "windows-x64");
 
-    private static volatile boolean loaded = false;
+    private static final Set<String> LOADED = ConcurrentHashMap.newKeySet();
 
     private NativeLibraryLoader() {}
 
-    static synchronized void loadNativeLibrary() {
-        if (loaded) {
+    /** Extract and load the named bundled library exactly once per JVM. */
+    static synchronized void loadNativeLibrary(String baseName) {
+        if (LOADED.contains(baseName)) {
             return;
         }
 
         String platform = detectPlatform();
         String extension = extensionFor(platform);
-        String resourcePath = RESOURCE_PREFIX + platform + "/" + LIB_BASE_NAME + "." + extension;
+        String resourcePath = RESOURCE_PREFIX + platform + "/" + baseName + "." + extension;
 
         byte[] libraryBytes;
         try (InputStream in = NativeLibraryLoader.class.getResourceAsStream(resourcePath)) {
@@ -59,13 +60,13 @@ final class NativeLibraryLoader {
         String version = VersionInfo.VERSION;
 
         Path extractionDir = resolveExtractionDir().resolve("flezha-" + version + "-" + hash);
-        Path target = extractionDir.resolve(LIB_BASE_NAME + "." + extension);
+        Path target = extractionDir.resolve(baseName + "." + extension);
 
         try {
             Files.createDirectories(extractionDir);
 
             if (!Files.exists(target) || Files.size(target) != libraryBytes.length) {
-                Path tmp = Files.createTempFile(extractionDir, LIB_BASE_NAME + "-", "." + extension + ".tmp");
+                Path tmp = Files.createTempFile(extractionDir, baseName + "-", "." + extension + ".tmp");
                 Files.write(tmp, libraryBytes);
                 try {
                     Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
@@ -85,7 +86,7 @@ final class NativeLibraryLoader {
             throw new UnsatisfiedLinkError("System.load failed for " + target + ": " + e.getMessage());
         }
 
-        loaded = true;
+        LOADED.add(baseName);
     }
 
     static String detectPlatform() {

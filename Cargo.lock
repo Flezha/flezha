@@ -439,21 +439,16 @@ dependencies = [
 name = "flz_core_ffi"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "crossbeam",
  "dashmap",
  "flz_core",
  "flz_transport",
+ "jni",
+ "postcard",
  "prost",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "flz_jni"
-version = "0.1.0"
-dependencies = [
- "flz_transport",
- "jni",
 ]
 
 [[package]]

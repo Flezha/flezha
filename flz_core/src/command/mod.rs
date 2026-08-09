@@ -263,8 +263,13 @@ pub fn handle_command(
                 eprintln!("[flezha] Failed to write disconnect response: {}", e);
             }
 
-            // Close the socket.
-            let _ = stream.shutdown(Shutdown::Both);
+            // FIN, not abort: shutting only the write half guarantees the
+            // response bytes are delivered BEFORE the peer observes the
+            // close. `Shutdown::Both` raced them — the controller could see
+            // an aborted read (losing the response) and then deadlock its
+            // disconnect call cycle on the missing ack. The read half drains
+            // to EOF when the controller closes its side.
+            let _ = stream.shutdown(Shutdown::Write);
         }
 
         CommandActionType::AckSignal(result) => {

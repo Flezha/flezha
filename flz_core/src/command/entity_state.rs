@@ -75,7 +75,7 @@ impl CommandAction for EntityState {
             }
         };
 
-        match serialize_selected_state(&instance, selector(self)) {
+        match serialize_selected_state(&instance, selector(self), StatePurpose::LiveRead) {
             Ok((payload, Some(seq))) => (
                 payload_id,
                 payload,
@@ -109,10 +109,19 @@ fn non_empty(s: &str) -> Option<&str> {
     }
 }
 
+/// Why a state serialization was asked for. Typed classes serve both from
+/// the same fn pointer; a host-run class is asked with the matching
+/// activation kind (`LiveStateRead` vs `MigrationSerialize`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatePurpose {
+    LiveRead,
+    Migration,
+}
+
 /// Whole-Operative walk — the migration/handover shape. Refusals are
 /// impossible without a selector, so the JSON is returned directly.
 pub fn serialize_operative_state(instance: &Arc<UnboundedInstance>) -> Vec<u8> {
-    serialize_selected_state(instance, StateSelector::default())
+    serialize_selected_state(instance, StateSelector::default(), StatePurpose::Migration)
         .map(|(payload, _seq)| payload)
         .unwrap_or_default()
 }
@@ -133,6 +142,7 @@ pub fn serialize_operative_state(instance: &Arc<UnboundedInstance>) -> Vec<u8> {
 pub fn serialize_selected_state(
     instance: &Arc<UnboundedInstance>,
     selector: StateSelector<'_>,
+    purpose: StatePurpose,
 ) -> Result<(Vec<u8>, Option<u64>), String> {
     if selector.entity_key.is_some() && selector.procedure.is_none() {
         return Err(format!(
@@ -173,7 +183,7 @@ pub fn serialize_selected_state(
                 else {
                     continue;
                 };
-                collect(procedure_desc, slot, &procedure_name, &mut top, &mut seqs);
+                collect(procedure_desc, slot, &procedure_name, purpose, &mut top, &mut seqs);
                 continue;
             }
         };
@@ -190,11 +200,11 @@ pub fn serialize_selected_state(
                         wanted,
                     ));
                 };
-                collect(procedure_desc, &slot, wanted, &mut inner, &mut seqs);
+                collect(procedure_desc, &slot, wanted, purpose, &mut inner, &mut seqs);
             }
             None => {
                 for (key, slot) in keyed.pairs() {
-                    collect(procedure_desc, &slot, &key, &mut inner, &mut seqs);
+                    collect(procedure_desc, &slot, &key, purpose, &mut inner, &mut seqs);
                 }
             }
         }
@@ -289,10 +299,11 @@ fn collect(
     procedure_desc: &ProcedureDescriptor,
     slot: &Arc<EntitySlot>,
     key: &str,
+    purpose: StatePurpose,
     into: &mut Map<String, Value>,
     seqs: &mut Vec<u64>,
 ) {
-    match serialize_slot(procedure_desc, slot) {
+    match serialize_slot(procedure_desc, slot, purpose) {
         Ok((value, seq)) => {
             into.insert(key.to_string(), value);
             seqs.push(seq);
@@ -311,11 +322,15 @@ fn collect(
 fn serialize_slot(
     procedure_desc: &ProcedureDescriptor,
     slot: &Arc<EntitySlot>,
+    purpose: StatePurpose,
 ) -> Result<(Value, u64), String> {
     // Under the entity's handout exclusivity: a live read (or a migration
     // serialize, which shares this seam) never observes a half-applied
     // activation.
     crate::poll_core::global().with_entity_exclusive(slot, || {
+        if slot.dispatcher.host_facts().is_some() {
+            return crate::host::state_json_locked(slot, purpose == StatePurpose::Migration);
+        }
         let state_guard = slot.state.lock_recover();
         let value = (procedure_desc.serialize_state)(&state_guard)?;
         let seq = slot.change_seq.load(Ordering::Relaxed);
@@ -454,6 +469,25 @@ fn apply_one(
     procedure_name: &str,
     entity_key: Option<&str>,
 ) {
+    if slot.dispatcher.host_facts().is_some() {
+        // Host-held state: the value crosses as an ApplyState activation
+        // under the same handout gate the typed swap takes.
+        let applied = crate::poll_core::global()
+            .with_entity_exclusive(slot, || crate::host::apply_state_locked(slot, value));
+        if let Err(e) = applied {
+            match entity_key {
+                Some(k) => eprintln!(
+                    "[flezha] apply_init_values: procedure `{}` key `{}` apply failed: {}",
+                    procedure_name, k, e
+                ),
+                None => eprintln!(
+                    "[flezha] apply_init_values: procedure `{}` apply failed: {}",
+                    procedure_name, e
+                ),
+            }
+        }
+        return;
+    }
     match (procedure_desc.deserialize_state)(value) {
         Ok(new_state) => {
             // Apply-state replaces the materialized value whole; the handout

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Defines how the Java SDK is structured, built, and distributed: Maven module layout, native binary packaging and runtime loading, version pinning to `flz_transport`, protobuf code generation, and CI publication of build artifacts.
+Defines how the Java SDK is structured, built, and distributed: Maven module layout, native binary packaging and runtime loading, version pinning to `flz_core_ffi`, and CI publication of build artifacts.
 
 ## Requirements
 
@@ -11,7 +11,7 @@ Defines how the Java SDK is structured, built, and distributed: Maven module lay
 The Java SDK SHALL live under `sdk/java/` as a Maven multi-module project with the following modules: `flezha-sdk-api`, `flezha-sdk-protobuf`, `flezha-sdk-runtime`, `flezha-sdk-native`, `flezha-sdk` (aggregator / fat jar), and `flezha-sdk-integration-tests`. Each module's `pom.xml` MUST declare `java.version = 21` via Maven toolchains or the `maven-compiler-plugin` `<release>21</release>` setting.
 
 #### Scenario: Fresh checkout builds with a single Maven command
-- **WHEN** a developer runs `mvn -f sdk/java/pom.xml install` from a fresh checkout with Java 21 and a host-triple `flz_transport` native build available
+- **WHEN** a developer runs `mvn -f sdk/java/pom.xml install` from a fresh checkout with Java 21 and a host-triple `flz_core_ffi` native build available
 - **THEN** all six modules SHALL compile and their unit tests SHALL pass
 
 #### Scenario: Module targeting wrong Java version is rejected
@@ -20,80 +20,80 @@ The Java SDK SHALL live under `sdk/java/` as a Maven multi-module project with t
 
 ### Requirement: Native Library Packaging
 
-The published `flezha-sdk` fat jar SHALL bundle prebuilt `flz_transport` native binaries for **at minimum** the following target triples, under resource path `native/<os>-<arch>/libflz_transport.<ext>`:
+The published `flezha-sdk` fat jar SHALL bundle prebuilt `flz_core_ffi`
+binaries (built with the `jni` feature, so one binary carries both the C
+ABI and the JNI exports) for at minimum the five supported target triples,
+under resource paths `native/<os>-<arch>/libflz_core_ffi.<ext>`
+(linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64;
+`.so`/`.dylib`/`.dll` per platform). The cross-build SHALL be driven by
+`cargo-zigbuild` from the existing Maven `native-build` profile
+(`scripts/build-native.sh`), and `scripts/build-dist.sh` SHALL stage all
+five before the jar is assembled. The transport JNI crate (`flz_jni`) and
+its binaries are deleted: the Java SDK links no native surface besides
+`flz_core_ffi`.
 
-| Target | Resource path |
-|---|---|
-| linux x86_64 | `native/linux-x64/libflz_transport.so` |
-| linux aarch64 | `native/linux-arm64/libflz_transport.so` |
-| macOS x86_64 | `native/macos-x64/libflz_transport.dylib` |
-| macOS aarch64 | `native/macos-arm64/libflz_transport.dylib` |
-| Windows x86_64 | `native/windows-x64/libflz_transport.dll` |
-
-The cross-build SHALL be driven by `cargo-zigbuild` invoked from a Maven profile (`native-build`) that runs before the jar is assembled.
-
-#### Scenario: Fat jar contains all five binaries
+#### Scenario: Fat jar contains the five core binaries
 - **WHEN** `mvn -P native-build package` completes successfully
-- **THEN** `unzip -l sdk/java/flezha-sdk/target/flezha-sdk-*.jar` SHALL list exactly those five `libflz_transport.*` paths
+- **THEN** `unzip -l sdk/java/flezha-sdk/target/flezha-sdk-*.jar` SHALL list the five `native/<os>-<arch>/libflz_core_ffi.*` paths, and no `libflz_jni.*` path
 
 #### Scenario: Missing native target fails the packaging step
-- **WHEN** `mvn -P native-build package` runs but one of the five binaries is missing from `flezha-sdk-native/src/main/resources/native/`
-- **THEN** the build SHALL fail with an error naming the missing target triple
+- **WHEN** `mvn -P native-build package` (or `-P native-verify`) runs but any of the five binaries is missing from `flezha-sdk-native/src/main/resources/native/`
+- **THEN** the build SHALL fail with an enforcer error naming the refresh command
 
 ### Requirement: Runtime Native Library Loading
 
-On SDK initialization the Java SDK SHALL (a) detect the current `<os>-<arch>` from `os.name` and `os.arch`, (b) extract the matching native binary to a writable temp directory whose path includes the content hash of the binary, (c) call `System.load` with the absolute path, and (d) fail fast with an `UnsatisfiedLinkError` wrapping a descriptive message if the extraction or load fails. The SDK MUST honor the `FLEZHA_NATIVE_LIB_DIR` environment variable as an override for the extraction directory to support hardened containers with noexec `/tmp`.
+On SDK initialization the Java SDK SHALL (a) detect the current
+`<os>-<arch>` from `os.name` and `os.arch`, (b) extract the matching
+`flz_core_ffi` binary to a writable temp directory whose path includes the
+content hash, (c) call `System.load` with the absolute path, and (d) fail
+fast with an `UnsatisfiedLinkError` wrapping a descriptive message if
+extraction or load fails. The SDK MUST honor `FLEZHA_NATIVE_LIB_DIR` as an
+override for hardened containers. After loading, context creation SHALL
+perform the ABI's schema-version negotiation; a mismatch SHALL fail
+startup with an error naming both versions.
 
 #### Scenario: Library extracted and loaded on first SDK init
-- **WHEN** `Flezha.newInstance(...)` is called on a Linux x86_64 host for the first time in the JVM
-- **THEN** `libflz_transport.so` SHALL be extracted under `$TMPDIR/flezha-<version>-<hash>/` and `System.load` SHALL succeed
+- **WHEN** `Flezha.createRunner(...)` is first called on a Linux x86_64 host
+- **THEN** `libflz_core_ffi.so` SHALL be extracted under `$TMPDIR/flezha-<version>-<hash>/`, `System.load` SHALL succeed, and context creation SHALL negotiate the schema version
 
 #### Scenario: Concurrent JVMs do not corrupt the extracted library
 - **WHEN** two JVM processes start simultaneously and both extract the same native library
-- **THEN** both SHALL successfully `System.load` without races or partial-file errors, because the extraction target path includes a content hash and writes use atomic temp-then-rename
+- **THEN** both SHALL `System.load` successfully — the extraction path includes a content hash and writes are temp-then-rename
 
 #### Scenario: Unsupported OS/arch fails fast with a clear error
-- **WHEN** the SDK starts on a target for which no binary is bundled (e.g., `os.arch = riscv64`)
-- **THEN** the SDK SHALL throw an `UnsatisfiedLinkError` whose message names the detected `<os>-<arch>` and the supported set
+- **WHEN** the SDK starts on a target with no bundled binary
+- **THEN** it SHALL throw an `UnsatisfiedLinkError` naming the detected `<os>-<arch>` and the supported set
 
-#### Scenario: FLEZHA_NATIVE_LIB_DIR override is honored
-- **WHEN** `FLEZHA_NATIVE_LIB_DIR=/opt/flezha/native` is set and writable
-- **THEN** the SDK SHALL extract to that directory instead of `$TMPDIR`
+#### Scenario: Schema mismatch refuses startup loudly
+- **WHEN** the extracted core speaks a different `SCHEMA_VERSION` than the Java shim was built against
+- **THEN** startup SHALL fail before any controller connection with an error naming both versions
 
-### Requirement: Version Pinning Between Java SDK and flz_transport
+### Requirement: Version Pinning Between Java SDK and flz_core_ffi
 
-The Java SDK Maven version and the bundled `flz_transport` version SHALL be identical per release. On startup the SDK MUST call `flezha_version()` via JNI and compare against a build-time constant; on mismatch the SDK SHALL log a WARNING and continue, naming both versions in the log message.
+The Java SDK Maven version SHALL be identical, per release, to the bundled
+`flz_core_ffi` crate version. Version drift detection is the ABI's schema
+negotiation: context creation SHALL fail hard on an incompatible
+activation schema (replacing the old warn-and-continue `flezha_version()`
+check, whose silent-continue posture is exactly how runtime skew hid).
 
-#### Scenario: Matching versions startup silently
-- **WHEN** the bundled native library's `flezha_version()` equals the SDK's build-time version constant
-- **THEN** the SDK SHALL start without emitting any version-related log entries
+#### Scenario: Matching versions start silently
+- **WHEN** the bundled core's schema version equals the shim's build-time constant
+- **THEN** the SDK SHALL start without version-related log entries
 
-#### Scenario: Mismatched versions emit warning
-- **WHEN** `flezha_version()` returns a version that differs from the SDK's build-time constant
-- **THEN** the SDK SHALL log at WARNING level with both version strings, and SHALL continue startup normally
-
-### Requirement: Protobuf Code Generation
-
-The `flezha-sdk-protobuf` module SHALL generate Java classes from the existing `flz_transport/protobufs/*.proto` files at build time using `protobuf-maven-plugin`. No generated Java sources SHALL be committed to Git; the module's `src/main/java` directory MUST remain empty.
-
-#### Scenario: Build regenerates protobuf classes
-- **WHEN** `mvn -f sdk/java/flezha-sdk-protobuf/pom.xml generate-sources` is run
-- **THEN** Java classes for `CommandRequest`, `CommandResponse`, `AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `EntityState`, `MigrationSerialization`, `MigrationDeserialization`, `RunnerDisconnect` SHALL be produced under `target/generated-sources/protobuf/`
-
-#### Scenario: Proto changes are picked up without manual regeneration
-- **WHEN** a field is added to a `.proto` file in `flz_transport/protobufs/` and the Java SDK is rebuilt
-- **THEN** the regenerated Java class SHALL expose the new field without manual codegen steps
+#### Scenario: Mismatched schema refuses instead of warning
+- **WHEN** the bundled core's schema version differs from the shim's
+- **THEN** context creation SHALL fail with an error naming both versions — startup SHALL NOT continue
 
 ### Requirement: CI Build and Publish Artifacts
 
-CI SHALL include a Java SDK workflow that (a) cross-builds `flz_transport` for the five target triples, (b) assembles the fat jar, (c) runs Java unit tests, (d) runs the integration-test matrix from the `java-sdk-testing` spec, and (e) publishes the built jar as a CI artifact for download. Maven-registry publication is out of scope for this change.
+CI SHALL include a Java SDK workflow that (a) cross-builds `flz_core_ffi` (feature `jni`) for the five target triples, (b) assembles the fat jar, (c) runs Java unit tests, (d) runs the integration-test matrix from the `java-sdk-testing` spec, and (e) publishes the built jar as a CI artifact for download. Maven-registry publication is out of scope for this change.
 
 #### Scenario: Pull request CI produces a downloadable jar
-- **WHEN** a pull request is opened that affects `sdk/java/**` or `flz_transport/**`
+- **WHEN** a pull request is opened that affects `sdk/java/**`, `flz_core/**`, `flz_core_ffi/**`, or `flz_transport/**`
 - **THEN** CI SHALL attach the built `flezha-sdk-<version>.jar` as a workflow artifact on the PR
 
 #### Scenario: Java-only changes reuse cached native binaries
-- **WHEN** a pull request touches only files under `sdk/java/` (excluding `sdk/java/flezha-sdk-native/src/main/resources/native/`) and not `flz_transport/`
+- **WHEN** a pull request touches only files under `sdk/java/` (excluding `sdk/java/flezha-sdk-native/src/main/resources/native/`) and none of the native crates
 - **THEN** CI SHALL reuse cached native binaries from the most recent successful main-branch build instead of cross-rebuilding them
 
 ### Requirement: Java SDK artifact identifiers use canonical vocabulary

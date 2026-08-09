@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# Build flz_jni's cdylib (libflz_jni.{so,dylib,dll}) for one or more
+# Build the flz_core_ffi cdylib (poll-core ABI + JNI, feature "jni") for
+# one or more
 # target platforms and stage the result into the Java SDK's resources tree.
 #
-# *This script is runner-driven, not invoked by CI.* When flz_jni or
+# *This script is runner-driven, not invoked by CI.* When flz_core_ffi or
 # flz_transport changes, run it locally to refresh the bundled binaries
 # under sdk/java/flezha-sdk-native/src/main/resources/native/, then
 # `git add` and commit the updated files. CI only verifies the committed
@@ -15,11 +16,11 @@
 #   scripts/build-native.sh --output <dir> --targets a,b,c       # specific triples
 #
 # Output layout (subdirectories created on demand):
-#   <dir>/linux-x64/libflz_jni.so
-#   <dir>/linux-arm64/libflz_jni.so
-#   <dir>/macos-x64/libflz_jni.dylib
-#   <dir>/macos-arm64/libflz_jni.dylib
-#   <dir>/windows-x64/libflz_jni.dll
+#   <dir>/linux-x64/libflz_core_ffi.so
+#   <dir>/linux-arm64/libflz_core_ffi.so
+#   <dir>/macos-x64/libflz_core_ffi.dylib
+#   <dir>/macos-arm64/libflz_core_ffi.dylib
+#   <dir>/windows-x64/libflz_core_ffi.dll
 #
 # Requirements:
 #   - Rust stable
@@ -122,7 +123,7 @@ for triple in "${TRIPLES[@]}"; do
     exit 1
   fi
 
-  echo "==> Building flz_jni for ${triple}"
+  echo "==> Building native crates for ${triple}"
 
   if ! rustup target list --installed 2>/dev/null | grep -qx "${triple}"; then
     echo "    installing rustup target ${triple}"
@@ -130,7 +131,7 @@ for triple in "${TRIPLES[@]}"; do
   fi
 
   if [[ "${triple}" == "${HOST_TRIPLE}" ]]; then
-    (cd "${REPO_ROOT}" && cargo build --release -p flz_jni --target "${triple}")
+    (cd "${REPO_ROOT}" && cargo build --release -p flz_core_ffi --features jni --target "${triple}")
   else
     command -v cargo-zigbuild >/dev/null 2>&1 || {
       echo "cargo-zigbuild required for non-host triples ('${triple}')." >&2
@@ -142,25 +143,27 @@ for triple in "${TRIPLES[@]}"; do
       echo "  pip install ziglang  (a venv is fine), then ensure 'zig' is on PATH" >&2
       exit 1
     }
-    (cd "${REPO_ROOT}" && cargo zigbuild --release -p flz_jni --target "${triple}")
+    (cd "${REPO_ROOT}" && cargo zigbuild --release -p flz_core_ffi --features jni --target "${triple}")
   fi
 
   DIR_NAME="${TRIPLE_TO_DIR[${triple}]}"
   EXT="${TRIPLE_TO_EXT[${triple}]}"
   PREFIX="${TRIPLE_TO_PREFIX[${triple}]}"
-
-  SRC="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/${triple}/release/${PREFIX}flz_jni.${EXT}"
   DST_DIR="${OUTPUT_DIR}/${DIR_NAME}"
-  DST="${DST_DIR}/libflz_jni.${EXT}"
-
-  if [[ ! -f "${SRC}" ]]; then
-    echo "Expected build output not found: ${SRC}" >&2
-    exit 1
-  fi
-
   mkdir -p "${DST_DIR}"
-  cp "${SRC}" "${DST}"
-  echo "    -> ${DST}"
+
+  for crate in flz_core_ffi; do
+    SRC="${CARGO_TARGET_DIR:-${REPO_ROOT}/target}/${triple}/release/${PREFIX}${crate}.${EXT}"
+    DST="${DST_DIR}/lib${crate}.${EXT}"
+
+    if [[ ! -f "${SRC}" ]]; then
+      echo "Expected build output not found: ${SRC}" >&2
+      exit 1
+    fi
+
+    cp "${SRC}" "${DST}"
+    echo "    -> ${DST}"
+  done
 done
 
 echo "Done. Binaries staged under: ${OUTPUT_DIR}"

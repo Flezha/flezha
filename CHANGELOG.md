@@ -4,6 +4,23 @@
 
 ### Added
 
+- **The Java SDK is rehosted on the poll core**
+  (`rehost-java-sdk-on-poll-core`). The Java runtime's kernel mirror —
+  command handlers, framing, reconnect, flusher, credit, DLQ park, timer
+  wheel, the bounded driver — is deleted; JVM poller threads drive
+  `flz_core` through a JNI binding over `flz_core_ffi` (`FlzCore`,
+  schema-negotiated at context creation). The core's host layer grew from
+  v1 to full capability for this: the five command activation kinds
+  (restore fold, snapshot, live read, apply-state, migration serialize),
+  the prepare crossing for keys/event times, static/dynamic entity modes,
+  producer-evaluated inter-procedure edges, the effectively-once and
+  checkpoint ack-granularity tiers, late-input correction, per-entity
+  timers, and bounded lifecycles (run-sugar sessions + structured chains)
+  — all reachable through the C ABI and pinned by the ABI scenario suite.
+  Activation schema bumped to v2 (prepare answers, `change_seq`,
+  `factory`, `Output.event_time`, bounded kinds); both SDKs' fixture
+  suites pin the same bytes.
+
 - **The Rust SDK's kernel is now a language-agnostic poll core**
   (`extract-sdk-poll-core`). A new `flz_core` crate owns transport,
   ordering, durability, retries, timers, credit, routing and the bounded

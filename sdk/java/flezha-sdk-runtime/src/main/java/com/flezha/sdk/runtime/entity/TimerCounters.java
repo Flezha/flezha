@@ -12,7 +12,7 @@ import javax.annotation.Nonnull;
  * Per-Procedure timer counters plus the two process-global gauges the
  * {@code data_heartbeat} carries. Monotonic totals and a signed {@code pending}
  * gauge, read by observability at its leisure — the same posture as
- * {@link EntityCounters}.
+ * the retired {@code EntityCounters}.
  */
 public final class TimerCounters {
 

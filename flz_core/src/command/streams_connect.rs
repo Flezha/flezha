@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -7,6 +8,7 @@ use std::thread;
 use flz_transport::service::payloader;
 use flz_transport::transport::config::{get_transport_type, TransportType};
 use flz_transport::transport::{protocol, FlezhaStream};
+#[cfg(unix)]
 use flz_transport::utility::path_helper;
 
 use super::CommandAction;
@@ -24,12 +26,19 @@ impl CommandAction for ConnectSocket {
         _errors: &mut Vec<String>,
     ) -> (String, Vec<u8>) {
         match get_transport_type() {
+            #[cfg(unix)]
             TransportType::Uds => handle_uds(self, runner),
+            #[cfg(not(unix))]
+            TransportType::Uds => {
+                _errors.push("UDS transport is not available on this platform".to_string());
+                ("connect_sockets".to_string(), Vec::new())
+            }
             TransportType::Quic => handle_quic(self, runner),
         }
     }
 }
 
+#[cfg(unix)]
 fn handle_uds(cmd: &ConnectSocket, runner: &mut RunnerNode) -> (String, Vec<u8>) {
     let io_streams = runner.get_io_streams();
     let runner_id = runner.get_runner_id();
@@ -121,6 +130,7 @@ fn install_entity_state_sink_from_pairs(pairs: &[(FlezhaStream, Arc<FlezhaStream
     }
 }
 
+#[cfg(unix)]
 fn spawn_listener_uds(runner: &RunnerNode, pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>) {
     let handle = runner.operative_dispatch_handle();
     let _ = thread::spawn(move || listen_incoming_uds(pairs, handle));
@@ -162,6 +172,7 @@ fn run_data_reader(
     );
 }
 
+#[cfg(unix)]
 fn listen_incoming_uds(
     pairs: Vec<(FlezhaStream, Arc<FlezhaStream>)>,
     handle: OperativeDispatchHandle,
@@ -198,6 +209,7 @@ fn listen_incoming_quic(
     }
 }
 
+#[cfg(unix)]
 fn connect_unix(runner_id: &str, stream_type: String) -> UnixStream {
     let socket_path = path_helper::stream_socket_path(runner_id, stream_type);
 

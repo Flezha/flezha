@@ -164,7 +164,8 @@ fn c_abi_full_scenario() {
 
     let decl = br#"{
         "factory_id": "abi_probe",
-        "procedures": [{"name": "abi_pass", "entry_channel": "in"}]
+        "channels": [{"name": "in", "kind": "entry", "consumers": [0]}],
+        "procedures": [{"name": "abi_pass"}]
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
@@ -211,7 +212,9 @@ fn c_abi_full_scenario() {
     let stream = Arc::new(flz_transport::transport::FlezhaStream::Unix(sock));
     let entry = instance.topology.channel(0).expect("entry channel");
     for payload in [b"alpha".to_vec(), b"beta".to_vec()] {
-        let value: Arc<dyn std::any::Any + Send + Sync> = Arc::new(payload);
+        // The channel's own entry wrapper — the same one the wire path runs.
+        let wrap = entry.wrap_input.as_ref().expect("entry wrapper");
+        let value = wrap(payload).expect("bytes passthrough cannot fail");
         flz_core::routing::route_to_consumers(&instance, entry, &value, &stream, None, false);
     }
 
@@ -314,6 +317,349 @@ fn c_abi_full_scenario() {
         elapsed >= Duration::from_millis(90) && elapsed < Duration::from_millis(1_000),
         "timeout bound violated: {elapsed:?}"
     );
+
+    // ================================================== restore fold (ABI)
+    // A persistent effectively-once host class: the controller's
+    // RestoreInitState becomes a RestoreFold activation carrying the naked
+    // host-encoded bodies (plain records verbatim, effect records unwrapped),
+    // and the restored consumed-offset floor skips already-applied inputs.
+    let decl = br#"{
+        "factory_id": "abi_eff",
+        "persistent": true,
+        "effectively_once": true,
+        "sdk_lang": 2,
+        "change_format_id": 4,
+        "channels": [
+            {"name": "ein", "kind": "entry", "consumers": [0]},
+            {"name": "eout", "kind": "plugin", "producer": 0, "keyed": true}
+        ],
+        "procedures": [{"name": "eff_pass"}]
+    }"#;
+    assert_eq!(
+        unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
+        FLZ_OK
+    );
+    send_command(
+        &writer,
+        "ref-add-eff",
+        flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
+            operative_id: "eff-1".to_string(),
+            factory_id: "abi_eff".to_string(),
+            ..Default::default()
+        }),
+    );
+    await_frame(&frames, "AddOperative eff response", |captured| {
+        captured.iter().find_map(|(id, m)| {
+            (id == "cmd"
+                && flz_core::pb::CommandResponse::decode(m.as_slice())
+                    .is_ok_and(|r| r.reference_id == "ref-add-eff" && r.status == "success"))
+            .then_some(())
+        })
+    });
+
+    // On-disk WAL records: seq 1 a plain (host-codec) change, seq 2 an
+    // effect record whose consumed offset seeds the floor.
+    let header_for = |format_id: u8, body: &[u8]| {
+        flz_core::header::HeaderTemplate {
+            sdk_lang: 2,
+            sdk_version: 0,
+            schema_version: 1,
+            format_id,
+        }
+        .stamp(body)
+    };
+    let record = |seq: u64, format_id: u8, body: &[u8]| {
+        let header = header_for(format_id, body);
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&seq.to_be_bytes());
+        framed.extend_from_slice(&((16 + body.len()) as u32).to_be_bytes());
+        framed.extend_from_slice(&header);
+        framed.extend_from_slice(body);
+        let mut crc_input = header.to_vec();
+        crc_input.extend_from_slice(body);
+        framed.extend_from_slice(&crc32fast::hash(&crc_input).to_be_bytes());
+        framed
+    };
+    let effect_body = postcard::to_stdvec(&flz_core::flusher::EffectRecordBody {
+        changes: vec![vec![0xC2]],
+        outputs: vec![],
+        consumed_offset: Some(7),
+        dlq: None,
+        event_time: 1_234,
+        timers: vec![],
+    })
+    .unwrap();
+    let mut change_log = record(1, 4, &[0xC1]);
+    change_log.extend(record(2, flz_core::header::FORMAT_ID_EFFECT_RECORD, &effect_body));
+    let entity_id = flz_core::flusher::encode_entity_identity("eff-1", "eff_pass", "");
+    send_command(
+        &writer,
+        "ref-restore-1",
+        flz_core::pb::command_request::Command::RestoreInitState(
+            flz_core::pb::RestoreInitState {
+                entity_id: entity_id.clone(),
+                snapshot_bytes: vec![0x5A],
+                change_log_bytes: change_log,
+                ..Default::default()
+            },
+        ),
+    );
+    let (status, act) = abi_poll(ctx, 5_000);
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "restore fold hands out");
+    let act = act.unwrap();
+    assert_eq!(act.target.operative, "eff-1");
+    let schema::ActivationKind::RestoreFold(fold) = &act.kind else {
+        panic!("expected a restore fold, got {:?}", act.kind);
+    };
+    assert_eq!(fold.snapshot.as_deref(), Some(&[0x5A][..]));
+    assert_eq!(
+        fold.changes,
+        vec![vec![0xC1], vec![0xC2]],
+        "plain bodies verbatim, effect records unwrapped to their host changes"
+    );
+    abi_complete(
+        ctx,
+        &schema::ActivationResult {
+            token: act.token,
+            outcome: schema::ActivationOutcome::Restored,
+        },
+    );
+    await_frame(&frames, "restore ack (terminal seq 2)", |captured| {
+        captured.iter().find_map(|(id, m)| {
+            (id == "cmd"
+                && flz_core::pb::CommandResponse::decode(m.as_slice()).is_ok_and(|r| {
+                    r.reference_id == "ref-restore-1"
+                        && flz_core::pb::RestoreInitStateResponse::decode(r.raw_data.as_slice())
+                            .is_ok_and(|ack| ack.terminal_seq == 2)
+                }))
+            .then_some(())
+        })
+    });
+
+    // The fold's effect record consumed offset 7: a re-forwarded input at or
+    // below the floor is skipped, one above it dispatches.
+    let eff_instance = flz_core::fast::live_unbounded_instance("eff-1").expect("eff instance");
+    let eff_entry = eff_instance.topology.channel(0).expect("entry channel");
+    let wrap = eff_entry.wrap_input.as_ref().expect("entry wrapper");
+    let below = wrap(b"dup".to_vec()).unwrap();
+    flz_core::routing::route_to_consumers(&eff_instance, eff_entry, &below, &stream, Some(7), false);
+    let (status, _) = abi_poll(ctx, 300);
+    assert_eq!(status, FLZ_POLL_TIMEOUT, "offset 7 sits at the restored floor");
+    let above = wrap(b"new".to_vec()).unwrap();
+    flz_core::routing::route_to_consumers(&eff_instance, eff_entry, &above, &stream, Some(8), false);
+    let (status, act) = abi_poll(ctx, 2_000);
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "offset 8 dispatches");
+    let act = act.unwrap();
+    let schema::ActivationKind::Work(items) = &act.kind else {
+        panic!("expected work");
+    };
+    match &items[..] {
+        [schema::WorkItem::Input(input)] => {
+            assert_eq!(input.consumed_offset, Some(8));
+            assert_eq!(input.payload, b"new".to_vec());
+        }
+        other => panic!("expected one input, got {other:?}"),
+    }
+    abi_complete(
+        ctx,
+        &schema::ActivationResult {
+            token: act.token,
+            outcome: schema::ActivationOutcome::Work(vec![ok_effect(Some(8), vec![])]),
+        },
+    );
+
+    // ==================================================== live read (ABI)
+    // EntityState becomes a LiveStateRead activation; the host's JSON answer
+    // lands in the command reply under the Decision-10 shape.
+    send_command(
+        &writer,
+        "ref-read-1",
+        flz_core::pb::command_request::Command::EntityState(flz_core::pb::EntityState {
+            operative_id: "eff-1".to_string(),
+            ..Default::default()
+        }),
+    );
+    let (status, act) = abi_poll(ctx, 5_000);
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "live read hands out");
+    let act = act.unwrap();
+    assert!(
+        matches!(act.kind, schema::ActivationKind::LiveStateRead),
+        "expected a live read, got {:?}",
+        act.kind
+    );
+    abi_complete(
+        ctx,
+        &schema::ActivationResult {
+            token: act.token,
+            outcome: schema::ActivationOutcome::StateJson {
+                json: br#"{"n":3}"#.to_vec(),
+            },
+        },
+    );
+    await_frame(&frames, "entity_state reply carrying the host JSON", |captured| {
+        captured.iter().find_map(|(id, m)| {
+            (id == "cmd"
+                && flz_core::pb::CommandResponse::decode(m.as_slice()).is_ok_and(|r| {
+                    r.reference_id == "ref-read-1" && {
+                        let body = String::from_utf8_lossy(&r.raw_data);
+                        body.contains("eff_pass") && body.contains("\"n\":3")
+                    }
+                }))
+            .then_some(())
+        })
+    });
+
+    // ==================== keyed dynamic route via the prepare crossing (ABI)
+    let decl = br#"{
+        "factory_id": "abi_dyn",
+        "channels": [{"name": "din", "kind": "entry", "consumers": [0]}],
+        "procedures": [{"name": "dyn_pass", "entity_mode": "dynamic"}]
+    }"#;
+    assert_eq!(
+        unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
+        FLZ_OK
+    );
+    send_command(
+        &writer,
+        "ref-add-dyn",
+        flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
+            operative_id: "dyn-1".to_string(),
+            factory_id: "abi_dyn".to_string(),
+            ..Default::default()
+        }),
+    );
+    await_frame(&frames, "AddOperative dyn response", |captured| {
+        captured.iter().find_map(|(id, m)| {
+            (id == "cmd"
+                && flz_core::pb::CommandResponse::decode(m.as_slice())
+                    .is_ok_and(|r| r.reference_id == "ref-add-dyn" && r.status == "success"))
+            .then_some(())
+        })
+    });
+    let dyn_instance = flz_core::fast::live_unbounded_instance("dyn-1").expect("dyn instance");
+    let dyn_entry = dyn_instance.topology.channel(0).expect("entry channel");
+    // The wire-dispatch staging seam (the same call `OperativeDispatchHandle::
+    // dispatch` makes): a keyed consumer holds the payload for the crossing.
+    let staged = flz_core::host::maybe_stage_prepare(
+        &dyn_instance,
+        0,
+        dyn_entry,
+        b"k1:v".to_vec(),
+        None,
+        false,
+        &stream,
+    );
+    assert!(staged.is_none(), "keyed consumer stages for the crossing");
+    let (status, act) = abi_poll(ctx, 2_000);
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "prepare crossing hands out");
+    let act = act.unwrap();
+    let schema::ActivationKind::KeyRequest(request) = &act.kind else {
+        panic!("expected a key request, got {:?}", act.kind);
+    };
+    assert_eq!(request.payloads, vec![b"k1:v".to_vec()]);
+    assert!(request.want_keys);
+    assert!(!request.want_event_time);
+    abi_complete(
+        ctx,
+        &schema::ActivationResult {
+            token: act.token,
+            outcome: schema::ActivationOutcome::Prepared(vec![Ok(schema::PrepareAnswer {
+                keys: vec!["k1".to_string()],
+                event_time: None,
+            })]),
+        },
+    );
+    let (status, act) = abi_poll(ctx, 2_000);
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "keyed input dispatches");
+    let act = act.unwrap();
+    assert_eq!(act.target.operative, "dyn-1");
+    assert_eq!(
+        act.target.entity_key.as_deref(),
+        Some("k1"),
+        "the prepare answer's key selected the lazily-created entity"
+    );
+    abi_complete(
+        ctx,
+        &schema::ActivationResult {
+            token: act.token,
+            outcome: schema::ActivationOutcome::Work(vec![ok_effect(None, vec![])]),
+        },
+    );
+
+    // ============================================ bounded run-sugar (ABI)
+    let decl = br#"{
+        "factory_id": "abi_sugar",
+        "channels": [],
+        "procedures": [],
+        "bounded": {}
+    }"#;
+    assert_eq!(
+        unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
+        FLZ_OK
+    );
+    send_command(
+        &writer,
+        "ref-add-sugar",
+        flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
+            operative_id: "sugar-1".to_string(),
+            factory_id: "abi_sugar".to_string(),
+            kind: "bounded".to_string(),
+            init_values: "seed".to_string(),
+            ..Default::default()
+        }),
+    );
+    let (status, act) = abi_poll(ctx, 5_000);
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "bounded seed hands out");
+    let act = act.unwrap();
+    assert_eq!(act.target.operative, "sugar-1");
+    let schema::ActivationKind::BoundedRun { args } = &act.kind else {
+        panic!("expected a bounded run, got {:?}", act.kind);
+    };
+    assert_eq!(args, b"seed");
+    // The session calls a live body uses, through the ABI.
+    let instance_c = CString::new("sugar-1").unwrap();
+    assert_eq!(
+        unsafe { flz_core_bounded_cancelled(ctx, instance_c.as_ptr()) },
+        0,
+        "a live body is not cancelled"
+    );
+    {
+        let mut buf: *mut u8 = std::ptr::null_mut();
+        let mut len: usize = 0;
+        let status = unsafe {
+            flz_core_bounded_recv(ctx, instance_c.as_ptr(), 50, &mut buf, &mut len)
+        };
+        assert_eq!(status, FLZ_POLL_TIMEOUT, "an empty inbox times out");
+    }
+    assert_eq!(
+        unsafe { flz_core_bounded_emit(ctx, instance_c.as_ptr(), b"mid".as_ptr(), 3) },
+        FLZ_OK
+    );
+    abi_complete(
+        ctx,
+        &schema::ActivationResult {
+            token: act.token,
+            outcome: schema::ActivationOutcome::BoundedDone {
+                completed: true,
+                result: b"done".to_vec(),
+            },
+        },
+    );
+    await_frame(&frames, "BoundedCompleted teardown", |captured| {
+        captured.iter().find_map(|(id, m)| {
+            (id == "control_command"
+                && flz_core::pb::CommandRequest::decode(m.as_slice()).is_ok_and(|r| {
+                    matches!(
+                        r.command,
+                        Some(flz_core::pb::command_request::Command::BoundedCompleted(ref c))
+                            if c.operative_id == "sugar-1"
+                                && c.status == "ok"
+                                && c.result == b"done".to_vec()
+                    )
+                }))
+            .then_some(())
+        })
+    });
 
     // ------------------------------------- shutdown wakes blocked pollers
     let ctx_addr = ctx as usize;

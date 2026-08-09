@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -11,6 +12,7 @@ use flz_transport::transport::config::{get_transport_type, TransportType};
 use flz_transport::transport::liveness::{self, ControlLiveness, ReadAction};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
+#[cfg(unix)]
 use flz_transport::utility::path_helper;
 use prost::Message;
 use serde::Serialize;
@@ -116,14 +118,21 @@ fn try_open(
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> Result<ControlConn, String> {
     match get_transport_type() {
+        #[cfg(unix)]
         TransportType::Uds => {
             let (handle, stream) = try_open_uds(namespace, declared, itx, otx)?;
             Ok((handle, stream, None))
+        }
+        #[cfg(not(unix))]
+        TransportType::Uds => {
+            Err("UDS transport is not available on this platform; set FLEZHA_TRANSPORT=quic"
+                .to_string())
         }
         TransportType::Quic => try_open_quic(namespace, declared, itx, otx),
     }
 }
 
+#[cfg(unix)]
 fn try_open_uds(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
