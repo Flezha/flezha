@@ -3225,7 +3225,18 @@ defmodule Flezha.Service.CliManager do
   defp resolve_overwatch(operative_class) do
     case Flezha.Operative.ClassRegistry.overwatch_pid(operative_class) do
       {:ok, pid} -> {:ok, pid}
-      :error -> {:error, :operative_not_running}
+      :error -> resolve_overwatch_cluster(operative_class)
+    end
+  end
+
+  # The class registry is node-local; a target hosted on a peer resolves
+  # through the routed pid lookup and the re-injection cast rides distribution.
+  defp resolve_overwatch_cluster(operative_class) do
+    with {:ok, namespace} <- OperativeManager.namespace_of(operative_class),
+         {:ok, pid} <- OperativeManager.get_operative_pid(namespace, operative_class) do
+      {:ok, pid}
+    else
+      _ -> {:error, :operative_not_running}
     end
   end
 
@@ -3320,13 +3331,26 @@ defmodule Flezha.Service.CliManager do
         IO.puts("no schedules")
 
       entries ->
-        placement = Flezha.Schedule.Hub.placement()
+        statuses = Flezha.Schedule.Hub.statuses()
 
         IO.puts(
-          schedule_row(["NAME", "CRON", "TZ", "FACTORY", "NAMESPACE", "NODE", "NEXT FIRE (UTC)"])
+          schedule_row([
+            "NAME",
+            "CRON",
+            "TZ",
+            "FACTORY",
+            "NAMESPACE",
+            "NODE",
+            "NEXT FIRE (UTC)",
+            "LAST FIRE (UTC)",
+            "LAST RESULT"
+          ])
         )
 
         Enum.each(entries, fn e ->
+          status = Map.get(statuses, e.name, %{})
+          last_fire = Map.get(status, :last_fire)
+
           IO.puts(
             schedule_row([
               e.name,
@@ -3334,13 +3358,31 @@ defmodule Flezha.Service.CliManager do
               e.timezone,
               e.factory_id,
               e.namespace,
-              label_or(Map.get(placement, e.name), "-"),
-              schedule_next_fire(e)
+              label_or(Map.get(status, :node), "-"),
+              schedule_next_fire(e),
+              schedule_last_fire_at(last_fire),
+              schedule_last_result(last_fire)
             ])
           )
         end)
     end
   end
+
+  defp schedule_last_fire_at(%{at: at}),
+    do: at |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+
+  defp schedule_last_fire_at(_), do: "-"
+
+  # Error reasons truncate to the column; the full reason stays in
+  # log/telemetry.
+  @schedule_result_width 48
+  defp schedule_last_result(%{outcome: :ok}), do: "ok"
+  defp schedule_last_result(%{outcome: :duplicate}), do: "duplicate"
+
+  defp schedule_last_result(%{outcome: {:retrying, reason}}),
+    do: String.slice("retrying: #{reason}", 0, @schedule_result_width)
+
+  defp schedule_last_result(_), do: "-"
 
   def schedule_remove(name) do
     # Store first: retracting first would let the periodic re-assert sweep
@@ -3425,9 +3467,9 @@ defmodule Flezha.Service.CliManager do
 
   # First six columns padded; the last is printed raw.
   defp schedule_row(cells) do
-    {padded, [last]} = Enum.split(cells, 6)
+    {padded, [last]} = Enum.split(cells, 8)
 
-    Enum.zip_with(padded, [24, 18, 20, 24, 14, 22], &String.pad_trailing/2)
+    Enum.zip_with(padded, [24, 18, 20, 24, 14, 22, 22, 22], &String.pad_trailing/2)
     |> Enum.join()
     |> Kernel.<>(last)
   end

@@ -73,10 +73,16 @@ that handle instead of the procedure:
 | Outcome | Meaning |
 |---|---|
 | `AlreadyRunning` | the id is taken and the request said `error` |
-| `FactoryUnknown` | no connected runner registers that factory |
+| `FactoryUnknown` | no connected runner **on any cluster node** registers that factory |
 | `Refused(reason)` | quota exhausted, controller shutting down, start failed |
 | `Timeout` | no answer within 30 s |
 | `Unavailable` | no control plane to request on |
+
+Factory resolution is cluster-wide: when the requester's runner is connected
+to a controller node that holds no runner for the factory, the controller
+resolves the capable nodes through the cluster directory and executes the
+spawn-or-deliver on one of them, so `FactoryUnknown` is an honest cluster-wide
+verdict rather than a node-local one.
 
 Reading the handle is optional. A handle nobody inspects still reports a
 failure — once, as a warning line — so fire-and-forget never means

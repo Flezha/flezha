@@ -13,6 +13,7 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
+  alias FlezhaTest.Helper.FleetStateHelper
 
   use ExUnit.Case, async: false
   use Mimic
@@ -34,33 +35,9 @@ defmodule FlezhaTest.Runner.FleetManagerSyncFactoriesTest do
     :ok
   end
 
-  defp seed(runner_factories) do
-    ts = System.system_time(:millisecond)
+  defp seed(runner_factories), do: FleetStateHelper.seed(@namespace, runner_factories)
 
-    :sys.replace_state(FleetManager, fn state ->
-      runners = runner_factories |> Map.keys() |> Map.new(&{&1, {:active, ts}})
-
-      ns_factories =
-        Enum.reduce(runner_factories, %{}, fn {runner, factories}, acc ->
-          Enum.reduce(factories, acc, fn id, acc ->
-            existing = Map.get(acc, id, %{description: nil, ce_ids: MapSet.new()})
-            Map.put(acc, id, %{existing | ce_ids: MapSet.put(existing.ce_ids, runner)})
-          end)
-        end)
-
-      state
-      |> put_in([:runner_namespaces, @namespace], runners)
-      |> put_in([:namespace_factories, @namespace], ns_factories)
-    end)
-  end
-
-  # Cast + a same-sender call so the assertion runs after the cast is handled.
-  defp sync(runner, factory_ids) do
-    factories = Enum.map(factory_ids, fn id -> %{"id" => id, "description" => nil} end)
-    GenServer.cast(FleetManager, {:sync_factories, @namespace, runner, factories})
-    {:ok, _} = FleetManager.list_factories(@namespace)
-    :ok
-  end
+  defp sync(runner, factory_ids), do: FleetStateHelper.sync(@namespace, runner, factory_ids)
 
   defp factory_ids do
     {:ok, factories} = FleetManager.list_factories(@namespace)

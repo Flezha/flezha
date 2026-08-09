@@ -12,6 +12,8 @@ Both SDKs (Rust and Java, released together) SHALL expose a context call `spawn_
 
 The request SHALL NOT carry a namespace: the controller resolves it against the control channel the request arrived on, so a request cannot reach another namespace.
 
+Factory resolution SHALL be cluster-wide: the controller SHALL route the spawn to a runner registering `factory_id` connected to ANY controller node in the cluster, not only runners connected to the node that received the request. `factory_unknown` SHALL be yielded only when no connected runner on any cluster node registers the factory, resolved against the fleet state current at request time.
+
 #### Scenario: First request spawns, second delivers
 
 - **WHEN** two procedures issue `spawn_bounded("w1", "worker", p1/p2, deliver)` in sequence
@@ -26,6 +28,11 @@ The request SHALL NOT carry a namespace: the controller resolves it against the 
 
 - **WHEN** a procedure on the streaming runner requests spawn of a factory registered only by a separate analyzer runner (each runner holds its own sealed operative registry)
 - **THEN** the controller SHALL route the spawn to a runner that has registered `factory_id`, and SHALL yield a `factory_unknown` async result if no connected runner registers it
+
+#### Scenario: Factory on a runner connected to a different controller node
+
+- **WHEN** a procedure whose runner is connected to controller node A requests spawn of a factory whose only runner is connected to controller node B
+- **THEN** the controller SHALL start the instance on node B and the requester's async result SHALL be `spawned` (or `delivered` if the id already exists), not `factory_unknown`
 
 #### Scenario: Java and Rust parity
 

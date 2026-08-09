@@ -31,6 +31,9 @@ defmodule Flezha.Application do
         # Owns the recovery-state cache + the published convergence
         # snapshot; must be up before any hub fires recovery telemetry.
         Flezha.Convergence.Snapshot,
+        # The cluster directory scope must be up before its writers:
+        # HubManager joins hub pids, FleetManager joins capability groups.
+        Flezha.Cluster.Directory,
         Flezha.Service.HubManager,
         Flezha.Observability.Supervisor,
         Flezha.Shutdown.Coordinator,

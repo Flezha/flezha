@@ -132,3 +132,76 @@ The CLI SHALL expose a single `flz operative` verb tree for lifecycle management
 - **WHEN** the operator runs `flz relay start`
 - **THEN** the CLI SHALL reject it as an unknown command
 
+
+
+### Requirement: Operative start requests SHALL be location-transparent across controller nodes
+
+A bounded operative start request (`flz operative start`/`add`, a schedule fire, or a procedure-requested spawn) submitted on any controller node SHALL succeed whenever any node in the cluster holds a connected runner advertising the requested factory in the requested namespace. When the receiving node cannot satisfy the request locally, the controller SHALL resolve the set of capable nodes against fleet state current at request time and execute the same start call on one capable node, chosen deterministically, forwarded at most once. A routed request SHALL be validated on the executing node (namespace, factory, quota, duplicate id) exactly as a local request, and its verdict SHALL be returned to the origin unchanged. When no cluster node is capable, the refusal SHALL state that no runner exists on any cluster node — a node-local "no runners" answer SHALL NOT be reported for a cluster that holds one. Resolution of capable peers SHALL be bounded in time; an unreachable or unresponsive peer SHALL be treated as not capable rather than stalling the request. The local fast path SHALL be unchanged: a node that can satisfy the request itself SHALL perform no cluster round.
+
+#### Scenario: CLI start against a runner-less controller node
+
+- **WHEN** `flz operative start` is issued against a controller node holding no runner for the target namespace while a peer node holds a connected runner advertising the factory
+- **THEN** the operative SHALL be started on the capable peer and the command SHALL report success naming that placement
+
+#### Scenario: Honest cluster-wide refusal
+
+- **WHEN** a start request names a factory no connected runner on any cluster node advertises
+- **THEN** the refusal SHALL state that no runner in the namespace advertises the factory on any cluster node
+
+#### Scenario: A routed request is not forwarded twice
+
+- **WHEN** a start request is routed to a capable node and that node's runner disconnects before validation completes
+- **THEN** the request SHALL fail with that node's verdict rather than being forwarded again
+
+#### Scenario: An unreachable peer cannot stall a start
+
+- **WHEN** a start request is submitted while one cluster peer is unreachable
+- **THEN** capable-node resolution SHALL complete within its bounded timeout, treating the unreachable peer as not capable
+
+### Requirement: Operative commands SHALL be location-transparent across controller nodes
+
+Every controller node SHALL be a valid entry point for every namespace-scoped operative command — sending input, requesting a stop, reading live entity state, reading overwatch info, creating a snapshot, resolving an operative's pid or namespace, and re-injecting a dead-letter payload. When the receiving node is not a member of the target namespace's hub, the controller SHALL forward the command once to a hub-member node resolved against membership current at request time, and SHALL return that node's verdict unchanged. A forwarded command SHALL NOT be forwarded again. Commands with node-local side effects (plugin disable, state-directory deletion, quota release) SHALL execute those side effects on the node hosting the operative, never on the receiving node. When no cluster node holds the namespace, the existing local refusal SHALL stand. Namespace and operative enumeration SHALL include namespaces hosted only on peer nodes. The local fast path SHALL be unchanged: a node that is a member of the namespace's hub SHALL perform no forwarding.
+
+#### Scenario: Sending input through a non-member controller node
+
+- **WHEN** `flz operative send` is issued against a controller node that is not a member of the target namespace's hub while a peer node runs the operative
+- **THEN** the payload SHALL be delivered to the operative and the confirming verdict SHALL be reported to the caller unchanged
+
+#### Scenario: Stopping through a non-member node cleans up on the hosting node
+
+- **WHEN** `flz operative stop` is issued against a non-member node
+- **THEN** the operative SHALL be stopped and its plugin disable, state-directory deletion, and quota release SHALL run on the node that hosted it
+
+#### Scenario: Live state read from any node
+
+- **WHEN** `flz state get` is issued against a non-member node for a live entity on a peer node
+- **THEN** the state JSON and its change seq SHALL be returned exactly as a member-node read would return them
+
+#### Scenario: A forwarded command is not forwarded twice
+
+- **WHEN** a command is forwarded to a hub-member node whose hub dies before the command executes
+- **THEN** the command SHALL fail with that node's refusal rather than being forwarded again
+
+#### Scenario: DLQ replay resolves the operative cluster-wide
+
+- **WHEN** `flz dlq replay` is issued on the node holding the parked entry while the target operative runs on a peer node
+- **THEN** the payload SHALL be re-injected into the operative's input stream on the peer node
+
+### Requirement: The controller cluster SHALL maintain a shared directory of runner capability and hub placement
+
+Each controller node SHALL advertise into a cluster-replicated directory which namespaces it holds active runners for, which factories those runners register, and which namespace hubs it is a member of. The directory SHALL be readable on every node without a network round per read. Advertisements SHALL follow the node-local fleet truth: a runner connecting, disconnecting, being evicted, or replacing its factory set SHALL be reflected, and a node leaving the cluster SHALL have its advertisements removed without operator action. Directory answers MAY lag the fleet truth; every routed request SHALL therefore be re-validated on the executing node, and a stale answer SHALL cost at most one failed forward. The directory SHALL NOT be used for recovery-time placement, which continues to ride hub membership.
+
+#### Scenario: A runner's factories appear cluster-wide on connect
+
+- **WHEN** a runner connects to controller node B advertising factory `f`
+- **THEN** a directory read on controller node A SHALL name node B as capable of `f` in that namespace without A performing a cluster round
+
+#### Scenario: A dead node's advertisements disappear
+
+- **WHEN** a controller node leaves the cluster without cleanly disconnecting its runners
+- **THEN** directory reads on surviving nodes SHALL stop naming that node
+
+#### Scenario: A stale directory answer degrades to one failed forward
+
+- **WHEN** a request is routed to a node whose last capable runner disconnected after the directory was read
+- **THEN** the executing node SHALL refuse with its local verdict and no further forwarding SHALL occur

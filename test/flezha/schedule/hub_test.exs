@@ -75,13 +75,19 @@ defmodule Flezha.Schedule.HubTest do
       assert [] = Helper.await_unregistered("digest")
     end
 
-    test "placement/0 reports the node running each schedule" do
+    test "statuses/0 reports the node and last_fire of each schedule" do
       entry = Helper.add_quiet("digest")
       :ok = Hub.assert(entry)
-      Helper.await_registered("digest")
+      [pid | _] = Helper.await_registered("digest")
 
-      assert %{"digest" => node} = Hub.placement()
+      # A quiet entry has not fired yet.
+      assert %{"digest" => %{node: node, last_fire: nil}} = Hub.statuses()
       assert node == node()
+
+      # A wedged job reports its node only — the walk must render regardless.
+      :ok = :sys.suspend(pid)
+      assert %{"digest" => %{node: ^node, last_fire: nil}} = Hub.statuses()
+      :ok = :sys.resume(pid)
     end
 
     test "the schedule hub stays invisible to the operative-oriented walkers" do
@@ -107,8 +113,8 @@ defmodule Flezha.Schedule.HubTest do
       assert :ok = Hub.retract("digest")
     end
 
-    test "placement/0 is empty" do
-      assert Hub.placement() == %{}
+    test "statuses/0 is empty" do
+      assert Hub.statuses() == %{}
     end
   end
 end

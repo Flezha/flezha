@@ -5,6 +5,7 @@ defmodule Flezha.Service.OperativeManager do
 
   require Logger
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias Flezha.Runner.ControlUnit
@@ -32,34 +33,134 @@ defmodule Flezha.Service.OperativeManager do
     {:ok, operatives}
   end
 
-  def get_operative_pid(namespace, operative_id) do
-    case HubManager.get_pid(namespace, operative_id) do
-      {:ok, pid} -> {:ok, pid}
-      {:error, "no pid found"} -> {:error, "operative not found"}
+  @doc """
+  Resolve `operative_id`'s pid from ANY controller node. A node that is not a
+  member of the namespace's hub asks one hub-member node (resolved through the
+  cluster directory, forwarded at most once); every pid-interaction verb then
+  rides BEAM distribution on the returned pid, so the interaction still
+  executes inside the operative's own node.
+  """
+  def get_operative_pid(namespace, operative_id, opts \\ []) do
+    on_hub_member(namespace, operative_id, opts, :get_operative_pid, fn ->
+      case HubManager.get_pid(namespace, operative_id) do
+        {:ok, pid} -> {:ok, pid}
+        {:error, "no pid found"} -> {:error, "operative not found"}
+        err -> err
+      end
+    end)
+  end
+
+  # Run `local` when this node is a hub member (or the call was already
+  # forwarded — the loop guard), else forward `fun` once to one deterministic
+  # hub-member node. Local with no hub anywhere preserves today's refusal.
+  defp on_hub_member(namespace, operative_id, opts, fun, local) do
+    if Keyword.get(opts, :routed, false) or HubManager.hub_alive?(namespace) do
+      local.()
+    else
+      case List.delete(Directory.hub_nodes(namespace), node()) do
+        [] ->
+          local.()
+
+        nodes ->
+          target = pick_runner(nodes, operative_id)
+          route_call(target, fun, [namespace, operative_id, [routed: true]], &{:error, &1})
+      end
+    end
+  end
+
+  # Resolve the pid, then run `fun` on it — every error passes through.
+  defp with_operative_pid(namespace, operative_id, fun) do
+    case get_operative_pid(namespace, operative_id) do
+      {:ok, operative_pid} -> fun.(operative_pid)
       err -> err
     end
   end
 
-  def get_overwatch_state(namespace, operative_id) do
-    case get_operative_pid(namespace, operative_id) do
-      {:ok, operative_pid} ->
-        # `SafeCall.bounded` returns `{:ok, state} | {:error, reason}` — the same
-        # success shape as before, but a wedged operative now yields a logged
-        # `{:error, :timeout}` (with the target's mailbox/current-function) instead
-        # of an unhandled exit.
-        SafeCall.bounded(operative_pid, :get_overwatch_state, overwatch_call_timeout_ms())
+  # One bounded forward; an unreachable or crashed peer maps through `on_error`
+  # instead of raising into the caller. Must exceed the remote start's own
+  # internal budget (ProcessHub's 15s wait plus the :no_response retry ladder).
+  @route_call_timeout_ms 30_000
+  defp route_call(target, fun, args, on_error) do
+    :erpc.call(target, __MODULE__, fun, args, @route_call_timeout_ms)
+  catch
+    kind, reason -> on_error.({:routed_call_failed, target, kind, reason})
+  end
 
-      err ->
-        err
-    end
+  def get_overwatch_state(namespace, operative_id) do
+    # `SafeCall.bounded` returns `{:ok, state} | {:error, reason}` — the same
+    # success shape as before, but a wedged operative now yields a logged
+    # `{:error, :timeout}` (with the target's mailbox/current-function) instead
+    # of an unhandled exit.
+    with_operative_pid(namespace, operative_id, fn pid ->
+      SafeCall.bounded(pid, :get_overwatch_state, overwatch_call_timeout_ms())
+    end)
   end
 
   @doc """
   Starts a new operative to the runner.
+
+  Location-transparent: a node that cannot satisfy the start itself (no
+  namespace hub / no runner advertising the factory) resolves the capable
+  nodes through the cluster directory and executes the same call on one of
+  them, forwarded at most once (`routed: true`). The executing node
+  re-validates everything, so a stale directory answer costs one failed
+  forward, never a wrong start.
   """
-  @spec start_operative(String.t(), OperativeBuilder.t()) ::
-          {:ok, map()} | {:error, String.t()}
-  def start_operative(namespace, operative) do
+  @spec start_operative(String.t(), OperativeBuilder.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def start_operative(namespace, operative, opts \\ []) do
+    if Keyword.get(opts, :routed, false) or locally_startable?(namespace, operative.factory_id) do
+      do_start_operative(namespace, operative)
+    else
+      route_start(namespace, operative)
+    end
+  end
+
+  defp locally_startable?(namespace, factory_id) do
+    HubManager.hub_alive?(namespace) and local_runners?(namespace, factory_id)
+  end
+
+  defp local_runners?(namespace, factory_id) when is_binary(factory_id),
+    do: FleetManager.runners_for_factory(namespace, factory_id) != []
+
+  defp local_runners?(namespace, _factory_id),
+    do: FleetManager.active_runners(namespace) != []
+
+  defp capable_nodes(namespace, factory_id) when is_binary(factory_id),
+    do: List.delete(Directory.factory_nodes(namespace, factory_id), node())
+
+  defp capable_nodes(namespace, _factory_id),
+    do: List.delete(Directory.runner_nodes(namespace), node())
+
+  defp route_start(namespace, operative) do
+    case capable_nodes(namespace, operative.factory_id) do
+      [] ->
+        {:error,
+         %{
+           operative_id: operative.id,
+           node: node(),
+           reason: cluster_wide_refusal(namespace, operative.factory_id)
+         }}
+
+      nodes ->
+        target = pick_runner(nodes, operative.id)
+
+        route_call(
+          target,
+          :start_operative,
+          [namespace, operative, [routed: true]],
+          &{:error, %{operative_id: operative.id, node: target, reason: &1}}
+        )
+    end
+  end
+
+  defp cluster_wide_refusal(namespace, factory_id) when is_binary(factory_id),
+    do: "no runners for factory #{factory_id} in namespace #{namespace} on any cluster node"
+
+  defp cluster_wide_refusal(namespace, _factory_id),
+    do: "no runners in namespace #{namespace} on any cluster node"
+
+  defp do_start_operative(namespace, operative) do
     with :ok <- check_not_shutting_down(),
          :ok <- OperativeBuilder.validate_operative(namespace, operative),
          :ok <- validate_factory(namespace, operative.factory_id),
@@ -148,9 +249,18 @@ defmodule Flezha.Service.OperativeManager do
   Returns `{:ok, :cooperative}` when a cooperative stop was signalled, `:ok` after
   a hard teardown, or `{:error, reason}`.
   """
-  @spec request_stop(String.t(), String.t()) ::
+  @spec request_stop(String.t(), String.t(), keyword()) ::
           :ok | {:ok, :cooperative} | {:error, term()}
-  def request_stop(namespace, operative_id) do
+  def request_stop(namespace, operative_id, opts \\ []) do
+    # Whole-call forward, unlike the pid-riding read verbs: the stop path's
+    # side effects (ControlUnit lookup, plugin disable, state-dir delete,
+    # quota release) are node-local and must run on the hosting node.
+    on_hub_member(namespace, operative_id, opts, :request_stop, fn ->
+      do_request_stop(namespace, operative_id)
+    end)
+  end
+
+  defp do_request_stop(namespace, operative_id) do
     case get_overwatch_state(namespace, operative_id) do
       {:ok, %{builder: %{kind: :bounded}, runner_id: runner_id}}
       when is_binary(runner_id) ->
@@ -170,39 +280,41 @@ defmodule Flezha.Service.OperativeManager do
   state, and release its quota. Drives `RemOperative` (terminal) — the converged
   teardown for both an explicit stop and a `BoundedCompleted`.
   """
-  @spec stop_operative(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def stop_operative(namespace, operative_id) do
-    case get_operative_pid(namespace, operative_id) do
-      {:ok, operative_pid} ->
-        # Read the entity count before the stop tears the operative down — the
-        # operative is gone afterwards and the count is needed to release the
-        # `:max_entities_per_operative` quota symmetrically with start.
-        seg_count = operative_entity_count(namespace, operative_id)
+  @spec stop_operative(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
+  def stop_operative(namespace, operative_id, opts \\ []) do
+    on_hub_member(namespace, operative_id, opts, :stop_operative, fn ->
+      do_stop_operative(namespace, operative_id)
+    end)
+  end
 
-        case GenServer.call(operative_pid, :stop_operative) do
-          :ok ->
-            _ = Flezha.Service.PluginManager.disable_operative_plugins(namespace, operative_id)
-            _ = delete_operative_state_dir(operative_id)
-            _ = Flezha.AuthZ.Quotas.record_deallocation(namespace, :max_operatives, 1)
+  defp do_stop_operative(namespace, operative_id) do
+    with_operative_pid(namespace, operative_id, fn operative_pid ->
+      # Read the entity count before the stop tears the operative down — the
+      # operative is gone afterwards and the count is needed to release the
+      # `:max_entities_per_operative` quota symmetrically with start.
+      seg_count = operative_entity_count(namespace, operative_id)
 
-            if seg_count > 0 do
-              _ =
-                Flezha.AuthZ.Quotas.record_deallocation(
-                  namespace,
-                  :max_entities_per_operative,
-                  seg_count
-                )
-            end
+      case GenServer.call(operative_pid, :stop_operative) do
+        :ok ->
+          _ = Flezha.Service.PluginManager.disable_operative_plugins(namespace, operative_id)
+          _ = delete_operative_state_dir(operative_id)
+          _ = Flezha.AuthZ.Quotas.record_deallocation(namespace, :max_operatives, 1)
 
-            :ok
+          if seg_count > 0 do
+            _ =
+              Flezha.AuthZ.Quotas.record_deallocation(
+                namespace,
+                :max_entities_per_operative,
+                seg_count
+              )
+          end
 
-          {:error, reason} ->
-            {:error, reason}
-        end
+          :ok
 
-      err ->
-        err
-    end
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end)
   end
 
   defp operative_entity_count(namespace, operative_id) do
@@ -308,13 +420,9 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   def send_io(operative_id, namespace, message, metadata) do
-    case get_operative_pid(namespace, operative_id) do
-      {:ok, operative_pid} ->
-        GenServer.cast(operative_pid, {:io_in, message, metadata})
-
-      err ->
-        err
-    end
+    with_operative_pid(namespace, operative_id, fn pid ->
+      GenServer.cast(pid, {:io_in, message, metadata})
+    end)
   end
 
   @typedoc """
@@ -390,18 +498,51 @@ defmodule Flezha.Service.OperativeManager do
   uniqueness check converts to the same delivery a later request would get, so
   exactly one instance exists and every payload lands exactly once.
   """
-  @spec spawn_or_deliver(String.t(), String.t(), String.t(), binary(), :deliver | :error) ::
+  @spec spawn_or_deliver(
+          String.t(),
+          String.t(),
+          String.t(),
+          binary(),
+          :deliver | :error,
+          keyword()
+        ) ::
           spawn_outcome()
-  def spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running) do
+  def spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running, opts \\ []) do
     cond do
       exist?(namespace, instance_id) ->
         resolve_running(namespace, instance_id, payload, if_running)
 
-      FleetManager.runners_for_factory(namespace, factory_id) == [] ->
+      FleetManager.runners_for_factory(namespace, factory_id) != [] ->
+        spawn_fresh(namespace, instance_id, factory_id, payload, if_running)
+
+      # The loop guard: a forwarded request finding no local runner answers the
+      # honest refusal instead of forwarding again.
+      Keyword.get(opts, :routed, false) ->
         :factory_unknown
 
       true ->
-        spawn_fresh(namespace, instance_id, factory_id, payload, if_running)
+        route_spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running)
+    end
+  end
+
+  # No local runner registers the factory — resolve cluster-wide and run the
+  # WHOLE call where the namespace hub is alive, so `exist?/2` and delivery
+  # execute against live truth. `:factory_unknown` is now an honest
+  # cluster-wide verdict.
+  defp route_spawn_or_deliver(namespace, instance_id, factory_id, payload, if_running) do
+    case capable_nodes(namespace, factory_id) do
+      [] ->
+        :factory_unknown
+
+      nodes ->
+        target = pick_runner(nodes, instance_id)
+
+        route_call(
+          target,
+          :spawn_or_deliver,
+          [namespace, instance_id, factory_id, payload, if_running, [routed: true]],
+          &{:refused, inspect(&1)}
+        )
     end
   end
 
@@ -430,13 +571,9 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   def create_snapshot(namespace, operative_id) do
-    case get_operative_pid(namespace, operative_id) do
-      {:ok, operative_pid} ->
-        GenServer.call(operative_pid, :create_snapshot)
-
-      err ->
-        err
-    end
+    with_operative_pid(namespace, operative_id, fn pid ->
+      GenServer.call(pid, :create_snapshot)
+    end)
   end
 
   @no_response_retry_attempts 8
@@ -597,6 +734,10 @@ defmodule Flezha.Service.OperativeManager do
 
     HubManager.get_running_namespaces()
     |> Enum.map(&to_string/1)
+    # Namespaces hosted only on peer nodes: `exist?/2` probes them through the
+    # routed pid lookup, so the answer is cluster-wide.
+    |> Enum.concat(Directory.namespaces())
+    |> Enum.uniq()
     |> Enum.reject(&(&1 == except))
     |> Enum.find(&exist?(&1, operative_id))
     |> case do
@@ -630,23 +771,15 @@ defmodule Flezha.Service.OperativeManager do
   @spec get_entity_state(binary(), binary(), map()) ::
           {:ok, binary(), non_neg_integer() | nil} | {:error, term()}
   def get_entity_state(namespace, operative_id, selector) when is_map(selector) do
-    case get_operative_pid(namespace, operative_id) do
-      {:ok, operative_pid} ->
-        # Unwrap one level: the operative's own reply is already
-        # `{:ok, json, seq} | {:error, reason}`, so collapse `SafeCall`'s outer
-        # `{:ok, _}`; a bounded timeout/noproc stays `{:error, reason}`.
-        case SafeCall.bounded(
-               operative_pid,
-               {:get_entity_state, selector},
-               overwatch_call_timeout_ms()
-             ) do
-          {:ok, reply} -> reply
-          {:error, _} = err -> err
-        end
-
-      err ->
-        err
-    end
+    with_operative_pid(namespace, operative_id, fn pid ->
+      # Unwrap one level: the operative's own reply is already
+      # `{:ok, json, seq} | {:error, reason}`, so collapse `SafeCall`'s outer
+      # `{:ok, _}`; a bounded timeout/noproc stays `{:error, reason}`.
+      case SafeCall.bounded(pid, {:get_entity_state, selector}, overwatch_call_timeout_ms()) do
+        {:ok, reply} -> reply
+        {:error, _} = err -> err
+      end
+    end)
   end
 
   defp overwatch_call_timeout_ms,

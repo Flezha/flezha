@@ -1,4 +1,5 @@
 defmodule Flezha.Runner.FleetManager do
+  alias Flezha.Cluster.Directory
   alias Flezha.Cluster.Orchestrator
   alias Flezha.Runner.RunnerSupervisor
   alias Flezha.Runner.FleetSupervisor
@@ -114,6 +115,28 @@ defmodule Flezha.Runner.FleetManager do
     GenServer.call(__MODULE__, {:runners_for_factory, namespace, factory_id}, timeout)
   end
 
+  @doc """
+  Runner ids across every cluster node holding active runners in `namespace`,
+  resolved through the cluster directory. Serves `Flezha.list_runners/1`.
+  An unreachable peer contributes nothing rather than failing the read.
+  """
+  @spec global_runners(String.t()) :: {:ok, [binary()]}
+  def global_runners(namespace) do
+    runners =
+      [node() | Directory.runner_nodes(namespace)]
+      |> Enum.uniq()
+      |> Enum.flat_map(fn n ->
+        try do
+          :erpc.call(n, __MODULE__, :active_runners, [namespace], @lookup_timeout_ms)
+        catch
+          _, _ -> []
+        end
+      end)
+      |> Enum.uniq()
+
+    {:ok, runners}
+  end
+
   def disconnect_runner(namespace, runner_id) do
     GenServer.call(__MODULE__, {:disconnect_runner, namespace, runner_id})
   end
@@ -181,7 +204,13 @@ defmodule Flezha.Runner.FleetManager do
     # transient readers (WalWriters) that consult them.
     ensure_superseded_table()
 
-    {:ok, %{runner_namespaces: %{}, namespace_factories: %{}, stable_sessions: %{}}}
+    {:ok,
+     %{
+       runner_namespaces: %{},
+       namespace_factories: %{},
+       stable_sessions: %{},
+       directory_groups: MapSet.new()
+     }}
   end
 
   defp boot_recovery_timeout() do
@@ -207,7 +236,7 @@ defmodule Flezha.Runner.FleetManager do
   def handle_call({:runner_disconnected, namespace, runner_id}, _from, state) do
     state = handle_runner_disconnect(state, namespace, runner_id)
 
-    {:reply, :ok, state}
+    {:reply, :ok, sync_directory(state)}
   end
 
   @impl true
@@ -251,7 +280,7 @@ defmodule Flezha.Runner.FleetManager do
 
     state = Map.put(state, :runner_namespaces, runner_namespaces)
     state = Map.update!(state, :namespace_factories, &Map.delete(&1, namespace))
-    {:reply, reply, state}
+    {:reply, reply, sync_directory(state)}
   end
 
   @impl true
@@ -311,7 +340,7 @@ defmodule Flezha.Runner.FleetManager do
       %{members: :local}
     )
 
-    {:reply, {:ok, {namespace, session_token}}, state}
+    {:reply, {:ok, {namespace, session_token}}, sync_directory(state)}
   end
 
   @impl true
@@ -326,13 +355,13 @@ defmodule Flezha.Runner.FleetManager do
     if runner_active?(state, runner_id) do
       {:reply, :ok, state}
     else
-      {:reply, :ok, do_evict_runner(state, runner_id)}
+      {:reply, :ok, state |> do_evict_runner(runner_id) |> sync_directory()}
     end
   end
 
   @impl true
   def handle_call(:runner_cleanup, _from, state) do
-    {:reply, :ok, runner_cleanup(state)}
+    {:reply, :ok, state |> runner_cleanup() |> sync_directory()}
   end
 
   # Full-set replacement of one runner's declared factory list, cast from
@@ -351,14 +380,14 @@ defmodule Flezha.Runner.FleetManager do
 
     warn_dropped_factories(state, namespace, runner_id, dropped)
 
-    {:noreply, state}
+    {:noreply, sync_directory(state)}
   end
 
   @impl true
   def handle_info(:schedule_runner_cleanup, state) do
     schedule_runner_cleanup()
 
-    {:noreply, runner_cleanup(state)}
+    {:noreply, state |> runner_cleanup() |> sync_directory()}
   end
 
   @impl true
@@ -802,6 +831,28 @@ defmodule Flezha.Runner.FleetManager do
 
   defp parse_factories(init_payload) do
     Map.get(init_payload, "factories") || []
+  end
+
+  # Re-advertise this node's capability into the cluster directory from the
+  # state just committed. Desired-state diff, not refcounts: a group stays
+  # joined while ANY runner on this node still backs it, and a crashed
+  # FleetManager's memberships are cleaned by `:pg`'s monitors.
+  defp sync_directory(state) do
+    %{state | directory_groups: Directory.sync_membership(desired_directory_groups(state), state.directory_groups)}
+  end
+
+  defp desired_directory_groups(state) do
+    runner_groups =
+      for {namespace, runners} <- state.runner_namespaces,
+          Enum.any?(runners, fn {_id, {status, _ts}} -> status == :active end),
+          do: Directory.runners_group(namespace)
+
+    factory_groups =
+      for {namespace, factories} <- state.namespace_factories,
+          {factory_id, _info} <- factories,
+          do: Directory.factory_group(namespace, factory_id)
+
+    MapSet.new(runner_groups ++ factory_groups)
   end
 
   defp store_factories(state, namespace, runner_id, factories) do

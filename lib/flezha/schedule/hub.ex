@@ -21,10 +21,13 @@ defmodule Flezha.Schedule.Hub do
   require Logger
 
   alias Flezha.Cluster.Orchestrator
+  alias Flezha.Convergence.SafeCall
   alias Flezha.Schedule.{Job, Store}
   alias Flezha.Service.HubManager
 
   @hub_retry_ms 5_000
+  # A wedged job must not stall the list render; it reports node only.
+  @status_timeout_ms 1_000
   # Covers the residual case only: definitions asserted while the hub was down
   # or mid-formation. ProcessHub itself re-places children on nodedown.
   @reassert_interval_ms 60_000
@@ -83,19 +86,32 @@ defmodule Flezha.Schedule.Hub do
     end)
   end
 
-  @doc "Which node runs each registered schedule."
-  @spec placement() :: %{optional(String.t()) => node()}
-  def placement() do
+  @doc """
+  Which node runs each registered schedule, plus each job's live `last_fire`
+  (`nil` before the first fire or when the job does not answer inside the
+  bound — the list must render even with a wedged job).
+  """
+  @spec statuses() :: %{optional(String.t()) => %{node: node(), last_fire: map() | nil}}
+  def statuses() do
     with_live_hub(%{}, fn hub_id ->
       hub_id
       |> ProcessHub.process_list(:global)
       |> Enum.reduce(%{}, fn {name, node_pids}, acc ->
         case HubManager.live_node(node_pids) do
           nil -> acc
-          node -> Map.put(acc, name, node)
+          node -> Map.put(acc, name, %{node: node, last_fire: job_last_fire(node_pids)})
         end
       end)
     end)
+  end
+
+  defp job_last_fire(node_pids) do
+    with pid when is_pid(pid) <- HubManager.live_pid(node_pids),
+         {:ok, %{last_fire: last_fire}} <- SafeCall.bounded(pid, :status, @status_timeout_ms) do
+      last_fire
+    else
+      _ -> nil
+    end
   end
 
   ## ----- GenServer -----

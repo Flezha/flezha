@@ -17,6 +17,16 @@ contains Entities.**
   mailboxes through the poll core's activation engine. One physical machine
   may run multiple Runners.
 
+- **Cluster directory** — the `:pg`-backed map of which controller nodes hold
+  runners for which factories, and which nodes host which namespace hubs
+  (`Flezha.Cluster.Directory`). Each node advertises its own fleet truth;
+  every node reads it locally, no cluster round. It is what makes every
+  controller node a valid entry point: a start or command submitted on a node
+  without the namespace's runner/hub is forwarded once to a capable node,
+  which re-validates against live truth (staleness costs at most one failed
+  forward). Eventually consistent; membership is cleaned by `:pg`'s monitors
+  on process or node death.
+
 ## Workload abstractions
 
 - **Operative** — the user-facing unit of work; the thing you start and stop.

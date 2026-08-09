@@ -146,7 +146,7 @@ defmodule Flezha.Schedule.JobTest do
       assert Process.alive?(pid)
     end
 
-    test "a failed spawn is logged and not retried" do
+    test "a failed spawn is logged with its attempt number" do
       stub(OperativeManager, :start_bounded, fn "default", _id, _factory, _init, _opts ->
         {:error, %{operative_id: "x", node: node(), reason: "Factory with id fac does not exist"}}
       end)
@@ -159,7 +159,7 @@ defmodule Flezha.Schedule.JobTest do
           _ = :sys.get_state(pid)
         end)
 
-      assert log =~ "job@2026-07-27T08:01:00Z not started: spawn failed"
+      assert log =~ "job@2026-07-27T08:01:00Z not started (attempt 1): spawn failed"
       assert Process.alive?(pid)
     end
 
@@ -215,6 +215,134 @@ defmodule Flezha.Schedule.JobTest do
       assert log =~ "plugin spec did not decode"
       assert log =~ "retired_provider"
       assert Process.alive?(pid)
+    end
+
+    test "a failed spawn arms a retry with the slot id and reports retrying" do
+      stub(OperativeManager, :start_bounded, fn "default", _id, _factory, _init, _opts ->
+        {:error, %{reason: "no runners"}}
+      end)
+
+      pid = start_supervised!({Job, Helper.quiet_entry()})
+      slot = ~U[2026-07-27 08:01:00Z]
+
+      log =
+        capture_log(fn ->
+          send(pid, {:fire, slot})
+          _ = :sys.get_state(pid)
+        end)
+
+      assert log =~ "not started (attempt 1)"
+
+      state = :sys.get_state(pid)
+      assert %{slot: ^slot, attempt: 2, timer: timer} = state.pending_retry
+      # First rung of the ladder: the 1s base.
+      remaining = Process.read_timer(timer)
+      assert is_integer(remaining) and remaining <= 1_000
+
+      assert %{last_fire: %{instance_id: "job@2026-07-27T08:01:00Z", outcome: {:retrying, _}}} =
+               GenServer.call(pid, :status)
+    end
+
+    test "a retry re-uses the slot id; success clears the ladder" do
+      test_pid = self()
+      {:ok, verdicts} = Agent.start_link(fn -> :fail end)
+
+      stub(OperativeManager, :start_bounded, fn "default", id, _factory, _init, _opts ->
+        case Agent.get(verdicts, & &1) do
+          :fail ->
+            {:error, %{reason: "no runners"}}
+
+          verdict ->
+            send(test_pid, {:spawned, id})
+            if verdict == :duplicate, do: :duplicate, else: {:ok, %{operative_id: id}}
+        end
+      end)
+
+      pid = start_supervised!({Job, Helper.quiet_entry()})
+      slot = ~U[2026-07-27 08:01:00Z]
+
+      capture_log(fn ->
+        send(pid, {:fire, slot})
+        _ = :sys.get_state(pid)
+      end)
+
+      Agent.update(verdicts, fn _ -> :ok end)
+      send(pid, {:retry, slot, 2})
+
+      assert_receive {:spawned, "job@2026-07-27T08:01:00Z"}, 2_000
+      state = :sys.get_state(pid)
+      assert state.pending_retry == nil
+      assert state.last_fire.outcome == :ok
+    end
+
+    test "a duplicate answer on retry counts as success — someone fired the slot" do
+      {:ok, verdicts} = Agent.start_link(fn -> :fail end)
+
+      stub(OperativeManager, :start_bounded, fn "default", _id, _factory, _init, _opts ->
+        case Agent.get(verdicts, & &1) do
+          :fail -> {:error, %{reason: "no runners"}}
+          :duplicate -> :duplicate
+        end
+      end)
+
+      pid = start_supervised!({Job, Helper.quiet_entry()})
+      slot = ~U[2026-07-27 08:01:00Z]
+
+      capture_log(fn ->
+        send(pid, {:fire, slot})
+        _ = :sys.get_state(pid)
+      end)
+
+      Agent.update(verdicts, fn _ -> :duplicate end)
+      send(pid, {:retry, slot, 2})
+
+      state = :sys.get_state(pid)
+      assert state.pending_retry == nil
+      assert state.last_fire.outcome == :duplicate
+    end
+
+    test "the next slot supersedes a pending retry — no back-fill, stale retries ignored" do
+      test_pid = self()
+      slot1 = ~U[2026-07-27 08:01:00Z]
+      slot2 = ~U[2026-07-27 08:02:00Z]
+      failing_id = "job@#{DateTime.to_iso8601(slot1)}"
+
+      stub(OperativeManager, :start_bounded, fn "default", id, _factory, _init, _opts ->
+        if id == failing_id do
+          {:error, %{reason: "no runners"}}
+        else
+          send(test_pid, {:spawned, id})
+          {:ok, %{operative_id: id}}
+        end
+      end)
+
+      pid = start_supervised!({Job, Helper.quiet_entry()})
+
+      capture_log(fn ->
+        send(pid, {:fire, slot1})
+        _ = :sys.get_state(pid)
+      end)
+
+      assert %{pending_retry: %{slot: ^slot1}} = :sys.get_state(pid)
+
+      send(pid, {:fire, slot2})
+      assert_receive {:spawned, "job@2026-07-27T08:02:00Z"}, 2_000
+
+      state = :sys.get_state(pid)
+      assert state.pending_retry == nil
+
+      # The abandoned slot's retry message (already in flight) must no-op.
+      send(pid, {:retry, slot1, 2})
+      _ = :sys.get_state(pid)
+      refute_received {:spawned, ^failing_id}
+    end
+
+    test "the backoff ladder is exponential and capped at one minute" do
+      alias Flezha.Plugin.ProviderBehaviour
+      assert ProviderBehaviour.retry_backoff_ms(1_000, 60_000, 1) == 1_000
+      assert ProviderBehaviour.retry_backoff_ms(1_000, 60_000, 2) == 2_000
+      assert ProviderBehaviour.retry_backoff_ms(1_000, 60_000, 7) == 60_000
+      assert ProviderBehaviour.retry_backoff_ms(1_000, 60_000, 20) == 60_000
     end
 
     test "an unparsable cron goes dormant instead of crash-looping" do

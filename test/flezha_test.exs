@@ -127,7 +127,11 @@ defmodule FlezhaTest do
     assert status === :error
     assert pid === operative_id
     assert node === @node_name
-    assert reason === "Factory with id non_existing_factory does not exist"
+    # An unknown factory is refused cluster-wide now: no local runner
+    # advertises it and the cluster directory names no capable peer either.
+    assert reason ===
+             "no runners for factory non_existing_factory in namespace " <>
+               "#{@default_namespace} on any cluster node"
   end
 
   @tag :websocket_plugin

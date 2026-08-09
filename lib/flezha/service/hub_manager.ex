@@ -44,12 +44,12 @@ defmodule Flezha.Service.HubManager do
     hub_id = Identificator.hub(namespace)
 
     case Supervisor.start_child(__MODULE__, process_hub(namespace)) do
-      {:ok, _pid} = ok ->
-        on_hub_started(hub_id)
+      {:ok, pid} = ok ->
+        on_hub_started(hub_id, pid, namespace)
         ok
 
-      {:ok, _pid, _info} = ok ->
-        on_hub_started(hub_id)
+      {:ok, pid, _info} = ok ->
+        on_hub_started(hub_id, pid, namespace)
         ok
 
       other ->
@@ -57,8 +57,11 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  defp on_hub_started(hub_id) do
+  defp on_hub_started(hub_id, pid, namespace) do
     wait_until_hub_alive(hub_id)
+    # Advertise placement cluster-wide; membership dies with the hub pid,
+    # so stop/crash/nodedown need no leave call.
+    Flezha.Cluster.Directory.join_hub(pid, namespace)
     _ = Flezha.Boot.RecoveryHooks.register(hub_id)
     # Seed the snapshot cache with the coordinator's current state. The
     # recovery telemetry fired during recovery overwrites this entry as

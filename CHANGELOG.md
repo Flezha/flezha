@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Every controller node is a valid entry point for every namespace command**
+  (`schedule-spawn-without-runner`). A new cluster directory
+  (`Flezha.Cluster.Directory`, one `:pg` scope — no new dependency) lets each
+  node advertise which factories its runners serve and which namespace hubs it
+  hosts; reads are local on every node. Bounded starts (`flz operative add`,
+  schedule fires, `ctx.spawn_bounded`) submitted on a node that cannot satisfy
+  them locally are forwarded once to a capable node and re-validated there, so
+  a schedule no longer fails forever when a rolling update moves its runner to
+  another controller node. The command plane routes the same way: `flz
+  operative send`/`stop`/`info`, `flz state get` and `flz dlq replay` resolve
+  their target cluster-wide. A failed schedule slot is retried with capped
+  exponential backoff under the same deterministic instance id until the next
+  slot supersedes it, and `flz schedule list` gained `LAST FIRE (UTC)` /
+  `LAST RESULT` columns. `factory_unknown` and "no runners" refusals are now
+  honest cluster-wide verdicts. The dead `Flezha.Service.RunnerManager` was
+  deleted (`Flezha.list_runners/1` now reads through the directory).
+
 - **The Java SDK is rehosted on the poll core**
   (`rehost-java-sdk-on-poll-core`). The Java runtime's kernel mirror —
   command handlers, framing, reconnect, flusher, credit, DLQ park, timer

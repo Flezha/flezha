@@ -67,7 +67,11 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
   test "schedule_list shows the node running each schedule" do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
-    stub(Flezha.Schedule.Hub, :placement, fn -> %{"digest" => :flz@testhost} end)
+
+    stub(Flezha.Schedule.Hub, :statuses, fn ->
+      %{"digest" => %{node: :flz@testhost, last_fire: nil}}
+    end)
+
     capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
 
     output = capture_io(fn -> CliManager.schedule_list() end)
@@ -78,7 +82,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
 
   test "schedule_list renders a dash when the schedule is unplaced" do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
-    stub(Flezha.Schedule.Hub, :placement, fn -> %{} end)
+    stub(Flezha.Schedule.Hub, :statuses, fn -> %{} end)
     capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
 
     output = capture_io(fn -> CliManager.schedule_list() end)
@@ -86,6 +90,59 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     # The NODE cell is padded to 22, so match the cell — a bare "-" would also
     # match the ISO date in NEXT FIRE.
     assert output =~ "-" <> String.duplicate(" ", 21)
+  end
+
+  test "schedule_list renders the last fire and its result" do
+    stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
+
+    stub(Flezha.Schedule.Hub, :statuses, fn ->
+      %{
+        "digest" => %{
+          node: :flz@testhost,
+          last_fire: %{
+            instance_id: "digest@2026-08-09T08:00:00Z",
+            outcome: :ok,
+            at: ~U[2026-08-09 08:00:03.123456Z]
+          }
+        }
+      }
+    end)
+
+    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+
+    output = capture_io(fn -> CliManager.schedule_list() end)
+
+    assert output =~ "LAST FIRE (UTC)"
+    assert output =~ "LAST RESULT"
+    assert output =~ "2026-08-09T08:00:03Z"
+    assert output =~ "ok"
+  end
+
+  test "schedule_list truncates a retrying result to its column" do
+    stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
+
+    reason = "no runners for factory ai_digest in namespace default on any cluster node"
+
+    stub(Flezha.Schedule.Hub, :statuses, fn ->
+      %{
+        "digest" => %{
+          node: :flz@testhost,
+          last_fire: %{
+            instance_id: "digest@2026-08-09T08:00:00Z",
+            outcome: {:retrying, reason},
+            at: ~U[2026-08-09 08:00:03Z]
+          }
+        }
+      }
+    end)
+
+    capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
+
+    output = capture_io(fn -> CliManager.schedule_list() end)
+
+    assert output =~ "retrying: no runners for factory"
+    # Truncated to the column; the full reason stays in log/telemetry.
+    refute output =~ "any cluster node"
   end
 
   test "schedule_list with no entries" do

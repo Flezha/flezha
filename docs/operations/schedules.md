@@ -22,10 +22,14 @@ flz schedule run <name>
   (letters/digits/`_`/`-`, at most 11 bytes so the composed instance id
   `<name>@<slot-iso>` fits the 32-byte operative id limit) before storing
   anything; a factory with no live runner is accepted with a warning (the
-  runner may connect later — until it does, firings fail and are logged).
-- `list` shows every entry with the node currently running it and its next
-  fire time (UTC). `NODE` is `-` when the schedule is not registered in the
-  hub (its owner has not asserted it yet, or the hub is down on this node).
+  runner may connect later — until it does, slots are retried on backoff).
+- `list` shows every entry with the node currently running it, its next
+  fire time (UTC), the last fired instance (`LAST FIRE (UTC)`) and its
+  result (`LAST RESULT`: `ok`, `duplicate`, or `retrying: <reason>`;
+  `-` before the first fire). `NODE` is `-` when the schedule is not
+  registered in the hub (its owner has not asserted it yet, or the hub is
+  down on this node); a job that does not answer the status query in time
+  still lists with its node.
 - `run` fires one instance immediately with the stored configuration, under
   a manual id (`<name>@manual-<unix-ts>`) distinct from cron slots.
 - `--plugins` takes the same JSON array as `flz operative start --plugins`
@@ -98,10 +102,29 @@ Slots are evaluated in the entry's IANA time zone:
 - **Overlap is permitted.** If `<name>@<t1>` is still running at slot
   `t2`, `<name>@<t2>` spawns normally (the ids differ). Bounding runtime is
   the author's responsibility (`max_duration`).
-- **A failed spawn is logged, not retried** — the next slot is a fresh
-  instance anyway.
+- **The fire is routed at fire time, not pinned to the schedule's node.**
+  The schedule process lives wherever the `:flz_schedules` hub hashes it —
+  possibly a controller node with no runner for the entry's namespace. The
+  spawn goes through the shared location-transparent start path: if the
+  local node cannot satisfy it, the cluster directory names the nodes whose
+  runners advertise the factory and the start executes on one of them,
+  chosen deterministically. A slot fails only when **no** cluster node
+  holds such a runner, and the refusal says so cluster-wide. Where the
+  schedule process happens to live never affects the outcome — a rolling
+  update that moves the runner between nodes needs no operator action.
+- **A failed slot is retried until its next slot supersedes it.** Retries
+  use exponential backoff (1 s base, capped at one minute — the finest cron
+  granularity) under the SAME `<name>@<slot-iso>` id, so a retry racing any
+  other fire attempt no-ops on the duplicate-id guard (`duplicate` counts
+  as success). When the next slot fires, any pending retry is cancelled:
+  at most one slot is ever in flight, and abandoned slots are never
+  back-filled. The schedule never parks and needs no operator action — a
+  schedule added before its runner deploys simply keeps probing.
 - **Bounded only.** Unbounded operatives are owned by convergence; the
   scheduler refuses any other kind.
+- **Quotas bound each executing node separately.** Quota checks run on the
+  node the start executes on, against its own stores — a routed start is
+  not counted against the origin node's view.
 
 ## Durability and multi-controller clusters
 
@@ -145,9 +168,11 @@ both sides keep running their schedules.
 ## Observability
 
 Telemetry events `[:flezha, :schedule, :fired]`,
-`[:flezha, :schedule, :spawn_failed]`, `[:flezha, :schedule, :dormant]`
+`[:flezha, :schedule, :spawn_failed]` (carries the `attempt` number),
+`[:flezha, :schedule, :dormant]`
 (a schedule whose cron has no future slot, or is unparsable — the process
 stays up holding its name but never fires) and
 `[:flezha, :schedule, :hub_start_failed]`. Each carries `schedule` and,
 where relevant, `instance_id` metadata; dormancy and spawn failures are
-also logged with the schedule name.
+also logged with the schedule name. A persistently failing schedule is
+also visible in `flz schedule list`'s `LAST RESULT` column.
