@@ -45,7 +45,7 @@ defmodule Flezha.Cluster.OrchestratorTest do
       Application.put_env(:flezha, :initial_nodes, [:"ghost@127.0.0.1"])
       # Degrade window well below the periodic sweep so the degrade timer (not
       # the sweep's discovery reset) is what flips readiness.
-      Application.put_env(:flezha, :cluster_formation_timeout_ms, 1_500)
+      Application.put_env(:flezha, :cluster_formation_timeout_ms, 500)
       Application.put_env(:flezha, :cluster_update_interval, 60_000)
       restart_orchestrator()
 

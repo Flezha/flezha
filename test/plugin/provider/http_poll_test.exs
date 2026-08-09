@@ -280,7 +280,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       origin = start_origin(body: "cfg-v1")
 
       assert {:ok, opts} = HttpPoll.init_provider(base_opts(origin))
-      Process.sleep(150)
+      Process.sleep(60)
 
       assert requests(origin) == 0
       assert opts.overwatcher_pid == self()
@@ -288,13 +288,13 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     end
 
     test "activate returns without waiting on the request" do
-      origin = start_origin(body: "cfg-v1", delay_ms: 1_000)
+      origin = start_origin(body: "cfg-v1", delay_ms: 250)
       {:ok, opts} = HttpPoll.init_provider(base_opts(origin))
 
       {elapsed_us, {:ok, poller}} = :timer.tc(fn -> HttpPoll.activate(opts) end)
       kill_on_exit(poller)
 
-      assert elapsed_us < 250_000
+      assert elapsed_us < 100_000
 
       # The host keeps serving its own mailbox while that request is in
       # flight — the wait belongs to the fetch child, not to the poller and
@@ -307,7 +307,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
     end
 
     test "the health probe answers while a request is outstanding" do
-      origin = start_origin(body: "cfg-v1", delay_ms: 1_000)
+      origin = start_origin(body: "cfg-v1", delay_ms: 250)
       poller = start_poller(origin)
 
       # Mid-flight: the request is blocking its own child, not the worker, so

@@ -8,6 +8,29 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   alias Flezha.Service.Identificator
   alias ProcessHub.Service.ProcessRegistry
 
+  # A redistribution really does start the injected child, so the default spec
+  # must name something startable. An Overwatch is not: it would bind a runner
+  # these tests do not have.
+  defmodule StubChild do
+    @moduledoc false
+    use GenServer
+
+    def start_link({_ns, _operative}), do: GenServer.start_link(__MODULE__, :ok)
+    def start_link({_ns, _runner, _operative}), do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, %{}}
+
+    # Stands in for an Overwatch, which absorbs the binding re-assert nudge.
+    @impl true
+    def handle_info(_msg, state), do: {:noreply, state}
+  end
+
+  # `start_args/1`'s two-element clause yields a nil recorded runner, and
+  # `unplaceable_runner/5` RAISES on nil — which kills the whole start request.
+  # Naming a runner keeps an unplaceable row on the log-and-continue path.
+  @recorded_runner "test_recorded_runner"
+
   @doc "Start (or reuse) the namespace's hub, normalising the start-result shapes."
   def ensure_hub(ns) do
     case HubManager.start_hub(ns) do
@@ -25,13 +48,15 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   def inject_operative(ns, operative_id, node_pids) do
     inject_operative(ns, operative_id, node_pids, %{
       id: operative_id,
-      start: {Flezha.Operative.Overwatch, :start_link, [{ns, operative_id}]}
+      start:
+        {StubChild, :start_link,
+         [{ns, @recorded_runner, %{id: operative_id, factory_id: "market"}}]}
     })
   end
 
   @doc """
   Inject a synthetic registry entry carrying an explicit `child_spec`, for tests
-  that need a start-args shape other than the default Overwatch one.
+  that need a start-args shape other than the default one.
   """
   def inject_operative(ns, operative_id, node_pids, child_spec) do
     hub_id = Identificator.hub(ns)

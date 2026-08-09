@@ -383,7 +383,12 @@ defmodule FlezhaTest do
 
     assert :ok = shutdown_peer(peer_node, 30_000)
 
-    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m, _meta}, 10_000
+    # One :drain_progress per hub — match the namespace the operative is in, or
+    # a peer namespace with nothing to move answers for it with migrated: 0.
+    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
+                    %{namespace: @default_namespace}},
+                   10_000
+
     assert m.migrated >= 1
     assert m.forced == 0
 
@@ -443,7 +448,11 @@ defmodule FlezhaTest do
     assert :ok = shutdown_peer(peer_node, 6_000)
 
     assert_receive :deferred, 1_000
-    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m, _meta}, 5_000
+
+    assert_receive {[:flezha, :shutdown, :drain_progress], _ref, m,
+                    %{namespace: @default_namespace}},
+                   5_000
+
     assert m.forced >= 1
 
     # Forced onto this node through the best-effort handover: state carried,

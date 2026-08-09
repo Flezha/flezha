@@ -28,6 +28,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.Identificator
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.HubRegistryTestHelper
   alias ProcessHub.Service.ProcessRegistry
 
@@ -110,28 +111,13 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     assert {:error, :unknown_hub} = HubManager.recovery_state(hub_id)
   end
 
-  defmodule ReplayStubChild do
-    @moduledoc false
-    use GenServer
-
-    def start_link({_ns, _operative}), do: GenServer.start_link(__MODULE__, :ok)
-    def start_link({_ns, _runner, _operative}), do: GenServer.start_link(__MODULE__, :ok)
-
-    @impl true
-    def init(:ok), do: {:ok, %{}}
-
-    # Stands in for an Overwatch, which absorbs the binding re-assert nudge.
-    @impl true
-    def handle_info(_msg, state), do: {:noreply, state}
-  end
-
   # fails when: a warm restart leaves a persisted operative listed but
   # `(unplaced)` — bound to the previous boot's dead pid, invisible to the
   # convergence reconciler, producing no data until the operator re-declares it.
   test "recovery replay rebinds a persisted operative even when no runner is placeable" do
     # Zero budget removes every timing dependency: the hook gets exactly one
     # lookup, which cannot succeed because no runner is ever seeded.
-    put_env(:hub_runner_assign_wait_ms, 0)
+    on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
 
     hub_id = Identificator.hub(@namespace)
     operative_id = "replay_no_runner_op"
@@ -150,10 +136,10 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   # replay batch past `cross_node_request_timeout`, so WorkerQueue kills the
   # request and every row in it — placeable or not — keeps its dead pid.
   test "unplaceable operatives do not strand the rest of the replay batch" do
-    # 4s × 3 unplaceable children overruns the 10s request bound if the wait is
-    # per-child; shared, the whole batch waits 4s once.
-    budget = 4_000
-    put_env(:hub_runner_assign_wait_ms, budget)
+    # 800ms × 3 unplaceable children takes 2.4s if the wait is per-child;
+    # shared, the whole batch waits 800ms once.
+    budget = 800
+    on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, budget))
 
     hub_id = Identificator.hub(@namespace)
     # `start_children/3` folds the batch in registry-dump key order, so the `a_`
@@ -206,20 +192,27 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     HubRegistryTestHelper.inject_operative(@namespace, good, [{node(), dead_pid()}], %{
       id: good,
       start:
-        {ReplayStubChild, :start_link,
+        {HubRegistryTestHelper.StubChild, :start_link,
          [{@namespace, @recorded_runner, %{id: good, factory_id: "market"}}]}
     })
 
     # An arg shape no current clause understands — an older or corrupted row.
     HubRegistryTestHelper.inject_operative(@namespace, malformed, [{node(), dead_pid()}], %{
       id: malformed,
-      start: {ReplayStubChild, :start_link, [{@namespace, :not_an_operative_map}]}
+      start: {HubRegistryTestHelper.StubChild, :start_link, [{@namespace, :not_an_operative_map}]}
     })
 
-    restart_hub_without_marker(hub_id)
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        restart_hub_without_marker(hub_id)
 
-    assert await_bound_node(hub_id, good, 10_000) == node(),
-           "#{good} kept its dead pid — the malformed sibling killed the whole start request"
+        assert await_bound_node(hub_id, good, 10_000) == node(),
+               "#{good} kept its dead pid — the malformed sibling killed the whole start request"
+      end)
+
+    # Logged-and-skipped, not raised: the row is named so an operator can find it.
+    assert log =~ ~s(unrecognised start args for child "#{malformed}")
+    assert log =~ "leaving it unaltered"
   end
 
   # fails when: await_runner stops iterating and degrades to the single shot it
@@ -287,19 +280,29 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   # it cleanly, so the operator sees a CaseClauseError rather than the reason the
   # operative did not come up.
   test "Overwatch stops cleanly when FleetManager never answers the bind lookup" do
-    put_env(:overwatch_runner_wait_ms, 300)
+    on_exit(TestHelpers.override_env(:overwatch_runner_wait_ms, 300))
     :sys.suspend(FleetManager)
     on_exit(fn -> :sys.resume(FleetManager) end)
 
     Process.flag(:trap_exit, true)
 
-    {:ok, pid} =
-      Overwatch.start_link(
-        {@namespace, @recorded_runner, %Builder{id: "unanswered_lookup_op", factory_id: "market"}}
-      )
+    # The stop is the asserted behaviour, so OTP's crash report for it is
+    # expected output — captured here rather than left on the console.
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        {:ok, pid} =
+          Overwatch.start_link(
+            {@namespace, @recorded_runner,
+             %Builder{id: "unanswered_lookup_op", factory_id: "market"}}
+          )
 
-    assert_receive {:EXIT, ^pid, reason}, 5_000
-    assert reason == :runner_not_ready
+        assert_receive {:EXIT, ^pid, reason}, 5_000
+        assert reason == :runner_not_ready
+      end)
+
+    # The operator reads the reason, not a CaseClauseError.
+    assert log =~ "runner_not_ready"
+    refute log =~ "CaseClauseError"
   end
 
   # Registry rows left by a previous boot (dead pids), then a marker-absent hub
@@ -312,7 +315,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       HubRegistryTestHelper.inject_operative(@namespace, operative_id, [{node(), dead_pid()}], %{
         id: operative_id,
         start:
-          {ReplayStubChild, :start_link,
+          {HubRegistryTestHelper.StubChild, :start_link,
            [{@namespace, @recorded_runner, %{id: operative_id, factory_id: factory_id}}]}
       })
     end)
@@ -341,18 +344,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     ref = Process.monitor(pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
     pid
-  end
-
-  defp put_env(key, value) do
-    previous = Application.fetch_env(:flezha, key)
-    Application.put_env(:flezha, key, value)
-
-    on_exit(fn ->
-      case previous do
-        {:ok, v} -> Application.put_env(:flezha, key, v)
-        :error -> Application.delete_env(:flezha, key)
-      end
-    end)
   end
 
   defp marker_path(hub_id) do

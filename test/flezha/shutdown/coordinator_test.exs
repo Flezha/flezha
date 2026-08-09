@@ -242,7 +242,14 @@ defmodule Flezha.Shutdown.CoordinatorTest do
         :ok
       end)
 
-      assert {:partial, ["op-1"]} = Coordinator.shutdown(:cli, timeout_ms: 300)
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:partial, ["op-1"]} = Coordinator.shutdown(:cli, timeout_ms: 300)
+        end)
+
+      # The operator's only signal that the budget was blown is this line.
+      assert log =~ "timeout phase=draining"
+      assert log =~ "still_local=1"
 
       # The timeout path still stops the hub before finalise.
       assert_receive :hub_stopped, 1_000

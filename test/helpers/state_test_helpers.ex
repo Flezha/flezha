@@ -1,10 +1,12 @@
 defmodule Flezha.State.TestHelpers do
   @moduledoc """
-  Fixtures shared across the persistence-module test suite.
+  Fixtures shared across the persistence-module test suite, plus
+  `override_env/2` — the one app-env override every test overriding a
+  `:flezha` key goes through.
 
-  Compiled in all envs because `lib/flezha/state/` modules are exercised
-  from integration tests outside the unit-test tree; the helpers carry
-  no runtime side effects unless invoked.
+  Lives under `test/helpers/`, which `elixirc_paths` compiles in `:dev` and
+  `:test` but not `:prod`: `reset_all_entities/0` wipes the state root, and
+  that must not be reachable from a release.
   """
 
   alias Flezha.State.{Registry, WalWriter}

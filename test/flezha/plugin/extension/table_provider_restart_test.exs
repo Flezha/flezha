@@ -19,6 +19,7 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.Host
+  alias Flezha.State.TestHelpers
 
   @catalog Host.build_catalog(
              [
@@ -26,6 +27,13 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
              ],
              %{file: __ENV__.file, line: __ENV__.line}
            )
+
+  setup do
+    # The production base is 4 s; the retry ladder's shape is what is under
+    # test, not its wall clock.
+    on_exit(TestHelpers.override_env(:plugin_retry_base_delay_ms, 20))
+    :ok
+  end
 
   defmodule FakeProvider do
     def init_provider(opts) do
@@ -130,7 +138,7 @@ defmodule Flezha.Plugin.Extension.TableProviderRestartTest do
     # The host's mailbox now holds a {:retry_plugin_restart, plugin_id}
     # message courtesy of schedule_retry; drain it so the ExUnit cleanup
     # doesn't trip on a stray timer.
-    assert_receive {:retry_plugin_restart, ^plugin_id}, 60_000
+    assert_receive {:retry_plugin_restart, ^plugin_id}, 1_000
   end
 
   defmodule FailingProvider do

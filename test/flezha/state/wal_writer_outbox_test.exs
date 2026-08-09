@@ -8,6 +8,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
   property of the atomic effect record (§3.5).
   """
   use ExUnit.Case, async: false
+  use Mimic
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
@@ -169,6 +170,12 @@ defmodule Flezha.State.WalWriterOutboxTest do
   test "N appends produce no dedup-file writes until the fsync batch", %{
     entity_id: entity_id
   } do
+    # The app-tree FsyncBatcher ticks every 5 ms, so without suppressing the
+    # dirty mark the very batch this test is named for can fire mid-append and
+    # answer for the append path.
+    set_mimic_global()
+    stub(FsyncBatcher, :mark_dirty, fn _ -> :ok end)
+
     pid = start_writer(entity_id)
 
     for seq <- 0..9 do

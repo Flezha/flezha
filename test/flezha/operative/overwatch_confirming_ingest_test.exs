@@ -130,8 +130,16 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
     state = state(inst, durable_bounded: true, channel: fake_channel(:ok))
 
-    assert {:reply, {:error, :refused}, _state} =
-             Overwatch.handle_call({:ingest, "doomed", %{}}, self(), state)
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:reply, {:error, :refused}, _state} =
+                 Overwatch.handle_call({:ingest, "doomed", %{}}, self(), state)
+      end)
+
+    # append-before-forward: the refusal is loud, and names why nothing moved.
+    assert log =~ "durable-inbox append failed for #{inst}"
+    assert log =~ ":enospc"
+    assert log =~ "input NOT forwarded"
 
     refute_receive {:channel_got, _, _}, 50
   end

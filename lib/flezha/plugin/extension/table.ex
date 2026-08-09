@@ -32,6 +32,7 @@ defmodule Flezha.Plugin.Extension.Table do
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Extension.Ctx
+  alias Flezha.Plugin.ProviderBehaviour
 
   require Logger
 
@@ -40,6 +41,7 @@ defmodule Flezha.Plugin.Extension.Table do
   # whose upstream keeps 429-ing) accumulates backoff instead of hammering.
   @stable_uptime_ms 60_000
   @max_retry_delay_ms 60_000
+  @retry_base_delay_ms 4_000
 
   defstruct catalog: %{},
             active_mask: 0,
@@ -244,7 +246,7 @@ defmodule Flezha.Plugin.Extension.Table do
   raises or times out is reported `:healthy` so the reconciler never escalates on
   an uncertain probe. Returns `%{plugin_id => :healthy | {:unhealthy, reason}}`.
   """
-  @spec health(t()) :: %{binary() => Flezha.Plugin.ProviderBehaviour.health_verdict()}
+  @spec health(t()) :: %{binary() => ProviderBehaviour.health_verdict()}
   def health(%__MODULE__{} = table) do
     Map.new(table.plugins, fn {plugin_id, plugin} ->
       {plugin_id, plugin_health(table, plugin_id, plugin)}
@@ -1144,11 +1146,11 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   defp retry_delay(count) do
-    exp = min(count, 20)
+    base = Application.get_env(:flezha, :plugin_retry_base_delay_ms, @retry_base_delay_ms)
 
-    (4000 * :math.pow(2, exp))
-    |> round()
-    |> min(@max_retry_delay_ms)
+    # Cap the exponent, not just the product: an unbounded count would build a
+    # bignum the clamp then throws away.
+    ProviderBehaviour.retry_backoff_ms(base, @max_retry_delay_ms, min(count, 20) + 1)
   end
 
   ## Private — helpers

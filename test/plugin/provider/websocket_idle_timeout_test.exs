@@ -132,16 +132,14 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
       state = base_state(idle_timeout_ms: 5_000)
       assert {:ok, ^state} = Websocket.handle_info(:idle_check, state)
       # idle_timeout_ms / 2 = 2_500 ms; 1-second floor doesn't apply.
-      refute_receive :idle_check, 1_500
-      assert_receive :idle_check, 1_500
+      assert Websocket.idle_tick_interval(state) == 2_500
     end
 
     test "tick interval has a 1-second floor for small idle_timeout_ms" do
       state = base_state(idle_timeout_ms: 100)
       assert {:ok, _} = Websocket.handle_info(:idle_check, state)
       # idle_timeout_ms / 2 = 50 ms but the floor is 1_000 ms.
-      refute_receive :idle_check, 800
-      assert_receive :idle_check, 700
+      assert Websocket.idle_tick_interval(state) == 1_000
     end
 
     test "stays alive (does NOT exit) when within threshold" do
@@ -246,16 +244,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
       assert_receive :idle_check, 1_500
     end
 
-    test "does NOT schedule a watchdog tick when idle_timeout_ms is 0" do
-      state =
-        base_state(
-          idle_timeout_ms: 0,
-          last_data_frame_at: 0
-        )
-
-      assert {:ok, _} = Websocket.handle_connect(101, [], state)
-      refute_receive :idle_check, 1_200
-    end
+    # The idle_timeout_ms: 0 counterpart lives in
+    # WebsocketIdleTimeoutDisabledTest, which owns the disabled case.
   end
 
   defp spawn_dummy_overwatcher do

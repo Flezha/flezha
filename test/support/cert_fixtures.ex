@@ -17,7 +17,7 @@ defmodule Flezha.Test.CertFixtures do
   """
   @spec self_signed_der(keyword()) :: binary()
   def self_signed_der(opts) do
-    key = :public_key.generate_key({:rsa, 2048, 65537})
+    key = signing_key()
 
     pub_key = extract_public_key(key)
 
@@ -67,6 +67,20 @@ defmodule Flezha.Test.CertFixtures do
 
     cert = {:Certificate, tbs, sig_alg(), signature}
     :public_key.der_encode(:Certificate, cert)
+  end
+
+  # RSA keygen dominates the cost of these fixtures and no test varies the
+  # key — only the DN and the SANs. Generate one and reuse it.
+  defp signing_key do
+    case :persistent_term.get({__MODULE__, :signing_key}, nil) do
+      nil ->
+        key = :public_key.generate_key({:rsa, 2048, 65537})
+        :persistent_term.put({__MODULE__, :signing_key}, key)
+        key
+
+      key ->
+        key
+    end
   end
 
   defp extract_public_key(rsa_private_key) do

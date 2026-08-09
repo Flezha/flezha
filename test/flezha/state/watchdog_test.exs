@@ -12,8 +12,11 @@ defmodule Flezha.State.WatchdogTest do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{Supervisor, TestHelpers, Watchdog, WalWriter}
 
-  @stall_ms 50
-  @compaction_ms 50
+  @stall_ms 20
+  @compaction_ms 20
+  # How long a refute waits to be convinced nothing arrived: long enough to
+  # outlast a sweep's telemetry delivery, short enough not to pace the suite.
+  @quiet_ms 80
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
@@ -32,15 +35,17 @@ defmodule Flezha.State.WatchdogTest do
       end
     end
 
-    Application.put_env(:flezha, :default_output_stall_timeout_ms, @stall_ms)
-    Application.put_env(:flezha, :compaction_timeout_ms, @compaction_ms)
+    on_exit(TestHelpers.override_env(:default_output_stall_timeout_ms, @stall_ms))
+    on_exit(TestHelpers.override_env(:compaction_timeout_ms, @compaction_ms))
 
     parent = self()
 
-    Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
-      send(parent, {:resync_called, entity_id, opts})
-      {:ok, make_ref()}
-    end)
+    on_exit(
+      TestHelpers.override_env(:state_resync_fun, fn entity_id, opts ->
+        send(parent, {:resync_called, entity_id, opts})
+        {:ok, make_ref()}
+      end)
+    )
 
     out_id = {__MODULE__, :output_stall, System.unique_integer([:positive])}
     comp_id = {__MODULE__, :compaction_timeout, System.unique_integer([:positive])}
@@ -83,9 +88,6 @@ defmodule Flezha.State.WatchdogTest do
       :telemetry.detach(comp_id)
       :telemetry.detach(trig_id)
       :telemetry.detach(give_id)
-      Application.delete_env(:flezha, :state_resync_fun)
-      Application.delete_env(:flezha, :default_output_stall_timeout_ms)
-      Application.delete_env(:flezha, :compaction_timeout_ms)
       Application.put_env(:flezha, :default_compact_after_bytes, prev_bytes)
       Application.put_env(:flezha, :compact_after_age_ms, prev_age)
       Application.delete_env(:flezha, :state_root)
@@ -138,8 +140,8 @@ defmodule Flezha.State.WatchdogTest do
     # test in this file uses the operative class "TestOperative", so an unscoped
     # refute — or one scoped only to the operative — matches a sibling test's
     # message and fails whenever the suite interleaves.
-    refute_receive {:output_stall, _, %{key: ^key}}, 200
-    refute_receive {:resync_called, ^entity_id, _}, 200
+    refute_receive {:output_stall, _, %{key: ^key}}, @quiet_ms
+    refute_receive {:resync_called, ^entity_id, _}, @quiet_ms
   end
 
   test "a stalled compaction times out and stays retriable, without resyncing a live entity below give-up" do
@@ -157,11 +159,11 @@ defmodule Flezha.State.WatchdogTest do
     assert ms >= @compaction_ms
     # Below the give-up threshold a still-live, still-correct Entity is NOT
     # force-resynced — the backoff-gated trigger sweep is the retry.
-    refute_receive {:resync_called, ^entity_id, _}, 200
+    refute_receive {:resync_called, ^entity_id, _}, @quiet_ms
 
     # Entry was cleared on timeout — a second sweep does not re-fire.
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_timeout, _, %{key: ^key}}, 200
+    refute_receive {:compaction_timeout, _, %{key: ^key}}, @quiet_ms
   end
 
   test "repeated compaction failures back off and give up loudly with a real resync" do
@@ -169,29 +171,39 @@ defmodule Flezha.State.WatchdogTest do
 
     # Drive four timeouts (compaction_started bypasses the backoff-gated trigger
     # sweep, so this reaches the give-up threshold without waiting out cooldowns).
-    for _ <- 1..4 do
-      Watchdog.compaction_started(entity_id, "exec-giveup")
-      Process.sleep(@compaction_ms * 2)
-      :ok = Watchdog.sweep_now()
-    end
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        for _ <- 1..4 do
+          Watchdog.compaction_started(entity_id, "exec-giveup")
+          Process.sleep(@compaction_ms * 2)
+          :ok = Watchdog.sweep_now()
+        end
 
-    # The fourth crossing alarms loudly and dispatches a real resync carrying the
-    # runner_id the WalWriter status held — the fix for the old silent no-op.
-    assert_receive {:compaction_gave_up, %{attempts: 4}, %{key: ^key}}, 1_000
+        assert_receive {:compaction_gave_up, %{attempts: 4}, %{key: ^key}}, 1_000
+      end)
+
+    # "Loudly" is half the contract: the operator gets a named alarm.
+    assert log =~ "compaction GAVE UP after 4 failed attempts"
+    assert log =~ "key=#{key}"
+
+    # The fourth crossing also dispatches a real resync carrying the runner_id
+    # the WalWriter status held — the fix for the old silent no-op.
     assert_receive {:resync_called, ^entity_id, opts}, 1_000
     assert opts[:reason] == :compaction_gave_up
     assert opts[:runner_id] == "exec-giveup"
   end
 
   test "a compaction that completes before the bound never times out" do
-    entity_id = TestHelpers.sample_entity_id("compok_" <> uniq())
+    {_, _, key} = entity_id = TestHelpers.sample_entity_id("compok_" <> uniq())
 
     Watchdog.compaction_started(entity_id, "exec-ok")
     Watchdog.compaction_completed(entity_id)
     Process.sleep(@compaction_ms * 2)
 
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_timeout, _, _}, 200
+    # Keyed on this entity: the sweep is global, so a sibling test's in-flight
+    # compaction must not be able to answer for this one.
+    refute_receive {:compaction_timeout, _, %{key: ^key}}, @quiet_ms
   end
 
   # An owned writer (runner_id on append) is the trigger sweeps' subject;
@@ -223,7 +235,7 @@ defmodule Flezha.State.WatchdogTest do
 
     # In-flight guard: the next sweep does not re-enqueue.
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_trigger, _, %{key: ^key}}, 200
+    refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
   end
 
   test "a small-but-old WAL triggers an age compaction", %{header: header} do
@@ -244,7 +256,7 @@ defmodule Flezha.State.WatchdogTest do
     Process.sleep(60)
     :ok = Watchdog.sweep_now()
 
-    refute_receive {:compaction_trigger, _, %{key: ^key}}, 200
+    refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
   end
 
   test "size and age never double-enqueue across consecutive ticks", %{header: header} do
@@ -257,10 +269,10 @@ defmodule Flezha.State.WatchdogTest do
 
     # Both conditions hold, but the shared in-flight guard yields ONE enqueue.
     assert_receive {:compaction_trigger, _meas, %{key: ^key, trigger: :size}}, 1_000
-    refute_receive {:compaction_trigger, _, %{key: ^key}}, 200
+    refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
 
     :ok = Watchdog.sweep_now()
-    refute_receive {:compaction_trigger, _, %{key: ^key}}, 200
+    refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
   end
 
   test "a bounded class is not flagged for output stall or catastrophic dataflow", %{
@@ -299,24 +311,22 @@ defmodule Flezha.State.WatchdogTest do
     # Scoped to THIS test's class and entity. The Watchdog is a singleton whose
     # sweep walks every registered entity, so an unscoped refute also matches a
     # sibling test's resync (a compaction timeout on its own WAL, say).
-    refute_receive {:output_stall, _, %{operative_class: ^class}}, 200
-    refute_receive {:resync_called, ^pid, _}, 200
-    refute_receive {:catastrophic, _, %{operative_class: ^class}}, 200
+    refute_receive {:output_stall, _, %{operative_class: ^class}}, @quiet_ms
+    refute_receive {:resync_called, ^pid, _}, @quiet_ms
+    refute_receive {:catastrophic, _, %{operative_class: ^class}}, @quiet_ms
   end
 
   test "a checkpoint-ack class's quiet interval is not a dead data-flow", %{header: header} do
     # The dataflow-stop detector reads "produced output before, silent since"
     # as a dead feed. For a checkpoint-ack class that silence is the steady
     # state: it makes nothing durable until the interval closes.
-    prev = Application.get_env(:flezha, :catastrophic_dataflow_timeout_ms)
-    Application.put_env(:flezha, :catastrophic_dataflow_timeout_ms, @stall_ms)
+    on_exit(TestHelpers.override_env(:catastrophic_dataflow_timeout_ms, @stall_ms))
 
     per_input = "PerInputWatch" <> uniq()
     checkpoint = "CheckpointWatch" <> uniq()
     ClassRegistry.put_checkpoint_ack(checkpoint, true)
 
     on_exit(fn ->
-      Application.put_env(:flezha, :catastrophic_dataflow_timeout_ms, prev)
       ClassRegistry.delete(per_input)
       ClassRegistry.delete(checkpoint)
     end)
@@ -343,12 +353,20 @@ defmodule Flezha.State.WatchdogTest do
 
     # Both go silent past the timeout, with output behind them.
     Process.sleep(@stall_ms * 2)
-    :ok = Watchdog.sweep_now()
 
-    # The control proves the detector is armed and this signature trips it...
-    assert_receive {:catastrophic, ^per_input}, 1_000
-    # ...and that the checkpoint-ack class is exempt, not merely unobserved.
-    refute_receive {:catastrophic, ^checkpoint}, 200
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        :ok = Watchdog.sweep_now()
+
+        # The control proves the detector is armed and this signature trips it...
+        assert_receive {:catastrophic, ^per_input}, 1_000
+        # ...and that the checkpoint-ack class is exempt, not merely unobserved.
+        refute_receive {:catastrophic, ^checkpoint}, @quiet_ms
+      end)
+
+    # The positive control alarms by name; the exempt class never appears.
+    assert log =~ ~s(data-flow stop operative="#{per_input}")
+    refute log =~ checkpoint
   end
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))

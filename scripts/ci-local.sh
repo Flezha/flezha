@@ -10,8 +10,9 @@
 #   scripts/ci-local.sh elixir java    # any combination
 #
 # Sections (each runs the verbatim sequence of commands from the YAML):
-#   elixir  mix deps.get, mix compile --warnings-as-errors, mix test
-#           (matches elixir.yml)
+#   elixir  mix deps.get, mix compile --warnings-as-errors, cargo test for
+#           the flezha_runner crate, mix test, and the uncaptured-error-log
+#           gate (matches elixir.yml)
 #   java    mvn verify with -P coverage,native-verify on the SDK reactor,
 #           then mix test.java_sdk for the integration matrix
 #           (matches java-sdk.yml's two jobs)
@@ -78,8 +79,9 @@ test_app_jar_present() {
 # elixir  —  matches elixir.yml `Run mix test`.
 # ---------------------------------------------------------------------------
 run_elixir() {
-  section "elixir  —  deps.get + compile --warnings-as-errors + mix test"
+  section "elixir  —  deps.get + compile --warnings-as-errors + cargo test + mix test"
   require_cmd mix "install Elixir 1.17+ via mise/asdf"
+  require_cmd cargo "install Rust stable"
 
   bold ">>> mix deps.get"
   mix deps.get
@@ -87,8 +89,24 @@ run_elixir() {
   bold ">>> mix compile --warnings-as-errors"
   mix compile --warnings-as-errors
 
+  bold ">>> cargo test -p flezha_runner (Rust SDK unit + integration tests)"
+  cargo test --quiet \
+    -p flezha_runner --features bench-internals \
+    --lib --tests
+
   bold ">>> mix test"
-  mix test
+  local log
+  log="$(mktemp)"
+  mix test 2>&1 | tee "${log}"
+
+  bold ">>> uncaptured error logs"
+  if grep -nE '\[(error|critical)\]' "${log}"; then
+    rm -f "${log}"
+    red "uncaptured error/critical log during mix test — wrap the failure-path test"
+    red "in ExUnit.CaptureLog and assert the message"
+    return 1
+  fi
+  rm -f "${log}"
 }
 
 # ---------------------------------------------------------------------------

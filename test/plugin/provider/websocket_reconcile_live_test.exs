@@ -62,8 +62,10 @@ defmodule Flezha.Plugin.Provider.WebsocketReconcileLiveTest do
     assert remove["params"]["symbol"] == ["ETH/USD"]
     ack(ws, remove["req_id"])
 
-    # ---- converged: the source is steady, so nothing more is sent
-    refute_receive {:ws_frame, _}, 2_500
+    # ---- converged: the source is steady across a full poll cycle
+    # (subscription_interval_ms is floored at 1_000 by the provider), so
+    # nothing more is sent
+    refute_receive {:ws_frame, _}, 1_200
 
     # ---- and it all happened on ONE connection
     assert connections(ws) == 1

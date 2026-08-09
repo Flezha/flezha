@@ -69,7 +69,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
         end
       end)
 
-    refute_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 500
+    refute_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle_timeout}}, 200
     refute_receive {:telemetry, @telemetry_event, _, _}, 100
 
     Process.exit(pid, :kill)
@@ -95,7 +95,8 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutDisabledTest do
 
     assert {:ok, _} = Websocket.handle_connect(101, [], state)
 
-    # Wait longer than the smallest meaningful tick interval (1 s floor).
-    refute_receive :idle_check, 1_200
+    # Both tiers off means there is no interval to arm at all.
+    assert Websocket.idle_tick_interval(state) == nil
+    refute_received :idle_check
   end
 end

@@ -403,6 +403,20 @@ defmodule Flezha.Plugin.Provider.Websocket do
     }
   end
 
+  @doc """
+  The watchdog tick interval for `state`, or `nil` when both tiers are off.
+
+  Half the nearest enabled deadline so neither tier is observed late, floored
+  so a small deadline cannot produce a busy tick.
+  """
+  @spec idle_tick_interval(map()) :: pos_integer() | nil
+  def idle_tick_interval(state) do
+    case Enum.filter([state.idle_timeout_ms, state.resubscribe_after_ms], &(&1 > 0)) do
+      [] -> nil
+      enabled -> max(@min_tick_interval_ms, div(Enum.min(enabled), 2))
+    end
+  end
+
   # One meaning for every "milliseconds, non-negative, 0 disables" option:
   # clamp a negative to 0, and fall back to the default for anything that is
   # not a number at all. Reached from stored opts rather than a CLI string,
@@ -974,15 +988,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
   ## ---------- timers ----------
 
-  # Tick at half the nearest enabled deadline so neither tier is observed
-  # late; no tick is scheduled when both tiers are disabled.
   defp schedule_idle_check(state) do
-    case Enum.filter([state.idle_timeout_ms, state.resubscribe_after_ms], &(&1 > 0)) do
-      [] ->
+    case idle_tick_interval(state) do
+      nil ->
         :ok
 
-      enabled ->
-        tick = max(@min_tick_interval_ms, div(Enum.min(enabled), 2))
+      tick ->
         Process.send_after(self(), :idle_check, tick)
         :ok
     end
