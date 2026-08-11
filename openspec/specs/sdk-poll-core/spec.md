@@ -150,13 +150,16 @@ core-side; a prepare failure enters the input channel's retry→park ladder.
 
 ### Requirement: Bounded lifecycles run under poll
 
-Bounded host classes SHALL be driven by the core's bounded driver with
-stage execution handed out as work activations: the driver accumulates a
-stage's per-entity batch, hands it to the host, and its barriers await
-host completions AND controller acks in the same order the driver
-scenarios pin per loop mode (`Once | PerInput | Chained`). Saga
-compensation crosses as a dedicated work-item flavor carrying the recorded
-outputs; the proc-journal, staged outbox, durable loop, suspension,
+Bounded classes of BOTH language paths SHALL be driven by the core's bounded
+driver with stage execution handed out as activations through the poll seam:
+the driver accumulates a stage's per-entity batch, submits one step activation
+per entity partition, and its barriers await step completions AND controller
+acks in the same order the driver scenarios pin per loop mode
+(`Once | PerInput | Chained`). No core-owned thread SHALL execute user code
+and no core thread SHALL block awaiting a host completion — the driver's
+count-based barrier is the only wait, and the work-stealing pool SHALL NOT
+exist. Saga compensation crosses as a dedicated activation flavor carrying the
+recorded outputs; the proc-journal, staged outbox, durable loop, suspension,
 entity-retry, and rewind semantics are unchanged. The `run`-sugar class is
 expressible with no journal and no barriers.
 
@@ -165,8 +168,21 @@ expressible with no journal and no barriers.
 - **THEN** the host receives one activation carrying the seed, its completion's terminal outcome drives the same `BoundedCompleted` teardown the typed path produces
 
 #### Scenario: A structured chain's barrier waits for the host and the ack
-- **WHEN** a durable structured bounded host class finishes a stage's activations
-- **THEN** the driver SHALL commit the proc boundary only after every entity's completion arrived AND the controller acked `ProcCommit`, and a crash-resume SHALL skip journaled procs exactly as the typed suites pin
+- **WHEN** a durable structured bounded class finishes a stage's activations
+- **THEN** the driver SHALL commit the proc boundary only after every entity's completion arrived AND the controller acked `ProcCommit`, and a crash-resume SHALL skip journaled procs exactly as the driver suites pin
+
+#### Scenario: A Java bounded step costs one thread, not two
+- **WHEN** a Java bounded class runs a stage step
+- **THEN** exactly one thread SHALL be occupied by that step (the SDK thread
+  running the code); no core thread SHALL be parked awaiting its reply — the
+  reply SHALL be collected by the driver at its stage barrier
+
+#### Scenario: Typed Rust steps run on the SDK's poll workers
+- **WHEN** a typed Rust bounded class runs a parallel stage
+- **THEN** its per-entity step activations SHALL be picked up and executed by
+  the same worker threads that serve unbounded activations, sibling entities
+  MAY genuinely interleave, and a step that panics SHALL report failure
+  through the barrier without killing the worker that ran it
 
 ### Requirement: Deferred wakes never hold a thread
 

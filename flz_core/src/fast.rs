@@ -1,5 +1,5 @@
-//! Per-Entity mailboxes backed by a DashMap registry and a Chase-Lev
-//! work-stealing pool. The coordinator thread still exists for control-plane
+//! Per-Entity mailboxes backed by a DashMap registry, served by the poll
+//! core's activation handout. The coordinator thread still exists for control-plane
 //! traffic (`HandleCommandAction`, `ReturnOperatives`, `Reconnect`) but
 //! data-plane traffic bypasses it entirely — stream readers push directly
 //! into the targeted UnboundedOperative instance's entity mailboxes.
@@ -16,9 +16,6 @@ use flz_transport::transport::{liveness, FlezhaStream};
 use prost::Message;
 use tracing::warn;
 
-use super::work_stealing_pool::WorkStealingPool;
-use crate::command;
-use crate::control_unit;
 use crate::operative::instance::UnboundedInstance;
 use crate::operative::registry::{get_class as get_operative_class, Operative, OperativeRegistry};
 use crate::pb::command_request::Command;
@@ -26,12 +23,12 @@ use crate::pb::{BoundedCompleted as PbBoundedCompleted, CommandRequest};
 use crate::runner::{ClientResponseMessage, RunnerMessage, RunnerStatus};
 use crate::shutdown::ShutdownBridge;
 use crate::util::nonce_suffix;
+use crate::{command, control_unit};
 
 pub struct RunnerNode {
     runner_id: String,
     _namespace: String,
     operative_registry: Arc<OperativeRegistry>,
-    pool: Arc<WorkStealingPool>,
     shared_io_streams: Arc<RwLock<HashMap<u32, FlezhaStream>>>,
     quic_client: Option<Arc<QuicClient>>,
     status: RunnerStatus,
@@ -61,14 +58,12 @@ impl RunnerNode {
         let operative_registry = Arc::new(OperativeRegistry::new());
         *LIVE_REGISTRY.lock().unwrap_or_else(|p| p.into_inner()) =
             Some(Arc::clone(&operative_registry));
-        let pool = Arc::new(WorkStealingPool::new());
         let shared_io_streams = Arc::new(RwLock::new(HashMap::new()));
 
         RunnerNode {
             runner_id: "undefined".to_string(),
             _namespace: namespace,
             operative_registry,
-            pool,
             shared_io_streams,
             quic_client: None,
             status: RunnerStatus::Starting,
@@ -88,11 +83,7 @@ impl RunnerNode {
             return Some(existing);
         }
         let topology = get_operative_class(&factory_id)?;
-        let instance = UnboundedInstance::new(
-            topology,
-            Arc::from(instance_id.as_str()),
-            Arc::clone(&self.pool),
-        );
+        let instance = UnboundedInstance::new(topology, Arc::from(instance_id.as_str()));
         Some(self.operative_registry.register_unbounded(instance))
     }
 
@@ -138,7 +129,7 @@ impl RunnerNode {
         let stage_entities = spec
             .topology
             .as_ref()
-            .map(|_| crate::bounded::driver::build_all_stage_entities(&spec, &id, &self.pool))
+            .map(|_| crate::bounded::driver::build_all_stage_entities(&spec, &id))
             .unwrap_or_default();
         let (instance, inbox_rx) = crate::bounded::instance::BoundedInstance::new(
             Arc::clone(&id),
@@ -149,7 +140,7 @@ impl RunnerNode {
         );
         self.operative_registry
             .register_bounded(Arc::clone(&instance));
-        crate::bounded::driver::spawn(spec, instance, inbox_rx, args, Arc::clone(&self.pool));
+        crate::bounded::driver::spawn(spec, instance, inbox_rx, args);
         true
     }
 
@@ -459,8 +450,8 @@ fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
 /// bare payload-id with no body, small enough to write atomically.
 fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
     // Dispatch-progress self-report: the heartbeat thread stays alive even
-    // when the dispatch pool is wedged, so the controller needs these
-    // counters to tell "alive but frozen" apart from "healthy".
+    // when every worker is wedged, so the controller needs these counters to
+    // tell "alive but frozen" apart from "healthy".
     let mut metadata = HashMap::new();
     metadata.insert(
         "dispatches".to_string(),
@@ -557,7 +548,7 @@ fn handle_reconnect(
 
 /// Stream-reader handle for the UnboundedOperative model. Cheap to clone; carries a
 /// reference to the live UnboundedOperative-instance registry. Per-Entity drain
-/// scheduling uses the pool held by `EntitySlot`.
+/// scheduling goes through the poll core.
 #[derive(Clone)]
 pub struct OperativeDispatchHandle {
     pub registry: Arc<OperativeRegistry>,

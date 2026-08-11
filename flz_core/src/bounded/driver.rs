@@ -1,11 +1,11 @@
 //! Bounded driver.
 //!
-//! One driver runs per started bounded instance on a **dedicated thread** (not
-//! a work-pool worker): a `run`-sugar body may block on its inbox during an
-//! interactive loop, and the structured path joins pool entity sub-tasks —
-//! running the driver on the shared pool would tie up a worker indefinitely and
-//! a one-worker pool would self-deadlock (the driver blocks on tasks only that
-//! same worker could run). The driver:
+//! One driver runs per started bounded instance on a **dedicated thread**: it
+//! spends its life blocked — on its inbox, on a stage barrier, on a commit ack
+//! — and it must never be one of the threads its own stages need to run. Stage
+//! work leaves as activations ([`BoundedStep`]) the SDK's workers pick up off
+//! the poll core's direct queue, in both languages; the driver's count-based
+//! barrier is the only wait. The driver:
 //!
 //! - reads the [`BoundedInstance`](super::instance::BoundedInstance) that
 //!   `start_bounded_resumable` registered on the shared `OperativeRegistry`
@@ -16,44 +16,44 @@
 //! - runs the body — `run`-sugar ([`run_sugar`]) or the structured procedure
 //!   DAG ([`run_structured`], a child procedure runs only after every producer
 //!   feeding it commits, sibling branches and the entities inside each
-//!   procedure run in parallel on the pool, count-based barrier between
-//!   levels);
+//!   procedure run in parallel on the SDK's workers, count-based barrier
+//!   between levels);
 //! - converges every exit trigger on the single `BoundedCompleted` teardown,
 //!   emitting status (`ok | error | cancelled`) plus the result payload.
 
 use std::any::Any;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crossbeam::channel::{unbounded, Receiver, RecvTimeoutError};
+use crossbeam::channel::{Receiver, RecvTimeoutError};
 
 use super::compensation::{plan_compensation, EntityRun, StageRecord, StagedOutput};
 use super::instance::{BoundedInstance, CommittedProc, InboxItem, JournalResume};
 use super::spec::{BoundedSpec, ProcDag};
-use super::{BoundedCollectSink, BoundedCtx, BoundedError, BoundedRunFn, LoopMode, RollbackMode};
-use crate::channel::BuildEntityArgs;
-use crate::channel::{ChannelId, ChannelKind, ConsumerEdge, ProcedureId, RetryPolicy};
+use super::{BoundedCtx, BoundedError, BoundedRunFn, LoopMode, RollbackMode};
+use crate::channel::{
+    BuildEntityArgs, ChannelId, ChannelKind, ConsumerEdge, ProcedureId, RetryPolicy,
+};
 use crate::entity::EntitySlot;
 use crate::flusher::EntityFlusher;
 use crate::operative::topology::{EntityMode, OperativeTopology, ProcedureDescriptor};
 use crate::state_sink::{COMPENSATION_DONE_PAYLOAD_ID, COMPENSATION_INTENT_PAYLOAD_ID};
-use crate::util::LockRecover;
-use crate::work_stealing_pool::WorkStealingPool;
 
 /// Type-erased value moving between bounded stages.
-type Value = Arc<dyn Any + Send + Sync>;
+pub(super) type Value = Arc<dyn Any + Send + Sync>;
 
 /// Upper bound on the wait for the controller's `ProcCommitResponse` /
 /// `IterCommitResponse` before the run terminates abnormally — the same posture
 /// as any mid-run channel loss (the un-acked proc/iteration re-runs on resume,
 /// at-least-once).
 const PROC_COMMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
-/// Re-check cadence during the ack wait so a cooperative cancel is observed
-/// promptly (mirrors the restore gate's `RESUME_WAIT_CHUNK`).
-const PROC_COMMIT_ACK_CHUNK: Duration = Duration::from_millis(200);
+/// How often a blocked driver re-checks for a cooperative stop: the commit-ack
+/// wait, the inbox wait, and a stage's retry backoff all wake at this cadence
+/// (mirrors the restore gate's `RESUME_WAIT_CHUNK`).
+pub(super) const CANCEL_POLL_CHUNK: Duration = Duration::from_millis(200);
 
 /// How long an inbox-driven loop waits at a committed iteration boundary before
 /// it parks (eviction hysteresis, `bounded-durable-suspension`): a message
@@ -72,27 +72,18 @@ enum RunOutcome {
     Parked,
 }
 
-/// One stage's parallel-join result: the inter-procedure `batch` released to the
-/// next stage, plus the per-entity record (which entities ran, with their
-/// collected outputs) retained for a possible saga rollback.
-struct StageOut {
-    batch: Vec<Value>,
-    entities: Vec<EntityRun>,
-}
-
 /// Read-only context threaded through one structured chain run: the topology,
 /// the resolved procedure DAG, the running instance (its id + saga
-/// crash-resume markers), the work pool, the pre-built per-stage entities, the
+/// crash-resume markers), the pre-built per-stage entities, the
 /// rollback mode, and whether the class is durable (gates the saga compensation
 /// records). Bundled so the chain driver and the compensator take it by
 /// reference instead of a long parameter list.
-struct ChainCtx<'a> {
-    topology: &'a Arc<OperativeTopology>,
+pub(super) struct ChainCtx<'a> {
+    pub(super) topology: &'a Arc<OperativeTopology>,
     dag: &'a ProcDag,
-    instance: &'a BoundedInstance,
-    instance_id: &'a Arc<str>,
-    pool: &'a Arc<WorkStealingPool>,
-    stage_entities: &'a [Vec<Arc<EntitySlot>>],
+    pub(super) instance: &'a BoundedInstance,
+    pub(super) instance_id: &'a Arc<str>,
+    pub(super) stage_entities: &'a [Vec<Arc<EntitySlot>>],
     rollback_mode: RollbackMode,
     /// Loop shape: `Once` is the single pass, the others iterate the chain with
     /// a durable commit per iteration (`bounded-durable-loop`).
@@ -103,7 +94,7 @@ struct ChainCtx<'a> {
     /// seeds each iteration from it.
     inbox: &'a Receiver<InboxItem>,
     /// Per-entity retry ladder applied inside a stage (`bounded-entity-retry`).
-    retry: RetryPolicy,
+    pub(super) retry: RetryPolicy,
     persistence_enabled: bool,
 }
 
@@ -114,13 +105,13 @@ impl ChainCtx<'_> {
     /// journal to gate a flush on, so its plugin output must keep going
     /// straight to the wire rather than being staged into an outbox nobody
     /// would ever flush.
-    fn journaling(&self) -> bool {
+    pub(super) fn journaling(&self) -> bool {
         self.persistence_enabled && crate::runner::coordinator_installed()
     }
 
     /// The procedure descriptor at a DAG node (= its `stage_idx` / wire
     /// `proc_idx`).
-    fn proc(&self, node: usize) -> &ProcedureDescriptor {
+    pub(super) fn proc(&self, node: usize) -> &ProcedureDescriptor {
         self.topology
             .procedure(self.dag.order[node])
             .expect("dag procedure present in topology")
@@ -184,13 +175,12 @@ pub fn spawn(
     instance: Arc<BoundedInstance>,
     inbox_rx: Receiver<InboxItem>,
     args: String,
-    pool: Arc<WorkStealingPool>,
 ) {
     let name = format!("flezha-bounded-{}", instance.instance_id);
     let thread_instance = Arc::clone(&instance);
     let spawned = thread::Builder::new()
         .name(name)
-        .spawn(move || run(spec, thread_instance, inbox_rx, args, pool));
+        .spawn(move || run(spec, thread_instance, inbox_rx, args));
 
     if let Err(e) = spawned {
         // Spawn failed: deregister this run's flusher entries and report a
@@ -211,7 +201,6 @@ fn run(
     instance: Arc<BoundedInstance>,
     inbox_rx: Receiver<InboxItem>,
     args: String,
-    pool: Arc<WorkStealingPool>,
 ) {
     let finished = Arc::new(AtomicBool::new(false));
 
@@ -226,7 +215,7 @@ fn run(
         // Entity restores land, then drive the chain over the restored state.
         Some(_) => {
             instance.wait_for_restore();
-            run_structured(&spec, &instance, &args, &pool, &inbox_rx)
+            run_structured(&spec, &instance, &args, &inbox_rx)
         }
         // Run-sugar: no Entities, no restore — a crash re-runs from the top.
         // A host class's body runs host-side, crossed through the poll
@@ -313,12 +302,11 @@ fn classify(
 /// Structured path: walk the procedure DAG. A child procedure starts only when
 /// every producer feeding it has finished and had its commit acked
 /// (count-based barrier); entities — and independent sibling branches — run in
-/// parallel on the pool.
+/// parallel on the SDK's workers.
 fn run_structured(
     spec: &BoundedSpec,
     instance: &BoundedInstance,
     args: &str,
-    pool: &Arc<WorkStealingPool>,
     inbox: &Receiver<InboxItem>,
 ) -> RunOutcome {
     let topology = spec
@@ -335,7 +323,6 @@ fn run_structured(
         dag: &spec.dag,
         instance,
         instance_id: &instance.instance_id,
-        pool,
         stage_entities: &instance.stage_entities,
         rollback_mode: spec.rollback_mode,
         loop_mode: spec.loop_mode,
@@ -356,7 +343,6 @@ fn run_structured(
 pub fn build_all_stage_entities(
     spec: &BoundedSpec,
     instance_id: &Arc<str>,
-    pool: &Arc<WorkStealingPool>,
 ) -> Vec<Vec<Arc<EntitySlot>>> {
     let topology = spec
         .topology
@@ -372,7 +358,6 @@ pub fn build_all_stage_entities(
             instance_id,
             proc_id,
             proc,
-            pool,
             spec.persistence_enabled,
         ));
     }
@@ -524,7 +509,7 @@ fn drive_chain(ctx: &ChainCtx, args: &str, cancel: &AtomicBool) -> RunOutcome {
 }
 
 /// One DAG node scheduled to run, with the batch it consumes.
-type Runnable = (usize, Vec<Value>);
+pub(super) type Runnable = (usize, Vec<Value>);
 
 /// Where an iteration starts: the immediately runnable nodes plus, for a
 /// mid-iteration resume over a join, the contributions already banked for
@@ -586,7 +571,7 @@ fn run_iteration(
             return Err(("cancelled".to_string(), String::new()));
         }
 
-        let (level, failure) = run_frontier(ctx, frontier);
+        let (level, failure) = super::step::run_stage(ctx, frontier);
         let mut next: Vec<Runnable> = Vec::new();
 
         for (node, out) in level {
@@ -829,7 +814,7 @@ fn wait_for_input(ctx: &ChainCtx, cancel: &AtomicBool) -> Option<InboxItem> {
         if cancel.load(Ordering::Acquire) {
             return None;
         }
-        match ctx.inbox.recv_timeout(PROC_COMMIT_ACK_CHUNK) {
+        match ctx.inbox.recv_timeout(CANCEL_POLL_CHUNK) {
             Ok(item) => return Some(item),
             Err(RecvTimeoutError::Timeout) => {
                 if ctx.journaling() && Instant::now() >= deadline {
@@ -1196,7 +1181,7 @@ fn ship_and_await(
     // Chunked wait so a cooperative cancel is observed promptly.
     let deadline = Instant::now() + PROC_COMMIT_ACK_TIMEOUT;
     loop {
-        match rx.recv_timeout(PROC_COMMIT_ACK_CHUNK) {
+        match rx.recv_timeout(CANCEL_POLL_CHUNK) {
             Ok(Ok(_)) => return Ok(()),
             Ok(Err(e)) => {
                 return Err(format!("{what} {idx} refused by controller: {e}"));
@@ -1249,19 +1234,19 @@ fn run_compensation(ctx: &ChainCtx, committed: &[Vec<StageRecord>], in_flight: &
             if ctx.instance.has_compensation_done(&slot.entity_identity) {
                 continue;
             }
-            let sink = compensate_entity(ctx, slot, seg_run);
+            let staged = super::step::run_compensation_step(ctx, record.stage_idx, seg_run);
             // Journal this entity's undo output BEFORE the done marker: the
             // marker is what stops the hook re-running on resume, so a crash
             // between the two must fall on the side that re-runs the (idempotent)
             // hook rather than the side that loses its undo output. A hook that
             // emitted nothing needs no entry.
-            if !sink.staged.is_empty() {
+            if !staged.is_empty() {
                 journal_undo(
                     ctx,
                     record,
                     "compensation",
                     vec![slot.entity_identity.as_ref().clone()],
-                    outbox_items(slot, &sink.staged),
+                    outbox_items(slot, &staged),
                 );
             }
             // Durable saga (§4.3): record this compensation's completion so a
@@ -1301,8 +1286,8 @@ fn run_rewind_undo(ctx: &ChainCtx, unwound: &[CommittedProc]) {
             let slot = &slots[seg_run.entity_index];
             entities_ran.push(slot.entity_identity.as_ref().clone());
             if proc.compensate_overridden {
-                let sink = compensate_entity(ctx, slot, seg_run);
-                outbox.extend(outbox_items(slot, &sink.staged));
+                let staged = super::step::run_compensation_step(ctx, record.stage_idx, seg_run);
+                outbox.extend(outbox_items(slot, &staged));
             }
         }
 
@@ -1338,30 +1323,6 @@ fn journal_undo(
             ctx.instance_id
         );
     }
-}
-
-/// Run one entity's `compensate` hook and hand back the sink holding whatever
-/// undo output it staged (under that entity's identity, for the `compensated`
-/// journal entry — `bounded-transactional-outbox` D5). Best-effort: a failing
-/// hook is logged so one broken undo cannot strand the rest of the plan.
-fn compensate_entity(
-    ctx: &ChainCtx,
-    slot: &Arc<EntitySlot>,
-    seg_run: &EntityRun,
-) -> BoundedEntitySink {
-    let outputs: Vec<Value> = seg_run.outputs.iter().map(Arc::clone).collect();
-    let mut sink = BoundedEntitySink::new(ctx.instance_id, ctx.journaling());
-    let mut state = slot.state.lock_recover();
-    if let Err(e) =
-        slot.dispatcher
-            .compensate_collecting(outputs, &mut state, ctx.topology, &mut sink)
-    {
-        eprintln!(
-            "[flezha] bounded {} compensation error: {e}",
-            ctx.instance_id
-        );
-    }
-    sink
 }
 
 /// Rebuild the completed-stage records to compensate on a crash-resume from the
@@ -1413,7 +1374,6 @@ fn build_stage_entities(
     instance_id: &Arc<str>,
     proc_id: ProcedureId,
     proc: &ProcedureDescriptor,
-    pool: &Arc<WorkStealingPool>,
     persistence_enabled: bool,
 ) -> Vec<Arc<EntitySlot>> {
     let build = |entity_key: Option<&str>, entity_index: usize| {
@@ -1425,7 +1385,6 @@ fn build_stage_entities(
             entity_key,
             entity_index,
             persistence_enabled,
-            pool: Arc::clone(pool),
         })
     };
     match proc.mode {
@@ -1438,253 +1397,6 @@ fn build_stage_entities(
             .collect(),
         // Rejected at registration; defensively yield no entities.
         EntityMode::Dynamic => Vec::new(),
-    }
-}
-
-/// Partition an input batch across a stage's entities. Single mode routes every
-/// item to entity 0; Static mode routes by the procedure's `entities_for` keys.
-fn partition(proc: &ProcedureDescriptor, entity_count: usize, batch: &[Value]) -> Vec<Vec<Value>> {
-    let mut buckets: Vec<Vec<Value>> = vec![Vec::new(); entity_count];
-    match proc.mode {
-        EntityMode::Single => {
-            if let Some(bucket) = buckets.first_mut() {
-                bucket.extend(batch.iter().map(Arc::clone));
-            }
-        }
-        EntityMode::Static => {
-            let key_to_idx: HashMap<&str, usize> = proc
-                .entity_keys
-                .iter()
-                .enumerate()
-                .map(|(i, k)| (*k, i))
-                .collect();
-            for item in batch {
-                for key in (proc.entities_for_erased)(item.as_ref()) {
-                    if let Some(&idx) = key_to_idx.get(key) {
-                        buckets[idx].push(Arc::clone(item));
-                    }
-                }
-            }
-        }
-        EntityMode::Dynamic => {}
-    }
-    buckets
-}
-
-/// Run one frontier — every currently-runnable DAG node — on the pool and join
-/// on a single count-based barrier. All of a node's entities and all the nodes
-/// of the frontier are submitted together: the nodes are independent, so
-/// sibling branches genuinely interleave on the pool. A failing entity
-/// climbs its retry ladder in place ([`EntityJob::run_with_retry`]); its
-/// siblings keep their completed results buffered and are never re-run.
-///
-/// Returns the `StageOut` of every node that completed **whole** (ascending by
-/// node, so parents keep preceding children) plus the first error seen. A node
-/// with a failing entity yields nothing: its staged plugin output is dropped
-/// with the error, exactly as a failing stage's always was — a failed procedure
-/// leaks nothing. A node whose entities all got an empty partition still yields
-/// an empty `StageOut`: a procedure with nothing to do is done.
-fn run_frontier(
-    ctx: &ChainCtx,
-    frontier: Vec<Runnable>,
-) -> (Vec<(usize, StageOut)>, Option<BoundedError>) {
-    let (tx, rx) = unbounded::<(usize, usize, Result<EntityOut, BoundedError>)>();
-    let mut spawned = 0usize;
-    let mut entities: BTreeMap<usize, Vec<EntityRun>> = frontier
-        .iter()
-        .map(|(node, _)| (*node, Vec::new()))
-        .collect();
-
-    for (node, batch) in &frontier {
-        let slots = &ctx.stage_entities[*node];
-        for (seg_idx, items) in partition(ctx.proc(*node), slots.len(), batch)
-            .into_iter()
-            .enumerate()
-        {
-            if items.is_empty() {
-                continue;
-            }
-            let job = EntityJob {
-                topology: Arc::clone(ctx.topology),
-                instance_id: Arc::clone(ctx.instance_id),
-                slot: Arc::clone(&slots[seg_idx]),
-                staging: ctx.journaling(),
-                retry: ctx.retry,
-                cancel: Arc::clone(&ctx.instance.cancel),
-            };
-            let tx = tx.clone();
-            let node = *node;
-            spawned += 1;
-            ctx.pool.submit(Box::new(move || {
-                let _ = tx.send((node, seg_idx, job.run_with_retry(items)));
-            }));
-        }
-    }
-    drop(tx);
-
-    // Wait for every entity of every node (the barrier) before returning, even
-    // on failure, so nothing is mid-run when the level completes.
-    let mut failed: HashSet<usize> = HashSet::new();
-    let mut first_err: Option<BoundedError> = None;
-    for _ in 0..spawned {
-        match rx.recv() {
-            Ok((node, seg_idx, Ok((outputs, staged)))) => {
-                if let Some(runs) = entities.get_mut(&node) {
-                    runs.push(EntityRun {
-                        entity_index: seg_idx,
-                        outputs,
-                        staged,
-                    });
-                }
-            }
-            Ok((node, _, Err(e))) => {
-                failed.insert(node);
-                first_err.get_or_insert(e);
-            }
-            // A dropped task cannot be attributed to a node, so no node of this
-            // level is trusted to have completed.
-            Err(_) => {
-                failed.extend(entities.keys().copied());
-                first_err.get_or_insert_with(|| BoundedError::from("bounded entity task dropped"));
-            }
-        }
-    }
-
-    let level = entities
-        .into_iter()
-        .filter(|(node, _)| !failed.contains(node))
-        .map(|(node, mut entities)| {
-            // Deterministic downstream batch: entities in index order (each
-            // entity's own item order is preserved by `EntityJob::run`).
-            entities.sort_by_key(|s| s.entity_index);
-            let batch: Vec<Value> = entities
-                .iter()
-                .flat_map(|s| s.outputs.iter().map(Arc::clone))
-                .collect();
-            (node, StageOut { batch, entities })
-        })
-        .collect();
-    (level, first_err)
-}
-
-/// One entity's stage result: the inter-procedure output collected for the
-/// next stage plus the plugin-bound output staged for the procedure's outbox.
-type EntityOut = (Vec<Value>, Vec<StagedOutput>);
-
-/// One entity's share of a stage, moved onto a pool thread: everything needed
-/// to run its batch — and to re-run it on a retry — off the driver thread.
-struct EntityJob {
-    topology: Arc<OperativeTopology>,
-    instance_id: Arc<str>,
-    slot: Arc<EntitySlot>,
-    staging: bool,
-    retry: RetryPolicy,
-    cancel: Arc<AtomicBool>,
-}
-
-impl EntityJob {
-    /// Run the batch, climbing the class's retry ladder on a retryable failure
-    /// (`bounded-entity-retry`): the entity re-runs its whole batch from the
-    /// top — at-least-once, the same idempotency contract crash-resume imposes —
-    /// with each attempt collecting into a fresh sink, so a failed attempt's
-    /// output is discarded rather than double-counted. A non-retryable error, an
-    /// exhausted ladder, or a cancellation during the backoff returns the error
-    /// into the caller's abnormal path unchanged.
-    fn run_with_retry(&self, items: Vec<Value>) -> Result<EntityOut, BoundedError> {
-        let max_attempts = self.retry.max_attempts.max(1);
-        let mut items = Some(items);
-        let mut attempt: u32 = 1;
-        loop {
-            let is_final = attempt >= max_attempts;
-            // A non-final attempt hands the batch over by Arc clone so the
-            // original survives for the re-run; the final attempt moves it.
-            let attempt_items = match &items {
-                Some(batch) if !is_final => batch.clone(),
-                _ => items.take().expect("retry ladder: batch consumed twice"),
-            };
-            match self.run(attempt_items) {
-                Ok(out) => return Ok(out),
-                Err(e) if is_final || e.non_retryable => return Err(e),
-                Err(e) => {
-                    let delay =
-                        crate::retry::note_failed_attempt(&self.label(), attempt, self.retry, &e);
-                    // An external stop / `max_duration` during the wait abandons
-                    // the ladder: the failure takes the abnormal-exit path.
-                    if !crate::util::sleep_interruptible(delay, Some(&self.cancel)) {
-                        return Err(e);
-                    }
-                    attempt += 1;
-                }
-            }
-        }
-    }
-
-    /// One attempt: process the entity's items sequentially (per-entity
-    /// ordering preserved), running `Procedure::run` via the monomorphized
-    /// dispatcher's collecting path and gathering the inter-procedure output for
-    /// the next stage plus the plugin-bound output staged for the procedure's
-    /// outbox.
-    fn run(&self, items: Vec<Value>) -> Result<EntityOut, BoundedError> {
-        let mut sink = BoundedEntitySink::new(&self.instance_id, self.staging);
-        let mut state = self.slot.state.lock_recover();
-        for item in items {
-            self.slot
-                .dispatcher
-                .run_collecting(item, &mut state, &self.topology, &mut sink)?;
-        }
-        Ok((sink.collected, sink.staged))
-    }
-
-    /// The failing work, as the retry log names it.
-    fn label(&self) -> String {
-        let procedure = self
-            .topology
-            .procedure(self.slot.procedure_id)
-            .map_or("-", |proc| proc.name.as_ref());
-        format!(
-            "bounded {} procedure {} entity {}",
-            self.instance_id,
-            procedure,
-            self.slot.entity_key.as_deref().unwrap_or("-")
-        )
-    }
-}
-
-/// Per-entity collecting sink for the structured driver. Inter-procedure
-/// output is buffered for the next stage. Plugin-bound output is **staged** for
-/// the procedure's transactional outbox when the run commits its proc boundaries
-/// (`staging`), so nothing reaches a plugin before the proc's journal entry is
-/// durable; otherwise — an opted-out class or a transport-less run, neither of
-/// which journals — it is forwarded straight to the wire as before.
-struct BoundedEntitySink {
-    instance_id: Arc<str>,
-    collected: Vec<Value>,
-    staged: Vec<StagedOutput>,
-    staging: bool,
-}
-
-impl BoundedEntitySink {
-    fn new(instance_id: &Arc<str>, staging: bool) -> Self {
-        Self {
-            instance_id: Arc::clone(instance_id),
-            collected: Vec::new(),
-            staged: Vec::new(),
-            staging,
-        }
-    }
-}
-
-impl BoundedCollectSink for BoundedEntitySink {
-    fn collect(&mut self, value: Value) {
-        self.collected.push(value);
-    }
-
-    fn emit_plugin_bytes(&mut self, channel: &str, bytes: Vec<u8>) {
-        if self.staging {
-            self.staged.push((channel.to_string(), bytes));
-        } else {
-            crate::runner::emit_bounded_output(self.instance_id.to_string(), bytes);
-        }
     }
 }
 

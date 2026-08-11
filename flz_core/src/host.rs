@@ -23,17 +23,17 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
+use crate::bounded::{LoopMode, RollbackMode};
 use crate::channel::{
     BuildEntityArgs, ChannelDescriptor, ChannelKind, OverflowPolicy, RetryPolicy,
 };
 use crate::entity::{EntityItem, EntitySlot, ItemDisposition, ProcedureDispatcher};
 use crate::flusher::{EntityFlusher, FlushFrame, FlushableBuffer};
 use crate::header::HeaderTemplate;
+use crate::operative::instance::UnboundedInstance;
 use crate::operative::topology::{
     AckGranularity, CorrectionPolicy, EntityMode, OperativeTopology, ProcedureDescriptor,
 };
-use crate::bounded::{LoopMode, RollbackMode};
-use crate::operative::instance::UnboundedInstance;
 use crate::poll_core::{EngineActivation, EnginePayload, PollCore, WorkItem};
 use crate::schema::{self, TimerOp};
 use crate::timer::PendingTimers;
@@ -335,7 +335,9 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
                     run: host_run_unreachable,
                     topology: None,
                     dag: Default::default(),
-                    max_duration: bounded.max_duration_ms.map(std::time::Duration::from_millis),
+                    max_duration: bounded
+                        .max_duration_ms
+                        .map(std::time::Duration::from_millis),
                     rollback_mode: rollback_of(bounded.rollback_mode),
                     loop_mode: LoopMode::Once,
                     wake_after: bounded.wake_after_ms.map(std::time::Duration::from_millis),
@@ -354,15 +356,16 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
         }
     }
     if decl.effectively_once && !decl.persistent {
-        return Err(
-            "effectively_once requires persistent: the tier IS durable state".to_string(),
-        );
+        return Err("effectively_once requires persistent: the tier IS durable state".to_string());
     }
     if decl.ack_granularity == HostAckGranularity::Checkpoint && !decl.effectively_once {
         return Err("ack_granularity checkpoint requires effectively_once".to_string());
     }
     if decl.correction_window_ms.is_some()
-        && !decl.procedures.iter().any(|p| p.clock == HostClock::EventTime)
+        && !decl
+            .procedures
+            .iter()
+            .any(|p| p.clock == HostClock::EventTime)
     {
         return Err(
             "correction_window_ms requires at least one event_time-clocked procedure".to_string(),
@@ -395,10 +398,16 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
         match channel.kind {
             HostChannelKind::Entry => {
                 if channel.producer.is_some() {
-                    return Err(format!("entry channel `{}` cannot name a producer", channel.name));
+                    return Err(format!(
+                        "entry channel `{}` cannot name a producer",
+                        channel.name
+                    ));
                 }
                 if channel.consumers.is_empty() {
-                    return Err(format!("entry channel `{}` names no consumer", channel.name));
+                    return Err(format!(
+                        "entry channel `{}` names no consumer",
+                        channel.name
+                    ));
                 }
             }
             HostChannelKind::InterProc => {
@@ -468,17 +477,15 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
     let factory_id: &'static str = Box::leak(decl.factory_id.clone().into_boxed_str());
     let schema_version = decl.schema_version;
     let persistent = decl.persistent;
-    let correction = decl
-        .correction_window_ms
-        .map(|window_ms| CorrectionPolicy {
-            window_ms,
-            beyond_window: match decl.beyond_window_policy {
-                HostBeyondWindow::ProcessAsArrival => {
-                    crate::operative::topology::BeyondWindowPolicy::ProcessAsArrival
-                }
-                HostBeyondWindow::Drop => crate::operative::topology::BeyondWindowPolicy::Drop,
-            },
-        });
+    let correction = decl.correction_window_ms.map(|window_ms| CorrectionPolicy {
+        window_ms,
+        beyond_window: match decl.beyond_window_policy {
+            HostBeyondWindow::ProcessAsArrival => {
+                crate::operative::topology::BeyondWindowPolicy::ProcessAsArrival
+            }
+            HostBeyondWindow::Drop => crate::operative::topology::BeyondWindowPolicy::Drop,
+        },
+    });
     let compact_after_bytes = decl
         .compact_after_bytes
         .unwrap_or(crate::persistence::DEFAULT_COMPACT_AFTER_BYTES);
@@ -659,7 +666,9 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
                     run: host_run_unreachable,
                     topology: Some(topology),
                     dag,
-                    max_duration: bounded.max_duration_ms.map(std::time::Duration::from_millis),
+                    max_duration: bounded
+                        .max_duration_ms
+                        .map(std::time::Duration::from_millis),
                     rollback_mode: rollback_of(bounded.rollback_mode),
                     loop_mode: match bounded.loop_mode {
                         HostLoopMode::Once => LoopMode::Once,
@@ -702,9 +711,7 @@ fn host_run_unreachable(
 /// Kahn toposort of a structured host chain from its entry root, refusing
 /// what the typed builder refuses: several entry consumers, a procedure
 /// producing more than one channel, cycles, disconnected procedures.
-fn build_host_dag(
-    topology: &OperativeTopology,
-) -> Result<crate::bounded::spec::ProcDag, String> {
+fn build_host_dag(topology: &OperativeTopology) -> Result<crate::bounded::spec::ProcDag, String> {
     let entry = topology
         .channels
         .iter()
@@ -820,8 +827,7 @@ fn host_payload_codec(channel_id: u32) -> crate::channel::ChannelCodec {
             .map_err(|e| e.to_string())
         }),
         decode: Arc::new(move |bytes: Vec<u8>| {
-            let form: JournalForm =
-                postcard::from_bytes(&bytes).map_err(|e| e.to_string())?;
+            let form: JournalForm = postcard::from_bytes(&bytes).map_err(|e| e.to_string())?;
             Ok(Arc::new(HostPayload {
                 bytes: form.bytes,
                 channel: channel_id,
@@ -906,9 +912,6 @@ fn build_host_entity_slot(
     let dispatcher = Arc::new(HostDispatcher {
         procedure_id: args.procedure_id,
         entity_label: Arc::clone(&parts.entity_label),
-        entity_key: args.entity_key.map(str::to_string),
-        change_seq: Arc::clone(&parts.change_seq),
-        flush_buffer: Arc::clone(&flush_buffer),
         facts,
     }) as Arc<dyn ProcedureDispatcher>;
     crate::entity::assemble_slot(
@@ -928,103 +931,77 @@ fn build_host_entity_slot(
 struct HostDispatcher {
     procedure_id: u32,
     entity_label: Arc<str>,
-    entity_key: Option<String>,
-    /// The slot's own seq/buffer, cloned at assembly — what the bounded
-    /// crossings need without a back-reference to the slot.
-    change_seq: Arc<AtomicU64>,
-    flush_buffer: Arc<Mutex<Box<dyn FlushableBuffer>>>,
     facts: Arc<HostProcedureFacts>,
 }
 
-impl HostDispatcher {
-    fn entity_ref(&self) -> schema::EntityRef {
-        schema::EntityRef {
-            operative: operative_of(&self.entity_label),
-            procedure: self.procedure_id,
-            entity_key: self.entity_key.clone(),
+/// Why the in-process bounded seams are unreachable for a host class: its work
+/// leaves as a step activation the host polls, and the answer folds through
+/// [`fold_bounded_outcome`].
+fn host_bounded_unreachable(what: &str) -> crate::bounded::BoundedError {
+    crate::bounded::BoundedError::non_retryable(format!(
+        "host-run procedure: {what} reaches the host as a bounded step activation, \
+         never this in-process seam"
+    ))
+}
+
+/// Map one bounded step's work outcome into the driver's collect sink: changes
+/// into that entity's flush buffer, edge outputs collected for the next stage,
+/// plugin outputs staged/forwarded by the sink. Runs on the thread that
+/// completed the step, with its driver parked at the barrier the fold's result
+/// answers.
+pub fn fold_bounded_outcome(
+    flush_buffer: &Mutex<Box<dyn FlushableBuffer>>,
+    outcome: schema::ActivationOutcome,
+    sink: &mut dyn crate::bounded::BoundedCollectSink,
+) -> Result<(), crate::bounded::BoundedError> {
+    let effects = match outcome {
+        schema::ActivationOutcome::Work(effects) => effects,
+        schema::ActivationOutcome::Failed(err) => {
+            return Err(crate::bounded::BoundedError::new(
+                err.message,
+                err.non_retryable,
+            ));
         }
-    }
-
-    /// One blocking crossing to the host — the bounded driver's stage and
-    /// compensation seams. Blocks without a deadline, exactly as a typed
-    /// in-process stage body would (the host lives in this process; a wedged
-    /// body is governed by the class's `max_duration`).
-    fn bounded_crossing(
-        &self,
-        kind: schema::ActivationKind,
-    ) -> Result<schema::ActivationOutcome, crate::bounded::BoundedError> {
-        let (reply, rx) = crossbeam::channel::bounded(1);
-        crate::poll_core::global().submit_direct(EnginePayload::Command {
-            target: self.entity_ref(),
-            change_seq: self.change_seq.load(Ordering::Acquire),
-            factory: self.facts.factory.to_string(),
-            kind,
-            reply,
-        });
-        rx.recv().map_err(|_| {
-            crate::bounded::BoundedError::from(
-                "host context dropped the bounded activation".to_string(),
-            )
-        })
-    }
-
-    /// Map one crossing's work outcome into the driver's collect sink:
-    /// changes into this entity's flush buffer, edge outputs collected for
-    /// the next stage, plugin outputs staged/forwarded by the sink.
-    fn fold_bounded_outcome(
-        &self,
-        outcome: schema::ActivationOutcome,
-        sink: &mut dyn crate::bounded::BoundedCollectSink,
-    ) -> Result<(), crate::bounded::BoundedError> {
-        let effects = match outcome {
-            schema::ActivationOutcome::Work(effects) => effects,
-            schema::ActivationOutcome::Failed(err) => {
-                return Err(crate::bounded::BoundedError::new(
-                    err.message,
-                    err.non_retryable,
-                ));
+        _ => {
+            return Err(crate::bounded::BoundedError::from(
+                "bounded step answered with a non-work outcome".to_string(),
+            ));
+        }
+    };
+    for effect in effects {
+        match effect.verdict {
+            schema::Verdict::Ok => {}
+            schema::Verdict::RetryableError { message } => {
+                return Err(crate::bounded::BoundedError::new(message, false));
             }
-            _ => {
-                return Err(crate::bounded::BoundedError::from(
-                    "bounded crossing answered with a non-work outcome".to_string(),
-                ));
+            schema::Verdict::NonRetryableError { message } => {
+                return Err(crate::bounded::BoundedError::new(message, true));
             }
-        };
-        for effect in effects {
-            match effect.verdict {
-                schema::Verdict::Ok => {}
-                schema::Verdict::RetryableError { message } => {
-                    return Err(crate::bounded::BoundedError::new(message, false));
+        }
+        if !effect.changes.is_empty() {
+            let mut buffer = flush_buffer.lock_recover();
+            if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
+                bytes.changes.extend(effect.changes);
+            }
+        }
+        for output in effect.outputs {
+            match output.target {
+                schema::OutputTarget::Edge { channel, .. } => {
+                    sink.collect(Arc::new(HostPayload {
+                        bytes: output.payload,
+                        channel,
+                        keys: output.key.into_iter().collect(),
+                        event_time: output.event_time,
+                        metadata: output.metadata,
+                    }) as Arc<dyn Any + Send + Sync>);
                 }
-                schema::Verdict::NonRetryableError { message } => {
-                    return Err(crate::bounded::BoundedError::new(message, true));
-                }
-            }
-            if !effect.changes.is_empty() {
-                let mut buffer = self.flush_buffer.lock_recover();
-                if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
-                    bytes.changes.extend(effect.changes);
-                }
-            }
-            for output in effect.outputs {
-                match output.target {
-                    schema::OutputTarget::Edge { channel, .. } => {
-                        sink.collect(Arc::new(HostPayload {
-                            bytes: output.payload,
-                            channel,
-                            keys: output.key.into_iter().collect(),
-                            event_time: output.event_time,
-                            metadata: output.metadata,
-                        }) as Arc<dyn Any + Send + Sync>);
-                    }
-                    schema::OutputTarget::Plugin { channel } => {
-                        sink.emit_plugin_bytes(&channel, output.payload);
-                    }
+                schema::OutputTarget::Plugin { channel } => {
+                    sink.emit_plugin_bytes(&channel, output.payload);
                 }
             }
         }
-        Ok(())
     }
+    Ok(())
 }
 
 impl ProcedureDispatcher for HostDispatcher {
@@ -1081,53 +1058,22 @@ impl ProcedureDispatcher for HostDispatcher {
 
     fn run_collecting(
         &self,
-        input: Arc<dyn Any + Send + Sync>,
+        _input: Arc<dyn Any + Send + Sync>,
         _state: &mut Box<dyn Any + Send>,
         _topology: &OperativeTopology,
-        sink: &mut dyn crate::bounded::BoundedCollectSink,
+        _sink: &mut dyn crate::bounded::BoundedCollectSink,
     ) -> Result<(), crate::bounded::BoundedError> {
-        // A stage item crosses as a one-item work activation; the driver's
-        // retry ladder and barriers stay exactly where they are.
-        let host_payload = input.downcast_ref::<HostPayload>().ok_or_else(|| {
-            crate::bounded::BoundedError::from(
-                "bounded stage input is not a host payload".to_string(),
-            )
-        })?;
-        let clock_now = match self.facts.clock {
-            HostClock::Logical => self.change_seq.load(Ordering::Acquire),
-            _ => crate::util::wall_now_ms(),
-        };
-        let item = schema::WorkItem::Input(schema::InputItem {
-            channel: host_payload.channel,
-            payload: host_payload.bytes.clone(),
-            metadata: host_payload.metadata.clone(),
-            consumed_offset: None,
-            replay: false,
-            now: clock_now,
-        });
-        let outcome = self.bounded_crossing(schema::ActivationKind::Work(vec![item]))?;
-        self.fold_bounded_outcome(outcome, sink)
+        Err(host_bounded_unreachable("a stage batch"))
     }
 
     fn compensate_collecting(
         &self,
-        outputs: Vec<Arc<dyn Any + Send + Sync>>,
+        _outputs: Vec<Arc<dyn Any + Send + Sync>>,
         _state: &mut Box<dyn Any + Send>,
         _topology: &OperativeTopology,
-        sink: &mut dyn crate::bounded::BoundedCollectSink,
+        _sink: &mut dyn crate::bounded::BoundedCollectSink,
     ) -> Result<(), crate::bounded::BoundedError> {
-        let output_bytes: Vec<Vec<u8>> = outputs
-            .iter()
-            .filter_map(|value| {
-                value
-                    .downcast_ref::<HostPayload>()
-                    .map(|p| p.bytes.clone())
-            })
-            .collect();
-        let outcome = self.bounded_crossing(schema::ActivationKind::CompensateRun {
-            outputs: output_bytes,
-        })?;
-        self.fold_bounded_outcome(outcome, sink)
+        Err(host_bounded_unreachable("a saga undo"))
     }
 
     fn restore_state(
@@ -1279,32 +1225,25 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
             change_seq: 0,
             factory: crossing.instance.topology.factory_id.to_string(),
         },
+        EnginePayload::BoundedStep(step) => schema::Activation {
+            token: act.token,
+            target: entity_ref_of(&step.slot),
+            kind: bounded_step_kind(step),
+            change_seq: step.slot.change_seq.load(Ordering::Acquire),
+            factory: step.slot.topology.factory_id.to_string(),
+        },
         EnginePayload::Work { slot, items } => {
-            // The engine stamped `now` for event-time items; wall and logical
-            // clocks evaluate here, once per handout — the host never reads
-            // ambient time (or its own counters) for `ctx.now()`.
-            let clock = slot
-                .dispatcher
-                .host_facts()
-                .map(|f| f.clock)
-                .unwrap_or(HostClock::Wall);
-            let now_fallback = match clock {
-                HostClock::Logical => slot.change_seq.load(Ordering::Acquire),
-                _ => crate::util::wall_now_ms(),
-            };
+            let now_fallback = host_clock_now(slot);
             let schema_items = items
                 .iter()
                 .map(|work| match &work.item {
                     EntityItem::Input(payload) => {
-                        let host_payload = payload.value.downcast_ref::<HostPayload>();
+                        let (channel, bytes, metadata) =
+                            host_input_parts(payload.value.downcast_ref::<HostPayload>(), slot);
                         schema::WorkItem::Input(schema::InputItem {
-                            channel: host_payload
-                                .map(|p| p.channel)
-                                .unwrap_or_else(|| input_channel_of(slot)),
-                            payload: host_payload.map(|p| p.bytes.clone()).unwrap_or_default(),
-                            metadata: host_payload
-                                .map(|p| p.metadata.clone())
-                                .unwrap_or_default(),
+                            channel,
+                            payload: bytes,
+                            metadata,
                             consumed_offset: payload.consumed_offset,
                             replay: payload.replay,
                             now: work.now.unwrap_or(now_fallback),
@@ -1324,6 +1263,71 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
                 factory: slot.topology.factory_id.to_string(),
             }
         }
+    }
+}
+
+/// One bounded step as the host receives it: a stage batch is an ordinary
+/// `Work` activation (the driver's ladder and barriers stay driver-side, so the
+/// host runs exactly one attempt), an undo is a `CompensateRun`.
+fn bounded_step_kind(step: &crate::bounded::step::BoundedStep) -> schema::ActivationKind {
+    use crate::bounded::step::StepWork;
+    match &step.work {
+        StepWork::Items(items) => {
+            let now = host_clock_now(&step.slot);
+            schema::ActivationKind::Work(
+                items
+                    .iter()
+                    .map(|value| {
+                        let (channel, bytes, metadata) =
+                            host_input_parts(value.downcast_ref::<HostPayload>(), &step.slot);
+                        schema::WorkItem::Input(schema::InputItem {
+                            channel,
+                            payload: bytes,
+                            metadata,
+                            consumed_offset: None,
+                            replay: false,
+                            now,
+                        })
+                    })
+                    .collect(),
+            )
+        }
+        StepWork::Compensate(outputs) => schema::ActivationKind::CompensateRun {
+            outputs: outputs
+                .iter()
+                .filter_map(|value| value.downcast_ref::<HostPayload>())
+                .map(|payload| payload.bytes.clone())
+                .collect(),
+        },
+    }
+}
+
+/// The declared clock's value for one handout. The engine stamps `now` for
+/// event-time items; wall and logical clocks evaluate here, once per handout —
+/// the host never reads ambient time (or its own counters) for `ctx.now()`.
+fn host_clock_now(slot: &EntitySlot) -> u64 {
+    let clock = slot
+        .dispatcher
+        .host_facts()
+        .map(|f| f.clock)
+        .unwrap_or(HostClock::Wall);
+    match clock {
+        HostClock::Logical => slot.change_seq.load(Ordering::Acquire),
+        _ => crate::util::wall_now_ms(),
+    }
+}
+
+/// The channel, payload and metadata one item carries across. A value that is
+/// not a `HostPayload` cannot reach a host class — its codecs mint them — so
+/// the fallback is defensive: an empty payload on the entity's input channel,
+/// which the host's own decoder rejects as a work failure.
+fn host_input_parts(
+    payload: Option<&HostPayload>,
+    slot: &EntitySlot,
+) -> (u32, Vec<u8>, Vec<(String, String)>) {
+    match payload {
+        Some(p) => (p.channel, p.bytes.clone(), p.metadata.clone()),
+        None => (input_channel_of(slot), Vec::new(), Vec::new()),
     }
 }
 
@@ -1349,6 +1353,13 @@ pub fn apply_result(
             // entity gate and validates the outcome; this side only
             // rendezvous-routes.
             let _ = reply.send(result.outcome);
+            return Ok(());
+        }
+        EnginePayload::BoundedStep(step) => {
+            // A bounded stage step: its driver is parked at the barrier this
+            // answer feeds, so the fold happens here rather than on a thread
+            // waiting between the two.
+            crate::bounded::step::complete_bounded_step(step, result.outcome);
             return Ok(());
         }
         EnginePayload::Prepare(crossing) => {
@@ -1575,10 +1586,9 @@ fn resolve_item(
                         (Vec::new(), Vec::new(), None, !output_records.is_empty())
                     }
                 } else {
-                    let ship = !(changes.is_empty()
-                        && output_records.is_empty()
-                        && timers.is_empty())
-                        || dlq.is_some();
+                    let ship =
+                        !(changes.is_empty() && output_records.is_empty() && timers.is_empty())
+                            || dlq.is_some();
                     (changes, timers.clone(), consumed_offset, ship)
                 };
                 if ship {
@@ -1692,9 +1702,8 @@ fn park_channel_of(slot: &Arc<EntitySlot>) -> String {
 /// Live run-sugar bodies keyed by instance id — what the ABI's bounded
 /// session calls (`emit` / `recv` / `cancelled`) resolve against while the
 /// host runs the imperative body.
-static BOUNDED_SESSIONS: std::sync::LazyLock<
-    dashmap::DashMap<String, Arc<HostBoundedSession>>,
-> = std::sync::LazyLock::new(dashmap::DashMap::new);
+static BOUNDED_SESSIONS: std::sync::LazyLock<dashmap::DashMap<String, Arc<HostBoundedSession>>> =
+    std::sync::LazyLock::new(dashmap::DashMap::new);
 
 pub struct HostBoundedSession {
     cancel: Arc<std::sync::atomic::AtomicBool>,
@@ -1712,9 +1721,7 @@ pub fn bounded_session_recv(
         .get(instance_id)
         .map(|s| Arc::clone(s.value()))
         .ok_or_else(|| format!("no live bounded run body for instance `{instance_id}`"))?;
-    let inbox = {
-        session.inbox.lock_recover()
-    };
+    let inbox = { session.inbox.lock_recover() };
     match inbox.recv_timeout(timeout) {
         Ok(item) => Ok(Some(item.payload)),
         Err(crossbeam::channel::RecvTimeoutError::Timeout) => Ok(None),
@@ -1831,9 +1838,8 @@ pub struct PrepareCrossing {
     pub entries: Vec<StagedEntry>,
     /// A ladder's single-payload blocking re-crossing awaits here instead of
     /// the inline application path.
-    pub reply: Option<
-        crossbeam::channel::Sender<Vec<Result<schema::PrepareAnswer, schema::WorkError>>>,
-    >,
+    pub reply:
+        Option<crossbeam::channel::Sender<Vec<Result<schema::PrepareAnswer, schema::WorkError>>>>,
 }
 
 /// Cap per crossing, so one flood does not become one giant activation.
@@ -1841,10 +1847,7 @@ const PREPARE_BATCH_MAX: usize = 256;
 
 /// What an entry channel's consumers need resolved before enqueue:
 /// `(want_keys, want_event_time)`. `(false, false)` = no crossing.
-pub fn prepare_wants(
-    topology: &OperativeTopology,
-    channel: &ChannelDescriptor,
-) -> (bool, bool) {
+pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) -> (bool, bool) {
     let mut want_keys = false;
     let mut want_event_time = false;
     for edge in &channel.consumers {
@@ -2013,7 +2016,13 @@ fn apply_prepare_outcome(
             ),
         }
     }
-    finish_crossing(&instance, channel, want_keys, want_event_time, replay_resolved);
+    finish_crossing(
+        &instance,
+        channel,
+        want_keys,
+        want_event_time,
+        replay_resolved,
+    );
     Ok(())
 }
 
@@ -2069,16 +2078,14 @@ fn spawn_prepare_ladder(
             first_error.message,
             || {
                 let (tx, rx) = crossbeam::channel::bounded(1);
-                crate::poll_core::global().submit_direct(EnginePayload::Prepare(
-                    PrepareCrossing {
-                        instance: Arc::clone(&instance),
-                        channel: channel_id,
-                        want_keys,
-                        want_event_time,
-                        entries: vec![entry.clone()],
-                        reply: Some(tx),
-                    },
-                ));
+                crate::poll_core::global().submit_direct(EnginePayload::Prepare(PrepareCrossing {
+                    instance: Arc::clone(&instance),
+                    channel: channel_id,
+                    want_keys,
+                    want_event_time,
+                    entries: vec![entry.clone()],
+                    reply: Some(tx),
+                }));
                 let mut answers = rx
                     .recv_timeout(std::time::Duration::from_secs(30))
                     .map_err(|_| "prepare re-attempt not answered".to_string())?;
@@ -2146,7 +2153,8 @@ pub fn restore_fold_exclusive(
         terminal = terminal.max(record.seq);
         match record.header.get(9) {
             Some(&crate::header::FORMAT_ID_EFFECT_RECORD) => {
-                match postcard::from_bytes::<crate::flusher::EffectRecordBody>(record.change_bytes) {
+                match postcard::from_bytes::<crate::flusher::EffectRecordBody>(record.change_bytes)
+                {
                     Ok(body) => {
                         changes.extend(body.changes);
                         for op in &body.timers {
@@ -2154,7 +2162,9 @@ pub fn restore_fold_exclusive(
                         }
                     }
                     Err(e) => {
-                        errors.push(format!("restore_init_state: effect record decode error: {e}"));
+                        errors.push(format!(
+                            "restore_init_state: effect record decode error: {e}"
+                        ));
                         return None;
                     }
                 }
@@ -2222,10 +2232,7 @@ pub fn snapshot_frame_crossing(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, 
         );
     };
     flush(&mut slot.flush_buffer.lock_recover());
-    let seq = slot
-        .change_seq
-        .load(Ordering::Acquire)
-        .saturating_sub(1);
+    let seq = slot.change_seq.load(Ordering::Acquire).saturating_sub(1);
     // The snapshot body is the host's State alone; the timer ops the coming
     // truncation would delete are re-stated as a full set AFTER the seq is
     // read — landing at `snapshot_seq + 1`, which `truncate_up_to` keeps.
@@ -2247,8 +2254,12 @@ pub fn snapshot_frame_crossing(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, 
         _ => return Err("host answered with a non-snapshot outcome".to_string()),
     };
     let size = state.len();
-    let frame =
-        crate::flusher::build_entity_frame(&slot.entity_identity, seq, &header.stamp(&state), &state);
+    let frame = crate::flusher::build_entity_frame(
+        &slot.entity_identity,
+        seq,
+        &header.stamp(&state),
+        &state,
+    );
     Ok((frame, seq, size))
 }
 
@@ -2287,4 +2298,3 @@ pub fn apply_state_locked(slot: &Arc<EntitySlot>, value: &serde_json::Value) -> 
         _ => Err("host answered with a non-apply outcome".to_string()),
     }
 }
-

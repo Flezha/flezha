@@ -16,14 +16,12 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use flz_transport::service::payloader;
 
-use crate::channel::BuildEntityArgs;
-use crate::channel::ProcedureId;
+use crate::channel::{BuildEntityArgs, ProcedureId};
 use crate::entity::EntitySlot;
 use crate::flusher::EntityFlusher;
 use crate::operative::instance::UnboundedInstance;
 use crate::operative::topology::OperativeTopology;
 use crate::state_sink;
-use crate::work_stealing_pool::WorkStealingPool;
 
 const ENV_REAP_INTERVAL_MS: &str = "FLEZHA_REAP_INTERVAL_MS";
 const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
@@ -69,7 +67,6 @@ pub struct DynamicEntityRegistry {
     topology: Arc<OperativeTopology>,
     instance: Weak<UnboundedInstance>,
     instance_id: Arc<str>,
-    pool: Arc<WorkStealingPool>,
     persistence_enabled: bool,
 }
 
@@ -81,7 +78,6 @@ impl DynamicEntityRegistry {
         topology: Arc<OperativeTopology>,
         instance: Weak<UnboundedInstance>,
         instance_id: Arc<str>,
-        pool: Arc<WorkStealingPool>,
         persistence_enabled: bool,
     ) -> Self {
         Self {
@@ -93,7 +89,6 @@ impl DynamicEntityRegistry {
             topology,
             instance,
             instance_id,
-            pool,
             persistence_enabled,
         }
     }
@@ -212,7 +207,6 @@ impl DynamicEntityRegistry {
             entity_key: Some(key),
             entity_index: 0,
             persistence_enabled: self.persistence_enabled,
-            pool: Arc::clone(&self.pool),
         })
     }
 }

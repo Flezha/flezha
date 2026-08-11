@@ -652,7 +652,7 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 |-------|-------|
 | Direction | Controller -> SDK |
 | Proto message | `AddOperative { operative_id: string, factory_id: string, init_values: string, kind: string }` |
-| Behavior | SDK creates a new operative from the named factory. `kind` (empty ⇒ `"unbounded"`) selects the operative kind. For `"unbounded"`: an unbounded operative instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"bounded"`: a bounded operative instance whose `run(ctx, args)` is scheduled once on the work pool with `args = init_values`. |
+| Behavior | SDK creates a new operative from the named factory. `kind` (empty ⇒ `"unbounded"`) selects the operative kind. For `"unbounded"`: an unbounded operative instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"bounded"`: a bounded operative instance whose `run(ctx, args)` is scheduled once on its driver thread with `args = init_values`. |
 | Response status | `"success"` on success, `"error"` on failure |
 | Response raw_data | empty |
 | Possible errors | Factory not found (unbounded or bounded class); JSON parse failure; deserialization failure; unknown `kind` |
@@ -839,7 +839,7 @@ When the SDK receives a frame on a primary stream:
 3. Construct an `OperativeInput`:
    - `"1"` -> `Binary(message_bytes)`
    - `"2"` -> `Text(utf8_string(message_bytes))`
-4. Dispatch to the operative's `run()` method via the worker pool.
+4. Dispatch to the operative's `run()` method on a poll worker.
 
 ### Output Processing (Secondary Streams)
 

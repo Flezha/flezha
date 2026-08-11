@@ -55,8 +55,6 @@ pub mod state_sink;
 pub mod timer;
 #[doc(hidden)]
 pub mod util;
-#[doc(hidden)]
-pub mod work_stealing_pool;
 
 /// The controller↔runner protobuf command surface (prost-generated).
 pub mod pb {

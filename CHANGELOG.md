@@ -4,15 +4,34 @@
 
 ### Changed
 
+- **Bounded stage work runs on the SDK's workers, in both languages**
+  (`bounded-steps-through-sdk`). The bounded driver used to fan a stage out
+  onto a second, core-owned thread pool, and a Java step cost TWO threads: one
+  of those pool threads submitted the crossing and then blocked on the reply
+  while a Java thread ran the code. Both are gone. The driver now hands each
+  entity partition out as a **step activation** on the poll seam's direct
+  queue — a typed class runs it on its poll workers, a C-ABI host receives the
+  same ordinary `Work` (or `CompensateRun`) activation it already knew — and
+  collects the answers at the stage barrier it already owned. Every step
+  therefore costs exactly one thread, no core-owned thread runs or waits on
+  user code, and bounded work inherits the adaptive pool / virtual threads
+  from `sdk-owned-concurrency`. The entity-retry ladder moves with it: a step
+  runs ONE attempt and releases its worker, and the driver times the
+  re-submission at its barrier, so a backoff window no longer occupies a
+  worker (policy, classification, exhaustion, telemetry and stop
+  responsiveness are unchanged). `WorkStealingPool` and every handle threaded
+  through the tree are deleted — the change is a net deletion. No wire,
+  journal, persistence or authoring-API change; Java bytecode is untouched.
+
 - **Blocking user code no longer halts the runner** (`sdk-owned-concurrency`).
   The worker count used to be the limit on how many jobs could be underway:
   with the pool sized to CPU count, CPU-count slow calls (an LLM turn, a slow
   HTTP fetch) stopped everything else — not slowed, stopped. That limit now
   belongs to the core and is decoupled from any thread count: one process-wide
   cap on work activations underway (`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default
-  1024), enforced at handout and released on completion. Command activations
-  (restore folds, snapshot requests, bounded step crossings) stay exempt —
-  they are barrier-bounded by their own drivers. Each SDK then services that
+  1024), enforced at handout and released on completion. Direct activations
+  (restore folds, snapshot requests, bounded steps) stay exempt — they are
+  barrier-bounded by their own drivers. Each SDK then services that
   with whatever its runtime does best: **Rust** parks one supervisor thread in
   the core's new starvation wait (work queued, nobody inside `poll`) and grows
   its pool one thread at a time up to `FLEZHA_WORKER_POOL_MAX` (default 10×

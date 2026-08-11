@@ -41,6 +41,7 @@ pub mod driver;
 pub mod instance;
 pub mod registry;
 pub mod spec;
+pub mod step;
 
 use std::any::Any;
 use std::fmt;

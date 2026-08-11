@@ -30,11 +30,12 @@ activation, holds per-entity ordering, exclusivity, the retry ladder and
 durability, and caps how many work activations may be underway at once —
 `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default 1024, enforced at handout: at the
 cap `poll` blocks as if nothing were ready, and the completion that drops the
-count below it releases the next one. Command activations (restore folds,
-snapshot requests, bounded step crossings) are exempt — they are
-barrier-bounded by the drivers that enqueue them and answer a caller blocked
-on a rendezvous, so holding one behind capped entity work would deadlock that
-caller.
+count below it releases the next one. Direct activations (restore folds,
+snapshot requests, bounded steps) are exempt — they are barrier-bounded by the
+drivers that enqueue them and answer a caller blocked on a rendezvous or a
+stage barrier, so holding one behind capped entity work would deadlock that
+caller. They are also what a queued direct activation with no thread inside
+`poll` reports as starvation: a blocked driver must be able to buy a thread.
 
 **The SDK brings the threads**, with whatever its runtime does best. The
 count is a servicing detail, not a limit on concurrency — that limit is the
@@ -232,10 +233,13 @@ At runtime the full contract crosses the boundary:
   typed value and the extractor; the core holds neither).
 - **Bounded lifecycles run under poll**: a run-sugar body is one
   `BoundedRun` activation plus the session calls (`flz_core_bounded_emit` /
-  `_recv` / `_cancelled`); a structured chain's stage batches cross as work
-  activations from the driver's own seams (`run_collecting`), compensation
-  as `CompensateRun` — barriers, proc-journal, loop modes, suspension and
-  rewind are unchanged driver machinery.
+  `_recv` / `_cancelled`); a structured chain hands out one **step
+  activation** per entity partition — a `Work` batch, or `CompensateRun` for
+  an undo — and collects the answers at its stage barrier. Both language
+  paths take that route, so a step costs exactly one thread (the SDK's) and
+  no core thread waits on a host: the driver is the only waiter, and its
+  retry timing lives there too. Barriers, proc-journal, loop modes,
+  suspension and rewind are unchanged driver machinery.
 
 ### In-process residuals
 

@@ -74,3 +74,28 @@ is never retried).
 - **THEN** the failure SHALL be terminal with no platform retry
 </content>
 </invoke>
+
+### Requirement: A backoff wait holds no worker thread
+
+A retrying entity's backoff SHALL NOT occupy a worker thread: the step
+attempt runs to completion on an SDK worker, the worker is released, and the
+driver SHALL own the re-submission timing at its stage barrier. The retry
+policy (attempts, shared jittered exponential backoff), error classification,
+exhaustion behavior, per-attempt telemetry, and cancellation responsiveness
+(external stop / `max_duration` observed at the existing wake granularity)
+SHALL be unchanged.
+
+#### Scenario: Sibling stages proceed while an entity backs off
+
+- **WHEN** entity k2 of a parallel stage is waiting out a retry backoff while
+  unrelated activations are queued
+- **THEN** no worker thread SHALL be sleeping on k2's behalf, and the queued
+  activations SHALL be served by the workers that ran k2's failed attempt
+
+#### Scenario: Stop interrupts a driver-timed backoff
+
+- **WHEN** an external stop arrives while the driver is timing an entity's
+  backoff at its barrier
+- **THEN** the wait SHALL end promptly and the operative SHALL take the normal
+  abnormal-exit path, exactly as the pre-existing stop-interrupts-backoff
+  scenario pins

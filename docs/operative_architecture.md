@@ -106,7 +106,7 @@ Lifecycle: `flz operative start <id> <factory> --kind bounded` populates the opt
 `kind` field on the `AddOperative` wire message (empty ⇒ `:unbounded`, the
 default). The SDK holds a sealed unit registry (unbounded or bounded) resolved once
 per frame at the dispatch boundary; for a bounded operative it schedules the author's
-`BoundedOperative::run(ctx, args)` once on the work pool, with `args` taken from
+`BoundedOperative::run(ctx, args)` once on that instance's driver thread, with `args` taken from
 `init_values`. When `run` returns, the SDK emits a `BoundedCompleted`
 SDK→Controller control message; the controller drives **deregister-on-completion**
 through the normal stop/teardown path (`OperativeManager.stop_operative/2`), so a
@@ -146,7 +146,7 @@ Flezha.createRunner("my_app").defineBounded(GreetBounded.class).run();
 The Java runtime mirrors the Rust shape: a sealed `Operative` (provisional name)
 permits an unbounded instance or a bounded instance in one per-runner registry,
 resolved once per frame at `PrimaryStreamReader.dispatch`; an `AddOperative` whose
-`kind` resolves to `:bounded` schedules `BoundedOperative.run` once on the worker pool with
+`kind` resolves to `:bounded` schedules `BoundedOperative.run` once on its driver thread with
 `init_values` as `args`; `BoundedCtx.emit` writes an instance-id-keyed,
 empty-metadata frame on a secondary stream; and `BoundedCompleted` is emitted on
 the control stream byte-identically to the Rust SDK, so the controller drives a
@@ -460,7 +460,7 @@ The dispatch path is engineered to keep the per-message cost low:
      keyless return.
 3. **Mailbox push + counter + inflight CAS** — one `ArrayQueue::try_push`,
    one Relaxed `pushes_total` increment, and one atomic compare-exchange.
-   If the CAS wins, submit a drain task to the pool; otherwise an
+   If the CAS wins, schedule the entity's round on the poll core; otherwise an
    in-progress drain will pick up the new item via the missed-wake
    recovery loop. On a full mailbox the channel's declared
    `OverflowPolicy` (Block / DropNewest / DropOldest) decides what
@@ -514,7 +514,7 @@ Two per-Procedure knobs:
   WAL/snapshot are dropped (a fire-and-forget `delete_entity_state` to
   the controller), and a later input cold-starts fresh — no
   restore-from-disk. (Deliberate: keeps recreate off any blocking
-  controller round-trip that could stall a pool worker.)
+  controller round-trip that could stall a poll worker.)
 - `max_entities() -> usize` (default `100_000`) — soft cap. At the cap,
   new-key inputs are dropped (`inputs_dropped_capped_total`); existing keys
   are unaffected. Bounds memory against a runaway `.key_by`, not

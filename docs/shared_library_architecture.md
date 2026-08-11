@@ -89,8 +89,7 @@ by every SDK:
 | `routing.rs` | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
 | `flusher.rs`, `state_sink.rs`, `credit.rs`, `park.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable sink, credit windows, DLQ parks, late-input machinery, timers, restore payloads, record headers |
 | `fast.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, the 19 command handlers |
-| `bounded/` | The bounded driver, saga machinery, spec/DAG kernel |
-| `work_stealing_pool.rs` | Chase-Lev pool — bounded-driver stage tasks only |
+| `bounded/` | The bounded driver (lifecycle, DAG walk, commits, saga), `step.rs` (a stage's step activations + its retry barrier), the spec/DAG kernel |
 
 `flz_core_ffi` wraps the same engine in a C ABI (poll/complete, versioned
 schema negotiation) for non-Rust hosts. What stays per-language: the
@@ -112,9 +111,10 @@ head back to the engine's ladder).
 Sticky per-Entity ordering is preserved: batch assembly runs under the
 single-active-drainer gates, an entity with an outstanding activation is
 never handed out again until its completion, and the inflight flag closes
-the classic push-vs-empty race (see `flz_core/src/mailbox.rs`). The
-work-stealing pool still exists for bounded-driver stage tasks; unbounded
-dispatch no longer runs on it.
+the classic push-vs-empty race (see `flz_core/src/mailbox.rs`). Bounded
+stage work rides the same workers: the driver hands each entity partition
+out as a step activation and waits at its barrier, so the core owns no
+thread that runs user code.
 
 The coordinator thread handles only control-plane traffic
 (`HandleCommandAction`, `ReturnOperatives`, `Reconnect`); data-plane

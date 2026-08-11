@@ -81,13 +81,12 @@ pub enum EnginePayload {
         items: Vec<WorkItem>,
     },
     /// A host-participating command interaction (restore fold, snapshot
-    /// request, live-state read, apply-state, migration serialize) or a
-    /// bounded crossing (stage batch, compensation, run-sugar seed) queued
-    /// as a real activation for a C-ABI host. It carries no engine items;
-    /// its exclusivity is the caller's — the entity gate a command thread
-    /// holds inside [`PollCore::with_entity_exclusive`], or the bounded
-    /// driver's own stage serialization — and its completion answers the
-    /// enqueuer's rendezvous instead of releasing a slot.
+    /// request, live-state read, apply-state, migration serialize, run-sugar
+    /// seed) queued as a real activation for a C-ABI host. It carries no
+    /// engine items; its exclusivity is the caller's — the entity gate a
+    /// command thread holds inside [`PollCore::with_entity_exclusive`] — and
+    /// its completion answers the enqueuer's rendezvous instead of releasing
+    /// a slot.
     Command {
         target: crate::schema::EntityRef,
         change_seq: u64,
@@ -95,14 +94,20 @@ pub enum EnginePayload {
         kind: crate::schema::ActivationKind,
         reply: crossbeam::channel::Sender<crate::schema::ActivationOutcome>,
     },
+    /// One entity partition's share of a bounded stage (or of a saga undo).
+    /// Its exclusivity is the bounded driver's own stage serialization, and
+    /// its completion answers that driver's barrier; a typed class runs it in
+    /// process, a C-ABI host receives it as a `Work` / `CompensateRun`
+    /// activation.
+    BoundedStep(crate::bounded::step::BoundedStep),
     /// A batched prepare crossing for one entry channel — pre-keying work,
     /// bound to no entity yet.
     Prepare(crate::host::PrepareCrossing),
 }
 
 impl EngineActivation {
-    /// The work batch's slot. The typed poll workers and the engine tests
-    /// only ever see work activations.
+    /// The work batch's slot. Only a work activation is bound to a slot the
+    /// engine owns the gates of — a step carries its own.
     pub fn slot(&self) -> &Arc<EntitySlot> {
         match &self.payload {
             EnginePayload::Work { slot, .. } => slot,
@@ -110,7 +115,7 @@ impl EngineActivation {
         }
     }
 
-    /// The work batch's items (empty for command/prepare payloads).
+    /// The work batch's items (empty for every other payload).
     pub fn items(&self) -> &[WorkItem] {
         match &self.payload {
             EnginePayload::Work { items, .. } => items,
@@ -282,9 +287,10 @@ impl DeferredWake {
 
 pub struct PollCore {
     ready: Mutex<VecDeque<Arc<EntitySlot>>>,
-    /// Command activations for host classes, handed out ahead of `ready`.
-    /// Their entity gate is held by the enqueuing command thread, so handing
-    /// them out never races a work assembly for the same entity.
+    /// Command and bounded-step activations, handed out ahead of `ready`.
+    /// Their entity gate is held by the enqueuer — the command thread, or the
+    /// bounded driver serializing its own stages — so handing them out never
+    /// races a work assembly for the same entity.
     direct: Mutex<VecDeque<EngineActivation>>,
     cv: Condvar,
     shutting_down: AtomicBool,
@@ -407,7 +413,7 @@ impl PollCore {
             }
             // At the cap, entity work stays queued and pollers wait as if
             // `ready` were empty; the completion that drops the count below it
-            // notifies. Command activations were already served above — they
+            // notifies. Direct activations were already served above — they
             // are barrier-bounded by their own drivers, and holding one behind
             // blocked entity work would deadlock the driver waiting for it.
             while self.outstanding_count.load(Ordering::Acquire) < self.max_inflight {
@@ -431,11 +437,12 @@ impl PollCore {
     /// Park until the core observes starvation — runnable work with nobody
     /// left to run it — or `timeout` elapses.
     ///
-    /// Starvation is *stuck*, not *busy*. Queued entity work counts only once
-    /// it has sat for [`STARVATION_DWELL`] with **no thread entering `poll`
-    /// at all**: a saturated runner enters `poll` once per batch, i.e. orders
-    /// of magnitude more often, and answering that with more threads would
-    /// add contention to a runner that is merely working.
+    /// Starvation is *stuck*, not *busy*. Queued work — an entity round, or a
+    /// direct activation a driver is blocked on — counts only once it has sat
+    /// for [`STARVATION_DWELL`] with **no thread entering `poll` at all**: a
+    /// saturated runner enters `poll` once per batch, i.e. orders of magnitude
+    /// more often, and answering that with more threads would add contention
+    /// to a runner that is merely working.
     ///
     /// The core still calls no host code: this is the same
     /// bring-your-own-thread shape as `poll`, and a host that cannot starve
@@ -475,10 +482,8 @@ impl PollCore {
     /// restarts it.
     fn starving(&self, ready_empty: bool, now: Instant, held: &mut Option<(Instant, u64)>) -> bool {
         // Could a thread supplied now even take work? Not while one is
-        // already inside `poll`, nor at the cap.
-        if self.pollers_inside.load(Ordering::Acquire) > 0
-            || self.outstanding_count.load(Ordering::Acquire) >= self.max_inflight
-        {
+        // already inside `poll`.
+        if self.pollers_inside.load(Ordering::Acquire) > 0 {
             *held = None;
             return false;
         }
@@ -488,7 +493,12 @@ impl PollCore {
         if self.wakes.any_due(crate::util::wall_now_ms()) {
             return true;
         }
-        if ready_empty {
+        // A direct activation — a bounded step, a host crossing — is runnable
+        // whatever the cap says, and a driver is blocked on it; queued entity
+        // work at the cap is not runnable and is owed no thread.
+        let runnable = !self.direct.lock_recover().is_empty()
+            || (!ready_empty && self.outstanding_count.load(Ordering::Acquire) < self.max_inflight);
+        if !runnable {
             *held = None;
             return false;
         }
@@ -745,8 +755,8 @@ impl PollCore {
         }
     }
 
-    /// Queue a non-work payload (command interaction, prepare crossing) for
-    /// a host poller, ahead of the ready queue.
+    /// Queue a non-work payload (command interaction, bounded step, prepare
+    /// crossing) for a host worker, ahead of the ready queue.
     pub fn submit_direct(&self, payload: EnginePayload) -> u64 {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
         self.direct

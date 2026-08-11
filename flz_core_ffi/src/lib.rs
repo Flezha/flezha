@@ -404,7 +404,11 @@ pub unsafe extern "C" fn flz_core_spawn_bounded(
         return ctx.fail("spawn arguments are not valid UTF-8");
     };
     let payload = std::slice::from_raw_parts(payload, payload_len).to_vec();
-    let reference_id = format!("spawn-bounded-{}-{}", instance_id, flz_core::util::nonce_suffix());
+    let reference_id = format!(
+        "spawn-bounded-{}-{}",
+        instance_id,
+        flz_core::util::nonce_suffix()
+    );
     // Register before sending: the reply can then never arrive before its
     // waiter exists.
     let rx = flz_core::shutdown::register_pending_ack(reference_id.clone());

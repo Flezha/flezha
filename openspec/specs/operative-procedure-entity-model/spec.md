@@ -691,15 +691,26 @@ The producing Procedure's `Procedure.run` SHALL receive the exception via the no
 - **AND** the consumer fan-out for that emit SHALL have already completed
 
 ### Requirement: Worker pool reuses existing dispatch infrastructure
-The Runner pool SHALL be the existing Chase-Lev work-stealing pool implementation (`sdk/rust/src/runner/work_stealing_pool.rs`). The `FLEZHA_WORKER_POOL_SIZE` environment variable SHALL continue to control pool size, defaulting to `Runtime.availableOperatives()`. The per-Entity `inflight` CAS guard SHALL be the same mechanism the existing per-`OperativeSlot` guard uses.
+
+The Runner pool SHALL be the SDK's poll workers over the shared activation
+engine (`flz_core::poll_core`): one base set sized by `FLEZHA_WORKER_POOL_SIZE`
+(default: available parallelism), grown under starvation up to
+`FLEZHA_WORKER_POOL_MAX`. There SHALL be no second, core-owned pool — bounded
+stage work is handed out as step activations the same workers serve — and the
+per-Entity `inflight` CAS guard SHALL be the same mechanism the per-`EntitySlot`
+guard uses.
 
 #### Scenario: Default pool sizing
 - **WHEN** the SDK is started without `FLEZHA_WORKER_POOL_SIZE` set on a host with 8 cores
-- **THEN** the runner pool SHALL contain 8 OS threads
+- **THEN** the runner pool SHALL start 8 OS threads
 
 #### Scenario: Env override honored
 - **WHEN** `FLEZHA_WORKER_POOL_SIZE=4` is set on a host with 8 cores
-- **THEN** the runner pool SHALL contain exactly 4 OS threads
+- **THEN** the runner pool SHALL start exactly 4 OS threads
+
+#### Scenario: One worker set serves both operative profiles
+- **WHEN** a bounded operative runs a stage while unbounded entities are being dispatched
+- **THEN** both SHALL be served by the same workers, and no core-owned thread SHALL run user code
 
 ### Requirement: No coexistence with OperativeHandler API
 The `OperativeHandler` trait, `OperativeResult` enum, `OperativeRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `UnboundedOperative` / `Procedure` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.

@@ -24,15 +24,14 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-pub use crate::header::RestoreError;
-pub use crate::restore::RestoreInitPayload;
 use crossbeam::sync::{Parker, Unparker};
 use flz_transport::transport::FlezhaStream;
 
 use crate::channel::ProcedureId;
+pub use crate::header::RestoreError;
 use crate::mailbox::Mailbox;
+pub use crate::restore::RestoreInitPayload;
 use crate::util::LockRecover;
-use crate::work_stealing_pool::WorkStealingPool;
 
 /// Erased payload moving through the inter-procedure mailbox. The `value`
 /// is `Arc<dyn Any + Send + Sync>` (the consumer downcasts to its own
@@ -243,20 +242,19 @@ pub struct EntitySlot {
     pub dispatcher: Arc<dyn ProcedureDispatcher>,
     pub procedure_id: ProcedureId,
     pub entity_key: Option<Arc<str>>,
-    pub pool: Arc<WorkStealingPool>,
     pub instance: Weak<crate::operative::instance::UnboundedInstance>,
     pub topology: Arc<crate::operative::topology::OperativeTopology>,
     /// FIFO wait list for `Block`-policy producers parked on a full
     /// mailbox. Drained one entry at a time by `drain_entity` after
     /// every successful pop.
     pub block_parker: BlockParker,
-    /// Single-ACTIVE-drainer gate. `mailbox`'s inflight flag means "a drain
-    /// is scheduled or running" (it is held by a queued pool task that may
-    /// not be running yet); this flag is true only while a thread is inside
-    /// `drain_entity`'s pop loop. Block-policy producers use it to drain
-    /// a full slot inline instead of parking — a parked pool worker can be
-    /// the only thread able to run the slot's queued drain task, which is a
-    /// permanent self-deadlock on a one-worker pool.
+    /// Single-ACTIVE-drainer gate. `mailbox`'s inflight flag means "a round is
+    /// scheduled or running" (it is held from the moment the slot is queued on
+    /// the poll core, before any worker takes it); this flag is true only while
+    /// a thread holds the handed-out activation. Block-policy producers use it
+    /// to drain a full slot inline instead of parking — a parked worker can be
+    /// the only thread able to serve the slot's queued round, which is a
+    /// permanent self-deadlock on a one-worker host.
     pub drain_active: AtomicBool,
     /// Per-Entity flush buffer holding `Vec<S::Change>` behind the
     /// type-erased `FlushableBuffer` trait object. The dispatcher locks
@@ -702,7 +700,6 @@ pub fn assemble_slot(
         dispatcher,
         procedure_id: args.procedure_id,
         entity_key: args.entity_key.map(Arc::from),
-        pool: args.pool,
         instance: args.instance,
         topology: args.topology,
         block_parker: BlockParker::new(),

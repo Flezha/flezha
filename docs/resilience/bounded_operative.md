@@ -75,8 +75,19 @@ it has its commit acknowledged — the existing rule, of which a join is just th
 several-producer case. Validation orders procedures with a Kahn topological
 sort (for a tree this is exactly the former BFS numbering, so journaled
 `proc_idx` values keep their meaning), every currently-runnable node is submitted
-to the work-stealing pool **together** — sibling branches are independent, so
-they interleave freely — and joined on one barrier before the level commits.
+**together** — one step activation per entity partition, sibling branches are
+independent, so they interleave freely — and joined on one barrier before the
+level commits.
+
+**Where a stage runs.** A step is an activation the SDK's own workers pick up
+(`flz-poll-*` threads in Rust, virtual threads in Java), never a core-owned
+thread, in both languages: the driver submits on the poll core's direct queue —
+served ahead of entity work and exempt from the jobs-underway cap, so the work
+a driver is blocked on is never queued behind work that blocks — and collects
+the answers at the barrier it already owns. A Java step therefore costs ONE
+thread, not the two it used to (a core thread parked on the crossing plus the
+Java thread running it).
+
 The operative is `ok` exactly when every **leaf** procedure has committed; the
 controller derives the same fact from the journal, because the SDK declares its
 leaf set at `AddOperative`.
@@ -231,6 +242,13 @@ procedure, and the original error then takes the unchanged abnormal path below
   procedure's `ProcCommit`, so a committed procedure is never retried; a crash
   mid-ladder converges on normal crash-resume of the uncommitted procedure (the
   in-memory attempt counter resets).
+- **The backoff holds no worker.** A step activation runs ONE attempt and
+  releases the worker that ran it; the ladder — attempt count, next-attempt
+  time, the failure it is climbing away from — lives on the driver, which times
+  the re-submission at the barrier it is already blocked on (waking at the same
+  ≤200 ms granularity, so an external stop or `max_duration` still cuts a wait
+  short and takes the abnormal path). Nothing sleeps on the SDK's threads, so a
+  stage whose entities outnumber the workers backs them all off at once.
 - **Observability.** Each retry logs `instance / procedure / entity / attempt /
   delay` and bumps the same retry counter the unbounded ladder feeds (shipped in
   `data_heartbeat` metadata), so flapping is visible before it escalates.

@@ -71,9 +71,11 @@ cargo bench --bench correctness -p flezha_runner \
 cargo bench --bench correctness -p flezha_runner \
   --features bench-internals -- throughput_static_fanout
 
-# Criterion mirrors of the mix-bench shapes (host-detected pool size).
+# Criterion mirrors of the mix-bench shapes. The SDK's worker pool is
+# process-global and sized once, so a run measures one size — sweep by
+# re-running under different values.
 cargo bench --bench dispatch -p flezha_runner --features bench-internals
-FLEZHA_BENCH_POOL_SIZES=1,8 cargo bench --bench dispatch \
+FLEZHA_WORKER_POOL_SIZE=1 cargo bench --bench dispatch \
   -p flezha_runner --features bench-internals
 ```
 
@@ -161,6 +163,6 @@ those paths is one Relaxed `last_activity_at` store per push).
 
 ## See also
 
-- `docs/operative_architecture.md` — dispatch hot path, entity mailboxes, work-stealing pool.
+- `docs/operative_architecture.md` — dispatch hot path, entity mailboxes, poll workers.
 - `docs/sdk_protocol_spec.md` — wire format that `mix bench` exercises.
 - `openspec/specs/rust-sdk-dispatch/spec.md` — the spec the floor closes.

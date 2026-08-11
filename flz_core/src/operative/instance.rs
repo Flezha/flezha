@@ -10,7 +10,6 @@ use crate::dynamic::{spawn_reaper, DynamicEntityRegistry};
 use crate::entity::EntitySlot;
 use crate::operative::topology::{EntityMode, OperativeTopology};
 use crate::persistence::resolve_persistence_enabled;
-use crate::work_stealing_pool::WorkStealingPool;
 
 pub struct UnboundedInstance {
     pub topology: Arc<OperativeTopology>,
@@ -47,12 +46,8 @@ impl UnboundedInstance {
     /// Construct a fresh `UnboundedInstance` with no runner persistence
     /// override. Equivalent to
     /// `UnboundedInstance::with_persistence_override(.., None)`.
-    pub fn new(
-        topology: Arc<OperativeTopology>,
-        instance_id: Arc<str>,
-        pool: Arc<WorkStealingPool>,
-    ) -> Arc<Self> {
-        Self::with_persistence_override(topology, instance_id, pool, None)
+    pub fn new(topology: Arc<OperativeTopology>, instance_id: Arc<str>) -> Arc<Self> {
+        Self::with_persistence_override(topology, instance_id, None)
     }
 
     /// Construct a fresh `UnboundedInstance` with an explicit runner
@@ -61,7 +56,6 @@ impl UnboundedInstance {
     pub fn with_persistence_override(
         topology: Arc<OperativeTopology>,
         instance_id: Arc<str>,
-        pool: Arc<WorkStealingPool>,
         operator_override: Option<bool>,
     ) -> Arc<Self> {
         let persistence_enabled =
@@ -87,7 +81,6 @@ impl UnboundedInstance {
                         Arc::clone(&topology),
                         Weak::clone(weak),
                         Arc::clone(&instance_id),
-                        Arc::clone(&pool),
                         persistence_enabled,
                     ))));
                 } else if procedure_desc.entity_keys.is_empty() {
@@ -99,7 +92,6 @@ impl UnboundedInstance {
                         entity_key: None,
                         entity_index: 0,
                         persistence_enabled,
-                        pool: Arc::clone(&pool),
                     });
                     entities.push(vec![slot]);
                     entity_key_to_idx.push(HashMap::new());
@@ -116,7 +108,6 @@ impl UnboundedInstance {
                             entity_key: Some(key),
                             entity_index: idx,
                             persistence_enabled,
-                            pool: Arc::clone(&pool),
                         });
                         slots.push(slot);
                         key_map.insert(*key, idx);
