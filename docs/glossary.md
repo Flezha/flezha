@@ -145,9 +145,9 @@ contains Entities.**
   **Entity**, so it can act because time passed rather than because an input
   arrived. Two kinds: an **event-time** timer fires when that Entity's
   event-time high-water crosses it (so an Entity nothing arrives at never fires
-  one), and a **processing-time** timer fires from the Operative's timer wheel
-  onto the Entity's own mailbox (so it *is* the answer to "nothing has
-  arrived"). `on_timer` receives the **scheduled** timestamp, never the wall
+  one), and a **processing-time** timer fires off the poll core's shared
+  deferred-wake list onto the Entity's own mailbox (so it *is* the answer to
+  "nothing has arrived"). `on_timer` receives the **scheduled** timestamp, never the wall
   clock at firing, which is what keeps it inside the determinism contract. The
   pending set is folded state — registration, cancellation and firing are each
   durable records in the Entity's change log — so a crash-resume owes exactly

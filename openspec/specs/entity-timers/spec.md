@@ -89,11 +89,14 @@ event-time timer.
 
 ### Requirement: Processing-time timers SHALL fire onto the Entity's mailbox
 
-A processing-time timer SHALL be tracked by one timer wheel per Operative and, on
-expiry, SHALL be enqueued onto the target Entity's existing mailbox. `on_timer`
-SHALL therefore never run concurrently with `run` on the same Entity, and firing
-SHALL obey the same ordering and back-pressure the mailbox already applies to
-inputs.
+A processing-time timer SHALL be tracked on the poll core's shared
+deferred-wake list — one list per process, serviced by threads already waiting
+in `poll` — and, on expiry, SHALL be enqueued onto the target Entity's existing
+mailbox. No per-Operative timer thread SHALL exist. `on_timer` SHALL therefore
+never run concurrently with `run` on the same Entity, and firing SHALL obey the
+same ordering and back-pressure the mailbox already applies to inputs. Due
+entries SHALL fire in ascending scheduled order, ties broken by Entity
+identity.
 
 #### Scenario: Firing is serialized against run
 
@@ -104,6 +107,20 @@ inputs.
 
 - **WHEN** an Operative restarts and an Entity's restored pending set contains a processing-time timer whose scheduled time has already passed
 - **THEN** it SHALL fire immediately after restore, in ascending scheduled order relative to other due timers
+
+#### Scenario: An Operative that uses timers costs no thread
+
+- **WHEN** an Operative registers processing-time timers across many Entities
+- **THEN** no thread SHALL be created on its behalf; its due firings SHALL be
+  promoted by whichever thread next enters or wakes inside `poll`, and
+  `fired_at` SHALL remain the scheduled timestamp regardless of promotion delay
+
+#### Scenario: Instance scoping survives the shared list
+
+- **WHEN** two Operative instances each arm a timer with the same procedure id,
+  entity key, and scheduled time, and one instance cancels its timer
+- **THEN** only that instance's timer SHALL be disarmed and the other SHALL
+  fire on schedule
 
 ### Requirement: Pending timers SHALL be durable state, requiring no new store
 

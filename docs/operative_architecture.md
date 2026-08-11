@@ -534,20 +534,20 @@ that input is dispatched — closing a window after the record that belongs to
 the next one would be wrong. It follows that an Entity nothing arrives at never
 fires one: nothing advances its clock.
 
-**Processing time** rides one **timer wheel per Operative**, keyed
-`(procedure, entity_key, scheduled_at)`. On expiry the wheel does not invoke
+**Processing time** rides the poll core's **shared deferred-wake list**, keyed
+`(scheduled_at, entity identity)`. On expiry the promotion does not invoke
 `on_timer`; it pushes a timer item onto the target Entity's **existing
 mailbox**. So a firing obeys the same FIFO ordering, the same overflow policy
 and the same single-active-drainer exclusion an input does, and `on_timer` can
 never run concurrently with `run` on one Entity — with no second lock and no
-second concurrency model. The wheel's thread is created on the first
-processing-time registration, so an Operative that never uses one never pays
-for it.
+second concurrency model. The list owns no thread: due entries are promoted by
+whichever poll worker next enters or wakes, so an Operative's timers cost no
+thread however many Entities they span.
 
 The pending set is folded state, mutated under the Entity's state lock and
 rebuilt by the ordinary change-log fold on restore; the restore re-arms the
-wheel, and anything already past its deadline fires at once, ascending. Dynamic
-eviction discards an Entity's timers with its state — the wheel entry holds a
+list, and anything already past its deadline fires at once, ascending. Dynamic
+eviction discards an Entity's timers with its state — the list entry holds a
 weak reference and the reaper drops it eagerly. Full contract in
 [`entity_timers.md`](entity_timers.md).
 

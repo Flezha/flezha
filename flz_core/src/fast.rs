@@ -478,9 +478,9 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
         "restore_discarded_inputs".to_string(),
         crate::entity::restore_discarded_inputs().to_string(),
     );
-    // Wheel occupancy: a runaway registration shows here long before it is
-    // fatal, and a `timers_fired` that stops moving while `timers_armed`
-    // climbs is the wheel wedged rather than the Operative idle.
+    // Wake-list occupancy: a runaway registration shows here long before it
+    // is fatal, and a `timers_fired` that stops moving while `timers_armed`
+    // climbs is promotion wedged rather than the Operative idle.
     metadata.insert(
         "timers_armed".to_string(),
         crate::timer::timers_armed().to_string(),

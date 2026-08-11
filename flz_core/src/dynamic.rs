@@ -165,15 +165,8 @@ impl DynamicEntityRegistry {
             }
             // Eviction is destructive and a recreate cold-starts, so the
             // Entity's timers go with its state. Dropping them here releases
-            // the wheel memory now instead of at each deadline.
-            if let Some(wheel) = slot
-                .instance
-                .upgrade()
-                .as_ref()
-                .and_then(|i| i.timer_wheel_if_started())
-            {
-                wheel.discard_entity(self.procedure_id, &key);
-            }
+            // the wake-list memory now instead of at each deadline.
+            crate::poll_core::global().discard_entity_timers(&slot.entity_identity);
             if slot.persistence_enabled {
                 send_delete_entity_state(&slot.entity_identity);
             }

@@ -74,6 +74,29 @@ parks the payload through the existing DLQ path, and a park closes the
 checkpoint interval. Attempt counts and `RETRIES_TOTAL` ride the existing
 telemetry.
 
+**The backoff blocks no thread.** Reporting the failure returns the
+completing thread immediately; the entity's exclusivity gates stay held
+across the window — nothing else could drain it during a backoff anyway —
+and the release-then-reclaim runs when the delay comes due. That matters
+under correlated failure: with workers sized to the CPU count, a backoff
+that slept the completing worker would, when a shared dependency goes down,
+put every worker to sleep and stop work that would have succeeded. Shutdown
+is not delayed either — there is no sleep left to run out.
+
+## The deferred-wake list
+
+One ordered list answers "do something with this entity at time T": retry
+backoffs, and processing-time timer deadlines (`entity-timers`). It owns
+**no thread**. Entries are promoted by whichever thread next enters or
+wakes inside `poll` — with no lock held, since a firing enqueues under the
+`Block` policy and may drain a saturated consumer inline — and the nearest
+entry shortens the poller wait. Recording one notifies blocked pollers so
+they re-compute that wait.
+
+The trade is that promotion needs a thread in `poll`: with every worker
+inside user code, a due entry waits for the first one to come back. It
+could not have *run* earlier than that in any case.
+
 ## Producer-side transforms and keys (D4)
 
 Consumer-edge transform chains and `key_by` evaluate on the producing side

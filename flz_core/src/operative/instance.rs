@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 
 use crate::channel::BuildEntityArgs;
@@ -10,7 +10,6 @@ use crate::dynamic::{spawn_reaper, DynamicEntityRegistry};
 use crate::entity::EntitySlot;
 use crate::operative::topology::{EntityMode, OperativeTopology};
 use crate::persistence::resolve_persistence_enabled;
-use crate::timer::{spawn_wheel, TimerWheel};
 use crate::work_stealing_pool::WorkStealingPool;
 
 pub struct UnboundedInstance {
@@ -28,14 +27,10 @@ pub struct UnboundedInstance {
     /// the lazily-populated entity map + reaper-facing counters.
     pub dynamic_registries: Vec<Option<Arc<DynamicEntityRegistry>>>,
     /// Stop flag + join handles for this instance's background threads: one
-    /// reaper per dynamic Procedure with a TTL, plus the timer wheel once
-    /// something arms a processing-time timer. Driven by
+    /// reaper per dynamic Procedure with a TTL. Driven by
     /// [`Self::shutdown_background_threads`] / `Drop`.
     background_stop: Arc<AtomicBool>,
     background_handles: Mutex<Vec<JoinHandle<()>>>,
-    /// Processing-time timer wheel, created on the first registration. An
-    /// Operative that never uses one never pays for a thread.
-    timer_wheel: OnceLock<Arc<TimerWheel>>,
     /// Per-entry-channel staging for the host prepare crossing (C-ABI
     /// classes whose consumers need keys/event times before enqueue).
     /// Lazily populated; typed classes never touch it.
@@ -158,7 +153,6 @@ impl UnboundedInstance {
                 dynamic_registries,
                 background_stop,
                 background_handles: Mutex::new(background_handles),
-                timer_wheel: OnceLock::new(),
                 persistence_enabled,
             }
         })
@@ -170,31 +164,9 @@ impl UnboundedInstance {
         self.persistence_enabled
     }
 
-    /// This instance's processing-time timer wheel, spawning its thread on the
-    /// first call. One wheel per Operative: it keys entries by
-    /// `(procedure, entity_key, scheduled_at)`, so one thread serves every
-    /// Entity the instance owns.
-    pub fn timer_wheel(&self) -> Arc<TimerWheel> {
-        Arc::clone(self.timer_wheel.get_or_init(|| {
-            let wheel = TimerWheel::new();
-            self.background_handles
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .push(spawn_wheel(Arc::clone(&wheel)));
-            wheel
-        }))
-    }
-
-    /// The wheel if one exists. For callers that only ever REMOVE entries —
-    /// creating a wheel (and its thread) to drop timers that cannot exist
-    /// would be backwards.
-    pub fn timer_wheel_if_started(&self) -> Option<&Arc<TimerWheel>> {
-        self.timer_wheel.get()
-    }
-
-    /// Stop and join this instance's background threads (reapers + the timer
-    /// wheel). Called by `RunnerNode::stop_operative`; idempotent and a no-op
-    /// for an instance that started none.
+    /// Stop and join this instance's background threads (the dynamic-mode
+    /// reapers). Called by `RunnerNode::stop_operative`; idempotent and a
+    /// no-op for an instance that started none.
     pub fn shutdown_background_threads(&self) {
         self.signal_background_stop();
         let handles = std::mem::take(
@@ -208,14 +180,10 @@ impl UnboundedInstance {
         }
     }
 
-    /// Ask every background thread to wind down. The wheel parks on a condvar
-    /// rather than a sleep, so it needs the signal as well as the flag.
+    /// Ask every background thread to wind down.
     fn signal_background_stop(&self) {
         self.background_stop
             .store(true, std::sync::atomic::Ordering::Release);
-        if let Some(wheel) = self.timer_wheel.get() {
-            wheel.stop();
-        }
     }
 }
 

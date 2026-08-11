@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed
+
+- **Neither a retry backoff nor a processing-time timer holds a thread**
+  (`sdk-deferred-wake`). One deferred-wake list inside the poll core now
+  answers "do something with this entity at time T", serviced by the threads
+  already waiting in `poll` — no thread of its own. A retryable failure
+  records its backoff and returns the completing worker immediately (it used
+  to sleep there, so a dependency outage that failed every entity could put
+  every worker to sleep at once, and the sleep also delayed shutdown); the
+  entity's exclusivity gates stay held across the window, so ordering and the
+  head-of-line holdback are unchanged. The per-Operative timer wheel thread is
+  deleted: an Operative registering timers across any number of Entities now
+  costs no thread. Firing semantics are unchanged — onto the Entity's mailbox,
+  serialized against `run`, ascending scheduled order, `fired_at` still the
+  scheduled timestamp — except that a deadline passing while every worker is
+  inside user code is promoted when the first one re-polls. Both SDKs get this
+  from the shared core; no wire, controller or API change.
+
 ### Added
 
 - **Every controller node is a valid entry point for every namespace command**

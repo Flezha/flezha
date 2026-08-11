@@ -167,3 +167,38 @@ expressible with no journal and no barriers.
 #### Scenario: A structured chain's barrier waits for the host and the ack
 - **WHEN** a durable structured bounded host class finishes a stage's activations
 - **THEN** the driver SHALL commit the proc boundary only after every entity's completion arrived AND the controller acked `ProcCommit`, and a crash-resume SHALL skip journaled procs exactly as the typed suites pin
+
+### Requirement: Deferred wakes never hold a thread
+
+The core SHALL maintain one deferred-wake list — "this entity becomes eligible
+at time T" — serviced by threads already waiting in `poll` and checked on every
+`poll` entry. Recording a deferred wake SHALL return the calling thread
+immediately. A retryable failure's backoff SHALL be expressed as a deferred
+wake: the failed head and unprocessed tail ride the existing per-entity
+holdback, the entity's exclusivity gates stay held across the window exactly as
+they are across an in-line backoff, and the release-then-reclaim runs when the
+entry comes due. No thread SHALL sleep out a backoff delay, and no dedicated
+thread SHALL exist to service the list.
+
+#### Scenario: Correlated failure does not stall the runner
+
+- **WHEN** every entity's activation is failing retryably (a shared dependency
+  is down) on a runner whose worker count equals the CPU count
+- **THEN** workers SHALL remain available to poll and run activations for
+  entities whose work would succeed, and each failing entity SHALL be re-handed
+  no earlier than its backoff due time
+
+#### Scenario: Backoff preserves ordering and the holdback contract
+
+- **WHEN** a retryable failure defers an entity with a failed head and an
+  unprocessed tail
+- **THEN** the next activation for that entity SHALL begin with the held-back
+  items in their original order, ahead of anything that arrived during the
+  backoff window, and no other thread SHALL drain that entity before the due
+  time
+
+#### Scenario: Shutdown is not delayed by backoff
+
+- **WHEN** shutdown begins while deferred wakes are pending
+- **THEN** pollers SHALL observe shutdown immediately, with no backoff sleep
+  left to run out

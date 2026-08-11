@@ -114,13 +114,20 @@ every pending event-time timer at or below it fires in ascending order,
 **before** that input is dispatched. Closing a window after the record that
 belongs to the next one would be wrong, so the ordering is part of the contract.
 
-**Processing time** — one timer wheel per Operative, keyed
-`(procedure, entity_key, scheduled_at)`. On expiry it pushes a timer item onto
+**Processing time** — an entry on the poll core's shared **deferred-wake list**,
+keyed `(scheduled_at, entity identity)`. On expiry it pushes a timer item onto
 the target Entity's existing **mailbox**, so `on_timer` can never run
 concurrently with `run` on the same Entity: the single-active-drainer gate that
-already serializes inputs serializes firings too, with no second lock. The wheel
-thread is created on the first processing-time registration, so an Operative
-that never uses one never pays for it.
+already serializes inputs serializes firings too, with no second lock. Due
+entries fire in ascending scheduled order, ties broken by Entity identity.
+
+There is **no timer thread**. The list is serviced by whichever thread next
+enters or wakes inside `PollCore::poll` — the same pollers that hand out
+activations — and the nearest entry shortens their wait. An Operative that
+registers timers therefore costs no thread at all, however many Entities it
+spreads them across. The cost is that a firing whose deadline passes while
+every worker is inside user code is promoted when the first one re-polls; the
+scheduled timestamp it reports is unaffected (see Limits).
 
 ## Durability: timers are folded state
 
@@ -190,10 +197,11 @@ memory multiplied by an unbounded Entity count.
 
 Per-Procedure counters track pending timers, registrations, firings,
 cancellations and refusals. Every `data_heartbeat` frame carries `timers_armed`
-(wheel occupancy across the process) and `timers_fired` beside the existing
-`dispatches` / `blocked_parks`, so a runaway registration is visible before it
-is fatal and a `timers_fired` that stops moving while `timers_armed` climbs
-reads as the wheel wedged rather than the Operative idle.
+(processing-time entries on the wake list, across the process) and
+`timers_fired` beside the existing `dispatches` / `blocked_parks`, so a runaway
+registration is visible before it is fatal and a `timers_fired` that stops
+moving while `timers_armed` climbs reads as promotion wedged rather than the
+Operative idle.
 
 ## Limits
 
@@ -212,24 +220,26 @@ reads as the wheel wedged rather than the Operative idle.
   session, so the refusal is structural.
 - **Resolution is milliseconds.** Sub-millisecond scheduling is a non-goal.
 - **A firing during a restore backlog can run well after its scheduled time.**
-  `fired_at` still reports the scheduled time, so behaviour is unchanged; the
-  lateness is observable in metrics, not in the callback.
+  So can one whose deadline passes while every poll worker is inside user code,
+  since promotion needs a thread in `poll`. `fired_at` still reports the
+  scheduled time, so behaviour is unchanged; the lateness is observable in
+  metrics, not in the callback.
 
 ## Where the code lives
 
 - Rust: `flz_core/src/timer.rs` (the pending set, its ops, the policy, the
-  session, the wheel, and the `apply_ops` / `rearm_restored` arming seam;
-  the typed `timer_policy_for::<S>()` wrapper sits in
-  `sdk/rust/src/entity/timer.rs`), `procedure/ctx.rs` (the surface),
-  `procedure/mod.rs` (`on_timer`), `flz_core/src/poll_core.rs` (the
-  event-time trigger, at batch assembly),
+  session, and the `apply_ops` / `rearm_restored` arming seam; the typed
+  `timer_policy_for::<S>()` wrapper sits in `sdk/rust/src/entity/timer.rs`),
+  `procedure/ctx.rs` (the surface), `procedure/mod.rs` (`on_timer`),
+  `flz_core/src/poll_core.rs` (both triggers: the event-time one at batch
+  assembly, the processing-time one on the deferred-wake list),
   `sdk/rust/src/operative/dispatcher.rs` (`invoke_once`),
   `sdk/rust/src/entity/restore.rs` (the typed fold).
 - Java: `runtime/state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`,
-  `runtime/entity/{TimerWheel,TimerCounters}.java`,
-  `procedure/ProcedureCtx.java`, `procedure/Procedure.java`,
-  `runtime/worker/ProcedureDispatcher.java`,
-  `runtime/state/EntityStateRestore.java`.
+  `runtime/entity/TimerCounters.java`, `procedure/ProcedureCtx.java`,
+  `procedure/Procedure.java`, `runtime/worker/ProcedureDispatcher.java`,
+  `runtime/state/EntityStateRestore.java`. Arming goes through the shared core
+  — the Java host has no timer thread of its own either.
 - Controller: `Flezha.State.Wire` decodes the effect record's `timers` field.
   Nothing else changes — a firing reaches it as an ordinary effect record with
   a nil consumed offset.

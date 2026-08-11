@@ -22,14 +22,21 @@
 //! block in [`PollCore::poll`] and answer with completions. A host may also
 //! serve one slot inline (`try_assemble` + complete), which is how a
 //! Block-policy producer drains a full consumer on its own thread.
+//!
+//! It also owns the one answer to "do something with this entity at time T":
+//! the [`DeferredWake`] list, holding retry backoffs and processing-time timer
+//! deadlines. No thread waits out either — the list is serviced by whichever
+//! poller next enters or wakes, and its nearest entry shortens that wait.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
+use flz_transport::transport::FlezhaStream;
 
+use crate::channel::OverflowPolicy;
 use crate::correction::Lateness;
 use crate::entity::{EntityItem, EntityPayload, EntitySlot};
 use crate::timer::{TimerFire, TimerKind};
@@ -119,6 +126,136 @@ pub enum Polled {
     ShuttingDown,
 }
 
+/// A deferred wake's place in the list: due time first, then a total
+/// tie-break so entries due at the same instant have a reproducible order.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct WakeKey {
+    due_at_ms: u64,
+    tiebreak: WakeTiebreak,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum WakeTiebreak {
+    /// The Entity's identity. It is also what makes arming
+    /// `(entity, scheduled_at)` an idempotent replace — pending timers are a
+    /// set — and, because the identity carries the owning instance's id, two
+    /// instances sharing a numeric `ProcedureId` cannot disarm each other's
+    /// timers.
+    Timer(Arc<Vec<u8>>),
+    /// Recording order. A slot's gates stay held across its backoff window,
+    /// so a second retry for the same entity cannot exist; a plain sequence
+    /// says so without a key collision able to drop an owed re-arm.
+    Retry(u64),
+}
+
+enum Wake {
+    /// Finish a deferred re-arm: the slot's holdback is already filled and
+    /// both its gates are still held.
+    Retry(Arc<EntitySlot>),
+    /// A processing-time deadline. `Weak` so an idle-evicted Entity's timers
+    /// die with it: the upgrade fails and the firing is dropped, which is the
+    /// D6 contract. The stream is the one captured at arming, so `on_timer`'s
+    /// plugin emits leave on the same connection an input's would.
+    Timer {
+        slot: Weak<EntitySlot>,
+        stream: Arc<FlezhaStream>,
+    },
+}
+
+/// The core's one deferred-wake list. It owns no thread: entries are promoted
+/// by whichever thread next enters or wakes inside [`PollCore::poll`], and
+/// recording one returns the recorder immediately.
+struct DeferredWake {
+    entries: Mutex<BTreeMap<WakeKey, Wake>>,
+    /// Due time of the earliest entry, `u64::MAX` when empty. Maintained
+    /// under `entries`' lock so the poll path decides "nothing is due" with
+    /// one relaxed load instead of taking the lock per activation.
+    earliest: AtomicU64,
+}
+
+impl DeferredWake {
+    fn new() -> Self {
+        Self {
+            entries: Mutex::new(BTreeMap::new()),
+            earliest: AtomicU64::new(u64::MAX),
+        }
+    }
+
+    /// Insert one entry, replacing any that shares its key.
+    fn record(&self, key: WakeKey, wake: Wake) {
+        let mut entries = self.entries.lock_recover();
+        entries.insert(key, wake);
+        self.refresh(&entries);
+    }
+
+    /// Remove one entry by key. A no-op when it is already gone.
+    fn remove(&self, key: &WakeKey) {
+        let mut entries = self.entries.lock_recover();
+        entries.remove(key);
+        self.refresh(&entries);
+    }
+
+    /// Drop every timer armed for one Entity. Dynamic-mode eviction is
+    /// destructive, so the timers go with the state — released here rather
+    /// than left to come due against an Entity that no longer exists.
+    fn discard_entity(&self, entity: &Arc<Vec<u8>>) {
+        let mut entries = self.entries.lock_recover();
+        let doomed: Vec<WakeKey> = entries
+            .keys()
+            .filter(|k| matches!(&k.tiebreak, WakeTiebreak::Timer(armed) if armed == entity))
+            .cloned()
+            .collect();
+        for key in doomed {
+            entries.remove(&key);
+        }
+        self.refresh(&entries);
+    }
+
+    /// Pop every entry due at `now`, ascending.
+    fn take_due(&self, now: u64) -> Vec<(WakeKey, Wake)> {
+        if self.earliest.load(Ordering::Acquire) > now {
+            return Vec::new();
+        }
+        let mut entries = self.entries.lock_recover();
+        let mut due = Vec::new();
+        while let Some((key, wake)) = entries.pop_first() {
+            if key.due_at_ms > now {
+                entries.insert(key, wake);
+                break;
+            }
+            due.push((key, wake));
+        }
+        self.refresh(&entries);
+        due
+    }
+
+    /// How long until the earliest entry comes due; `None` when the list is
+    /// empty. What shortens a poller's wait.
+    fn next_due_in(&self, now: u64) -> Option<Duration> {
+        let due = self.earliest.load(Ordering::Acquire);
+        (due != u64::MAX).then(|| Duration::from_millis(due.saturating_sub(now)))
+    }
+
+    /// Processing-time timers currently armed. Counted from the entries
+    /// themselves, so the number cannot drift from what is scheduled: a timer
+    /// counts while its entry sits here and stops the moment it leaves,
+    /// whether by disarm, eviction or firing.
+    fn timers_armed(&self) -> usize {
+        self.entries
+            .lock_recover()
+            .keys()
+            .filter(|k| matches!(k.tiebreak, WakeTiebreak::Timer(_)))
+            .count()
+    }
+
+    fn refresh(&self, entries: &BTreeMap<WakeKey, Wake>) {
+        let earliest = entries
+            .first_key_value()
+            .map_or(u64::MAX, |(k, _)| k.due_at_ms);
+        self.earliest.store(earliest, Ordering::Release);
+    }
+}
+
 pub struct PollCore {
     ready: Mutex<VecDeque<Arc<EntitySlot>>>,
     /// Command activations for host classes, handed out ahead of `ready`.
@@ -129,6 +266,8 @@ pub struct PollCore {
     shutting_down: AtomicBool,
     next_token: AtomicU64,
     outstanding: DashMap<u64, Arc<EntitySlot>>,
+    wakes: DeferredWake,
+    next_wake: AtomicU64,
 }
 
 static GLOBAL: OnceLock<PollCore> = OnceLock::new();
@@ -146,6 +285,8 @@ impl PollCore {
             shutting_down: AtomicBool::new(false),
             next_token: AtomicU64::new(0),
             outstanding: DashMap::new(),
+            wakes: DeferredWake::new(),
+            next_wake: AtomicU64::new(0),
         }
     }
 
@@ -161,10 +302,18 @@ impl PollCore {
 
     /// Block until an activation is available, the timeout elapses, or
     /// shutdown wakes every poller. Any host thread may call this.
+    ///
+    /// Also the deferred-wake list's only service: every pass promotes what
+    /// has come due, and the nearest entry shortens the wait.
     pub fn poll(&self, timeout: Duration) -> Polled {
         let deadline = Instant::now() + timeout;
-        let mut ready = self.ready.lock_recover();
         loop {
+            // First thing in the pass, before any lock is taken: a firing
+            // enqueues under the Block policy and may drain a saturated
+            // consumer inline, and peers must keep serving `ready` while it
+            // does.
+            self.promote_due();
+            let mut ready = self.ready.lock_recover();
             if self.shutting_down.load(Ordering::Acquire) {
                 return Polled::ShuttingDown;
             }
@@ -182,11 +331,94 @@ impl PollCore {
             if now >= deadline {
                 return Polled::Timeout;
             }
-            ready = match self.cv.wait_timeout(ready, deadline - now) {
-                Ok((guard, _)) => guard,
-                Err(poisoned) => poisoned.into_inner().0,
-            };
+            let mut wait = deadline - now;
+            // Reads the list's cached earliest, taking no lock: `ready` is
+            // held here, and a recorder takes the list's lock and then
+            // `ready` (to notify), so locking the list here would close a
+            // cycle.
+            if let Some(until_due) = self.wakes.next_due_in(crate::util::wall_now_ms()) {
+                wait = wait.min(until_due);
+            }
+            // The guard dies with the pass; the next one re-locks after
+            // promoting.
+            let _ = self.cv.wait_timeout(ready, wait);
         }
+    }
+
+    /// Hand every entry that has come due to its effect. Called once per
+    /// [`Self::poll`] pass — the list has no thread of its own.
+    fn promote_due(&self) {
+        for (key, wake) in self.wakes.take_due(crate::util::wall_now_ms()) {
+            match wake {
+                Wake::Retry(slot) => self.release_and_rearm(&slot),
+                Wake::Timer { slot, stream } => {
+                    let Some(slot) = slot.upgrade() else {
+                        continue;
+                    };
+                    // Block policy: a saturated mailbox delays the firing
+                    // (and drains the slot inline) rather than dropping it —
+                    // a timer silently lost is a bug the author cannot see.
+                    crate::routing::enqueue(
+                        &slot,
+                        EntityItem::Timer(TimerFire {
+                            kind: TimerKind::ProcessingTime,
+                            scheduled_at: key.due_at_ms,
+                            stream,
+                        }),
+                        OverflowPolicy::Block,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Arm one processing-time timer. Re-arming the same
+    /// `(entity, scheduled_at)` replaces the entry — pending timers are a
+    /// set, so this is the idempotence the surface promises.
+    pub fn arm_timer(&self, slot: &Arc<EntitySlot>, scheduled_at: u64, stream: Arc<FlezhaStream>) {
+        self.wakes.record(
+            WakeKey {
+                due_at_ms: scheduled_at,
+                tiebreak: WakeTiebreak::Timer(Arc::clone(&slot.entity_identity)),
+            },
+            Wake::Timer {
+                slot: Arc::downgrade(slot),
+                stream,
+            },
+        );
+        self.notify_waiters();
+    }
+
+    /// Disarm one processing-time timer. Idempotent — a firing that already
+    /// took the entry makes this a no-op. No notify: dropping an entry can
+    /// only leave a waiter waiting longer than it needed to, never miss one.
+    pub fn disarm_timer(&self, entity: &Arc<Vec<u8>>, scheduled_at: u64) {
+        self.wakes.remove(&WakeKey {
+            due_at_ms: scheduled_at,
+            tiebreak: WakeTiebreak::Timer(Arc::clone(entity)),
+        });
+    }
+
+    /// Drop every timer armed for one Entity, at the moment the dynamic-mode
+    /// reaper evicts it.
+    pub fn discard_entity_timers(&self, entity: &Arc<Vec<u8>>) {
+        self.wakes.discard_entity(entity);
+    }
+
+    /// Processing-time timers currently armed on this core — what the
+    /// `timers_armed` heartbeat metric reports.
+    pub fn timers_armed(&self) -> usize {
+        self.wakes.timers_armed()
+    }
+
+    /// Wake blocked pollers so they re-compute their wait against a newly
+    /// recorded entry. Taking `ready` is what makes the notify unmissable: a
+    /// waiter holds it from before it reads the list until `wait_timeout`
+    /// releases it. Called with the wake-list lock already released — the two
+    /// are taken in this order and never the other way round.
+    fn notify_waiters(&self) {
+        let _ready = self.ready.lock_recover();
+        self.cv.notify_all();
     }
 
     /// Try to become the slot's active drainer and assemble its batch.
@@ -239,27 +471,43 @@ impl PollCore {
         self.release_and_rearm(&slot);
     }
 
-    /// A retryable failure stopped the batch at `items[0]`: back off, bump
-    /// its attempt, hold the unprocessed tail at the head of the line, and
-    /// schedule the re-hand. Runs on the completing thread — the backoff
-    /// blocks it exactly as the in-dispatch ladder used to block the drain.
+    /// A retryable failure stopped the batch at `items[0]`: bump its attempt,
+    /// hold it and the unprocessed tail at the head of the line, and record
+    /// the backoff as a deferred wake. The completing thread returns at once.
+    ///
+    /// The entity's gates stay held across the window, reproducing today's
+    /// in-line sleep exactly: nothing else could drain the entity then
+    /// either, producers just enqueued. The promoting poller runs the
+    /// release-and-reclaim when the entry comes due.
     pub fn retry_after_failure(&self, token: u64, mut items: Vec<WorkItem>, error: String) {
         let Some((_, slot)) = self.outstanding.remove(&token) else {
             return;
         };
+        let mut delay = Duration::ZERO;
         if let Some(head) = items.first_mut() {
             let policy = slot.dispatcher.retry_policy();
-            let delay = crate::retry::note_failed_attempt(
+            delay = crate::retry::note_failed_attempt(
                 &format!("procedure {}", slot.dispatcher.procedure_name()),
                 head.attempt,
                 policy,
                 &error,
             );
-            crate::util::sleep_interruptible(delay, None);
             head.attempt += 1;
             head.is_final = head.attempt >= policy.max_attempts;
         }
-        self.hold_and_reschedule(&slot, items);
+        self.hold_head_of_line(&slot, items);
+        if delay.is_zero() {
+            self.release_and_rearm(&slot);
+            return;
+        }
+        self.wakes.record(
+            WakeKey {
+                due_at_ms: crate::util::wall_now_ms().saturating_add(delay.as_millis() as u64),
+                tiebreak: WakeTiebreak::Retry(self.next_wake.fetch_add(1, Ordering::Relaxed)),
+            },
+            Wake::Retry(slot),
+        );
+        self.notify_waiters();
     }
 
     /// Put back items the host never processed — they sat behind a failed
@@ -269,30 +517,27 @@ impl PollCore {
         let Some((_, slot)) = self.outstanding.remove(&token) else {
             return;
         };
+        self.hold_head_of_line(&slot, items);
+        self.release_and_rearm(&slot);
+    }
+
+    /// Park re-handed items at the head of the entity's line. Only ever
+    /// called while the slot is handed out, which is what the assertion
+    /// states; `assemble_batch` drains the holdback first on the next round,
+    /// so per-entity FIFO and head-retry ordering are unchanged.
+    fn hold_head_of_line(&self, slot: &Arc<EntitySlot>, items: Vec<WorkItem>) {
         if items.is_empty() {
-            self.release_and_rearm(&slot);
             return;
         }
-        self.hold_and_reschedule(&slot, items);
+        let mut held = slot.pending_retry.lock_recover();
+        debug_assert!(held.is_empty(), "holdback refilled while handed out");
+        held.extend(items);
     }
 
-    /// The holdback tail both re-hand flavors share: park the items in the
-    /// slot's holdback, release the gates, and claim the owed round. The
-    /// holdback is non-empty, so a round is owed regardless of the mailbox;
-    /// a losing CAS means a producer already scheduled one.
-    fn hold_and_reschedule(&self, slot: &Arc<EntitySlot>, items: Vec<WorkItem>) {
-        {
-            let mut held = slot.pending_retry.lock_recover();
-            debug_assert!(held.is_empty(), "holdback refilled while handed out");
-            held.extend(items);
-        }
-        slot.drain_active.store(false, Ordering::Release);
-        slot.mailbox.release_inflight();
-        if slot.mailbox.try_mark_inflight() {
-            self.schedule(slot);
-        }
-    }
-
+    /// Release the entity's gates and claim the round anything left owes.
+    /// Drop `drain_active` BEFORE releasing inflight so a producer that
+    /// observes inflight=false can immediately become the next drainer; a
+    /// losing CAS means a producer already scheduled the round.
     fn release_and_rearm(&self, slot: &Arc<EntitySlot>) {
         slot.drain_active.store(false, Ordering::Release);
         slot.mailbox.release_inflight();
@@ -302,11 +547,13 @@ impl PollCore {
             }
             return;
         }
-        // The mailbox is dry, but the completed batch may leave work only
-        // assembly can see: a chained event-time registration already behind
-        // the high-water, or the still-buffered remainder of a closed replay
-        // slice (drained one member per round for an event-time class).
-        if (event_time_due_pending(slot)
+        // The mailbox is dry, but work only assembly can see may remain: a
+        // re-handed head of line, a chained event-time registration already
+        // behind the high-water, or the still-buffered remainder of a closed
+        // replay slice (drained one member per round for an event-time
+        // class).
+        if (!slot.pending_retry.lock_recover().is_empty()
+            || event_time_due_pending(slot)
             || closed_slice_pending(slot)
             || !slot.deferred_live.lock_recover().is_empty())
             && slot.mailbox.try_mark_inflight()
@@ -557,7 +804,7 @@ fn stage_popped_item(
 ) -> Staged {
     let payload = match item {
         EntityItem::Timer(fire) => {
-            // The wheel holds no lock on the pending set, so an entry can
+            // The wake list holds no lock on the pending set, so an entry can
             // outlive the timer: a cancellation, a re-fire after a restore
             // re-armed it, an Entity restored without it. The set is the
             // authority — a stale entry fires nothing.

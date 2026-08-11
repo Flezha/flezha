@@ -1,5 +1,5 @@
-//! Per-Entity timers: the pending set, its durable ops, and the
-//! processing-time wheel.
+//! Per-Entity timers: the pending set, its durable ops, and the arming of
+//! processing-time deadlines.
 //!
 //! A timer is state, not a scheduler entry. Registration, cancellation and
 //! firing each append a [`TimerOp`] to the Entity's durable record stream, so
@@ -14,21 +14,21 @@
 //!
 //! Event-time timers need nothing here: they fire off the Entity's event-time
 //! high-water, on the dispatch path. Only the processing-time kind needs a
-//! clock of its own — one [`TimerWheel`] per Operative, whose expiry pushes a
-//! [`TimerFire`] onto the target Entity's existing mailbox so `on_timer` is
-//! serialized against `run` by the single-active-drainer gate already there.
+//! clock of its own — an entry on the poll core's shared deferred-wake list,
+//! whose expiry pushes a [`TimerFire`] onto the target Entity's existing
+//! mailbox so `on_timer` is serialized against `run` by the
+//! single-active-drainer gate already there. No timer owns a thread.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
 use flz_transport::transport::FlezhaStream;
 use serde::{Deserialize, Serialize};
 
-use crate::channel::{OverflowPolicy, ProcedureId};
 use crate::entity::EntitySlot;
 use crate::util::LockRecover;
 
@@ -105,7 +105,7 @@ impl PendingTimers {
     }
 
     /// Scheduled timestamps at or below `upto`, ascending — what a high-water
-    /// crossing (event time) or a wheel tick (processing time) must fire.
+    /// crossing (event time) or a due promotion (processing time) must fire.
     pub fn due(&self, kind: TimerKind, upto: u64) -> Vec<u64> {
         self.set(kind).range(..=upto).copied().collect()
     }
@@ -116,7 +116,7 @@ impl PendingTimers {
     }
 
     /// One kind expressed as registrations — what the restore re-arm hands the
-    /// wheel, and half of what a compaction re-states.
+    /// wake list, and half of what a compaction re-states.
     pub fn register_ops(&self, kind: TimerKind) -> Vec<TimerOp> {
         self.all(kind)
             .into_iter()
@@ -135,9 +135,9 @@ impl PendingTimers {
 }
 
 /// A validated timer firing on an Entity's work path. Processing-time firings
-/// are released by the wheel onto the mailbox; event-time firings are
+/// are promoted off the wake list onto the mailbox; event-time firings are
 /// generated at batch assembly when an admitted input advances the
-/// high-water. Carries the secondary stream captured at arming (wheel) or
+/// high-water. Carries the secondary stream captured at arming (wake list) or
 /// inherited from the admitting input (assembly) so `on_timer`'s plugin
 /// emits leave on the same connection an input's would.
 #[derive(Clone)]
@@ -297,7 +297,7 @@ impl TimerSession {
     }
 
     /// Publish the session onto the Entity's live pending set and return the
-    /// ops to make durable (and to arm/disarm on the wheel). Called by the
+    /// ops to make durable (and to arm/disarm on the wake list). Called by the
     /// dispatcher only for the attempt that completed.
     pub fn commit(self, live: &mut PendingTimers) -> Vec<TimerOp> {
         let counters = &self.policy.counters;
@@ -389,244 +389,37 @@ pub fn counters_snapshot() -> Vec<TimerCountersView> {
 /// `data_heartbeat` frame beside `dispatches` / `blocked_parks`.
 pub static TIMERS_FIRED_TOTAL: AtomicU64 = AtomicU64::new(0);
 
-/// Process-global count of processing-time timers currently armed across every
-/// Operative's wheel — the occupancy a runaway registration shows up in before
-/// it is fatal.
-pub static TIMERS_ARMED: AtomicI64 = AtomicI64::new(0);
-
 pub fn timers_fired_total() -> u64 {
     TIMERS_FIRED_TOTAL.load(Ordering::Relaxed)
 }
 
-pub fn timers_armed() -> i64 {
-    TIMERS_ARMED.load(Ordering::Relaxed)
-}
-
-// ------------------------------------------------------------------- wheel
-
-/// Wheel key: fire order is by deadline, ties broken by Entity identity so the
-/// order is total (and therefore reproducible).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct ArmedAt {
-    at: u64,
-    procedure: ProcedureId,
-    entity_key: String,
-}
-
-struct Armed {
-    /// Weak so an idle-evicted Entity's timers die with it: the upgrade fails
-    /// and the firing is dropped, which is the D6 contract.
-    slot: Weak<EntitySlot>,
-    stream: Arc<FlezhaStream>,
-}
-
-#[derive(Default)]
-struct WheelInner {
-    armed: BTreeMap<ArmedAt, Armed>,
-    stop: bool,
-}
-
-/// One processing-time timer wheel per Operative. Expiry pushes onto the
-/// target Entity's mailbox rather than invoking `on_timer` itself — that is
-/// what makes firing obey the same FIFO ordering, the same back-pressure and
-/// the same single-drainer exclusion an input already does, with no second
-/// concurrency mechanism.
-pub struct TimerWheel {
-    inner: Mutex<WheelInner>,
-    signal: Condvar,
-}
-
-/// Longest the wheel thread sleeps with nothing armed. Bounded so a stop
-/// request is honoured promptly even without a signal.
-const WHEEL_IDLE_TICK: Duration = Duration::from_millis(200);
-
-impl TimerWheel {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(WheelInner::default()),
-            signal: Condvar::new(),
-        })
-    }
-
-    /// Arm one processing-time timer for an Entity. Re-arming the same
-    /// `(procedure, key, scheduled_at)` replaces the entry — pending timers
-    /// are a set, so this is the idempotence the surface promises.
-    pub fn arm(
-        &self,
-        procedure: ProcedureId,
-        entity_key: &str,
-        scheduled_at: u64,
-        slot: &Arc<EntitySlot>,
-        stream: Arc<FlezhaStream>,
-    ) {
-        let key = ArmedAt {
-            at: scheduled_at,
-            procedure,
-            entity_key: entity_key.to_string(),
-        };
-        let mut inner = self.inner.lock_recover();
-        let replaced = inner.armed.insert(
-            key,
-            Armed {
-                slot: Arc::downgrade(slot),
-                stream,
-            },
-        );
-        if replaced.is_none() {
-            TIMERS_ARMED.fetch_add(1, Ordering::Relaxed);
-        }
-        drop(inner);
-        self.signal.notify_all();
-    }
-
-    /// Disarm one timer. Idempotent — a firing that already popped the entry
-    /// makes this a no-op.
-    pub fn disarm(&self, procedure: ProcedureId, entity_key: &str, scheduled_at: u64) {
-        let key = ArmedAt {
-            at: scheduled_at,
-            procedure,
-            entity_key: entity_key.to_string(),
-        };
-        let mut inner = self.inner.lock_recover();
-        if inner.armed.remove(&key).is_some() {
-            TIMERS_ARMED.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
-
-    /// Drop every timer armed for one Entity. Called when the dynamic-mode
-    /// reaper evicts it, so the wheel releases the memory at eviction time
-    /// rather than at each timer's deadline.
-    pub fn discard_entity(&self, procedure: ProcedureId, entity_key: &str) {
-        let mut inner = self.inner.lock_recover();
-        let doomed: Vec<ArmedAt> = inner
-            .armed
-            .keys()
-            .filter(|k| k.procedure == procedure && k.entity_key == entity_key)
-            .cloned()
-            .collect();
-        for key in doomed {
-            inner.armed.remove(&key);
-            TIMERS_ARMED.fetch_sub(1, Ordering::Relaxed);
-        }
-    }
-
-    /// Number of timers currently armed on this wheel.
-    pub fn occupancy(&self) -> usize {
-        self.inner.lock_recover().armed.len()
-    }
-
-    /// Stop the wheel thread. Idempotent.
-    pub fn stop(&self) {
-        self.inner.lock_recover().stop = true;
-        self.signal.notify_all();
-    }
-
-    /// Pop every entry due at `now`, ascending. Returns the fires to deliver
-    /// and how long the caller should wait before asking again.
-    fn take_due(&self, now: u64) -> (Vec<(Arc<EntitySlot>, TimerFire)>, Option<Duration>) {
-        let mut inner = self.inner.lock_recover();
-        let mut fires = Vec::new();
-        while let Some((key, _)) = inner.armed.iter().next() {
-            if key.at > now {
-                let wait = Duration::from_millis(key.at - now);
-                return (fires, Some(wait.min(WHEEL_IDLE_TICK)));
-            }
-            let key = key.clone();
-            let armed = inner.armed.remove(&key).expect("entry observed above");
-            TIMERS_ARMED.fetch_sub(1, Ordering::Relaxed);
-            if let Some(slot) = armed.slot.upgrade() {
-                fires.push((
-                    slot,
-                    TimerFire {
-                        kind: TimerKind::ProcessingTime,
-                        scheduled_at: key.at,
-                        stream: armed.stream,
-                    },
-                ));
-            }
-        }
-        (fires, None)
-    }
-
-    fn run_loop(self: Arc<Self>) {
-        loop {
-            {
-                let inner = self.inner.lock_recover();
-                if inner.stop {
-                    return;
-                }
-            }
-            let now = crate::util::wall_now_ms();
-            let (fires, wait) = self.take_due(now);
-            for (slot, fire) in fires {
-                // Block policy: a saturated mailbox delays the firing (and
-                // drains the slot inline) rather than dropping it — a timer
-                // silently lost is a bug the author cannot see.
-                crate::routing::enqueue(
-                    &slot,
-                    crate::entity::EntityItem::Timer(fire),
-                    OverflowPolicy::Block,
-                );
-            }
-            let mut inner = self.inner.lock_recover();
-            if inner.stop {
-                return;
-            }
-            let wait = wait.unwrap_or(WHEEL_IDLE_TICK);
-            let (guard, _) = self
-                .signal
-                .wait_timeout(inner, wait)
-                .unwrap_or_else(|p| p.into_inner());
-            inner = guard;
-            if inner.stop {
-                return;
-            }
-        }
-    }
-}
-
-/// Spawn the wheel's thread. One per Operative instance, created lazily on the
-/// first processing-time registration so an Operative that never uses timers
-/// never pays for a thread.
-pub fn spawn_wheel(wheel: Arc<TimerWheel>) -> std::thread::JoinHandle<()> {
-    std::thread::Builder::new()
-        .name("flezha-timer-wheel".to_string())
-        .spawn(move || wheel.run_loop())
-        .expect("spawning flezha-timer-wheel thread should not fail")
+/// Processing-time timers currently armed — the occupancy a runaway
+/// registration shows up in before it is fatal. Counted off the poll core's
+/// wake list, which holds them, rather than tracked beside it.
+pub fn timers_armed() -> usize {
+    crate::poll_core::global().timers_armed()
 }
 
 // ------------------------------------------------ arming from committed ops
 
-/// Reflect an invocation's committed timer ops onto the Operative's wheel.
-/// Event-time timers need nothing here — the Entity's high-water fires them —
-/// so a Procedure that only uses those never causes a wheel thread to exist.
+/// Reflect an invocation's committed timer ops onto the poll core's wake list.
+/// Event-time timers need nothing here — the Entity's high-water fires them.
+/// The Entity's identity is the list key, so timers armed by two instances
+/// sharing a numeric `ProcedureId` stay each other's business.
 pub fn apply_ops(slot: &Arc<EntitySlot>, ops: &[TimerOp], stream: &Arc<FlezhaStream>) {
-    if !ops.iter().any(|op| op.kind == TimerKind::ProcessingTime) {
-        return;
-    }
-    let Some(instance) = slot.instance.upgrade() else {
-        return;
-    };
-    let wheel = instance.timer_wheel();
-    let key = slot.entity_key.as_deref().unwrap_or("");
+    let core = crate::poll_core::global();
     for op in ops.iter().filter(|op| op.kind == TimerKind::ProcessingTime) {
         if op.register {
-            wheel.arm(
-                slot.procedure_id,
-                key,
-                op.scheduled_at,
-                slot,
-                Arc::clone(stream),
-            );
+            core.arm_timer(slot, op.scheduled_at, Arc::clone(stream));
         } else {
-            wheel.disarm(slot.procedure_id, key, op.scheduled_at);
+            core.disarm_timer(&slot.entity_identity, op.scheduled_at);
         }
     }
 }
 
 /// Re-arm a restored Entity's processing-time timers. The pending set came back
 /// through the change-log fold; anything already past its deadline fires on the
-/// wheel's next pass, in ascending order. Event-time timers need nothing — the
+/// next promotion, in ascending order. Event-time timers need nothing — the
 /// restored high-water is their trigger.
 pub fn rearm_restored(slot: &Arc<EntitySlot>) {
     let ops = slot
@@ -699,66 +492,6 @@ mod tests {
             rebuilt.apply(&op);
         }
         assert_eq!(rebuilt, pending);
-    }
-
-    /// The wheel's own contract, without a dispatcher: entries fire in
-    /// deadline order, a disarm removes exactly one, and discarding an Entity
-    /// takes every entry it owns.
-    #[test]
-    fn the_wheel_arms_disarms_and_discards_by_entity() {
-        let armed_before = timers_armed();
-        let wheel = TimerWheel::new();
-        assert_eq!(wheel.occupancy(), 0);
-
-        // The wheel holds a Weak to the slot, so this test exercises the
-        // bookkeeping — the delivery half is covered end-to-end by
-        // `tests/entity_timers.rs`, which owns real slots.
-        let key = ArmedAt {
-            at: 10,
-            procedure: 0,
-            entity_key: "a".to_string(),
-        };
-        let later = ArmedAt {
-            at: 20,
-            procedure: 0,
-            entity_key: "a".to_string(),
-        };
-        let other = ArmedAt {
-            at: 15,
-            procedure: 0,
-            entity_key: "b".to_string(),
-        };
-        let (sock, _peer) = std::os::unix::net::UnixStream::pair().expect("UnixStream::pair");
-        let stream = Arc::new(FlezhaStream::Unix(sock));
-        for k in [&key, &later, &other] {
-            wheel.inner.lock_recover().armed.insert(
-                k.clone(),
-                Armed {
-                    slot: Weak::new(),
-                    stream: Arc::clone(&stream),
-                },
-            );
-            TIMERS_ARMED.fetch_add(1, Ordering::Relaxed);
-        }
-        assert_eq!(wheel.occupancy(), 3);
-
-        wheel.disarm(0, "a", 20);
-        assert_eq!(wheel.occupancy(), 2, "a disarm removes exactly one entry");
-
-        wheel.discard_entity(0, "a");
-        assert_eq!(
-            wheel.occupancy(),
-            1,
-            "discarding an Entity takes every entry it owns and no other's"
-        );
-
-        wheel.discard_entity(0, "b");
-        assert_eq!(wheel.occupancy(), 0);
-        assert_eq!(
-            timers_armed(),
-            armed_before,
-            "the process-wide gauge nets out"
-        );
     }
 
     /// The counters an operator reads: a registration, a cancellation, a firing
