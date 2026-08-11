@@ -273,3 +273,39 @@ every `poll` pass promotes what has come due.
   poller is waiting in `poll`
 - **THEN** the starvation wait SHALL wake no later than the due time, so the
   host can supply a thread to promote the firing
+
+### Requirement: A running bounded instance holds one driver thread
+
+The core SHALL drive each actively-running bounded instance from one dedicated
+thread, which holds the chain's position as a call stack and SHALL NOT run
+user code. This is a stated design position, not an incidental one: the
+per-instance resident cost SHALL be dominated by the instance's heap rather
+than by that thread, and the thread SHALL NOT poll while waiting at a stage
+barrier. Its stack size SHALL be configurable
+(`FLEZHA_BOUNDED_DRIVER_STACK_KIB`) and SHALL default to the platform default.
+
+A change that would make a bounded instance's concurrency bounded by work in
+flight rather than by instance count SHALL be justified against a measurement,
+not a prediction; `sdk/rust/tests/bounded_scaling.rs` is that measurement, and
+`docs/resilience/bounded_operative.md` records the envelope it produced.
+
+#### Scenario: A blocked population's cost is its heap, not its threads
+
+- **WHEN** thousands of bounded instances are simultaneously blocked
+- **THEN** the resident cost per instance SHALL be dominated by per-instance
+  heap, and SHALL NOT change materially with the configured driver stack size —
+  a blocked driver's stack is not resident
+
+#### Scenario: A driver waiting at a stage barrier consumes no CPU
+
+- **WHEN** a bounded instance is blocked mid-step, waiting on its stage barrier
+- **THEN** its driver SHALL wait without polling, so a population blocked in
+  that state SHALL consume no measurable CPU
+
+#### Scenario: The scaling probe answers the question on demand
+
+- **WHEN** the per-instance cost of the driver thread is re-opened
+- **THEN** the probe SHALL report resident and virtual cost per instance,
+  thread count per instance, CPU while blocked, start and teardown latency, and
+  an unrelated instance's latency beside the population — for a population
+  blocked mid-step and for one blocked in the inbox wait

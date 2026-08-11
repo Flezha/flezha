@@ -487,6 +487,51 @@ unchanged, and a durable bounded operative gets durable state + restore **withou
 inheriting time-travel, dynamic-eviction, or output-stall semantics it has no use
 for.
 
+## How many instances a runner holds
+
+Every actively-running bounded instance owns one OS driver thread
+(`flezha-bounded-<id>`). It holds the chain's position as a call stack and
+never runs user code. Measured on 8 cores / 32 GiB, release build, with the
+standing probe — re-run it to re-check these numbers on your own hardware:
+
+```
+FLEZHA_SCALE_SHAPE=step FLEZHA_SCALE_N=10000 \
+  cargo test -p flezha_runner --features bench-internals --release \
+    --test bounded_scaling -- --ignored --nocapture
+```
+
+| | measured |
+|---|---|
+| resident per blocked instance | ~73 KiB, flat from 1 000 to 10 000 instances |
+| …of which the driver thread is | ~1.4 KiB — the rest is per-instance heap |
+| 10 000 blocked instances | ~734–884 MiB resident, start 0.65 s, teardown 0.44 s |
+| CPU, 10 000 blocked mid-step | 0.5 % of one core |
+| CPU, 10 000 parked in the inbox wait | ~1.6 of 8 cores |
+
+Two things follow for capacity planning.
+
+**Thread count, not instance count, is what interferes.** An agent turn
+blocked on a slow call holds two OS threads in Rust (the driver, plus the pool
+worker running the step) and one in Java (the driver — Java's worker is a
+virtual thread); a class declaring `max_duration()` pays a third, its duration
+watcher. At ~10 000 threads in the process, an unrelated instance's
+start-to-completion path roughly doubles at the median and halves in
+throughput; at ~20 000 it drops to a quarter. Size a runner by threads.
+
+**A driver blocked at a stage barrier is free; a driver polling is not.** The
+barrier is a plain blocking receive. Three other waits re-check every 200 ms —
+the inbox wait, the commit-ack wait, and the `max_duration` watcher — so a
+population sitting in any of them costs real CPU. A *durable* `PerInput` loop
+avoids this by parking after `FLEZHA_BOUNDED_PARK_IDLE_MS`; a
+persistence-opted-out one has no park to take and polls for as long as it
+lives.
+
+`FLEZHA_BOUNDED_DRIVER_STACK_KIB` sets the driver stack. It is unset by
+default and is an address-space lever only: a blocked driver's stack is not
+resident, so shrinking it was measured to move no resident byte. Note that an
+author's edge transform (`map`/`filter`/`flat_map`/merge mapping) runs on this
+thread, and a stack overflow there aborts the process rather than unwinding.
+
 ## Operator notes
 
 - **Crash-resume is at-least-once.** A non-idempotent fire-and-forget job (e.g.

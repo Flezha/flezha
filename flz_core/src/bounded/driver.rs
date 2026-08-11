@@ -60,6 +60,16 @@ pub(super) const CANCEL_POLL_CHUNK: Duration = Duration::from_millis(200);
 /// arriving inside the window continues the loop in place instead of paying a
 /// park/rehydrate cycle. Overridable with `FLEZHA_BOUNDED_PARK_IDLE_MS`.
 const PARK_IDLE_DEFAULT_MS: u64 = 5_000;
+const ENV_PARK_IDLE_MS: &str = "FLEZHA_BOUNDED_PARK_IDLE_MS";
+
+/// Stack size for a driver thread, in KiB; unset keeps the platform default.
+/// An **address-space** lever only: a blocked driver's stack is not resident,
+/// so shrinking it is measured to free virtual size and no resident byte
+/// (`docs/resilience/bounded_operative.md`). It is not free either — an edge
+/// transform (`extend_mapped`) is author code that runs on this thread, and a
+/// stack overflow aborts the process rather than unwinding. Set it only when
+/// virtual size at very high instance counts is the actual constraint.
+const ENV_DRIVER_STACK_KIB: &str = "FLEZHA_BOUNDED_DRIVER_STACK_KIB";
 
 /// How a bounded run ended, as seen by the teardown.
 enum RunOutcome {
@@ -178,9 +188,13 @@ pub fn spawn(
 ) {
     let name = format!("flezha-bounded-{}", instance.instance_id);
     let thread_instance = Arc::clone(&instance);
-    let spawned = thread::Builder::new()
-        .name(name)
-        .spawn(move || run(spec, thread_instance, inbox_rx, args));
+    let mut builder = thread::Builder::new().name(name);
+    // `0` — unset, unparseable, or an explicit zero — keeps the platform default.
+    match crate::util::env_parse_positive(ENV_DRIVER_STACK_KIB, 0) {
+        0 => {}
+        kib => builder = builder.stack_size(kib * 1024),
+    }
+    let spawned = builder.spawn(move || run(spec, thread_instance, inbox_rx, args));
 
     if let Err(e) = spawned {
         // Spawn failed: deregister this run's flusher entries and report a
@@ -828,11 +842,10 @@ fn wait_for_input(ctx: &ChainCtx, cancel: &AtomicBool) -> Option<InboxItem> {
 
 /// Eviction hysteresis for an idle inbox-driven loop.
 fn park_idle() -> Duration {
-    let ms = std::env::var("FLEZHA_BOUNDED_PARK_IDLE_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(PARK_IDLE_DEFAULT_MS);
-    Duration::from_millis(ms)
+    Duration::from_millis(crate::util::env_parse(
+        ENV_PARK_IDLE_MS,
+        PARK_IDLE_DEFAULT_MS,
+    ))
 }
 
 /// Suspend at the committed boundary of iteration `iter`: ship `IterPark` (with

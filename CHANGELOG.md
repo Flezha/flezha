@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Measured
+
+- **How many bounded instances a runner holds, answered with a number**
+  (`bounded-driver-as-state`). One OS driver thread per actively-running
+  bounded instance was the last thread-per-instance cost in the SDKs, and the
+  proposal to delete it — turning the chain's position from a call stack into
+  stored state — was gated on measuring it first. It was measured, and the
+  verdict is **no-go**: the thread is ~1.4 KiB of a bounded instance's ~73 KiB
+  resident cost (the rest is heap), 10 000 blocked instances cost ~734–884 MiB
+  and start in 0.65 s, and a driver blocked at a stage barrier — the agent-turn
+  shape the proposal was named for — costs 0.5 % of one core at that
+  population. Cutting the driver stack from 2 MiB to 256 KiB moves no resident
+  byte, because a blocked driver's stack was never resident, so that stopgap is
+  not adopted either. What the measurement *did* find is now documented in
+  `docs/resilience/bounded_operative.md`: interference tracks total OS thread
+  count rather than instance count (an agent turn holds two threads in Rust,
+  one in Java, three if the class declares `max_duration`), and the CPU a
+  blocked population burns comes entirely from three waits that re-check every
+  200 ms — the inbox wait, the commit-ack wait and the duration watcher — not
+  from the thread model. Kept: `sdk/rust/tests/bounded_scaling.rs`, an
+  `#[ignore]`d instance-count scaling probe, and
+  `FLEZHA_BOUNDED_DRIVER_STACK_KIB`, unset by default and an address-space
+  lever only. No behaviour change.
+
 ### Changed
 
 - **Bounded stage work runs on the SDK's workers, in both languages**
