@@ -16,6 +16,7 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 | [`kernel.md`](kernel.md) | The shared durable substrate: the input log, the atomic effect record, WAL + snapshot, the outbox, the watermark, output identity, the epoch rule, flow control, health |
 | [`unbounded_profile.md`](unbounded_profile.md) | Streaming: per-entity recovery, the dead-letter queue, late-input correction, checkpoint intervals |
 | [`bounded_profile.md`](bounded_profile.md) | Jobs and sessions: the procedure tree, the proc journal, the transactional outbox, saga compensation, the durable loop, suspension, rewind |
+| [`runner.md`](runner.md) | Inside a runner: the shared kernel, the poll boundary, per-entity exclusivity, and what each host SDK owns |
 
 ---
 
@@ -27,7 +28,10 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
   ProcessHub hub per namespace distributes operatives across them.
 - **Runner** — the SDK process (Rust or Java) where user code runs. Runners **dial the
   controller**, never the reverse. They are disposable: state lives in memory, and the
-  controller replicates it durably.
+  controller replicates it durably. Inside a runner there is one more split: transport,
+  ordering, durability, retries, timers and the bounded driver live in a shared Rust kernel
+  (`flz_core`), and the host SDK brings the authoring surface and the threads that run user
+  code. See [`runner.md`](runner.md).
 - **Source adapter** — where input comes from (a websocket, a feed, an HTTP endpoint). A
   pluggable edge, not a core component.
 - **Sink adapter** — where output goes (Kafka, Postgres, anything). Also a pluggable edge.
@@ -389,14 +393,15 @@ sequenceDiagram
     OW->>EX: Ping (proves the reply path is intact)
     OW->>EX: AddOperative {operative_id, factory_id, kind, init_values, resume_entity_count}
     EX-->>OW: AddOperativeResponse {metadata}
-    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms · compensable_procs · leaf_procs
+    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_procs · leaf_procs · compact_after_bytes
     OW->>EX: RestoreInitState per persisted entity (snapshot + WAL tail)
     Note over OW,EX: only now does input flow
 ```
 
-Those five metadata keys are the complete set of SDK→controller declarations. A runner that
-declares nothing — a Java runner, or a plain unbounded class — sends an empty map and the
-controller keeps every default. Wire detail:
+Those six metadata keys are the complete set of SDK→controller declarations, and the shared
+runner core emits them for every host language — a Java class and a Rust class declaring the
+same thing send the same map. A class that declares nothing — a plain unbounded class — sends
+an empty map and the controller keeps every default. Wire detail:
 [`../sdk_protocol_spec.md`](../sdk_protocol_spec.md).
 
 ---
@@ -528,6 +533,7 @@ The full scenario matrix and the operator playbook are in
 - The durable substrate every profile shares → [`kernel.md`](kernel.md)
 - Streaming workloads → [`unbounded_profile.md`](unbounded_profile.md)
 - Jobs, sagas, and agent sessions → [`bounded_profile.md`](bounded_profile.md)
+- Inside a runner, and writing a new SDK → [`runner.md`](runner.md)
 - Fault-tolerance mechanisms in depth → [`../resilience/overview.md`](../resilience/overview.md)
 - The wire protocol → [`../sdk_protocol_spec.md`](../sdk_protocol_spec.md)
 - Authoring an operative → [`../operative_architecture.md`](../operative_architecture.md)

@@ -55,10 +55,12 @@ value crosses a mailbox exactly once, at `P`.
 
 ## Where they run — and what that obliges
 
-Transform and key closures are evaluated in `route_to_consumers` (Rust) /
-`ProcedureDispatcher.routeToConsumers` (Java): **the routing seam**, which is
-the one path both live delivery and the controller's re-forwarded replay slice
-travel. Two consequences follow, and they are the whole contract:
+Transform and key closures are evaluated at **the routing seam** — the one path
+both live delivery and the controller's re-forwarded replay slice travel. For
+the in-process Rust host that is `route_to_consumers`; a byte-level host such as
+Java evaluates them producer-side, in the completion's outputs, because
+`(edge, key)` is all the core routes on. Two consequences follow, and they are
+the whole contract:
 
 - **They MUST be pure and total.** They re-run on replay. A closure that read
   the clock, a counter, or anything else ambient would rebuild a state the live
@@ -82,11 +84,11 @@ under the channel's own `retry_max` / `retry_backoff_ms` budget, parked to the
 dead-letter queue on exhaustion. Later inputs keep routing.
 
 On a **bounded** chain there is no DLQ; abort-and-compensate is the escape. An
-edge closure there runs on the driver thread rather than inside an entity
-invocation — the one author closure the existing `catch_unwind`s miss — so
-`extend_mapped` / `BoundedOperativeRunner.extendMapped` contains it and turns
-it into a terminal chain error the saga compensates, with the instance still
-reporting `BoundedCompleted` (status `error`). See
+in-process edge closure there runs on the driver thread rather than inside an
+entity invocation — the one author closure the existing `catch_unwind`s miss —
+so `extend_mapped` contains it and turns it into a terminal chain error the
+saga compensates, with the instance still reporting `BoundedCompleted`
+(status `error`). See
 `docs/multi_input_procedures.md` for the per-site undo-scope table; a `map` and
 a merge mapping are the same closure on the same seam.
 

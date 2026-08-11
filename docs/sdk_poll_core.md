@@ -20,6 +20,10 @@ The Rust SDK itself is the first host: its typed layer spawns poll workers
 and consumes the same engine as a crate — the dogfood rule that keeps the
 boundary from eroding.
 
+For the same split drawn rather than described — where it sits in the system,
+and how each host's threading model compares — see
+[`architecture/runner.md`](architecture/runner.md).
+
 ## The core decides, the SDK brings the threads
 
 This is the governing rule of the boundary, and the one an author of the next

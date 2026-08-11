@@ -139,7 +139,7 @@ The 10% tolerance band absorbs runner-image variance. If CI variance is consiste
 
 1. **Read the failure message** — it logs floor, measured throughput, and shortfall. A < 10% shortfall warns but passes.
 2. **Transport / NIF changes?** If the PR touches `flz_transport/`, `flz_nif/`, `streams_connect.rs`, or the framing path: compare `cargo bench --bench dispatch -- regression_100x1x1x10k` to the failing `mix bench` number. Criterion green + mix red → regression is in transport/controller, not SDK.
-3. **SDK dispatch changes?** If the PR touches `dispatcher.rs`, `runner/fast.rs`, or `entity/mod.rs`: run `cargo bench … throughput_single_entity` and compare to `SINGLE_ENTITY_FLOOR_MSG_PER_SEC`. A regression here is the dispatch hot path itself.
+3. **SDK dispatch changes?** If the PR touches `sdk/rust/src/operative/dispatcher.rs`, `flz_core/src/fast.rs`, or `flz_core/src/entity.rs`: run `cargo bench … throughput_single_entity` and compare to `SINGLE_ENTITY_FLOOR_MSG_PER_SEC`. A regression here is the dispatch hot path itself.
 4. **Runner drift?** Rerun the job on `main`. If `main` also underperforms on the same runner image, the runner pool shifted — open a separate change to rerecord the floor; do not casually lower it.
 5. **Entity ratio dropped?** If `bench-entity-scaling`'s `ratio (max/min)` fell from ~4× to <2× on the same PR, the regression is in the entity fan-out, not single-entity dispatch.
 

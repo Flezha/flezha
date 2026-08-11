@@ -78,7 +78,7 @@ Full examples: `sdk/rust/examples/merged_input.rs`,
   | unbounded, inter-procedure source | Runs under `ctx.emit`, inside the producing Procedure's invocation `catch_unwind`. Caught, attributed to that producer, rides **its** retry→DLQ ladder. |
   | unbounded, entry-Channel source | Runs on the wire-reader path (`flz_core/src/fast.rs` → `routing::route_to_consumers`). `stream-transforms` closed the guard gap here: the edge closure is contained at the routing seam and the value climbs the Channel's own retry→DLQ ladder, the same one a failing entry **parse** rides. |
   | bounded, inter-procedure source — forward | Runs on the driver thread in `extend_mapped`, outside any entity invocation. Contained there and turned into a terminal chain error: the saga unwinds the stages **recorded as completed** at that point, and the instance still reports `BoundedCompleted` (status `error`). Both SDKs unwind the same procedures in the same order. |
-  | bounded, inter-procedure source — crash-resume re-seed | Contained the same way and the instance still reports `error`. The **undo scope differs by SDK**: Rust seeds the resumed iteration's completed list from the journal, so the journaled producer is unwound; Java's resumed iteration does not, so nothing is unwound. See [Known limitation](#known-limitation-java-resumed-chains-do-not-compensate-journaled-procedures). |
+  | bounded, inter-procedure source — crash-resume re-seed | Contained the same way and the instance still reports `error`. The resumed iteration seeds its completed list from the journal, so the journaled producer is unwound. |
 
   The bounded rows are a guard this capability had to add: an edge closure is the
   only author closure on a bounded chain that runs on the driver thread rather
@@ -107,9 +107,9 @@ Full examples: `sdk/rust/examples/merged_input.rs`,
 ## Why replay is free
 
 The mapping is applied at the **routing** seam
-(`flz_core::routing::route_to_consumers` / `ProcedureDispatcher.routeToConsumers`),
-which is the one path both live delivery and the controller's re-forwarded
-replay slice travel. Frames are still journaled per source Channel, unchanged,
+(`flz_core::routing::route_to_consumers` in-process; producer-side in the
+completion's outputs for a byte-level host such as Java), which is the one path
+both live delivery and the controller's re-forwarded replay slice travel. Frames are still journaled per source Channel, unchanged,
 so:
 
 - on-disk formats are untouched;
@@ -145,10 +145,9 @@ handoff, so a resumed merge sees exactly what the live one did. Both sites run
 on the driver thread, so both contain a panicking mapping and turn it into a
 terminal chain error and the instance still reports.
 
-What the two sites do **not** share is the undo scope. On the forward site the
-saga unwinds the stages recorded as completed — the producer whose edge blew up
-among them, on both SDKs. On the crash-resume re-seed the SDKs diverge, for a
-pre-existing reason that is not merge-specific: see the next section.
+Both sites unwind the stages recorded as completed — the producer whose edge blew
+up among them. The resumed chain seeds that list from the journal, so a procedure
+the journal already committed is unwound even though this pass never re-ran it.
 
 An **entry** Channel cannot be one of a bounded merge's sources, and that is
 refused at registration (`BuildBoundedError::MergeFromEntryChannel` /
@@ -160,24 +159,6 @@ output streams of two or more of the operative's procedures instead. (The
 unbounded case is unaffected: there the controller stamps
 `metadata["channel"]` on every frame, which is exactly what the bounded seed
 lacks.)
-
-### Known limitation: Java resumed chains do not compensate journaled procedures
-
-`BoundedOperativeRunner.runIteration` declares its `completed` list empty and
-`continue`s past every procedure the journal records as committed, so those
-procedures are never added to it. Any abnormal exit from a **resumed** Java
-bounded chain therefore compensates only the procedures that re-ran in that
-pass; the ones the journal had already committed are left un-undone. Rust's
-`drive_chain` seeds the same list from the journal and does unwind them.
-
-This predates `multi-input-procedures` and is not specific to a merge — it
-applies to a resumed Java chain failing anywhere forward. A merge mapping that
-throws at the re-seed site is simply one way to reach it, which is why it is
-recorded here. Observable symptom: a Java bounded instance that crashed
-mid-chain, resumed, then failed reports `BoundedCompleted` with status `error`
-having compensated fewer procedures than its Rust twin would. Documented, not
-fixed: closing it changes bounded resume semantics, which this capability has
-no mandate to change.
 
 ## Implementation map
 
@@ -198,15 +179,14 @@ no mandate to change.
   panicking mapping from taking the driver thread with it.
 - Java mirrors: `com.flezha.sdk.channel.Merge`,
   `runtime.operative.ConsumerEdge`, `UnboundedOperativeTopologyBuilder.MergeImpl`,
-  `ProcedureDispatcher.routeToConsumers` (the one routing seam, shared by the
-  wire reader and an inter-procedure emit) and `BoundedOperativeRunner` (whose
-  `extendMapped` is the containment, rethrowing as `BoundedOperativeException` into
-  the chain's existing abort path).
+  and `runtime.core.ActivationDispatcher` (which evaluates `ConsumerEdge.transformValue`
+  producer-side, on every path an output leaves an entity by). The bounded chain
+  is the shared core's, so `extend_mapped` and its containment are not mirrored.
 
 ## Tests
 
 - `sdk/rust/tests/merged_input.rs`
-- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/worker/MergedInputTest.java`
+- `sdk/java/flezha-sdk-examples/src/test/java/com/flezha/examples/E09_MergedInputTest.java`
 
 Mirrored scenario for scenario: merged delivery through typed inter-procedure
 Channels (with the merged node's own output still fanning out), entry Channels

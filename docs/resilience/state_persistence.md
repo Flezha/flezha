@@ -249,8 +249,8 @@ ledger:
   stale-refusal drops that never occupy the buffer). One batched `CreditGrant` goes out when
   the freed credit brings the un-fsynced buffer below
   `low_watermark_bytes` — never per record; a stalled fsync mints nothing.
-* **Sender parks on exhaustion** — the SDK (`flz_core/src/credit.rs`,
-  `sdk/java .../state/CreditWindow.java`) debits each frame before the
+* **Sender parks on exhaustion** — the runner core (`flz_core/src/credit.rs`,
+  one implementation for every host) debits each frame before the
   sink write and parks the flush path (under the buffer lock, so
   producers throttle at the buffer boundary) until the next grant. Parks
   are bounded-wait loops; the `credit_parked` counter advances while
@@ -487,11 +487,10 @@ back:
   `docs/resilience/data_durability.md`), so the mailbox is the only copy
   they have and discarding them is loss with nothing to recover from.
 
-Both SDKs implement this rule
-(`EntitySlot::discard_queued_input_on_restore` /
-`EntitySlot.discardQueuedInputOnRestore`). Discards are counted and
-shipped as `restore_discarded_inputs` in `data_heartbeat` metadata, and
-each one logs the Entity it emptied.
+The rule lives once, in the runner core
+(`EntitySlot::discard_queued_input_on_restore`), so it cannot drift between
+hosts. Discards are counted and shipped as `restore_discarded_inputs` in
+`data_heartbeat` metadata, and each one logs the Entity it emptied.
 
 The replay buffer, replay flags, and any open checkpoint interval are
 cleared on **every** class: those belong to a past the restore replaced.

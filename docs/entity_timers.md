@@ -237,9 +237,9 @@ Operative idle.
   `sdk/rust/src/entity/restore.rs` (the typed fold).
 - Java: `runtime/state/{TimerOp,PendingTimers,TimerPolicy,TimerSession}.java`,
   `runtime/entity/TimerCounters.java`, `procedure/ProcedureCtx.java`,
-  `procedure/Procedure.java`, `runtime/worker/ProcedureDispatcher.java`,
-  `runtime/state/EntityStateRestore.java`. Arming goes through the shared core
-  — the Java host has no timer thread of its own either.
+  `procedure/Procedure.java`, `runtime/core/ActivationDispatcher.java` (the
+  invocation and the `RestoreFold` that rebuilds the pending set). Arming goes
+  through the shared core — the Java host has no timer thread of its own either.
 - Controller: `Flezha.State.Wire` decodes the effect record's `timers` field.
   Nothing else changes — a firing reaches it as an ordinary effect record with
   a nil consumed offset.

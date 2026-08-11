@@ -333,9 +333,11 @@ The tier is opt-in per operative (`effectively_once()` on the channel builder), 
 every plugin-bound channel to be `.keyed()` — an unkeyed output has nothing for a sink to dedup
 on, so declaring the tier over one is refused at build time.
 
-**The tier is a Rust-SDK capability.** The Java SDK has no effect record, no `ctx.now()` /
-`ctx.stable_id()` / `ctx.checkpoint()`, and no keyed emit, so a Java runner runs
-at-least-once.
+**The tier does not vary by host language.** The effect record, the offsets it carries, and
+the checkpoint interval are built by the shared runner core, so a Java runner and a Rust
+runner earn the same guarantee. What a host supplies is its own change bytes and the context
+surface the determinism contract needs — `ctx.now()`, `ctx.stable_id()`, `ctx.checkpoint()`,
+keyed emit — which both SDKs have. See [`../sdk_poll_core.md`](../sdk_poll_core.md).
 
 ## Determinism
 

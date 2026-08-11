@@ -143,10 +143,10 @@ public final class GreetBounded implements BoundedOperative {
 Flezha.createRunner("my_app").defineBounded(GreetBounded.class).run();
 ```
 
-The Java runtime mirrors the Rust shape: a sealed `Operative` (provisional name)
-permits an unbounded instance or a bounded instance in one per-runner registry,
-resolved once per frame at `PrimaryStreamReader.dispatch`; an `AddOperative` whose
-`kind` resolves to `:bounded` schedules `BoundedOperative.run` once on its driver thread with
+The Java runtime mirrors the Rust shape: an unbounded instance or a bounded
+instance in one per-runner registry, resolved once per activation at
+`ActivationDispatcher.dispatch`; an `AddOperative` whose
+`kind` resolves to `:bounded` schedules `BoundedOperative.run` once on the core's driver with
 `init_values` as `args`; `BoundedCtx.emit` writes an instance-id-keyed,
 empty-metadata frame on a secondary stream; and `BoundedCompleted` is emitted on
 the control stream byte-identically to the Rust SDK, so the controller drives a

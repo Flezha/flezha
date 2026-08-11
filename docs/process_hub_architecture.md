@@ -292,7 +292,7 @@ These are common assumptions to double-check against the actual code:
 | Operative wrapper, HotSwap callbacks | `lib/flezha/operative/overwatch.ex` |
 | Control channel (runner handshake, EOF detection) | `lib/flezha/runner/control_channel.ex` |
 | Stream channels, attach/detach, frame routing | `lib/flezha/runner/stream_channel.ex` |
-| UDS stream acceptance and round-robin | `lib/flezha/socket/stream_acceptor.ex` |
+| UDS stream acceptance and round-robin | `lib/flezha/runner/stream_acceptor.ex` |
 | Rust SDK reconnect loop | `flz_core/src/control_unit.rs` |
 | Rust SDK reconnect handler | `flz_core/src/fast.rs` `handle_reconnect` |
 

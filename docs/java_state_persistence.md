@@ -1,16 +1,21 @@
 # Java SDK — Per-Entity State Persistence
 
-Java SDK port of `operative-state-persistence`. Mirrors the Rust trait
-surface one-for-one within Java idioms: six-parameter `Procedure` generic,
-`StateHandle<State, Change>` mutation chokepoint, `UnboundedOperative::persistenceEnabled`
-default-method, per-Entity flusher, Kryo serialization with stable
-registered type IDs.
+The Java authoring surface for durable Entity state: six-parameter `Procedure`
+generic, `StateHandle<State, Change>` mutation chokepoint,
+`UnboundedOperative::persistenceEnabled` default-method, Kryo serialization with
+stable registered type IDs.
 
 This doc is the Java-author counterpart to
 `docs/operative_state_persistence.md` (Rust). The wire format is byte-identical
 across SDKs; the header `sdk_lang` byte differs (Rust = 1, Java = 2) and
 the `format_id` byte differs (postcard = 1, Kryo = 4). Cross-language load
-fails loud per umbrella Decision 9.
+fails loud.
+
+**Where the machinery lives.** Everything below the authoring surface — the
+flush cadence, the effect record, the credit window, restore, compaction — is
+the shared runner core's, not Java's. Java supplies the Kryo-encoded change
+bytes and the core does the rest, which is why this page describes types you
+write and not threads you own. See `docs/sdk_poll_core.md`.
 
 ## Surface
 
@@ -111,25 +116,24 @@ window. Changes without a key are emitted as-is.
 ### NoChange
 
 `NoChange` is uninhabited. Procedures opting out of persistence declare
-`Change = NoChange.class` (the default in the legacy migration); the runtime
-detects `Procedure.changeType() == NoChange.class` and skips per-Entity
-flusher registration entirely.
+`Change = NoChange.class`; the runtime detects
+`Procedure.changeType() == NoChange.class` and produces no change bytes, so
+nothing is registered for flushing.
 
 ### Clock
 
 `Clock` is a sealed interface permitting `WallClock`, `LogicalClock`, and
-`EventTimeFrom<Input>`. v1 fully wires `WallClock` only; declaring the
-others fails operative registration with
-`OperativeConfigurationException.clockNotImplementedYet`.
+`EventTimeFrom<Input>`. All three are wired. Because erasure cannot express
+Rust's `TimeExtractor<Input>` bound, an `EventTimeFrom` Procedure that does not
+override `eventTime` — and a `LogicalClock` Procedure declaring
+`Change = NoChange` — are refused at **registration** rather than compile time.
 
-### Per-Entity flusher
+### Flushing
 
-Single platform thread per JVM, lazy-started on first non-`NoChange` Procedure
-registration. Wakes every `linger_ms` (system property
-`flezha.flush.linger.ms` &gt; env var `FLEZHA_FLUSH_LINGER_MS` &gt; default
-5) and drains every registered Entity. Toggle-aware: when
-`persistenceEnabled = false`, drain-and-discard without serialization or
-wire I/O.
+There is no Java-side flusher. Changes ride the activation result back into the
+runner core, which coalesces, builds the effect record, and drives the linger
+cadence (`FLEZHA_FLUSH_LINGER_MS`, default 5 ms) for every host language. When
+`persistenceEnabled = false` nothing is serialized or sent.
 
 ### Kryo registration
 
@@ -188,9 +192,10 @@ deterministic function of the Change log; otherwise returns
   worse. See `operative-state-persistence/design.md` Decision 1.
 - `Kryo.setRegistrationRequired(true)` is intentional: unregistered types
   fail loud at first serialization. Users add to `Procedure.kryoTypes()`.
-- The flusher's single-thread cadence is bounded by JVM GC stop-the-world
-  pauses. Tune G1 / ZGC / Shenandoah for strict durability; the umbrella's
-  durability bound is a guideline, not a hard cap.
+- Changes reach the core only when the activation completes, so a long
+  invocation — including a GC stop-the-world pause inside one — delays the
+  record behind it. The durability bound is a guideline, not a hard cap; tune
+  G1 / ZGC / Shenandoah when it has to hold tightly.
 - `Optional<RestoreInitPayload>` adds a per-restart allocation vs Rust's
   `Option<&RestoreInitPayload>`. Negligible (microseconds per Entity
   restart).

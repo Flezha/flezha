@@ -142,8 +142,8 @@ drives compensation — a step whose durability the controller will not confirm 
 
 **On a crash, a committed procedure is not re-run.** The journal carries its handoff, so the
 resumed driver skips it and seeds the next level from the durable batch. Without the journal —
-an opted-out class, or the Java SDK — the chain re-runs from the top over the restored entity
-state, which is why a procedure body is required to be idempotent.
+an opted-out class — the chain re-runs from the top over the restored entity state, which is
+why a procedure body is required to be idempotent.
 
 ## The transactional outbox
 
@@ -427,13 +427,17 @@ flz operative info                        # phase: running | suspended
 flz operative rewind <instance> --to-iteration N
 ```
 
-## The Java SDK
+## Host languages
 
-Java bounded operatives support **entity state persistence and saga compensation**. They do not
-have the proc journal, the transactional outbox, the loop, suspension, or the entity retry ladder,
-and they reject a branching topology — a Java bounded chain is linear. A crashed Java bounded
-operative restores its entity state and **re-runs its chain from the top**, which is why an
-procedure body is idempotent by contract.
+Everything on this page is host-language-neutral. The chain is driven by the shared runner
+core, which owns the level barrier, the proc journal handshake, the staged outbox, the
+compensation plan, the loop, suspension and rewind. A host SDK supplies the procedure bodies
+and the threads that run them — one **step activation** per entity partition, handed out under
+poll and answered at the barrier the core already owns. Rust runs a step on a pool worker,
+Java on a virtual thread; neither owns the chain's position, so there is no per-host resume or
+compensation semantics to compare.
+
+Details of that split: [`../sdk_poll_core.md`](../sdk_poll_core.md).
 
 Mechanism-level detail for everything on this page:
 [`../resilience/bounded_operative.md`](../resilience/bounded_operative.md).

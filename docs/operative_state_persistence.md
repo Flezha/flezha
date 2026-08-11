@@ -1,13 +1,13 @@
 # Rust SDK Operative State Persistence
 
-This doc covers the state-persistence trait surface added by the
-`operative-state-persistence` change. The controller-side WAL writer,
-fsync batcher, snapshot lifecycle, retention sweeper, and time-travel
-CLI ship in `operative-state-persistence`; this doc describes the
-SDK-side contract and what runs where today.
+This doc covers the state-persistence trait surface a Rust author writes
+against. The controller-side WAL writer, fsync batcher, snapshot lifecycle,
+retention sweeper and time-travel CLI are described in
+`docs/resilience/state_persistence.md`; the runner-side flush cadence, effect
+record and restore fold live in the shared runner core
+(`docs/sdk_poll_core.md`).
 
-For the architecture rationale and the eight Tier-1 commitments that
-this change implements, see the umbrella in
+For the architecture rationale and the Tier-1 commitments behind it, see
 `openspec/specs/operative-state-persistence/`.
 
 ## Concepts
@@ -41,9 +41,9 @@ this change implements, see the umbrella in
   changes only take effect on the next `stop_operative` + `start_operative`
   cycle.
 
-- **`EntityFlusher`** — single OS thread per process, lazy-
-  initialized on first non-`NoChange` registration. Drains every
-  registered Entity's buffer on the linger cadence
+- **`EntityFlusher`** — the runner core's flush thread (`flz_core`), single
+  per process, lazy-initialized on first non-`NoChange` registration. Drains
+  every registered Entity's buffer on the linger cadence
   (`FLEZHA_FLUSH_LINGER_MS`, default 5 ms). Toggle-aware: when
   `persistence_enabled == false`, drains-and-discards.
 
@@ -132,10 +132,9 @@ impl UnboundedOperative for MarketOperative {
 ```
 
 When `PERSISTENCE_ENABLED == false` (or the runner override sets it
-to `false` at start time), the per-Entity flusher still drains the
-buffer on each linger tick — the buffer is cleared, coalescing runs,
-seq counters advance — but `send_frame` is never invoked. Tests can
-assert the wire stub was not called.
+to `false` at start time), the flusher still drains the buffer on each
+linger tick — the buffer is cleared, coalescing runs, seq counters
+advance — but nothing is written to the state sink.
 
 ## ProcedureTestHarness
 
@@ -181,8 +180,8 @@ last persisted record (modulo CRC failures, which fail loud).
 
 ## Wire format
 
-Per record (16-byte header per umbrella spec; full frame per
-`rust-sdk-dispatch` delta):
+Per record — the authoritative encoder is `flz_core/src/flusher.rs`, and the
+full framing is in `docs/sdk_protocol_spec.md`:
 
 ```
 [entity_id:      u32 BE]
@@ -199,37 +198,30 @@ over the change bytes. The trailing CRC32 is the same value, repeated
 on the wire so the controller's WAL reader can validate framing before
 decoding the header.
 
-## What ships where
+## What lives where
 
-| Concern | This change | `operative-state-persistence` |
-|---|---|---|
-| `Change` trait, `apply_change`, `StateHandle` | ✅ | — |
-| Per-Entity flusher (single OS thread) | ✅ | — |
-| Wire-frame builder | ✅ (stub `send_frame`) | replaces with NIF |
-| `ProcedureTestHarness::<S>::replay_equals` | ✅ | — |
-| 16-byte header, CRC32 validation | ✅ | — |
-| `UnboundedOperative::PERSISTENCE_ENABLED` resolution | ✅ | runner override wired |
-| Per-Procedure `compact_after_bytes` reported to controller | ✅ | consumes value |
-| Controller-side WAL writer + fsync batcher | — | ✅ |
-| Snapshot lifecycle + retention | — | ✅ |
-| Time-travel CLI | — | ✅ |
-
-Until both changes merge, the SDK is correct in isolation: drained
-frames are tracing-logged and discarded by the stub. End-to-end
-durability lands when the controller change wires the real `send_frame`.
+| Concern | Owner |
+|---|---|
+| `Change` trait, `apply_change`, `StateHandle`, `ProcedureTestHarness` | the Rust SDK (`sdk/rust`) |
+| `S::Change` / `S::State` serialization (postcard) | the Rust SDK — the core never decodes a change body |
+| Flusher, coalescing, effect record, 16-byte header, CRC32 | the runner core (`flz_core`) |
+| `UnboundedOperative::PERSISTENCE_ENABLED` resolution | the SDK declares, the runner override at start wins |
+| Per-Procedure `compact_after_bytes` reported at bind | declared by the SDK, consumed by the controller |
+| WAL writer, fsync batcher, snapshots, retention, time travel | the controller |
 
 ## Tunables
 
 - `FLEZHA_FLUSH_LINGER_MS` — flusher linger between drains. Default 5.
 - `Procedure::compact_after_bytes()` — per-Entity WAL size threshold
-  reported to the controller at operative start. Default 64 MiB.
+  reported to the controller at operative start. Default 8 MiB, in lockstep
+  with the controller's `:default_compact_after_bytes`.
 - `Procedure::SCHEMA_VERSION` — bump on non-additive Change-schema edits;
-  the runtime fails loud on mismatch (registered migrators are
-  reserved by the umbrella but not implemented in this change).
+  the runtime fails loud on mismatch. Registered migrators are reserved and
+  not implemented.
 
 ## See also
 
 - Umbrella spec: `openspec/specs/operative-state-persistence/`
-- Rust trait deltas: `openspec/changes/operative-state-persistence/`
+- Inside a runner: `docs/architecture/runner.md`, `docs/sdk_poll_core.md`
 - Wire-format hex: `docs/sdk_protocol_spec.md`
 - Bench baselines: `docs/benchmarking.md`
