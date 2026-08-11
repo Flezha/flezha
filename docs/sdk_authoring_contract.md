@@ -13,6 +13,12 @@ The trait surface itself is specified elsewhere (`operative-procedure-entity-mod
 `rust-sdk-dispatch`, `java-sdk`, `operative-state-persistence`). This contract
 governs only how a sugared declaration maps onto it.
 
+**Before writing a new SDK, read
+[`sdk_poll_core.md` → "The core decides, the SDK brings the threads"](sdk_poll_core.md#the-core-decides-the-sdk-brings-the-threads).**
+It states which side owns ordering, exclusivity and the limit on work
+underway, and which side owns the threading model — the choice a new binding
+makes first and can least afford to get wrong.
+
 ## 1. Escape-hatch equivalence (non-negotiable)
 
 - Generated code is equivalent to a valid hand-written `Procedure` / `UnboundedOperative`

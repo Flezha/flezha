@@ -7,7 +7,7 @@
 //! consumed-floor skip, replay-slice buffering and event-time ordering,
 //! late-input admission and classification, event-time due-timer generation,
 //! stale-timer validation, and the retry→park ladder's counting/backoff/
-//! re-hand. The host half (`operative::dispatcher::serve_slot`) runs one
+//! re-hand. The host half (`operative::poll_pool::serve_slot`) runs one
 //! attempt per item and reports the disposition.
 //!
 //! An event-time-clocked class is handed ONE admitted input per activation:
@@ -18,7 +18,7 @@
 //!
 //! The core never runs host code: scheduled rounds queue on `ready` and host
 //! workers — the typed layer's poll threads
-//! (`operative::dispatcher::ensure_poll_workers`), or a C-ABI host's own —
+//! (`operative::poll_pool`), or a C-ABI host's own —
 //! block in [`PollCore::poll`] and answer with completions. A host may also
 //! serve one slot inline (`try_assemble` + complete), which is how a
 //! Block-policy producer drains a full consumer on its own thread.
@@ -27,9 +27,16 @@
 //! the [`DeferredWake`] list, holding retry backoffs and processing-time timer
 //! deadlines. No thread waits out either — the list is serviced by whichever
 //! poller next enters or wakes, and its nearest entry shortens that wait.
+//!
+//! And it owns the one limit on how much work may be underway
+//! ([`PollCore::max_inflight`]), decoupled from any host's thread count: the
+//! core decides what runs and how much of it, each host brings the threads its
+//! runtime does best. [`PollCore::wait_starvation`] is the other half of that
+//! contract — a host thread parks in it and learns that work is queued with
+//! nobody left to take it, in the same bring-your-own-thread shape as `poll`.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -126,6 +133,16 @@ pub enum Polled {
     ShuttingDown,
 }
 
+/// What [`PollCore::wait_starvation`] answers — the same three-way shape as
+/// [`Polled`], so a host's supervisor loop reads like its worker loop and a
+/// shutdown ends both.
+pub enum Starvation {
+    /// Runnable work with nobody left to run it: the host owes a thread.
+    Observed,
+    Timeout,
+    ShuttingDown,
+}
+
 /// A deferred wake's place in the list: due time first, then a total
 /// tie-break so entries due at the same instant have a reproducible order.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -211,9 +228,16 @@ impl DeferredWake {
         self.refresh(&entries);
     }
 
+    /// Whether anything has come due. One relaxed load on the cached
+    /// earliest, so both the promotion path and the starvation predicate ask
+    /// it without taking the list's lock.
+    fn any_due(&self, now: u64) -> bool {
+        self.earliest.load(Ordering::Acquire) <= now
+    }
+
     /// Pop every entry due at `now`, ascending.
     fn take_due(&self, now: u64) -> Vec<(WakeKey, Wake)> {
-        if self.earliest.load(Ordering::Acquire) > now {
+        if !self.any_due(now) {
             return Vec::new();
         }
         let mut entries = self.entries.lock_recover();
@@ -268,6 +292,30 @@ pub struct PollCore {
     outstanding: DashMap<u64, Arc<EntitySlot>>,
     wakes: DeferredWake,
     next_wake: AtomicU64,
+    /// Work activations underway. `outstanding.len()` would answer it too,
+    /// but a `DashMap` counts by read-locking every shard, and this is read
+    /// on the handout path.
+    outstanding_count: AtomicUsize,
+    /// The cap on work activations underway at once. Enforced at handout, so
+    /// a host may run far more threads than this without ever exceeding it —
+    /// and far fewer without the cap mattering.
+    max_inflight: usize,
+    /// Pollers currently inside [`Self::poll`]. Presence is counted, not just
+    /// the condvar wait: a poller mid-assembly is about to take the queued
+    /// work, so it must not read as starvation.
+    pollers_inside: AtomicUsize,
+    /// Monotonic count of [`Self::poll`] entries. What separates a runner
+    /// that is merely *busy* — threads churning through batches, each one
+    /// briefly leaving `poll` — from one whose every thread is *stuck* inside
+    /// user code. See [`Self::wait_starvation`].
+    poll_entries: AtomicU64,
+    /// Where a host thread parks in [`Self::wait_starvation`]. Paired with
+    /// `ready`'s mutex so the predicate is evaluated under the same lock
+    /// producers take. Deliberately NOT signalled by `schedule` or by a
+    /// poller leaving: those are the hottest paths in the engine, and one
+    /// futex wake each would cost more than the whole feature is worth. The
+    /// waiter re-evaluates on its own [`STARVATION_DWELL`] tick instead.
+    starve_cv: Condvar,
 }
 
 static GLOBAL: OnceLock<PollCore> = OnceLock::new();
@@ -276,8 +324,33 @@ pub fn global() -> &'static PollCore {
     GLOBAL.get_or_init(PollCore::new)
 }
 
+/// How many work activations may be underway at once when
+/// `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` says nothing. High enough that a healthy
+/// blocking workload (hundreds of concurrent slow calls on host threads that
+/// cost nothing to block) never notices; low enough to bound the memory held
+/// by that many assembled batches.
+const MAX_INFLIGHT_DEFAULT: usize = 1024;
+const ENV_MAX_INFLIGHT: &str = "FLEZHA_MAX_INFLIGHT_ACTIVATIONS";
+
+/// How long queued work must sit with no thread entering `poll` before it
+/// counts as starvation, and the longest a starvation waiter parks between
+/// re-evaluations. A batch takes microseconds, so a busy runner re-enters
+/// `poll` orders of magnitude more often than this; only a runner whose
+/// threads are all *stuck* inside user code shows no entry at all for the
+/// window.
+const STARVATION_DWELL: Duration = Duration::from_millis(100);
+
 impl PollCore {
     pub fn new() -> Self {
+        Self::with_max_inflight(crate::util::env_parse_positive(
+            ENV_MAX_INFLIGHT,
+            MAX_INFLIGHT_DEFAULT,
+        ))
+    }
+
+    /// A core with an explicit jobs-underway cap. The engine's own tests use
+    /// it to reach the cap without queuing a thousand entities.
+    pub fn with_max_inflight(max_inflight: usize) -> Self {
         Self {
             ready: Mutex::new(VecDeque::new()),
             direct: Mutex::new(VecDeque::new()),
@@ -287,6 +360,11 @@ impl PollCore {
             outstanding: DashMap::new(),
             wakes: DeferredWake::new(),
             next_wake: AtomicU64::new(0),
+            outstanding_count: AtomicUsize::new(0),
+            max_inflight,
+            pollers_inside: AtomicUsize::new(0),
+            poll_entries: AtomicU64::new(0),
+            starve_cv: Condvar::new(),
         }
     }
 
@@ -306,7 +384,14 @@ impl PollCore {
     /// Also the deferred-wake list's only service: every pass promotes what
     /// has come due, and the nearest entry shortens the wait.
     pub fn poll(&self, timeout: Duration) -> Polled {
-        let deadline = Instant::now() + timeout;
+        self.poll_entries.fetch_add(1, Ordering::Release);
+        self.pollers_inside.fetch_add(1, Ordering::Release);
+        let polled = self.poll_until(Instant::now() + timeout);
+        self.pollers_inside.fetch_sub(1, Ordering::Release);
+        polled
+    }
+
+    fn poll_until(&self, deadline: Instant) -> Polled {
         loop {
             // First thing in the pass, before any lock is taken: a firing
             // enqueues under the Block policy and may drain a saturated
@@ -320,7 +405,13 @@ impl PollCore {
             if let Some(act) = self.direct.lock_recover().pop_front() {
                 return Polled::Activation(act);
             }
-            while let Some(slot) = ready.pop_front() {
+            // At the cap, entity work stays queued and pollers wait as if
+            // `ready` were empty; the completion that drops the count below it
+            // notifies. Command activations were already served above — they
+            // are barrier-bounded by their own drivers, and holding one behind
+            // blocked entity work would deadlock the driver waiting for it.
+            while self.outstanding_count.load(Ordering::Acquire) < self.max_inflight {
+                let Some(slot) = ready.pop_front() else { break };
                 drop(ready);
                 if let Some(act) = self.try_assemble(&slot) {
                     return Polled::Activation(act);
@@ -331,18 +422,98 @@ impl PollCore {
             if now >= deadline {
                 return Polled::Timeout;
             }
-            let mut wait = deadline - now;
-            // Reads the list's cached earliest, taking no lock: `ready` is
-            // held here, and a recorder takes the list's lock and then
-            // `ready` (to notify), so locking the list here would close a
-            // cycle.
-            if let Some(until_due) = self.wakes.next_due_in(crate::util::wall_now_ms()) {
-                wait = wait.min(until_due);
-            }
             // The guard dies with the pass; the next one re-locks after
             // promoting.
-            let _ = self.cv.wait_timeout(ready, wait);
+            let _ = self.cv.wait_timeout(ready, self.park_slice(deadline, now));
         }
+    }
+
+    /// Park until the core observes starvation — runnable work with nobody
+    /// left to run it — or `timeout` elapses.
+    ///
+    /// Starvation is *stuck*, not *busy*. Queued entity work counts only once
+    /// it has sat for [`STARVATION_DWELL`] with **no thread entering `poll`
+    /// at all**: a saturated runner enters `poll` once per batch, i.e. orders
+    /// of magnitude more often, and answering that with more threads would
+    /// add contention to a runner that is merely working.
+    ///
+    /// The core still calls no host code: this is the same
+    /// bring-your-own-thread shape as `poll`, and a host that cannot starve
+    /// (one that never lets a fetch thread run user code) simply never calls
+    /// it.
+    pub fn wait_starvation(&self, timeout: Duration) -> Starvation {
+        let deadline = Instant::now() + timeout;
+        let mut ready = self.ready.lock_recover();
+        // The dwell observation, carried across parks: when the condition
+        // started holding and the poll-entry count at that moment.
+        let mut held: Option<(Instant, u64)> = None;
+        loop {
+            if self.shutting_down.load(Ordering::Acquire) {
+                return Starvation::ShuttingDown;
+            }
+            let now = Instant::now();
+            if self.starving(ready.is_empty(), now, &mut held) {
+                return Starvation::Observed;
+            }
+            if now >= deadline {
+                return Starvation::Timeout;
+            }
+            // Re-evaluate at least once per dwell: nothing signals this
+            // condvar on the hot path.
+            let wait = self.park_slice(deadline, now).min(STARVATION_DWELL);
+            let (guard, _) = self
+                .starve_cv
+                .wait_timeout(ready, wait)
+                .unwrap_or_else(|p| p.into_inner());
+            ready = guard;
+        }
+    }
+
+    /// Whether the host owes a thread right now. `held` carries the dwell
+    /// observation between calls; anything that interrupts the condition —
+    /// the queue draining, the cap filling, a thread entering `poll` —
+    /// restarts it.
+    fn starving(&self, ready_empty: bool, now: Instant, held: &mut Option<(Instant, u64)>) -> bool {
+        // Could a thread supplied now even take work? Not while one is
+        // already inside `poll`, nor at the cap.
+        if self.pollers_inside.load(Ordering::Acquire) > 0
+            || self.outstanding_count.load(Ordering::Acquire) >= self.max_inflight
+        {
+            *held = None;
+            return false;
+        }
+        // A due wake needs no dwell: every `poll` pass promotes what has come
+        // due, so an entry still sitting there proves no pass has happened
+        // since it did.
+        if self.wakes.any_due(crate::util::wall_now_ms()) {
+            return true;
+        }
+        if ready_empty {
+            *held = None;
+            return false;
+        }
+        let entries = self.poll_entries.load(Ordering::Acquire);
+        match *held {
+            // Unchanged entry count: no thread has been inside `poll` since
+            // this work queued, so the runner is stuck rather than working.
+            Some((since, seen)) if seen == entries => now - since >= STARVATION_DWELL,
+            _ => {
+                *held = Some((now, entries));
+                false
+            }
+        }
+    }
+
+    /// How long to park: until `deadline`, but never past the nearest due
+    /// wake. Reads the list's cached earliest and takes no lock — `ready` is
+    /// held by both callers, and a recorder takes the list's lock and then
+    /// `ready`, so locking the list here would close a cycle.
+    fn park_slice(&self, deadline: Instant, now: Instant) -> Duration {
+        let mut wait = deadline.saturating_duration_since(now);
+        if let Some(until_due) = self.wakes.next_due_in(crate::util::wall_now_ms()) {
+            wait = wait.min(until_due);
+        }
+        wait
     }
 
     /// Hand every entry that has come due to its effect. Called once per
@@ -433,6 +604,7 @@ impl PollCore {
             if !items.is_empty() {
                 let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
                 self.outstanding.insert(token, Arc::clone(slot));
+                self.outstanding_count.fetch_add(1, Ordering::Release);
                 return Some(EngineActivation {
                     token,
                     payload: EnginePayload::Work {
@@ -465,10 +637,21 @@ impl PollCore {
     /// Any host thread may call this — including a different one than the
     /// thread that polled the activation.
     pub fn complete(&self, token: u64) {
-        let Some((_, slot)) = self.outstanding.remove(&token) else {
+        let Some(slot) = self.take_outstanding(token) else {
             return;
         };
         self.release_and_rearm(&slot);
+    }
+
+    /// Drop one activation from the jobs-underway count. A count that was at
+    /// the cap had pollers parked as if `ready` were empty, so falling below
+    /// it is the one event that makes them servable again.
+    fn take_outstanding(&self, token: u64) -> Option<Arc<EntitySlot>> {
+        let (_, slot) = self.outstanding.remove(&token)?;
+        if self.outstanding_count.fetch_sub(1, Ordering::AcqRel) >= self.max_inflight {
+            self.notify_waiters();
+        }
+        Some(slot)
     }
 
     /// A retryable failure stopped the batch at `items[0]`: bump its attempt,
@@ -480,7 +663,7 @@ impl PollCore {
     /// either, producers just enqueued. The promoting poller runs the
     /// release-and-reclaim when the entry comes due.
     pub fn retry_after_failure(&self, token: u64, mut items: Vec<WorkItem>, error: String) {
-        let Some((_, slot)) = self.outstanding.remove(&token) else {
+        let Some(slot) = self.take_outstanding(token) else {
             return;
         };
         let mut delay = Duration::ZERO;
@@ -514,7 +697,7 @@ impl PollCore {
     /// head that parked. No attempt bump and no backoff: these items are not
     /// failures, they are simply owed a fresh round.
     pub fn rehand_unprocessed(&self, token: u64, items: Vec<WorkItem>) {
-        let Some((_, slot)) = self.outstanding.remove(&token) else {
+        let Some(slot) = self.take_outstanding(token) else {
             return;
         };
         self.hold_head_of_line(&slot, items);
@@ -640,6 +823,7 @@ impl PollCore {
     pub fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::Release);
         self.cv.notify_all();
+        self.starve_cv.notify_all();
     }
 }
 

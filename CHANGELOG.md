@@ -4,6 +4,25 @@
 
 ### Changed
 
+- **Blocking user code no longer halts the runner** (`sdk-owned-concurrency`).
+  The worker count used to be the limit on how many jobs could be underway:
+  with the pool sized to CPU count, CPU-count slow calls (an LLM turn, a slow
+  HTTP fetch) stopped everything else — not slowed, stopped. That limit now
+  belongs to the core and is decoupled from any thread count: one process-wide
+  cap on work activations underway (`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default
+  1024), enforced at handout and released on completion. Command activations
+  (restore folds, snapshot requests, bounded step crossings) stay exempt —
+  they are barrier-bounded by their own drivers. Each SDK then services that
+  with whatever its runtime does best: **Rust** parks one supervisor thread in
+  the core's new starvation wait (work queued, nobody inside `poll`) and grows
+  its pool one thread at a time up to `FLEZHA_WORKER_POOL_MAX` (default 10×
+  cores), with the grown threads retiring after an idle streak; **Java**'s
+  poller threads become two platform *fetchers* that hand every activation to
+  a **virtual thread**, which dispatches and completes it, so waiting costs a
+  stack and the starvation condition cannot arise. No wire, controller,
+  persistence or authoring-API change; a workload that never starves observes
+  exactly the pool it does today.
+
 - **Neither a retry backoff nor a processing-time timer holds a thread**
   (`sdk-deferred-wake`). One deferred-wake list inside the poll core now
   answers "do something with this entity at time T", serviced by the threads

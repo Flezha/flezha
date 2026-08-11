@@ -9,23 +9,23 @@ import org.junit.jupiter.api.Test;
 class FlezhaEnvTest {
 
     @Test
-    @DisplayName("empty env → worker pool defaults to available processors")
+    @DisplayName("empty env → a small fixed fetcher set, not one per core")
     void defaults() {
         var resolved = FlezhaEnv.resolve(Map.of());
-        assertThat(resolved.workerPoolSize()).isPositive();
+        assertThat(resolved.fetcherCount()).isEqualTo(FlezhaEnv.DEFAULT_FETCHER_COUNT);
     }
 
     @Test
     @DisplayName("FLEZHA_WORKER_POOL_SIZE override parses as int")
-    void workerPoolOverride() {
+    void fetcherCountOverride() {
         var resolved = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "42"));
-        assertThat(resolved.workerPoolSize()).isEqualTo(42);
+        assertThat(resolved.fetcherCount()).isEqualTo(42);
     }
 
     @Test
-    @DisplayName("malformed worker pool size falls back to default")
-    void workerPoolMalformedFallback() {
+    @DisplayName("malformed fetcher count falls back to the default")
+    void fetcherCountMalformedFallback() {
         var resolved = FlezhaEnv.resolve(Map.of("FLEZHA_WORKER_POOL_SIZE", "notanumber"));
-        assertThat(resolved.workerPoolSize()).isPositive();
+        assertThat(resolved.fetcherCount()).isEqualTo(FlezhaEnv.DEFAULT_FETCHER_COUNT);
     }
 }

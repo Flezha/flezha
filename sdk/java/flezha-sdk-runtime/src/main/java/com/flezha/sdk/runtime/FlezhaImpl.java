@@ -6,22 +6,17 @@ import com.flezha.sdk.native_.FlzCore;
 import com.flezha.sdk.procedure.SpawnRequests;
 import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
-import com.flezha.sdk.runtime.core.Activation;
-import com.flezha.sdk.runtime.core.ActivationCodec;
 import com.flezha.sdk.runtime.core.ActivationDispatcher;
-import com.flezha.sdk.runtime.core.ActivationResult;
 import com.flezha.sdk.runtime.core.BoundedSession;
 import com.flezha.sdk.runtime.core.CoreSpawnRequester;
 import com.flezha.sdk.runtime.core.HostClassDeclaration;
 import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -33,42 +28,52 @@ import org.slf4j.LoggerFactory;
  * {@code FlezhaRunner} holds, resolved via reflection from
  * {@code FlezhaRunner.start()}. Hosts the poll core: declares every
  * registered class as {@code HostClassDecl} JSON, starts the core's runner
- * loop, and drives N poller threads through
- * {@code poll → ActivationDispatcher.dispatch → complete}. The core owns the
- * wire — transport, framing, reconnect, retry ladders, durability records —
- * so this class owns only declaration and lifecycle.
+ * loop, and brings the threads the core's activations run on (see
+ * {@link PollHost}). The core owns the wire — transport, framing, reconnect,
+ * retry ladders, durability records — so this class owns only declaration and
+ * lifecycle.
  */
 public final class FlezhaImpl implements RunnerHandle {
 
     private static final Logger LOG = LoggerFactory.getLogger(FlezhaImpl.class);
 
-    /** Poll timeout per loop turn; bounds how fast close() can join a poller. */
-    private static final long POLL_TIMEOUT_MS = 250;
-
     private final String namespace;
     private final long core;
     private final ActivationDispatcher dispatcher;
-    private final List<Thread> pollers;
+    private final PollHost pollHost;
     private final Set<String> declared;
     private final Runnable onTerminated;
     private final CountDownLatch terminationLatch = new CountDownLatch(1);
     private final AtomicBoolean closed = new AtomicBoolean(false);
-    private final AtomicInteger livePollers;
 
     private FlezhaImpl(
             String namespace,
             long core,
             ActivationDispatcher dispatcher,
-            List<Thread> pollers,
+            int fetchers,
             Set<String> declared,
             Runnable onTerminated) {
         this.namespace = namespace;
         this.core = core;
         this.dispatcher = dispatcher;
-        this.pollers = pollers;
         this.declared = declared;
         this.onTerminated = onTerminated;
-        this.livePollers = new AtomicInteger(0);
+        this.pollHost = new PollHost(
+                new PollHost.CoreCalls() {
+                    @Override
+                    @Nullable
+                    public byte[] poll(long timeoutMs) {
+                        return FlzCore.poll(core, timeoutMs);
+                    }
+
+                    @Override
+                    public void complete(@Nonnull byte[] result) {
+                        FlzCore.complete(core, result);
+                    }
+                },
+                dispatcher::dispatch,
+                fetchers,
+                terminationLatch::countDown);
     }
 
     /**
@@ -82,7 +87,7 @@ public final class FlezhaImpl implements RunnerHandle {
             @Nonnull String namespace,
             @Nonnull Supplier<List<String>> declaredFactoryIds,
             @Nonnull Runnable onTerminated) {
-        int poolSize = FlezhaEnv.resolveFromEnv().workerPoolSize();
+        int fetchers = FlezhaEnv.resolveFromEnv().fetcherCount();
 
         long core = FlzCore.newContext();
         Set<String> declared = ConcurrentHashMap.newKeySet();
@@ -101,59 +106,18 @@ public final class FlezhaImpl implements RunnerHandle {
                 new ActivationDispatcher(instanceId -> new FlzCoreBoundedSession(core, instanceId));
         SpawnRequests.install(new CoreSpawnRequester(core));
 
-        List<Thread> pollers = new ArrayList<>();
-        FlezhaImpl handle = new FlezhaImpl(namespace, core, dispatcher, pollers, declared, onTerminated);
-        for (int i = 0; i < Math.max(1, poolSize); i++) {
-            Thread t = new Thread(handle::pollLoop, "flz-poller-" + (i + 1));
-            t.setDaemon(true);
-            pollers.add(t);
-        }
-        handle.livePollers.set(pollers.size());
-        pollers.forEach(Thread::start);
+        FlezhaImpl handle = new FlezhaImpl(namespace, core, dispatcher, fetchers, declared, onTerminated);
+        handle.pollHost.start();
 
         // SIGTERM (Kubernetes pre-stop) triggers the graceful teardown even
         // when the user never calls close(). Idempotent with close().
         Runtime.getRuntime().addShutdownHook(new Thread(handle::close, "flezha-graceful-shutdown"));
 
-        LOG.info("Flezha runner started on namespace `{}` with {} poller(s)", namespace, pollers.size());
+        LOG.info(
+                "Flezha runner started on namespace `{}` with {} fetcher(s); activations run on virtual threads",
+                namespace,
+                handle.pollHost.fetcherCount());
         return handle;
-    }
-
-    /**
-     * One poller loop: poll ≤{@link #POLL_TIMEOUT_MS}, dispatch, complete.
-     * Per-activation failures are logged, never rethrown — a poller must not
-     * die on one bad activation. A zero-length poll result means the core is
-     * shutting down and ends the loop.
-     */
-    private void pollLoop() {
-        while (true) {
-            byte[] bytes;
-            try {
-                bytes = FlzCore.poll(core, POLL_TIMEOUT_MS);
-            } catch (Throwable t) {
-                if (closed.get()) {
-                    break;
-                }
-                LOG.error("core poll failed: {}", t.toString());
-                continue;
-            }
-            if (bytes == null) {
-                continue;
-            }
-            if (bytes.length == 0) {
-                break;
-            }
-            try {
-                Activation activation = ActivationCodec.decodeActivation(bytes);
-                ActivationResult result = dispatcher.dispatch(activation);
-                FlzCore.complete(core, ActivationCodec.encodeResult(result));
-            } catch (Throwable t) {
-                LOG.error("activation processing failed: {}", t.toString());
-            }
-        }
-        if (livePollers.decrementAndGet() == 0) {
-            terminationLatch.countDown();
-        }
     }
 
     /**
@@ -227,13 +191,9 @@ public final class FlezhaImpl implements RunnerHandle {
         }
         SpawnRequests.uninstall();
         FlzCore.shutdown(core);
-        for (Thread poller : pollers) {
-            try {
-                poller.join(5_000);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+        // Drains the in-flight activations too — each still owes the core a
+        // `complete` on this context, which the free below invalidates.
+        pollHost.close();
         FlzCore.contextFree(core);
         // Release the JVM-wide runner slot before waking waiters, so a thread
         // unblocked from awaitTermination() can immediately start a new runner.

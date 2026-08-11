@@ -15,10 +15,70 @@ loop:
 The core **never calls into host code and never owns a host thread** (the
 FFI log callback is the one permitted exception). Python keeps asyncio, Go
 keeps goroutines, Java keeps JVM threads; each SDK writes the loop above
-idiomatically. The Rust SDK itself is the first host: its typed layer spawns
-poll workers (`FLEZHA_WORKER_POOL_SIZE`, default = available parallelism)
+idiomatically (see [the governing rule](#the-core-decides-the-sdk-brings-the-threads)).
+The Rust SDK itself is the first host: its typed layer spawns poll workers
 and consumes the same engine as a crate — the dogfood rule that keeps the
 boundary from eroding.
+
+## The core decides, the SDK brings the threads
+
+This is the governing rule of the boundary, and the one an author of the next
+SDK (Go, Node, Python) has to read before choosing a threading model.
+
+**The core decides what runs and how much of it.** It picks the next
+activation, holds per-entity ordering, exclusivity, the retry ladder and
+durability, and caps how many work activations may be underway at once —
+`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default 1024, enforced at handout: at the
+cap `poll` blocks as if nothing were ready, and the completion that drops the
+count below it releases the next one. Command activations (restore folds,
+snapshot requests, bounded step crossings) are exempt — they are
+barrier-bounded by the drivers that enqueue them and answer a caller blocked
+on a rendezvous, so holding one behind capped entity work would deadlock that
+caller.
+
+**The SDK brings the threads**, with whatever its runtime does best. The
+count is a servicing detail, not a limit on concurrency — that limit is the
+core's one number. Concretely, the two shipped hosts differ completely and
+neither knows about the other:
+
+- **Rust** has no cheap blocking, so it grows its pool. A base pool
+  (`FLEZHA_WORKER_POOL_SIZE`, default = available parallelism) plus one
+  supervisor thread parked in the core's **starvation wait**. Each
+  observation spawns one more worker up to `FLEZHA_WORKER_POOL_MAX` (default
+  10× the base); workers above the base retire after an idle streak, so a
+  workload that never starves observes exactly the base pool.
+- **Java** hands the activation off instead. A small fixed set of platform
+  *fetcher* threads (default 2) loop `poll → decode → hand off → poll`, and
+  one **virtual thread** per activation runs the dispatch and completes it.
+  Waiting then costs a stack, the starvation condition cannot arise by
+  construction, and Java never calls `wait_starvation`.
+
+Starvation is exposed as a blocking wait a host thread may park in
+(`flz_core_wait_starvation`), never as a callback: the core calls no host
+code, and a host that cannot starve simply never calls it. It answers in the
+same three-way shape as `poll` — observed / timeout / shutting down — so a
+supervisor loop is structurally a worker loop and ends with the runner.
+
+**Starvation means *stuck*, not *busy*.** Queued work counts only once it has
+sat for a dwell (100 ms) during which **no thread entered `poll` at all**. A
+saturated runner enters `poll` once per batch — microseconds apart — so it
+never trips; only a runner whose every thread is inside user code shows no
+entry for the window. Answering saturation with more threads would add
+contention to a runner that is merely working. A due deferred wake needs no
+dwell: every `poll` pass promotes what has come due, so an entry still
+sitting there is itself proof that no pass has happened.
+
+Two notes owed to whoever writes the next SDK:
+
+- **Bring your own fetch threads.** Never fetch on the runtime's shared I/O
+  pool (libuv's threadpool, a framework's request executor): `poll` blocks
+  inside the core, and borrowing a shared pool's thread for it starves
+  everything else that pool serves. The same reason Java's fetchers are
+  platform threads and not virtual ones — a native frame pins a virtual
+  thread's carrier.
+- **Completing from a different thread than the one that polled is expected**,
+  not merely tolerated. It is what lets a host fetch on one thread and run on
+  another, which is the whole point of the split.
 
 ## Activation / ActivationResult
 
@@ -93,9 +153,10 @@ wakes inside `poll` — with no lock held, since a firing enqueues under the
 entry shortens the poller wait. Recording one notifies blocked pollers so
 they re-compute that wait.
 
-The trade is that promotion needs a thread in `poll`: with every worker
-inside user code, a due entry waits for the first one to come back. It
-could not have *run* earlier than that in any case.
+Promotion needs a thread in `poll`, so a due entry with every worker inside
+user code is starvation and reads as such: the starvation wait's deadline
+considers the nearest due entry, which is how a host that grows threads gets
+one there in time to promote the firing.
 
 ## Producer-side transforms and keys (D4)
 

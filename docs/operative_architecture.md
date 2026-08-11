@@ -72,8 +72,10 @@ decisions, and capability spec deltas, see
   (typed value serialized to bytes; sent to a named plugin via the
   controller).
 
-- **Runner** — the work-stealing pool that drains mailboxes. One pool
-  per runner (`FlezhaRunner::start()`); size controlled by `FLEZHA_WORKER_POOL_SIZE`.
+- **Runner** — the poll workers that drain mailboxes. One pool per runner
+  (`FlezhaRunner::start()`); base size controlled by
+  `FLEZHA_WORKER_POOL_SIZE`, grown under starvation up to
+  `FLEZHA_WORKER_POOL_MAX` (see `docs/sdk_poll_core.md`).
 
 ### Operative kind and capabilities (controller-side)
 
@@ -652,12 +654,13 @@ that change purely additive.
 
 ### Worker-pool sizing under `Block`
 
-A Block-policy producer parks the worker thread it ran on. A pipeline
-of depth D under `Block` requires the work-stealing pool to have
-`FLEZHA_WORKER_POOL_SIZE ≥ 2 × D + 1` to avoid a deadlock: D parked
-producers + 1 thread free to drain the deepest consumer + spare for
-upstream drains. The SDK does not enforce this at startup; runners
-running deep pipelines should size the pool accordingly.
+A Block-policy producer parks the worker thread it ran on. A pipeline of
+depth D under `Block` wants `≥ 2 × D + 1` threads: D parked producers + 1
+free to drain the deepest consumer + spare for upstream drains. The base
+pool (`FLEZHA_WORKER_POOL_SIZE`) need not be sized for it — a parked
+producer is not inside `poll`, so queued work behind D parked producers is
+exactly the starvation the pool grows on, up to `FLEZHA_WORKER_POOL_MAX`.
+Raising the base only removes the growth latency.
 
 Single-stage pipelines (entry → one Procedure, no fan-out) are unaffected:
 the wire reader is the only producer, and its park does not consume a

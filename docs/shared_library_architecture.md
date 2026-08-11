@@ -103,10 +103,11 @@ harness. See `docs/sdk_poll_core.md`.
 The Rust SDK's typed layer is the first poll host. Stream-reader threads
 push directly into the target Entity's bounded mailbox
 (`crossbeam::queue::ArrayQueue` + `AtomicBool inflight`); the CAS winner
-schedules an engine round, and the typed layer's **poll workers** (N =
-`FLEZHA_WORKER_POOL_SIZE`, default available parallelism) serve it:
-`poll() → run one attempt per item through the typed dispatcher →
-complete` (or hand a failed head back to the engine's ladder).
+schedules an engine round, and the typed layer's **poll workers** (base N =
+`FLEZHA_WORKER_POOL_SIZE`, default available parallelism, grown under
+starvation up to `FLEZHA_WORKER_POOL_MAX`) serve it: `poll() → run one
+attempt per item through the typed dispatcher → complete` (or hand a failed
+head back to the engine's ladder).
 
 Sticky per-Entity ordering is preserved: batch assembly runs under the
 single-active-drainer gates, an entity with an outstanding activation is

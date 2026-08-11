@@ -19,12 +19,14 @@ use std::time::Duration;
 
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
-use flz_core::poll_core::{EngineActivation, Polled};
+use flz_core::poll_core::{EngineActivation, Polled, Starvation};
 use flz_core::runner::{ClientResponseMessage, RunnerMessage};
 use flz_core::schema;
 
 /// Poll produced an activation; the out buffer holds its encoded bytes.
 pub const FLZ_POLL_ACTIVATION: i32 = 1;
+/// The starvation wait observed starvation: the host owes a thread.
+pub const FLZ_STARVATION_OBSERVED: i32 = 1;
 /// Poll timed out with no work.
 pub const FLZ_POLL_TIMEOUT: i32 = 0;
 /// The context is shutting down; every blocked poller is released.
@@ -219,6 +221,31 @@ pub unsafe extern "C" fn flz_core_poll(
             std::mem::forget(bytes);
             FLZ_POLL_ACTIVATION
         }
+    }
+}
+
+/// Block for up to `timeout_ms` until the core observes starvation: work has
+/// been queued (or a deferred wake is due) with no thread inside `poll` and
+/// the jobs-underway cap not reached. Answers in the same three-way shape as
+/// [`flz_core_poll`] — [`FLZ_STARVATION_OBSERVED`], [`FLZ_POLL_TIMEOUT`], or
+/// [`FLZ_POLL_SHUTTING_DOWN`] — so a supervisor loop ends with the runner.
+///
+/// For hosts whose fetch threads can be occupied by user code: they grow
+/// their pool on an observation. A host that hands every activation to a
+/// cheap concurrency primitive (virtual threads, goroutines, an event loop)
+/// returns to `poll` immediately and never needs to call this.
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`flz_core_context_new`].
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_wait_starvation(ctx: *mut FlzContext, timeout_ms: u64) -> i32 {
+    if ctx.is_null() {
+        return FLZ_ERR;
+    }
+    match flz_core::poll_core::global().wait_starvation(Duration::from_millis(timeout_ms)) {
+        Starvation::Observed => FLZ_STARVATION_OBSERVED,
+        Starvation::Timeout => FLZ_POLL_TIMEOUT,
+        Starvation::ShuttingDown => FLZ_POLL_SHUTTING_DOWN,
     }
 }
 

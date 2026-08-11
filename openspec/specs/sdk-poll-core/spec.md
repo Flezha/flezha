@@ -202,3 +202,58 @@ thread SHALL exist to service the list.
 - **WHEN** shutdown begins while deferred wakes are pending
 - **THEN** pollers SHALL observe shutdown immediately, with no backoff sleep
   left to run out
+
+### Requirement: The core caps jobs underway and signals starvation
+
+The core SHALL own one process-wide limit on concurrently outstanding work
+activations (default 1024, env `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`), enforced at
+work handout: when the limit is reached, `poll` SHALL NOT hand out entity work,
+and a completion that drops the count below the limit SHALL resume handout.
+The limit SHALL NOT gate direct command activations (restore folds, snapshot
+requests, bounded step crossings — these are barrier-bounded by their drivers)
+nor the inline-serve deadlock-avoidance path.
+
+The core SHALL expose starvation — runnable work exists, no thread is inside
+`poll`, and the limit is not reached — as a blocking wait a host thread may
+park in, answering in the same three-way shape as `poll` (observed / timeout /
+shutting down). No host-callback registration SHALL be introduced.
+
+Starvation SHALL mean stuck, not busy: queued entity work SHALL count only
+once it has waited a dwell interval during which no thread entered `poll` at
+all, so that a saturated runner — which re-enters `poll` once per batch —
+never reads as starved. A due deferred wake SHALL count immediately, since
+every `poll` pass promotes what has come due.
+
+#### Scenario: Handout stops at the cap and resumes on completion
+
+- **WHEN** the outstanding work count reaches the configured limit while more
+  entity work is queued
+- **THEN** polling threads SHALL block as if no work were ready, and a single
+  completion SHALL allow the next poll to return an activation
+
+#### Scenario: The cap does not gate command activations
+
+- **WHEN** the outstanding work count is at the limit and a direct command
+  activation (e.g., a restore fold) is enqueued
+- **THEN** the next poll SHALL return the command activation ahead of any
+  entity work
+
+#### Scenario: Starvation wakes a parked supervisor
+
+- **WHEN** entity work is queued while every poller is inside user code (none
+  waiting in `poll`) and the limit is not reached
+- **THEN** a host thread parked in the starvation wait SHALL be woken
+
+#### Scenario: A busy runner does not read as starved
+
+- **WHEN** work is continuously queued and threads keep entering `poll` to
+  take it — a saturated but healthy runner
+- **THEN** the starvation wait SHALL NOT report starvation, however deep the
+  queue grows
+
+#### Scenario: A due deferred wake with no waiting poller counts as starvation
+
+- **WHEN** a deferred wake (retry or processing-time timer) comes due while no
+  poller is waiting in `poll`
+- **THEN** the starvation wait SHALL wake no later than the due time, so the
+  host can supply a thread to promote the firing

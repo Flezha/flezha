@@ -533,3 +533,33 @@ no persisted Entity.
 
 - **WHEN** `AddOperative` arrives with no `proc_journal`
 - **THEN** `proc_journal_resume()` SHALL be `None` and the chain SHALL run from the top
+
+### Requirement: The worker pool grows under starvation and shrinks when idle
+
+The Rust SDK SHALL spawn its base poll-worker pool as today
+(`FLEZHA_WORKER_POOL_SIZE`, default = CPU count) and SHALL additionally park
+one supervisor thread in the core's starvation wait. On each starvation wake
+the supervisor SHALL spawn one additional poll worker, up to a ceiling
+(`FLEZHA_WORKER_POOL_MAX`, default 10× CPU count). Workers above the base
+count SHALL exit after a sustained idle streak; base workers SHALL NOT exit.
+A workload that never starves SHALL observe exactly the base pool.
+
+#### Scenario: Blocking user code no longer halts the runner
+
+- **WHEN** activations blocking longer than the starvation detection interval
+  occupy every base worker while work for other entities is queued
+- **THEN** additional workers SHALL be spawned (one per starvation signal, up
+  to the ceiling) and the queued work SHALL be served without waiting for the
+  blocked activations to finish
+
+#### Scenario: The pool shrinks back after the burst
+
+- **WHEN** spawned workers above the base count receive no work for the idle
+  streak duration
+- **THEN** they SHALL exit, returning the pool to its base size
+
+#### Scenario: The ceiling bounds growth
+
+- **WHEN** starvation persists with the pool at `FLEZHA_WORKER_POOL_MAX`
+- **THEN** no further threads SHALL be spawned and remaining work SHALL wait
+  for a completion, exactly as the whole pool does today at CPU count

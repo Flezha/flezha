@@ -979,7 +979,9 @@ The returned handle provides:
 |---|---|---|
 | `FLEZHA_SOCKET_FILES_PATH` | `app_data/sockets` | Base path for socket files |
 | `FLEZHA_CONCURRENT_CHANNEL_COUNT` | `0` (= CPU count) | Number of stream socket pairs (controller-side config) |
-| `FLEZHA_WORKER_POOL_SIZE` | CPU count | Number of worker threads in the SDK |
+| `FLEZHA_WORKER_POOL_SIZE` | CPU count (Rust), 2 (Java) | Base poll workers (Rust) / platform fetcher threads (Java) |
+| `FLEZHA_WORKER_POOL_MAX` | 10× base | Ceiling the Rust poll pool may grow to under starvation |
+| `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | 1024 | The core's cap on work activations underway at once |
 
 ---
 

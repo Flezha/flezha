@@ -163,15 +163,28 @@ re-binds and re-forwards).
 
 ### Requirement: Worker Pool and Dispatch Throughput Floor
 
-The Java SDK SHALL operate on a single shared bounded runner sized by `FLEZHA_WORKER_POOL_SIZE` (default = `Runtime.availableOperatives()`), draining all `EntitySlot` mailboxes work-steal-style. The SDK SHALL sustain at least the throughput floor (in messages/second) measured against the v1 implementation at merge time on the regression bench (`100 operatives × 1 procedure × 1 entity × 10K msg`, no-op Procedure, UDS transport, default worker-pool size; see `operative-mvp-java/design.md` Decision 7) invoked via `mix bench --runtime java --shape regression -n 100 -m 10000`. The bench-regression-java CI job is informational in v1; the literal floor value is recorded in this requirement once `mix bench --runtime java` has been measured 3× on the reference host (median, rounded down to a clean number) — until then the recorded floor is "TBD pending v1 measurement".
+The Java SDK SHALL fetch work with a small fixed set of platform fetcher
+threads (default 2; `FLEZHA_WORKER_POOL_SIZE` overrides the count) and SHALL
+run each polled activation on a virtual thread; the count of jobs underway is
+owned by the core, not by any Java pool size. The SDK SHALL sustain at least
+the throughput floor (in messages/second) measured against the v1
+implementation at merge time on the regression bench (`100 operatives × 1
+procedure × 1 entity × 10K msg`, no-op Procedure, UDS transport, default
+worker-pool size; see `operative-mvp-java/design.md` Decision 7) invoked via
+`mix bench --runtime java --shape regression -n 100 -m 10000`. The
+bench-regression-java CI job is informational in v1; the literal floor value
+is recorded in this requirement once `mix bench --runtime java` has been
+measured 3× on the reference host (median, rounded down to a clean number) —
+until then the recorded floor is "TBD pending v1 measurement".
 
 #### Scenario: Reference bench meets the Java throughput floor
 - **WHEN** a developer runs `MIX_ENV=prod mix bench --runtime java --shape regression -n 100 -m 10000` on a modern 8-core x86_64 laptop with a warm JVM (≥ 30 s warmup)
 - **THEN** the reported `Throughput:` line SHALL be ≥ the recorded Java floor value
 
-#### Scenario: Default worker pool size matches available operatives
+#### Scenario: Default fetcher count is small and fixed
 - **WHEN** the SDK starts with `FLEZHA_WORKER_POOL_SIZE` unset
-- **THEN** the worker pool SHALL be sized to `Runtime.availableOperatives()`
+- **THEN** exactly 2 platform fetcher threads SHALL poll, and every activation
+  SHALL be dispatched on a virtual thread
 
 ### Requirement: JNI Bridge to flz_core_ffi
 
@@ -894,17 +907,21 @@ The **default value** itself is owned by `java-state-guard-and-dead-knobs`, whic
 ### Requirement: The Java runtime is a poll host over the shared core
 
 The Java SDK's runtime SHALL be hosted on `flz_core` through the C ABI: a
-fixed pool of JVM poller threads (sized by `FLEZHA_WORKER_POOL_SIZE`,
-default = available processors) SHALL loop `poll → decode Activation →
-dispatch to the typed layer → encode ActivationResult → complete`. The
-runtime SHALL NOT reimplement kernel mechanisms the core owns — command
-handling, flushing, credit, DLQ parks, timer wheels, the bounded driver,
-reconnect, wire framing — and the classes that did (`runtime/control`
-handlers, `EntityFlusher`, `CreditWindow`, `DlqPark`, `TimerWheel`,
-`BoundedOperativeRunner`, the reconnect loop, `AckRegistry`) SHALL be
-deleted, not shimmed. The Java SDK SHALL encode and decode the
-Activation/ActivationResult schema byte-identically to the core's
-hex-pinned fixtures, reproduced in a Java fixture suite.
+small fixed set of platform **fetcher** threads (default 2;
+`FLEZHA_WORKER_POOL_SIZE` overrides the count) SHALL loop `poll → decode
+Activation → hand off to a virtual thread → poll again`, and the virtual
+thread SHALL run the typed dispatch, encode the ActivationResult, and call
+`complete` itself — completion from a thread other than the poller is the
+core's documented contract. Fetchers SHALL be platform threads, never virtual
+ones: `FlzCore.poll` blocks in native code, which would pin a virtual
+thread's carrier. The runtime SHALL NOT reimplement kernel mechanisms the
+core owns — command handling, flushing, credit, DLQ parks, timer wheels, the
+bounded driver, reconnect, wire framing — and the classes that did
+(`runtime/control` handlers, `EntityFlusher`, `CreditWindow`, `DlqPark`,
+`TimerWheel`, `BoundedOperativeRunner`, the reconnect loop, `AckRegistry`)
+SHALL be deleted, not shimmed. The Java SDK SHALL encode and decode the
+Activation/ActivationResult schema byte-identically to the core's hex-pinned
+fixtures, reproduced in a Java fixture suite.
 
 #### Scenario: Kernel classes are gone
 - **WHEN** user or test code references the deleted kernel classes (for example `com.flezha.sdk.runtime.state.EntityFlusher` or a `runtime/control/handlers` class)
@@ -915,5 +932,13 @@ hex-pinned fixtures, reproduced in a Java fixture suite.
 - **THEN** the produced bytes SHALL equal the core's pinned hex literals exactly, and a mismatch SHALL fail the build
 
 #### Scenario: Per-entity state is host-held without host locking
-- **WHEN** two poller threads process activations for two different entities of one Procedure concurrently
+- **WHEN** two activations for two different entities of one Procedure run concurrently on virtual threads
 - **THEN** each SHALL touch only its own entity's materialized state — per-entity exclusivity is the core's handout guarantee, and the Java layer performs no entity-level locking of its own
+
+#### Scenario: Blocking user code does not consume a fetcher
+- **WHEN** activations that block for tens of seconds (e.g., an LLM call) are
+  in flight for many entities at once
+- **THEN** the fetchers SHALL keep polling and handing out further
+  activations, and work for unblocked entities SHALL proceed — concurrency is
+  bounded by the core's jobs-underway limit, not by the fetcher count
+
