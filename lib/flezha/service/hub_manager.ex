@@ -872,8 +872,14 @@ defmodule Flezha.Service.HubManager do
     # disk — the DETS file would only become test-isolation noise. ETS
     # gives us identical in-memory semantics with no on-disk residue.
     case Application.get_env(:flezha, :auto_restore_enabled, true) do
-      false -> :ets
-      _ -> {:dets, [path: registry_path(hub_id)]}
+      false ->
+        :ets
+
+      _ ->
+        # `:durable_ets` serves reads from ETS and leaves the on-disk copy
+        # alone when a boot skips replay; `:dets` erases the file instead,
+        # which destroys the only record a cold cluster can recover from.
+        {:durable_ets, [path: registry_path(hub_id)]}
     end
   end
 

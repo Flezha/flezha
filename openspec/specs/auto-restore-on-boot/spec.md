@@ -6,7 +6,11 @@ The auto-restore-on-boot capability provides automatic, operator-free recovery o
 ## Requirements
 ### Requirement: Configure ProcessHub for durable registry and auto-recovery per namespace
 
-`Flezha.Service.HubManager.process_hub/1` SHALL pass `registry_backend: {:dets, [path: <path>]}` and `auto_recovery: <config>` to every `ProcessHub.child_spec/1` call. This activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace.
+`Flezha.Service.HubManager.process_hub/1` SHALL pass `registry_backend: {:durable_ets, [path: <path>]}` and `auto_recovery: <config>` to every `ProcessHub.child_spec/1` call. This activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace.
+
+The backend SHALL be one whose `open/2` leaves the on-disk registry untouched when ProcessHub injects `recovery_replay: false`. `ProcessHub.Service.Storage.Dets` does NOT qualify: it calls `:dets.delete_all_objects/1` on that path, so a marker-present boot destroys the only record a later recovery boot could replay — a whole-cluster power loss then comes up with zero operatives and no way back, and `flz cluster prepare-recovery` replays an empty file forever after. `ProcessHub.Service.Storage.DurableEts` qualifies: it skips loading DETS into its ETS read table and writes nothing to the file.
+
+The live registry MUST still start empty on such a boot. `ProcessRegistry.local_data/1` selects rows by `node_pids` membership and the node name is stable across a restart, so a backend that exposed the previous boot's rows as live state would have `Synchronizer.broadcastable_local_data/1` advertise dead pids to peers as this node's local children.
 
 The DETS path SHALL resolve to `app_data/process_hub/<hub_id>/registry.dets` by default, with the root configurable via `:flezha, :process_hub_registry_root` (env var `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`).
 
@@ -14,13 +18,13 @@ The recovery configuration SHALL carry only the keys `ProcessHub.Service.Recover
 
 The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` without consulting the marker or replaying.
 
-The atom in the registry-backend tuple MUST resolve to a real backend module via `ProcessHub.Initializer.resolve_registry_backend/1` — currently exactly `:dets` (→ `ProcessHub.Service.Storage.Dets`) or `:ets` (→ `ProcessHub.Service.Storage.Ets`). Backend identifiers that route to non-existent modules SHALL NOT appear in `lib/flezha/service/hub_manager.ex`'s `registry_backend_config/1`. In particular, `:durable_ets` was observed as a regression in the commit immediately following `b0a00e7 Implement auto-restore-on-boot`: `ProcessHub.Initializer.resolve_registry_backend/1`'s `{module, opts}` fall-through clause treated `:durable_ets` as a module name and crashed `setup_storage/2` on first runner connect with `(UndefinedFunctionError) function :durable_ets.open/2 is undefined (module :durable_ets is not available)`, killing every fresh controller boot. If a future upstream `process_hub` ships an actual `Storage.DurableEts` backend (DETS-on-disk + ETS-fast-reads), this requirement MUST be amended to allow `:durable_ets` only AFTER `deps/process_hub/lib/process_hub/service/storage/durable_ets.ex` exists AND `ProcessHub.Initializer.resolve_registry_backend/1` carries an explicit `{:durable_ets, opts}` clause.
+The atom in the registry-backend tuple MUST resolve to a real backend module via `ProcessHub.Initializer.resolve_registry_backend/1` — currently exactly `:durable_ets` (→ `ProcessHub.Service.Storage.DurableEts`), `:dets` (→ `ProcessHub.Service.Storage.Dets`) or `:ets` (→ `ProcessHub.Service.Storage.Ets`). Backend identifiers that route to non-existent modules SHALL NOT appear in `lib/flezha/service/hub_manager.ex`'s `registry_backend_config/1`: the `{module, opts}` fall-through clause treats an unknown atom as a module name and crashes `setup_storage/2` on the first runner connect with `(UndefinedFunctionError) function :<atom>.open/2 is undefined`, killing every fresh controller boot. `:durable_ets` is permitted here because both preconditions this requirement previously set are now met — `deps/process_hub/lib/process_hub/service/storage/durable_ets.ex` exists, and `resolve_registry_backend/1` carries an explicit `{:durable_ets, opts}` clause.
 
 #### Scenario: Default config opts in to durable + auto-recovery
 
 - **GIVEN** an application boots with default Flezha config
 - **WHEN** `HubManager` constructs the ProcessHub child spec for namespace `"default"`
-- **THEN** the spec contains `registry_backend: {:dets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}` and `auto_recovery: [marker_path: "app_data/process_hub/<hub_id>/cluster.healthy", recovery_timeout_ms: 30_000]`
+- **THEN** the spec contains `registry_backend: {:durable_ets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}` and `auto_recovery: [marker_path: "app_data/process_hub/<hub_id>/cluster.healthy", recovery_timeout_ms: 30_000]`
 
 #### Scenario: Kill-switch disables auto-recovery
 
@@ -31,9 +35,16 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 #### Scenario: Registry-backend atom resolves to a real backend
 
 - **WHEN** `Flezha.Service.HubManager.registry_backend_config/1` is called for any `hub_id` with `:auto_restore_enabled` at its `true` default
-- **THEN** the returned tuple's first element is `:dets`
-- **AND** `ProcessHub.Initializer.resolve_registry_backend/1` routes that atom to `ProcessHub.Service.Storage.Dets`
-- **AND** the matching backend module file exists at `deps/process_hub/lib/process_hub/service/storage/dets.ex`
+- **THEN** the returned tuple's first element is `:durable_ets`
+- **AND** `ProcessHub.Initializer.resolve_registry_backend/1` routes that atom to `ProcessHub.Service.Storage.DurableEts`
+- **AND** the matching backend module file exists at `deps/process_hub/lib/process_hub/service/storage/durable_ets.ex`
+
+#### Scenario: A boot that skips replay leaves the on-disk registry intact
+
+- **GIVEN** a registry file holding at least one operative row
+- **WHEN** the backend is opened with `recovery_replay: false` (the marker-present boot), then closed, then reopened with `recovery_replay: true`
+- **THEN** the first open exposes no rows as live state
+- **AND** the reopen still finds every row that was on disk before it
 
 #### Scenario: Boot succeeds end-to-end against a fresh image
 

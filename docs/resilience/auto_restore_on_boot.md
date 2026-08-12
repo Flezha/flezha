@@ -9,7 +9,7 @@ from their last persisted state.
 
 | Layer | Path | Lifecycle owner |
 |---|---|---|
-| ProcessHub durable registry (operative specs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (configures `registry_backend: {:dets, ...}`) |
+| ProcessHub durable registry (operative specs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (configures `registry_backend: {:durable_ets, ...}`) |
 | Per-Entity WAL + snapshots (change-by-change progress) | `app_data/state/<operative_class>/<procedure_id>/<entity_key>.{wal,snap.N,outbox.dedup}` | `Flezha.State.Supervisor` and friends |
 
 The path layout is **flat in the operative_class direction** — there is
@@ -25,8 +25,10 @@ controller ships it to the new runner on Entity stream attach.
    migration from the legacy runner-keyed layout to the flat
    layout, no-op on subsequent runs.
 2. `Flezha.Service.HubManager` starts each per-namespace ProcessHub
-   with `registry_backend: {:dets, [path: ...]}` and
+   with `registry_backend: {:durable_ets, [path: ...]}` and
    `auto_recovery: [marker_path: ..., recovery_timeout_ms: ...]`.
+   The backend matters: `{:dets, ...}` erases the file on a boot that
+   skips replay, `{:durable_ets, ...}` leaves it on disk.
 3. `Flezha.Boot.RecoveryHooks.register/1` installs thin telemetry
    forwarders for ProcessHub's `pre_recovery_replay` and
    `post_recovery_replay` hooks so the recovery lifecycle is visible

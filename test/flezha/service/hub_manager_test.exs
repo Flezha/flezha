@@ -65,21 +65,21 @@ defmodule Flezha.Service.HubManagerTest do
   describe "registry_backend_config/1" do
     @tag :tmp_dir
     test "regression_ensures_registry_backend_atom_routes_to_real_backend", %{tmp_dir: tmp_dir} do
-      # A regression test for the `:durable_ets` typo: ProcessHub's
-      # `resolve_registry_backend/1` only recognises `:dets` and `:ets`
-      # as backend identifiers — anything else is treated as a module
-      # name and crashes `setup_storage/2` on first use. Pinning the
-      # atom here means the next typo fails fast in CI instead of at
-      # the first runner connect.
+      # Fails when a controller cannot boot at all: ProcessHub treats an
+      # unrecognised backend atom as a module name and crashes
+      # `setup_storage/2` on the first runner connect. Pin both the atom
+      # and the module it must resolve to.
       previous_enabled = Application.get_env(:flezha, :auto_restore_enabled)
       previous_root = Application.get_env(:flezha, :process_hub_registry_root)
       Application.put_env(:flezha, :auto_restore_enabled, true)
       Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
 
       try do
-        assert {:dets, opts} = HubManager.registry_backend_config(:any_hub_id_for_test)
+        assert {:durable_ets, opts} = HubManager.registry_backend_config(:any_hub_id_for_test)
         assert is_list(opts)
         assert Keyword.has_key?(opts, :path)
+        assert Code.ensure_loaded?(ProcessHub.Service.Storage.DurableEts)
+        assert function_exported?(ProcessHub.Service.Storage.DurableEts, :open, 2)
       after
         Application.put_env(:flezha, :auto_restore_enabled, previous_enabled)
 
@@ -99,6 +99,50 @@ defmodule Flezha.Service.HubManagerTest do
         assert :ets = HubManager.registry_backend_config(:any_hub_id_for_test)
       after
         Application.put_env(:flezha, :auto_restore_enabled, previous)
+      end
+    end
+
+    @tag :tmp_dir
+    test "a boot that skips replay leaves the on-disk registry intact", %{tmp_dir: tmp_dir} do
+      # Fails when a whole-cluster cold boot comes up with zero operatives and
+      # no way back: the boot that declines to replay must not erase the only
+      # on-disk record a later recovery boot reads.
+      hub_id = :registry_survives_skipped_replay_hub
+      previous_enabled = Application.get_env(:flezha, :auto_restore_enabled)
+      previous_root = Application.get_env(:flezha, :process_hub_registry_root)
+      Application.put_env(:flezha, :auto_restore_enabled, true)
+      Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
+
+      try do
+        {atom, opts} = HubManager.registry_backend_config(hub_id)
+
+        assert atom == :durable_ets,
+               "the configured backend must keep the file across a skipped replay"
+
+        backend = ProcessHub.Service.Storage.DurableEts
+
+        {:ok, ref} = backend.open(hub_id, opts)
+        :ok = backend.insert(ref, "op1", {:cspec, "op1"})
+        :ok = backend.close(ref)
+
+        # A marker-present boot: replay is skipped because a live peer is
+        # expected to supply the registry.
+        {:ok, skipped} = backend.open(hub_id, Keyword.put(opts, :recovery_replay, false))
+        assert backend.get(skipped, "op1") == nil, "the live registry must start empty"
+        :ok = backend.close(skipped)
+
+        # A later recovery boot must still find the row on disk.
+        {:ok, replayed} = backend.open(hub_id, Keyword.put(opts, :recovery_replay, true))
+        assert backend.get(replayed, "op1") == {:cspec, "op1"}
+        :ok = backend.close(replayed)
+      after
+        Application.put_env(:flezha, :auto_restore_enabled, previous_enabled)
+
+        if previous_root do
+          Application.put_env(:flezha, :process_hub_registry_root, previous_root)
+        else
+          Application.delete_env(:flezha, :process_hub_registry_root)
+        end
       end
     end
   end

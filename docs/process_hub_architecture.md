@@ -300,7 +300,7 @@ These are common assumptions to double-check against the actual code:
 
 The ProcessHub child-spec is the source of truth for an operative's
 plugin subscriptions, and ProcessHub's **persistent registry** (the
-`durable-registry` capability with `registry_backend: {:dets, ...}`)
+`durable-registry` capability with `registry_backend: {:durable_ets, ...}`)
 makes that source of truth survive any controller restart.
 `operative.opts[:plugins]` (embedded inside the cspec start args) carries
 the authoritative list; the runtime `Overwatch.state.extensions`
