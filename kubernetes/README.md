@@ -8,7 +8,7 @@ They create a namespace, role, service account, role binding, and a daemonset.
 The Flezha controller is a multi-architecture (`linux/amd64`, `linux/arm64`) Docker
 image on Docker Hub.
 
-The DaemonSet pins an **immutable version tag** — `alfetahe/flezha:0.2.0` — not
+The DaemonSet pins an **immutable version tag** — `alfetahe/flezha:0.1.0` — not
 `:latest`. This is deliberate: the pull policy is `IfNotPresent`, so a mutable tag
 means a node that already has a layer cached keeps running the controller it pulled
 weeks ago, and two nodes silently run different code. **Bump the tag on every

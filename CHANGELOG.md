@@ -524,7 +524,7 @@
   flow relies on (`flezha-sockets` volume, `FLEZHA_SOCKET_FILES_PATH`,
   `FLEZHA_RUNNER_KEEPALIVE`) stay well-formed.
 
-## 0.2.0 — Cluster snapshot & restore (replaces DETS recovery)
+## 0.1.0 — Cluster snapshot & restore (replaces DETS recovery)
 
 Restart-survival is now runner-driven via `flz cluster snapshot/restore`.
 The previous DETS-based automatic recovery subsystem has been removed

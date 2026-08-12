@@ -158,9 +158,9 @@ The NIF `.so` is compiled once in Stage 1 and copied directly into Stage 2's `pr
 ### Build for current architecture
 
 ```bash
-VERSION=0.2.0 make docker-build
+VERSION=0.1.0 make docker-build
 # equivalent to:
-docker build -t alfetahe/flezha:0.2.0 -f docker/prod/Dockerfile.controller .
+docker build -t alfetahe/flezha:0.1.0 -f docker/prod/Dockerfile.controller .
 ```
 
 ### Build multi-arch and push to Docker Hub
@@ -173,13 +173,13 @@ docker buildx create --name multiarch --use
 docker buildx inspect --bootstrap
 
 # Build for amd64 + arm64 and push
-VERSION=0.2.0 make docker-build-multiarch
+VERSION=0.1.0 make docker-build-multiarch
 
 # Or manually with extra tags
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f docker/prod/Dockerfile.controller \
-  -t alfetahe/flezha:0.2.0 \
+  -t alfetahe/flezha:0.1.0 \
   -t alfetahe/flezha:latest \
   --push .
 ```
@@ -187,7 +187,7 @@ docker buildx build \
 ### Export image to file
 
 ```bash
-docker save -o flezha-0.2.0.tar alfetahe/flezha:0.2.0
+docker save -o flezha-0.1.0.tar alfetahe/flezha:0.1.0
 ```
 
 ---
@@ -198,10 +198,10 @@ Use the prod docker-compose to test the built image locally without K8s:
 
 ```bash
 # Build the image first
-VERSION=0.2.0 make docker-build
+VERSION=0.1.0 make docker-build
 
 # Start prod stack (controller + kafka + zookeeper)
-VERSION=0.2.0 docker compose -f docker/prod/docker-compose.yml up -d
+VERSION=0.1.0 docker compose -f docker/prod/docker-compose.yml up -d
 
 # Check controller logs
 docker logs -f flezha_agent_prod
@@ -215,7 +215,7 @@ The controller writes to `/flezha/app_data/logs/flezha.log` inside the container
 ### Run with QUIC transport
 
 ```bash
-FLEZHA_TRANSPORT=quic VERSION=0.2.0 \
+FLEZHA_TRANSPORT=quic VERSION=0.1.0 \
   docker compose -f docker/prod/docker-compose.yml up -d
 ```
 
@@ -261,7 +261,7 @@ make k8s-apply
 Edit `kubernetes/flezha-daemonset.yaml` and change the image tag, then re-apply:
 
 ```yaml
-image: alfetahe/flezha:0.2.0   # ← update this
+image: alfetahe/flezha:0.1.0   # ← update this
 ```
 
 ```bash
@@ -374,6 +374,6 @@ Examples:
 ```bash
 make nif                          # fast NIF rebuild during development
 make build-release                # full prod build locally
-VERSION=0.2.0 make docker-build   # build prod image tagged 0.2.0
+VERSION=0.1.0 make docker-build   # build prod image tagged 0.1.0
 make k8s-apply                    # deploy to cluster
 ```
