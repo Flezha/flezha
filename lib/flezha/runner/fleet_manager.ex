@@ -838,7 +838,11 @@ defmodule Flezha.Runner.FleetManager do
   # joined while ANY runner on this node still backs it, and a crashed
   # FleetManager's memberships are cleaned by `:pg`'s monitors.
   defp sync_directory(state) do
-    %{state | directory_groups: Directory.sync_membership(desired_directory_groups(state), state.directory_groups)}
+    %{
+      state
+      | directory_groups:
+          Directory.sync_membership(desired_directory_groups(state), state.directory_groups)
+    }
   end
 
   defp desired_directory_groups(state) do

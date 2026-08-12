@@ -169,8 +169,11 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
           {:error, :items_must_be_strings}
         end
 
-      {:ok, _} -> {:error, :missing_items}
-      {:error, _} -> {:error, :invalid_json}
+      {:ok, _} ->
+        {:error, :missing_items}
+
+      {:error, _} ->
+        {:error, :invalid_json}
     end
   end
 
