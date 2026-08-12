@@ -5,8 +5,7 @@
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
-use std::time::SystemTime;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Wake granularity of [`sleep_interruptible`]: how promptly a tripped flag is
 /// observed inside a longer sleep.

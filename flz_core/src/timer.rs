@@ -30,9 +30,8 @@ use flz_transport::transport::FlezhaStream;
 use serde::{Deserialize, Serialize};
 
 use crate::entity::EntitySlot;
-use crate::util::LockRecover;
-
 pub use crate::schema::{TimerKind, TimerOp};
+use crate::util::LockRecover;
 
 /// A refused timer registration. The typed layer converts these into its
 /// `ProcedureError` variants; the core knows only the facts.

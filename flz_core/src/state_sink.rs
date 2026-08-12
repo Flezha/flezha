@@ -87,6 +87,8 @@ const ENV_FLOOD_THRESHOLD: &str = "FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD";
 const DEFAULT_FLOOD_THRESHOLD: usize = 10;
 const ENV_FLOOD_WINDOW_MS: &str = "FLEZHA_BROKEN_PIPE_WINDOW_MS";
 const DEFAULT_FLOOD_WINDOW_MS: u64 = 5_000;
+const ENV_RECONNECT_RETRY_MS: &str = "FLEZHA_RECONNECT_REQUEST_RETRY_MS";
+const DEFAULT_RECONNECT_RETRY_MS: u64 = 30_000;
 
 const RECONNECT_REASON: &str = "broken_pipe_flood";
 
@@ -99,9 +101,12 @@ struct SinkState {
     ring: VecDeque<(String, Vec<u8>)>,
     /// Timestamps of recent write failures, used for flood detection.
     broken_pipe_at: VecDeque<Instant>,
-    /// Set once a flood reconnect has been requested; cleared on the next
-    /// sink install so we ask for exactly one reconnect per dead stream.
-    reconnect_requested: bool,
+    /// When the last flood reconnect was requested; cleared on the next sink
+    /// install. One request per dead stream, but re-armed after
+    /// `FLEZHA_RECONNECT_REQUEST_RETRY_MS` — a request that is never answered
+    /// (the runner was `Stopped`, or the reconnect itself failed) must not
+    /// disarm the detector for the life of the process.
+    reconnect_requested_at: Option<Instant>,
 }
 
 impl SinkState {
@@ -110,7 +115,7 @@ impl SinkState {
             sink: None,
             ring: VecDeque::new(),
             broken_pipe_at: VecDeque::new(),
-            reconnect_requested: false,
+            reconnect_requested_at: None,
         }
     }
 
@@ -133,8 +138,15 @@ impl SinkState {
             }
         }
         self.broken_pipe_at.push_back(now);
-        if !self.reconnect_requested && self.broken_pipe_at.len() >= flood_threshold() {
-            self.reconnect_requested = true;
+        // A prior request stops counting only while it is still plausibly in
+        // flight; past the retry window an unanswered request must not keep
+        // the detector disarmed.
+        let armed = match self.reconnect_requested_at {
+            None => true,
+            Some(at) => now.duration_since(at) >= Duration::from_millis(reconnect_retry_ms()),
+        };
+        if armed && self.broken_pipe_at.len() >= flood_threshold() {
+            self.reconnect_requested_at = Some(now);
             self.broken_pipe_at.clear();
             true
         } else {
@@ -194,6 +206,10 @@ fn flood_window_ms() -> u64 {
     crate::util::env_parse(ENV_FLOOD_WINDOW_MS, DEFAULT_FLOOD_WINDOW_MS)
 }
 
+fn reconnect_retry_ms() -> u64 {
+    crate::util::env_parse(ENV_RECONNECT_RETRY_MS, DEFAULT_RECONNECT_RETRY_MS)
+}
+
 /// Whether a global sink has ever been installed. `false` only for
 /// transport-less runs (unit tests, standalone benches); the install is
 /// never undone, so a reconnect window still reports `true`.
@@ -235,15 +251,35 @@ pub fn send(payload_id: &str, frame: Vec<u8>) {
             }
         }
     };
-    if should_reconnect {
-        tracing::warn!(
-            target: "flezha::transport",
-            reason = RECONNECT_REASON,
-            "outbound write-failure flood crossed threshold; requesting control reconnect"
-        );
-        if let Some(request_reconnect) = RECONNECT_HOOK.get() {
-            request_reconnect(RECONNECT_REASON);
-        }
+    drive_reconnect_if(should_reconnect);
+}
+
+/// Report an outbound transport failure that carries no frame — a data
+/// heartbeat that reached no secondary stream. Feeds the same flood ladder as
+/// [`send`], so a runner whose secondary is dead recovers even when it is
+/// producing no state changes to trip the ladder with.
+pub(crate) fn note_transport_failure() {
+    let should_reconnect = {
+        let mut st = STATE.lock().expect("state_sink lock poisoned");
+        st.note_broken_pipe(Instant::now())
+    };
+    drive_reconnect_if(should_reconnect);
+}
+
+fn drive_reconnect_if(should_reconnect: bool) {
+    if !should_reconnect {
+        return;
+    }
+    // Re-armed requests re-enter here, so a secondary that stays dead keeps
+    // reporting every retry window instead of going silent after one line.
+    tracing::warn!(
+        target: "flezha::transport",
+        reason = RECONNECT_REASON,
+        ring_len = STATE.lock().map(|st| st.ring.len()).unwrap_or(0),
+        "outbound write-failure flood crossed threshold; requesting control reconnect"
+    );
+    if let Some(request_reconnect) = RECONNECT_HOOK.get() {
+        request_reconnect(RECONNECT_REASON);
     }
 }
 
@@ -254,7 +290,7 @@ pub fn install_global_sink(send_fn: SendFrameFn) {
     let mut st = STATE.lock().expect("state_sink lock poisoned");
     st.sink = Some(send_fn.clone());
     st.broken_pipe_at.clear();
-    st.reconnect_requested = false;
+    st.reconnect_requested_at = None;
 
     let pending: Vec<(String, Vec<u8>)> = st.ring.drain(..).collect();
     let mut it = pending.into_iter();
@@ -286,21 +322,33 @@ pub fn send_compensation_record(payload_id: &str, entity_identity: &[u8]) {
 #[doc(hidden)]
 pub static SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Clear the process-global sink state. Test support; hold [`SINK_TEST_LOCK`].
+#[doc(hidden)]
+pub(crate) fn reset_for_test() {
+    let mut st = STATE.lock().unwrap_or_else(|p| p.into_inner());
+    st.sink = None;
+    st.ring.clear();
+    st.broken_pipe_at.clear();
+    st.reconnect_requested_at = None;
+}
+
+/// Whether a reconnect is currently requested. Test support.
+#[doc(hidden)]
+pub(crate) fn reconnect_requested_for_test() -> bool {
+    STATE
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .reconnect_requested_at
+        .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};
 
-    use super::*;
+    use super::{reset_for_test as reset_state, *};
     use crate::flusher::SendError;
-
-    fn reset_state() {
-        let mut st = STATE.lock().unwrap();
-        st.sink = None;
-        st.ring.clear();
-        st.broken_pipe_at.clear();
-        st.reconnect_requested = false;
-    }
 
     /// A sink that records every accepted frame; `fail` flips it to return
     /// `TransportDown` so the failure paths can be driven deterministically.
@@ -416,7 +464,8 @@ mod tests {
         assert!(!st.note_broken_pipe(now));
         assert!(!st.note_broken_pipe(now));
         assert!(st.note_broken_pipe(now), "3rd failure crosses threshold");
-        // Already requested: no second trigger until the next install resets.
+        // Already requested: no second trigger while that request is still
+        // plausibly in flight (see the re-arm test for what happens after).
         assert!(!st.note_broken_pipe(now));
         drop(st);
 
@@ -442,6 +491,42 @@ mod tests {
         }
         // All five frames buffered (drop-oldest not reached at default cap).
         assert_eq!(STATE.lock().unwrap().ring.len(), 5);
+
+        std::env::remove_var(ENV_FLOOD_THRESHOLD);
+        std::env::remove_var(ENV_FLOOD_WINDOW_MS);
+        reset_state();
+    }
+
+    /// A requested reconnect that never lands must not disarm the detector
+    /// forever. Before the fix the latch was cleared only by `install_global_sink`,
+    /// so if the `Reconnect` is dropped (the runner is `Stopped`) or the
+    /// reconnect fails, no further request is ever made: every subsequent
+    /// state change is silently absorbed by the ring for the life of the
+    /// process, while the control channel stays healthy — so the runner looks
+    /// alive from every angle and never produces anything again.
+    #[test]
+    fn unanswered_reconnect_request_rearms_so_the_stall_cannot_be_permanent() {
+        let _g = super::SINK_TEST_LOCK.lock().unwrap();
+        std::env::set_var(ENV_FLOOD_THRESHOLD, "3");
+        std::env::set_var(ENV_FLOOD_WINDOW_MS, "60000");
+        reset_state();
+
+        let mut st = STATE.lock().unwrap();
+        let t0 = Instant::now();
+        assert!(!st.note_broken_pipe(t0));
+        assert!(!st.note_broken_pipe(t0));
+        assert!(st.note_broken_pipe(t0), "3rd failure requests a reconnect");
+
+        // No `install_global_sink` follows — the reconnect never landed. Ten
+        // minutes later the sink is still dead and writes are still failing.
+        let much_later = t0 + Duration::from_secs(600);
+        st.note_broken_pipe(much_later);
+        st.note_broken_pipe(much_later);
+        assert!(
+            st.note_broken_pipe(much_later),
+            "a still-dead sink long past the retry window must request again"
+        );
+        drop(st);
 
         std::env::remove_var(ENV_FLOOD_THRESHOLD);
         std::env::remove_var(ENV_FLOOD_WINDOW_MS);

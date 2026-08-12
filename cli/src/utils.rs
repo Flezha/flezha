@@ -426,17 +426,24 @@ mod tests {
     /// be enabled from its own documented invocation.
     #[test]
     fn json_shaped_but_unparsable_values_are_quoted_as_strings() {
-        let template = r#"{"method":"subscribe","params":{"symbol":{{items}}},"req_id":{{req_id}}}"#;
+        let template =
+            r#"{"method":"subscribe","params":{"symbol":{{items}}},"req_id":{{req_id}}}"#;
         let out = serialize_flags(&[("subscribe_template".to_string(), template.to_string())]);
         let parsed: serde_json::Value = serde_json::from_str(&out).expect("must stay decodable");
-        assert_eq!(parsed["subscribe_template"], serde_json::Value::String(template.to_string()));
+        assert_eq!(
+            parsed["subscribe_template"],
+            serde_json::Value::String(template.to_string())
+        );
     }
 
     /// Real JSON must still be inlined as JSON — `payload_metadata` and
     /// `subscription_headers` are objects the controller reads structurally.
     #[test]
     fn parsable_json_values_are_still_inlined() {
-        let out = serialize_flags(&[("payload_metadata".to_string(), r#"{"channel":"trades_in"}"#.to_string())]);
+        let out = serialize_flags(&[(
+            "payload_metadata".to_string(),
+            r#"{"channel":"trades_in"}"#.to_string(),
+        )]);
         let parsed: serde_json::Value = serde_json::from_str(&out).expect("decodable");
         assert_eq!(parsed["payload_metadata"]["channel"], "trades_in");
     }
@@ -444,7 +451,10 @@ mod tests {
     /// A plain value containing a quote must not break out of its own string.
     #[test]
     fn quotes_in_plain_values_are_escaped() {
-        let out = serialize_flags(&[("ignore_pattern".to_string(), r#""event":"heartbeat""#.to_string())]);
+        let out = serialize_flags(&[(
+            "ignore_pattern".to_string(),
+            r#""event":"heartbeat""#.to_string(),
+        )]);
         let parsed: serde_json::Value = serde_json::from_str(&out).expect("decodable");
         assert_eq!(parsed["ignore_pattern"], r#""event":"heartbeat""#);
     }

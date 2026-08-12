@@ -170,7 +170,10 @@ pub enum ActivationOutcome {
     Failed(WorkError),
     /// A bounded run-sugar body returned. `completed` mirrors
     /// `ctx.complete(...)` having been called; `result` is its payload.
-    BoundedDone { completed: bool, result: Vec<u8> },
+    BoundedDone {
+        completed: bool,
+        result: Vec<u8>,
+    },
 }
 
 /// The effect record of one processed item — the same shape the flusher

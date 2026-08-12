@@ -49,8 +49,11 @@ impl CommandAction for CompactEntity {
                         };
                         let mut buffer_guard = slot.flush_buffer.lock_recover();
                         let timer_guard = slot.timers.lock_recover();
-                        slot.dispatcher
-                            .snapshot_frame(&mut state_guard, &mut buffer_guard, &timer_guard)
+                        slot.dispatcher.snapshot_frame(
+                            &mut state_guard,
+                            &mut buffer_guard,
+                            &timer_guard,
+                        )
                     };
                     match result {
                         Ok((frame, seq, size)) => {

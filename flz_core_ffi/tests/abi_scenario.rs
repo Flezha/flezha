@@ -390,19 +390,21 @@ fn c_abi_full_scenario() {
     })
     .unwrap();
     let mut change_log = record(1, 4, &[0xC1]);
-    change_log.extend(record(2, flz_core::header::FORMAT_ID_EFFECT_RECORD, &effect_body));
+    change_log.extend(record(
+        2,
+        flz_core::header::FORMAT_ID_EFFECT_RECORD,
+        &effect_body,
+    ));
     let entity_id = flz_core::flusher::encode_entity_identity("eff-1", "eff_pass", "");
     send_command(
         &writer,
         "ref-restore-1",
-        flz_core::pb::command_request::Command::RestoreInitState(
-            flz_core::pb::RestoreInitState {
-                entity_id: entity_id.clone(),
-                snapshot_bytes: vec![0x5A],
-                change_log_bytes: change_log,
-                ..Default::default()
-            },
-        ),
+        flz_core::pb::command_request::Command::RestoreInitState(flz_core::pb::RestoreInitState {
+            entity_id: entity_id.clone(),
+            snapshot_bytes: vec![0x5A],
+            change_log_bytes: change_log,
+            ..Default::default()
+        }),
     );
     let (status, act) = abi_poll(ctx, 5_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "restore fold hands out");
@@ -442,11 +444,28 @@ fn c_abi_full_scenario() {
     let eff_entry = eff_instance.topology.channel(0).expect("entry channel");
     let wrap = eff_entry.wrap_input.as_ref().expect("entry wrapper");
     let below = wrap(b"dup".to_vec()).unwrap();
-    flz_core::routing::route_to_consumers(&eff_instance, eff_entry, &below, &stream, Some(7), false);
+    flz_core::routing::route_to_consumers(
+        &eff_instance,
+        eff_entry,
+        &below,
+        &stream,
+        Some(7),
+        false,
+    );
     let (status, _) = abi_poll(ctx, 300);
-    assert_eq!(status, FLZ_POLL_TIMEOUT, "offset 7 sits at the restored floor");
+    assert_eq!(
+        status, FLZ_POLL_TIMEOUT,
+        "offset 7 sits at the restored floor"
+    );
     let above = wrap(b"new".to_vec()).unwrap();
-    flz_core::routing::route_to_consumers(&eff_instance, eff_entry, &above, &stream, Some(8), false);
+    flz_core::routing::route_to_consumers(
+        &eff_instance,
+        eff_entry,
+        &above,
+        &stream,
+        Some(8),
+        false,
+    );
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "offset 8 dispatches");
     let act = act.unwrap();
@@ -496,18 +515,22 @@ fn c_abi_full_scenario() {
             },
         },
     );
-    await_frame(&frames, "entity_state reply carrying the host JSON", |captured| {
-        captured.iter().find_map(|(id, m)| {
-            (id == "cmd"
-                && flz_core::pb::CommandResponse::decode(m.as_slice()).is_ok_and(|r| {
-                    r.reference_id == "ref-read-1" && {
-                        let body = String::from_utf8_lossy(&r.raw_data);
-                        body.contains("eff_pass") && body.contains("\"n\":3")
-                    }
-                }))
-            .then_some(())
-        })
-    });
+    await_frame(
+        &frames,
+        "entity_state reply carrying the host JSON",
+        |captured| {
+            captured.iter().find_map(|(id, m)| {
+                (id == "cmd"
+                    && flz_core::pb::CommandResponse::decode(m.as_slice()).is_ok_and(|r| {
+                        r.reference_id == "ref-read-1" && {
+                            let body = String::from_utf8_lossy(&r.raw_data);
+                            body.contains("eff_pass") && body.contains("\"n\":3")
+                        }
+                    }))
+                .then_some(())
+            })
+        },
+    );
 
     // ==================== keyed dynamic route via the prepare crossing (ABI)
     let decl = br#"{
@@ -626,9 +649,8 @@ fn c_abi_full_scenario() {
     {
         let mut buf: *mut u8 = std::ptr::null_mut();
         let mut len: usize = 0;
-        let status = unsafe {
-            flz_core_bounded_recv(ctx, instance_c.as_ptr(), 50, &mut buf, &mut len)
-        };
+        let status =
+            unsafe { flz_core_bounded_recv(ctx, instance_c.as_ptr(), 50, &mut buf, &mut len) };
         assert_eq!(status, FLZ_POLL_TIMEOUT, "an empty inbox times out");
     }
     assert_eq!(

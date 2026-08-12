@@ -130,8 +130,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_poll(
     let ctx = ctx as *mut FlzContext;
     let mut buf: *mut u8 = std::ptr::null_mut();
     let mut len: usize = 0;
-    let status =
-        unsafe { crate::flz_core_poll(ctx, timeout_ms.max(0) as u64, &mut buf, &mut len) };
+    let status = unsafe { crate::flz_core_poll(ctx, timeout_ms.max(0) as u64, &mut buf, &mut len) };
     match status {
         FLZ_POLL_ACTIVATION => {
             let bytes = unsafe { std::slice::from_raw_parts(buf, len) };
@@ -199,8 +198,9 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_boundedEmit(
         Ok(c) => c,
         Err(_) => return throw(&mut env, "instance id contains NUL"),
     };
-    let status =
-        unsafe { crate::flz_core_bounded_emit(ctx, c_instance.as_ptr(), bytes.as_ptr(), bytes.len()) };
+    let status = unsafe {
+        crate::flz_core_bounded_emit(ctx, c_instance.as_ptr(), bytes.as_ptr(), bytes.len())
+    };
     if status != FLZ_OK {
         throw(&mut env, &last_error_of(ctx));
     }

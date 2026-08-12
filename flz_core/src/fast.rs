@@ -338,7 +338,7 @@ pub fn start(
                     let _ = control_unit::send_keepalive_ping(&control_stream);
                 }
                 RunnerMessage::SendDataHeartbeat => {
-                    send_data_heartbeat(&runner.shared_io_streams);
+                    heartbeat_tick(&runner.shared_io_streams);
                 }
                 RunnerMessage::EmitBoundedOutput {
                     operative_id,
@@ -445,10 +445,24 @@ fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
     payloader::build_from_binary("control_command", &request.encode_to_vec(), HashMap::new())
 }
 
-/// Write a data-channel heartbeat on every secondary stream. Best-effort: a
-/// dead secondary is repopulated by the next `ConnectSocket`. The frame is a
+/// One heartbeat tick: write, and report a heartbeat that reached nothing so
+/// the flood ladder can drive a reconnect. An idle Operative writes no state
+/// changes, so this is the only signal that would ever trip the ladder for it.
+fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
+    if !send_data_heartbeat(io_streams) {
+        crate::state_sink::note_transport_failure();
+    }
+}
+
+/// Write a data-channel heartbeat on every secondary stream. The frame is a
 /// bare payload-id with no body, small enough to write atomically.
-fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
+///
+/// Returns whether it reached at least one stream. An empty map or an
+/// all-failed write means the controller's per-channel liveness clock is no
+/// longer being fed and it will flag `output_stall`; the caller reports that
+/// so a runner producing no state changes still drives its own recovery
+/// instead of waiting for a `ConnectSocket` that may never come.
+fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool {
     // Dispatch-progress self-report: the heartbeat thread stays alive even
     // when every worker is wedged, so the controller needs these counters to
     // tell "alive but frozen" apart from "healthy".
@@ -482,10 +496,14 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
     );
     let frame = payloader::build_from_binary(liveness::DATA_HEARTBEAT_PAYLOAD_ID, &[], metadata);
     let streams = io_streams.read().unwrap();
+    let mut delivered = false;
     for stream in streams.values() {
         let mut w: &FlezhaStream = stream;
-        let _ = w.write_all(&frame);
+        if w.write_all(&frame).is_ok() {
+            delivered = true;
+        }
     }
+    delivered
 }
 
 fn return_operatives(runner: &RunnerNode, ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>) {
@@ -711,5 +729,39 @@ impl OperativeDispatchHandle {
             consumed_offset,
             replay,
         );
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_tests {
+    use super::*;
+
+    /// An Operative that writes no state changes trips no flood ladder, so the
+    /// 10 s data heartbeat is its only outbound signal. When that heartbeat
+    /// reaches no stream the controller flags `output_stall`, while the runner
+    /// — which discarded the write error — sees nothing and never asks to
+    /// reconnect. That is a permanent, silent stall.
+    #[test]
+    fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
+        let _g = crate::state_sink::SINK_TEST_LOCK.lock().unwrap();
+        std::env::set_var("FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD", "3");
+        std::env::set_var("FLEZHA_BROKEN_PIPE_WINDOW_MS", "60000");
+        crate::state_sink::reset_for_test();
+
+        // The signature of a dead secondary: the stream map is empty, so every
+        // heartbeat write is a no-op over zero streams.
+        let empty: RwLock<HashMap<u32, FlezhaStream>> = RwLock::new(HashMap::new());
+        heartbeat_tick(&empty);
+        heartbeat_tick(&empty);
+        heartbeat_tick(&empty);
+
+        assert!(
+            crate::state_sink::reconnect_requested_for_test(),
+            "heartbeats that reach no stream must arm the reconnect ladder"
+        );
+
+        std::env::remove_var("FLEZHA_BROKEN_PIPE_RECONNECT_THRESHOLD");
+        std::env::remove_var("FLEZHA_BROKEN_PIPE_WINDOW_MS");
+        crate::state_sink::reset_for_test();
     }
 }

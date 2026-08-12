@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -17,11 +17,8 @@ use flz_transport::utility::path_helper;
 use prost::Message;
 use serde::Serialize;
 
-use std::sync::RwLock;
-
 use crate::pb::Ping;
-use crate::runner::ClientResponseMessage;
-use crate::runner::RunnerMessage;
+use crate::runner::{ClientResponseMessage, RunnerMessage};
 use crate::util::nonce_suffix;
 
 /// Reader-thread handle + write stream + optional QUIC client returned by
@@ -124,10 +121,10 @@ fn try_open(
             Ok((handle, stream, None))
         }
         #[cfg(not(unix))]
-        TransportType::Uds => {
-            Err("UDS transport is not available on this platform; set FLEZHA_TRANSPORT=quic"
-                .to_string())
-        }
+        TransportType::Uds => Err(
+            "UDS transport is not available on this platform; set FLEZHA_TRANSPORT=quic"
+                .to_string(),
+        ),
         TransportType::Quic => try_open_quic(namespace, declared, itx, otx),
     }
 }

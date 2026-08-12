@@ -1,6 +1,7 @@
+use std::process::exit;
+
 use crate::operative::parse_plugins_json;
 use crate::utils::{escape_rpc_arg, extract_param, get_json, get_namespace, run_rpc};
-use std::process::exit;
 
 pub fn handle_schedule_command(args: &[String]) {
     if args.is_empty() {

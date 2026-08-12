@@ -5,8 +5,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::channel::{ChannelDescriptor, ChannelId, ProcedureId};
-use crate::channel::{DeserializeStateFn, EntitiesForFn, EntityBuilder, SerializeStateFn};
+use crate::channel::{
+    ChannelDescriptor, ChannelId, DeserializeStateFn, EntitiesForFn, EntityBuilder, ProcedureId,
+    SerializeStateFn,
+};
 
 /// How a Procedure maps inputs to Entities. Resolved once at registration from
 /// the Procedure's own `entity_keys()` and from the WIRING — whether any

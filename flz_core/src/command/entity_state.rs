@@ -183,7 +183,14 @@ pub fn serialize_selected_state(
                 else {
                     continue;
                 };
-                collect(procedure_desc, slot, &procedure_name, purpose, &mut top, &mut seqs);
+                collect(
+                    procedure_desc,
+                    slot,
+                    &procedure_name,
+                    purpose,
+                    &mut top,
+                    &mut seqs,
+                );
                 continue;
             }
         };
@@ -200,7 +207,14 @@ pub fn serialize_selected_state(
                         wanted,
                     ));
                 };
-                collect(procedure_desc, &slot, wanted, purpose, &mut inner, &mut seqs);
+                collect(
+                    procedure_desc,
+                    &slot,
+                    wanted,
+                    purpose,
+                    &mut inner,
+                    &mut seqs,
+                );
             }
             None => {
                 for (key, slot) in keyed.pairs() {

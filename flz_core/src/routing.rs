@@ -5,10 +5,9 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-
-use std::io::Write;
 
 use flz_transport::service::payloader;
 use flz_transport::transport::FlezhaStream;
@@ -352,7 +351,15 @@ pub(crate) fn deliver_host_output(
         })?;
     // An inter-procedure value is never a replay member: the downstream
     // Procedure receives corrected outputs already in order.
-    deliver_to_consumer(instance, channel, edge, value, stream, consumed_offset, false)
+    deliver_to_consumer(
+        instance,
+        channel,
+        edge,
+        value,
+        stream,
+        consumed_offset,
+        false,
+    )
 }
 
 /// Deliver one post-transform value to one consumer's Entity. `Err` carries an
