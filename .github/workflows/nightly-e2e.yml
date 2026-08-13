@@ -1,0 +1,100 @@
+name: Nightly E2E
+
+# The `:system` and `:multi_node` suites are excluded from `mix test` (see
+# `test/test_helper.exs`) and no other workflow passes `--include`, so until
+# this job existed they had never run in CI at all. That is the suite that
+# covers crash-resume, durability, compaction, DLQ, entity timers and
+# cross-node migration — precisely the behaviour that breaks in production
+# while a green `mix test` says nothing is wrong.
+#
+# Nightly rather than per-PR: these cases boot real `cargo run` runners and
+# peer BEAMs, so they are slow and inherently more timing-sensitive than the
+# unit suite. Also runnable on demand (`workflow_dispatch`) before a release.
+#
+# Deliberately NOT carrying elixir.yml's "fail on uncaptured error logs" gate:
+# these tests kill runners and tear down channels on purpose, so error-level
+# logs are the expected output of the thing under test, not an unasserted
+# failure.
+
+on:
+  schedule:
+    # 02:30 UTC daily.
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  MIX_ENV: test
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Erlang + Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Elixir deps + build
+        uses: actions/cache@v5
+        with:
+          path: |
+            deps
+            _build
+          key: elixir-${{ runner.os }}-otp28-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            elixir-${{ runner.os }}-otp28-
+
+      - name: Cache Cargo registry + workspace target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            test/apps/rust_runner/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.4"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch Elixir deps
+        run: mix deps.get
+
+      - name: Compile Elixir (warnings as errors)
+        run: mix compile --warnings-as-errors
+
+      - name: Pre-build rust_runner
+        # Every e2e case spawns runners through `cargo run`; a cold build does
+        # not fit inside the connect budget the harness allows, so build the
+        # binary into the same ./target dir the run command uses.
+        run: |
+          cargo build --quiet \
+            --manifest-path=test/apps/rust_runner/Cargo.toml \
+            --target-dir=./target
+
+      - name: Run system + multi_node suites
+        run: mix test --include system --include multi_node
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-app-data
+          path: |
+            app_data/
+          retention-days: 7
+          if-no-files-found: ignore
