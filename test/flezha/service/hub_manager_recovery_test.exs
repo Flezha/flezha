@@ -32,9 +32,11 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   alias ProcessHub.Service.ProcessRegistry
 
   @namespace "recovery_test_ns"
-  # Upstream's floor is 1_000 ms. Every boot in this file pays it before the
-  # first reconcile round runs, so any test timing that round must subtract it.
-  @reconcile_grace_ms 1_000
+  # Every boot in this file pays the grace before the first reconcile round
+  # runs, so any test timing that round must subtract it. Upstream's floor for
+  # the grace is 50 ms — it is a one-shot delay, unlike the interval, whose
+  # floor stays at 1 s.
+  @reconcile_grace_ms 50
   # The runner id baked into the durable cspec by the boot that registered it.
   @recorded_runner "recorded_runner_from_previous_boot"
   @seeded_runner "seeded_live_runner"
