@@ -4,10 +4,18 @@ defmodule Flezha.Boot.RecoveryHooksTest do
   alias Flezha.Boot.RecoveryHooks
 
   setup do
+    # Restore the configured value rather than deleting the key: `config/test.exs`
+    # sets this `false`, but every reader defaults to `true`, so a delete leaves
+    # auto-restore ON for the rest of the BEAM. Hubs started later then boot into
+    # `:recovering` and hold there for `reconcile_grace_ms`, which stalls
+    # `RecoveryGate` and any convergence assertion behind it.
+    previous = Application.get_env(:flezha, :auto_restore_enabled)
     Application.put_env(:flezha, :auto_restore_enabled, true)
 
     on_exit(fn ->
-      Application.delete_env(:flezha, :auto_restore_enabled)
+      if previous == nil,
+        do: Application.delete_env(:flezha, :auto_restore_enabled),
+        else: Application.put_env(:flezha, :auto_restore_enabled, previous)
     end)
 
     :ok

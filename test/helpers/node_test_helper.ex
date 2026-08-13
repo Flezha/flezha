@@ -22,6 +22,14 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :"test_agent_node1@127.0.0.1"
   end
 
+  # A peer's `Application.start/2` blocks in `validate_boot_ready/0`, which
+  # itself waits up to 30 s for `BootLoader`. The budget has to clear that
+  # inner ceiling so a busy machine reports the peer's real start result
+  # rather than a spurious `{:erpc, :timeout}`, and stay under ExUnit's 60 s
+  # per-test timeout so a genuinely wedged boot still names the peer instead
+  # of consuming the whole test.
+  @peer_boot_timeout_ms 45_000
+
   def start_peer_node(name) do
     args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
 
@@ -67,6 +75,17 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # Peer nodes only need UDS transport (avoids QUIC port conflicts).
     :erpc.call(node_name, Application, :put_env, [:flezha, :transports, [:uds]])
 
+    # The peer copies the host's whole `:flezha` env, but it must not re-run
+    # the host's boot hooks. `:post_hooks` blocks `Application.start/2` until
+    # both `:external_processes` runners have connected, which is what makes a
+    # busy machine miss the boot budget; the runners themselves stay, because
+    # the peer only joins the `default` hub cluster once one connects, and
+    # callers already wait for that. `:pre_hooks` would additionally wipe
+    # `:process_hub_registry_root`, a path the peer shares with the live host.
+    for key <- [:pre_hooks, :post_hooks] do
+      :erpc.call(node_name, Application, :put_env, [:flezha, key, []])
+    end
+
     # A test that fails mid-way must not leak the peer BEAM; `stop_peer_node`
     # already checks liveness, so an explicit stop makes this a no-op.
     on_exit(fn ->
@@ -74,7 +93,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     end)
 
     # Start the flezha application on the peer node.
-    :erpc.call(node_name, Application, :ensure_all_started, [:flezha], 10000)
+    :erpc.call(node_name, Application, :ensure_all_started, [:flezha], @peer_boot_timeout_ms)
 
     # Mirror `test_helper.exs`'s `:logger.set_module_level/2` cap on the
     # peer so the noisy `ProcessHub.Service.LoggerService.error/3` lines
