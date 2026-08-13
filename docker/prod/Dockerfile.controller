@@ -71,6 +71,10 @@ RUN --mount=type=cache,target=/root/.hex \
             && mix local.rebar rebar3 /usr/local/bin/rebar3 --force)) \
     && mix deps.unlock process_hub \
     && mix deps.get --only prod
+# TEMPORARY, while mix.exs tracks process_hub's `dev` branch: the unlock above
+# discards mix.lock's pinned commit so the image takes the branch tip. It only
+# fires when this layer is not cache-hit — a mix.exs/mix.lock change busts it,
+# otherwise force it with NO_CACHE=1 (scripts/publish-image.sh).
 
 # RUSTLER_SKIP_COMPILATION makes rustler pick up the .so dropped into
 # priv/native/ below instead of invoking cargo again.

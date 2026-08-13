@@ -282,53 +282,45 @@ defmodule Flezha.Service.HubManagerTest do
     end
   end
 
-  describe "recovery-marker resolution" do
-    @tag :tmp_dir
-    test "default config derives marker path under process_hub_registry_root", %{tmp_dir: tmp_dir} do
-      previous_enabled = Application.get_env(:flezha, :auto_restore_enabled)
-      previous_root = Application.get_env(:flezha, :process_hub_registry_root)
-      previous_override = Application.get_env(:flezha, :process_hub_recovery_marker_path)
+  describe "auto_recovery_config/0" do
+    test "every key we advertise is one upstream reads, and every value is in range" do
+      # Fails when a knob drifts out of `parse_config/1`'s accepted set or
+      # bounds: upstream then either WARNs and silently ignores the key, or
+      # refuses the whole hub spec. Round-tripping through the real parser
+      # is the only check that catches both.
+      previous = Application.get_env(:flezha, :auto_restore_enabled)
       Application.put_env(:flezha, :auto_restore_enabled, true)
-      Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
-      Application.delete_env(:flezha, :process_hub_recovery_marker_path)
 
       try do
-        path = HubManager.resolved_marker_path(:my_test_hub)
-        assert path == Path.join([tmp_dir, "my_test_hub", "cluster.healthy"])
+        config = HubManager.auto_recovery_config()
+
+        assert {:ok, parsed} = ProcessHub.Service.Recovery.parse_config(config)
+        assert parsed.enabled?
+        assert parsed.reconcile_grace_ms == Keyword.fetch!(config, :reconcile_grace_ms)
+        assert parsed.reconcile_interval_ms == Keyword.fetch!(config, :reconcile_interval_ms)
+
+        # A deliberately stopped operative must stay stopped across a long
+        # weekend, not be resurrected by the reconcile 24 h later.
+        assert parsed.stopped_row_ttl_ms == :timer.hours(24 * 30)
+
+        # The grace holds the hub in `:recovering`, which gates the boot
+        # path — it must clear the runner handshake window, not the other
+        # way round.
+        assert parsed.reconcile_grace_ms > parsed.reconcile_interval_ms or
+                 parsed.reconcile_grace_ms >= 30_000
       after
-        Application.put_env(:flezha, :auto_restore_enabled, previous_enabled)
-
-        if previous_root,
-          do: Application.put_env(:flezha, :process_hub_registry_root, previous_root),
-          else: Application.delete_env(:flezha, :process_hub_registry_root)
-
-        if previous_override do
-          Application.put_env(:flezha, :process_hub_recovery_marker_path, previous_override)
-        end
+        Application.put_env(:flezha, :auto_restore_enabled, previous)
       end
     end
 
-    test "marker-path env override is honoured for any hub_id" do
-      previous_override = Application.get_env(:flezha, :process_hub_recovery_marker_path)
-
-      Application.put_env(
-        :flezha,
-        :process_hub_recovery_marker_path,
-        "/var/lib/process_hub/whatever/cluster.healthy"
-      )
+    test "returns false when auto_restore is disabled" do
+      previous = Application.get_env(:flezha, :auto_restore_enabled)
+      Application.put_env(:flezha, :auto_restore_enabled, false)
 
       try do
-        assert HubManager.resolved_marker_path(:default_hub) ==
-                 "/var/lib/process_hub/whatever/cluster.healthy"
-
-        assert HubManager.resolved_marker_path(:market_hub) ==
-                 "/var/lib/process_hub/whatever/cluster.healthy"
+        assert false == HubManager.auto_recovery_config()
       after
-        if previous_override do
-          Application.put_env(:flezha, :process_hub_recovery_marker_path, previous_override)
-        else
-          Application.delete_env(:flezha, :process_hub_recovery_marker_path)
-        end
+        Application.put_env(:flezha, :auto_restore_enabled, previous)
       end
     end
   end

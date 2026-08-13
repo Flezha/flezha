@@ -1,23 +1,22 @@
 defmodule Flezha.Service.HubManagerRecoveryTest do
   @moduledoc """
-  Exercises the marker-gated recovery contract Flezha consumes from the
-  upstream `recovery-mode-opt-in` change.
+  Exercises the orphan-reconcile recovery contract Flezha consumes from
+  upstream.
 
   Single-node coverage:
 
-    * a clean shutdown writes the marker → next boot bypasses replay
-      and `await_recovery_complete/1` returns immediately;
-    * `flz cluster prepare-recovery` deletes the marker on every
-      node (here: just the local one) → next boot replays the DETS
-      cspecs and `:recovery_complete` telemetry fires;
+    * every boot runs a reconcile round and reaches `:normal`, so
+      `await_recovery_complete/1` returns without operator action —
+      there is no marker to arm;
+    * a warm restart against a surviving registry replays the operative
+      list and rebinds it;
     * `await_recovery_complete/2` blocks on a missing :complete event
       and times out cleanly.
 
-  The cross-node split-brain detection scenarios (tasks 1.13 / 1.14
-  paired with the spec's two-controller cluster) require the live k3s
-  smoke test in task 4.19; the marker-file / telemetry contract is
-  identical on one node and is what flezha-core owns. The upstream
-  process_hub test suite covers the multi-peer init_sync semantics.
+  The cross-node split-brain detection scenarios require the live k3s
+  smoke test; the reconcile / telemetry contract is identical on one
+  node and is what flezha-core owns. The upstream process_hub test
+  suite covers the multi-peer init_sync semantics.
   """
 
   use ExUnit.Case, async: false
@@ -33,6 +32,9 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   alias ProcessHub.Service.ProcessRegistry
 
   @namespace "recovery_test_ns"
+  # Upstream's floor is 1_000 ms. Every boot in this file pays it before the
+  # first reconcile round runs, so any test timing that round must subtract it.
+  @reconcile_grace_ms 1_000
   # The runner id baked into the durable cspec by the boot that registered it.
   @recorded_runner "recorded_runner_from_previous_boot"
   @seeded_runner "seeded_live_runner"
@@ -43,8 +45,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     previous_enabled = Application.get_env(:flezha, :auto_restore_enabled)
     previous_root = Application.get_env(:flezha, :process_hub_registry_root)
-    previous_override = Application.get_env(:flezha, :process_hub_recovery_marker_path)
-    previous_timeout = Application.get_env(:flezha, :process_hub_recovery_timeout_ms)
+    previous_grace = Application.get_env(:flezha, :process_hub_reconcile_grace_ms)
+    previous_interval = Application.get_env(:flezha, :process_hub_reconcile_interval_ms)
 
     tmp_dir =
       Path.join([System.tmp_dir!(), "flezha_recovery_test_#{System.unique_integer([:positive])}"])
@@ -54,8 +56,11 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     Application.put_env(:flezha, :auto_restore_enabled, true)
     Application.put_env(:flezha, :process_hub_registry_root, tmp_dir)
-    Application.delete_env(:flezha, :process_hub_recovery_marker_path)
-    Application.put_env(:flezha, :process_hub_recovery_timeout_ms, 3_000)
+    # The grace is what holds a hub in `:recovering`; production sets it
+    # above the runner handshake window, but here nothing has to connect,
+    # so shrink it or every boot in this file costs 45 s.
+    Application.put_env(:flezha, :process_hub_reconcile_grace_ms, @reconcile_grace_ms)
+    Application.put_env(:flezha, :process_hub_reconcile_interval_ms, 1_000)
 
     on_exit(fn ->
       _ = HubManager.stop_hub(@namespace)
@@ -66,44 +71,29 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
         do: Application.put_env(:flezha, :process_hub_registry_root, previous_root),
         else: Application.delete_env(:flezha, :process_hub_registry_root)
 
-      if previous_override,
-        do: Application.put_env(:flezha, :process_hub_recovery_marker_path, previous_override),
-        else: Application.delete_env(:flezha, :process_hub_recovery_marker_path)
+      if previous_grace,
+        do: Application.put_env(:flezha, :process_hub_reconcile_grace_ms, previous_grace),
+        else: Application.delete_env(:flezha, :process_hub_reconcile_grace_ms)
 
-      if previous_timeout,
-        do: Application.put_env(:flezha, :process_hub_recovery_timeout_ms, previous_timeout),
-        else: Application.delete_env(:flezha, :process_hub_recovery_timeout_ms)
+      if previous_interval,
+        do: Application.put_env(:flezha, :process_hub_reconcile_interval_ms, previous_interval),
+        else: Application.delete_env(:flezha, :process_hub_reconcile_interval_ms)
     end)
 
     {:ok, tmp_dir: tmp_dir}
   end
 
-  test "fresh boot writes the marker and reaches :normal", %{tmp_dir: tmp_dir} do
+  # fails when: recovery needs operator action again. Under the marker
+  # design a boot only replayed if someone had armed it first, which is
+  # what made a peerless cold start lose the fleet.
+  test "a boot reaches :normal on its own, with nothing armed beforehand" do
     hub_id = Identificator.hub(@namespace)
-    marker_path = Path.join([tmp_dir, Atom.to_string(hub_id), "cluster.healthy"])
 
     {:ok, _} = HubManager.start_hub(@namespace)
 
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
     assert {:ok, state} = HubManager.recovery_state(hub_id)
     assert state in [:normal, :skipped]
-    assert File.exists?(marker_path)
-  end
-
-  test "prepare_recovery_cluster deletes the marker on the local node",
-       %{tmp_dir: tmp_dir} do
-    hub_id = Identificator.hub(@namespace)
-    marker_path = Path.join([tmp_dir, Atom.to_string(hub_id), "cluster.healthy"])
-
-    {:ok, _} = HubManager.start_hub(@namespace)
-    assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
-    assert File.exists?(marker_path)
-
-    # The CLI verb is a thin wrapper around this upstream call; the
-    # operator-facing rendering is covered in cli_manager_cluster_test.
-    assert {:ok, _acked} = ProcessHub.Service.Recovery.prepare_recovery_cluster(hub_id)
-
-    refute File.exists?(marker_path)
   end
 
   test "recovery_state surfaces :unknown_hub when the hub is not started" do
@@ -154,18 +144,19 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       [{placeable, "market"}] ++
         Enum.map(unplaceable, &{&1, "factory_no_runner_serves"})
 
-    started_at = System.monotonic_time(:millisecond)
-    replay_hub(hub_id, rows)
+    elapsed = replay_hub(hub_id, rows)
 
     for {operative_id, _factory} <- rows do
       assert await_bound_node(hub_id, operative_id, 15_000) == node(),
              "#{operative_id} kept its dead pid — the start request was killed before update_registry"
     end
 
-    elapsed = System.monotonic_time(:millisecond) - started_at
+    # The reconcile round that does the placement only starts once the grace
+    # elapses, so the grace is boot latency, not batch waiting.
+    waited = elapsed - @reconcile_grace_ms
 
-    assert elapsed < budget * 2,
-           "the batch spent #{elapsed} ms waiting — the deadline is per-child, not shared, " <>
+    assert waited < budget * 2,
+           "the batch spent #{waited} ms waiting — the deadline is per-child, not shared, " <>
              "so N unplaceable children scale past cross_node_request_timeout"
 
     dump = ProcessRegistry.dump(hub_id)
@@ -204,7 +195,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        restart_hub_without_marker(hub_id)
+        restart_hub(hub_id)
 
         assert await_bound_node(hub_id, good, 10_000) == node(),
                "#{good} kept its dead pid — the malformed sibling killed the whole start request"
@@ -320,17 +311,19 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       })
     end)
 
-    restart_hub_without_marker(hub_id)
+    restart_hub(hub_id)
   end
 
-  # The warm restart itself: keep the registry, clear the marker so the next
-  # boot replays it, come back up.
-  defp restart_hub_without_marker(hub_id) do
+  # The warm restart itself: keep the registry, come back up. Every boot
+  # reconciles now, so nothing has to be armed between the two. Returns the
+  # milliseconds it took, for the tests that assert on placement latency.
+  defp restart_hub(hub_id) do
     stop_hub_keeping_registry(hub_id)
-    File.rm!(marker_path(hub_id))
 
+    started_at = System.monotonic_time(:millisecond)
     {:ok, _} = HubManager.start_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
+    System.monotonic_time(:millisecond) - started_at
   end
 
   # The owning runner recorded on a registry row (`metadata.tag`).
@@ -344,14 +337,6 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     ref = Process.monitor(pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
     pid
-  end
-
-  defp marker_path(hub_id) do
-    Path.join([
-      Application.get_env(:flezha, :process_hub_registry_root),
-      Atom.to_string(hub_id),
-      "cluster.healthy"
-    ])
   end
 
   # `HubManager.stop_hub/1` wipes the registry dir; a warm restart must keep it.

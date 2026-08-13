@@ -1,4 +1,5 @@
 .PHONY: build build-release nif nif-release test clean \
+        refresh-process-hub \
         docker-build docker-publish \
         docker-build-dev docker-build-toolchain \
         k8s-apply k8s-delete \
@@ -17,6 +18,14 @@ build-release:
 	cargo build --release -p flz_nif -p flz
 	MIX_ENV=prod mix deps.get --only prod
 	MIX_ENV=prod mix release --overwrite
+
+# TEMPORARY, for as long as mix.exs tracks process_hub's `dev` branch: take
+# the current branch tip and rewrite its mix.lock entry. Plain `mix deps.get`
+# honours the locked commit, so this is the only way to move forward locally.
+# Commit the resulting mix.lock — CI and every other build path use it as-is.
+refresh-process-hub:
+	mix deps.unlock process_hub
+	mix deps.get
 
 # Just the NIF shared library (debug, fast iteration)
 nif:

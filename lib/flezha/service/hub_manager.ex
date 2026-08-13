@@ -21,7 +21,7 @@ defmodule Flezha.Service.HubManager do
   # 20% of the request bound, leaving the rest for the operative starts the
   # bound was sized for. Overrunning it is not fatal — see `unplaceable_runner/5`.
   @runner_assign_wait_ms 2_000
-  # Deliberately off the `<namespace>_hub` convention: `hub_id?/1` filters it
+  # Deliberately off the `<namespace>_hub` convention: `Identificator.hub_id?/1` filters it
   # out, so every operative-oriented walker (Convergence, RecoveryGate,
   # ShutdownCoordinator, the CLI, metrics) ignores it.
   @schedule_hub_id :flz_schedules
@@ -66,8 +66,8 @@ defmodule Flezha.Service.HubManager do
     # Seed the snapshot cache with the coordinator's current state. The
     # recovery telemetry fired during recovery overwrites this entry as
     # the lifecycle progresses; the seed only matters when a hub boots
-    # straight into `:normal` (marker present + no replay) and no
-    # telemetry event will follow.
+    # straight into `:normal` (auto-recovery off) and no telemetry event
+    # will follow.
     _ = Snapshot.observe_recovery(hub_id, ProcessHub.Service.Recovery.recovery_state(hub_id))
   end
 
@@ -262,7 +262,7 @@ defmodule Flezha.Service.HubManager do
 
   def get_running_namespaces() do
     list_running_hub_ids()
-    |> Enum.map(&extract_namespace_from_hub/1)
+    |> Enum.map(&Identificator.namespace_from_hub/1)
     |> Enum.reject(&is_nil/1)
   end
 
@@ -277,23 +277,9 @@ defmodule Flezha.Service.HubManager do
   def list_running_hub_ids() do
     Supervisor.which_children(__MODULE__)
     |> Enum.map(fn {id, _pid, _type, _modules} -> id end)
-    |> Enum.filter(&hub_id?/1)
+    |> Enum.filter(&Identificator.hub_id?/1)
     |> Enum.filter(fn id -> ProcessHub.is_alive?(id) end)
   end
-
-  defp hub_id?(id) when is_atom(id) do
-    String.ends_with?(Atom.to_string(id), "_hub")
-  end
-
-  defp hub_id?(_), do: false
-
-  defp extract_namespace_from_hub(hub_id) when is_atom(hub_id) do
-    hub_id
-    |> Atom.to_string()
-    |> String.replace_suffix("_hub", "")
-  end
-
-  defp extract_namespace_from_hub(_), do: nil
 
   @doc """
   Run `fun` with `hub_id` when that hub is alive, else return `on_dead`.
@@ -314,8 +300,16 @@ defmodule Flezha.Service.HubManager do
 
   def get_registry(namespace) do
     with_live_hub(namespace, {:error, "hub not alive"}, fn hub_id ->
-      {:ok, ProcessHub.registry_dump(hub_id)}
+      {:ok, live_registry_dump(hub_id)}
     end)
+  end
+
+  # A deliberately stopped operative keeps a durable row until its TTL expires,
+  # so `dump/1`'s default would report it as intent. Every caller here means
+  # "what should be running", and resurrecting a stopped operative is exactly
+  # what that would cause.
+  defp live_registry_dump(hub_id) do
+    ProcessRegistry.dump_all(hub_id, include_unbound: false, include_stopped: false)
   end
 
   def get_hub_nodes(namespace, include_local \\ false) do
@@ -429,7 +423,7 @@ defmodule Flezha.Service.HubManager do
   def operative_rows(namespace) do
     with_live_hub(namespace, [], fn hub_id ->
       hub_id
-      |> ProcessRegistry.dump()
+      |> live_registry_dump()
       |> Enum.map(fn {operative_id, entry} ->
         {cspec, node_pids, metadata} = normalize_registry_entry(entry)
 
@@ -807,7 +801,7 @@ defmodule Flezha.Service.HubManager do
       distribution_strategy: %ProcessHub.Strategy.Distribution.ConsistentHashing{},
       migration_strategy: migration_strategy(),
       registry_backend: registry_backend_config(hub_id),
-      auto_recovery: auto_recovery_config(hub_id),
+      auto_recovery: auto_recovery_config(),
       # Operative startup involves multiple GenServer hops and socket communication
       # to the compute engine (Rust), so the default 5s is too tight.
       cross_node_request_timeout: @cross_node_request_timeout_ms,
@@ -876,9 +870,10 @@ defmodule Flezha.Service.HubManager do
         :ets
 
       _ ->
-        # `:durable_ets` serves reads from ETS and leaves the on-disk copy
-        # alone when a boot skips replay; `:dets` erases the file instead,
-        # which destroys the only record a cold cluster can recover from.
+        # `:durable_ets` serves reads from ETS and mirrors writes to disk
+        # synchronously, so the reconcile's per-round registry reads stay
+        # in-memory while the file remains the record a cold cluster
+        # recovers from. Same on-disk format as `:dets`.
         {:durable_ets, [path: registry_path(hub_id)]}
     end
   end
@@ -936,14 +931,14 @@ defmodule Flezha.Service.HubManager do
   # reseated onto a reconnected runner.
   defp running_hub_operatives_unbound?() do
     Enum.any?(list_running_hub_ids(), fn hub_id ->
-      namespace = extract_namespace_from_hub(hub_id)
+      namespace = Identificator.namespace_from_hub(hub_id)
 
       namespace != nil and durable_operative_count(hub_id) > length(get_all_operatives(namespace))
     end)
   end
 
   defp durable_operative_count(hub_id) do
-    map_size(ProcessRegistry.dump(hub_id))
+    map_size(live_registry_dump(hub_id))
   catch
     :exit, _ -> 0
   end
@@ -960,7 +955,7 @@ defmodule Flezha.Service.HubManager do
   end
 
   defp durable_operative_keys(hub_id) do
-    ProcessRegistry.dump(hub_id) |> Map.keys() |> Enum.filter(&is_binary/1)
+    live_registry_dump(hub_id) |> Map.keys() |> Enum.filter(&is_binary/1)
   catch
     :exit, _ -> []
   end
@@ -993,35 +988,26 @@ defmodule Flezha.Service.HubManager do
     end
   end
 
-  defp auto_recovery_config(hub_id) do
+  @doc false
+  def auto_recovery_config do
+    # Orphan reconcile: each round starts the difference between this node's
+    # durable registry and what the cluster is observed to hold. The grace is
+    # also what holds the hub in `:recovering`, so it gates `RecoveryGate` and
+    # `BootLoader.await_namespace_hubs` — it is set long enough for runners to
+    # finish their handshake, since an orphan start needs one to place against.
     case Application.get_env(:flezha, :auto_restore_enabled, true) do
       false ->
         false
 
       _ ->
         [
-          marker_path: marker_path(hub_id),
-          recovery_timeout_ms:
-            Application.get_env(:flezha, :process_hub_recovery_timeout_ms, 30_000)
+          reconcile_grace_ms:
+            Application.get_env(:flezha, :process_hub_reconcile_grace_ms, 45_000),
+          reconcile_interval_ms:
+            Application.get_env(:flezha, :process_hub_reconcile_interval_ms, 30_000),
+          stopped_row_ttl_ms:
+            Application.get_env(:flezha, :process_hub_stopped_row_ttl_ms, :timer.hours(24 * 30))
         ]
     end
   end
-
-  defp marker_path(hub_id) do
-    case Application.get_env(:flezha, :process_hub_recovery_marker_path) do
-      nil ->
-        root = Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
-        Path.join([root, Atom.to_string(hub_id), "cluster.healthy"])
-
-      override when is_binary(override) ->
-        override
-    end
-  end
-
-  @doc false
-  # Public for the CLI `flz cluster status --recovery` surface. Resolves the
-  # same marker path the hub spec uses, so an operator-visible check matches
-  # the live state.
-  @spec resolved_marker_path(atom()) :: binary()
-  def resolved_marker_path(hub_id), do: marker_path(hub_id)
 end

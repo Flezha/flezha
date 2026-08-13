@@ -429,7 +429,7 @@ flowchart TB
     INB["inbox.wal<br/><i>bounded durable inbox</i>"]:::store
 
     DLQE["&lt;class&gt;/&lt;procedure&gt;/entries.jsonl + &lt;id&gt;.bin"]:::store
-    PHR["&lt;hub_id&gt;/registry.dets + cluster.healthy"]:::store
+    PHR["&lt;hub_id&gt;/registry.dets"]:::store
 
     ROOT --> ST
     ROOT --> DLQ

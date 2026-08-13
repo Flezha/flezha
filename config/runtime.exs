@@ -439,9 +439,21 @@ if config_env() != :test do
   config :flezha,
     process_hub_registry_root:
       System.get_env("FLEZHA_PROCESS_HUB_REGISTRY_ROOT", "app_data/process_hub"),
-    process_hub_recovery_marker_path: System.get_env("FLEZHA_PROCESS_HUB_RECOVERY_MARKER_PATH"),
-    process_hub_recovery_timeout_ms:
-      System.get_env("FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS", "30000")
+    # Orphan-reconcile cadence. The grace also bounds how long a hub stays
+    # `:recovering`, so it is what the boot gate waits on; it is set above
+    # the runner handshake window because an orphan start needs a runner to
+    # place against.
+    process_hub_reconcile_grace_ms:
+      System.get_env("FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS", "45000")
+      |> String.to_integer(),
+    process_hub_reconcile_interval_ms:
+      System.get_env("FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS", "30000")
+      |> String.to_integer(),
+    # A deliberately stopped operative keeps its durable row this long, so a
+    # stop survives a node's absence instead of being resurrected by a peer.
+    # 30 days — an operative stopped before a long weekend must not come back.
+    process_hub_stopped_row_ttl_ms:
+      System.get_env("FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS", "2592000000")
       |> String.to_integer(),
     boot_replay_timeout_ms:
       System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),

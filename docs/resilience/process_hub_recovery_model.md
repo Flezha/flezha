@@ -47,40 +47,48 @@ All hub nodes are assumed to run the same release — the propagated function
 must resolve on every node. This closed the 2026-06-12 outage gap where an
 operative restarted from a peer's pluginless cspec and nothing could heal it.
 
-## Recovery from DETS — the ONE exception
+## Recovery is a reconcile, not a mode
 
-DETS replay (re-starting children from the persisted registry) is valid in
-**exactly one** case: **the entire cluster was down** and is being cold-started,
-so no peer survives and the on-disk record is the only thing left.
+Recovery is no longer a boot mode an operator arms. Every node runs an
+**orphan reconcile**: `reconcile_grace_ms` after the coordinator starts, and
+then at most once per `reconcile_interval_ms`, it starts the difference between
+its own durable registry and what the cluster is observed to hold.
 
-It is **opt-in**, gated by the recovery marker
-(`ProcessHub.Service.Recovery`, file `cluster.healthy`):
+That single rule covers both cases the marker used to separate:
 
-- **Marker present** (the cluster was healthy when last seen) → recovery mode
-  `:normal` → **skip DETS replay**. The node expects to sync from a peer. On a
-  persistent backend, `Storage.Dets.open/2` runs `:dets.delete_all_objects` to
-  **discard the stale local copy on purpose** so the peer sync is the single
-  authority. This is correct, not a bug.
-- **Marker absent / `FLEZHA_PROCESS_HUB_RECOVERY_MARKER` force** → `:recovering`
-  → **replay from DETS**. Use only when you KNOW this is the sole surviving
-  instance of a fully-downed cluster (operator drives it via
-  `flz cluster prepare-recovery`).
+- **Cold-starting a dead cluster** — no peer holds anything, so the difference
+  is the whole registry and the node restores itself. No arming step.
+- **Rejoining a live cluster** — peers already hold every child, so the
+  difference is empty and the node starts nothing.
 
-So `recovery_replay` controls **only** whether to re-spawn children from disk.
-It is deliberately coupled to wiping the local DETS because both answer the same
-question: "am I rejoining a live cluster (discard local, sync from peers) or
-cold-starting a dead one (trust local disk)?"
+The difference is computed against the durable registry, which is never wiped
+to force that outcome. Two upstream fixes are what make this safe, and both
+correspond to logged flezha incidents: `Storage.Dets.open/2` no longer deletes
+every row on a skip-replay boot (2026-07-25 — a peerless controller came up
+with **0 operatives** and every later recovery boot replayed an empty file),
+and `Synchronizer.detach_data/2` no longer deletes a row because a peer's
+payload did not mention it (2026-06-19 — a restarted controller synced empty
+intent from a churn-emptied peer and ran **0 relays** while `/healthz` said
+healthy).
+
+A deliberate stop is not an orphan: `stop_children/3` marks the row `:stopped`
+rather than deleting it, so the stop survives the stopping node's absence
+instead of a peer resurrecting it. The row expires after `stopped_row_ttl_ms`
+(flezha: 30 days). Every controller-side reader that means "what should be
+running" — `flz operative list`, convergence's intent check — goes through
+`HubManager.live_registry_dump/1`, which excludes stopped rows; `dump/1`'s own
+default includes them.
 
 ## Restart playbook (operational)
 
 - **Deployment / rolling update:** ALWAYS bring the new instance up and confirm
   it is running *before* killing the old one. The new instance syncs live state
-  from the surviving peer → zero operative-list loss, no recovery needed.
-- **Manual restart, sole instance, cluster was fully down:** start in recovery
-  mode (`flz cluster prepare-recovery`) so it replays the operative list from DETS.
-- **Manual restart, accept losing the live operative list:** plain restart. The
-  registry is rebuilt from peers (if any) and from runners re-announcing their
-  operatives on reconnect. Do this only when temporary loss is acceptable.
+  from the surviving peer → zero operative-list loss.
+- **Manual restart, sole instance, cluster was fully down:** plain restart. The
+  first reconcile round replays the operative list from the durable registry
+  within `reconcile_grace_ms`. No operator step.
+- **Manual restart, accept losing the live operative list:** there is no longer
+  a variant that does this on purpose. A restart recovers.
 
 ## Implications for flezha controller code (the lessons)
 

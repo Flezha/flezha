@@ -8,15 +8,17 @@ The auto-restore-on-boot capability provides automatic, operator-free recovery o
 
 `Flezha.Service.HubManager.process_hub/1` SHALL pass `registry_backend: {:durable_ets, [path: <path>]}` and `auto_recovery: <config>` to every `ProcessHub.child_spec/1` call. This activates ProcessHub's `durable-registry` and `coordinator-bootstrap-recovery` capabilities per namespace.
 
-The backend SHALL be one whose `open/2` leaves the on-disk registry untouched when ProcessHub injects `recovery_replay: false`. `ProcessHub.Service.Storage.Dets` does NOT qualify: it calls `:dets.delete_all_objects/1` on that path, so a marker-present boot destroys the only record a later recovery boot could replay — a whole-cluster power loss then comes up with zero operatives and no way back, and `flz cluster prepare-recovery` replays an empty file forever after. `ProcessHub.Service.Storage.DurableEts` qualifies: it skips loading DETS into its ETS read table and writes nothing to the file.
+The backend SHALL be one whose reads are served from memory, so the reconcile's per-round registry read does not touch disk, and whose writes are mirrored to disk synchronously so the file stays the record a cold cluster recovers from. `ProcessHub.Service.Storage.DurableEts` qualifies. `ProcessHub.Service.Storage.Dets` is permitted by shape — it shares the on-disk format, so a hub may be switched between the two against the same `:path` — but pays a disk read per round.
 
 The live registry MUST still start empty on such a boot. `ProcessRegistry.local_data/1` selects rows by `node_pids` membership and the node name is stable across a restart, so a backend that exposed the previous boot's rows as live state would have `Synchronizer.broadcastable_local_data/1` advertise dead pids to peers as this node's local children.
 
 The DETS path SHALL resolve to `app_data/process_hub/<hub_id>/registry.dets` by default, with the root configurable via `:flezha, :process_hub_registry_root` (env var `FLEZHA_PROCESS_HUB_REGISTRY_ROOT`).
 
-The recovery configuration SHALL carry only the keys `ProcessHub.Service.Recovery.parse_config/1` reads — `[marker_path: <resolved marker path>, recovery_timeout_ms: <flezha_process_hub_recovery_timeout_ms>]` — so no key advertises a control ProcessHub ignores. The timeout comes from runtime config `:flezha, :process_hub_recovery_timeout_ms` (default `30_000`).
+The recovery configuration SHALL carry only the keys `ProcessHub.Service.Recovery.parse_config/1` reads — `[reconcile_grace_ms:, reconcile_interval_ms:, stopped_row_ttl_ms:]` — so no key advertises a control ProcessHub ignores; a key it no longer reads is accepted with a WARN and silently dropped, which is indistinguishable from working. Values come from runtime config `:flezha, :process_hub_reconcile_grace_ms` (default `45_000`), `:process_hub_reconcile_interval_ms` (default `30_000`) and `:process_hub_stopped_row_ttl_ms` (default `2_592_000_000`, 30 days).
 
-The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` without consulting the marker or replaying.
+The grace SHALL exceed the runner handshake window. The first reconcile round is what moves a hub `:recovering` → `:normal`, so it both gates boot and is the round that starts orphans — and an orphan start needs a connected runner to place against.
+
+The kill-switch `:flezha, :auto_restore_enabled` (env var `FLEZHA_AUTO_RESTORE_ENABLED`, default `true`) SHALL gate the `auto_recovery` field: when `false`, pass `auto_recovery: false` to `ProcessHub.child_spec` so ProcessHub transitions immediately to `:normal` and never reconciles.
 
 The atom in the registry-backend tuple MUST resolve to a real backend module via `ProcessHub.Initializer.resolve_registry_backend/1` — currently exactly `:durable_ets` (→ `ProcessHub.Service.Storage.DurableEts`), `:dets` (→ `ProcessHub.Service.Storage.Dets`) or `:ets` (→ `ProcessHub.Service.Storage.Ets`). Backend identifiers that route to non-existent modules SHALL NOT appear in `lib/flezha/service/hub_manager.ex`'s `registry_backend_config/1`: the `{module, opts}` fall-through clause treats an unknown atom as a module name and crashes `setup_storage/2` on the first runner connect with `(UndefinedFunctionError) function :<atom>.open/2 is undefined`, killing every fresh controller boot. `:durable_ets` is permitted here because both preconditions this requirement previously set are now met — `deps/process_hub/lib/process_hub/service/storage/durable_ets.ex` exists, and `resolve_registry_backend/1` carries an explicit `{:durable_ets, opts}` clause.
 
@@ -24,7 +26,7 @@ The atom in the registry-backend tuple MUST resolve to a real backend module via
 
 - **GIVEN** an application boots with default Flezha config
 - **WHEN** `HubManager` constructs the ProcessHub child spec for namespace `"default"`
-- **THEN** the spec contains `registry_backend: {:durable_ets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}` and `auto_recovery: [marker_path: "app_data/process_hub/<hub_id>/cluster.healthy", recovery_timeout_ms: 30_000]`
+- **THEN** the spec contains `registry_backend: {:durable_ets, [path: "app_data/process_hub/<hub_id>/registry.dets"]}` and `auto_recovery: [reconcile_grace_ms: 45_000, reconcile_interval_ms: 30_000, stopped_row_ttl_ms: 2_592_000_000]`
 
 #### Scenario: Kill-switch disables auto-recovery
 
@@ -291,12 +293,12 @@ Registry-dependent services SHALL gate their readiness on `HubManager.await_reco
 - **THEN** the predicate treats auto-restore as enabled and returns a boolean without raising
 - **AND** the Loop tick completes normally.
 
-### Requirement: A sole-instance restart preserves operatives only via recovery mode
+### Requirement: A sole-instance restart preserves operatives with no operator step
 
-A plain restart of the sole controller SHALL skip-replay and rebuild the operative list from runners re-announcing (the durable registry is wiped on a skip-replay boot, by design). To preserve operatives across a sole-instance restart, recovery mode (the `cluster.healthy` marker removed / `flz cluster prepare-recovery`) SHALL be used so the registry replays from DETS, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound.
+A plain restart of the sole controller SHALL preserve its operative list. The durable registry is never wiped to force a peer sync, so the first reconcile round finds every operative missing from the cluster and starts it, and `/healthz` SHALL honestly report `recovering`/`restoring_registry` until rebound. There SHALL be no arming step and no restart variant that discards the list on purpose.
 
-#### Scenario: recovery-mode restart preserves the operative list
-- **GIVEN** a sole controller has operatives bound and the operator wants them preserved across a restart
-- **WHEN** recovery mode is armed (marker removed / `flz cluster prepare-recovery`) and the controller restarts
-- **THEN** the registry replays from DETS, `/healthz` reports `recovering` until rebound, and the operatives return without operator re-arming.
+#### Scenario: a plain sole-instance restart preserves the operative list
+- **GIVEN** a sole controller has operatives bound
+- **WHEN** the controller restarts, with nothing armed beforehand
+- **THEN** the first reconcile round replays the operative list from the durable registry, `/healthz` reports `recovering` until rebound, and the operatives return.
 

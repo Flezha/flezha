@@ -71,7 +71,6 @@ defmodule Flezha.Service.CliManager.ClusterTest do
       end)
 
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
-      stub(HubManager, :resolved_marker_path, fn _hub_id -> "/tmp/cluster.healthy" end)
 
       out = capture_io(fn -> CliManager.cluster_status("shop", "json") end)
 
@@ -90,7 +89,6 @@ defmodule Flezha.Service.CliManager.ClusterTest do
       end)
 
       stub(HubManager, :recovery_state, fn _hub_id -> {:ok, :normal} end)
-      stub(HubManager, :resolved_marker_path, fn _hub_id -> "/tmp/cluster.healthy" end)
 
       out = capture_io(fn -> CliManager.cluster_status("shop", "text") end)
 

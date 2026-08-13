@@ -147,11 +147,13 @@ calls `State.Recovery.resync/2` so the SDK rewinds and resends from
 | `BootLoader` | Runs pre-boot hooks (sockets, certs) and gates hub creation on cluster readiness |
 
 **ProcessHub recovery gate:** `HubManager` starts each namespace hub with a
-durable DETS registry backend and an auto-recovery window. When a hub starts on
-a fully-downed cluster, it replays the operative list from DETS (opt-in via the
-`cluster.healthy` marker / `flz cluster prepare-recovery`). When joining a live
-cluster it syncs from peers and discards the local DETS copy — peers are always
-authoritative. See [`process_hub_recovery_model.md`](process_hub_recovery_model.md).
+durable registry backend and an orphan reconcile. Every node periodically
+starts the difference between its durable registry and what the cluster is
+observed to hold: on a fully-downed cluster that difference is the whole
+operative list, so it restores itself with no operator step; joining a live
+cluster the difference is empty, so it starts nothing. The durable copy is
+never wiped to force either outcome. See
+[`process_hub_recovery_model.md`](process_hub_recovery_model.md).
 
 **Bounded-kind operatives (durable crash-resume).** A `:bounded` operative is
 **durable by default** (opt-out per class) and crash-resumes on the shared WAL

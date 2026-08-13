@@ -36,11 +36,10 @@ set and the convergence loop re-adds anything missing. See
 | **All runners SIGKILL'd at once** under load | **Brief best-effort loss** | At-least-once | Same WAL-restore path, with no live copy anywhere — reliably exposes the lag (this is what `stateful-resume` provokes). |
 | **Runner OOM / container crash / node death** | **Brief best-effort loss** | At-least-once | Same as SIGKILL — no drain runs. |
 | **Controller graceful restart / rolling deploy with a live peer** | **No loss** | At-least-once | The new instance syncs the registry from the surviving peer; runners stay connected. |
-| **Controller plain restart, sole instance** (marker present) | State in WAL preserved; **operative *list* briefly unknown (~6 s)** | At-least-once | Skip-replay boot wipes local DETS by design; the registry is rebuilt from runners re-announcing. `/healthz` is `healthy` (vacuously) during the gap — safe for kubelet, but not "recovering". Prefer recovery mode (below). |
-| **Controller recovery-mode restart, sole instance** (marker removed / `flz cluster prepare-recovery`) | **No loss** | At-least-once | Replays the registry from DETS; `/healthz` honestly reports `recovering` until rebound. The correct way to restart the *only* instance. |
-| **Whole cluster down → cold start** | Recovered from DETS | n/a | The ONE case DETS replay is for: no peer survives, disk is the only record. |
+| **Controller plain restart, sole instance** | **No loss** | At-least-once | The first reconcile round replays the operative list from the durable registry; `/healthz` honestly reports `recovering` until rebound. No operator step, and no variant of this restart discards the list. |
+| **Whole cluster down → cold start** | Recovered from the durable registry | n/a | No peer survives, so the reconcile's difference is the whole list and disk is the only record. |
 | **Procedure migrated to a controller with no local WAL** (node loss / redistribution / lost hostPath), runner live | **No loss** | At-least-once | The WAL is node-local and unreplicated, so the new controller starts baseline-less. Its first `entity_state_change` (empty WAL, `seq > 0`) triggers a `CompactEntity` **pull** — the runner ships a full-state snapshot that becomes the new baseline; deltas shed while awaiting it are superseded by the snapshot. The controller never pushes an empty `RestoreInitState` (which would reset the live Entity to `init_state`). See [`state_persistence.md`](state_persistence.md) "Baseline recovery: push vs pull". |
-| **Node rejoins a live cluster** | Synced from peers; local DETS discarded | n/a | Correct — local DETS is stale; peers are authoritative. |
+| **Node rejoins a live cluster** | Synced from peers; local durable copy kept | n/a | The reconcile's difference against live peers is empty, so the node starts nothing. The on-disk copy is no longer discarded to force that — a peer reporting an empty registry must not be able to erase state cluster-wide. |
 | **Kafka/broker down, runners alive** | No loss | Buffered, resumes | Producer reconnects (see kafka producer recovery); offset resumes when the broker returns. |
 | **Sustained overload** (state changes outpace fsync — the 06-21 OOM shape) | **No loss** (credit-speaking SDK) | At-least-once | Credit-grant flow control: the sender's byte window (default 16 MiB) is minted back only on WAL fsync, so an exhausted window *parks* the SDK's flush path instead of growing controller memory — park, never drop. Shedding is unreachable for a conformant sender; any shed/overrun on a credit session emits `[:flezha, :state, :credit_anomaly]`. Pre-credit SDKs keep the legacy status-flag + shed/resync path. See [`state_persistence.md`](state_persistence.md) "Flow control". |
 | **Bounded operative runner SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new runner, restores committed Entity state via the restore-before-run gate, and resumes **at the first un-journaled procedure**: the proc-journal (`proc.journal`, one gated `ProcCommit` fsync per proc barrier) records each completed procedure + its inter-proc handoff, so committed procs are **skipped, not redone**, and the next proc is seeded from the journaled handoff (Rust SDK; Java keeps the pre-journal full re-run until its parity change). Inspect with `flz state journal`. See [`bounded_operative.md`](bounded_operative.md). |
@@ -595,10 +594,8 @@ heal the recent past. A target older than retention is refused with
 - **Restart the controller correctly:**
   - Multi-node / rolling: bring the new instance up *before* killing the old → peer sync,
     zero loss.
-  - Sole instance that must keep its operatives: use **recovery mode** (remove the
-    `cluster.healthy` marker / `flz cluster prepare-recovery`) → replays from DETS.
-  - Plain restart of a sole instance is "accept the operative-list rebuild window" — only do
-    it when that's acceptable.
+  - Sole instance: plain restart. The first reconcile round replays the operative list
+    from the durable registry within `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS`.
 - **Make sinks idempotent where exactly-once matters.** Output is at-least-once by
   default and can be re-emitted after a rebind/restore — use Kafka keys/transactions,
   HTTP idempotency keys, or DB upserts downstream. Declare the channel `.keyed()` so

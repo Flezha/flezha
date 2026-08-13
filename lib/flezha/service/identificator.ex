@@ -47,6 +47,24 @@ defmodule Flezha.Service.Identificator do
     gen_id(namespace, "hub") |> String.to_atom()
   end
 
+  @doc """
+  Inverse of `hub/1`. `nil` for anything that is not a hub id.
+  """
+  @spec namespace_from_hub(term()) :: binary() | nil
+  def namespace_from_hub(hub_id) when is_atom(hub_id) do
+    hub_id |> Atom.to_string() |> String.replace_suffix("_hub", "")
+  end
+
+  def namespace_from_hub(_), do: nil
+
+  @doc """
+  Whether `id` has the shape `hub/1` produces. Used to sift hub children
+  out of a supervisor's child list.
+  """
+  @spec hub_id?(term()) :: boolean()
+  def hub_id?(id) when is_atom(id), do: String.ends_with?(Atom.to_string(id), "_hub")
+  def hub_id?(_), do: false
+
   def stream_listener(runner_id, type) do
     case type do
       :primary -> gen_via(runner_id, "psl")

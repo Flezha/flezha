@@ -500,7 +500,7 @@ defmodule Flezha.Service.CliManager do
     rows = HubManager.operative_rows(namespace_display)
     counts = Enum.frequencies_by(rows, & &1.node)
     health = Enum.frequencies_by(rows, & &1.health)
-    {recovery_per_node, marker_per_node} = cluster_status_recovery(namespace_display, nodes)
+    recovery_per_node = cluster_status_recovery(namespace_display, nodes)
 
     render_cluster_status(
       %{
@@ -510,8 +510,7 @@ defmodule Flezha.Service.CliManager do
         is_leader: safe_is_leader(),
         counts: counts,
         health: health,
-        recovery_per_node: recovery_per_node,
-        recovery_marker_per_node: marker_per_node
+        recovery_per_node: recovery_per_node
       },
       output_format
     )
@@ -519,118 +518,38 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   RPC fan-out: ask every node in the cluster (including the local one)
-  for its `HubManager.recovery_state/1` and whether the marker file
-  exists. Returns `{state_map, marker_present_map}` keyed by node().
-  Used to populate the `recovery_state` / `recovery_armed` columns on
-  `flz cluster status`.
+  for its `HubManager.recovery_state/1`. Returns a map keyed by node().
+  Used to populate the `recovery_state` column on `flz cluster status`.
   """
-  @spec cluster_status_recovery(binary(), [node()]) :: {map(), map()}
+  @spec cluster_status_recovery(binary(), [node()]) :: map()
   def cluster_status_recovery(namespace, nodes) do
     hub_id = Flezha.Service.Identificator.hub(namespace)
 
-    {state_map, marker_map} =
-      Enum.reduce(nodes, {%{}, %{}}, fn n, {sa, ma} ->
-        {state, marker_present?} =
-          if n == node() do
-            local_recovery_snapshot(hub_id)
-          else
-            try do
-              :rpc.call(n, __MODULE__, :local_recovery_snapshot, [hub_id], 5_000)
-              |> case do
-                {:badrpc, _} -> {:unreachable, false}
-                {s, m} -> {s, m}
-              end
-            catch
-              _, _ -> {:unreachable, false}
+    Map.new(nodes, fn n ->
+      state =
+        if n == node() do
+          local_recovery_snapshot(hub_id)
+        else
+          try do
+            case :rpc.call(n, __MODULE__, :local_recovery_snapshot, [hub_id], 5_000) do
+              {:badrpc, _} -> :unreachable
+              s when is_atom(s) -> s
             end
+          catch
+            _, _ -> :unreachable
           end
+        end
 
-        {Map.put(sa, n, state), Map.put(ma, n, marker_present?)}
-      end)
-
-    {state_map, marker_map}
+      {n, state}
+    end)
   end
 
   @doc false
-  @spec local_recovery_snapshot(atom()) :: {atom(), boolean()}
+  @spec local_recovery_snapshot(atom()) :: atom()
   def local_recovery_snapshot(hub_id) when is_atom(hub_id) do
-    state =
-      case HubManager.recovery_state(hub_id) do
-        {:ok, s} -> s
-        {:error, :unknown_hub} -> :unknown
-      end
-
-    marker_present? = File.exists?(HubManager.resolved_marker_path(hub_id))
-    {state, marker_present?}
-  end
-
-  @doc """
-  Operator-facing CLI implementation for `flz cluster prepare-recovery`.
-  Fans `ProcessHub.Service.Recovery.prepare_recovery_cluster/1` out via the upstream
-  library and prints one row per node. Exit code derived from the
-  upstream return shape: 0 on full success, 1 on partial, 2 on error.
-  """
-  @spec cluster_prepare_recovery(binary()) :: :ok
-  def cluster_prepare_recovery(namespace \\ "default") do
-    namespace_display = normalize_namespace(namespace)
-    hub_id = Flezha.Service.Identificator.hub(namespace_display)
-    marker_path = HubManager.resolved_marker_path(hub_id)
-    nodes = HubManager.get_hub_nodes(namespace_display, true)
-
-    result = ProcessHub.Service.Recovery.prepare_recovery_cluster(hub_id)
-    print_prepare_recovery_table(hub_id, marker_path, nodes, result)
-    set_prepare_recovery_exit_code(result)
-    :ok
-  end
-
-  defp print_prepare_recovery_table(hub_id, marker_path, nodes, result) do
-    IO.puts(
-      "  " <>
-        String.pad_trailing("node", 30) <>
-        String.pad_trailing("hub_id", 18) <>
-        String.pad_trailing("marker_path", 60) <>
-        "result"
-    )
-
-    {ok_nodes, unreachable_nodes} =
-      case result do
-        {:ok, acked} -> {acked, []}
-        {:partial, acked, unreachable} -> {acked, unreachable}
-        {:error, _reason} -> {[], nodes}
-      end
-
-    Enum.each(nodes, fn n ->
-      label =
-        cond do
-          n in ok_nodes -> "ok"
-          n in unreachable_nodes -> "unreachable"
-          true -> "skipped"
-        end
-
-      IO.puts([
-        "  ",
-        String.pad_trailing(to_string(n), 30),
-        String.pad_trailing(to_string(hub_id), 18),
-        String.pad_trailing(marker_path, 60),
-        label
-      ])
-    end)
-
-    case result do
-      {:error, reason} ->
-        IO.puts("  error: #{inspect(reason)}")
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp set_prepare_recovery_exit_code(result) do
-    # Non-zero CLI exit via the rpc-safe exit(:cli_error) — the codebase-wide
-    # pattern; see cli_error!/1.
-    case result do
-      {:ok, _} -> :ok
-      _ -> exit(:cli_error)
+    case HubManager.recovery_state(hub_id) do
+      {:ok, s} -> s
+      {:error, :unknown_hub} -> :unknown
     end
   end
 
@@ -646,8 +565,7 @@ defmodule Flezha.Service.CliManager do
             node: to_string(n),
             operative_count: Map.get(s.counts, n, 0),
             leader: n == s.leader,
-            recovery_state: Map.get(s.recovery_per_node, n, :unknown),
-            recovery_armed: not Map.get(s.recovery_marker_per_node, n, false)
+            recovery_state: Map.get(s.recovery_per_node, n, :unknown)
           }
         end),
       unplaced_operatives: Map.get(s.counts, nil, 0),
@@ -671,12 +589,8 @@ defmodule Flezha.Service.CliManager do
       Enum.each(s.nodes, fn n ->
         marker = if n == s.leader, do: " [leader]", else: ""
         rs = Map.get(s.recovery_per_node, n, :unknown)
-        armed = not Map.get(s.recovery_marker_per_node, n, false)
 
-        IO.puts(
-          "    #{n}: #{Map.get(s.counts, n, 0)} operative(s) recovery_state=#{rs} " <>
-            "recovery_armed=#{armed}#{marker}"
-        )
+        IO.puts("    #{n}: #{Map.get(s.counts, n, 0)} operative(s) recovery_state=#{rs}#{marker}")
       end)
     end
 

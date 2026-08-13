@@ -26,21 +26,25 @@ controller ships it to the new runner on Entity stream attach.
    layout, no-op on subsequent runs.
 2. `Flezha.Service.HubManager` starts each per-namespace ProcessHub
    with `registry_backend: {:durable_ets, [path: ...]}` and
-   `auto_recovery: [marker_path: ..., recovery_timeout_ms: ...]`.
-   The backend matters: `{:dets, ...}` erases the file on a boot that
-   skips replay, `{:durable_ets, ...}` leaves it on disk.
+   `auto_recovery: [reconcile_grace_ms:, reconcile_interval_ms:,
+   stopped_row_ttl_ms:]`. `:durable_ets` serves reads from ETS — which
+   is what keeps the reconcile's per-round registry reads cheap — and
+   mirrors writes to disk synchronously.
 3. `Flezha.Boot.RecoveryHooks.register/1` installs thin telemetry
-   forwarders for ProcessHub's `pre_recovery_replay` and
-   `post_recovery_replay` hooks so the recovery lifecycle is visible
-   on the observability bus.
-4. ProcessHub's coordinator runs the recovery state machine, gated on
-   the marker file at `marker_path`. Marker present → straight to
-   `:normal`, no replay. Marker absent → `:recovering`, dispatching
-   `start_children` for the persistent-registry cspecs under a
-   `recovery_timeout_ms` ceiling, then `:normal`. Every transition to
-   `:normal` (re)writes the marker; nothing deletes it at shutdown, so
-   replay is armed only by `ProcessHub.Service.Recovery.prepare_recovery/1`
-   or by losing the volume the marker lives on.
+   forwarders for ProcessHub's `pre_recovery_replay`,
+   `post_recovery_replay`, `reconcile_round` and `reconcile_duplicate`
+   hooks so the recovery lifecycle is visible on the observability bus.
+4. ProcessHub's coordinator runs the recovery state machine as an
+   **orphan reconcile**: `reconcile_grace_ms` after start it runs a
+   round that starts the difference between this node's durable
+   registry and what the cluster is observed to hold, then repeats at
+   most once per `reconcile_interval_ms`. That first round is what
+   moves the hub `:recovering` → `:normal`, so the grace is what the
+   boot gate waits on — it is set above the runner handshake window
+   because an orphan start needs a runner to place against. There is
+   no marker and no operator arming step: a cold cluster recovers
+   itself, and a node rejoining a live cluster starts nothing because
+   the difference is empty.
 5. Each Operative's `Overwatch.init/1` reads `operative.opts[:plugins]`
    straight from the cspec (the persistent registry already restored
    it) and rebuilds `state.extensions`. Then `start_operative_sdk` and
@@ -88,8 +92,10 @@ flz boot import-legacy-snapshot /path/to/snap.flz [--force]
 | Env var | Application key | Default | Purpose |
 |---|---|---|---|
 | `FLEZHA_AUTO_RESTORE_ENABLED` | `:flezha, :auto_restore_enabled` | `true` | Kill-switch. When `false`, the auto-recovery hooks do not register; durable registry mutations still happen. |
-| `FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS` | `:flezha, :process_hub_recovery_timeout_ms` | `30_000` | Ceiling on ProcessHub's `:recovering` state — the replay and the cluster-event queue gate. |
-| `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `:flezha, :boot_replay_timeout_ms` | `60_000` | How long boot waits for every hub to leave `:recovery_pending`, and how long a connecting runner waits for that during cluster formation. Not passed to ProcessHub — its replay cap is `FLEZHA_PROCESS_HUB_RECOVERY_TIMEOUT_MS`. |
+| `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` | `:flezha, :process_hub_reconcile_grace_ms` | `45_000` | How long after coordinator start the first reconcile round runs. That round is what reaches `:normal`, so this is also how long a hub stays `:recovering`. Set above the runner handshake window: an orphan start needs a runner to place against. |
+| `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | `:flezha, :process_hub_reconcile_interval_ms` | `30_000` | Rate limit on subsequent rounds. `Flezha.Convergence.Health` binds on its own 5 s tick, so both loops can act on the same missing operative; `reconcile_duplicate` telemetry is what reports it when they do. |
+| `FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS` | `:flezha, :process_hub_stopped_row_ttl_ms` | `2_592_000_000` (30 d) | How long a deliberately stopped operative keeps its durable row. The row is what makes the stop survive a node's absence instead of being resurrected by a peer, so this is the window in which `flz operative stop` stays honoured. |
+| `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `:flezha, :boot_replay_timeout_ms` | `60_000` | How long boot waits for every hub to leave `:recovery_pending`, and how long a connecting runner waits for that during cluster formation. Not passed to ProcessHub — its own gate is `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS`. |
 | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | `:flezha, :process_hub_registry_root` | `app_data/process_hub` | Parent dir for each per-namespace `<hub_id>/registry.dets`. |
 
 ## Kill-switch and rollback

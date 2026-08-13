@@ -1,22 +1,35 @@
 defmodule Flezha.Boot.RecoveryHooks do
   @moduledoc """
-  Thin telemetry forwarders for ProcessHub's `pre_recovery_replay` and
-  `post_recovery_replay` hooks.
+  Thin telemetry forwarders for ProcessHub's orphan-reconcile hooks.
 
-  The upstream `recovery-mode-opt-in` contract owns the recovery
-  state machine, the cluster-event queue, and the cspecs-only replay
-  path; Flezha no longer needs to poll FleetManager readiness or strip
-  dead-node entries from the registry. These handlers exist only to
-  surface the replay lifecycle to Flezha's observability layer.
+  Upstream owns the recovery state machine: each round starts the
+  difference between this node's durable registry and what the cluster
+  is observed to hold. These handlers only surface that lifecycle to
+  Flezha's observability layer.
+
+  `reconcile_round` / `reconcile_duplicate` are forwarded because
+  `Convergence.Health` independently binds and rebinds operatives on its
+  own tick, so both loops can act on the same missing operative. The
+  telemetry is what tells us whether they actually contend in
+  production; neither loop is gated on the other.
 
   When the kill-switch `:flezha, :auto_restore_enabled` is `false`,
   ProcessHub does not fire these hooks (auto_recovery is off), so
   `register/1` is a no-op in that mode.
   """
 
+  alias Flezha.Service.Identificator
   alias ProcessHub.Constant.Hook
   alias ProcessHub.Service.HookManager
-  alias ProcessHub.Service.ProcessRegistry
+
+  # Handler name doubles as the HookManager id tag — it is already unique
+  # per hook, so nothing else has to be kept in sync.
+  @handlers [
+    {&Hook.pre_recovery_replay/0, :pre_recovery_replay},
+    {&Hook.post_recovery_replay/0, :post_recovery_replay},
+    {&Hook.reconcile_round/0, :reconcile_round},
+    {&Hook.reconcile_duplicate/0, :reconcile_duplicate}
+  ]
 
   @spec register(atom()) :: :ok
   def register(hub_id) when is_atom(hub_id) do
@@ -25,83 +38,97 @@ defmodule Flezha.Boot.RecoveryHooks do
         :ok
 
       _ ->
-        ProcessHub.register_hook_handlers(hub_id, Hook.pre_recovery_replay(), [
-          %HookManager{
-            id: {__MODULE__, :pre, hub_id},
-            m: __MODULE__,
-            f: :pre_recovery_replay,
-            a: [hub_id, :_]
-          }
-        ])
-
-        ProcessHub.register_hook_handlers(hub_id, Hook.post_recovery_replay(), [
-          %HookManager{
-            id: {__MODULE__, :post, hub_id},
-            m: __MODULE__,
-            f: :post_recovery_replay,
-            a: [hub_id, :_]
-          }
-        ])
+        Enum.each(@handlers, fn {hook, handler} ->
+          ProcessHub.register_hook_handlers(hub_id, hook.(), [
+            %HookManager{
+              id: {__MODULE__, handler, hub_id},
+              m: __MODULE__,
+              f: handler,
+              a: [hub_id, :_]
+            }
+          ])
+        end)
 
         :ok
     end
   end
 
   @doc """
-  Synchronous `pre_recovery_replay` handler. Emits Flezha telemetry and
-  returns immediately. ProcessHub blocks the coordinator until this
-  returns; keeping the body small is the contract.
+  Synchronous `pre_recovery_replay` handler. ProcessHub blocks the
+  coordinator until this returns, so the body reads the payload rather
+  than the registry.
   """
   @spec pre_recovery_replay(atom(), map()) :: :ok
-  def pre_recovery_replay(hub_id, _hook_data) do
-    namespace = namespace_from_hub(hub_id)
-
-    :telemetry.execute(
-      [:flezha, :boot, :pre_recovery_replay],
-      %{cspec_count: cspec_count(hub_id), system_time: System.system_time()},
-      %{hub_id: hub_id, namespace: namespace}
-    )
-
-    :ok
+  def pre_recovery_replay(hub_id, hook_data) do
+    emit(:pre_recovery_replay, hub_id, %{
+      cspec_count: Map.get(hook_data, :child_count, 0),
+      system_time: System.system_time()
+    })
   end
 
   @doc """
-  Async `post_recovery_replay` handler. Emits Flezha telemetry.
+  Async `post_recovery_replay` handler: the first round's outcome.
   """
   @spec post_recovery_replay(atom(), map()) :: :ok
   def post_recovery_replay(hub_id, hook_data) do
-    namespace = namespace_from_hub(hub_id)
-
-    :telemetry.execute(
-      [:flezha, :boot, :recovery_complete],
+    emit(
+      :recovery_complete,
+      hub_id,
       %{
         child_count: Map.get(hook_data, :child_count, 0),
         succeeded: Map.get(hook_data, :succeeded, 0),
         failed: Map.get(hook_data, :failed, 0)
       },
+      %{replay_outcome: Map.get(hook_data, :reason)}
+    )
+  end
+
+  @doc """
+  Every reconcile round, not only the first. `measurements` carries
+  `candidates` / `orphans` / `started` / `duplicates` / `elapsed_ms`.
+  """
+  @spec reconcile_round(atom(), map()) :: :ok
+  def reconcile_round(hub_id, hook_data) do
+    measurements = Map.get(hook_data, :measurements, %{})
+
+    emit(
+      :reconcile_round,
+      hub_id,
+      Map.take(measurements, [:candidates, :orphans, :started, :duplicates, :elapsed_ms]),
+      %{first_round: Map.get(hook_data, :first_round, false)}
+    )
+  end
+
+  @doc """
+  One operative observed running on more than one node — the signal that
+  the reconcile and `Convergence.Health` both started it.
+  """
+  @spec reconcile_duplicate(atom(), map()) :: :ok
+  def reconcile_duplicate(hub_id, hook_data) do
+    emit(
+      :reconcile_duplicate,
+      hub_id,
+      %{instance_count: Map.get(hook_data, :instance_count, 0)},
       %{
-        hub_id: hub_id,
-        namespace: namespace,
-        replay_outcome: Map.get(hook_data, :reason)
+        operative_id: Map.get(hook_data, :child_id),
+        kept_node: Map.get(hook_data, :kept_node),
+        stopped_nodes: Map.get(hook_data, :stopped_nodes, [])
       }
+    )
+  end
+
+  # Every event on this source carries the hub and its namespace; only the
+  # measurements and the extra metadata differ per hook.
+  defp emit(event, hub_id, measurements, metadata \\ %{}) do
+    :telemetry.execute(
+      [:flezha, :boot, event],
+      measurements,
+      Map.merge(metadata, %{
+        hub_id: hub_id,
+        namespace: Identificator.namespace_from_hub(hub_id)
+      })
     )
 
     :ok
-  end
-
-  defp cspec_count(hub_id) do
-    try do
-      ProcessRegistry.dump(hub_id) |> length()
-    rescue
-      _ -> 0
-    catch
-      :exit, _ -> 0
-    end
-  end
-
-  defp namespace_from_hub(hub_id) do
-    hub_id
-    |> Atom.to_string()
-    |> String.replace_suffix("_hub", "")
   end
 end
