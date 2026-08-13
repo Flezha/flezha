@@ -1,0 +1,396 @@
+defmodule Flezha.Operative.Replay do
+  @moduledoc """
+  Restore-and-replay for one operative: the engine behind crash resume, late-input
+  correction, and the operator's `flz operative replay`.
+
+  Restore and correction are ONE thing, which is why they are one module. A
+  correction leaves the on-disk state at a rewound baseline with the input-log
+  watermark lowered to match, and from there the ordinary resume replay *is* the
+  correction — the two differ only in how the baseline was chosen. Splitting them
+  would fork the path that has to stay single.
+
+  Everything here runs in the `Flezha.Operative.Overwatch` process and reads its
+  state without changing it: the one mutation a correction makes is the debounce
+  bookkeeping, which stays in the Overwatch beside the cast that drives it.
+  """
+
+  alias Flezha.Operative.Overwatch
+  alias Flezha.State.Commands
+  alias Flezha.State.InputLog
+  alias Flezha.State.PersistenceResolver
+  alias Flezha.State.ProcInbox
+  alias Flezha.State.ProcJournal
+  alias Flezha.State.Registry
+  alias Flezha.State.Restore
+
+  require Logger
+
+  # ---------- process API ----------
+
+  @doc """
+  An Entity reported an input behind its event-time high-water but inside the
+  correction window. Coalesce it; the debounce fires the replay.
+  """
+  @spec request_correction(pid(), tuple(), non_neg_integer()) :: :ok
+  def request_correction(overwatch, entity_id, target_event_time),
+    do: GenServer.cast(overwatch, {:correction_request, entity_id, target_event_time})
+
+  @doc """
+  Operator replay (`flz operative replay`): rewind an Entity to `baseline_seq`
+  and re-run its retained inputs from there through the current code.
+
+  The same transaction a late input drives, with the baseline chosen rather than
+  derived. Synchronous, so the CLI reports the outcome rather than a hopeful
+  "queued".
+  """
+  @spec replay_from(pid(), tuple(), non_neg_integer()) :: :ok | {:error, term()}
+  def replay_from(overwatch, entity_id, baseline_seq),
+    do: GenServer.call(overwatch, {:replay_from, entity_id, baseline_seq}, 60_000)
+
+  @doc """
+  External trigger for the bind-driven per-Entity replay. Called from
+  `Flezha.State.Recovery.resync_for_overwatch/2` when a non-bind caller
+  (the convergence Loop's rebind heal) needs to re-issue the
+  `RestoreInitState` handshake for an already-bound Overwatch.
+
+  Routes the work back to the Overwatch process via a cast so the caller never
+  blocks on enumeration / dispatch — the Overwatch is the single owner of
+  "enumerate my entities, dispatch RestoreInitState for each".
+  """
+  @spec kick_restore_for_bound_runner(pid(), binary()) :: :ok
+  def kick_restore_for_bound_runner(overwatch_pid, runner_id)
+      when is_pid(overwatch_pid) and is_binary(runner_id) do
+    GenServer.cast(overwatch_pid, {:kick_restore, runner_id})
+  end
+
+  @doc """
+  Fold a correction request into the pending set, arming the debounce on the
+  first one.
+
+  Concurrent late inputs for one Entity collapse into the one replay that
+  reaches furthest back — a burst of five late trades is one restore-replay
+  cycle, not five. The debounce is what gives the burst time to arrive; the
+  `Map.has_key?` guard is what keeps it a single timer.
+  """
+  @spec note_correction(Overwatch.t(), tuple(), non_neg_integer()) :: Overwatch.t()
+  def note_correction(%Overwatch{} = state, entity_id, target) do
+    pending = state.corrections
+
+    if Map.has_key?(pending, entity_id) do
+      %{state | corrections: Map.update!(pending, entity_id, &min(&1, target))}
+    else
+      Process.send_after(self(), {:run_correction, entity_id}, correction_debounce_ms())
+      %{state | corrections: Map.put(pending, entity_id, target)}
+    end
+  end
+
+  defp correction_debounce_ms(),
+    do: Application.get_env(:flezha, :correction_debounce_ms, 200)
+
+  # ---------- bind-time restore ----------
+
+  @doc """
+  Walk the on-disk Entity state for this operative and dispatch `RestoreInitState`
+  to the SDK for each Entity that has a non-empty payload.
+
+  Skipped when the operative arrived via HotSwap — handover already delivers the
+  state in-band — and when persistence is disabled for this operative class.
+  """
+  @spec restore_on_bind(Overwatch.t(), map()) :: :ok
+  def restore_on_bind(%Overwatch{arrived_via_hotswap?: true}, _operative),
+    do: :ok
+
+  # Tier operatives restored synchronously in `restore_and_replay_journal/1`.
+  def restore_on_bind(%Overwatch{effectively_once: true}, _operative),
+    do: :ok
+
+  def restore_on_bind(%Overwatch{} = state, operative) do
+    dispatch_restore(state, operative.opts, state.runner_id)
+    :ok
+  end
+
+  @doc """
+  Enumerate this operative's persisted Entities and ship a `RestoreInitState` for
+  each, off-process — the replay does blocking disk reads and never touches state.
+
+  The bind path reaches it through `restore_on_bind/2`; the
+  convergence heal reaches it through the Overwatch's `{:kick_restore, _}` cast.
+  """
+  @spec dispatch_restore(Overwatch.t(), keyword(), binary()) :: :ok
+  def dispatch_restore(%Overwatch{} = state, operative_opts, runner_id) do
+    # The SDK keys per-Entity state by the operative INSTANCE id (== `state.id`),
+    # so the WAL lives under `state/{operative_id}/...`. Enumerate by the same key.
+    operative_class = Keyword.get(operative_opts, :operative_class, state.id)
+    overwatch = self()
+
+    spawn(fn ->
+      replay_persisted_entities(state.builder.kind, operative_class, runner_id, overwatch)
+    end)
+
+    :ok
+  end
+
+  # Bind-time restore is capability-gated on `persistent_state?` (kind+class):
+  # `:stream` always; a durable `:workflow` class (this IS its crash-resume)
+  # unless it opted out. A stateless kind has no WAL to replay.
+  defp replay_persisted_entities(kind, operative_class, runner_id, overwatch) do
+    # Transactional outbox re-drive (workflow-transactional-outbox): a procedure
+    # journaled `proc_committed` (or `compensated`) whose outbox never reached the
+    # plugins owes that output. Re-drive it — with the original keys — before the
+    # resumed run advances, so a crash between commit and flush loses nothing.
+    if kind == :workflow do
+      _ = ProcJournal.flush_pending(operative_class, overwatch)
+    end
+
+    Enum.each(restorable_entities(kind, operative_class), fn entity_id ->
+      _ = Commands.dispatch_restore_init_state(runner_id, entity_id)
+    end)
+  end
+
+  # Persisted, restorable Entities of this class — empty when the kind/class
+  # combination has no persistent state.
+  defp restorable_entities(kind, operative_class) do
+    if PersistenceResolver.persistent_state?(kind, operative_class) do
+      operative_class
+      |> Registry.entities_of()
+      |> Enum.filter(&Restore.has_persisted_state?/1)
+    else
+      []
+    end
+  end
+
+  @doc """
+  Number of persisted Entities the bind-time restore path will ship a
+  `RestoreInitState` for on this (re)bind — the value threaded onto
+  `AddOperative.resume_entity_count` so a durable workflow driver holds its
+  first Procedure until that many restores land (crash-resume,
+  `workflow-operative-durability`).
+
+  Non-zero only for a durable `:workflow` class with WAL state on disk; `0` for a
+  fresh spawn, a stream operative, or an opted-out workflow one — those need
+  no restore-before-run gate. Matches the frames `replay_persisted_entities/4`
+  ships (same enumeration + `has_persisted_state?` filter).
+  """
+  @spec resume_entity_count(atom(), binary()) :: non_neg_integer()
+  def resume_entity_count(:workflow, operative_class),
+    do: length(restorable_entities(:workflow, operative_class))
+
+  def resume_entity_count(_kind, _operative_class), do: 0
+
+  @doc """
+  Effectively-once bind path: restore each persisted Entity through the
+  awaited control round-trip (the SDK has applied state + consumed floor
+  when the reply lands), then re-forward the journaled input tail above
+  the min durable consumed-offset.
+
+  Runs in the Overwatch process before plugin activation; Entities ahead of the
+  min watermark skip re-forwarded offsets they already consumed (SDK
+  `consumed_floor`).
+  """
+  @spec restore_and_replay_journal(Overwatch.t()) :: Overwatch.t()
+  def restore_and_replay_journal(%Overwatch{} = state) do
+    state.builder.kind
+    |> restorable_entities(Overwatch.operative_class(state))
+    |> Enum.each(fn entity_id ->
+      # Starting the writer replays its WAL scan: arms the outbox re-drive
+      # and repopulates the Entity's durable consumed-offset watermark.
+      _ = Flezha.State.Supervisor.find_or_start(entity_id)
+      _ = Commands.await_restore_init_state(state.runner_id, entity_id)
+    end)
+
+    replay_journaled_inputs(state)
+    state
+  end
+
+  # ---------- re-forwarding a durable tail ----------
+
+  @doc """
+  Re-forward the retained journaled inputs above the min durable
+  consumed-offset, stamping each record's original `flz.offset` (never
+  re-journaling — the log already holds them, post-`:on_input`).
+  """
+  @spec replay_journaled_inputs(Overwatch.t()) :: :ok
+  def replay_journaled_inputs(%Overwatch{} = state) do
+    operative_class = Overwatch.operative_class(state)
+
+    if File.exists?(Registry.input_log_path(operative_class)) do
+      floor = InputLog.watermark(operative_class) || -1
+      last = InputLog.last_offset(operative_class)
+
+      if last > floor do
+        replay_slice(state, operative_class, floor + 1, last)
+      end
+    end
+
+    :ok
+  end
+
+  @doc """
+  Re-forward every inbox entry above the durable consumed offset, stamped with
+  its original offset (never re-journaling — the inbox already holds them).
+
+  Runs on every bind of a durable workflow instance, which is what makes crash
+  resume, migration, and rehydrate-from-suspension one path. The durable-inbox
+  half of what `replay_journaled_inputs/1` does for the effectively-once tier.
+  """
+  @spec deliver_inbox_tail(Overwatch.t()) :: Overwatch.t()
+  def deliver_inbox_tail(%Overwatch{durable_workflow: false} = state), do: state
+
+  def deliver_inbox_tail(%Overwatch{} = state) do
+    state.id
+    |> ProcInbox.undelivered()
+    |> Enum.map(fn entry ->
+      {entry.message,
+       Map.put(entry.metadata, "flz.inbox_offset", Integer.to_string(entry.offset))}
+    end)
+    |> then(&reforward(state, &1))
+
+    state
+  end
+
+  # The one re-forward path, shared by crash recovery and deliberate correction
+  # — which is the whole point. A correction leaves the on-disk state at a
+  # rewound baseline with the input-log watermark lowered to match, and from
+  # there the ordinary resume replay *is* the correction. The two differ only in
+  # how the baseline was chosen.
+  #
+  # For a correction-declaring class every replayed slice is marked, and the
+  # SDK holds it to the end marker so it can order it by event time before
+  # dispatching any of it. Re-forwarding in arrival order would put the late
+  # input back after the inputs that overtook it and recompute the same wrong
+  # answer.
+  defp replay_slice(%Overwatch{} = state, operative_class, from, to) do
+    case InputLog.read_range(operative_class, from, to) do
+      [] ->
+        :ok
+
+      payloads ->
+        marks = if state.correction_window_ms, do: %{"flz.replay" => "1"}, else: %{}
+
+        payloads
+        |> Enum.map(fn {offset, message, metadata} ->
+          {message,
+           metadata
+           |> Map.put("flz.offset", Integer.to_string(offset))
+           |> Map.merge(marks)}
+        end)
+        |> then(&reforward(state, &1))
+
+        # Close the slice. A broadcast rather than a flag on the last input:
+        # an input reaches exactly one Entity (routed by key), so a marker
+        # riding one would strand the slice every *other* Entity buffered.
+        if state.correction_window_ms do
+          reforward(state, [{"", %{"flz.replay_end" => "1"}}])
+        end
+
+        :ok
+    end
+  end
+
+  # Re-forward already-durable payloads, stamped with the offset they were
+  # journaled at. The delivery half of both durability tiers' resume — the
+  # effectively-once input log and the durable workflow inbox — and
+  # deliberately NOT an ingest: these payloads are already in their log and
+  # already ran `:on_input`, so re-journaling them would duplicate them.
+  defp reforward(%Overwatch{} = state, payloads) do
+    Enum.each(payloads, &Overwatch.deliver(state, &1))
+  end
+
+  # ---------- correction ----------
+
+  @doc """
+  The correction transaction. Runs synchronously in the Overwatch process,
+  which is what makes it safe: the Overwatch is also the only thing that
+  journals and forwards input for this operative, so while it is in here no
+  new input can be journaled and the slice's upper bound cannot move.
+
+  A crash anywhere in here needs no marker to recover. Before the rewind
+  commits, nothing durable has changed: the late input is still in the log,
+  still unconsumed, and the ordinary resume re-forwards it, the SDK
+  re-classifies it, and we end up back here. After the rewind commits, the
+  on-disk state *is* the baseline and the watermark was lowered to match — so
+  the ordinary resume replay IS this replay. That is why crash recovery and
+  deliberate correction share one path.
+  """
+  @spec run_correction(Overwatch.t(), tuple(), non_neg_integer()) :: Overwatch.t()
+  def run_correction(%Overwatch{} = state, entity_id, target) do
+    result =
+      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(entity_id),
+           {:ok, %{seq: baseline_seq, consumed_offset: consumed}} <-
+             Flezha.State.WalWriter.correction_baseline(writer, target) do
+        rewind_and_replay(state, entity_id, writer, baseline_seq, consumed)
+      end
+
+    log_correction(state, entity_id, target, result)
+    state
+  end
+
+  @doc """
+  The operator's half (`flz operative replay`): the baseline is given, so only
+  the consumed offset has to be looked up. Everything downstream is the same
+  transaction `run_correction/3` drives.
+  """
+  @spec run_replay(Overwatch.t(), tuple(), non_neg_integer()) :: :ok | {:error, term()}
+  def run_replay(%Overwatch{} = state, entity_id, baseline_seq) do
+    result =
+      with {:ok, writer} <- Flezha.State.Supervisor.find_or_start(entity_id) do
+        consumed = Flezha.State.WalWriter.consumed_offset_at(writer, baseline_seq)
+        rewind_and_replay(state, entity_id, writer, baseline_seq, consumed)
+      end
+
+    log_correction(state, entity_id, baseline_seq, result)
+    if match?({:ok, _}, result), do: :ok, else: result
+  end
+
+  defp rewind_and_replay(state, entity_id, writer, baseline_seq, consumed) do
+    operative_class = Overwatch.operative_class(state)
+    started = System.monotonic_time(:millisecond)
+
+    # Explicit, not `current + 1` inside the writer: a re-run of an interrupted
+    # correction must re-assert the epoch it already committed to, never bump a
+    # second time — a second bump would leave the first attempt's rows behind at
+    # an epoch nothing overwrites.
+    epoch = Flezha.State.WalWriter.outbox_epoch(writer) + 1
+    :ok = Flezha.State.WalWriter.rewind_to(writer, baseline_seq, epoch)
+
+    # Blocking: the restore rides the control channel while the replay rides the
+    # data channel, and without this fence they race — the runner could fold
+    # slice inputs into the very state the rewind was about to replace.
+    _ = Commands.await_restore_init_state(state.runner_id, entity_id)
+
+    last = InputLog.last_offset(operative_class)
+    if last > consumed, do: replay_slice(state, operative_class, consumed + 1, last)
+
+    {:ok,
+     %{
+       baseline_seq: baseline_seq,
+       epoch: epoch,
+       replayed: max(last - consumed, 0),
+       duration_ms: System.monotonic_time(:millisecond) - started
+     }}
+  end
+
+  defp log_correction(state, entity_id, _target, {:ok, measurements}) do
+    emit_correction(:completed, Overwatch.operative_class(state), entity_id, measurements)
+    :ok
+  end
+
+  defp log_correction(state, entity_id, target, {:error, reason}) do
+    Logger.warning(
+      "[Overwatch] correction refused entity=#{inspect(entity_id)} " <>
+        "target=#{target}: #{inspect(reason)}"
+    )
+
+    emit_correction(:refused, Overwatch.operative_class(state), entity_id, %{reason: reason})
+  end
+
+  defp emit_correction(event, operative_class, {_, procedure, key}, measurements) do
+    {reason, measurements} = Map.pop(measurements, :reason)
+
+    :telemetry.execute(
+      [:flezha, :correction, event],
+      Map.put_new(measurements, :count, 1),
+      %{operative: operative_class, procedure: procedure, key: key, reason: reason}
+    )
+  end
+end

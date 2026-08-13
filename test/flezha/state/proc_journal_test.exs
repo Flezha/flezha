@@ -7,8 +7,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
   """
   use ExUnit.Case, async: false
 
-  alias Flezha.Operative.Overwatch
-  alias Flezha.State.{ProcJournal, Registry, TestHelpers, WalWriter, Wire}
+  alias Flezha.State.{Commands, ProcJournal, Registry, TestHelpers, WalWriter, Wire}
 
   setup do
     root = TestHelpers.tmp_app_data_dir()
@@ -426,7 +425,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     :ok = ProcJournal.append_iter_committed(inst, 0, 3, [{2, "carry"}])
     :ok = ProcJournal.append_proc_committed(inst, 0, 1, [seg_id], [{2, "h"}])
 
-    journal = Overwatch.proc_journal_state(inst)
+    journal = Commands.proc_journal_state(inst)
 
     assert %RunnerCommands.ProcJournalState{
              committed_proc_idxs: [0],
@@ -455,7 +454,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
   end
 
   test "an instance without a journal ships no journal state" do
-    assert Overwatch.proc_journal_state(instance_id()) == nil
+    assert Commands.proc_journal_state(instance_id()) == nil
   end
 
   # ---------- workflow-loop-rewind ----------

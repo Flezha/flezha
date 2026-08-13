@@ -11,8 +11,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
   import Mimic
 
   alias Flezha.Runner.{ControlChannel, StreamChannel}
-  alias Flezha.Operative.Overwatch
-  alias Flezha.State.{Registry, TestHelpers, Wire}
+  alias Flezha.State.{Commands, Registry, TestHelpers, Wire}
 
   setup :verify_on_exit!
 
@@ -92,7 +91,7 @@ defmodule FlezhaTest.State.CompensationMarkersTest do
       {:ok, make_ref()}
     end)
 
-    Overwatch.dispatch_restore_init_state("exec-ship", seg)
+    Commands.dispatch_restore_init_state("exec-ship", seg)
 
     assert_receive {:captured, {:restore_init_state, cmd}}
     assert cmd.has_compensation_intent, "intent marker rides RestoreInitState"

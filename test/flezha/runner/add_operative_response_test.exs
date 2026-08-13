@@ -7,9 +7,9 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
   """
   use ExUnit.Case, async: true
 
-  alias Flezha.Operative.Overwatch
+  alias Flezha.Operative.ClassRegistry
 
-  defp declarations(metadata), do: Overwatch.decode_declarations(encode(metadata))
+  defp declarations(metadata), do: ClassRegistry.decode_declarations(encode(metadata))
 
   test "tier declaration in the response metadata resolves true" do
     assert declarations(%{"effectively_once" => "true"}).effectively_once
@@ -22,7 +22,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
 
   test "empty raw_data (pre-tier or Java runner) resolves the defaults" do
     for raw <- ["", nil] do
-      assert Overwatch.decode_declarations(raw) == %{
+      assert ClassRegistry.decode_declarations(raw) == %{
                effectively_once: false,
                checkpoint_ack: false,
                compensable_procs: nil,
@@ -34,7 +34,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
   end
 
   test "undecodable raw_data resolves the defaults" do
-    assert Overwatch.decode_declarations(<<255, 255, 255, 1>>) == %{
+    assert ClassRegistry.decode_declarations(<<255, 255, 255, 1>>) == %{
              effectively_once: false,
              checkpoint_ack: false,
              compensable_procs: nil,

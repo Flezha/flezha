@@ -1328,7 +1328,7 @@ defmodule Flezha.State.WalWriter do
          {rc, sh, pk} <- state.entity_id,
          runner_id when is_binary(runner_id) <- state.owning_runner do
       _ =
-        Flezha.Operative.Overwatch.notify_entity_backpressure(
+        Flezha.State.Commands.notify_entity_backpressure(
           {runner_id, rc, sh, pk},
           status
         )

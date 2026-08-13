@@ -673,7 +673,7 @@ defmodule FlezhaTest do
                for {operative_id, _info} <- operative_infos do
                  case HubManager.get_pid(namespace, operative_id) do
                    {:ok, pid} when is_pid(pid) ->
-                     Flezha.Operative.Overwatch.kick_restore_for_bound_runner(
+                     Flezha.Operative.Replay.kick_restore_for_bound_runner(
                        pid,
                        runner_id_3
                      )

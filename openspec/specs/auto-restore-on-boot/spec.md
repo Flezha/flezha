@@ -100,9 +100,9 @@ The previous self-heal-on-next-procedure contract from `plugin-subscription-pers
 
 ### Requirement: Entity state restoration fires on first stream attach
 
-When an Entity's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.Operative.Overwatch.dispatch_restore_init_state/2` for that Entity exactly once per Operative-startup BEFORE allowing input frames to flow.
+When an Entity's data stream attaches to a `StreamChannel` AND the owning Operative has `persistence_enabled = true` AND `Restore.assemble_payload/1` returns a payload with non-empty `snapshot_bytes` OR non-empty `change_log_bytes` AND the Operative did NOT arrive via HotSwap, the controller SHALL invoke `Flezha.State.Commands.dispatch_restore_init_state/2` for that Entity exactly once per Operative-startup BEFORE allowing input frames to flow.
 
-The Operative's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
+The Operative's `arrived_via_hotswap?` flag SHALL be set to `true` by `Overwatch.alter_handover_state/2` on the destination of a HotSwap migration. When this flag is set, `Flezha.State.Commands.dispatch_restore_init_state/2` SHALL NOT fire — the in-band handover state stands.
 
 This works identically across: ProcessHub-driven cold-boot replay, fresh `flz operative start`, ProcessHub redistribution, AddOperative reissue after runner restart.
 

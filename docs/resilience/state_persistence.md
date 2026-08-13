@@ -79,7 +79,7 @@ operative's durable state a pin to the controller whose disk holds it, and a
 migration to another controller has to move the files or lose them.
 
 A HotSwap handover normally carries the state in-band — but
-`Overwatch.prepare_handover_state/1` sources it from the **runner**, so the one
+`Flezha.Operative.Lifecycle.prepare_handover/1` sources it from the **runner**, so the one
 migration triggered by a runner's death (`hub_migrate`, when a controller loses
 its last runner for a namespace) necessarily ships an empty payload. That is
 where `Flezha.State.WalTransfer` runs: the handover stamps `source_node`, and an
@@ -189,7 +189,7 @@ already-folded WAL records is idempotent (umbrella commitment on
 
 ### The compaction failure path
 
-`Overwatch.dispatch_compact_entity/2` inspects the `CompactEntityResponse`:
+`Flezha.State.Commands.dispatch_compact_entity/2` inspects the `CompactEntityResponse`:
 a `{snapshot_seq: 0, snapshot_bytes_size: 0}` answer against a **non-empty**
 WAL is a failed handshake (never a completion), reported as
 `[:flezha, :state, :compaction_failed]`. A snapshot that never arrives is
@@ -482,7 +482,7 @@ back:
   durable log the Controller re-forwards, so keeping it would double-apply
   it and, during a correction, re-order it behind the replayed slice.
 * **Every other class** — including a plain stateful stream operative,
-  the default configuration — keeps its queue. `Overwatch.journal_input/2`
+  the default configuration — keeps its queue. `Ingest.journal_input/2`
   passes those inputs through un-journaled (see
   `docs/resilience/data_durability.md`), so the mailbox is the only copy
   they have and discarding them is loss with nothing to recover from.

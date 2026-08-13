@@ -451,7 +451,7 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 
 A restore SHALL discard an Entity's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
 
-`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Overwatch.journal_input/2` journals for the effectively-once tier and for durable workflow instances, and passes every other operative through untouched. A plain stateful stream operative, which is the default configuration, has no such log.
+`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Ingest.journal_input/2` journals for the effectively-once tier and for durable workflow instances, and passes every other operative through untouched. A plain stateful stream operative, which is the default configuration, has no such log.
 
 #### Scenario: Journaled input may be discarded
 - **GIVEN** an Entity whose class journals its inputs before forwarding

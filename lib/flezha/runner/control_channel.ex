@@ -672,7 +672,7 @@ defmodule Flezha.Runner.ControlChannel do
 
     Task.start(fn ->
       Enum.each(entities, fn entity_id ->
-        case Flezha.Operative.Overwatch.dispatch_compact_entity(runner_id, entity_id) do
+        case Flezha.State.Commands.dispatch_compact_entity(runner_id, entity_id) do
           {:ok, _ref} ->
             :ok
 
@@ -717,7 +717,7 @@ defmodule Flezha.Runner.ControlChannel do
         :ok ->
           case HubManager.get_pid(namespace, operative_id) do
             {:ok, pid} when is_pid(pid) ->
-              Flezha.Operative.Overwatch.suspend(pid, iter, deadline)
+              Flezha.Operative.Lifecycle.suspend(pid, iter, deadline)
 
             _ ->
               # No Overwatch to suspend (already migrated / torn down). The park

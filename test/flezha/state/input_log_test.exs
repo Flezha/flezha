@@ -9,7 +9,9 @@ defmodule Flezha.State.InputLogTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  alias Flezha.Operative.Ingest
   alias Flezha.Operative.Overwatch
+  alias Flezha.Operative.Replay
   alias Flezha.State.{FsyncBatcher, InputLog, Registry, Supervisor, TestHelpers}
 
   setup do
@@ -188,8 +190,8 @@ defmodule Flezha.State.InputLogTest do
     }
 
     payload = {"message", %{"input_type" => "2"}}
-    assert Overwatch.journal_input(state, payload) == payload
-    assert Overwatch.journal_input(state, nil) == nil
+    assert Ingest.journal_input(state, payload) == payload
+    assert Ingest.journal_input(state, nil) == nil
     refute File.exists?(Registry.input_log_path(class))
     refute class in InputLog.all_classes()
   end
@@ -201,7 +203,7 @@ defmodule Flezha.State.InputLogTest do
       effectively_once: true
     }
 
-    {message, metadata} = Overwatch.journal_input(state, {"message", %{"input_type" => "2"}})
+    {message, metadata} = Ingest.journal_input(state, {"message", %{"input_type" => "2"}})
     assert message == "message"
     assert metadata["flz.offset"] == "0"
 
@@ -235,7 +237,7 @@ defmodule Flezha.State.InputLogTest do
         effectively_once: true
       }
 
-      :ok = Overwatch.replay_journaled_inputs(state)
+      :ok = Replay.replay_journaled_inputs(state)
 
       assert_receive {:forwarded, ^class, {"m3", md3}}
       assert md3["flz.offset"] == "3"
@@ -255,7 +257,7 @@ defmodule Flezha.State.InputLogTest do
         effectively_once: true
       }
 
-      :ok = Overwatch.replay_journaled_inputs(state)
+      :ok = Replay.replay_journaled_inputs(state)
       refute_receive {:forwarded, _, _}, 50
       refute File.exists?(Registry.input_log_path(class))
     end

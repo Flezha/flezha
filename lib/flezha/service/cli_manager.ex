@@ -6,7 +6,6 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
   alias Flezha.Plugin.SpecDecoder
-  alias Flezha.Operative.Overwatch
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
   alias Flezha.Service.Payloader
@@ -107,8 +106,11 @@ defmodule Flezha.Service.CliManager do
   """
   def operative_rewind(namespace, operative_id, to_iter) do
     case OperativeManager.get_operative_pid(normalize_namespace(namespace), operative_id) do
-      {:ok, pid} -> print_rewind(operative_id, to_iter, Overwatch.rewind(pid, to_iter))
-      _ -> cli_error!("Error: operative '#{operative_id}' not found")
+      {:ok, pid} ->
+        print_rewind(operative_id, to_iter, Flezha.Operative.Lifecycle.rewind(pid, to_iter))
+
+      _ ->
+        cli_error!("Error: operative '#{operative_id}' not found")
     end
   end
 
@@ -1433,14 +1435,14 @@ defmodule Flezha.Service.CliManager do
 
   @doc """
   `flz state rotate <operative/procedure/entity>` — force a compaction by
-  asking Overwatch to dispatch a `CompactEntity` to the SDK.
+  dispatching a `CompactEntity` to the SDK.
   """
   def state_rotate(path_string) do
     case parse_state_path(path_string) do
       {:ok, {rc, sh, pk}} ->
         case lookup_runner_for_entity(rc, sh, pk) do
           {:ok, runner_id} ->
-            case Flezha.Operative.Overwatch.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
+            case Flezha.State.Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
               {:ok, _ref} ->
                 IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
 
@@ -1534,7 +1536,7 @@ defmodule Flezha.Service.CliManager do
     with {:ok, {operative_class, _, _} = entity_id} <- parse_state_path(path_string),
          {:ok, overwatch} <- resolve_replay_overwatch(namespace, operative_class),
          {:ok, target_seq} <- resolve_replay_seq(entity_id, from_string) do
-      Overwatch.replay_from(overwatch, entity_id, target_seq)
+      Flezha.Operative.Replay.replay_from(overwatch, entity_id, target_seq)
 
       IO.puts(
         "Replaying #{path_string} from seq #{target_seq}. Outputs republish under a " <>

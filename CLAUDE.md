@@ -799,7 +799,7 @@
   and the determinism contract — is available in Java. The e2e matrix no longer
   branches per runtime; there is ONE contract.
 - **The unblocker was `AddOperativeHandler` returning `new byte[0]`.**
-  `AddOperativeResponse.metadata` is the ONE seam `Overwatch.decode_declarations/1`
+  `AddOperativeResponse.metadata` is the ONE seam `ClassRegistry.decode_declarations/1`
   reads. With it empty the controller could not be TOLD a Java class is
   `effectively_once` / has a `correction_window` / an `ack_granularity` /
   `compensable_procs` / `leaf_procs` — so every declaration-gated capability was
@@ -882,7 +882,7 @@
   is a **producer-side** change: no new record type, no new control message, no
   proto change, no new retention rule.
 - **Interval replay = the EXISTING crash-resume replay.**
-  `Overwatch.restore_and_replay_journal/1` already re-forwards
+  `Replay.restore_and_replay_journal/1` already re-forwards
   `InputLog.watermark + 1 .. last_offset` on every tier bind. Hold the watermark
   at the last checkpoint and that path IS the interval replay. Same for retention
   (truncates below the min durable consumed-offset = the last checkpoint) and for
@@ -930,7 +930,7 @@
 
 ## Stream late-input correction (`stream-late-input-correction`)
 
-- **THERE IS NO SPLICE.** `Overwatch.journal_input/2` appends to the input log
+- **THERE IS NO SPLICE.** `Ingest.journal_input/2` appends to the input log
   BEFORE forwarding (`overwatch.ex:634`); the SDK extracts event time later, in
   `dispatch`. So a late input is already durable in the log at its arrival offset
   by the time anything knows it is late. The slice is an offset range and already
@@ -976,7 +976,7 @@
   `compact_after_age_ms` therefore moved onto the per-operative `resolve/5` cascade —
   it is a correctness constraint now, not a tuning knob.
 - **Declaration**: `c.correction_window(ms)` + `c.beyond_window_policy(..)`; rides
-  `AddOperativeResponse.metadata` → `Overwatch.decode_declarations/1`. Refusals: tier
+  `AddOperativeResponse.metadata` → `ClassRegistry.decode_declarations/1`. Refusals: tier
   + `EventTimeFrom` + all-channels-keyed (SDK build); hold-window + snapshot age-floor
   ≥ window (controller, at start). Beyond-window default = `process_as_arrival` (it is
   today's behaviour — declaring a window must never silently start dropping data).
@@ -1047,7 +1047,7 @@
   change) → `ClassRegistry.put_compensable_ops/2` (same sidecar shape as the
   tier). The guard asks `ProcJournal.staged_channels_above/2` — the journal owns
   its fold, Overwatch owns the policy (`live_entries/1` is private).
-- **`Overwatch.decode_declarations/1`** is the ONE place the `AddOperative`
+- **`ClassRegistry.decode_declarations/1`** is the ONE place the `AddOperative`
   response is decoded → `%{effectively_once:, compensable_procs:}`. A new
   SDK-declared capability is added there and nowhere else. (`compensable_procs`
   `nil` = the class declared nothing — Java/stream/run-sugar — vs `[]` = a
@@ -1146,7 +1146,7 @@
   — while offset 0 must mean "nothing consumed"/"unjournaled").
   `Registry.@reserved_files` keeps `inbox.wal` out of `scan_dir` (it
   would otherwise decode as an Entity named "inbox").
-- **Append-before-forward**: `Overwatch.journal_input/2` — the ONE durable
+- **Append-before-forward**: `Ingest.journal_input/2` — the ONE durable
   ingest seam (eff-once InputLog clause + durable-workflow ProcInbox clause).
   Stamps `flz.inbox_offset`; a duplicate (`flz.msg_id`, else payload hash,
   inside the undelivered window) returns nil = absorbed; a failed append
@@ -1154,7 +1154,7 @@
 - **Suspension**: SDK ships `IterPark` (tag 32) and exits WITHOUT
   `WorkflowCompleted` (`RunOutcome::Parked`). Controller journals
   `parked(N[, deadline])` (type 4, ACTIVE) THEN
-  `Overwatch.suspend/3` → `RemOperative` + `operative_set_runner(nil)`;
+  `Lifecycle.suspend/3` → `RemOperative` + `operative_set_runner(nil)`;
   Overwatch + registry entry STAY (zero *runner* resources).
   `Convergence.Diff`/`Loop` skip `suspended?` (else they'd rebind it and
   undo the eviction). `flz operative info` → phase `suspended`.

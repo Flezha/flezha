@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   @moduledoc """
   The resuming bind's two instance-scoped fields on `AddOperative`, both stamped
-  onto the operative's opts by `Overwatch.with_resume_state/3`.
+  onto the operative's opts by `Flezha.Operative.Lifecycle`.
 
   `proc_journal` rides the bind rather than a per-Entity `RestoreInitState`
   because it is instance-scoped: a durable workflow class with no per-Entity

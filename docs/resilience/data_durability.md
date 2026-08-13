@@ -459,7 +459,7 @@ bumped epoch, so a keyed changelog sink overwrites the stale rows by natural
 key. One machine, two triggers: a late input, or an operator.
 
 **There is nothing to splice.** Inputs are journaled *before* they are
-forwarded (`Overwatch.journal_input/2`), so a late input is already durably in
+forwarded (`Ingest.journal_input/2`), so a late input is already durably in
 the input log at its arrival offset by the time anything knows it is late.
 Re-reading the range already contains it. Only the *order* was ever wrong.
 

@@ -445,7 +445,7 @@ The stream-only seq-gap → resync + epoch-realign machinery stays on
    socket EOF) and QUIC (where the dead peer is otherwise invisible until its
    ~45 s idle timeout).
 3. The operative's supervisor re-binds onto the replacement with a **fresh
-   `Overwatch.complete_init`**, which stamps `resume_entity_count > 0` from the
+   `Flezha.Operative.Lifecycle.complete_init`**, which stamps `resume_entity_count > 0` from the
    on-disk WAL and ships the persisted Entities (and any compensation markers)
    via `RestoreInitState`. In production this is driven by the convergence loop;
    the cross-language e2e drives it deterministically.

@@ -96,7 +96,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
         # entry durable before the SIGKILL.
         operative_id =
           drive_crash_resume(ctx, "commit_block_workflow", "ok", fn oid ->
-            Overwatch.resume_entity_count(:workflow, oid) > 0 and
+            Flezha.Operative.Replay.resume_entity_count(:workflow, oid) > 0 and
               Flezha.State.ProcJournal.restore_state(oid) != nil
           end)
 
@@ -212,7 +212,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
           ctx,
           "tier_commit_block_workflow",
           "ok",
-          fn oid -> Overwatch.resume_entity_count(:workflow, oid) > 0 end,
+          fn oid -> Flezha.Operative.Replay.resume_entity_count(:workflow, oid) > 0 end,
           plugins: [sink]
         )
 
@@ -756,7 +756,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              "the idle stateless loop never parked"
 
       # Nothing on disk to restore — the journal is the only thing carried over.
-      assert Flezha.Operative.Overwatch.resume_entity_count(:workflow, operative_id) == 0
+      assert Flezha.Operative.Replay.resume_entity_count(:workflow, operative_id) == 0
 
       send_turn(namespace, operative_id, "two")
 

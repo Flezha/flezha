@@ -19,7 +19,8 @@ defmodule Flezha.State.Recovery do
 
   require Logger
 
-  alias Flezha.Operative.Overwatch
+  alias Flezha.Operative.Replay
+  alias Flezha.State.Commands
   alias Flezha.State.Restore
 
   @spec resync(tuple(), keyword()) :: {:ok, reference()} | {:error, term()}
@@ -40,12 +41,12 @@ defmodule Flezha.State.Recovery do
   This is the single state-restoration trigger for non-HotSwap operatives;
   every Overwatch bind unconditionally invokes it. The implementation
   is intentionally trivial — the heavy lifting lives in
-  `Flezha.Operative.Overwatch.dispatch_restore_init_state/2`.
+  `Flezha.State.Commands.dispatch_restore_init_state/2`.
   """
   @spec resync_for_overwatch(pid(), binary()) :: :ok
   def resync_for_overwatch(overwatch_pid, runner_id)
       when is_pid(overwatch_pid) and is_binary(runner_id) do
-    Overwatch.kick_restore_for_bound_runner(overwatch_pid, runner_id)
+    Replay.kick_restore_for_bound_runner(overwatch_pid, runner_id)
     :ok
   end
 
@@ -101,9 +102,9 @@ defmodule Flezha.State.Recovery do
   defp dispatch_resync(entity_id, runner_id, reason) do
     result =
       if Restore.has_persisted_state?(entity_id) do
-        Overwatch.dispatch_restore_init_state(runner_id, entity_id)
+        Commands.dispatch_restore_init_state(runner_id, entity_id)
       else
-        Overwatch.dispatch_compact_entity(runner_id, entity_id)
+        Commands.dispatch_compact_entity(runner_id, entity_id)
       end
 
     case result do

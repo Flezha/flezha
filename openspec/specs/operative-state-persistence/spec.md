@@ -833,7 +833,7 @@ Java SDK preserves it — with neither behaviour documented as intended.
 The Controller re-forwards input only for classes whose inputs it journals
 before forwarding: the effectively-once tier, whose inputs land in the input
 log, and durable workflow instances, whose inputs land in the proc inbox.
-`Overwatch.journal_input/2` passes every other operative through un-journaled,
+`Ingest.journal_input/2` passes every other operative through un-journaled,
 including a plain stateful stream operative — the default configuration,
 since persistence defaults to enabled and the tier is an explicit opt-in.
 
@@ -885,7 +885,7 @@ The coverage SHALL assert against observable durable state — a snapshot file e
 
 ### Requirement: The Controller SHALL inspect CompactEntityResponse
 
-`Overwatch.dispatch_compact_entity/2` currently treats a successful `send_control` as compaction having started and never reads the response body. The Controller SHALL inspect `CompactEntityResponse` and SHALL treat a response that reports no snapshot for an Entity with a non-empty WAL as a failure of the handshake, not as its completion.
+`Flezha.State.Commands.dispatch_compact_entity/2` currently treats a successful `send_control` as compaction having started and never reads the response body. The Controller SHALL inspect `CompactEntityResponse` and SHALL treat a response that reports no snapshot for an Entity with a non-empty WAL as a failure of the handshake, not as its completion.
 
 #### Scenario: Zero snapshot_seq against a non-empty WAL is an error
 

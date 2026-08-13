@@ -38,8 +38,8 @@ defmodule Flezha.State.Watchdog do
   require Logger
 
   alias Flezha.Convergence.Backoff
-  alias Flezha.Operative.{ClassRegistry, Overwatch}
-  alias Flezha.State.{PersistenceResolver, Recovery, Registry, Supervisor, WalWriter}
+  alias Flezha.Operative.ClassRegistry
+  alias Flezha.State.{Commands, PersistenceResolver, Recovery, Registry, Supervisor, WalWriter}
 
   # Consecutive compaction failures at which the miss stops being treated as
   # transient. The backoff schedule has four rungs (5s/30s/60s/300s); crossing
@@ -224,7 +224,7 @@ defmodule Flezha.State.Watchdog do
       %{operative: rc, procedure: sh, key: pk, trigger: trigger, runner: runner_id}
     )
 
-    _ = Overwatch.dispatch_compact_entity(runner_id, entity_id)
+    _ = Commands.dispatch_compact_entity(runner_id, entity_id)
     :ok
   end
 

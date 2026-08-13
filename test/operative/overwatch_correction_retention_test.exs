@@ -10,7 +10,7 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
   """
   use ExUnit.Case, async: false
 
-  alias Flezha.Operative.{ClassRegistry, Overwatch}
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{InputLog, PersistenceResolver, TestHelpers}
 
   setup do
@@ -56,7 +56,7 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
     Application.put_env(:flezha, :compact_after_age_ms, 60_000)
     :ok = ClassRegistry.put_correction_window(class, 300_000)
 
-    assert :ok = Overwatch.announce_derived_retention(class, 300_000)
+    assert :ok = ClassRegistry.announce_derived_retention(class, 300_000)
 
     assert InputLog.hold_window_ms(class) == 300_000
     assert PersistenceResolver.compact_after_age_ms(class) == 300_000
@@ -76,7 +76,7 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
     Application.put_env(:flezha, :compact_after_age_ms, 600_000)
     :ok = ClassRegistry.put_correction_window(class, 60_000)
 
-    assert :ok = Overwatch.announce_derived_retention(class, 60_000)
+    assert :ok = ClassRegistry.announce_derived_retention(class, 60_000)
 
     assert InputLog.hold_window_ms(class) == 600_000
     assert PersistenceResolver.compact_after_age_ms(class) == 600_000
@@ -95,7 +95,7 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
     Application.put_env(:flezha, :compact_after_age_ms, 0)
     :ok = ClassRegistry.put_correction_window(class, 60_000)
 
-    assert :ok = Overwatch.announce_derived_retention(class, 60_000)
+    assert :ok = ClassRegistry.announce_derived_retention(class, 60_000)
 
     assert PersistenceResolver.compact_after_age_ms(class) == 0
     refute_receive {^ref, _, _}, 50

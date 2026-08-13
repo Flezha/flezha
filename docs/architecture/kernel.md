@@ -60,7 +60,7 @@ sequenceDiagram
 
 Three orderings in that diagram are invariants, not implementation detail:
 
-- **Append before forward.** `Overwatch.journal_input/2` is the single seam where an input
+- **Append before forward.** `Ingest.journal_input/2` is the single seam where an input
   becomes durable, and it runs *before* the input reaches a runner. A failed append is not
   forwarded — a frame the sender can retry beats an undurable one it believes was accepted.
 - **Fsync before flush.** An output never reaches a sink until the record that produced it is

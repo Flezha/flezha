@@ -24,7 +24,7 @@ defmodule Flezha.Runner.ControlUnit do
   reply within `timeout_ms` (default 2 s), or `{:error, reason}` for any
   transport or decode failure.
 
-  Used by `Flezha.Operative.Overwatch.complete_init/3` before `:start_operative` to
+  Used by `Flezha.Operative.Lifecycle.complete_init/4` before `:start_operative` to
   prove the control channel is end-to-end healthy. A timeout here signals a
   stale `stream_ref` that the bound `ControlChannel` cannot detect on its
   own (writes succeed against a closed transport with no failure signal).
@@ -84,9 +84,9 @@ defmodule Flezha.Runner.ControlUnit do
   ControlUnit and await the SDK's reply as raw bytes — the single request/reply
   seam every control round-trip decodes on top of. Returns `{:ok, raw_data}`
   (the `CommandResponse.raw_data` the caller decodes) or `{:error, reason}` on a
-  timeout, transport failure, or dead ControlUnit. `send_operative_message/3`,
-  the credit-window handshake, and the compaction response inspection all use
-  it.
+  timeout, transport failure, an unstarted ControlUnit, or a dead one.
+  `send_operative_message/3`, the credit-window handshake, the operative
+  handover round-trips, and the compaction response inspection all use it.
 
   Options: `:timeout` (default #{@default_reply_timeout_ms} ms) and
   `:metadata`. With `metadata: true` the reply is
@@ -98,11 +98,21 @@ defmodule Flezha.Runner.ControlUnit do
   @spec send_control_await(binary(), tuple(), keyword()) ::
           {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
   def send_control_await(runner_id, command, opts \\ []) when is_binary(runner_id) do
-    GenServer.call(
-      Identificator.control_unit(runner_id),
-      {:send_control, command, Keyword.get(opts, :metadata, false)},
-      Keyword.get(opts, :timeout, @default_reply_timeout_ms)
-    )
+    # A control unit that was never started is a distinct failure from one that
+    # is wedged, and the callers log or park on the difference. A wedged one
+    # (waiting on a reply the dead transport will never deliver) is caught below,
+    # so neither shape can crash the operative that asked.
+    case GenServer.whereis(Identificator.control_unit(runner_id)) do
+      nil ->
+        {:error, "control unit not available for runner #{runner_id} with payload"}
+
+      _pid ->
+        GenServer.call(
+          Identificator.control_unit(runner_id),
+          {:send_control, command, Keyword.get(opts, :metadata, false)},
+          Keyword.get(opts, :timeout, @default_reply_timeout_ms)
+        )
+    end
   catch
     :exit, {:timeout, _} -> {:error, :timeout}
     :exit, reason -> {:error, {:control_unit_exit, reason}}
@@ -270,7 +280,7 @@ defmodule Flezha.Runner.ControlUnit do
       factory_id: operative.factory_id,
       init_values: init_values,
       kind: kind,
-      # Both stamped on opts by `Overwatch.with_resume_state/3`. Non-zero only
+      # Both stamped on opts by `Flezha.Operative.Lifecycle`. Non-zero only
       # for a durable workflow (re)bind: the SDK driver holds its first Procedure
       # until this many Entity restores land (crash-resume). `proc_journal` is
       # `nil` unless the instance has a journal to resume from.

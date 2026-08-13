@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
   @moduledoc """
-  §5b.2 crash-resume gate (controller half): `Overwatch.resume_entity_count/2`
+  §5b.2 crash-resume gate (controller half): `Flezha.Operative.Replay.resume_entity_count/2`
   is the number of persisted Entities the bind-time restore path will ship a
   `RestoreInitState` for, threaded onto `AddOperative.resume_entity_count` so a
   durable workflow driver holds its first Procedure until that many restores land.
@@ -10,7 +10,7 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
   """
   use ExUnit.Case, async: false
 
-  alias Flezha.Operative.Overwatch
+  alias Flezha.Operative.Replay
   alias Flezha.State.{Registry, TestHelpers}
 
   setup do
@@ -41,23 +41,23 @@ defmodule FlezhaTest.Operative.OverwatchResumeCountTest do
     seed_entity("resume_class", "proc", "even")
     seed_entity("resume_class", "proc", "odd")
 
-    assert Overwatch.resume_entity_count(:workflow, "resume_class") == 2
+    assert Replay.resume_entity_count(:workflow, "resume_class") == 2
   end
 
   test "a fresh durable workflow operative (no WAL) waits for nothing" do
-    assert Overwatch.resume_entity_count(:workflow, "unseeded_class") == 0
+    assert Replay.resume_entity_count(:workflow, "unseeded_class") == 0
   end
 
   test "a stream operative never waits for a workflow-style restore gate" do
     seed_entity("cont_class", "proc", "s")
 
-    assert Overwatch.resume_entity_count(:stream, "cont_class") == 0
+    assert Replay.resume_entity_count(:stream, "cont_class") == 0
   end
 
   test "an opted-out workflow class counts zero even with WAL on disk" do
     Application.put_env(:flezha, :operative_persistence, %{"optout_class" => false})
     seed_entity("optout_class", "proc", "s")
 
-    assert Overwatch.resume_entity_count(:workflow, "optout_class") == 0
+    assert Replay.resume_entity_count(:workflow, "optout_class") == 0
   end
 end

@@ -502,7 +502,7 @@ defmodule Flezha.Runner.StreamChannel do
            StateWire.decode_frame(frame),
          {:ok, target} <- StateWire.decode_correction_request(body),
          {:ok, overwatch} <- ClassRegistry.overwatch_pid(operative_class) do
-      Flezha.Operative.Overwatch.request_correction(overwatch, entity_id, target)
+      Flezha.Operative.Replay.request_correction(overwatch, entity_id, target)
     else
       other ->
         Logger.warning("[stream] undecodable correction_request: #{inspect(other)}")

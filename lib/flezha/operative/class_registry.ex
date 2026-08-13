@@ -25,9 +25,17 @@ defmodule Flezha.Operative.ClassRegistry do
   The sidecar is written only for non-`:stream` kinds, so a stream
   operative's on-disk layout is unchanged. Like `Flezha.State.Completion`, the
   `kind` file is inert to every `Flezha.State.Registry` scanner.
+
+  This module also owns the whole declaration round-trip, not just its storage:
+  `decode_declarations/1` reads the `AddOperative` response the SDK answers a
+  bind with, `put_declarations/2` persists it, and `announce_derived_retention/2`
+  reports the retention floors a declared correction window raised. Adding a new
+  SDK-declared capability means touching those and nothing else.
   """
 
   alias Flezha.Operative.Kind
+  alias Flezha.State.InputLog
+  alias Flezha.State.PersistenceResolver
   alias Flezha.State.Registry
 
   require Logger
@@ -89,9 +97,75 @@ defmodule Flezha.Operative.ClassRegistry do
     :ok
   end
 
+  # ---------- declarations: decode ----------
+
+  @typedoc """
+  A class's SDK-side declarations, as resolved from the `AddOperative` response.
+
+  `compensable_procs` is the chain positions whose procedure declares a `compensate`
+  hook, or `nil` when the class declares nothing (run-sugar, stream, or a Java
+  runner) — which a rewind reads as "no coverage information", not as "nothing
+  is compensable".
+  """
+  @type declarations :: %{
+          effectively_once: boolean(),
+          checkpoint_ack: boolean(),
+          compensable_procs: [non_neg_integer()] | nil,
+          leaf_procs: [non_neg_integer()] | nil,
+          correction_window_ms: pos_integer() | nil,
+          compact_after_bytes: pos_integer() | nil
+        }
+
+  @doc """
+  Resolve a class's SDK-side declarations from the `AddOperative` response
+  raw_data — an `AddOperativeResponse` metadata map when the class declares
+  anything, empty otherwise (including every pre-tier or Java runner). The one
+  place the wire form is decoded; `put_declarations/2` is the one place it is
+  persisted. A new declared capability is added in those two and nowhere else.
+  """
+  @spec decode_declarations(binary() | nil) :: declarations()
+  def decode_declarations(raw_data) do
+    metadata = decode_metadata(raw_data)
+
+    %{
+      effectively_once: Map.get(metadata, "effectively_once") == "true",
+      checkpoint_ack: Map.get(metadata, "ack_granularity") == "checkpoint",
+      compensable_procs: parse_ops(Map.get(metadata, "compensable_procs")),
+      leaf_procs: parse_ops(Map.get(metadata, "leaf_procs")),
+      correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms")),
+      compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes"))
+    }
+  end
+
+  defp decode_metadata(raw_data) when is_binary(raw_data) and raw_data != "" do
+    case RunnerCommands.AddOperativeResponse.decode(raw_data) do
+      {:ok, %RunnerCommands.AddOperativeResponse{metadata: metadata}} -> metadata
+      {:error, _} -> %{}
+    end
+  end
+
+  defp decode_metadata(_raw_data), do: %{}
+
+  defp parse_ops(nil), do: nil
+  defp parse_ops(""), do: []
+  defp parse_ops(csv), do: csv |> String.split(",") |> Enum.map(&String.to_integer/1)
+
+  # A positive decimal declaration string as an integer, or nil when
+  # absent/malformed/non-positive.
+  defp parse_window(raw) when is_binary(raw) do
+    case Integer.parse(raw) do
+      {ms, ""} when ms > 0 -> ms
+      _ -> nil
+    end
+  end
+
+  defp parse_window(_raw), do: nil
+
+  # ---------- declarations: persist ----------
+
   @doc """
   Persist every SDK-declared capability for `operative_class`, as decoded from
-  the `AddOperative` response by `Flezha.Operative.Overwatch.decode_declarations/1`.
+  the `AddOperative` response by `decode_declarations/1`.
 
   Each rides an ETS entry plus a durable sidecar, so a process-less `Retention`
   sweep — or a bind that happens while the instance is suspended — resolves it
@@ -109,6 +183,59 @@ defmodule Flezha.Operative.ClassRegistry do
     put_leaf_ops(operative_class, declarations.leaf_procs)
     put_correction_window(operative_class, declarations.correction_window_ms)
     put_compact_after_bytes(operative_class, declarations.compact_after_bytes)
+  end
+
+  @doc """
+  Announce the retention a declared correction window derived for itself.
+
+  Retention is not a prerequisite an operator negotiates — a correction over a
+  60 s window MEANS holding 60 s of input log and 60 s of WAL history, so the
+  declaration derives both floors (`InputLog.hold_window_ms/1`,
+  `PersistenceResolver.compact_after_age_ms/1`). But an SDK author's one line can
+  commit the controller to real disk, so a floor RAISED above its configured value
+  is logged and emitted once, at bind. Nothing is announced when nothing was
+  raised.
+  """
+  @spec announce_derived_retention(binary(), pos_integer()) :: :ok
+  def announce_derived_retention(operative_class, window_ms) do
+    configured_hold = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
+    derived_hold = InputLog.hold_window_ms(operative_class)
+
+    if derived_hold > configured_hold do
+      emit_retention_derived(operative_class, :input_log_hold_window_ms, configured_hold,
+        derived: derived_hold,
+        window_ms: window_ms
+      )
+    end
+
+    # `0` means "no age-triggered compaction", which already retains everything the
+    # window needs — the resolver satisfies it rather than raising it.
+    configured_age = PersistenceResolver.configured_compact_after_age_ms(operative_class)
+    derived_age = PersistenceResolver.compact_after_age_ms(operative_class)
+
+    if derived_age > configured_age do
+      emit_retention_derived(operative_class, :compact_after_age_ms, configured_age,
+        derived: derived_age,
+        window_ms: window_ms
+      )
+    end
+
+    :ok
+  end
+
+  defp emit_retention_derived(operative_class, floor, configured, opts) do
+    derived = Keyword.fetch!(opts, :derived)
+
+    Logger.info(
+      "[Overwatch] #{operative_class} declares a #{Keyword.fetch!(opts, :window_ms)}ms " <>
+        "correction window: #{floor} raised #{configured} -> #{derived}"
+    )
+
+    :telemetry.execute(
+      [:flezha, :correction, :retention_derived],
+      %{count: 1, configured: configured, derived: derived},
+      %{operative: operative_class, floor: floor}
+    )
   end
 
   @doc """
@@ -349,16 +476,6 @@ defmodule Flezha.Operative.ClassRegistry do
   defp encode_declaration(true), do: "true"
   defp encode_declaration(procs) when is_list(procs), do: Enum.join(procs, ",")
   defp encode_declaration(ms) when is_integer(ms), do: Integer.to_string(ms)
-
-  defp parse_ops(""), do: []
-  defp parse_ops(csv), do: csv |> String.split(",") |> Enum.map(&String.to_integer/1)
-
-  defp parse_window(text) do
-    case Integer.parse(text) do
-      {ms, ""} when ms > 0 -> ms
-      _ -> nil
-    end
-  end
 
   defp ets_lookup(operative_class) do
     case :ets.whereis(@table) do
