@@ -323,6 +323,11 @@ pub fn send_compensation_record(payload_id: &str, entity_identity: &[u8]) {
 pub static SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Clear the process-global sink state. Test support; hold [`SINK_TEST_LOCK`].
+///
+/// `cfg(test)`-only: both callers are this crate's own test modules, so a
+/// non-test build compiles them out and would report this as dead code on
+/// every rebuild.
+#[cfg(test)]
 #[doc(hidden)]
 pub(crate) fn reset_for_test() {
     let mut st = STATE.lock().unwrap_or_else(|p| p.into_inner());
@@ -332,7 +337,9 @@ pub(crate) fn reset_for_test() {
     st.reconnect_requested_at = None;
 }
 
-/// Whether a reconnect is currently requested. Test support.
+/// Whether a reconnect is currently requested. Test support; `cfg(test)`-only
+/// for the same reason as [`reset_for_test`].
+#[cfg(test)]
 #[doc(hidden)]
 pub(crate) fn reconnect_requested_for_test() -> bool {
     STATE

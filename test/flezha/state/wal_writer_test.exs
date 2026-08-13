@@ -171,7 +171,7 @@ defmodule Flezha.State.WalWriterTest do
       :ok = WalWriter.append(srv, 1, header, "b")
       :ok = WalWriter.append(srv, 2, header, "c")
 
-      WalWriter.close(srv)
+      TestHelpers.close_and_await(srv, pid)
       # Drop the dedup file so the writer must rebuild from the WAL.
       File.rm(Registry.outbox_dedup_path(pid))
 
@@ -186,7 +186,7 @@ defmodule Flezha.State.WalWriterTest do
       header = TestHelpers.stub_header()
       :ok = WalWriter.append(srv, 0, header, "a")
       :ok = WalWriter.append(srv, 1, header, "bb")
-      WalWriter.close(srv)
+      TestHelpers.close_and_await(srv, pid)
 
       # Append 5 garbage bytes that look like a partial record.
       File.write!(Registry.wal_path(pid), <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>, [:append])
@@ -253,7 +253,7 @@ defmodule Flezha.State.WalWriterTest do
       assert WalWriter.last_persisted_seq(srv) == 3
 
       # And it is durable: a fresh writer recovers seq 3 from the WAL on disk.
-      WalWriter.close(srv)
+      TestHelpers.close_and_await(srv, pid)
       File.rm(Registry.outbox_dedup_path(pid))
       {:ok, srv2} = Supervisor.find_or_start(pid)
       assert WalWriter.last_persisted_seq(srv2) == 3

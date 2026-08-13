@@ -9,7 +9,7 @@ defmodule Flezha.State.TestHelpers do
   that must not be reachable from a release.
   """
 
-  alias Flezha.State.{Registry, WalWriter}
+  alias Flezha.State.{Registry, Supervisor, WalWriter}
 
   @doc """
   Allocates a per-test temporary directory under `System.tmp_dir!/0` and
@@ -102,5 +102,34 @@ defmodule Flezha.State.TestHelpers do
   @spec sample_entity_id(binary()) :: Registry.entity_id()
   def sample_entity_id(suffix \\ "p1") do
     {"TestOperative", "TestProcedure", suffix}
+  end
+
+  @doc """
+  Close a writer and wait until its registry entry is gone.
+
+  `WalWriter.close/1` is a `GenServer.stop/2`, so it returns once the process
+  has exited — but `Elixir.Registry` drops the entry only when it processes the
+  monitor's `:DOWN`, which happens after. A re-open in that window gets the
+  dead pid back from `Supervisor.lookup/1` and the next call exits `:noproc`.
+  """
+  @spec close_and_await(pid(), Registry.entity_id(), timeout()) :: :ok
+  def close_and_await(server, entity_id, timeout_ms \\ 2_000) do
+    WalWriter.close(server)
+    await_deregistered(entity_id, System.monotonic_time(:millisecond) + timeout_ms)
+  end
+
+  defp await_deregistered(entity_id, deadline) do
+    case Supervisor.lookup(entity_id) do
+      :error ->
+        :ok
+
+      {:ok, _pid} ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          raise "writer for #{inspect(entity_id)} still registered after close"
+        end
+
+        Process.sleep(5)
+        await_deregistered(entity_id, deadline)
+    end
   end
 end

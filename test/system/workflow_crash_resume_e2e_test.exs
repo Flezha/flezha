@@ -51,7 +51,6 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.Operative.Overwatch
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
