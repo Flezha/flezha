@@ -6,7 +6,7 @@ defmodule Flezha.Runner.ControlChannelPingTest do
   re-arms, and it never enters the command path. A wedged controller stops
   echoing, so the runner's watchdog drives reconnect.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Runner.ControlChannel
   alias Flezha.Service.Payloader

@@ -5,7 +5,7 @@ defmodule Flezha.Plugin.Installer.CompilerTest do
   global code server doesn't collide across tests.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Installer.Compiler
 

@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.Provider.WebsocketHealthTest do
   window, dead/absent connection is unhealthy. The probe reply leaves the
   watchdog's state untouched.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Provider.Websocket
 

@@ -6,7 +6,7 @@ defmodule Flezha.Transport.DriverStatsTest do
   wedged.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Transport.Native
 

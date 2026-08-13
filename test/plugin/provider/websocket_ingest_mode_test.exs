@@ -5,7 +5,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIngestModeTest do
   blocking call — a zero-credit park then stops the connection process
   reading its socket. Tier-off keeps the fire-and-forget cast unchanged.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Provider.Websocket
 

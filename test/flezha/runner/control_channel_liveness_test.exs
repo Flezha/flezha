@@ -14,7 +14,7 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
   the global window via `put_env`, which would falsely evict the suite's
   long-lived default-namespace runners.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   @moduletag :capture_log
 

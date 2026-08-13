@@ -9,7 +9,7 @@ defmodule Flezha.Plugin.Provider.WebsocketIdleTimeoutTest do
   pre-hibernation, 16 min post-hibernation).
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Flezha.Plugin.Provider.Websocket
 

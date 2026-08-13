@@ -3,7 +3,7 @@ defmodule FlezhaTest.Operative.OverwatchRestoreAsyncTest do
   The per-Entity restore replay must run off the Overwatch process so its
   blocking disk reads cannot freeze the GenServer mailbox.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
   use Mimic
 
   alias Flezha.Operative.Overwatch
