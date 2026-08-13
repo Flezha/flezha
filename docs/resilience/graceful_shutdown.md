@@ -38,7 +38,7 @@ the same outcome.
    - **Locally-empty is the completion signal.** `drain/2` returns once
      the deferred list is empty, but migration start requests are async
      and HotSwap stops a local child only after the remote start
-     succeeded — so the coordinator additionally waits (bounded) until
+     succeeded — so the coordinator additionally waits (workflow) until
      the hub has no local children before stopping it. A 2 s grace window
      is carved out of the drain timeout so a deadline force pass can
      still land its handover.
@@ -70,7 +70,7 @@ answers `:defer` while moving it would tear mid-critical work:
 | Busy signal                            | Safe barrier (signals `migration_ready/2`)        |
 | -------------------------------------- | ------------------------------------------------- |
 | Late-input correction pending          | Correction transaction completes                  |
-| Durable bounded, not suspended         | Suspension at a committed iteration boundary      |
+| Durable workflow, not suspended         | Suspension at a committed iteration boundary      |
 | Effectively-once outbox not flushed    | Consent re-query on the next retry tick           |
 
 A deferring child is parked in the hub's deferred list, re-queried

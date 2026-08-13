@@ -24,7 +24,7 @@ defmodule Flezha.Operative.Kind do
     * `:output_stall_watch?` — the per-Entity output-staleness watchdog that
       forces a rebind.
 
-  `:unbounded` declares all four. `:bounded` is a run-once, stateless job and
+  `:stream` declares all four. `:workflow` is a run-once, stateless job and
   declares none, so every flag reads `false`.
 
   ## Extension protocol
@@ -37,7 +37,7 @@ defmodule Flezha.Operative.Kind do
     2. Opt the built-in kinds that need it into it here, in `@capabilities`.
 
   A kind that does not opt in reads the new flag as `false` and is unaffected.
-  When a new flag names a behavior the full `:unbounded` kind needs, opt `:unbounded`
+  When a new flag names a behavior the full `:stream` kind needs, opt `:stream`
   into it in the same change that adds the gate, so the full kind never silently
   loses a behavior.
   """
@@ -46,13 +46,13 @@ defmodule Flezha.Operative.Kind do
   @type capability() :: atom()
 
   @capabilities %{
-    unbounded: %{
+    stream: %{
       persistent_state?: true,
       time_travel?: true,
       dynamic_entities?: true,
       output_stall_watch?: true
     },
-    bounded: %{}
+    workflow: %{}
   }
 
   @doc "Sparse capability descriptor for `kind` (declared-true capabilities only)."

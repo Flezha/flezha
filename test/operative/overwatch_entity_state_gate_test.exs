@@ -1,8 +1,8 @@
 defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
   @moduledoc """
   §5b.2: `:get_entity_state` is gated on `persistent_state?` (kind+class).
-  `:unbounded` and a durable-by-default `:bounded` class proceed to query the
-  runner exactly as before; a `:bounded` class that opted out of persistence —
+  `:stream` and a durable-by-default `:workflow` class proceed to query the
+  runner exactly as before; a `:workflow` class that opted out of persistence —
   or any stateless kind — is rejected with
   `{:error, {:unsupported_for_kind, :persistent_state}}` and never contacts the
   runner (the handler replies synchronously instead of spawning the send).
@@ -28,8 +28,8 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
     }
   end
 
-  test "an :unbounded kind proceeds to query the runner" do
-    state = state_for(:unbounded)
+  test "an :stream kind proceeds to query the runner" do
+    state = state_for(:stream)
 
     # {:noreply, state} == the gate passed and the handler went on to contact
     # the runner off-loop (replies later via GenServer.reply), as it does today.
@@ -37,16 +37,16 @@ defmodule FlezhaTest.Operative.OverwatchEntityStateGateTest do
              Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
   end
 
-  test "a durable :bounded kind proceeds to query the runner" do
-    state = state_for(:bounded)
+  test "a durable :workflow kind proceeds to query the runner" do
+    state = state_for(:workflow)
 
     assert {:noreply, ^state} =
              Overwatch.handle_call({:get_entity_state, %{}}, {self(), make_ref()}, state)
   end
 
-  test "an opted-out :bounded class is rejected and does not contact the runner" do
+  test "an opted-out :workflow class is rejected and does not contact the runner" do
     Application.put_env(:flezha, :operative_persistence, %{"opted_out" => false})
-    state = state_for(:bounded, "opted_out")
+    state = state_for(:workflow, "opted_out")
 
     # A synchronous {:reply, error, state} (no spawn) proves the runner was not
     # contacted for state.

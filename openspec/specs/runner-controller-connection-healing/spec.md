@@ -328,7 +328,7 @@ silently skipped when `FLEZHA_TRANSPORT=quic`.
 
 Both SDKs SHALL use a single shared reconnect backoff schedule with full jitter so that a
 controller restart dropping many runners does not produce a synchronized reconnect
-storm. Attempts SHALL remain unbounded (the runner must keep trying until a live
+storm. Attempts SHALL remain stream (the runner must keep trying until a live
 controller is found).
 
 #### Scenario: Fleet reconnect does not thunder

@@ -37,7 +37,7 @@ The Controller SHALL hold the authoritative placement table. Runners SHALL regis
 ### Requirement: Per-Entity mailbox is bounded with declared capacity
 Each EntitySlot's mailbox SHALL have a fixed capacity declared at operative startup. The mailbox SHALL refuse a push that would exceed this capacity; the SDK then applies the source channel's `OverflowPolicy` (see "Overflow policy declared per channel"). Capacity SHALL NOT change at runtime once the operative is started.
 
-The capacity SHALL be the value returned by the consumer Procedure's `mailbox_capacity()` trait method, evaluated once per Procedure at `register_unbounded::<R>()` time after applying the precedence rules in "Mailbox capacity precedence". Static-mode Procedures SHALL apply the same capacity to every Entity declared by `entity_keys()`.
+The capacity SHALL be the value returned by the consumer Procedure's `mailbox_capacity()` trait method, evaluated once per Procedure at `register_stream::<R>()` time after applying the precedence rules in "Mailbox capacity precedence". Static-mode Procedures SHALL apply the same capacity to every Entity declared by `entity_keys()`.
 
 The mailbox SHALL refuse capacity values of 0 (which would always overflow) and values strictly greater than 1_048_576 (1 MiB items). Operative startup SHALL fail with an error naming the offending Procedure when `mailbox_capacity()` returns an out-of-range value.
 
@@ -66,7 +66,7 @@ The mailbox SHALL refuse capacity values of 0 (which would always overflow) and 
 - **THEN** Operative startup SHALL fail with an error naming the Procedure
 
 ### Requirement: Mailbox capacity precedence
-The SDK SHALL resolve a Procedure's mailbox capacity at `register_unbounded::<R>()` time using the following ordered rule:
+The SDK SHALL resolve a Procedure's mailbox capacity at `register_stream::<R>()` time using the following ordered rule:
 
 1. If `Procedure::MAILBOX_CAPACITY_OVERRIDDEN` is `true`, use the value returned by `Procedure::mailbox_capacity()`.
 2. Otherwise, if the `FLEZHA_MAILBOX_CAPACITY` environment variable is set to a non-empty string parseable as `usize`, use that value.
@@ -216,7 +216,7 @@ The Rust SDK's `Procedure` trait SHALL declare an associated `type Clock: flezha
 #### Scenario: Non-WallClock fails startup in v1
 
 - **WHEN** a Rust Procedure declares `type Clock = LogicalClock`
-- **THEN** `register_unbounded::<R>()` SHALL fail with `OperativeStartError::ClockNotImplementedYet { clock_type: "LogicalClock" }` and the operative SHALL NOT be registered
+- **THEN** `register_stream::<R>()` SHALL fail with `OperativeStartError::ClockNotImplementedYet { clock_type: "LogicalClock" }` and the operative SHALL NOT be registered
 
 ### Requirement: Procedure declares Config associated type with typed constructor (Rust SDK)
 The Rust SDK's `Procedure` trait SHALL declare an associated `type Config: DeserializeOwned + Send + Sync + 'static` with default `()`, and a constructor `fn from_config(cfg: Self::Config) -> Self`. When `Config = ()` (the default), `from_config(())` SHALL invoke `Self::default()` (requiring `Procedure: Default` for unit-Config procedures; this is satisfied by the existing `operative-mvp-rust` requirement).
@@ -271,33 +271,33 @@ The Rust SDK's `Procedure::run` SHALL receive `state: StateHandle<'_, Self>` ins
 - **THEN** the read SHALL succeed via `StateHandle`'s `Deref` impl with no Change recording, no buffer mutation, and zero heap allocations
 
 ### Requirement: Operative declares PERSISTENCE_ENABLED const, frozen at instance start (Rust SDK)
-The Rust SDK's `UnboundedOperative` trait SHALL declare `const PERSISTENCE_ENABLED: bool = true`. The runtime SHALL resolve a per-Operative-instance `persistence_enabled: bool` at `start_operative(factory_id, instance_id)` time using:
+The Rust SDK's `StreamOperative` trait SHALL declare `const PERSISTENCE_ENABLED: bool = true`. The runtime SHALL resolve a per-Operative-instance `persistence_enabled: bool` at `start_operative(factory_id, instance_id)` time using:
 
 1. If the operative-start metadata from the agent contains `operative_persistence.<OperativeClass>` with a boolean value, use that.
-2. Otherwise, use the value of `UnboundedOperative::PERSISTENCE_ENABLED`.
+2. Otherwise, use the value of `StreamOperative::PERSISTENCE_ENABLED`.
 3. The default of the trait const is `true`.
 
-The resolved value SHALL be bound to the `UnboundedInstance` and SHALL be propagated to every `EntitySlot` constructed for that instance. Subsequent changes to the runner-side metadata or to the `UnboundedOperative::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_operative` + `start_operative` cycle for that instance.
+The resolved value SHALL be bound to the `StreamInstance` and SHALL be propagated to every `EntitySlot` constructed for that instance. Subsequent changes to the runner-side metadata or to the `StreamOperative::PERSISTENCE_ENABLED` const (via SDK redeploy) SHALL NOT affect already-running instances; new values take effect on the next `stop_operative` + `start_operative` cycle for that instance.
 
 #### Scenario: Default const value is true
 
 - **WHEN** a Operative does not declare `PERSISTENCE_ENABLED` and no runner override is present in operative-start metadata
-- **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `true`
+- **THEN** `StreamInstance::persistence_enabled()` SHALL return `true`
 
 #### Scenario: Const-declared opt-out is honored
 
 - **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = false` and no runner override is present
-- **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Entities; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance
+- **THEN** `StreamInstance::persistence_enabled()` SHALL return `false`; the per-Process flusher SHALL drain-and-discard for this instance's Entities; `stub_send_frame` (or its real counterpart) SHALL NOT be invoked for this instance
 
 #### Scenario: Runner override takes precedence over const
 
 - **WHEN** `MarketOperative` declares `const PERSISTENCE_ENABLED: bool = true` AND the operative-start metadata carries `operative_persistence.MarketOperative = false`
-- **THEN** `UnboundedInstance::persistence_enabled()` SHALL return `false`
+- **THEN** `StreamInstance::persistence_enabled()` SHALL return `false`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** a `UnboundedInstance` is constructed with resolved `persistence_enabled = true`, AND the runner subsequently issues a runtime config change setting `operative_persistence.<OperativeClass> = false`
-- **THEN** the running `UnboundedInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operative(instance_id)` and a subsequent `start_operative(...)` invocation
+- **WHEN** a `StreamInstance` is constructed with resolved `persistence_enabled = true`, AND the runner subsequently issues a runtime config change setting `operative_persistence.<OperativeClass> = false`
+- **THEN** the running `StreamInstance` SHALL continue with `persistence_enabled = true`; the new value SHALL take effect only after `stop_operative(instance_id)` and a subsequent `start_operative(...)` invocation
 
 ### Requirement: init_state accepts optional restoration payload (Rust SDK)
 The Rust SDK's `Procedure::init_state` signature SHALL be `fn init_state(entity_key: Option<&str>, init_payload: Option<RestoreInitPayload<'_>>) -> Self::State`. When `init_payload = None`, `init_state` SHALL behave as a fresh-start constructor. When `init_payload = Some(payload)`, the user MAY inspect or ignore the payload bytes; the runtime SHALL automatically apply the payload (snapshot decode + change-log fold via `Procedure::apply_change`) AFTER `init_state` returns, replacing the user-constructed state with the restored state.
@@ -335,17 +335,17 @@ For Entities whose Procedure's `Change == NoChange`, the runtime SHALL NOT alloc
 ### Requirement: Four-layer abstraction with defined responsibilities
 The SDK SHALL expose a four-layer abstraction comprising Operative, Procedure, Entity, and Runner. Each layer SHALL have the following exclusive responsibilities and no others SHALL be implicitly added:
 
-- **Operative** — a user-defined struct implementing the `UnboundedOperative` trait. Spawned by the agent once per `flz operative start` invocation. Owns the channel topology declaration and the registered Procedures. Holds no domain state of its own.
+- **Operative** — a user-defined struct implementing the `StreamOperative` trait. Spawned by the agent once per `flz operative start` invocation. Owns the channel topology declaration and the registered Procedures. Holds no domain state of its own.
 - **Procedure** — a user-defined struct implementing the `Procedure` trait. Defines a stage's typed input, typed output, state type, run logic, and entity strategy. Holds no runtime state of its own; acts as the template for Entities.
 - **Entity** — a runtime instance of a Procedure, identified by an optional string key. Holds exactly one State value, exactly one mailbox, and exactly one `inflight` flag. Created by the SDK at operative startup; not user-instantiable.
 - **Runner** — an OS thread in the SDK's worker pool. Drains Entity mailboxes. Not user-visible at the API surface; pool size is configured via the existing `FLEZHA_WORKER_POOL_SIZE` mechanism.
 
 #### Scenario: Each layer has a distinct programmer-visible role
 - **WHEN** a developer reads the public API of the new SDK
-- **THEN** they SHALL find a `UnboundedOperative` trait, a `Procedure` trait, but no `Entity` trait or `Runner` trait — Entities and Runners are runtime artifacts created by the SDK, not types the user implements
+- **THEN** they SHALL find a `StreamOperative` trait, a `Procedure` trait, but no `Entity` trait or `Runner` trait — Entities and Runners are runtime artifacts created by the SDK, not types the user implements
 
 #### Scenario: A Operative holds no domain state
-- **WHEN** a `UnboundedOperative` impl is examined
+- **WHEN** a `StreamOperative` impl is examined
 - **THEN** the trait MUST NOT include a state-init or state-handle method; all stateful behavior MUST live on Procedures
 
 ### Requirement: Static and single entity modes are supported in v1
@@ -575,11 +575,11 @@ On a pure-`InterProcedure` channel with no plugin sink, `emit_with_meta` SHALL c
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
 ### Requirement: New BuildTopologyError variant — `DuplicatePluginSink`
-`BuildTopologyError` (in `sdk/rust/src/channel/builder.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_unbounded::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_unbounded::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
+`BuildTopologyError` (in `sdk/rust/src/channel/builder.rs`) SHALL gain a `DuplicatePluginSink { channel: &'static str }` variant. The variant SHALL be raised at `register_stream::<R>()` time when `also_to_plugin_with` is called more than once on the same channel. The first call registers the sink; the second SHALL push the error onto the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `register_stream::<R>()` validation SHALL fail with the standard "topology rejected" message that lists every accumulated `BuildTopologyError`.
 
 #### Scenario: Second also_to_plugin_with call is rejected at registration
 - **WHEN** a Operative's `channels(c)` method calls `also_to_plugin_with("p1", f1)` followed by `also_to_plugin_with("p2", f2)` on the same channel
-- **THEN** `register_unbounded::<R>()` SHALL panic with the topology error including `DuplicatePluginSink { channel: "<name>" }`
+- **THEN** `register_stream::<R>()` SHALL panic with the topology error including `DuplicatePluginSink { channel: "<name>" }`
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: New ProcedureError variant — `PluginSerializerPanic`
@@ -667,11 +667,11 @@ On a pure-`INTER_PROCEDURE` channel with no plugin sink, `emitWithMeta` SHALL co
 - **THEN** the wire frame SHALL contain `channel = <real channel name>` (the reserved value, not "spoof") and `trace_id = "abc"`
 
 ### Requirement: New OperativeConfigurationException factory — `duplicatePluginSink` (Java SDK)
-`OperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/OperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `OperativeRegistry.registerUnbounded(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `OperativeRegistry.registerUnbounded(...)` validation SHALL throw a `OperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
+`OperativeConfigurationException` (in `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/OperativeConfigurationException.java`) SHALL gain a static factory `duplicatePluginSink(String channel)` that produces an exception whose message names the offending channel. The factory SHALL be raised at `OperativeRegistry.registerStream(...)` time when `alsoToPluginWith` is called more than once on the same channel. The first call registers the sink; the second SHALL accumulate the exception into the builder's error vector and SHALL NOT overwrite the previously-registered sink. The aggregate `OperativeRegistry.registerStream(...)` validation SHALL throw a `OperativeConfigurationException` listing every accumulated error with the standard "operative topology validation failed" prefix.
 
 #### Scenario: Second alsoToPluginWith call is rejected at registration (Java)
 - **WHEN** a Operative's `channels(c)` method calls `c.channel(T.class, "foo").from(S.class).alsoToPluginWith("p1", f1).alsoToPluginWith("p2", f2)`
-- **THEN** `OperativeRegistry.registerUnbounded(R.class)` SHALL throw `OperativeConfigurationException` whose message contains both the verb `duplicatePluginSink` (or equivalent diagnostic phrasing) and the channel name `"foo"`
+- **THEN** `OperativeRegistry.registerStream(R.class)` SHALL throw `OperativeConfigurationException` whose message contains both the verb `duplicatePluginSink` (or equivalent diagnostic phrasing) and the channel name `"foo"`
 - **AND** the registered topology SHALL be discarded
 
 ### Requirement: New ProcedureException subclass — `PluginSerializerFailure` (Java SDK)
@@ -695,7 +695,7 @@ The producing Procedure's `Procedure.run` SHALL receive the exception via the no
 The Runner pool SHALL be the SDK's poll workers over the shared activation
 engine (`flz_core::poll_core`): one base set sized by `FLEZHA_WORKER_POOL_SIZE`
 (default: available parallelism), grown under starvation up to
-`FLEZHA_WORKER_POOL_MAX`. There SHALL be no second, core-owned pool — bounded
+`FLEZHA_WORKER_POOL_MAX`. There SHALL be no second, core-owned pool — workflow
 stage work is handed out as step activations the same workers serve — and the
 per-Entity `inflight` CAS guard SHALL be the same mechanism the per-`EntitySlot`
 guard uses.
@@ -709,15 +709,15 @@ guard uses.
 - **THEN** the runner pool SHALL start exactly 4 OS threads
 
 #### Scenario: One worker set serves both operative profiles
-- **WHEN** a bounded operative runs a stage while unbounded entities are being dispatched
+- **WHEN** a workflow operative runs a stage while stream entities are being dispatched
 - **THEN** both SHALL be served by the same workers, and no core-owned thread SHALL run user code
 
 ### Requirement: No coexistence with OperativeHandler API
-The `OperativeHandler` trait, `OperativeResult` enum, `OperativeRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `UnboundedOperative` / `Procedure` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
+The `OperativeHandler` trait, `OperativeResult` enum, `OperativeRunner` enum, `register_factory()` function, `FactoryMetadata` struct, and `InputTransformer` / `OutputTransformer` traits SHALL be removed from the public Rust SDK API in the same change that introduces the `StreamOperative` / `Procedure` traits. There SHALL be no transitional period in which both APIs are usable simultaneously.
 
 **Reason**: The library is unpublished, the only known runner-app consumer is in this monorepo and migrates atomically as part of the same change, and the user has an explicit "no legacy / backward-compat shims" policy. Coexistence would also force the new abstraction to retain dispatch-by-operative-id baggage that the new model deliberately leaves behind.
 
-**Migration**: runner apps using `OperativeHandler` rewrite to `UnboundedOperative` + one or more `Procedure` impls in the same change. Concrete example: `flezha_market/market-operative/src/main.rs` and `market_computation.rs` are rewritten in the `operative-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Procedure state types.
+**Migration**: runner apps using `OperativeHandler` rewrite to `StreamOperative` + one or more `Procedure` impls in the same change. Concrete example: `flezha_market/market-operative/src/main.rs` and `market_computation.rs` are rewritten in the `operative-mvp-rust` change. State (formerly `Assets`) is decomposed into per-Procedure state types.
 
 #### Scenario: Old API is not importable
 - **WHEN** a Rust file attempts to `use flezha_runner::OperativeHandler` after the cutover
@@ -822,7 +822,7 @@ Counters SHALL be observable via the same per-Entity / per-Procedure observabili
 ### Requirement: The workload model names exactly three levels
 The system SHALL name the workload hierarchy **Operative → Procedure → Entity**, and every artifact — source, comment, document, specification, wire name, and on-disk name — SHALL use those names for those levels.
 
-An **Operative** is the deployable unit: it has an id and a namespace, is placed on a Runner, and is started, stopped, migrated, suspended, and crash-resumed. It carries a kind (`bounded`, `unbounded`) and MUST remain able to accept further kinds as a qualifier.
+An **Operative** is the deployable unit: it has an id and a namespace, is placed on a Runner, and is started, stopped, migrated, suspended, and crash-resumed. It carries a kind (`workflow`, `stream`) and MUST remain able to accept further kinds as a qualifier.
 
 A **Procedure** is a typed stage inside an Operative. It declares `Input`, `Output`, `State`, `Change`, and `Clock`, implements `run` / `apply_change` / `compensate`, and is wired to other Procedures by Channels.
 
@@ -833,7 +833,7 @@ An **Entity** is one keyed instance of a Procedure. It owns its mailbox, its sta
 - **THEN** it MUST state that an Operative contains Procedures and a Procedure holds one Entity per key, and MUST NOT name any level with a term this specification retires
 
 #### Scenario: Level 1 accepts a new kind without renaming
-- **WHEN** a workload kind beyond `bounded` and `unbounded` is introduced
+- **WHEN** a workload kind beyond `workflow` and `stream` is introduced
 - **THEN** it MUST be expressible as a qualifier on `Operative` (for example "scheduled Operative") with no change to the level's name
 
 ### Requirement: A Procedure resolves to exactly one entity mode
@@ -841,7 +841,7 @@ Each Procedure SHALL resolve, once at registration, to exactly one of three enti
 
 - **Single** — exactly one Entity, carrying no key.
 - **Static** — a fixed keyset declared by the Procedure; one input MAY be routed to several Entities.
-- **Dynamic** — an unbounded keyset; Entities are created on first sight of a key and MAY be idle-evicted.
+- **Dynamic** — a stream keyset; Entities are created on first sight of a key and MAY be idle-evicted.
 
 Wiring a key function onto a Procedure that declares a static keyset SHALL be a build error.
 
@@ -888,7 +888,7 @@ Per-Entity durable state SHALL live at `state/{operative_class}/{procedure_id}/{
 - **THEN** the payload id MUST name the Entity, and MUST match the term used for that concept in `docs/`
 
 #### Scenario: On-disk names match the documented vocabulary
-- **WHEN** a bounded Operative writes its journal or its durable inbox
+- **WHEN** a workflow Operative writes its journal or its durable inbox
 - **THEN** the filename MUST name the Procedure level, and MUST NOT use a retired abbreviation
 
 #### Scenario: State written before the rename is not read after it

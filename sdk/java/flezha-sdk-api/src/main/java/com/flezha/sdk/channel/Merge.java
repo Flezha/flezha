@@ -18,10 +18,10 @@ import javax.annotation.Nonnull;
  * }</pre>
  *
  * <p>Sources may be entry channels (sealed payloads) or another procedure's
- * output stream, freely mixed — on an <b>unbounded</b> operative. A bounded
+ * output stream, freely mixed — on an <b>stream</b> operative. A workflow
  * operative is seeded from its spawn args (and, for a {@code PER_INPUT} loop,
  * its inbox items) through one entry channel, and nothing on that path says
- * which channel a payload arrived on, so a bounded merge over an entry channel
+ * which channel a payload arrived on, so a workflow merge over an entry channel
  * is refused at registration ({@code MergeFromEntryChannel}); its sources are
  * the output streams of two or more of its procedures.
  *
@@ -39,8 +39,8 @@ import javax.annotation.Nonnull;
  *
  * <p>A mapping that throws is contained everywhere it can be: on an
  * inter-procedure source it is attributed to the producing procedure
- * (unbounded) or turned into a terminal chain error the saga compensates
- * (bounded). The one unguarded seam is an unbounded entry-channel source, where
+ * (stream) or turned into a terminal chain error the saga compensates
+ * (workflow). The one unguarded seam is a stream entry-channel source, where
  * the mapping runs on the wire-reader path — the same exposure the entry parser
  * there already carries. {@code docs/multi_input_procedures.md} tabulates it.
  *

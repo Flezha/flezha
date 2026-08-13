@@ -91,7 +91,7 @@ class ActivationCodecTest {
                 Map.entry(
                         new ActivationKind.KeyRequest(2, List.of(new byte[] {0x70}), true, false),
                         "06020101700100000166"),
-                Map.entry(new ActivationKind.BoundedRun("go".getBytes()), "0702676f000166"),
+                Map.entry(new ActivationKind.WorkflowRun("go".getBytes()), "0702676f000166"),
                 Map.entry(new ActivationKind.CompensateRun(List.of(new byte[] {0x0A})), "0801010a000166"));
         for (Map.Entry<ActivationKind, String> entry : kinds) {
             Activation act = new Activation(1, new EntityRef("o", 0, Optional.empty()), entry.getKey(), 0, "f");
@@ -118,7 +118,7 @@ class ActivationCodecTest {
                         new PrepareResult.Ok(new PrepareAnswer(List.of("k1", "k2"), OptionalLong.of(77))),
                         new PrepareResult.Err(new WorkError("bad key", true)))),
                 new ActivationOutcome.Failed(new WorkError("boom", false)),
-                new ActivationOutcome.BoundedDone(true, new byte[] {0x09}),
+                new ActivationOutcome.WorkflowDone(true, new byte[] {0x09}),
                 new ActivationOutcome.Work(List.of(new ItemEffect(
                         new Verdict.RetryableError("later"),
                         List.of(),

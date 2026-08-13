@@ -2,7 +2,7 @@
 //! Decision 2.
 //!
 //! Single OS thread per process, lazy-initialized via `OnceLock` on the
-//! first `define_unbounded::<R>()` for a Procedure with a non-`NoChange`
+//! first `define_stream::<R>()` for a Procedure with a non-`NoChange`
 //! Change. The thread runs an infinite loop: sleep for `linger_ms`,
 //! iterate registered Entities, drain non-empty buffers, build wire
 //! frames, hand them to the per-Entity `send_frame` fn pointer.

@@ -5,8 +5,8 @@ import javax.annotation.Nonnull;
 
 /**
  * Producer-first fluent graph builder consumed by
- * {@link com.flezha.sdk.operative.UnboundedOperative#channels(ChannelBuilder)}
- * (and by bounded {@code procedures(...)} authoring).
+ * {@link com.flezha.sdk.operative.StreamOperative#channels(ChannelBuilder)}
+ * (and by workflow {@code procedures(...)} authoring).
  *
  * <p>{@code c.input(T.class, "name").into(A.class).into(B.class).output("sink")}
  * — {@code .into} wires a consumer and returns that procedure's <b>output

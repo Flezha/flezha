@@ -1,7 +1,7 @@
 package com.flezha.examples;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
@@ -18,7 +18,7 @@ import java.util.Optional;
 /**
  * <b>12 — a session that closes itself when it goes quiet.</b>
  *
- * <p>Every other unbounded path in Flezha is input-driven. This one is not: the
+ * <p>Every other stream path in Flezha is input-driven. This one is not: the
  * whole reason a timer exists is the last statement of {@code run}. Without it,
  * nothing would ever close a session whose user simply stopped clicking —
  * there is no input to carry that decision, only the passage of time.
@@ -172,7 +172,7 @@ public final class E12_SessionTimeout {
         }
     }
 
-    public static final class SessionOperative implements UnboundedOperative {
+    public static final class SessionOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "session_window";

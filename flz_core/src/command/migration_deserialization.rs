@@ -1,4 +1,4 @@
-//! `MigrationDeserialization` — restore an UnboundedOperative instance's per-Procedure /
+//! `MigrationDeserialization` — restore a StreamOperative instance's per-Procedure /
 //! per-Entity state from a snapshot blob and register it locally.
 //! Reuses `apply_init_values` for the state-application path so a
 //! migrated instance ends up with byte-identical Entity state to the
@@ -37,7 +37,7 @@ impl CommandAction for MigrationDeserialization {
             }
             None => {
                 errors.push(format!(
-                    "UnboundedOperative class with factory_id {} is not registered",
+                    "StreamOperative class with factory_id {} is not registered",
                     self.factory_id
                 ));
                 ("migration_deserialization".to_string(), Vec::new())

@@ -1,7 +1,5 @@
 package com.flezha.examples;
 
-import com.flezha.sdk.bounded.BoundedOperative;
-import com.flezha.sdk.bounded.LoopMode;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
@@ -11,6 +9,8 @@ import com.flezha.sdk.state.CoalesceKey;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.WallClock;
+import com.flezha.sdk.workflow.LoopMode;
+import com.flezha.sdk.workflow.WorkflowOperative;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,7 +41,7 @@ import java.util.Optional;
  */
 public final class E06_DurableChatLoop {
 
-    public static final class ChatOperative implements BoundedOperative {
+    public static final class ChatOperative implements WorkflowOperative {
         @Override
         public String factoryId() {
             return "chat_agent";

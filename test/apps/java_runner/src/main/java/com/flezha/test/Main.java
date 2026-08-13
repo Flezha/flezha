@@ -18,21 +18,21 @@ public final class Main {
         String namespace = args.length > 0 ? args[0] : "default";
         spawnStdinEofExit();
         Flezha.createRunner(namespace)
-                .defineUnbounded(DoNothingUnboundedOperative.class)
-                .defineUnbounded(StoreInputUnboundedOperative.class)
-                .defineUnbounded(CompareFilterUnboundedOperative.class)
-                .defineUnbounded(StatefulCounterUnboundedOperative.class)
-                .defineUnbounded(CoalescingCounterUnboundedOperative.class)
-                .defineUnbounded(PersistenceOffUnboundedOperative.class)
-                .defineUnbounded(HybridChannelUnboundedOperative.class)
-                .defineUnbounded(PoisonProbeUnboundedOperative.class)
-                .defineUnbounded(DynamicEntityUnboundedOperative.class)
-                .defineUnbounded(SessionTimeoutUnboundedOperative.class)
-                // EchoMessageUnboundedOperative is reintroduced once per-Procedure `handleMessage` lands.
-                .defineBounded(EchoBoundedOperative.class)
-                .defineBounded(CommitBlockBoundedOperative.class)
-                .defineBounded(SagaBlockBoundedOperative.class)
-                .defineBounded(DiamondBoundedOperative.class)
+                .defineStream(DoNothingStreamOperative.class)
+                .defineStream(StoreInputStreamOperative.class)
+                .defineStream(CompareFilterStreamOperative.class)
+                .defineStream(StatefulCounterStreamOperative.class)
+                .defineStream(CoalescingCounterStreamOperative.class)
+                .defineStream(PersistenceOffStreamOperative.class)
+                .defineStream(HybridChannelStreamOperative.class)
+                .defineStream(PoisonProbeStreamOperative.class)
+                .defineStream(DynamicEntityStreamOperative.class)
+                .defineStream(SessionTimeoutStreamOperative.class)
+                // EchoMessageStreamOperative is reintroduced once per-Procedure `handleMessage` lands.
+                .defineWorkflow(EchoWorkflowOperative.class)
+                .defineWorkflow(CommitBlockWorkflowOperative.class)
+                .defineWorkflow(SagaBlockWorkflowOperative.class)
+                .defineWorkflow(DiamondWorkflowOperative.class)
                 .run();
     }
 

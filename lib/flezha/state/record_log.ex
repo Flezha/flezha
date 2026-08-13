@@ -2,7 +2,7 @@ defmodule Flezha.State.RecordLog do
   @moduledoc """
   Per-instance append-only record log on the Entity persistence substrate.
 
-  The shared core behind a bounded instance's two durable logs — its
+  The shared core behind a workflow instance's two durable logs — its
   `proc.journal` (`Flezha.State.ProcJournal`) and its `inbox.wal`
   (`Flezha.State.ProcInbox`). Both are WAL-framed record streams written through
   the existing `WalWriter` + `FsyncBatcher` path under a reserved

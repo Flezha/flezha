@@ -9,8 +9,8 @@ defmodule Flezha.Schedule.Job do
   the misfire-grace look-back on start repairs by firing the single most
   recent slot inside the window. Older slots are never back-filled.
 
-  Firing goes through the shared bounded start path
-  (`OperativeManager.start_bounded/5`) with deterministic instance id
+  Firing goes through the shared workflow start path
+  (`OperativeManager.start_workflow/5`) with deterministic instance id
   `<name>@<slot-iso>`; its `:duplicate` answer is the duplicate-fire no-op.
 
   A slot whose spawn fails is retried with exponential backoff under the SAME
@@ -51,10 +51,10 @@ defmodule Flezha.Schedule.Job do
 
   @doc """
   Spawn one instance for `entry` with `instance_id` through the standard
-  bounded start path. Also serves `flz schedule run` (manual fire).
+  workflow start path. Also serves `flz schedule run` (manual fire).
 
   The entry's plugin spec is decoded per firing (provider ids resolve against
-  the running controller) and attached AT SPAWN — a bounded instance finishes
+  the running controller) and attached AT SPAWN — a workflow instance finishes
   in milliseconds, so a plugin attached afterwards would miss the whole run.
   """
   @spec spawn_instance(Store.entry(), String.t(), pos_integer()) ::
@@ -82,7 +82,7 @@ defmodule Flezha.Schedule.Job do
   defp start(entry, instance_id, plugins, attempt) do
     opts = if plugins == [], do: [], else: [plugins: plugins]
 
-    case OperativeManager.start_bounded(
+    case OperativeManager.start_workflow(
            entry.namespace,
            instance_id,
            entry.factory_id,

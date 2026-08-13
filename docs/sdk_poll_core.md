@@ -1,7 +1,7 @@
 # The poll-based SDK core (`flz_core`)
 
 `flz_core` is the language-agnostic runner kernel: transport, ordering,
-durability, retries, timers, credit, routing, and the bounded driver live in
+durability, retries, timers, credit, routing, and the workflow driver live in
 one Rust crate. A host language SDK drives it through exactly one invocation
 surface:
 
@@ -35,7 +35,7 @@ durability, and caps how many work activations may be underway at once —
 `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default 1024, enforced at handout: at the
 cap `poll` blocks as if nothing were ready, and the completion that drops the
 count below it releases the next one. Direct activations (restore folds,
-snapshot requests, bounded steps) are exempt — they are barrier-bounded by the
+snapshot requests, workflow steps) are exempt — they are barrier-bounded by the
 drivers that enqueue them and answer a caller blocked on a rendezvous or a
 stage barrier, so holding one behind capped entity work would deadlock that
 caller. They are also what a queued direct activation with no thread inside
@@ -195,7 +195,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`) drives connect,
 AddOperative over the real control path, input activations, a timer firing,
 a restore fold, a live state read, a keyed dynamic route through the
-prepare crossing, an effectively-once floor skip, a bounded run-sugar
+prepare crossing, an effectively-once floor skip, a workflow run-sugar
 lifecycle, and shutdown entirely through the C ABI — a capability reachable
 in the crate API but not the ABI is a defect, not a backlog item.
 
@@ -209,8 +209,8 @@ keying), entity modes (single, static with declared keys, dynamic with
 idle-TTL eviction and cap), clock kinds (wall, logical, event-time), the
 effectively-once tier and checkpoint ack-granularity, the late-input
 correction window, the record-header lang/format bytes (`sdk_lang`,
-`change_format_id` — a Java host's durable records claim Kryo), and bounded
-lifecycle facts (`bounded`: loop mode, rollback mode, stage retry,
+`change_format_id` — a Java host's durable records claim Kryo), and workflow
+lifecycle facts (`workflow`: loop mode, rollback mode, stage retry,
 max-duration, wake-after; empty `procedures` = run-sugar).
 
 At runtime the full contract crosses the boundary:
@@ -235,8 +235,8 @@ At runtime the full contract crosses the boundary:
 - **Inter-procedure edges route on `(edge, key)`**: outputs name their
   consumer, keys and event times are producer-evaluated (the host holds the
   typed value and the extractor; the core holds neither).
-- **Bounded lifecycles run under poll**: a run-sugar body is one
-  `BoundedRun` activation plus the session calls (`flz_core_bounded_emit` /
+- **Workflow lifecycles run under poll**: a run-sugar body is one
+  `WorkflowRun` activation plus the session calls (`flz_core_workflow_emit` /
   `_recv` / `_cancelled`); a structured chain hands out one **step
   activation** per entity partition — a `Work` batch, or `CompensateRun` for
   an undo — and collects the answers at its stage barrier. Both language

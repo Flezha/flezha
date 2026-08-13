@@ -387,7 +387,7 @@ defmodule Flezha.ConvergenceTest do
 
     test "on timeout against a remote pid, reports :remote instead of crashing the caller" do
       # Regression: `Process.info/2` raises `ArgumentError` on a remote pid.
-      # That raise is an :error, not an :exit, so the catch in bounded/3 never
+      # That raise is an :error, not an :exit, so the catch in workflow/3 never
       # covered it — it propagated out of Convergence.Loop and took the node down.
       on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
 

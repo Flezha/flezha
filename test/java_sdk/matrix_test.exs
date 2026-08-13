@@ -171,7 +171,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
   # Task-kind cells. The Rust task path is proven by
   # test/system/task_kind_e2e_test.exs; here we prove Java parity — a run-once
-  # task spawned via `kind: :bounded` runs once, emits, signals `BoundedCompleted`,
+  # task spawned via `kind: :workflow` runs once, emits, signals `WorkflowCompleted`,
   # and is deregistered on completion — over both transports.
   for transport <- [:uds, :quic] do
     describe "task kind (runtime=java, transport=#{transport})" do
@@ -185,8 +185,8 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
         builder = %Flezha.Operative.Builder{
           id: operative_id,
-          factory_id: "echo_bounded",
-          kind: :bounded,
+          factory_id: "echo_workflow",
+          kind: :workflow,
           init_values: %{"msg" => "hi"}
         }
 
@@ -195,7 +195,7 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
         assert {:ok, _info} = OperativeManager.start_operative(@temp_namespace, builder)
 
         # Deregister-on-completion: the unit drops out of the durable registry
-        # with no explicit stop — proof the run-once + BoundedCompleted loop ran.
+        # with no explicit stop — proof the run-once + WorkflowCompleted loop ran.
         assert wait_until(fn -> not registered?(operative_id) end, 10_000),
                "task was never deregistered after completion"
       end
@@ -208,14 +208,14 @@ defmodule FlezhaTest.JavaSdk.MatrixTest do
 
         builder = %Flezha.Operative.Builder{
           id: operative_id,
-          factory_id: "echo_bounded",
-          kind: :bounded,
+          factory_id: "echo_workflow",
+          kind: :workflow,
           init_values: %{"mode" => "fail"}
         }
 
         assert {:ok, _info} = OperativeManager.start_operative(@temp_namespace, builder)
 
-        # Terminal failure: BoundedCompleted{status:"error"} drives the same
+        # Terminal failure: WorkflowCompleted{status:"error"} drives the same
         # teardown as success — deregistered, no retry, nothing left running.
         assert wait_until(fn -> not registered?(operative_id) end, 10_000),
                "failing task was never deregistered"

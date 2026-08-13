@@ -122,21 +122,21 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @doc """
-  Cooperative external stop for a bounded operative (`flz operative stop`).
+  Cooperative external stop for a workflow operative (`flz operative stop`).
 
-  Sends a `BoundedStop` command — distinct from the hard `RemOperative`: the SDK
-  trips the bounded driver's cancellation token, lets in-flight work unwind, runs
-  any saga compensation, then emits `BoundedCompleted` (status "cancelled") which
-  drives the single teardown via `ControlChannel.handle_bounded_completed/2`.
+  Sends a `WorkflowStop` command — distinct from the hard `RemOperative`: the SDK
+  trips the workflow driver's cancellation token, lets in-flight work unwind, runs
+  any saga compensation, then emits `WorkflowCompleted` (status "cancelled") which
+  drives the single teardown via `ControlChannel.handle_workflow_completed/2`.
 
   Fire-and-forget (mirrors `:stop_operative_async`) — the teardown is asynchronous,
   so the caller does not wait on the SDK ack. Returns `{:error, :no_control_unit}`
   when the runner's control unit is gone (caller falls back to a hard stop).
   """
-  @spec bounded_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
-  def bounded_stop(runner_id, operative_id)
+  @spec workflow_stop(binary(), binary()) :: :ok | {:error, :no_control_unit}
+  def workflow_stop(runner_id, operative_id)
       when is_binary(runner_id) and is_binary(operative_id) do
-    cast_to_unit(runner_id, {:bounded_stop, operative_id})
+    cast_to_unit(runner_id, {:workflow_stop, operative_id})
   end
 
   @doc """
@@ -261,9 +261,9 @@ defmodule Flezha.Runner.ControlUnit do
           ""
       end
 
-    # Empty kind ⇒ `:unbounded` on the SDK side, keeping the wire frame
+    # Empty kind ⇒ `:stream` on the SDK side, keeping the wire frame
     # byte-identical to pre-kind builds for the default kind.
-    kind = if operative.kind in [nil, :unbounded], do: "", else: to_string(operative.kind)
+    kind = if operative.kind in [nil, :stream], do: "", else: to_string(operative.kind)
 
     command = %RunnerCommands.AddOperative{
       operative_id: operative.id,
@@ -271,7 +271,7 @@ defmodule Flezha.Runner.ControlUnit do
       init_values: init_values,
       kind: kind,
       # Both stamped on opts by `Overwatch.with_resume_state/3`. Non-zero only
-      # for a durable bounded (re)bind: the SDK driver holds its first Procedure
+      # for a durable workflow (re)bind: the SDK driver holds its first Procedure
       # until this many Entity restores land (crash-resume). `proc_journal` is
       # `nil` unless the instance has a journal to resume from.
       resume_entity_count: Keyword.get(operative.opts, :resume_entity_count, 0),
@@ -335,12 +335,12 @@ defmodule Flezha.Runner.ControlUnit do
   end
 
   @impl true
-  def handle_cast({:bounded_stop, operative_id}, state) do
+  def handle_cast({:workflow_stop, operative_id}, state) do
     ControlChannel.send_control_async(
       state.runner_id,
       {
-        :bounded_stop,
-        %RunnerCommands.BoundedStop{operative_id: operative_id}
+        :workflow_stop,
+        %RunnerCommands.WorkflowStop{operative_id: operative_id}
       }
     )
 

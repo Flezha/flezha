@@ -30,7 +30,7 @@ public final class StateHandle<State, ChangeT extends Change> {
     }
 
     /**
-     * Factory used by the runtime dispatcher, the bounded driver, and the test
+     * Factory used by the runtime dispatcher, the workflow driver, and the test
      * harness — all in other packages and modules, so this is necessarily
      * {@code public}. Java has no {@code package(crate)} equivalent, so user code
      * is asked not to construct handles but is not structurally prevented from it.

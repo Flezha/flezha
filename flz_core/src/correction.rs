@@ -1,4 +1,4 @@
-//! Late-input detection and the correction request (unbounded, tier-only).
+//! Late-input detection and the correction request (stream, tier-only).
 //!
 //! Only the SDK can decide an input is late: the event time comes from the
 //! user's `TimeExtractor`, so the controller — which owns the WAL, the

@@ -1,6 +1,6 @@
 defmodule Flezha.State.Completion do
   @moduledoc """
-  The per-operative *completion record* of a finished bounded operative.
+  The per-operative *completion record* of a finished workflow operative.
 
   On terminal teardown (status `ok | error | cancelled`) the controller writes
   a small durable term alongside the operative's retained Entity state, so the

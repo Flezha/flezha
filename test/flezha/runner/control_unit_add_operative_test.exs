@@ -4,7 +4,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   onto the operative's opts by `Overwatch.with_resume_state/3`.
 
   `proc_journal` rides the bind rather than a per-Entity `RestoreInitState`
-  because it is instance-scoped: a durable bounded class with no per-Entity
+  because it is instance-scoped: a durable workflow class with no per-Entity
   state ships no restore at all, so a journal delivered there would never arrive
   and the driver would resume at iteration 0 on every wake.
   """
@@ -36,7 +36,7 @@ defmodule FlezhaTest.Runner.ControlUnitAddOperativeTest do
   end
 
   defp start_operative(runner_id, opts) do
-    operative = %Builder{id: "op-1", factory_id: "f", kind: :bounded, opts: opts}
+    operative = %Builder{id: "op-1", factory_id: "f", kind: :workflow, opts: opts}
     # The reply only lands on the AddOperative response, which never arrives here.
     catch_exit(
       GenServer.call(

@@ -13,7 +13,7 @@
     <artifactId>flezha-sdk-processor</artifactId>
     <packaging>jar</packaging>
     <name>Flezha SDK Annotation Processor</name>
-    <description>Generates Procedure/UnboundedOperative implementations from @Procedure / @State / @UnboundedOperative authoring annotations.</description>
+    <description>Generates Procedure/StreamOperative implementations from @Procedure / @State / @StreamOperative authoring annotations.</description>
 
     <dependencies>
         <dependency>

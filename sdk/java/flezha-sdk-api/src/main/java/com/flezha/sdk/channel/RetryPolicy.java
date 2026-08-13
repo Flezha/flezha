@@ -26,8 +26,8 @@ public record RetryPolicy(int maxAttempts, long backoffBaseMs) {
      * Backoff before {@code attempt} (1-based): {@code base × 2^(attempt-1)} with
      * ±50% jitter, capped at {@link #RETRY_BACKOFF_MAX_MS}.
      *
-     * <p>Lives here because BOTH retry ladders — the unbounded dead-letter one and
-     * the bounded entity one — resolve onto this policy, so they share one
+     * <p>Lives here because BOTH retry ladders — the stream dead-letter one and
+     * the workflow entity one — resolve onto this policy, so they share one
      * backoff curve rather than two that can drift apart.
      */
     public long backoffFor(int attempt) {

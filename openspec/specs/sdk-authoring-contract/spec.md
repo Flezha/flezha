@@ -2,21 +2,21 @@
 
 ## Purpose
 
-The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared procedure/operative declaration to the existing `UnboundedOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit entity-mode opt-ins (single/static/dynamic), single-procedure input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared procedures compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
+The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared procedure/operative declaration to the existing `StreamOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit entity-mode opt-ins (single/static/dynamic), single-procedure input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared procedures compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
 ## Requirements
 
 ### Requirement: Sugar expands to existing trait surface
-The authoring sugar in every SDK SHALL be pure expansion over the existing `UnboundedOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
+The authoring sugar in every SDK SHALL be pure expansion over the existing `StreamOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
 
 #### Scenario: Generated code equals hand-written impl
 
 - **WHEN** a sugared procedure is expanded by any SDK's macro or processor
-- **THEN** the result is a `Procedure`/`UnboundedOperative` implementation that compiles and runs identically to the equivalent hand-written one
+- **THEN** the result is a `Procedure`/`StreamOperative` implementation that compiles and runs identically to the equivalent hand-written one
 - **AND** no protobuf, controller, or WAL-format change is required for it to run
 
 #### Scenario: Sugared and raw procedures interoperate
 
-- **WHEN** an unbounded operative contains one sugared procedure and one hand-written procedure wired together
+- **WHEN** a stream operative contains one sugared procedure and one hand-written procedure wired together
 - **THEN** the operative builds and runs correctly with both procedures participating
 
 #### Scenario: Eject to full impl is a paste
@@ -112,11 +112,11 @@ The contract SHALL define exactly one topology that may be auto-wired — a sing
 - **THEN** startup fails with an error naming the colliding id
 
 ### Requirement: Contract binds all current and future SDKs
-The contract SHALL be the single source of truth for authoring sugar across Rust, Java, and future Python and Elixir SDKs, including non-normative target sketches for the not-yet-built bindings. Every SDK's unbounded and bounded authoring surfaces SHALL be rooted in the shared `Computation` base (see below).
+The contract SHALL be the single source of truth for authoring sugar across Rust, Java, and future Python and Elixir SDKs, including non-normative target sketches for the not-yet-built bindings. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Computation` base (see below).
 
 #### Scenario: Reference operative expands identically across SDKs
 
-- **WHEN** the same reference unbounded operative is authored with each SDK's sugar
+- **WHEN** the same reference stream operative is authored with each SDK's sugar
 - **THEN** each expansion produces a structurally identical topology and associated-type mapping per this contract
 
 #### Scenario: Future bindings have a documented target
@@ -187,23 +187,23 @@ The procedure authoring sugar SHALL offer an opt-in that maps an entity's key to
 - **WHEN** the init opt-in is declared on a procedure with no state
 - **THEN** the SDK reports a compile-time error directing the author to remove it, and generates no init delegation
 
-### Requirement: Unbounded and bounded share a `Computation` authoring base
-Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `UnboundedOperative` and `BoundedOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The declaration siblings (`defineUnbounded`/`defineBounded` in Java, `define_unbounded`/`define_bounded` in Rust) and their removal inverses (`removeUnbounded`/`removeBounded`, `remove_unbounded`/`remove_bounded`) SHALL be methods on the concrete `FlezhaRunner` handle — not free functions, static methods, or methods on a builder type (there is no builder) — and SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and adding a corresponding `define_*`/`defineX` (and `remove_*`/`removeX`) runner method, without editing the existing two authoring surfaces.
+### Requirement: Stream and workflow share a `Computation` authoring base
+Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rust trait / Java interface that `StreamOperative` and `WorkflowOperative` both implement at the **authoring-trait layer**. The base's shared member SHALL be `factory_id()` (the one method both authoring traits already share); the kind-divergent surface (`channels` / persistence opt-in vs `run`) SHALL remain on the per-kind traits. The declaration siblings (`defineStream`/`defineWorkflow` in Java, `define_stream`/`define_workflow` in Rust) and their removal inverses (`removeStream`/`removeWorkflow`, `remove_stream`/`remove_workflow`) SHALL be methods on the concrete `FlezhaRunner` handle — not free functions, static methods, or methods on a builder type (there is no builder) — and SHALL be generic over `Computation`. The base SHALL NOT require unifying the sealed operative *instance* enum, which stays asymmetric. Adding a future operative kind SHALL require implementing `Computation` and adding a corresponding `define_*`/`defineX` (and `remove_*`/`removeX`) runner method, without editing the existing two authoring surfaces.
 
 #### Scenario: Both kinds implement the base
 
-- **WHEN** an unbounded operative class and a bounded operative class are declared on the same `FlezhaRunner`
+- **WHEN** a stream operative class and a workflow operative class are declared on the same `FlezhaRunner`
 - **THEN** both SHALL be `Computation` implementations resolvable through their respective `define_*`/`defineX` runner method, sharing `factory_id()`
 
 #### Scenario: A future kind plugs into the base without touching existing kinds
 
 - **WHEN** a new operative kind is added by implementing `Computation` and adding a new `define_*`/`defineX` runner method for it
-- **THEN** the `UnboundedOperative` and `BoundedOperative` authoring surfaces SHALL be unchanged
+- **THEN** the `StreamOperative` and `WorkflowOperative` authoring surfaces SHALL be unchanged
 
 #### Scenario: The instance enum is not forced symmetric
 
 - **WHEN** the sealed operative instance enum is renamed
-- **THEN** its variants MAY remain asymmetric (a rich unbounded instance vs an id-only bounded instance), and the `Computation` base SHALL NOT require inventing a common instance type
+- **THEN** its variants MAY remain asymmetric (a rich stream instance vs an id-only workflow instance), and the `Computation` base SHALL NOT require inventing a common instance type
 
 ### Requirement: Each SDK SHALL name the state-mutation enforcement level it actually provides
 The authoring contract SHALL record, per SDK, the state-mutation enforcement level that SDK actually provides, so that an asymmetry between SDKs is a deliberate documented choice rather than an accident of each language's ergonomics.

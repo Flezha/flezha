@@ -140,7 +140,7 @@ defmodule Flezha.State.RunnerRestartRealignTest do
     refute_received {:seq_gap, _, _}
   end
 
-  test "stale refusal is episode-bounded: one event, the counter tracks every refusal", ctx do
+  test "stale refusal is episode-workflow: one event, the counter tracks every refusal", ctx do
     owner = start_channel("exec_owner_" <> uniq())
     feed(owner, ctx, 0..2)
 

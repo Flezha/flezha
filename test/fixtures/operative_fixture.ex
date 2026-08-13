@@ -81,7 +81,7 @@ defmodule FlezhaTest.Fixtures.OperativeFixture do
   #       operative.id,
   #       get_io_handler(handler, :input),
   #       :input,
-  #       handling_type: Keyword.get(opts, :handling_type, :bounded)
+  #       handling_type: Keyword.get(opts, :handling_type, :workflow)
   #     )
 
   #   operative

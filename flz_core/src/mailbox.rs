@@ -11,7 +11,7 @@
 //!   to do based on the channel's declared `OverflowPolicy` (Block, drop the
 //!   newest, or replace the oldest via `force_push`).
 //!
-//! Wake protocol (unchanged from the unbounded shape):
+//! Wake protocol (unchanged from the stream shape):
 //!
 //!   - Producer calls `try_push(item)` → on success, CASes `inflight false→true`.
 //!     On a winning CAS the caller schedules the entity's round on the poll
@@ -41,7 +41,7 @@ use crossbeam::queue::ArrayQueue;
 
 use crate::entity::EntityCounters;
 
-/// Per-Entity mailbox: a bounded `ArrayQueue<Payload>` plus an
+/// Per-Entity mailbox: a workflow `ArrayQueue<Payload>` plus an
 /// `AtomicBool` inflight flag and a [`EntityCounters`] block.
 ///
 /// `Payload` is the user-defined work item shape. For Flezha, it's

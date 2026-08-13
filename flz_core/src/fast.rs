@@ -2,7 +2,7 @@
 //! core's activation handout. The coordinator thread still exists for control-plane
 //! traffic (`HandleCommandAction`, `ReturnOperatives`, `Reconnect`) but
 //! data-plane traffic bypasses it entirely — stream readers push directly
-//! into the targeted UnboundedOperative instance's entity mailboxes.
+//! into the targeted StreamOperative instance's entity mailboxes.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -16,10 +16,10 @@ use flz_transport::transport::{liveness, FlezhaStream};
 use prost::Message;
 use tracing::warn;
 
-use crate::operative::instance::UnboundedInstance;
+use crate::operative::instance::StreamInstance;
 use crate::operative::registry::{get_class as get_operative_class, Operative, OperativeRegistry};
 use crate::pb::command_request::Command;
-use crate::pb::{BoundedCompleted as PbBoundedCompleted, CommandRequest};
+use crate::pb::{CommandRequest, WorkflowCompleted as PbWorkflowCompleted};
 use crate::runner::{ClientResponseMessage, RunnerMessage, RunnerStatus};
 use crate::shutdown::ShutdownBridge;
 use crate::util::nonce_suffix;
@@ -40,17 +40,17 @@ pub struct RunnerNode {
 pub static LIVE_REGISTRY: std::sync::Mutex<Option<Arc<OperativeRegistry>>> =
     std::sync::Mutex::new(None);
 
-/// Look up a live unbounded instance by id on the newest runner. Test
+/// Look up a live stream instance by id on the newest runner. Test
 /// support; `None` when no runner started or the id is unknown.
 #[doc(hidden)]
-pub fn live_unbounded_instance(
+pub fn live_stream_instance(
     instance_id: &str,
-) -> Option<Arc<crate::operative::instance::UnboundedInstance>> {
+) -> Option<Arc<crate::operative::instance::StreamInstance>> {
     LIVE_REGISTRY
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .as_ref()
-        .and_then(|r| r.get_unbounded(instance_id))
+        .and_then(|r| r.get_stream(instance_id))
 }
 
 impl RunnerNode {
@@ -70,7 +70,7 @@ impl RunnerNode {
         }
     }
 
-    /// Spawn an UnboundedOperative instance from a registered UnboundedOperative class. `factory_id`
+    /// Spawn a StreamOperative instance from a registered StreamOperative class. `factory_id`
     /// is looked up in the global class registry; `instance_id` is what
     /// the wire calls `operative_id`. Idempotent on duplicate
     /// `instance_id`: returns the existing instance.
@@ -78,45 +78,45 @@ impl RunnerNode {
         &self,
         factory_id: String,
         instance_id: String,
-    ) -> Option<Arc<UnboundedInstance>> {
-        if let Some(existing) = self.operative_registry.get_unbounded(&instance_id) {
+    ) -> Option<Arc<StreamInstance>> {
+        if let Some(existing) = self.operative_registry.get_stream(&instance_id) {
             return Some(existing);
         }
         let topology = get_operative_class(&factory_id)?;
-        let instance = UnboundedInstance::new(topology, Arc::from(instance_id.as_str()));
-        Some(self.operative_registry.register_unbounded(instance))
+        let instance = StreamInstance::new(topology, Arc::from(instance_id.as_str()));
+        Some(self.operative_registry.register_stream(instance))
     }
 
-    /// Spawn a bounded-kind unit: register it (idempotent on a duplicate id) and
+    /// Spawn a workflow-kind unit: register it (idempotent on a duplicate id) and
     /// launch its sequential driver on a dedicated thread with `args` from
     /// `init_values`. The driver runs the run-sugar body or the structured
     /// linear chain, observes the lifecycle (inbox, loop, duration, external
-    /// stop), and converges on a single `BoundedCompleted` teardown. Returns
-    /// `false` when no bounded class is registered.
-    pub fn start_bounded(&self, factory_id: String, instance_id: String, args: String) -> bool {
-        self.start_bounded_resumable(factory_id, instance_id, args, 0, None)
+    /// stop), and converges on a single `WorkflowCompleted` teardown. Returns
+    /// `false` when no workflow class is registered.
+    pub fn start_workflow(&self, factory_id: String, instance_id: String, args: String) -> bool {
+        self.start_workflow_resumable(factory_id, instance_id, args, 0, None)
     }
 
-    /// Spawn a bounded unit that may be **resuming** after a crash: a durable
+    /// Spawn a workflow unit that may be **resuming** after a crash: a durable
     /// structured driver holds its first Procedure until `resume_entity_count`
     /// per-Entity restores have landed (the Controller ships one
     /// `RestoreInitState` per persisted Entity). `0` ⇒ a fresh spawn / a
     /// run-sugar or opted-out class ⇒ run immediately. `proc_journal` is the
     /// instance's committed proc state, which rides the bind because a durable
     /// class with no per-Entity state ships no restore at all. See
-    /// [`crate::bounded::instance`].
-    pub fn start_bounded_resumable(
+    /// [`crate::workflow::instance`].
+    pub fn start_workflow_resumable(
         &self,
         factory_id: String,
         instance_id: String,
         args: String,
         resume_entity_count: u32,
-        proc_journal: Option<crate::bounded::instance::JournalResume>,
+        proc_journal: Option<crate::workflow::instance::JournalResume>,
     ) -> bool {
         if self.operative_registry.contains(&instance_id) {
             return true;
         }
-        let spec = match crate::bounded::registry::get_class(&factory_id) {
+        let spec = match crate::workflow::registry::get_class(&factory_id) {
             Some(spec) => spec,
             None => return false,
         };
@@ -129,9 +129,9 @@ impl RunnerNode {
         let stage_entities = spec
             .topology
             .as_ref()
-            .map(|_| crate::bounded::driver::build_all_stage_entities(&spec, &id))
+            .map(|_| crate::workflow::driver::build_all_stage_entities(&spec, &id))
             .unwrap_or_default();
-        let (instance, inbox_rx) = crate::bounded::instance::BoundedInstance::new(
+        let (instance, inbox_rx) = crate::workflow::instance::WorkflowInstance::new(
             Arc::clone(&id),
             Arc::from(factory_id.as_str()),
             stage_entities,
@@ -139,8 +139,8 @@ impl RunnerNode {
             proc_journal,
         );
         self.operative_registry
-            .register_bounded(Arc::clone(&instance));
-        crate::bounded::driver::spawn(spec, instance, inbox_rx, args);
+            .register_workflow(Arc::clone(&instance));
+        crate::workflow::driver::spawn(spec, instance, inbox_rx, args);
         true
     }
 
@@ -149,13 +149,13 @@ impl RunnerNode {
     /// that is what serializes it with `AddOperative` handling and makes the
     /// check race-free. `Err(n)` = `n` live instances exist; the type stays
     /// registered.
-    pub fn remove_factory(&self, factory_id: &str, bounded: bool) -> Result<(), usize> {
+    pub fn remove_factory(&self, factory_id: &str, workflow: bool) -> Result<(), usize> {
         let live = self.operative_registry.count_by_factory(factory_id);
         if live > 0 {
             return Err(live);
         }
-        if bounded {
-            crate::bounded::registry::unregister_class(factory_id);
+        if workflow {
+            crate::workflow::registry::unregister_class(factory_id);
         } else {
             crate::operative::registry::unregister_class(factory_id);
         }
@@ -166,10 +166,10 @@ impl RunnerNode {
         match self.operative_registry.remove(instance_id) {
             Some(unit) => {
                 match &*unit {
-                    Operative::Unbounded(instance) => instance.shutdown_background_threads(),
-                    // Hard removal of a bounded: trip its cancellation token so
+                    Operative::Stream(instance) => instance.shutdown_background_threads(),
+                    // Hard removal of a workflow: trip its cancellation token so
                     // the driver thread unwinds and exits promptly.
-                    Operative::Bounded(instance) => instance.request_cancel(),
+                    Operative::Workflow(instance) => instance.request_cancel(),
                 }
                 true
             }
@@ -181,28 +181,28 @@ impl RunnerNode {
         self.operative_registry.contains(instance_id)
     }
 
-    pub fn get_unbounded(&self, instance_id: &str) -> Option<Arc<UnboundedInstance>> {
-        self.operative_registry.get_unbounded(instance_id)
+    pub fn get_stream(&self, instance_id: &str) -> Option<Arc<StreamInstance>> {
+        self.operative_registry.get_stream(instance_id)
     }
 
-    /// Resolve a running bounded instance by id (cooperative `BoundedStop`).
-    pub fn get_bounded(
+    /// Resolve a running workflow instance by id (cooperative `WorkflowStop`).
+    pub fn get_workflow(
         &self,
         instance_id: &str,
-    ) -> Option<Arc<crate::bounded::instance::BoundedInstance>> {
-        self.operative_registry.get_bounded(instance_id)
+    ) -> Option<Arc<crate::workflow::instance::WorkflowInstance>> {
+        self.operative_registry.get_workflow(instance_id)
     }
 
-    /// Locate a live bounded Entity slot by wire identity, for the inbound
+    /// Locate a live workflow Entity slot by wire identity, for the inbound
     /// `RestoreInitState` handler.
-    pub fn find_bounded_entity(
+    pub fn find_workflow_entity(
         &self,
         entity_id: &[u8],
     ) -> Option<(
-        Arc<crate::bounded::instance::BoundedInstance>,
+        Arc<crate::workflow::instance::WorkflowInstance>,
         Arc<crate::entity::EntitySlot>,
     )> {
-        self.operative_registry.find_bounded_entity(entity_id)
+        self.operative_registry.find_workflow_entity(entity_id)
     }
 
     pub fn operative_dispatch_handle(&self) -> OperativeDispatchHandle {
@@ -215,10 +215,10 @@ impl RunnerNode {
         self._namespace.clone()
     }
 
-    /// Snapshot of live UnboundedOperative instances — the
+    /// Snapshot of live StreamOperative instances — the
     /// `FlezhaRunner::operatives()` view.
-    pub fn get_operatives(&self) -> HashMap<String, Arc<UnboundedInstance>> {
-        self.operative_registry.snapshot_unbounded()
+    pub fn get_operatives(&self) -> HashMap<String, Arc<StreamInstance>> {
+        self.operative_registry.snapshot_stream()
     }
 
     pub fn get_io_streams(&self) -> Arc<RwLock<HashMap<u32, FlezhaStream>>> {
@@ -257,14 +257,14 @@ pub fn start(
         let mut runner = RunnerNode::new(namespace.clone());
 
         // Capture a registry snapshot closure now so the shutdown bridge
-        // can enumerate live UnboundedOperative instances without going through the
+        // can enumerate live StreamOperative instances without going through the
         // coordinator channel. Survives reconnects since the registry
         // Arc is stable.
         {
             let registry = Arc::clone(&runner.operative_registry);
             shutdown_bridge.set_snapshot_fn(Box::new(move || {
                 registry
-                    .snapshot_unbounded()
+                    .snapshot_stream()
                     .into_iter()
                     .map(|(k, instance)| {
                         (
@@ -340,21 +340,21 @@ pub fn start(
                 RunnerMessage::SendDataHeartbeat => {
                     heartbeat_tick(&runner.shared_io_streams);
                 }
-                RunnerMessage::EmitBoundedOutput {
+                RunnerMessage::EmitWorkflowOutput {
                     operative_id,
                     payload,
                 } => {
-                    write_bounded_output(&runner.shared_io_streams, &operative_id, &payload);
+                    write_workflow_output(&runner.shared_io_streams, &operative_id, &payload);
                 }
-                RunnerMessage::EmitBoundedCompleted {
+                RunnerMessage::EmitWorkflowCompleted {
                     operative_id,
                     status,
                     error,
                     result,
                 } => {
                     let frame = control_command_frame(
-                        "bounded-completed",
-                        Command::BoundedCompleted(PbBoundedCompleted {
+                        "workflow-completed",
+                        Command::WorkflowCompleted(PbWorkflowCompleted {
                             operative_id: operative_id.clone(),
                             status,
                             error,
@@ -364,7 +364,7 @@ pub fn start(
                     if let Err(e) = (&*control_stream).write_all(&frame) {
                         warn!(
                             target: "flezha",
-                            "[flezha] BoundedCompleted write failed for {}: {}", operative_id, e
+                            "[flezha] WorkflowCompleted write failed for {}: {}", operative_id, e
                         );
                     }
                 }
@@ -386,11 +386,11 @@ pub fn start(
                 }
                 RunnerMessage::RemoveFactory {
                     factory_id,
-                    bounded,
+                    workflow,
                 } => {
                     // Serialized with AddOperative by construction (same loop),
                     // so the live-instance check cannot race a placement.
-                    let result = runner.remove_factory(&factory_id, bounded);
+                    let result = runner.remove_factory(&factory_id, workflow);
                     let _ = ctx_arc
                         .lock()
                         .unwrap()
@@ -401,11 +401,11 @@ pub fn start(
     })
 }
 
-/// Write a bounded's output payload on a secondary stream, tagged with its
+/// Write a workflow's output payload on a secondary stream, tagged with its
 /// `operative_id` so the controller routes it to the unit's bound plugins. The
 /// controller keys output fan-out on the payload id, so any one secondary
 /// stream suffices; best-effort like the data heartbeat.
-fn write_bounded_output(
+fn write_workflow_output(
     io_streams: &RwLock<HashMap<u32, FlezhaStream>>,
     operative_id: &str,
     payload: &[u8],
@@ -417,13 +417,13 @@ fn write_bounded_output(
             let mut w: &FlezhaStream = stream;
             if let Err(e) = w.write_all(&frame) {
                 eprintln!(
-                    "[flezha] bounded {} output write failed: {}",
+                    "[flezha] workflow {} output write failed: {}",
                     operative_id, e
                 );
             }
         }
         None => eprintln!(
-            "[flezha] bounded {} output dropped: no secondary stream available",
+            "[flezha] workflow {} output dropped: no secondary stream available",
             operative_id
         ),
     }
@@ -564,8 +564,8 @@ fn handle_reconnect(
     runner.set_status(RunnerStatus::Running);
 }
 
-/// Stream-reader handle for the UnboundedOperative model. Cheap to clone; carries a
-/// reference to the live UnboundedOperative-instance registry. Per-Entity drain
+/// Stream-reader handle for the StreamOperative model. Cheap to clone; carries a
+/// reference to the live StreamOperative-instance registry. Per-Entity drain
 /// scheduling goes through the poll core.
 #[derive(Clone)]
 pub struct OperativeDispatchHandle {
@@ -574,7 +574,7 @@ pub struct OperativeDispatchHandle {
 
 impl OperativeDispatchHandle {
     /// Dispatch a frame from the wire. Resolves the entry channel by
-    /// `metadata["channel"]` (or the UnboundedOperative's first declared input
+    /// `metadata["channel"]` (or the StreamOperative's first declared input
     /// channel as the documented default), wraps the payload bytes via
     /// the channel's `wrap_input`, and pushes the typed
     /// `Arc<dyn Any + Send + Sync>` onto every consumer Procedure's
@@ -588,21 +588,21 @@ impl OperativeDispatchHandle {
     ) {
         let instance = match self.registry.get_operative(instance_id) {
             Some(unit) => match &*unit {
-                Operative::Unbounded(ri) => Arc::clone(ri),
-                // Bounded inbox: route post-start input to the running driver's
+                Operative::Stream(ri) => Arc::clone(ri),
+                // Workflow inbox: route post-start input to the running driver's
                 // inbox instead of dropping it. Dropped only if the instance is
                 // not running / has no live inbox.
-                Operative::Bounded(instance) => {
+                Operative::Workflow(instance) => {
                     // A durable instance's input was journaled to its inbox
                     // before this frame was forwarded; the stamped offset rides
                     // into the iteration commit as the consumed offset.
                     let offset = metadata
-                        .get(crate::bounded::INBOX_OFFSET_KEY)
+                        .get(crate::workflow::INBOX_OFFSET_KEY)
                         .and_then(|v| v.parse::<u64>().ok())
                         .unwrap_or(0);
                     if !instance.push_inbox(payload, offset) {
                         eprintln!(
-                            "[flezha] inbox frame for bounded unit {} dropped (not running / no inbox)",
+                            "[flezha] inbox frame for workflow unit {} dropped (not running / no inbox)",
                             instance_id
                         );
                     }

@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.operative.StreamOperative;
+import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
@@ -34,14 +34,14 @@ class ClockAndKeyedValidationTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeClassRegistry.reset();
+        StreamOperativeClassRegistry.reset();
     }
 
     @Test
     @DisplayName("EventTimeFrom without an eventTime override is refused")
     void eventTimeFromWithoutExtractorIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(NoExtractorOperative.class))
-                .isInstanceOf(UnboundedOperativeConfigurationException.class)
+        assertThatThrownBy(() -> StreamOperativeClassRegistry.registerClass(NoExtractorOperative.class))
+                .isInstanceOf(StreamOperativeConfigurationException.class)
                 .hasMessageContaining("no_extractor")
                 .hasMessageContaining("eventTime");
     }
@@ -49,24 +49,23 @@ class ClockAndKeyedValidationTest {
     @Test
     @DisplayName("EventTimeFrom WITH an eventTime override registers")
     void eventTimeFromWithExtractorRegisters() {
-        UnboundedOperativeClassRegistry.registerClass(ExtractorOperative.class);
-        assertThat(UnboundedOperativeClassRegistry.getTopology("clock-extractor"))
-                .isNotNull();
+        StreamOperativeClassRegistry.registerClass(ExtractorOperative.class);
+        assertThat(StreamOperativeClassRegistry.getTopology("clock-extractor")).isNotNull();
     }
 
     @Test
     @DisplayName("LogicalClock with NoChange is refused as UnservableClock")
     void logicalClockWithNoChangeIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(UnservableClockOperative.class))
-                .isInstanceOf(UnboundedOperativeConfigurationException.class)
+        assertThatThrownBy(() -> StreamOperativeClassRegistry.registerClass(UnservableClockOperative.class))
+                .isInstanceOf(StreamOperativeConfigurationException.class)
                 .hasMessageContaining("UnservableClock");
     }
 
     @Test
     @DisplayName("a keyed channel with no plugin wire is refused")
     void keyedChannelWithoutPluginWireIsRefused() {
-        assertThatThrownBy(() -> UnboundedOperativeClassRegistry.registerClass(KeyedNoPluginOperative.class))
-                .isInstanceOf(UnboundedOperativeConfigurationException.class)
+        assertThatThrownBy(() -> StreamOperativeClassRegistry.registerClass(KeyedNoPluginOperative.class))
+                .isInstanceOf(StreamOperativeConfigurationException.class)
                 .hasMessageContaining("keyed")
                 .hasMessageContaining("flz.key");
     }
@@ -74,8 +73,8 @@ class ClockAndKeyedValidationTest {
     @Test
     @DisplayName("a keyed plugin-bound channel registers and is marked keyed on the descriptor")
     void keyedPluginChannelRegisters() {
-        UnboundedOperativeClassRegistry.registerClass(KeyedPluginOperative.class);
-        UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology("clock-keyed-plugin");
+        StreamOperativeClassRegistry.registerClass(KeyedPluginOperative.class);
+        StreamOperativeTopology topology = StreamOperativeClassRegistry.getTopology("clock-keyed-plugin");
         assertThat(topology).isNotNull();
         ChannelDescriptor out = topology.channel(topology.lookupChannelId("out"));
         assertThat(out.keyed()).isTrue();
@@ -83,7 +82,7 @@ class ClockAndKeyedValidationTest {
 
     // --- fixtures -----------------------------------------------------------
 
-    public static final class NoExtractorOperative implements UnboundedOperative {
+    public static final class NoExtractorOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "clock-no-extractor";
@@ -95,7 +94,7 @@ class ClockAndKeyedValidationTest {
         }
     }
 
-    public static final class ExtractorOperative implements UnboundedOperative {
+    public static final class ExtractorOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "clock-extractor";
@@ -107,7 +106,7 @@ class ClockAndKeyedValidationTest {
         }
     }
 
-    public static final class UnservableClockOperative implements UnboundedOperative {
+    public static final class UnservableClockOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "clock-unservable";
@@ -119,7 +118,7 @@ class ClockAndKeyedValidationTest {
         }
     }
 
-    public static final class KeyedNoPluginOperative implements UnboundedOperative {
+    public static final class KeyedNoPluginOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "clock-keyed-no-plugin";
@@ -132,7 +131,7 @@ class ClockAndKeyedValidationTest {
         }
     }
 
-    public static final class KeyedPluginOperative implements UnboundedOperative {
+    public static final class KeyedPluginOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "clock-keyed-plugin";

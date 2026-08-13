@@ -147,10 +147,10 @@ interface. Factories that do not override it return an explicit
 ### Rust
 
 ```rust
-use flezha_runner::{UnboundedOperative, operative::OperativeError};
+use flezha_runner::{StreamOperative, operative::OperativeError};
 
 struct MyOperative;
-impl UnboundedOperative<MyState, String, String> for MyOperative {
+impl StreamOperative<MyState, String, String> for MyOperative {
     fn process(&mut self, input: String, state: &mut MyState)
         -> Result<String, OperativeError> { /* ... */ }
 
@@ -169,7 +169,7 @@ impl UnboundedOperative<MyState, String, String> for MyOperative {
 
 ```java
 public final class MyOperative
-        implements UnboundedOperative<MyState, String, String> {
+        implements StreamOperative<MyState, String, String> {
 
     @Override
     public String process(String input, MyState state) { /* ... */ }

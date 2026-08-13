@@ -9,7 +9,7 @@ package com.flezha.sdk.state;
  * ({@code EventTimeFrom<F: TimeExtractor<Input>>}); Java's erasure precludes
  * that, so a missing override fails Operative registration instead.
  *
- * <p>This is the clock the unbounded late-input correction rests on — the
+ * <p>This is the clock the stream late-input correction rests on — the
  * event time it reports is what the controller maps back to an input offset.
  */
 public final class EventTimeFrom implements Clock {}

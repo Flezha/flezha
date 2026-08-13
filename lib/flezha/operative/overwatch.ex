@@ -82,10 +82,10 @@ defmodule Flezha.Operative.Overwatch do
     # Effectively-once tier, declared by the SDK in the AddOperative response
     # metadata. Gates the input-log journal + `flz.offset` stamp on `:io_in`.
     effectively_once: false,
-    # Durable bounded class (kind + per-class persistence). Gates the durable
+    # Durable workflow class (kind + per-class persistence). Gates the durable
     # inbox on `:io_in` and the suspension lifecycle
-    # (`bounded-durable-suspension`).
-    durable_bounded: false,
+    # (`workflow-durable-suspension`).
+    durable_workflow: false,
     # Suspended at a committed iteration boundary: zero live runner resources,
     # registry entry retained. A new inbox append — or the journaled wake
     # deadline — rehydrates through the normal bind path.
@@ -140,13 +140,13 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_continue({:bind_runner, stale_runner_id, operative}, %__MODULE__{} = state) do
-    state = %__MODULE__{state | durable_bounded: durable_bounded?(state, operative)}
+    state = %__MODULE__{state | durable_workflow: durable_workflow?(state, operative)}
 
     # Suspended instances are rediscovered from durable state alone (journal +
     # inbox), so a controller redeploy neither binds them to a runner nor
-    # loses their suspension (`bounded-durable-suspension`). An instance with
+    # loses their suspension (`workflow-durable-suspension`). An instance with
     # undelivered input is not suspended any more — it binds and consumes it.
-    if state.durable_bounded and suspended_on_disk?(operative.id) do
+    if state.durable_workflow and suspended_on_disk?(operative.id) do
       {:noreply, enter_suspended(state, ProcJournal.restore_state(operative.id))}
     else
       do_bind_runner(state, stale_runner_id, operative)
@@ -173,7 +173,7 @@ defmodule Flezha.Operative.Overwatch do
 
   defp seed_input(result, _operative), do: result
 
-  defp fresh_inbox?(%__MODULE__{durable_bounded: true, id: id}),
+  defp fresh_inbox?(%__MODULE__{durable_workflow: true, id: id}),
     do: ProcInbox.last_offset(id) == 0
 
   defp fresh_inbox?(%__MODULE__{}), do: true
@@ -284,9 +284,9 @@ defmodule Flezha.Operative.Overwatch do
 
       state = activate_initial_plugins(state)
 
-      # Record this class's kind so the State subsystem can gate unbounded-only
+      # Record this class's kind so the State subsystem can gate stream-only
       # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
-      # bounded operative — plus every SDK declaration and this pid (the
+      # workflow operative — plus every SDK declaration and this pid (the
       # fsync-gated outbox flush dispatches `:on_output` through it).
       _ = ClassRegistry.put(operative_class(state), state.builder.kind)
       _ = ClassRegistry.put_declarations(operative_class(state), declarations)
@@ -511,14 +511,14 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   # Bind-time restore is capability-gated on `persistent_state?` (kind+class):
-  # `:unbounded` always; a durable `:bounded` class (this IS its crash-resume)
+  # `:stream` always; a durable `:workflow` class (this IS its crash-resume)
   # unless it opted out. A stateless kind has no WAL to replay.
   defp replay_persisted_entities(kind, operative_class, runner_id, overwatch) do
-    # Transactional outbox re-drive (bounded-transactional-outbox): a procedure
+    # Transactional outbox re-drive (workflow-transactional-outbox): a procedure
     # journaled `proc_committed` (or `compensated`) whose outbox never reached the
     # plugins owes that output. Re-drive it — with the original keys — before the
     # resumed run advances, so a crash between commit and flush loses nothing.
-    if kind == :bounded do
+    if kind == :workflow do
       _ = Flezha.State.ProcJournal.flush_pending(operative_class, overwatch)
     end
 
@@ -770,7 +770,7 @@ defmodule Flezha.Operative.Overwatch do
 
   # Re-forward already-durable payloads, stamped with the offset they were
   # journaled at. The delivery half of both durability tiers' resume — the
-  # effectively-once input log above, and the durable bounded inbox below — and
+  # effectively-once input log above, and the durable workflow inbox below — and
   # deliberately NOT an ingest: these payloads are already in their log and
   # already ran `:on_input`, so re-journaling them would duplicate them.
   defp reforward(%__MODULE__{} = state, payloads) do
@@ -797,31 +797,34 @@ defmodule Flezha.Operative.Overwatch do
   @doc """
   Number of persisted Entities the bind-time restore path will ship a
   `RestoreInitState` for on this (re)bind — the value threaded onto
-  `AddOperative.resume_entity_count` so a durable bounded driver holds its
+  `AddOperative.resume_entity_count` so a durable workflow driver holds its
   first Procedure until that many restores land (crash-resume,
-  `bounded-operative-durability`).
+  `workflow-operative-durability`).
 
-  Non-zero only for a durable `:bounded` class with WAL state on disk; `0` for a
-  fresh spawn, an unbounded operative, or an opted-out bounded one — those need
+  Non-zero only for a durable `:workflow` class with WAL state on disk; `0` for a
+  fresh spawn, a stream operative, or an opted-out workflow one — those need
   no restore-before-run gate. Matches the frames `replay_persisted_entities/3`
   ships (same enumeration + `has_persisted_state?` filter).
   """
   @spec resume_entity_count(atom(), binary()) :: non_neg_integer()
-  def resume_entity_count(:bounded, operative_class),
-    do: length(restorable_entities(:bounded, operative_class))
+  def resume_entity_count(:workflow, operative_class),
+    do: length(restorable_entities(:workflow, operative_class))
 
   def resume_entity_count(_kind, _operative_class), do: 0
 
   # Stamp everything a resuming bind carries onto the operative's opts so
   # `control_unit` can set the `AddOperative` fields: how many Entity restores
   # to wait for, and the proc-journal the driver resumes its iteration from. Only
-  # a bounded instance has a journal, and the kind check is what keeps an
-  # unbounded bind from reading for a file that cannot exist.
+  # a workflow instance has a journal, and the kind check is what keeps an
+  # stream bind from reading for a file that cannot exist.
   defp with_resume_state(operative, kind, operative_class) do
     opts =
       operative.opts
       |> Keyword.put(:resume_entity_count, resume_entity_count(kind, operative_class))
-      |> Keyword.put(:proc_journal, if(kind == :bounded, do: proc_journal_state(operative_class)))
+      |> Keyword.put(
+        :proc_journal,
+        if(kind == :workflow, do: proc_journal_state(operative_class))
+      )
 
     %{operative | opts: opts}
   end
@@ -837,7 +840,7 @@ defmodule Flezha.Operative.Overwatch do
   #   * effectively-once (`durable-input-log`): appended to the operative's
   #     input log and stamped `flz.offset`, which the SDK threads into the
   #     effect record;
-  #   * durable bounded (`bounded-durable-suspension`): appended to the
+  #   * durable workflow (`workflow-durable-suspension`): appended to the
   #     instance's `inbox.wal` and stamped `flz.inbox_offset`, which the SDK
   #     threads into the iteration commit as the consumed offset. A duplicate
   #     dedup id in the undelivered window is absorbed (`nil` — nothing is
@@ -854,7 +857,7 @@ defmodule Flezha.Operative.Overwatch do
     {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
   end
 
-  def journal_input(%__MODULE__{durable_bounded: true} = state, {message, metadata})
+  def journal_input(%__MODULE__{durable_workflow: true} = state, {message, metadata})
       when is_binary(message) do
     case ProcInbox.append(state.id, message, metadata) do
       {:ok, offset} ->
@@ -882,11 +885,11 @@ defmodule Flezha.Operative.Overwatch do
   def journal_input(_state, payload), do: payload
 
   # ---------------------------------------------------------------
-  # Durable suspension (`bounded-durable-suspension`)
+  # Durable suspension (`workflow-durable-suspension`)
   # ---------------------------------------------------------------
 
   @doc """
-  Suspend a bounded instance parked at the committed boundary of iteration
+  Suspend a workflow instance parked at the committed boundary of iteration
   `iter`: evict it from its runner (`RemOperative`), release the registry's
   runner binding, and arm the journaled wake deadline. The registry entry —
   and this process — stay, so a new input still has somewhere to land; it is the
@@ -899,7 +902,7 @@ defmodule Flezha.Operative.Overwatch do
     do: GenServer.cast(overwatch_pid, {:suspend, iter, wake_deadline_ms})
 
   @doc """
-  Rewind a bounded loop to the committed boundary of iteration `to_iter`: journal
+  Rewind a workflow loop to the committed boundary of iteration `to_iter`: journal
   the rewind — which bumps the epoch and un-commits every iteration above it —
   then evict the instance from its runner and rehydrate it.
 
@@ -933,7 +936,7 @@ defmodule Flezha.Operative.Overwatch do
     end
   end
 
-  # A bounded operative's staged plugin output carries no natural key, so a
+  # A workflow operative's staged plugin output carries no natural key, so a
   # re-run's output cannot be relied on to overwrite the original at every sink.
   # The only undo the engine can guarantee is the procedure's own `compensate`
   # hook — so an unwound procedure that emitted and declares none blocks the
@@ -952,7 +955,7 @@ defmodule Flezha.Operative.Overwatch do
   # wake timer armed from the journaled deadline.
   defp enter_suspended(%__MODULE__{} = state, journal) do
     :telemetry.execute(
-      [:flezha, :bounded, :suspended],
+      [:flezha, :workflow, :suspended],
       %{count: 1},
       %{
         namespace: state.namespace,
@@ -1026,7 +1029,7 @@ defmodule Flezha.Operative.Overwatch do
 
       runner_id ->
         :telemetry.execute(
-          [:flezha, :bounded, :rehydrating],
+          [:flezha, :workflow, :rehydrating],
           %{count: 1},
           %{namespace: state.namespace, operative_id: state.id, runner_id: runner_id}
         )
@@ -1038,9 +1041,9 @@ defmodule Flezha.Operative.Overwatch do
 
   # Re-forward every inbox entry above the durable consumed offset, stamped with
   # its original offset (never re-journaling — the inbox already holds them).
-  # Runs on every bind of a durable bounded instance, which is what makes crash
+  # Runs on every bind of a durable workflow instance, which is what makes crash
   # resume, migration, and rehydrate-from-suspension one path.
-  defp deliver_inbox_tail(%__MODULE__{durable_bounded: false} = state), do: state
+  defp deliver_inbox_tail(%__MODULE__{durable_workflow: false} = state), do: state
 
   defp deliver_inbox_tail(%__MODULE__{} = state) do
     state.id
@@ -1054,12 +1057,12 @@ defmodule Flezha.Operative.Overwatch do
     state
   end
 
-  # A durable bounded class: the kind that owns a proc-journal and an inbox. An
+  # A durable workflow class: the kind that owns a proc-journal and an inbox. An
   # opted-out class keeps the memory-only inbox and re-runs from the top.
-  defp durable_bounded?(%__MODULE__{} = state, operative) do
-    state.builder.kind == :bounded and
+  defp durable_workflow?(%__MODULE__{} = state, operative) do
+    state.builder.kind == :workflow and
       PersistenceResolver.persistent_state?(
-        :bounded,
+        :workflow,
         Keyword.get(operative.opts, :operative_class, operative.id)
       )
   end
@@ -1123,7 +1126,7 @@ defmodule Flezha.Operative.Overwatch do
     end
   end
 
-  defp durable_input?(%__MODULE__{effectively_once: eo, durable_bounded: db}), do: eo or db
+  defp durable_input?(%__MODULE__{effectively_once: eo, durable_workflow: db}), do: eo or db
 
   # Forward an ingested payload to the bound stream channel. Counts an
   # unbound-stream drop instead of discarding the channel's `{:error, :no_stream}`
@@ -1149,7 +1152,7 @@ defmodule Flezha.Operative.Overwatch do
   A class's SDK-side declarations, as resolved from the `AddOperative` response.
 
   `compensable_procs` is the chain positions whose procedure declares a `compensate`
-  hook, or `nil` when the class declares nothing (run-sugar, unbounded, or a Java
+  hook, or `nil` when the class declares nothing (run-sugar, stream, or a Java
   runner) — which a rewind reads as "no coverage information", not as "nothing
   is compensable".
   """
@@ -1603,7 +1606,7 @@ defmodule Flezha.Operative.Overwatch do
       _ = HubManager.operative_set_runner(state.namespace, state.id, nil)
 
       :telemetry.execute(
-        [:flezha, :bounded, :rewind],
+        [:flezha, :workflow, :rewind],
         %{count: 1, epoch: ProcJournal.current_epoch(state.id)},
         %{namespace: state.namespace, operative_id: state.id, to_iter: to_iter}
       )
@@ -1677,7 +1680,7 @@ defmodule Flezha.Operative.Overwatch do
 
   # The SDK parked at a committed iteration boundary and the `parked` journal
   # entry is durable: evict the instance from its runner and keep it
-  # `suspended` here (`bounded-durable-suspension`). Not a terminal outcome — no
+  # `suspended` here (`workflow-durable-suspension`). Not a terminal outcome — no
   # completion record, no state deletion.
   @impl true
   def handle_cast({:suspend, iter, wake_deadline_ms}, %__MODULE__{} = state) do
@@ -1775,7 +1778,7 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, %{state | extensions: table}}
   end
 
-  # The journaled wake deadline elapsed (`bounded-durable-suspension`): append a
+  # The journaled wake deadline elapsed (`workflow-durable-suspension`): append a
   # timer wake to the inbox and rehydrate. Routing the wake THROUGH the inbox is
   # what makes two racing wake sources — a message and the deadline — collapse
   # into one rehydration: the second is a no-op on an already-rehydrating
@@ -2005,7 +2008,7 @@ defmodule Flezha.Operative.Overwatch do
   defp adopt_source_state(%__MODULE__{} = state, _source_node), do: state
 
   # Busy classification for ProcessHub's migration consent: defer while a
-  # correction is pending, while a durable bounded is off an iteration
+  # correction is pending, while a durable workflow is off an iteration
   # boundary (suspension IS the safe barrier), or while the effectively-once
   # outbox still owes output that would strand on this node. The synchronous
   # correction transaction needs no clause — mid-run this process cannot
@@ -2014,7 +2017,7 @@ defmodule Flezha.Operative.Overwatch do
   def migration_consent(%__MODULE__{} = state) do
     cond do
       state.corrections != %{} -> :defer
-      state.durable_bounded and not state.suspended -> :defer
+      state.durable_workflow and not state.suspended -> :defer
       state.effectively_once and outbox_pending?(state) -> :defer
       true -> :ready
     end
@@ -2225,16 +2228,16 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @doc """
-  Bounded proc-journal crash-resume: the instance's committed proc state, threaded
+  Workflow proc-journal crash-resume: the instance's committed proc state, threaded
   onto `AddOperative.proc_journal` so the resumed driver skips the journaled
   procedures, seeds the next one from the journaled handoff, and enters the
   iteration after the last committed one.
 
   It rides the bind rather than a per-Entity `RestoreInitState` because it is
-  instance-scoped: a durable bounded class with no per-Entity state ships no
+  instance-scoped: a durable workflow class with no per-Entity state ships no
   restore at all, and would otherwise resume at iteration 0 on every wake.
 
-  `nil` when the instance has no journal — a fresh spawn, an unbounded
+  `nil` when the instance has no journal — a fresh spawn, a stream
   operative, an opted-out class.
   """
   @spec proc_journal_state(binary()) :: RunnerCommands.ProcJournalState.t() | nil

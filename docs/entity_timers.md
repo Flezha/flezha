@@ -175,7 +175,7 @@ same idempotence advice as `run`.
 
 ### A registration made during a replay IS registered
 
-`ctx.spawn_bounded` answers `SkippedOnReplay` because it is an external side
+`ctx.spawn_workflow` answers `SkippedOnReplay` because it is an external side
 effect that must not happen twice. A timer is the opposite: it is internal
 state, and skipping it on replay would rebuild a pending set the live run never
 had. The two calls sit on the same `ProcedureCtx`, so the contrast is worth
@@ -193,7 +193,7 @@ forever** — the same reason a park closes a checkpoint interval.
 Each Procedure carries `max_timers_per_entity()` / `maxTimersPerEntity()`
 (default 10 000). Registering past it returns an error naming the Procedure and
 the bound rather than allocating: a per-Entity timer set is author-controlled
-memory multiplied by an unbounded Entity count.
+memory multiplied by a stream Entity count.
 
 Per-Procedure counters track pending timers, registrations, firings,
 cancellations and refusals. Every `data_heartbeat` frame carries `timers_armed`
@@ -214,9 +214,9 @@ Operative idle.
   alone; the receiving runner suppresses the WAL restore that would have folded
   the pending set. The timers are still on disk — a later restore rebuilds them
   — but the migrated Entity does not owe them until then.
-- **Bounded operatives have no timers.** They have `wake_after` and an iteration
+- **Workflow operatives have no timers.** They have `wake_after` and an iteration
   model already; a per-Entity timer would be a second, competing wake source.
-  `ProcedureCtx` in a bounded stage or a `compensate` hook carries no timer
+  `ProcedureCtx` in a workflow stage or a `compensate` hook carries no timer
   session, so the refusal is structural.
 - **Resolution is milliseconds.** Sub-millisecond scheduling is a non-goal.
 - **A firing during a restore backlog can run well after its scheduled time.**

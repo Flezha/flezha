@@ -663,7 +663,7 @@ defmodule Flezha.Runner.FleetManager do
   # the hub or a freshly reconnected peer is mid-restart under rapid churn. If
   # one of those raises, the runner's `:active` entry must still be removed —
   # otherwise it lingers as a corpse that `active_runners/1` keeps reporting
-  # and operatives get assigned to a dead node (unbounded ghost accumulation).
+  # and operatives get assigned to a dead node (stream ghost accumulation).
   defp drop_runner(state, namespace, runner_id) do
     Map.delete(state.runner_namespaces[namespace] || %{}, runner_id)
   end

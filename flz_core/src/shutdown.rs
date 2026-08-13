@@ -15,7 +15,7 @@
 //!   per-operative timeout**, parallelised across operatives so total
 //!   wait is bounded by 2 s (not 2N s).
 //! - The per-operative serializer step is capped at the controller's
-//!   `cross_node_request_timeout` ceiling (**10 s**). Concrete `UnboundedOperative`
+//!   `cross_node_request_timeout` ceiling (**10 s**). Concrete `StreamOperative`
 //!   impls with multi-second serializers should override `bin_apply_state`
 //!   to keep below that cap.
 //! - On timeout the SDK exits unconditionally and SHALL NOT block its
@@ -53,7 +53,7 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(2);
 /// to dispatch SDK-initiated variants vs `CommandResponse`s.
 const SHUTDOWN_PAYLOAD_ID: &str = "control_command";
 
-/// Returns `(instance_id, serialized_state_bytes)` per live UnboundedOperative
+/// Returns `(instance_id, serialized_state_bytes)` per live StreamOperative
 /// instance. The closure is responsible for walking the live registry
 /// and serializing each instance via `entity_state::serialize_operative_state`.
 pub type OperativeSnapshotFn = Box<dyn Fn() -> Vec<(String, Vec<u8>)> + Send + Sync>;
@@ -193,7 +193,7 @@ impl ShutdownBridge {
 /// Result carried by a controller reply to an SDK-initiated request. The `Ok`
 /// payload is whatever the reply reports beyond "it worked" — empty for a bare
 /// ack (`RunnerShutdownAck`, `ProcCommitResponse`), the resolved outcome for a
-/// `SpawnBoundedResponse`. `Err(reason)` is a reply that reports a failure.
+/// `SpawnWorkflowResponse`. `Err(reason)` is a reply that reports a failure.
 pub type AckResult = Result<String, String>;
 
 fn pending_acks_map() -> &'static Mutex<HashMap<String, mpsc::SyncSender<AckResult>>> {
@@ -203,7 +203,7 @@ fn pending_acks_map() -> &'static Mutex<HashMap<String, mpsc::SyncSender<AckResu
 }
 
 /// Register a waiter for a controller reply keyed by the outbound request's
-/// `reference_id`. Shared by the graceful-shutdown ack wait and the bounded
+/// `reference_id`. Shared by the graceful-shutdown ack wait and the workflow
 /// driver's proc-commit barrier.
 pub fn register_pending_ack(reference_id: String) -> mpsc::Receiver<AckResult> {
     let (tx, rx) = mpsc::sync_channel(1);

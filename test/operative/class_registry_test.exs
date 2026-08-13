@@ -1,10 +1,10 @@
 defmodule FlezhaTest.Operative.ClassRegistryTest do
   @moduledoc """
   §1.2: `ClassRegistry` resolves `operative_class → kind` for the State
-  subsystem — in-memory ETS → durable sidecar → default `:unbounded` — so the
-  unbounded-only capabilities can be gated per class. An unknown class stays
-  fully unbounded (gating is only ever subtractive); a `:bounded` class reads
-  every unbounded-only flag false and its kind survives ETS eviction via the
+  subsystem — in-memory ETS → durable sidecar → default `:stream` — so the
+  stream-only capabilities can be gated per class. An unknown class stays
+  fully stream (gating is only ever subtractive); a `:workflow` class reads
+  every stream-only flag false and its kind survives ETS eviction via the
   sidecar.
   """
   use ExUnit.Case, async: false
@@ -24,38 +24,38 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     %{class: "cr_" <> Integer.to_string(System.unique_integer([:positive]))}
   end
 
-  test "an unknown class defaults to :unbounded and reads every flag true", %{class: class} do
-    assert ClassRegistry.get(class) == :unbounded
+  test "an unknown class defaults to :stream and reads every flag true", %{class: class} do
+    assert ClassRegistry.get(class) == :stream
     assert ClassRegistry.capable?(class, :time_travel?)
     assert ClassRegistry.capable?(class, :dynamic_entities?)
     assert ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
-  test "a :bounded class resolves and reads every unbounded-only flag false", %{class: class} do
-    :ok = ClassRegistry.put(class, :bounded)
+  test "a :workflow class resolves and reads every stream-only flag false", %{class: class} do
+    :ok = ClassRegistry.put(class, :workflow)
 
-    assert ClassRegistry.get(class) == :bounded
+    assert ClassRegistry.get(class) == :workflow
     refute ClassRegistry.capable?(class, :time_travel?)
     refute ClassRegistry.capable?(class, :dynamic_entities?)
     refute ClassRegistry.capable?(class, :output_stall_watch?)
   end
 
-  test "an :unbounded put writes no sidecar; a :bounded put does", %{class: class} do
+  test "an :stream put writes no sidecar; a :workflow put does", %{class: class} do
     cont = class <> "_c"
-    :ok = ClassRegistry.put(cont, :unbounded)
+    :ok = ClassRegistry.put(cont, :stream)
     refute File.exists?(sidecar(cont))
 
-    :ok = ClassRegistry.put(class, :bounded)
-    assert File.read!(sidecar(class)) == "bounded"
+    :ok = ClassRegistry.put(class, :workflow)
+    assert File.read!(sidecar(class)) == "workflow"
   end
 
   test "get falls back to the durable sidecar after the ETS entry is evicted", %{class: class} do
-    :ok = ClassRegistry.put(class, :bounded)
+    :ok = ClassRegistry.put(class, :workflow)
     :ok = ClassRegistry.delete(class)
 
-    # ETS entry gone, durable sidecar remains → still resolves :bounded, so a
+    # ETS entry gone, durable sidecar remains → still resolves :workflow, so a
     # process-less retention sweep over retained state gets the right kind.
-    assert ClassRegistry.get(class) == :bounded
+    assert ClassRegistry.get(class) == :workflow
     refute ClassRegistry.capable?(class, :time_travel?)
   end
 
@@ -63,7 +63,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     File.mkdir_p!(Path.join(Registry.state_root(), class))
     File.write!(sidecar(class), "definitely_not_a_kind")
 
-    assert ClassRegistry.get(class) == :unbounded
+    assert ClassRegistry.get(class) == :stream
   end
 
   test "effectively_once? defaults to false for an unknown class", %{class: class} do

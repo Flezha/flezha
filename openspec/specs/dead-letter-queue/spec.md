@@ -2,13 +2,13 @@
 
 ## Purpose
 
-The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in an Unbounded operative is never silently dropped and never freezes the operative's progress. A failing procedure invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operative_class>/<procedure_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the entity advances: tier-off sessions hold the entity until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Operators inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. Bounded operatives are out of scope — their escape is AbortAll + saga compensation.
+The dead-letter-queue capability guarantees that a permanently-failing (poison) payload in a Stream operative is never silently dropped and never freezes the operative's progress. A failing procedure invocation — returned error or panic/unhandled exception, one policy in both SDKs — is retried up to a per-channel budget (default 3 total attempts, exponential backoff + jitter; author-classified non-retryable errors park immediately). After exhaustion the payload is durably parked to the controller's DLQ store (`app_data/dlq/<operative_class>/<procedure_id>/`, JSONL metadata index + per-entry payload blobs) strictly BEFORE the entity advances: tier-off sessions hold the entity until the fsynced append is acknowledged (`park_payload` data-stream frame + `ParkPayloadAck` control command), while effectively-once sessions record the park and the consumed-offset advance in one atomic WAL record so a crash can never advance past a lost park — parking un-freezes the min-watermark, keeping input-log retention and source credit moving. Operators inspect, replay (explicit-only, through the ordinary input path), or drop entries via `flz dlq`; retention is bounded by age and total size with loud telemetry per deletion. Workflow operatives are out of scope — their escape is AbortAll + saga compensation.
 
 ## Requirements
 
 ### Requirement: Failing procedure invocations are retried with backoff before parking
 
-An Unbounded procedure invocation that fails — by returned error or by panic/unhandled exception — SHALL be retried up to a per-channel maximum (default 3 attempts) with exponential backoff and jitter. Authors SHALL be able to classify errors as non-retryable, which parks immediately without further attempts. A panic is retryable by default. The Rust and Java SDK dispatchers SHALL implement identical retry semantics, and the current catch-log-continue path SHALL be removed.
+A Stream procedure invocation that fails — by returned error or by panic/unhandled exception — SHALL be retried up to a per-channel maximum (default 3 attempts) with exponential backoff and jitter. Authors SHALL be able to classify errors as non-retryable, which parks immediately without further attempts. A panic is retryable by default. The Rust and Java SDK dispatchers SHALL implement identical retry semantics, and the current catch-log-continue path SHALL be removed.
 
 #### Scenario: Transient failure recovers within the retry budget
 
@@ -44,7 +44,7 @@ After the retry budget is exhausted the SDK SHALL ship a park frame (payload byt
 - **WHEN** a tier-on entity's poison payload froze the operative's min-watermark
 - **THEN** after the park the entity's consumed offset advances past it, the min-watermark resumes, input-log retention proceeds, and a parked source-credit loop resumes granting
 
-### Requirement: DLQ storage is per-procedure, durable, and bounded
+### Requirement: DLQ storage is per-procedure, durable, and workflow
 
 The controller SHALL store parked payloads under `app_data/dlq/<operative_class>/<procedure_id>/` as a JSONL metadata index (entry id, entity key, channel, origin offset, error, attempts, replay generation, timestamp) with payload bytes in adjacent per-entry blob files. Retention SHALL be bounded by age and total size (defaults 30 days / 4 GiB, more restrictive wins); deleting an entry by retention SHALL emit a dedicated loud telemetry event, since it discards already-parked data. Parking and retention SHALL be observable via counters (`dlq_parked_total`, `dlq_dropped_by_retention_total`, per-procedure entry count and bytes).
 
@@ -77,11 +77,11 @@ The CLI SHALL provide `flz dlq list <operative>` (entries with entity, channel, 
 - **WHEN** an operator runs `flz dlq drop`
 - **THEN** the entry and payload are deleted and an audit event records the drop with the entry's identity
 
-### Requirement: Bounded profile is explicitly out of scope with a documented equivalence
+### Requirement: Workflow profile is explicitly out of scope with a documented equivalence
 
-The dead-letter queue SHALL apply to Unbounded operatives only. For Bounded operatives a permanently-failing entity SHALL continue to fail its procedure (AbortAll) and trigger saga compensation — the profile's existing escape. Documentation SHALL state this equivalence and that configurable `on_entity_failure` policies (DeadLetter | MinSuccess) remain deferred.
+The dead-letter queue SHALL apply to Stream operatives only. For Workflow operatives a permanently-failing entity SHALL continue to fail its procedure (AbortAll) and trigger saga compensation — the profile's existing escape. Documentation SHALL state this equivalence and that configurable `on_entity_failure` policies (DeadLetter | MinSuccess) remain deferred.
 
-#### Scenario: Bounded failure path unchanged
+#### Scenario: Workflow failure path unchanged
 
-- **WHEN** a Bounded operative's entity fails permanently
+- **WHEN** a Workflow operative's entity fails permanently
 - **THEN** the procedure aborts and compensation runs exactly as before this change, and nothing is written to the DLQ store

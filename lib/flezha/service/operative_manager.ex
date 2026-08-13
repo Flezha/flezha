@@ -76,7 +76,7 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
-  # One bounded forward; an unreachable or crashed peer maps through `on_error`
+  # One workflow forward; an unreachable or crashed peer maps through `on_error`
   # instead of raising into the caller. Must exceed the remote start's own
   # internal budget (ProcessHub's 15s wait plus the :no_response retry ladder).
   @route_call_timeout_ms 30_000
@@ -238,11 +238,11 @@ defmodule Flezha.Service.OperativeManager do
   @doc """
   Stops `operative_id` the way its kind expects.
 
-  A bound `:bounded` operative is stopped **cooperatively**: a `BoundedStop`
+  A bound `:workflow` operative is stopped **cooperatively**: a `WorkflowStop`
   trips the SDK's cancellation token and the operative winds down to its own
-  `BoundedCompleted` (status "cancelled"), which drives the single teardown via
-  `ControlChannel.handle_bounded_completed/2`. Everything else (`:unbounded`, or
-  a bounded operative not bound to a runner) takes the hard `stop_operative/2`
+  `WorkflowCompleted` (status "cancelled"), which drives the single teardown via
+  `ControlChannel.handle_workflow_completed/2`. Everything else (`:stream`, or
+  a workflow operative not bound to a runner) takes the hard `stop_operative/2`
   teardown. An unreadable kind (not found / wedged) also falls back to the hard
   stop so `flz operative stop` always attempts removal.
 
@@ -262,9 +262,9 @@ defmodule Flezha.Service.OperativeManager do
 
   defp do_request_stop(namespace, operative_id) do
     case get_overwatch_state(namespace, operative_id) do
-      {:ok, %{builder: %{kind: :bounded}, runner_id: runner_id}}
+      {:ok, %{builder: %{kind: :workflow}, runner_id: runner_id}}
       when is_binary(runner_id) ->
-        case ControlUnit.bounded_stop(runner_id, operative_id) do
+        case ControlUnit.workflow_stop(runner_id, operative_id) do
           :ok -> {:ok, :cooperative}
           # No control unit to cooperate with — fall back to the hard teardown.
           {:error, _} -> stop_operative(namespace, operative_id)
@@ -278,7 +278,7 @@ defmodule Flezha.Service.OperativeManager do
   @doc """
   Hard teardown: stop the operative, disable its plugins, delete its on-disk
   state, and release its quota. Drives `RemOperative` (terminal) — the converged
-  teardown for both an explicit stop and a `BoundedCompleted`.
+  teardown for both an explicit stop and a `WorkflowCompleted`.
   """
   @spec stop_operative(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_operative(namespace, operative_id, opts \\ []) do
@@ -369,7 +369,7 @@ defmodule Flezha.Service.OperativeManager do
   # destination (or next host) can pull them via WAL-follows-operative.
   defp delete_operative_state_dir(operative_id) do
     if Flezha.State.Completion.exists?(operative_id) do
-      # Finished bounded operative: retain its state + completion record for the
+      # Finished workflow operative: retain its state + completion record for the
       # retention window so the outcome stays inspectable; `Flezha.State.Retention`
       # reclaims it once the window elapses.
       :ok
@@ -455,20 +455,20 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   @doc """
-  Start a bounded instance of `factory_id` under `instance_id`, answering
+  Start a workflow instance of `factory_id` under `instance_id`, answering
   `:duplicate` when that id is already claimed.
 
   The one place the registry's duplicate-id refusal is recognised, shared by
   every in-cluster spawner — a schedule's slot firing and a procedure's
   `spawn_or_deliver/5` — so how a collision reports is decided once.
   """
-  @spec start_bounded(String.t(), String.t(), String.t(), map(), Keyword.t()) ::
+  @spec start_workflow(String.t(), String.t(), String.t(), map(), Keyword.t()) ::
           {:ok, map()} | :duplicate | {:error, term()}
-  def start_bounded(namespace, instance_id, factory_id, init_values \\ %{}, opts \\ []) do
+  def start_workflow(namespace, instance_id, factory_id, init_values \\ %{}, opts \\ []) do
     builder = %OperativeBuilder{
       id: instance_id,
       factory_id: factory_id,
-      kind: :bounded,
+      kind: :workflow,
       init_values: init_values,
       opts: opts
     }
@@ -488,9 +488,9 @@ defmodule Flezha.Service.OperativeManager do
 
   @doc """
   Spawn-or-deliver `instance_id` in `namespace` — the controller half of an
-  procedure's `ctx.spawn_bounded`.
+  procedure's `ctx.spawn_workflow`.
 
-  A free id spawns a bounded instance of `factory_id` carrying `payload` as its
+  A free id spawns a workflow instance of `factory_id` carrying `payload` as its
   first input (`:seed_input`, ingested inside the instance's bind continue, so
   nothing can be ingested ahead of it). A taken id either receives `payload` as
   one more input (`if_running: :deliver`) or refuses (`if_running: :error`).
@@ -547,7 +547,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp spawn_fresh(namespace, instance_id, factory_id, payload, if_running) do
-    case start_bounded(namespace, instance_id, factory_id, %{}, seed_input: payload) do
+    case start_workflow(namespace, instance_id, factory_id, %{}, seed_input: payload) do
       {:ok, _} ->
         :spawned
 
@@ -664,7 +664,7 @@ defmodule Flezha.Service.OperativeManager do
               end
             catch
               # Started, then exited cleanly before we could read its binding —
-              # a run-once bounded operative that already completed, or a concurrent stop. A
+              # a run-once workflow operative that already completed, or a concurrent stop. A
               # clean exit is a successful start, not a failure; no live binding
               # remains, so `runner_id` is nil.
               :exit, {reason, _} when reason in [:normal, :noproc] ->

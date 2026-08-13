@@ -54,9 +54,9 @@ pub mod command_request {
         #[prost(message, tag = "21")]
         ReassignRunnerId(super::ReassignRunnerId),
         #[prost(message, tag = "22")]
-        BoundedCompleted(super::BoundedCompleted),
+        WorkflowCompleted(super::WorkflowCompleted),
         #[prost(message, tag = "23")]
-        BoundedStop(super::BoundedStop),
+        WorkflowStop(super::WorkflowStop),
         #[prost(message, tag = "24")]
         CreditWindowInit(super::CreditWindowInit),
         #[prost(message, tag = "25")]
@@ -106,17 +106,17 @@ pub struct AddOperative {
     pub factory_id: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
     pub init_values: ::prost::alloc::string::String,
-    /// Operative kind for this unit: "unbounded" or "bounded". Default
+    /// Operative kind for this unit: "stream" or "workflow". Default
     /// (when populated by the Controller from the operative's :kind) is
-    /// "unbounded".
+    /// "stream".
     #[prost(string, tag = "4")]
     pub kind: ::prost::alloc::string::String,
     /// Number of persisted Entities the Controller will ship RestoreInitState
-    /// for on this (re)bind. Non-zero only when re-binding a durable bounded
-    /// operative that has WAL state on disk (crash-resume). A durable bounded
+    /// for on this (re)bind. Non-zero only when re-binding a durable workflow
+    /// operative that has WAL state on disk (crash-resume). A durable workflow
     /// driver holds its first Procedure until this many Entity restores have
     /// landed, so a resumed run reads persisted state instead of cold-starting.
-    /// 0 for a fresh spawn, an unbounded operative, or an opted-out bounded one.
+    /// 0 for a fresh spawn, a stream operative, or an opted-out workflow one.
     #[prost(uint32, tag = "5")]
     pub resume_entity_count: u32,
 }
@@ -241,7 +241,7 @@ pub struct ProcHandoffItem {
 }
 /// One staged plugin-bound output of a procedure, buffered per entity
 /// while the procedure ran and shipped at its barrier
-/// (bounded-transactional-outbox). `seq_in_proc` orders the entries a single
+/// (workflow-transactional-outbox). `seq_in_proc` orders the entries a single
 /// entity staged during the procedure; `channel` is the producing plugin
 /// channel's name, carried through to the flushed frame's `channel`
 /// metadata.
@@ -257,10 +257,10 @@ pub struct ProcOutboxItem {
     pub payload: ::prost::alloc::vec::Vec<u8>,
 }
 /// SDK -> Controller, at each procedure barrier of a durable structured
-/// bounded operative (bounded-proc-journal): procedure `proc_idx` completed
+/// workflow operative (workflow-proc-journal): procedure `proc_idx` completed
 /// forward on `entities_ran` (wire entity identities) and released the
 /// serialized `handoff` batch plus the `outbox` its entities staged
-/// (bounded-transactional-outbox — nothing reached a plugin yet). The
+/// (workflow-transactional-outbox — nothing reached a plugin yet). The
 /// Controller appends ONE `proc_committed` entry carrying handoff AND outbox
 /// to the instance's proc-journal, fsyncs, replies ProcCommitResponse, and only
 /// then flushes the outbox; the driver starts the next procedure after the
@@ -305,7 +305,7 @@ pub struct ProcCommitResponse {
     pub error: ::prost::alloc::string::String,
 }
 /// SDK -> Controller, at each iteration boundary of a looping durable
-/// structured bounded operative (bounded-durable-loop): iteration `iter`
+/// structured workflow operative (workflow-durable-loop): iteration `iter`
 /// finished, having consumed the durable inbox up to `consumed_offset` and
 /// released `handoff` as its terminal batch. The Controller appends
 /// `iter_committed(iter, consumed_offset)` to the proc-journal, fsyncs, requests
@@ -337,13 +337,13 @@ pub struct IterCommitResponse {
     #[prost(string, tag = "3")]
     pub error: ::prost::alloc::string::String,
 }
-/// SDK -> Controller. A looping durable bounded operative found its inbox empty
+/// SDK -> Controller. A looping durable workflow operative found its inbox empty
 /// at the committed boundary of iteration `iter` and past the idle threshold:
-/// it has torn its own run down WITHOUT a BoundedCompleted (this is not a
+/// it has torn its own run down WITHOUT a WorkflowCompleted (this is not a
 /// terminal outcome). The Controller journals `parked(iter\[, wake_deadline_ms\])`
 /// and evicts the instance from the runner; the registry keeps it `suspended`
 /// until a new inbox append — or the wake deadline — rehydrates it
-/// (bounded-durable-suspension). `wake_deadline_ms` is 0 when the operative
+/// (workflow-durable-suspension). `wake_deadline_ms` is 0 when the operative
 /// declared no durable timer.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IterPark {
@@ -356,7 +356,7 @@ pub struct IterPark {
 }
 /// One journaled forward proc commit, shipped back on crash-resume so the driver
 /// can rebuild `plan_compensation`'s per-iteration `committed` input from
-/// durable state (bounded-durable-loop): procedure `proc_idx` of iteration `iter`
+/// durable state (workflow-durable-loop): procedure `proc_idx` of iteration `iter`
 /// completed forward on `entities_ran`.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProcCommittedProc {
@@ -368,7 +368,7 @@ pub struct ProcCommittedProc {
     pub entities_ran: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
 /// What one committed procedure of the in-flight iteration released, keyed by
-/// its proc_idx (bounded-branching). A procedure tree re-seeds each uncommitted
+/// its proc_idx (workflow-branching). A procedure tree re-seeds each uncommitted
 /// child branch from its own parent's edge, so the resume state carries every
 /// in-flight commit's handoff — not just the latest one's.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -379,7 +379,7 @@ pub struct ProcEdgeHandoff {
     pub handoff: ::prost::alloc::vec::Vec<ProcHandoffItem>,
 }
 /// Committed proc-journal state shipped back on crash-resume
-/// (bounded-proc-journal). `iter` is the iteration to resume at — the one after
+/// (workflow-proc-journal). `iter` is the iteration to resume at — the one after
 /// the highest journaled `iter_committed` (0 for a non-looping chain);
 /// `committed_proc_idxs` are the procedures already committed inside that
 /// still-in-flight iteration, which the driver skips, and `proc_handoffs` what
@@ -388,10 +388,10 @@ pub struct ProcEdgeHandoff {
 /// loop. `committed_procs` carries every forward proc commit with its iteration
 /// (compensation planning), `consumed_offset` the inbox offset the last
 /// committed iteration consumed, and `parked` / `wake_deadline_ms` the
-/// suspension record (bounded-durable-suspension).
+/// suspension record (workflow-durable-suspension).
 ///
 /// `rewind_undo` carries the procedures a rewind unwound that have not been
-/// compensated yet (bounded-loop-rewind). The driver runs them through the
+/// compensated yet (workflow-loop-rewind). The driver runs them through the
 /// ordinary compensation planner before resuming forward at `iter`, which the
 /// journal has already folded back to the rewound-to iteration. Each undo
 /// journals a `compensated` entry, so the list shrinks across a crash and
@@ -434,21 +434,21 @@ pub struct RestoreInitState {
     pub snapshot_bytes: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "3")]
     pub change_log_bytes: ::prost::alloc::vec::Vec<u8>,
-    /// Saga crash-resume (bounded-operative-saga): the Controller sets these
+    /// Saga crash-resume (workflow-operative-saga): the Controller sets these
     /// from the per-Entity compensation markers it persisted for a durable
-    /// bounded operative. `has_compensation_intent` ⇒ this Entity's procedure
+    /// workflow operative. `has_compensation_intent` ⇒ this Entity's procedure
     /// completed forward and may need undo; `has_compensation_done` ⇒ its
     /// compensation already ran (skip it on resume). Both false for a
-    /// unbounded operative or a bounded one that never compensated.
+    /// stream operative or a workflow one that never compensated.
     #[prost(bool, tag = "4")]
     pub has_compensation_intent: bool,
     #[prost(bool, tag = "5")]
     pub has_compensation_done: bool,
-    /// Bounded proc-journal crash-resume (bounded-proc-journal): the instance's
+    /// Workflow proc-journal crash-resume (workflow-proc-journal): the instance's
     /// committed proc indexes + latest journaled handoff, shipped in the same
     /// restore exchange as the compensation markers (no second round-trip).
     /// Absent when the instance has no journal (fresh spawn, opted-out class,
-    /// unbounded operative, pre-upgrade instance) — the driver then keeps the
+    /// stream operative, pre-upgrade instance) — the driver then keeps the
     /// re-run-from-top behaviour.
     #[prost(message, optional, tag = "6")]
     pub proc_journal: ::core::option::Option<ProcJournalState>,
@@ -535,19 +535,19 @@ pub struct ReassignRunnerId {
     #[prost(string, tag = "1")]
     pub new_id: ::prost::alloc::string::String,
 }
-/// SDK -> Controller. Emitted by a bounded operative when it reaches an exit
+/// SDK -> Controller. Emitted by a workflow operative when it reaches an exit
 /// trigger (chain complete, ctx.complete, loop terminal, duration, or external
 /// stop). `status` is "ok" on clean completion, "error" on failure (with
 /// `error` describing it), or "cancelled" on a cooperative external stop;
 /// `result` carries the terminal result/error payload. The Controller drives
 /// the same stop/teardown path as an explicit stop (deregister-on-completion)
-/// so a finished bounded operative is removed from the durable registry and
+/// so a finished workflow operative is removed from the durable registry and
 /// never replayed on boot or misjudged by convergence. Direction is reversed
 /// like RunnerShutdownNotification: SDK -> Controller over the
 /// "control_command" payload_id; old Controllers ignore the unknown variant via
 /// Protox unknown-field handling.
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct BoundedCompleted {
+pub struct WorkflowCompleted {
     #[prost(string, tag = "1")]
     pub operative_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
@@ -606,15 +606,15 @@ pub struct ParkPayloadAck {
     #[prost(string, tag = "1")]
     pub park_id: ::prost::alloc::string::String,
 }
-/// Controller -> SDK. Cooperative external stop for a bounded operative
+/// Controller -> SDK. Cooperative external stop for a workflow operative
 /// (`flz operative stop`), distinct from the hard `RemOperative` teardown: the
 /// SDK trips its cancellation token, lets in-flight work unwind, runs any saga
-/// compensation, then emits the normal `BoundedCompleted` (status "cancelled")
+/// compensation, then emits the normal `WorkflowCompleted` (status "cancelled")
 /// that drives the single teardown path. Rides the "control_command" payload_id
 /// like other CommandRequest variants; SDKs that do not recognise it skip it via
 /// the protobuf decoder (degrading to no cooperative stop).
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct BoundedStop {
+pub struct WorkflowStop {
     #[prost(string, tag = "1")]
     pub operative_id: ::prost::alloc::string::String,
 }

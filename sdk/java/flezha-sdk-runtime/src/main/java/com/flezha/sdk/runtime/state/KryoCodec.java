@@ -22,9 +22,9 @@ import javax.annotation.Nonnull;
 
 /**
  * Kryo-backed serializer for per-Entity state and per-Entity Change
- * payloads. Constructed once per {@code UnboundedOperativeInstance}; the {@code userTypes}
+ * payloads. Constructed once per {@code StreamOperativeInstance}; the {@code userTypes}
  * list aggregates the {@code Procedure.kryoTypes()} returns across every Procedure in
- * the UnboundedOperative class.
+ * the StreamOperative class.
  *
  * <p>Stable type IDs are essential for cross-version compatibility under
  * additive Change evolution: a new Change variant added in v2 ships at id

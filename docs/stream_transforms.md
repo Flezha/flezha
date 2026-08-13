@@ -83,17 +83,17 @@ It is contained at the routing seam and the value climbs the channel's
 under the channel's own `retry_max` / `retry_backoff_ms` budget, parked to the
 dead-letter queue on exhaustion. Later inputs keep routing.
 
-On a **bounded** chain there is no DLQ; abort-and-compensate is the escape. An
+On a **workflow** chain there is no DLQ; abort-and-compensate is the escape. An
 in-process edge closure there runs on the driver thread rather than inside an
 entity invocation — the one author closure the existing `catch_unwind`s miss —
 so `extend_mapped` contains it and turns it into a terminal chain error the
-saga compensates, with the instance still reporting `BoundedCompleted`
+saga compensates, with the instance still reporting `WorkflowCompleted`
 (status `error`). See
 `docs/multi_input_procedures.md` for the per-site undo-scope table; a `map` and
 a merge mapping are the same closure on the same seam.
 
-An edge **key** never reaches the bounded driver: a keyed edge makes its
-consumer dynamic, and a dynamic procedure is refused on a bounded operative.
+An edge **key** never reaches the workflow driver: a keyed edge makes its
+consumer dynamic, and a dynamic procedure is refused on a workflow operative.
 
 ## Keying replaces `entity_key`
 
@@ -131,8 +131,8 @@ All build-time, both SDKs, same names:
 A re-declaration carrying neither stays the legal fan-in / repeated-`.into`
 no-op.
 
-Bounded operatives additionally refuse any edge closure on an **entry**
-channel (`BuildBoundedError::MergeFromEntryChannel`): the bounded seed is a
+Workflow operatives additionally refuse any edge closure on an **entry**
+channel (`BuildWorkflowError::MergeFromEntryChannel`): the workflow seed is a
 bare payload that bypasses the routing seam, so a closure declared there could
 never be selected.
 

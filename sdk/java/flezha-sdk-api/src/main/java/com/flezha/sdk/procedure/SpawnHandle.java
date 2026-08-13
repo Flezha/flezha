@@ -11,7 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The async result of a {@link ProcedureCtx#spawnBounded} request. Observing it
+ * The async result of a {@link ProcedureCtx#spawnWorkflow} request. Observing it
  * is optional: a handle nobody looks at logs one warning if the request failed,
  * so a fire-and-forget requester never loses the diagnosis.
  *
@@ -44,7 +44,7 @@ public final class SpawnHandle {
         result.whenComplete((outcome, error) -> {
             if (error != null && !claimed.get()) {
                 LOG.warn(
-                        "spawnBounded({}, {}) failed: {}",
+                        "spawnWorkflow({}, {}) failed: {}",
                         instanceId,
                         factoryId,
                         unwrap(error).getMessage());
@@ -52,7 +52,7 @@ public final class SpawnHandle {
         });
     }
 
-    /** A handle awaiting the controller's {@code SpawnBoundedResponse}. */
+    /** A handle awaiting the controller's {@code SpawnWorkflowResponse}. */
     @Nonnull
     public static SpawnHandle pending(
             @Nonnull String instanceId, @Nonnull String factoryId, @Nonnull CompletableFuture<String> reply) {

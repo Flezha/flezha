@@ -11,7 +11,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   is safe by construction.
 
   The delivery guarantee is derived, never configured: a source with a
-  transactional outbox (effectively-once unbounded, or durable bounded) already
+  transactional outbox (effectively-once stream, or durable workflow) already
   stamps `flz.seq` / `flz.key` / `flz.epoch` identity, and a durable receiver
   already absorbs duplicates — retry-until-confirmed across those two halves is
   effectively-once. A source with no outbox gets retry-until-confirmed without

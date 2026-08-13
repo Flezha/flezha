@@ -63,7 +63,7 @@ public abstract class Stream<T> implements EdgeStream<T> {
     /**
      * Declare a codec for this channel's payload, using the SDK's default
      * JSON serialization. <b>Required</b> on every inter-procedure channel of
-     * a durable structured bounded operative — the handoff between two
+     * a durable structured workflow operative — the handoff between two
      * procedures is journaled at the proc barrier and re-seeded from that blob
      * on crash-resume.
      */

@@ -70,11 +70,11 @@ pub enum ActivationKind {
     /// [`PrepareAnswer`] per payload, in order, before the core enqueues
     /// anything to an entity mailbox.
     KeyRequest(KeyRequest),
-    /// A bounded run-sugar body: the seed args cross once; the host runs the
+    /// A workflow run-sugar body: the seed args cross once; the host runs the
     /// imperative body (emit/recv/cancelled ride their own ABI calls) and
-    /// completes with [`ActivationOutcome::BoundedDone`].
-    BoundedRun { args: Vec<u8> },
-    /// Saga compensation for one bounded entity: the recorded forward
+    /// completes with [`ActivationOutcome::WorkflowDone`].
+    WorkflowRun { args: Vec<u8> },
+    /// Saga compensation for one workflow entity: the recorded forward
     /// outputs cross; the host runs `compensate` and answers a work outcome
     /// whose single effect carries any undo outputs.
     CompensateRun { outputs: Vec<Vec<u8>> },
@@ -168,9 +168,9 @@ pub enum ActivationOutcome {
     /// The whole activation failed before per-item processing (host-side
     /// panic equivalent). The core treats every item per the error's class.
     Failed(WorkError),
-    /// A bounded run-sugar body returned. `completed` mirrors
+    /// A workflow run-sugar body returned. `completed` mirrors
     /// `ctx.complete(...)` having been called; `result` is its payload.
-    BoundedDone {
+    WorkflowDone {
         completed: bool,
         result: Vec<u8>,
     },
@@ -475,7 +475,7 @@ mod fixture_tests {
                 "06020101700100000166",
             ),
             (
-                ActivationKind::BoundedRun {
+                ActivationKind::WorkflowRun {
                     args: b"go".to_vec(),
                 },
                 "0702676f000166",

@@ -242,7 +242,7 @@ pub struct EntitySlot {
     pub dispatcher: Arc<dyn ProcedureDispatcher>,
     pub procedure_id: ProcedureId,
     pub entity_key: Option<Arc<str>>,
-    pub instance: Weak<crate::operative::instance::UnboundedInstance>,
+    pub instance: Weak<crate::operative::instance::StreamInstance>,
     pub topology: Arc<crate::operative::topology::OperativeTopology>,
     /// FIFO wait list for `Block`-policy producers parked on a full
     /// mailbox. Drained one entry at a time by `drain_entity` after
@@ -264,7 +264,7 @@ pub struct EntitySlot {
     pub flush_buffer: Arc<Mutex<Box<dyn crate::flusher::FlushableBuffer>>>,
     /// Frozen-at-instance-start persistence flag. Resolved by
     /// `operative::persistence::resolve_persistence_enabled` from the
-    /// runner override + UnboundedOperative class const at `UnboundedInstance::new`
+    /// runner override + StreamOperative class const at `StreamInstance::new`
     /// time and propagated here.
     pub persistence_enabled: bool,
     /// Per-Entity WAL seq counter. The flusher fetches-and-adds once
@@ -364,13 +364,13 @@ impl EntitySlot {
 
     /// Restore-time disposition of queued input: drop it only where the
     /// controller will hand it back. It journals inputs before forwarding for
-    /// the effectively-once tier (input log) and for durable bounded instances
+    /// the effectively-once tier (input log) and for durable workflow instances
     /// (proc inbox), and for nothing else — so a plain stateful Operative's
     /// mailbox is the only copy its input has, and clearing it is data loss.
     /// Where the log does exist, keeping the queue would double-apply it and,
     /// during a correction, re-order it behind the replayed slice.
     ///
-    /// A bounded Entity reaches this too, and is inert: its driver feeds
+    /// A workflow Entity reaches this too, and is inert: its driver feeds
     /// stages directly, so the mailbox is never pushed to.
     ///
     /// Returns the number of items discarded, counted into
@@ -421,7 +421,7 @@ pub trait ProcedureDispatcher: Send + Sync + 'static {
         state: &mut Box<dyn Any + Send>,
         flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
         timers: &mut crate::timer::PendingTimers,
-        instance: &Weak<crate::operative::instance::UnboundedInstance>,
+        instance: &Weak<crate::operative::instance::StreamInstance>,
     ) -> ItemDisposition;
 
     fn procedure_id(&self) -> ProcedureId;
@@ -452,11 +452,11 @@ pub trait ProcedureDispatcher: Send + Sync + 'static {
     /// `compensate_collecting`.
     fn event_time_of(&self, payload: &EntityPayload) -> Option<u64>;
 
-    /// Bounded-driver entry: run `Procedure::run` once on `input` against the
+    /// Workflow-driver entry: run `Procedure::run` once on `input` against the
     /// type-erased entity `state`, collecting inter-procedure output and
-    /// routing plugin-bound output through `sink` — instead of the unbounded
-    /// push-dispatch mailbox path. Used only by the sequential bounded driver
-    /// (`crate::bounded`); unbounded dispatch never calls it. `topology`
+    /// routing plugin-bound output through `sink` — instead of the stream
+    /// push-dispatch mailbox path. Used only by the sequential workflow driver
+    /// (`crate::workflow`); stream dispatch never calls it. `topology`
     /// resolves the producer-edge channel's plugin serializer. Changes are
     /// folded into in-memory state via `StateHandle::apply`; Phase-3 durability
     /// wires the WAL flush here.
@@ -465,22 +465,22 @@ pub trait ProcedureDispatcher: Send + Sync + 'static {
         input: Arc<dyn Any + Send + Sync>,
         state: &mut Box<dyn Any + Send>,
         topology: &crate::operative::topology::OperativeTopology,
-        sink: &mut dyn crate::bounded::BoundedCollectSink,
-    ) -> Result<(), crate::bounded::BoundedError>;
+        sink: &mut dyn crate::workflow::WorkflowCollectSink,
+    ) -> Result<(), crate::workflow::WorkflowError>;
 
-    /// Bounded-saga rollback entry: invoke `Procedure::compensate` once for this
+    /// Workflow-saga rollback entry: invoke `Procedure::compensate` once for this
     /// entity against its type-erased `state`, handing back the `outputs` the
     /// entity collected during its forward run (downcast to `Arc<S::Output>`)
     /// and routing any compensation emit through `sink`. Used only by the
-    /// bounded driver's reverse-order rollback; unbounded dispatch never calls
+    /// workflow driver's reverse-order rollback; stream dispatch never calls
     /// it. `topology` resolves the producer-edge channel's plugin serializer.
     fn compensate_collecting(
         &self,
         outputs: Vec<Arc<dyn Any + Send + Sync>>,
         state: &mut Box<dyn Any + Send>,
         topology: &crate::operative::topology::OperativeTopology,
-        sink: &mut dyn crate::bounded::BoundedCollectSink,
-    ) -> Result<(), crate::bounded::BoundedError>;
+        sink: &mut dyn crate::workflow::WorkflowCollectSink,
+    ) -> Result<(), crate::workflow::WorkflowError>;
 
     /// Warm-restart: rebuild the type-erased entity `state` in place from a
     /// persisted `RestoreInitState` payload (snapshot + WAL change-log),

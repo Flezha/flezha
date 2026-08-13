@@ -1,7 +1,7 @@
 # rust-sdk-dispatch Specification
 
 ## Purpose
-This capability covers the Rust SDK's Operative/Procedure/Entity dispatch path: sticky per-Entity ordering invariants under ThreadPool dispatch, the dispatch throughput floor on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Entity flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the bounded `state.apply` hot-path cost, drain-time coalescing, the public `ProcedureTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
+This capability covers the Rust SDK's Operative/Procedure/Entity dispatch path: sticky per-Entity ordering invariants under ThreadPool dispatch, the dispatch throughput floor on the reference workload, the per-message dispatch-overhead budget, live Operative-instance registry concurrency, reconnect semantics across transient and intentional disconnects, command-dispatch byte-stability for surviving wire commands, the per-Entity flusher's single-thread linger drain (with toggle-aware semantics for `persistence_enabled = false`), the workflow `state.apply` hot-path cost, drain-time coalescing, the public `ProcedureTestHarness` testing surface, and the 16-byte version header stamped on persisted Changes.
 ## Requirements
 ### Requirement: Sticky Per-Entity Ordering Under ThreadPool Dispatch
 
@@ -80,7 +80,7 @@ The 4-op invariant is an analytical bound enforced by code review, consistent wi
 
 ### Requirement: Live Registry Concurrent Access
 
-The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single procedure's critical section. Operative classes are declared via `FlezhaRunner::define_unbounded::<R: UnboundedOperative>()`, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<UnboundedInstance>` or equivalent handle. Bounded instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
+The live Operative-instance registry used by the Rust SDK SHALL support concurrent reads from many threads without inter-reader blocking, and writes (Operative instance create / destroy) SHALL NOT block readers for longer than a single procedure's critical section. Operative classes are declared via `FlezhaRunner::define_stream::<R: StreamOperative>()`, callable before and after `.start()`/`.run()` on a runner obtained from `Flezha::create_runner(namespace)`; the class registries SHALL be overwrite-on-insert and SHALL support `unregister_class` for on-demand removal. `AddOperative` / `RemOperative` wire commands add and remove Operative instances by what the wire calls `operative_id` (mapped to the SDK's `operative_instance_id`); lookup by that id returns an `Arc<StreamInstance>` or equivalent handle. Workflow instances SHALL record their `factory_id` so live instances of a factory are attributable during a removal check.
 
 The "registry" name carries forward from the pre-change implementation; what's stored in it is unchanged by this requirement. The concurrency guarantees are unchanged.
 
@@ -89,11 +89,11 @@ The "registry" name carries forward from the pre-change implementation; what's s
 - **THEN** no reader thread observes a latency spike greater than 1 millisecond attributable to the writer
 
 #### Scenario: Registry preserves the declaration contract
-- **WHEN** user code calls `.define_unbounded::<R>()` on a `FlezhaRunner` and later `AddOperative` triggers an Operative instance creation
-- **THEN** the resulting `UnboundedInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-procedure-entity-model` capability's scenarios
+- **WHEN** user code calls `.define_stream::<R>()` on a `FlezhaRunner` and later `AddOperative` triggers an Operative instance creation
+- **THEN** the resulting `StreamInstance` SHALL be looked up by id and have its entry channels routable exactly as the spec requires, observable via the `operative-procedure-entity-model` capability's scenarios
 
 #### Scenario: Post-start removal is serialized with AddOperative
-- **WHEN** a `remove_unbounded` request and an `AddOperative` command for the same factory race
+- **WHEN** a `remove_stream` request and an `AddOperative` command for the same factory race
 - **THEN** both SHALL be processed on the coordinator loop in some serial order — either the add lands first and the removal returns `Err(FlezhaError::OperativeTypeInUse { .. })`, or the removal lands first and the add fails as an unknown factory — with no interleaving where the removal succeeds while an instance exists
 
 ### Requirement: Reconnect Semantics Preserved
@@ -123,7 +123,7 @@ Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `Con
 `OperativeMessage` and `OperativeMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Procedure `handle_message` (see `operative-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
 
 #### Scenario: AddOperative with init_values produces same response shape
-- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_unbounded::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
+- **WHEN** the agent sends `AddOperative{operative_id:"p1", factory_id:"market", init_values:"{\"symbol\":\"BTC\"}"}` and the identical command is sent to both pre- and post-change SDK builds where `"market"` is registered via the new `register_stream::<MarketOperative>()` (post-change) or `register_factory("market", ...)` (pre-change)
 - **THEN** both SDKs SHALL return a `CommandResponse` with the same `reference_id`, `status="success"`, and `errors=[]` (the `raw_data` bytes are not part of this requirement because the post-change `init_values` semantics are per-Procedure, see the `operative-procedure-entity-model` capability)
 
 #### Scenario: RunnerDisconnect closes sockets identically
@@ -136,18 +136,18 @@ Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `Con
 
 ### Requirement: Per-Entity flusher single-thread linger drain
 
-The Rust SDK SHALL spawn at most one `EntityFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::define_unbounded::<R>()` call that declares a Procedure with a non-`NoChange` Change type. Programs that declare only `NoChange` Procedures SHALL NOT spawn a flusher thread.
+The Rust SDK SHALL spawn at most one `EntityFlusher` OS thread per process. The thread SHALL be lazy-initialized via `OnceLock` on the first `FlezhaRunner::define_stream::<R>()` call that declares a Procedure with a non-`NoChange` Change type. Programs that declare only `NoChange` Procedures SHALL NOT spawn a flusher thread.
 
 The flusher SHALL run an infinite loop that on each iteration: (a) sleeps for `linger_ms` milliseconds (default 5; configurable via env var `FLEZHA_FLUSH_LINGER_MS`); (b) iterates the registered Entities; (c) for each Entity, attempts to acquire the buffer's `Mutex`, and on success calls `FlushableBuffer::drain_to_frames` which: applies coalescing, builds wire frames, releases the lock; (d) for each frame, invokes the Entity's `send_frame` function pointer.
 
 #### Scenario: NoChange-only program does not spawn flusher
 
-- **WHEN** a Rust process calls `.define_unbounded::<R>()` for an Operative whose Procedures all have `Change = NoChange`
+- **WHEN** a Rust process calls `.define_stream::<R>()` for an Operative whose Procedures all have `Change = NoChange`
 - **THEN** no `EntityFlusher` thread SHALL be spawned, observable via thread-count assertions in the test (`std::thread::available_parallelism` baseline + assertion that no `flezha-flusher` named thread exists)
 
 #### Scenario: First non-NoChange declaration starts the flusher
 
-- **WHEN** a Rust process calls `.define_unbounded::<R>()` for an Operative containing a Procedure with `Change = MyChange`
+- **WHEN** a Rust process calls `.define_stream::<R>()` for an Operative containing a Procedure with `Change = MyChange`
 - **THEN** exactly one OS thread named `flezha-flusher` SHALL be spawned for the lifetime of the process
 
 ### Requirement: Toggle-aware drain semantics for persistence_enabled = false
@@ -342,7 +342,7 @@ On a fresh process start (not a reconnect) the SDK SHALL load its node-local per
 The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) -> Result<FlezhaRunner, FlezhaError>` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start(&self)` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2 carrying the runner's currently-declared factory set (possibly empty), wait for `AssignRunnerId`, and return `Ok(&Self)` for chaining. The started runner SHALL expose `namespace()` (replacing `id()` — the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is never the handle's identity) and `operatives()`. `.run(&self)` SHALL be sugar for `.start()` followed by `await_termination()`, never an independent implementation. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical.
 
 #### Scenario: Successful connection returns a live handle
-- **WHEN** an SDK user calls `Flezha::create_runner("my_app")?.define_unbounded::<MarketOperative>()?.start()` (binding the runner with `let`) with the controller running
+- **WHEN** an SDK user calls `Flezha::create_runner("my_app")?.define_stream::<MarketOperative>()?.start()` (binding the runner with `let`) with the controller running
 - **THEN** the call blocks until the connect handshake completes, and the runner's `namespace()` returns `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
@@ -350,7 +350,7 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 - **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
 
 #### Scenario: start() with zero defined operative types is legal
-- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.define_unbounded(...)`/`.define_bounded(...)` calls and no `inventory`-harvested classes on the binary
+- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.define_stream(...)`/`.define_workflow(...)` calls and no `inventory`-harvested classes on the binary
 - **THEN** the runner SHALL connect successfully with an empty factory list in the handshake init message, and operative types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder does not compile
@@ -359,20 +359,20 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 
 ### Requirement: Runner declaration and connection failures surface as typed Results
 
-Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.define_unbounded::<A>()?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidBounded(#[from] BuildBoundedError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `entities_for` overrides, type mismatches, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
+Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.define_stream::<A>()?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidWorkflow(#[from] BuildWorkflowError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `entities_for` overrides, type mismatches, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
 
-`operatives()` SHALL return `Result<HashMap<String, Arc<UnboundedInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
+`operatives()` SHALL return `Result<HashMap<String, Arc<StreamInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
 
 #### Scenario: Invalid topology is reported as a Result, not a panic
 - **WHEN** an Operative declares a channel whose consumer's input type does not match the channel payload type
-- **THEN** `.define_unbounded::<ThatOperative>()` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::TypeMismatch` diagnosis naming the mismatch — the call SHALL NOT panic
+- **THEN** `.define_stream::<ThatOperative>()` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::TypeMismatch` diagnosis naming the mismatch — the call SHALL NOT panic
 
 #### Scenario: A connection failure at start() is a Result, not a panic
 - **WHEN** the confirmation channel from the runner thread closes without delivering `RunnerIdConfirmation` (e.g. the runner thread panicked internally)
 - **THEN** `.start()` SHALL return `Err(FlezhaError::ConnectFailed(..))` — the caller's thread SHALL NOT panic
 
 #### Scenario: The fluent chain compiles under one question mark
-- **WHEN** user code writes `Flezha::create_runner("ns")?.define_unbounded::<A>()?.define_bounded::<B>()?.run()?` in a function returning `Result<(), FlezhaError>`
+- **WHEN** user code writes `Flezha::create_runner("ns")?.define_stream::<A>()?.define_workflow::<B>()?.run()?` in a function returning `Result<(), FlezhaError>`
 - **THEN** it SHALL compile without intermediate `map_err` calls
 
 #### Scenario: operatives() on a never-started runner
@@ -428,30 +428,30 @@ The Rust SDK SHALL allow at most one runner to be **started** per process. `Flez
 
 ### Requirement: On-demand operative type declaration and removal (Rust)
 
-`FlezhaRunner` SHALL provide `define_unbounded::<R>()` / `define_bounded::<T>()` and their inverses `remove_unbounded::<R>()` / `remove_bounded::<T>()`, each returning `Result<&Self, FlezhaError>`, legal before and after `.start()`. The declared factory set SHALL be per-runner, starting empty each generation (inventory-harvested classes are merged into it at every `.start()`). A post-start define or remove SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `remove_*` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperativeTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`.
+`FlezhaRunner` SHALL provide `define_stream::<R>()` / `define_workflow::<T>()` and their inverses `remove_stream::<R>()` / `remove_workflow::<T>()`, each returning `Result<&Self, FlezhaError>`, legal before and after `.start()`. The declared factory set SHALL be per-runner, starting empty each generation (inventory-harvested classes are merged into it at every `.start()`). A post-start define or remove SHALL update the process-global class registries and ship the runner's full current factory set to the controller via the `UpdateFactories` control message (see the `runner-factory-sync` capability); the reconnect init frame SHALL serialize the same per-runner set, so reconnect naturally resyncs post-start mutations. `remove_*` SHALL return `Err(FlezhaError::NotDefined { .. })` for an undefined factory and `Err(FlezhaError::OperativeTypeInUse { factory_id, live_instances })` when live instances of the factory exist, leaving the type defined. Duplicate definition of the same factory id on one runner SHALL return `Err(FlezhaError::DuplicateFactoryId { .. })`.
 
 #### Scenario: Pre-start remove shapes the init frame
 - **WHEN** user code defines A and B on an unstarted runner, removes B, then starts
 - **THEN** the handshake init frame's factory list SHALL contain only A
 
 #### Scenario: Post-start define ships UpdateFactories
-- **WHEN** user code calls `.define_unbounded::<C>()` on a started runner already declaring A
+- **WHEN** user code calls `.define_stream::<C>()` on a started runner already declaring A
 - **THEN** the SDK SHALL send an `UpdateFactories` control message carrying the full set {A, C}, and a subsequent `AddOperative{factory_id: C}` SHALL succeed
 
 #### Scenario: Post-start remove with live instances refuses
 - **GIVEN** a started runner with one live instance of factory `"market"`
-- **WHEN** user code calls `.remove_unbounded::<MarketOperative>()`
+- **WHEN** user code calls `.remove_stream::<MarketOperative>()`
 - **THEN** the call SHALL return `Err(FlezhaError::OperativeTypeInUse { factory_id: "market", live_instances: 1 })` and the type SHALL remain defined
 
 #### Scenario: Removing an undefined factory
-- **WHEN** user code calls `.remove_unbounded::<X>()` and X's factory id is not in the runner's declared set
+- **WHEN** user code calls `.remove_stream::<X>()` and X's factory id is not in the runner's declared set
 - **THEN** the call SHALL return `Err(FlezhaError::NotDefined { .. })`
 
 ### Requirement: A restore SHALL NOT silently discard un-recoverable queued input
 
 A restore SHALL discard an Entity's queued input only where the Controller will re-forward it. Where the Controller will not re-forward it, the queued input SHALL NOT be silently destroyed.
 
-`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Overwatch.journal_input/2` journals for the effectively-once tier and for durable bounded instances, and passes every other operative through untouched. A plain stateful unbounded operative, which is the default configuration, has no such log.
+`restore_into_slot` today clears the mailbox on every restore, justified by the claim that every queued input "is durable in the input log the controller is about to re-forward". That claim holds only for classes whose inputs are journaled before forwarding — `Overwatch.journal_input/2` journals for the effectively-once tier and for durable workflow instances, and passes every other operative through untouched. A plain stateful stream operative, which is the default configuration, has no such log.
 
 #### Scenario: Journaled input may be discarded
 - **GIVEN** an Entity whose class journals its inputs before forwarding
@@ -517,15 +517,15 @@ The frame SHALL carry a payload-id constant defined alongside the sink's other p
 
 ### Requirement: The Rust SDK SHALL take the proc-journal from the bind
 
-`start_bounded_resumable` SHALL accept the instance's proc-journal alongside the
-restore count and SHALL pass it to `BoundedInstance::new`, so the resume state is
+`start_workflow_resumable` SHALL accept the instance's proc-journal alongside the
+restore count and SHALL pass it to `WorkflowInstance::new`, so the resume state is
 present before the driver is spawned. The `RestoreInitState` handler SHALL NOT
 carry the journal — that frame is per-Entity and is not shipped for a class with
 no persisted Entity.
 
 #### Scenario: A resuming bind with no Entity restores still resumes at its iteration
 
-- **GIVEN** a durable bounded class whose procedures hold no per-Entity state, so no `RestoreInitState` is shipped
+- **GIVEN** a durable workflow class whose procedures hold no per-Entity state, so no `RestoreInitState` is shipped
 - **WHEN** the controller binds it with `AddOperative.proc_journal`
 - **THEN** the driver SHALL enter the journaled iteration and skip the procedures committed in it
 

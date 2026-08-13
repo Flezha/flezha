@@ -12,14 +12,14 @@ defmodule Flezha.State.PersistenceResolver do
   Configuration keys:
 
     * `:operative_persistence` — `%{<OperativeClass> => boolean}`. Default `true`.
-      Resolves both `persistence_enabled?/2` and, for `:bounded`,
+      Resolves both `persistence_enabled?/2` and, for `:workflow`,
       `persistent_state?/3` (durable-by-default, opt-out per class).
     * `:time_travel_retention_hours` — `%{<OperativeClass> => non_neg_integer}`.
        Global default `6`. `0` disables time-travel for that Operative class.
-    * `:bounded_completed_retention_hours` — `%{<OperativeClass> => non_neg_integer}`
-       per-class override for how long a finished bounded operative's data is
-       retained; global default `:default_bounded_completed_retention_hours`
-       (`72`, env `FLEZHA_BOUNDED_RETENTION_HOURS`).
+    * `:workflow_completed_retention_hours` — `%{<OperativeClass> => non_neg_integer}`
+       per-class override for how long a finished workflow operative's data is
+       retained; global default `:default_workflow_completed_retention_hours`
+       (`72`, env `FLEZHA_WORKFLOW_RETENTION_HOURS`).
     * `:compact_after_bytes` — per-Procedure threshold, sourced from SDK
        metadata first; global default `8 * 1024 * 1024`.
     * `:output_stall_timeout_ms` — `%{<OperativeClass> => non_neg_integer}`.
@@ -47,7 +47,7 @@ defmodule Flezha.State.PersistenceResolver do
   @default_output_stall_timeout_ms 60_000
   @default_compaction_timeout_ms 30_000
   @default_compact_after_age_ms 300_000
-  @default_bounded_completed_retention_hours 72
+  @default_workflow_completed_retention_hours 72
 
   @spec persistence_enabled?(binary(), map()) :: boolean()
   def persistence_enabled?(operative_class, metadata \\ %{}) when is_binary(operative_class) do
@@ -63,22 +63,22 @@ defmodule Flezha.State.PersistenceResolver do
   `persistent_state?` capability that gates bind-time restore (crash-resume)
   and `:get_entity_state` introspection:
 
-    * `:unbounded` — always durable.
-    * `:bounded` — durable **by default**, opt-out per class (same precedence
+    * `:stream` — always durable.
+    * `:workflow` — durable **by default**, opt-out per class (same precedence
       as `persistence_enabled?/2`: operator override → instance metadata →
       default `true`).
     * any other kind — not durable.
 
   Distinct from the pure per-kind `Flezha.Operative.Kind.capable?/2` flags
   (`time_travel?`, `dynamic_entities?`, `output_stall_watch?`) which a durable
-  bounded operative does NOT inherit.
+  workflow operative does NOT inherit.
   """
   @spec persistent_state?(atom(), binary(), map()) :: boolean()
   def persistent_state?(kind, operative_class, metadata \\ %{})
 
-  def persistent_state?(:unbounded, _operative_class, _metadata), do: true
+  def persistent_state?(:stream, _operative_class, _metadata), do: true
 
-  def persistent_state?(:bounded, operative_class, metadata)
+  def persistent_state?(:workflow, operative_class, metadata)
       when is_binary(operative_class),
       do: persistence_enabled?(operative_class, metadata)
 
@@ -99,26 +99,26 @@ defmodule Flezha.State.PersistenceResolver do
   end
 
   @doc """
-  How many hours a finished bounded operative's data (retained Entity state +
+  How many hours a finished workflow operative's data (retained Entity state +
   completion record) is kept before the retention sweeper reclaims it.
-  Precedence: operator override map `:bounded_completed_retention_hours` →
-  instance metadata → global `:default_bounded_completed_retention_hours`
-  (`72`, env `FLEZHA_BOUNDED_RETENTION_HOURS`).
+  Precedence: operator override map `:workflow_completed_retention_hours` →
+  instance metadata → global `:default_workflow_completed_retention_hours`
+  (`72`, env `FLEZHA_WORKFLOW_RETENTION_HOURS`).
   """
-  @spec bounded_completed_retention_hours(binary(), map()) :: non_neg_integer()
-  def bounded_completed_retention_hours(operative_class, metadata \\ %{})
+  @spec workflow_completed_retention_hours(binary(), map()) :: non_neg_integer()
+  def workflow_completed_retention_hours(operative_class, metadata \\ %{})
       when is_binary(operative_class) do
     resolve(
-      :bounded_completed_retention_hours,
-      :bounded_completed_retention_hours,
+      :workflow_completed_retention_hours,
+      :workflow_completed_retention_hours,
       operative_class,
       metadata,
       valid: &non_neg_int?/1,
       default: fn ->
         Application.get_env(
           :flezha,
-          :default_bounded_completed_retention_hours,
-          @default_bounded_completed_retention_hours
+          :default_workflow_completed_retention_hours,
+          @default_workflow_completed_retention_hours
         )
       end
     )
@@ -185,7 +185,7 @@ defmodule Flezha.State.PersistenceResolver do
   The WAL soft watermark (`:wal_high_watermark_bytes`) — the one definition of
   "how many bytes is too many for one Entity-scale payload".
 
-  It bounds the per-Entity WAL, the input log, a bounded journal entry, the
+  It bounds the per-Entity WAL, the input log, a workflow journal entry, the
   default credit window, and a live state read, so it lives here rather than as
   a literal at each of those.
   """

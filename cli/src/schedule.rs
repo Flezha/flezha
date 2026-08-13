@@ -26,7 +26,7 @@ pub fn handle_schedule_command(args: &[String]) {
 }
 
 fn handle_add(args: &[String]) {
-    let usage = "Usage: flz schedule add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id> [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>] [--plugins <json> | -p <json>] [--kind bounded]";
+    let usage = "Usage: flz schedule add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id> [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>] [--plugins <json> | -p <json>] [--kind workflow]";
 
     let name = match args.first() {
         Some(name) if !name.starts_with('-') => name.clone(),
@@ -39,7 +39,7 @@ fn handle_add(args: &[String]) {
     let cron = require_param(args, "--cron", usage);
     let tz = require_param(args, "--tz", usage);
     let factory = require_param(args, "--factory", usage);
-    let kind = extract_param(args, "--kind", "--kind").unwrap_or_else(|| "bounded".to_string());
+    let kind = extract_param(args, "--kind", "--kind").unwrap_or_else(|| "workflow".to_string());
     let namespace = get_namespace(args);
     let init_values = get_json(args, "--init_values", "-iv");
     let escaped_init_values = escape_rpc_arg(&init_values);
@@ -84,7 +84,7 @@ fn require_param(args: &[String], key: &str, usage: &str) -> String {
 }
 
 fn print_schedule_help() {
-    println!("flz schedule - cron-scheduled bounded operative spawns");
+    println!("flz schedule - cron-scheduled workflow operative spawns");
     println!();
     println!("USAGE:");
     println!("    flz schedule <SUBCOMMAND>");
@@ -92,9 +92,9 @@ fn print_schedule_help() {
     println!("SUBCOMMANDS:");
     println!("    add <name> --cron \"<expr>\" --tz <iana> --factory <factory_id>");
     println!(
-        "        [--namespace <ns>] [--init_values <json>] [--plugins <json>] [--kind bounded]"
+        "        [--namespace <ns>] [--init_values <json>] [--plugins <json>] [--kind workflow]"
     );
-    println!("                 Add a durable schedule (bounded operatives only).");
+    println!("                 Add a durable schedule (workflow operatives only).");
     println!("                 --plugins takes the same array as `operative start --plugins`;");
     println!("                 each firing prefixes the plugin ids with its instance id.");
     println!("    list         List schedules with their next fire time");

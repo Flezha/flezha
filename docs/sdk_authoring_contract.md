@@ -3,7 +3,7 @@
 **Status:** Normative for every SDK binding (Rust, Java today; Python, Elixir next).
 
 This document is the single source of truth for the *authoring sugar* every
-SDK offers on top of the `UnboundedOperative` / `Procedure` / `Change` / `Channel`
+SDK offers on top of the `StreamOperative` / `Procedure` / `Change` / `Channel`
 trait (or interface) surface. The sugar is **pure expansion**: a macro (Rust) or an
 annotation processor (Java) generates exactly the trait impls a user would
 write by hand, against the unchanged runtime. There is no parallel runtime
@@ -21,7 +21,7 @@ makes first and can least afford to get wrong.
 
 ## 1. Escape-hatch equivalence (non-negotiable)
 
-- Generated code is equivalent to a valid hand-written `Procedure` / `UnboundedOperative`
+- Generated code is equivalent to a valid hand-written `Procedure` / `StreamOperative`
   implementation. It compiles and runs identically; no protocol, controller,
   or WAL change is required for it to run.
 - An operative MAY mix sugared procedures and hand-written procedures wired together.
@@ -162,7 +162,7 @@ hole in it:
 2. **`timer_after(d)` is anchored on `ctx.now()`**, not on an ambient read —
    which is what makes a replayed invocation register the same absolute
    timestamp the live one did.
-3. **A registration made during a replay IS registered.** `ctx.spawn_bounded`
+3. **A registration made during a replay IS registered.** `ctx.spawn_workflow`
    answers `SkippedOnReplay` because it is an external side effect that must not
    happen twice; a timer is internal state, and skipping it on replay would
    rebuild a pending set the live run never had. The two calls sit on the same
@@ -220,10 +220,10 @@ and registers it automatically — the user writes no registration call.
 - **Auto-registration** uses a compile-time-collected registry (Rust:
   `inventory`, merged into the runner's declared set at every
   `FlezhaRunner::start()`; Java: the processor emits a
-  `GeneratedUnboundedOperatives.defineAll(FlezhaRunner)` aggregator). Explicit
-  declaration — `FlezhaRunner::define_unbounded::<R>()` /
-  `FlezhaRunner.defineUnbounded(Class)`, legal before and after `start()`,
-  with `remove_unbounded`/`removeUnbounded` as the inverse — stays valid for
+  `GeneratedStreamOperatives.defineAll(FlezhaRunner)` aggregator). Explicit
+  declaration — `FlezhaRunner::define_stream::<R>()` /
+  `FlezhaRunner.defineStream(Class)`, legal before and after `start()`,
+  with `remove_stream`/`removeStream` as the inverse — stays valid for
   hand-written operatives.
 - **Duplicate factory id fails fast.** Declaring two operatives with the same
   `factory_id` on one runner fails at the second `define*` call with an error

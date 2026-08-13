@@ -2,34 +2,76 @@
 
 ## Unreleased
 
+### Breaking
+
+<!-- kind-naming-record:begin -->
+- **The two operative kinds are now `stream` and `workflow`**
+  (`rename-operative-kinds-to-stream-and-workflow`). They were `unbounded` and
+  `bounded` — Flink's words for a property of the *data*, borrowed for what is
+  actually an *execution model* distinction, and outright false for a durable
+  `PerInput` operative, which consumes an unbounded input stream forever and
+  bounds only its iteration. Nothing about execution, durability or the wire
+  tag numbers moves; only names.
+
+  What changes for a caller: the kind atoms (`:unbounded`/`:bounded` →
+  `:stream`/`:workflow`) and their wire literals — `""` still means the
+  `stream` default, and `"unbounded"`/`"bounded"` are now rejected as unknown
+  with **no compatibility mapping**; the SDK author surfaces
+  (`UnboundedOperative`/`BoundedOperative` → `StreamOperative`/
+  `WorkflowOperative` in both SDKs, with the whole surrounding family, and
+  `define_unbounded`/`define_bounded` → `define_stream`/`define_workflow`,
+  `spawn_bounded` → `spawn_workflow`); the protobuf messages `BoundedCompleted`,
+  `BoundedStop`, `SpawnBoundedRequest`, `SpawnBoundedResponse` and their oneof
+  fields; `flz operative start --kind <stream|workflow>` (`--kind bounded` is
+  refused); and the env vars `FLEZHA_BOUNDED_{DRIVER_STACK_KIB,PARK_IDLE_MS,
+  RETENTION_HOURS,RETRY_FAILS}` → `FLEZHA_WORKFLOW_*`.
+
+  **Upgrading requires `flz controller stop && flz reset --yes`** — the kind
+  atom is persisted in the ProcessHub DETS cspec registry and in the class
+  registry's on-disk sidecar, and no code reads the retired atoms. Controller
+  and every runner redeploy together; there is no forward-compatible
+  intermediate state, so rollback is symmetric and equally requires a reset.
+  Deployment config referencing `FLEZHA_BOUNDED_*` — including the
+  `flezha_market` ConfigMaps, which live in a separate repo — must be renamed
+  before its next deploy.
+
+  The words survive where they are true. `bounded` and `unbounded` remain
+  correct English for describing a *run* (a workflow operative runs a bounded
+  iteration; a stream operative folds an unbounded input) and for unrelated
+  capacity concepts such as the bounded mailbox subsystem, which is untouched.
+  `scripts/kind-naming-allowlist.txt` enumerates every preserved occurrence and
+  `scripts/check-kind-naming.sh` — wired into CI as the Naming gate — fails a
+  kind-sense reintroduction.
+<!-- kind-naming-record:end -->
+
 ### Measured
 
-- **How many bounded instances a runner holds, answered with a number**
-  (`bounded-driver-as-state`). One OS driver thread per actively-running
-  bounded instance was the last thread-per-instance cost in the SDKs, and the
+- **How many workflow instances a runner holds, answered with a number**
+  (`workflow-driver-as-state`). One OS driver thread per actively-running
+  workflow instance was the last thread-per-instance cost in the SDKs, and the
   proposal to delete it — turning the chain's position from a call stack into
   stored state — was gated on measuring it first. It was measured, and the
-  verdict is **no-go**: the thread is ~1.4 KiB of a bounded instance's ~73 KiB
+  verdict is **no-go**: the thread is ~1.4 KiB of a workflow instance's ~73 KiB
   resident cost (the rest is heap), 10 000 blocked instances cost ~734–884 MiB
   and start in 0.65 s, and a driver blocked at a stage barrier — the agent-turn
   shape the proposal was named for — costs 0.5 % of one core at that
   population. Cutting the driver stack from 2 MiB to 256 KiB moves no resident
   byte, because a blocked driver's stack was never resident, so that stopgap is
   not adopted either. What the measurement *did* find is now documented in
-  `docs/resilience/bounded_operative.md`: interference tracks total OS thread
+  `docs/resilience/workflow_operative.md`: interference tracks total OS thread
   count rather than instance count (an agent turn holds two threads in Rust,
   one in Java, three if the class declares `max_duration`), and the CPU a
   blocked population burns comes entirely from three waits that re-check every
   200 ms — the inbox wait, the commit-ack wait and the duration watcher — not
-  from the thread model. Kept: `sdk/rust/tests/bounded_scaling.rs`, an
+  from the thread model. Kept: `sdk/rust/tests/workflow_scaling.rs`, an
   `#[ignore]`d instance-count scaling probe, and
-  `FLEZHA_BOUNDED_DRIVER_STACK_KIB`, unset by default and an address-space
+  `FLEZHA_WORKFLOW_DRIVER_STACK_KIB`, unset by default and an address-space
   lever only. No behaviour change.
 
 ### Changed
 
-- **Bounded stage work runs on the SDK's workers, in both languages**
-  (`bounded-steps-through-sdk`). The bounded driver used to fan a stage out
+- **Workflow stage work runs on the SDK's workers, in both languages**
+  (`workflow-steps-through-sdk`). The workflow driver used to fan a stage out
   onto a second, core-owned thread pool, and a Java step cost TWO threads: one
   of those pool threads submitted the crossing and then blocked on the reply
   while a Java thread ran the code. Both are gone. The driver now hands each
@@ -38,7 +80,7 @@
   same ordinary `Work` (or `CompensateRun`) activation it already knew — and
   collects the answers at the stage barrier it already owned. Every step
   therefore costs exactly one thread, no core-owned thread runs or waits on
-  user code, and bounded work inherits the adaptive pool / virtual threads
+  user code, and workflow work inherits the adaptive pool / virtual threads
   from `sdk-owned-concurrency`. The entity-retry ladder moves with it: a step
   runs ONE attempt and releases its worker, and the driver times the
   re-submission at its barrier, so a backoff window no longer occupies a
@@ -54,7 +96,7 @@
   belongs to the core and is decoupled from any thread count: one process-wide
   cap on work activations underway (`FLEZHA_MAX_INFLIGHT_ACTIVATIONS`, default
   1024), enforced at handout and released on completion. Direct activations
-  (restore folds, snapshot requests, bounded steps) stay exempt — they are
+  (restore folds, snapshot requests, workflow steps) stay exempt — they are
   barrier-bounded by their own drivers. Each SDK then services that
   with whatever its runtime does best: **Rust** parks one supervisor thread in
   the core's new starvation wait (work queued, nobody inside `poll`) and grows
@@ -88,8 +130,8 @@
   (`schedule-spawn-without-runner`). A new cluster directory
   (`Flezha.Cluster.Directory`, one `:pg` scope — no new dependency) lets each
   node advertise which factories its runners serve and which namespace hubs it
-  hosts; reads are local on every node. Bounded starts (`flz operative add`,
-  schedule fires, `ctx.spawn_bounded`) submitted on a node that cannot satisfy
+  hosts; reads are local on every node. Workflow starts (`flz operative add`,
+  schedule fires, `ctx.spawn_workflow`) submitted on a node that cannot satisfy
   them locally are forwarded once to a capable node and re-validated there, so
   a schedule no longer fails forever when a rolling update moves its runner to
   another controller node. The command plane routes the same way: `flz
@@ -104,7 +146,7 @@
 - **The Java SDK is rehosted on the poll core**
   (`rehost-java-sdk-on-poll-core`). The Java runtime's kernel mirror —
   command handlers, framing, reconnect, flusher, credit, DLQ park, timer
-  wheel, the bounded driver — is deleted; JVM poller threads drive
+  wheel, the workflow driver — is deleted; JVM poller threads drive
   `flz_core` through a JNI binding over `flz_core_ffi` (`FlzCore`,
   schema-negotiated at context creation). The core's host layer grew from
   v1 to full capability for this: the five command activation kinds
@@ -112,15 +154,15 @@
   the prepare crossing for keys/event times, static/dynamic entity modes,
   producer-evaluated inter-procedure edges, the effectively-once and
   checkpoint ack-granularity tiers, late-input correction, per-entity
-  timers, and bounded lifecycles (run-sugar sessions + structured chains)
+  timers, and workflow lifecycles (run-sugar sessions + structured chains)
   — all reachable through the C ABI and pinned by the ABI scenario suite.
   Activation schema bumped to v2 (prepare answers, `change_seq`,
-  `factory`, `Output.event_time`, bounded kinds); both SDKs' fixture
+  `factory`, `Output.event_time`, workflow kinds); both SDKs' fixture
   suites pin the same bytes.
 
 - **The Rust SDK's kernel is now a language-agnostic poll core**
   (`extract-sdk-poll-core`). A new `flz_core` crate owns transport,
-  ordering, durability, retries, timers, credit, routing and the bounded
+  ordering, durability, retries, timers, credit, routing and the workflow
   driver; host SDKs drive it through one surface — `poll() -> Activation` /
   `complete(ActivationResult)` — and the core never calls host code. The
   Rust SDK is rebuilt as a typed layer over the crate (public API
@@ -238,7 +280,7 @@
   (Java) subscribes two or more source channels to one procedure whose `Input`
   is an author-declared sum type, each subscription supplying a pure mapping
   from its payload into that type. Entry channels and inter-procedure channels
-  are both valid sources on an unbounded operative, freely mixed, so a detector
+  are both valid sources on a stream operative, freely mixed, so a detector
   can take its data feed and
   a live config channel without the operative being restarted with new
   environment. Per-source FIFO is preserved and nothing is ordered across
@@ -246,9 +288,9 @@
   live delivery and WAL replay, so a warm restart restores the same state.
   Fewer than two sources, the same channel subscribed twice, or a source that
   would re-wire an already-declared edge all fail operative definition with a
-  named topology error. A **bounded** operative merges its procedures' output
+  named topology error. A **workflow** operative merges its procedures' output
   streams — its entry channel seeds the root from the spawn args and names no
-  channel, so an entry channel as a bounded merge source is refused by name.
+  channel, so an entry channel as a workflow merge source is refused by name.
   Single-input wiring is unchanged.
 
   **No wire change and no controller change**: the merge is a subscription-time
@@ -256,9 +298,9 @@
   controller has no model of a channel's consumers. See
   `docs/multi_input_procedures.md`.
 
-- **A procedure can ask for a bounded operative**
-  (`add-procedure-requested-spawn`). `ctx.spawn_bounded` (Rust) /
-  `ctx.spawnBounded` (Java) spawns-or-delivers a bounded instance on one
+- **A procedure can ask for a workflow operative**
+  (`add-procedure-requested-spawn`). `ctx.spawn_workflow` (Rust) /
+  `ctx.spawnWorkflow` (Java) spawns-or-delivers a workflow instance on one
   `(namespace, instance_id)` from inside any procedure: a free id starts the
   factory with the payload as its first input, a taken id receives the payload
   as one more input (`if_running: deliver`) or refuses (`error`). Concurrent
@@ -266,13 +308,13 @@
   Failures — quota, unknown factory, unreachable controller — resolve the
   caller's async handle and never fault the requesting procedure; an
   uninspected handle logs the failure once. Spawning is a live-processing side
-  effect: a replayed invocation issues nothing. Until now a bounded operative
+  effect: a replayed invocation issues nothing. Until now a workflow operative
   could only be started from outside the cluster, so every pipeline that needed
   one grew its own external dispatcher. See
   `docs/procedure_requested_spawn.md`.
 
-  **Wire**: two additive `CommandRequest` variants, `SpawnBoundedRequest`
-  (tag 34, SDK → controller) and `SpawnBoundedResponse` (tag 35,
+  **Wire**: two additive `CommandRequest` variants, `SpawnWorkflowRequest`
+  (tag 34, SDK → controller) and `SpawnWorkflowResponse` (tag 35,
   controller → SDK). Additive-tag compatibility as with every prior wire
   change: an older controller ignores the unknown variant (the requester times
   out), so the controller image and both SDKs are released together.
@@ -283,8 +325,8 @@
   enabled providers at `add` time, stored verbatim, and decoded at every
   firing; each firing stamps its namespace and instance id on every plugin
   and prefixes the plugin id with the instance id so overlapping slots never
-  collide. Without this a cron-fired bounded job had no output channel at all
-  — a bounded instance finishes in milliseconds, so plugins must be attached
+  collide. Without this a cron-fired workflow job had no output channel at all
+  — a workflow instance finishes in milliseconds, so plugins must be attached
   at spawn. A spec that fails to decode at fire time starts nothing and is
   reported on `[:flezha, :schedule, :spawn_failed]` rather than firing a run
   whose output is dropped. The schedule row gained a field, so the
@@ -292,7 +334,7 @@
 
 ### Changed (BREAKING)
 
-- Scheduled bounded spawns are now driven by **one schedule process per
+- Scheduled workflow spawns are now driven by **one schedule process per
   schedule, hosted in a dedicated `:flz_schedules` ProcessHub**, replacing the
   per-controller polling evaluator (`single-owner-schedule-processes`). The
   hub's `Singularity` redundancy makes exactly one process exist cluster-wide
@@ -314,17 +356,17 @@
   superseded before release by `sdk-runner-entrypoint-redesign` — the shipping
   surface is the one described here). `Flezha.newInstance(namespace)` (Java) /
   `flezha_runner::new(namespace)` (Rust) and the
-  `Flezha.registerUnbounded`/`registerBounded` /
-  `register_unbounded::<R>()`/`register_bounded::<T>()` registration surface
+  `Flezha.registerStream`/`registerWorkflow` /
+  `register_stream::<R>()`/`register_workflow::<T>()` registration surface
   are removed with no back-compat shim. The replacement is a runner handle —
   no builder, no freeze step:
-  `Flezha.createRunner(ns).defineUnbounded(A.class).run()` (Java) /
-  `Flezha::create_runner(ns)?.define_unbounded::<A>()?.run()?` (Rust).
+  `Flezha.createRunner(ns).defineStream(A.class).run()` (Java) /
+  `Flezha::create_runner(ns)?.define_stream::<A>()?.run()?` (Rust).
   `RunnerBuilder` and both Java registry facades
-  (`UnboundedOperativeRegistry`/`BoundedOperativeRegistry`) are gone.
+  (`StreamOperativeRegistry`/`WorkflowOperativeRegistry`) are gone.
   The declared set is per-runner and starts empty each generation;
-  `define_*`/`remove_*` (`removeUnbounded`/`removeBounded` /
-  `remove_unbounded::<R>()`/`remove_bounded::<T>()`) are legal before and
+  `define_*`/`remove_*` (`removeStream`/`removeWorkflow` /
+  `remove_stream::<R>()`/`remove_workflow::<T>()`) are legal before and
   after `start()`, a post-start change shipping the full factory set as a
   fire-and-forget `UpdateFactories`. A removal refuses while live instances
   of the factory exist (`OperativeTypeInUseException` /
@@ -343,10 +385,10 @@
   and `Flezha.currentRunner()` / `Flezha::current_runner()` exposes the
   active runner. Rust declaration, connect, and lifecycle failures are now
   ONE typed `Result` error, `FlezhaError` (wrapping `TopologyBuildError` /
-  `BuildBoundedError`), instead of panics and the removed
+  `BuildWorkflowError`), instead of panics and the removed
   `RunnerStartError`/`RunnerError`; the per-issue topology enum is
   `TopologyIssue`. Java's annotation processor generates
-  `GeneratedUnboundedOperatives.defineAll(FlezhaRunner)`.
+  `GeneratedStreamOperatives.defineAll(FlezhaRunner)`.
   Naming rules for future SDK surface: `docs/sdk_naming_conventions.md`.
 
 ### Fixed
@@ -374,7 +416,7 @@
   One-shot at migration time, not replication — a controller that dies together
   with its disk still takes its state with it.
 
-- A durable bounded operative whose procedures hold **no per-Entity state**
+- A durable workflow operative whose procedures hold **no per-Entity state**
   went silent after its first turn. The proc-journal is instance-scoped but rode
   `RestoreInitState.proc_journal`, a per-Entity frame — and such a class has no
   Entity WAL, so the controller shipped no restore at all. Every wake resumed
@@ -398,7 +440,7 @@
   each inbound frame to its entry by `metadata["channel"]` (falling back to the
   first-declared entry), so this only lifts the build-time refusal — enabling a
   single operative to ingest several external sources (e.g. a market pipeline
-  reading a trade feed and an order-book feed on distinct channels). Bounded
+  reading a trade feed and an order-book feed on distinct channels). Workflow
   operatives keep their single-entry linear-chain rule.
 
 - Plugin subscriptions added via `flz plugin enable` now survive any
@@ -424,7 +466,7 @@
 
 ### Added
 
-- Controller-native cron scheduling of bounded operatives
+- Controller-native cron scheduling of workflow operatives
   (`add-scheduled-operative-spawns`). `flz schedule add <name> --cron
   "<expr>" --tz <iana> --factory <factory_id> [--namespace ns]
   [--init_values json]` registers a durable schedule (node-local DETS at
@@ -432,7 +474,7 @@
   composed instance id fits the 32-byte operative id limit); `list` /
   `remove` / `run <name>` complete the family. A per-controller evaluator
   (`Flezha.Schedule.Evaluator`) fires each matching slot through the
-  standard bounded start path with deterministic instance id
+  standard workflow start path with deterministic instance id
   `<name>@<slot-iso>` — a duplicate fire attempt no-ops on the id, which is
   the cluster-wide exactly-once guard. Slots are evaluated in the entry's
   IANA time zone (new `tz` dependency): a spring-forward gap slot skips, a
@@ -441,7 +483,7 @@
   e.g. missed while the controller was down — are skipped and logged with
   their timestamps, never back-filled; a still-running previous slot never
   blocks the next one (ids differ; bound runtime via `max_duration`). Only
-  bounded operatives are schedulable. Telemetry: `[:flezha, :schedule,
+  workflow operatives are schedulable. Telemetry: `[:flezha, :schedule,
   :fired | :skipped | :spawn_failed]`. Operator guide in
   [`docs/operations/schedules.md`](docs/operations/schedules.md).
 

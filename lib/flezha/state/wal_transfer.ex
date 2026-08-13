@@ -16,7 +16,7 @@ defmodule Flezha.State.WalTransfer do
     * `manifest/1` — runs on the source, lists the Entity's existing files
       with sizes (`Flezha.State.Registry.entity_files/1` is the one definition
       of that set).
-    * `read_chunk/3` — runs on the source, returns one bounded slice.
+    * `read_chunk/3` — runs on the source, returns one workflow slice.
     * `pull_entity/3` — runs on the destination, loops the two above per file,
       writing to a `.transferring` sibling that is fsynced and atomically
       renamed. A failure removes the artefact and leaves the destination cold,

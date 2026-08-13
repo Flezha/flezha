@@ -125,18 +125,18 @@ class SpawnHandleTest {
                 (instanceId, factoryId, payload, ifRunning) -> CompletableFuture.completedFuture("delivered"));
 
         ProcedureCtx live = new StubCtx(false);
-        assertThat(live.spawnBounded("w1", "worker", new byte[] {1}, IfRunning.DELIVER)
+        assertThat(live.spawnWorkflow("w1", "worker", new byte[] {1}, IfRunning.DELIVER)
                         .await())
                 .isEqualTo(SpawnOutcome.DELIVERED);
 
         ProcedureCtx replaying = new StubCtx(true);
         assertThat(replaying
-                        .spawnBounded("w1", "worker", new byte[] {1}, IfRunning.DELIVER)
+                        .spawnWorkflow("w1", "worker", new byte[] {1}, IfRunning.DELIVER)
                         .await())
                 .isEqualTo(SpawnOutcome.SKIPPED_ON_REPLAY);
     }
 
-    /** Only the two members {@code spawnBounded}'s default implementation reads. */
+    /** Only the two members {@code spawnWorkflow}'s default implementation reads. */
     private record StubCtx(boolean replay) implements ProcedureCtx {
         @Override
         public boolean replaying() {

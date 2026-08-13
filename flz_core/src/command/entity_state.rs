@@ -1,4 +1,4 @@
-//! `EntityState` — return the UnboundedOperative instance's per-Procedure / per-Entity
+//! `EntityState` — return the StreamOperative instance's per-Procedure / per-Entity
 //! state JSON blob per `operative-mvp-rust/design.md` Decision 10.
 //!
 //! `serialize_selected_state` walks each Procedure's entities via the per-Procedure
@@ -20,7 +20,7 @@ use serde_json::{Map, Value};
 use super::CommandAction;
 use crate::dynamic::DynamicEntityRegistry;
 use crate::entity::EntitySlot;
-use crate::operative::instance::UnboundedInstance;
+use crate::operative::instance::StreamInstance;
 use crate::operative::topology::ProcedureDescriptor;
 use crate::pb::EntityState;
 use crate::runner::RunnerNode;
@@ -64,11 +64,11 @@ impl CommandAction for EntityState {
     ) -> (String, Vec<u8>, HashMap<String, String>) {
         let payload_id = "entity_state".to_string();
 
-        let instance = match runner.get_unbounded(&self.operative_id) {
+        let instance = match runner.get_stream(&self.operative_id) {
             Some(i) => i,
             None => {
                 errors.push(format!(
-                    "UnboundedOperative instance with id {} not found",
+                    "StreamOperative instance with id {} not found",
                     self.operative_id
                 ));
                 return (payload_id, Vec::new(), HashMap::new());
@@ -120,7 +120,7 @@ pub enum StatePurpose {
 
 /// Whole-Operative walk — the migration/handover shape. Refusals are
 /// impossible without a selector, so the JSON is returned directly.
-pub fn serialize_operative_state(instance: &Arc<UnboundedInstance>) -> Vec<u8> {
+pub fn serialize_operative_state(instance: &Arc<StreamInstance>) -> Vec<u8> {
     serialize_selected_state(instance, StateSelector::default(), StatePurpose::Migration)
         .map(|(payload, _seq)| payload)
         .unwrap_or_default()
@@ -140,7 +140,7 @@ pub fn serialize_operative_state(instance: &Arc<UnboundedInstance>) -> Vec<u8> {
 /// from individual entities are logged on stderr and that entity is omitted —
 /// the controller treats a missing procedure key the same as no state.
 pub fn serialize_selected_state(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     selector: StateSelector<'_>,
     purpose: StatePurpose,
 ) -> Result<(Vec<u8>, Option<u64>), String> {
@@ -257,7 +257,7 @@ enum Keyset<'a> {
 
 impl<'a> Keyset<'a> {
     /// `None` for single mode, which has no keyset.
-    fn of(instance: &'a Arc<UnboundedInstance>, procedure_id: usize) -> Option<Self> {
+    fn of(instance: &'a Arc<StreamInstance>, procedure_id: usize) -> Option<Self> {
         if let Some(Some(registry)) = instance.dynamic_registries.get(procedure_id) {
             return Some(Keyset::Dynamic(registry));
         }
@@ -370,7 +370,7 @@ fn missing_entity_refusal(evicted: bool, procedure_name: &str, key: &str) -> Str
     }
 }
 
-/// Apply an `AddOperative.init_values` JSON blob to a fresh UnboundedOperative instance.
+/// Apply an `AddOperative.init_values` JSON blob to a fresh StreamOperative instance.
 /// Walks the top-level keys, matches them against registered Procedure names,
 /// and dispatches each value to the matching Procedure's `deserialize_state`
 /// fn pointer to overwrite the freshly-`init_state`d Entity state.
@@ -378,10 +378,7 @@ fn missing_entity_refusal(evicted: bool, procedure_name: &str, key: &str) -> Str
 /// Empty `init_values` is a no-op (the cold-start path uses `init_state`).
 /// Unknown top-level keys and unknown inner entity_key entries are logged
 /// and skipped per the spec.
-pub fn apply_init_values(
-    instance: &Arc<UnboundedInstance>,
-    init_values: &str,
-) -> Result<(), String> {
+pub fn apply_init_values(instance: &Arc<StreamInstance>, init_values: &str) -> Result<(), String> {
     if init_values.is_empty() {
         return Ok(());
     }

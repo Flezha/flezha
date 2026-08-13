@@ -3,7 +3,7 @@ defmodule Flezha.Service.CliManagerStateGetTest do
   `flz state get <operative/procedure[/entity_key]>` operator surface: the live
   read, and every refusal it can report. The SDK-side selector and its
   token-prefixed refusals are covered by `state_serialize.rs` and
-  `UnboundedOperativeStateSerializerTest`; here we pin how each verdict reaches
+  `StreamOperativeStateSerializerTest`; here we pin how each verdict reaches
   the operator, and that the non-resident family points at the durable path.
   """
   use ExUnit.Case, async: false

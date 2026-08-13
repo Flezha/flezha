@@ -45,7 +45,7 @@ public final class EchoProcedure
     }
 }
 
-public final class EchoOperative implements UnboundedOperative {
+public final class EchoOperative implements StreamOperative {
     @Override public String factoryId() { return "echo"; }
 
     @Override public void channels(ChannelBuilder c) {
@@ -57,7 +57,7 @@ public final class EchoOperative implements UnboundedOperative {
 
 public static void main(String[] args) throws Exception {
     Flezha.createRunner(args[0])                     // args[0] = the namespace
-            .defineUnbounded(EchoOperative.class)    // legal before AND after start()
+            .defineStream(EchoOperative.class)    // legal before AND after start()
             .run();                                  // connect + block until shutdown
 }
 ```
@@ -67,7 +67,7 @@ binary. Embedding into a larger app? `start()` returns a `FlezhaRunner`
 handle (`AutoCloseable`) and keeps your thread:
 
 ```java
-try (FlezhaRunner runner = Flezha.createRunner(ns).defineUnbounded(EchoOperative.class).start()) {
+try (FlezhaRunner runner = Flezha.createRunner(ns).defineStream(EchoOperative.class).start()) {
     // ... your app; runner.awaitTermination() to block, Flezha.currentRunner() from anywhere
 }
 ```
@@ -141,7 +141,7 @@ verdicts, and the terminal channel carries output identity for a
 changelog-style sink:
 
 ```java
-public final class RiskOperative implements UnboundedOperative {
+public final class RiskOperative implements StreamOperative {
     @Override public String factoryId() { return "risk"; }
 
     @Override public void channels(ChannelBuilder c) {
@@ -174,16 +174,16 @@ hold, and the only names in the graph are the ones something external needs —
 the entry (`orders`), the tap (`audit`), the sink (`verdict_sink`), and any
 channel you chose to `.named(...)`.
 
-### A structured bounded DAG
+### A structured workflow DAG
 
-Bounded operatives author on the same builder. A durable class journals each
+Workflow operatives author on the same builder. A durable class journals each
 proc barrier, so inter-proc channels declare `.codec()`; a fan-in node runs once,
 after **all** its producers committed, with the accumulated batch — and on an
 abnormal exit the saga unwinds reverse-topologically (the join before either
 producer, the shared root last):
 
 ```java
-public final class SettleBounded implements BoundedOperative {
+public final class SettleWorkflow implements WorkflowOperative {
     @Override public String factoryId() { return "settle"; }
 
     @Override public int retryAttempts() { return 3; } // entity ladder before the saga
@@ -249,23 +249,23 @@ Everything else follows from that. Declaring a class only says what this
 runner *can* serve; the controller decides what it *does* serve. A runner
 with nothing placed on it is idle, not broken.
 
-A **bounded** operative is the other shape: started with arguments, runs to
+A **workflow** operative is the other shape: started with arguments, runs to
 completion, torn down. The smallest one is a single `run`, no topology at all:
 
 ```java
-public final class GreetBounded implements BoundedOperative {
+public final class GreetWorkflow implements WorkflowOperative {
     @Override public String factoryId() { return "greet"; }
 
-    @Override public void run(BoundedOperativeCtx ctx, String args)
-            throws BoundedOperativeException {
+    @Override public void run(WorkflowOperativeCtx ctx, String args)
+            throws WorkflowOperativeException {
         ctx.emit("hello " + args);
     }
 }
 
 public static void main(String[] args) throws Exception {
     Flezha.createRunner(args[0])                       // args[0] = the namespace
-            .defineUnbounded(EchoOperative.class)
-            .defineBounded(GreetBounded.class)
+            .defineStream(EchoOperative.class)
+            .defineWorkflow(GreetWorkflow.class)
             .run();
 }
 ```
@@ -278,7 +278,7 @@ that drops *after* a successful connect.
 java -jar my-runner.jar my_app          # my_app = the namespace
 
 flz operative start echo1 echo -n my_app
-flz operative start greet1 greet -n my_app --kind bounded --init_values '{"name":"world"}'
+flz operative start greet1 greet -n my_app --kind workflow --init_values '{"name":"world"}'
 ```
 
 The argument to `createRunner` is the **namespace**, and it is the join key: the
@@ -288,9 +288,9 @@ on a node dials the same control socket regardless of namespace.
 
 In `flz operative start <operative_id> <factory_id>`, the factory id (`echo`,
 `greet`) is what `factoryId()` returns; the operative id (`echo1`, `greet1`)
-names this one instance. `--init_values` is handed to a bounded `run` verbatim as
-its `args` string — parse it yourself if it is JSON. The unbounded `echo1` then
-runs until stopped; the bounded `greet1` emits once, completes, and disappears.
+names this one instance. `--init_values` is handed to a workflow `run` verbatim as
+its `args` string — parse it yourself if it is JSON. The stream `echo1` then
+runs until stopped; the workflow `greet1` emits once, completes, and disappears.
 
 ### Identity across restarts
 
@@ -333,7 +333,7 @@ with `ProcedureTestHarness.replayEquals()` (state) **and** `replayEmitsEqual()`
 | Dead-letter queue | `.retryMax(n)` on the channel | A poison payload is retried, then parked durably — never silently dropped. |
 | Edge transforms | `.map(T.class, f)` / `.filter(p)` / `.flatMap(T.class, f)` on the wiring | Reshape, drop or fan out values without a Procedure — no Entity, no mailbox, no dispatch hop. |
 | Dynamic entity mode | `.keyBy(f)` on the wiring | One Entity per key the stream actually carries, created on first sight — and visible where the graph is declared. |
-| Bounded transaction | `implements BoundedOperative` + `procedures(...)` | Resumable chain: a committed step is skipped on resume, not re-run. Failure unwinds via `compensate`. |
+| Workflow transaction | `implements WorkflowOperative` + `procedures(...)` | Resumable chain: a committed step is skipped on resume, not re-run. Failure unwinds via `compensate`. |
 | Durable loop / suspension | `loopMode()` + `wakeAfter()` | One durable iteration per message; parks when idle, holding its journal. |
 | Entity retry | `retryAttempts()` / `retryBackoff()` | Only the failing entity re-runs; a failed attempt's output is dropped, not double-emitted. |
 
@@ -345,8 +345,8 @@ retention, and a tier without keyed sinks is refused at registration.
 
 | Module | Purpose |
 |---|---|
-| `flezha-sdk-api` | Public API: `Flezha`, `UnboundedOperative`, `BoundedOperative`, `Procedure`, `ProcedureCtx`, `StableId`, channel builders, clocks. No native dependency. |
-| `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, state persistence, bounded driver. |
+| `flezha-sdk-api` | Public API: `Flezha`, `StreamOperative`, `WorkflowOperative`, `Procedure`, `ProcedureCtx`, `StableId`, channel builders, clocks. No native dependency. |
+| `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, state persistence, workflow driver. |
 | `flezha-sdk-native` | JNI bindings + bundled per-OS `libflz_transport`. |
 | `flezha-sdk-testing` | `ProcedureTestHarness` — add with `<scope>test</scope>`. |
 | `flezha-sdk-examples` | Worked examples. Compiled by the build, so they cannot rot. |
@@ -389,7 +389,7 @@ mix test.java_sdk                               # from repo root: full Java matr
 | `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | Durable stable identity. Unwritable ⇒ a fresh id per boot and lost bindings. |
 | `FLEZHA_WORKER_POOL_SIZE` | `availableProcessors()` | Shared runner draining every Entity mailbox. |
 | `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Where `libflz_transport` is extracted. Set it on containers where `/tmp` is `noexec`. |
-| `FLEZHA_BOUNDED_PARK_IDLE_MS` | `5000` | Idle hysteresis before a looping bounded operative parks. |
+| `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | Idle hysteresis before a looping workflow operative parks. |
 
 ## Further reading
 

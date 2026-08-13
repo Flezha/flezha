@@ -10,7 +10,6 @@
 //! it through the C ABI (`flz_core_ffi`); the Rust SDK consumes the same
 //! engine this crate exposes as a library.
 
-pub mod bounded;
 pub mod channel;
 #[doc(hidden)]
 pub mod command;
@@ -55,6 +54,7 @@ pub mod state_sink;
 pub mod timer;
 #[doc(hidden)]
 pub mod util;
+pub mod workflow;
 
 /// The controller↔runner protobuf command surface (prost-generated).
 pub mod pb {

@@ -59,7 +59,7 @@ entity mode (single/static with keys, dynamic with TTL and cap), clock
 kind, correction window and beyond-window policy, delivery tier
 (effectively-once, checkpoint ack-granularity), inter-procedure channels
 with edge ids and keying markers, per-channel retry and overflow
-policies, the record-header lang/format bytes, persistence, and bounded
+policies, the record-header lang/format bytes, persistence, and workflow
 lifecycle facts (loop mode, rollback mode, retry, wake-after,
 compensable procs). Timer caps stay host-layer policy — in both SDKs the
 cap is enforced where the registration API lives, not in the core. A declaration
@@ -79,9 +79,9 @@ naming the field — never accepted and degraded silently.
 Every capability the widened host layer supports SHALL be exercisable
 through `flz_core_ffi` alone — the five command activation kinds, the
 prepare crossing, entity modes, tiers, timers, inter-procedure routing,
-and bounded lifecycles. The CI scenario suite SHALL grow to drive at least:
+and workflow lifecycles. The CI scenario suite SHALL grow to drive at least:
 a restore fold, a live state read, a keyed dynamic route via the prepare
-crossing, an effectively-once completion with offsets, and a bounded
+crossing, an effectively-once completion with offsets, and a workflow
 run-sugar lifecycle — all through the C entry points, failing if any
 required surface is missing.
 

@@ -298,14 +298,14 @@ pub unsafe extern "C" fn flz_core_shutdown(ctx: *mut FlzContext) {
     }
 }
 
-/// Emit one output payload from a live bounded run-sugar body — the ABI form
-/// of `BoundedCtx::emit`. Best-effort and at-least-once, like operative
+/// Emit one output payload from a live workflow run-sugar body — the ABI form
+/// of `WorkflowCtx::emit`. Best-effort and at-least-once, like operative
 /// output.
 ///
 /// # Safety
 /// `ctx` must be live; `instance_id` NUL-terminated; `buf`/`len` readable.
 #[no_mangle]
-pub unsafe extern "C" fn flz_core_bounded_emit(
+pub unsafe extern "C" fn flz_core_workflow_emit(
     ctx: *mut FlzContext,
     instance_id: *const c_char,
     buf: *const u8,
@@ -318,12 +318,12 @@ pub unsafe extern "C" fn flz_core_bounded_emit(
         return ctx.fail("instance id is not valid UTF-8");
     };
     let bytes = std::slice::from_raw_parts(buf, len).to_vec();
-    flz_core::runner::emit_bounded_output(instance_id.to_string(), bytes);
+    flz_core::runner::emit_workflow_output(instance_id.to_string(), bytes);
     FLZ_OK
 }
 
-/// Block up to `timeout_ms` for the next inbox item of a live bounded
-/// run-sugar body — the ABI form of `BoundedCtx::recv`. On
+/// Block up to `timeout_ms` for the next inbox item of a live workflow
+/// run-sugar body — the ABI form of `WorkflowCtx::recv`. On
 /// [`FLZ_POLL_ACTIVATION`] the payload is in `buf_out`/`len_out` (free with
 /// [`flz_core_buf_free`]); [`FLZ_POLL_TIMEOUT`] = no item yet; `FLZ_ERR` =
 /// no live body / inbox closed.
@@ -331,7 +331,7 @@ pub unsafe extern "C" fn flz_core_bounded_emit(
 /// # Safety
 /// `ctx` must be live; `instance_id` NUL-terminated; out pointers writable.
 #[no_mangle]
-pub unsafe extern "C" fn flz_core_bounded_recv(
+pub unsafe extern "C" fn flz_core_workflow_recv(
     ctx: *mut FlzContext,
     instance_id: *const c_char,
     timeout_ms: u64,
@@ -344,7 +344,7 @@ pub unsafe extern "C" fn flz_core_bounded_recv(
     let Ok(instance_id) = CStr::from_ptr(instance_id).to_str() else {
         return ctx.fail("instance id is not valid UTF-8");
     };
-    match flz_core::host::bounded_session_recv(instance_id, Duration::from_millis(timeout_ms)) {
+    match flz_core::host::workflow_session_recv(instance_id, Duration::from_millis(timeout_ms)) {
         Ok(Some(payload)) => {
             let mut bytes = payload.into_boxed_slice();
             *buf_out = bytes.as_mut_ptr();
@@ -357,25 +357,25 @@ pub unsafe extern "C" fn flz_core_bounded_recv(
     }
 }
 
-/// 1 once the named bounded body's cancellation token tripped (external stop
-/// / `max_duration`) — the ABI form of `BoundedCtx::is_cancelled`. Also 1
+/// 1 once the named workflow body's cancellation token tripped (external stop
+/// / `max_duration`) — the ABI form of `WorkflowCtx::is_cancelled`. Also 1
 /// for an unknown instance (a finished body is as cancelled as it gets).
 ///
 /// # Safety
 /// `instance_id` must be NUL-terminated.
 #[no_mangle]
-pub unsafe extern "C" fn flz_core_bounded_cancelled(
+pub unsafe extern "C" fn flz_core_workflow_cancelled(
     _ctx: *const FlzContext,
     instance_id: *const c_char,
 ) -> i32 {
     let Ok(instance_id) = CStr::from_ptr(instance_id).to_str() else {
         return 1;
     };
-    i32::from(flz_core::host::bounded_session_cancelled(instance_id))
+    i32::from(flz_core::host::workflow_session_cancelled(instance_id))
 }
 
-/// Spawn-or-deliver a bounded instance from a live host procedure — the ABI
-/// form of `ctx.spawn_bounded`. `if_running` is the wire string
+/// Spawn-or-deliver a workflow instance from a live host procedure — the ABI
+/// form of `ctx.spawn_workflow`. `if_running` is the wire string
 /// (`"deliver"` | `"error"`). Blocks for the controller's outcome (one of
 /// `spawned | delivered | already_running | ...`), returned in
 /// `outcome_out`/`outcome_len_out` (free with [`flz_core_buf_free`]).
@@ -383,7 +383,7 @@ pub unsafe extern "C" fn flz_core_bounded_cancelled(
 /// # Safety
 /// `ctx` must be live; strings NUL-terminated; buffers readable/writable.
 #[no_mangle]
-pub unsafe extern "C" fn flz_core_spawn_bounded(
+pub unsafe extern "C" fn flz_core_spawn_workflow(
     ctx: *mut FlzContext,
     instance_id: *const c_char,
     factory_id: *const c_char,
@@ -405,7 +405,7 @@ pub unsafe extern "C" fn flz_core_spawn_bounded(
     };
     let payload = std::slice::from_raw_parts(payload, payload_len).to_vec();
     let reference_id = format!(
-        "spawn-bounded-{}-{}",
+        "spawn-workflow-{}-{}",
         instance_id,
         flz_core::util::nonce_suffix()
     );
@@ -415,8 +415,8 @@ pub unsafe extern "C" fn flz_core_spawn_bounded(
     let sent = flz_core::runner::coordinator_try_send(
         flz_core::runner::RunnerMessage::EmitControlRequest {
             reference_id: reference_id.clone(),
-            command: flz_core::pb::command_request::Command::SpawnBoundedRequest(
-                flz_core::pb::SpawnBoundedRequest {
+            command: flz_core::pb::command_request::Command::SpawnWorkflowRequest(
+                flz_core::pb::SpawnWorkflowRequest {
                     instance_id: instance_id.to_string(),
                     factory_id: factory_id.to_string(),
                     payload,

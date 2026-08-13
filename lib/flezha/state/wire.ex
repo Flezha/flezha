@@ -84,7 +84,7 @@ defmodule Flezha.State.Wire do
   def payload_id_delete_entity_state(), do: @payload_id_delete_entity_state
 
   @doc """
-  Payload-ids reserved on the data stream for the bounded-operative saga
+  Payload-ids reserved on the data stream for the workflow-operative saga
   change-log (SDK → controller), same frame layout as `entity_state_change`:
   `compensation_intent` records a procedure's completion (so a crash
   mid-compensation knows what to undo) and `compensation_done` records a
@@ -168,9 +168,9 @@ defmodule Flezha.State.Wire do
   conforming sink deduplicates on (`Flezha.Plugin.Provider.Postgres`,
   `Flezha.Plugin.Provider.Kafka`).
 
-  Both durable outbox flushes mint it: the unbounded effectively-once tier
+  Both durable outbox flushes mint it: the stream effectively-once tier
   (`Flezha.State.WalWriter`, `seq` = `<change_seq>.<emit_ordinal>`) and the
-  bounded transactional outbox (`Flezha.State.ProcJournal`, `seq` =
+  workflow transactional outbox (`Flezha.State.ProcJournal`, `seq` =
   `<proc_idx>.<seq_in_proc>`, an undo carrying a trailing `.1`). `seq` is a numeric
   dotted sequence so a sink can order it; `key` is omitted when the output
   carries no natural key.

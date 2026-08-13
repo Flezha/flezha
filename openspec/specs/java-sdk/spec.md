@@ -9,7 +9,7 @@ Defines the Java SDK for Flezha compute engines: the public authoring API and th
 The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getOperatives()` (a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
 
 #### Scenario: Successful connection on a created runner
-- **WHEN** an SDK user calls `Flezha.createRunner("my_app").defineUnbounded(MarketOperative.class).start()` with the controller running
+- **WHEN** an SDK user calls `Flezha.createRunner("my_app").defineStream(MarketOperative.class).start()` with the controller running
 - **THEN** the call blocks until the controller responds with `AssignRunnerId`, returns the same `FlezhaRunner`, and `getNamespace()` returns `"my_app"`
 
 #### Scenario: Controller unavailable triggers exponential backoff retries
@@ -17,11 +17,11 @@ The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)
 - **THEN** the SDK SHALL retry the connect with exponential backoff starting at 200 ms and capped at 30 s, and succeed once the controller becomes available
 
 #### Scenario: start() with zero defined operative types is legal
-- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.defineUnbounded(...)`/`.defineBounded(...)` calls and no auto-wired classes on the classpath
+- **WHEN** `.start()` is called on a `FlezhaRunner` with no `.defineStream(...)`/`.defineWorkflow(...)` calls and no auto-wired classes on the classpath
 - **THEN** the runner SHALL connect successfully with an empty `factory_ids` list in the handshake init message, and operative types MAY be defined later on the live runner
 
 #### Scenario: RunnerBuilder is not importable
-- **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.operative.UnboundedOperativeRegistry`, `com.flezha.sdk.bounded.BoundedOperativeRegistry`, or `Flezha.newRunner`
+- **WHEN** user code references `com.flezha.sdk.RunnerBuilder`, `com.flezha.sdk.operative.StreamOperativeRegistry`, `com.flezha.sdk.workflow.WorkflowOperativeRegistry`, or `Flezha.newRunner`
 - **THEN** compilation SHALL fail — the builder type, both public registry facades, and the old entry-point name are deleted with no shim
 
 ### Requirement: Procedure Interface and Per-Entity Dispatch
@@ -128,7 +128,7 @@ the five host-participating interactions SHALL reach Java — as activation
 kinds (`RestoreFold`, `SnapshotRequest`, `LiveStateRead`, `ApplyState`,
 `MigrationSerialize`), subject to per-entity exclusivity; every other
 command (including `Ping`, credit frames, acks, `AssignRunnerId`,
-`ConnectSocket`, `RemOperative`, `BoundedStop`) SHALL be answered by the
+`ConnectSocket`, `RemOperative`, `WorkflowStop`) SHALL be answered by the
 core without surfacing to Java. Class capability declarations
 (`effectively_once`, `ack_granularity`, `correction_window_ms`,
 `beyond_window_policy`, `compensable_procs`, `leaf_procs`,
@@ -293,7 +293,7 @@ The Java SDK's `Procedure` interface SHALL declare `Clock extends com.flezha.sdk
 #### Scenario: EventTimeFrom without an eventTime override fails registration
 
 - **WHEN** a Java Procedure declares `Clock = EventTimeFrom` but does not override `eventTime(Input)`
-- **THEN** `registerUnbounded(...)` SHALL throw `OperativeConfigurationException` naming the Procedure and the missing `eventTime` override
+- **THEN** `registerStream(...)` SHALL throw `OperativeConfigurationException` naming the Procedure and the missing `eventTime` override
 
 #### Scenario: LogicalClock serves the durable change seq and re-arms on restore
 
@@ -303,22 +303,22 @@ The Java SDK's `Procedure` interface SHALL declare `Clock extends com.flezha.sdk
 #### Scenario: LogicalClock with NoChange fails registration
 
 - **WHEN** a Java Procedure declares `Clock = LogicalClock` and `Change = NoChange`
-- **THEN** `registerUnbounded(...)` SHALL throw `OperativeConfigurationException` whose message carries the error name `UnservableClock`
+- **THEN** `registerStream(...)` SHALL throw `OperativeConfigurationException` whose message carries the error name `UnservableClock`
 
 ### Requirement: Operative declares persistenceEnabled default-method, frozen at instance start
 
-The Java SDK's `UnboundedOperative` interface SHALL declare `default boolean persistenceEnabled() { return true; }`. The runtime SHALL resolve a per-Operative-instance `persistenceEnabled: boolean` at the moment `AddOperative` is processed using:
+The Java SDK's `StreamOperative` interface SHALL declare `default boolean persistenceEnabled() { return true; }`. The runtime SHALL resolve a per-Operative-instance `persistenceEnabled: boolean` at the moment `AddOperative` is processed using:
 
 1. If the `AddOperative` metadata carries `operative_persistence.<OperativeClass>` with a boolean value (runner override), use that.
-2. Otherwise, use the value of `UnboundedOperative.persistenceEnabled()` (the Operative-class default).
+2. Otherwise, use the value of `StreamOperative.persistenceEnabled()` (the Operative-class default).
 3. If neither is overridden, the result is `true`.
 
-The resolved value SHALL be bound to the `UnboundedOperativeInstance` and SHALL be propagated to every `EntitySlot` constructed for that instance. Subsequent changes to the runner-side metadata or to the SDK's `UnboundedOperative.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
+The resolved value SHALL be bound to the `StreamOperativeInstance` and SHALL be propagated to every `EntitySlot` constructed for that instance. Subsequent changes to the runner-side metadata or to the SDK's `StreamOperative.persistenceEnabled()` impl (via SDK redeploy) SHALL NOT affect already-running instances.
 
 #### Scenario: Default-on with no override
 
 - **WHEN** an Operative's `persistenceEnabled()` is the default (returns `true`) AND no runner override is present
-- **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `true`
+- **THEN** `StreamOperativeInstance.persistenceEnabled()` SHALL return `true`
 
 #### Scenario: Code-declared opt-out is honored
 
@@ -328,12 +328,12 @@ The resolved value SHALL be bound to the `UnboundedOperativeInstance` and SHALL 
 #### Scenario: Runner override takes precedence
 
 - **WHEN** `MarketOperative.persistenceEnabled()` returns `true` AND `AddOperative` metadata sets `operative_persistence.MarketOperative = false`
-- **THEN** `UnboundedOperativeInstance.persistenceEnabled()` SHALL return `false`
+- **THEN** `StreamOperativeInstance.persistenceEnabled()` SHALL return `false`
 
 #### Scenario: Resolved value frozen at instance start
 
-- **WHEN** an `UnboundedOperativeInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent runner config change sets `operative_persistence.<OperativeClass> = false`
-- **THEN** the running `UnboundedOperativeInstance` SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operative` + `start_operative` cycle for that instance
+- **WHEN** an `StreamOperativeInstance` is constructed with resolved `persistenceEnabled = true`, AND a subsequent runner config change sets `operative_persistence.<OperativeClass> = false`
+- **THEN** the running `StreamOperativeInstance` SHALL continue with `persistenceEnabled = true`; the new value SHALL take effect only on the next `stop_operative` + `start_operative` cycle for that instance
 
 ### Requirement: initState accepts optional restoration payload
 
@@ -421,10 +421,10 @@ The Java SDK SHALL expose handler classes whose names use canonical vocabulary: 
 
 ### Requirement: Public Operative / Procedure / Entity user-facing API names
 
-The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `UnboundedOperative`, `Procedure`, `Entity`, and `Channel`. The Runner process startup hook SHALL be `Runner.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Runner` as the role term, not `ComputeEngine` or `Operator`.
+The Java SDK SHALL expose user-extensible base classes/interfaces under the canonical names `StreamOperative`, `Procedure`, `Entity`, and `Channel`. The Runner process startup hook SHALL be `Runner.start(Config)` (or equivalent factory entry point); class names referring to the SDK process itself SHALL use `Runner` as the role term, not `ComputeEngine` or `Operator`.
 
-#### Scenario: User extends UnboundedOperative
-- **WHEN** a user-defined Operative class declares `extends UnboundedOperative`
+#### Scenario: User extends StreamOperative
+- **WHEN** a user-defined Operative class declares `extends StreamOperative`
 - **THEN** the class MUST compile against the published Java SDK; declaring `extends Processor` MUST fail
 
 ### Requirement: Java SDK implements the effectively-once output tier
@@ -488,9 +488,9 @@ The per-Entity flush buffer SHALL carry a third `staged` list holding the open i
 - **WHEN** an Entity with a non-empty `staged` list is restored via `RestoreInitState`
 - **THEN** the staged list SHALL be cleared, since it belongs to a past that no longer exists
 
-### Requirement: Java SDK implements unbounded late-input correction
+### Requirement: Java SDK implements stream late-input correction
 
-The Java SDK SHALL implement the `unbounded-correction` capability. A channel declaration SHALL support `c.correctionWindow(millis)` and `c.beyondWindowPolicy(policy)` where policy is `PROCESS_AS_ARRIVAL` (the default, today's behaviour) or `DROP`. Declaring a correction window SHALL require the effectively-once tier, an `EventTimeFrom` clock, and all channels keyed; violating any of these SHALL fail registration.
+The Java SDK SHALL implement the `stream-correction` capability. A channel declaration SHALL support `c.correctionWindow(millis)` and `c.beyondWindowPolicy(policy)` where policy is `PROCESS_AS_ARRIVAL` (the default, today's behaviour) or `DROP`. Declaring a correction window SHALL require the effectively-once tier, an `EventTimeFrom` clock, and all channels keyed; violating any of these SHALL fail registration.
 
 Every effect record SHALL carry the invocation's `event_time`. The runtime SHALL maintain a per-Entity event-time high-water mark, and SHALL classify an input whose event time is below the high-water by more than the declared window as beyond-window. A replay slice SHALL be recognised via the `flz.replay` metadata key and terminated by a payload-less `flz.replay_end` **broadcast** frame (intercepted before channel lookup, since an input routes to only one entity by key); the buffered slice SHALL be dispatched in **event-time order**, and a closed slice SHALL flush before any live input popped behind it.
 
@@ -521,27 +521,27 @@ A replay SHALL NOT lower the event-time high-water mark.
 - **WHEN** a class declares `c.correctionWindow(60_000)` without declaring a policy, and an input arrives whose event time is older than the window
 - **THEN** the input SHALL be processed as an arrival (not dropped), since declaring a window must never silently start dropping data
 
-### Requirement: Java SDK implements the bounded proc-journal and ProcCommit handshake
+### Requirement: Java SDK implements the workflow proc-journal and ProcCommit handshake
 
-The Java SDK SHALL implement the `bounded-proc-journal` capability. At every proc barrier of a durable structured bounded class, the SDK SHALL ship `ProcCommit` (tag 28) carrying the procs that ran and the channel-tagged handoff blobs, and SHALL block on the controller's `ProcCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation.
+The Java SDK SHALL implement the `workflow-proc-journal` capability. At every proc barrier of a durable structured workflow class, the SDK SHALL ship `ProcCommit` (tag 28) carrying the procs that ran and the channel-tagged handoff blobs, and SHALL block on the controller's `ProcCommitResponse` (tag 29) under the same `reference_id` for up to 30 seconds. A failure or timeout SHALL produce a terminal error and trigger compensation.
 
-Inter-proc channels of a durable structured bounded class SHALL declare a codec; a missing codec SHALL fail registration with `MissingInterProcCodec` naming the channel. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top.
+Inter-proc channels of a durable structured workflow class SHALL declare a codec; a missing codec SHALL fail registration with `MissingInterProcCodec` naming the channel. Classes that opt out of persistence SHALL skip the journal and the handshake entirely, preserving re-run-from-top.
 
 On resume, the SDK SHALL read the journal state shipped on `AddOperative.proc_journal`, SHALL **skip** procs already recorded as committed, and SHALL seed the next proc's batch from the journaled handoff via the channel codec.
 
 #### Scenario: A committed proc is skipped on resume, not re-run
 
-- **WHEN** a durable bounded class commits proc A, then the runner is SIGKILLed, then the operative is rebound with a journal recording proc A as committed
+- **WHEN** a durable workflow class commits proc A, then the runner is SIGKILLed, then the operative is rebound with a journal recording proc A as committed
 - **THEN** proc A's `run` SHALL NOT be invoked again, and proc B SHALL run seeded from proc A's journaled handoff
 
 #### Scenario: A missing inter-proc codec fails registration
 
-- **WHEN** a durable structured bounded class declares an inter-proc channel without a codec
-- **THEN** registration SHALL throw `BoundedOperativeConfigurationException` carrying the error name `MissingInterProcCodec` and naming the channel
+- **WHEN** a durable structured workflow class declares an inter-proc channel without a codec
+- **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `MissingInterProcCodec` and naming the channel
 
 #### Scenario: An opted-out class re-runs from the top
 
-- **WHEN** a bounded class declares `persistenceEnabled() == false` and is resumed after a crash
+- **WHEN** a workflow class declares `persistenceEnabled() == false` and is resumed after a crash
 - **THEN** the SDK SHALL ship no `ProcCommit`, and every proc SHALL re-run from the top
 
 #### Scenario: A commit timeout triggers compensation
@@ -549,15 +549,15 @@ On resume, the SDK SHALL read the journal state shipped on `AddOperative.proc_jo
 - **WHEN** the controller does not answer a `ProcCommit` within 30 seconds
 - **THEN** the SDK SHALL treat the proc as terminally failed and SHALL run the compensation plan
 
-### Requirement: Java SDK implements bounded staged commit and the transactional outbox
+### Requirement: Java SDK implements workflow staged commit and the transactional outbox
 
-The Java SDK SHALL implement the `bounded-transactional-outbox` capability. Inside a structured proc of a durable bounded class, `ctx.emit` SHALL NOT reach the wire: `BoundedCollectSink` SHALL buffer `(channel, bytes)` and the buffered outputs SHALL ride the same `ProcCommit` as the journal record, in the `outbox` field (`ProcOutboxItem{entity_id, seq_in_proc, channel, payload}`). A failing stage SHALL drop its staged bytes together with the error, so nothing leaks. `run`-sugar classes (no barrier to stage against) and transport-less runs SHALL keep the direct-emit path.
+The Java SDK SHALL implement the `workflow-transactional-outbox` capability. Inside a structured proc of a durable workflow class, `ctx.emit` SHALL NOT reach the wire: `WorkflowCollectSink` SHALL buffer `(channel, bytes)` and the buffered outputs SHALL ride the same `ProcCommit` as the journal record, in the `outbox` field (`ProcOutboxItem{entity_id, seq_in_proc, channel, payload}`). A failing stage SHALL drop its staged bytes together with the error, so nothing leaks. `run`-sugar classes (no barrier to stage against) and transport-less runs SHALL keep the direct-emit path.
 
 Compensation output SHALL ride the same handshake with `compensating` set.
 
 #### Scenario: A proc's emits are staged, not shipped, until the barrier
 
-- **WHEN** a structured proc of a durable bounded class calls `ctx.emit(v)` twice and then reaches its proc barrier
+- **WHEN** a structured proc of a durable workflow class calls `ctx.emit(v)` twice and then reaches its proc barrier
 - **THEN** no plugin frame SHALL be sent during the proc body, and the `ProcCommit` at the barrier SHALL carry both outputs in its `outbox`
 
 #### Scenario: A failing stage leaks no staged output
@@ -567,71 +567,71 @@ Compensation output SHALL ride the same handshake with `compensating` set.
 
 #### Scenario: run-sugar keeps the direct path
 
-- **WHEN** a bounded class authored with `run`-sugar calls `ctx.emit(v)`
+- **WHEN** a workflow class authored with `run`-sugar calls `ctx.emit(v)`
 - **THEN** the frame SHALL be sent directly, as before this change
 
-### Requirement: Java SDK implements the bounded durable loop and suspension
+### Requirement: Java SDK implements the workflow durable loop and suspension
 
-The Java SDK SHALL implement the `bounded-durable-loop` and `bounded-durable-suspension` capabilities. `BoundedOperative` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), plus `wakeAfter()`.
+The Java SDK SHALL implement the `workflow-durable-loop` and `workflow-durable-suspension` capabilities. `WorkflowOperative` SHALL declare `loopMode()` returning `ONCE` (the default, byte-identical to the current single pass), `PER_INPUT` (one iteration per inbox item), or `CHAINED` (each iteration seeded by the previous iteration's terminal handoff), plus `wakeAfter()`.
 
 At every iteration boundary the SDK SHALL ship `IterCommit` (tag 30) carrying the iteration index, the consumed inbox offset, and the terminal handoff, and SHALL await `IterCommitResponse` (tag 31). Registration SHALL reject a loop on `run`-sugar (`LoopWithoutChain`) and a durable `CHAINED` loop whose terminal proc has no codec'd output channel (`LoopTerminalWithoutCodec`).
 
-When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) and exit **without** `BoundedCompleted`, yielding a parked outcome. The SDK SHALL read its inbox offset from the inbound `flz.inbox_offset` metadata key.
+When the loop is idle past the park hysteresis, the SDK SHALL ship `IterPark` (tag 32) and exit **without** `WorkflowCompleted`, yielding a parked outcome. The SDK SHALL read its inbox offset from the inbound `flz.inbox_offset` metadata key.
 
 #### Scenario: Each loop iteration commits at its boundary
 
-- **WHEN** a `PER_INPUT` bounded class processes three inbox items
+- **WHEN** a `PER_INPUT` workflow class processes three inbox items
 - **THEN** the SDK SHALL ship three `IterCommit` commands, each carrying its iteration index and consumed inbox offset, and SHALL await each response before starting the next iteration
 
 #### Scenario: An idle loop parks instead of completing
 
-- **WHEN** a durable looping bounded class has no inbox item for longer than the park hysteresis
-- **THEN** the SDK SHALL ship `IterPark` and exit without shipping `BoundedCompleted`
+- **WHEN** a durable looping workflow class has no inbox item for longer than the park hysteresis
+- **THEN** the SDK SHALL ship `IterPark` and exit without shipping `WorkflowCompleted`
 
 #### Scenario: A resumed loop restarts at the journaled iteration
 
-- **WHEN** a looping bounded class committed iteration 2 and is then rebound after a crash
+- **WHEN** a looping workflow class committed iteration 2 and is then rebound after a crash
 - **THEN** the SDK SHALL resume at iteration 3, seeded (for `CHAINED`) from iteration 2's journaled terminal handoff
 
 #### Scenario: A loop on run-sugar is refused
 
-- **WHEN** a bounded class authored with `run`-sugar declares a non-`ONCE` `loopMode()`
-- **THEN** registration SHALL throw `BoundedOperativeConfigurationException` carrying the error name `LoopWithoutChain`
+- **WHEN** a workflow class authored with `run`-sugar declares a non-`ONCE` `loopMode()`
+- **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `LoopWithoutChain`
 
 #### Scenario: A durable chained loop whose terminal proc has no codec is refused
 
-- **WHEN** a durable `CHAINED` bounded class's terminal proc has no codec'd output channel
-- **THEN** registration SHALL throw `BoundedOperativeConfigurationException` carrying the error name `LoopTerminalWithoutCodec`
+- **WHEN** a durable `CHAINED` workflow class's terminal proc has no codec'd output channel
+- **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `LoopTerminalWithoutCodec`
 
-### Requirement: Java SDK implements the bounded entity retry ladder
+### Requirement: Java SDK implements the workflow entity retry ladder
 
-The Java SDK SHALL implement the `bounded-entity-retry` capability. `BoundedOperative` SHALL declare `retryAttempts()` (default 3 total attempts) and `retryBackoff()` (default 500 ms base). Only the failing entity SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
+The Java SDK SHALL implement the `workflow-entity-retry` capability. `WorkflowOperative` SHALL declare `retryAttempts()` (default 3 total attempts) and `retryBackoff()` (default 500 ms base). Only the failing entity SHALL re-run its batch; siblings SHALL stay buffered at the barrier, and each attempt SHALL use a fresh sink so a failed attempt's staged output is dropped rather than double-emitted.
 
-Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled proc SHALL never be retried. `retryAttempts() == 0` SHALL collapse to a single attempt; `attempts > 1` with a zero backoff SHALL be rejected at registration with `ZeroRetryBackoff`. A `BoundedException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
+Backoff SHALL reuse the dead-letter ladder's helper (`base × 2^(n-1)` with ±50% jitter, capped at 5 s) and the wait SHALL be cancellation-aware, so a stop or `maxDuration` ends it at once. Retry is strictly pre-commit: a journaled proc SHALL never be retried. `retryAttempts() == 0` SHALL collapse to a single attempt; `attempts > 1` with a zero backoff SHALL be rejected at registration with `ZeroRetryBackoff`. A `WorkflowException` SHALL carry a `nonRetryable` flag; a thrown `RuntimeException` SHALL stay retryable.
 
 #### Scenario: A transient entity failure recovers on retry
 
-- **WHEN** a bounded entity's batch throws on its first attempt and succeeds on its second
+- **WHEN** a workflow entity's batch throws on its first attempt and succeeds on its second
 - **THEN** the operative SHALL complete successfully, only the failing entity SHALL have re-run, and its first attempt's staged output SHALL NOT be emitted
 
 #### Scenario: An exhausted ladder compensates
 
-- **WHEN** a bounded entity fails all three attempts
+- **WHEN** a workflow entity fails all three attempts
 - **THEN** the operative SHALL abort and run the compensation plan
 
 #### Scenario: A non-retryable error skips the ladder
 
-- **WHEN** an entity throws `BoundedException.nonRetryable("bad record")`
+- **WHEN** an entity throws `WorkflowException.nonRetryable("bad record")`
 - **THEN** the SDK SHALL NOT retry and SHALL proceed directly to the abort path
 
 #### Scenario: attempts > 1 with a zero backoff is refused
 
-- **WHEN** a bounded class declares `retryAttempts() == 3` and `retryBackoff() == Duration.ZERO`
-- **THEN** registration SHALL throw `BoundedOperativeConfigurationException` carrying the error name `ZeroRetryBackoff`
+- **WHEN** a workflow class declares `retryAttempts() == 3` and `retryBackoff() == Duration.ZERO`
+- **THEN** registration SHALL throw `WorkflowOperativeConfigurationException` carrying the error name `ZeroRetryBackoff`
 
-### Requirement: Java SDK implements bounded loop rewind
+### Requirement: Java SDK implements workflow loop rewind
 
-The Java SDK SHALL implement the `bounded-loop-rewind` capability. On restore, the SDK SHALL read `ProcJournalState.rewind_undo` (the procs the controller's rewind marker determined are still owed an undo) and, before entering the forward loop, SHALL run those undos in reverse order under a **forced** all-or-nothing rollback mode — whatever the class's declared `rollbackMode()` says — since a rewind unwinds committed iterations by definition.
+The Java SDK SHALL implement the `workflow-loop-rewind` capability. On restore, the SDK SHALL read `ProcJournalState.rewind_undo` (the procs the controller's rewind marker determined are still owed an undo) and, before entering the forward loop, SHALL run those undos in reverse order under a **forced** all-or-nothing rollback mode — whatever the class's declared `rollbackMode()` says — since a rewind unwinds committed iterations by definition.
 
 The SDK SHALL journal exactly one `compensated` record per undone proc, **including an empty one for a proc with no compensate hook**, since that record is what drains `rewind_undo`. The undo pass SHALL NOT consult the per-entity crash-resume done markers, which are per entity and would wrongly suppress a proc that ran in two rewound iterations.
 
@@ -639,7 +639,7 @@ A rewind SHALL NOT replay inputs: the controller truncates the inbox at each ite
 
 #### Scenario: A rewind undoes committed iterations in reverse order
 
-- **WHEN** the controller rewinds a looping bounded class to iteration 1 and the class committed iterations 2 and 3
+- **WHEN** the controller rewinds a looping workflow class to iteration 1 and the class committed iterations 2 and 3
 - **THEN** on rebind the SDK SHALL run the compensate hooks for iterations 3 and 2's procs in reverse order before resuming the forward loop
 
 #### Scenario: A hookless proc still drains the rewind undo
@@ -649,18 +649,18 @@ A rewind SHALL NOT replay inputs: the controller truncates the inbox at each ite
 
 #### Scenario: A rewind does not re-deliver consumed inputs
 
-- **WHEN** a looping bounded class is rewound to iteration 1
+- **WHEN** a looping workflow class is rewound to iteration 1
 - **THEN** the inputs consumed by iterations 2 and 3 SHALL NOT be re-delivered; the loop SHALL resume waiting, and the next inbound message SHALL become the next iteration
 
-### Requirement: Java SDK implements bounded branching
+### Requirement: Java SDK implements workflow branching
 
-The Java SDK SHALL implement the `bounded-branching` capability. `BoundedSpec` SHALL model the proc graph as a tree (`order` plus `children`) rather than the current `List<Integer> chain`; a linear chain SHALL be the degenerate single-child case. `BoundedSpec.linearChain()`'s refusal of any non-linear graph SHALL be removed and replaced with validation over the tree.
+The Java SDK SHALL implement the `workflow-branching` capability. `WorkflowSpec` SHALL model the proc graph as a tree (`order` plus `children`) rather than the current `List<Integer> chain`; a linear chain SHALL be the degenerate single-child case. `WorkflowSpec.linearChain()`'s refusal of any non-linear graph SHALL be removed and replaced with validation over the tree.
 
 The SDK SHALL declare the tree's leaf procs to the controller via the `leaf_procs` key of `AddOperativeResponse.metadata`. Fan-in SHALL NOT silently overwrite an edge. Compensation SHALL run in reverse-topological order, which the existing BFS numbering already yields — the compensation planner SHALL NOT be changed.
 
 #### Scenario: A branching chain runs its branches and joins
 
-- **WHEN** a bounded class declares proc 0 feeding both proc 1 and proc 2, which both feed proc 3
+- **WHEN** a workflow class declares proc 0 feeding both proc 1 and proc 2, which both feed proc 3
 - **THEN** procs 1 and 2 SHALL each run seeded from proc 0's handoff, and proc 3 SHALL run once both have committed
 
 #### Scenario: Compensation runs in reverse-topological order
@@ -689,51 +689,51 @@ The Java SDK's `data_heartbeat` frame SHALL carry the same metrics the Rust SDK 
 
 ### Requirement: Operative Type Declaration
 
-The Java SDK SHALL provide `RunnerBuilder.defineUnbounded(Class<? extends UnboundedOperative>)` and `RunnerBuilder.defineBounded(Class<? extends BoundedOperative>)` as chainable builder methods, called **before** `.start()`/`.run()`. For each declared UnboundedOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a stream's payload type and its consumer Procedures' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `.start()` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
+The Java SDK SHALL provide `RunnerBuilder.defineStream(Class<? extends StreamOperative>)` and `RunnerBuilder.defineWorkflow(Class<? extends WorkflowOperative>)` as chainable builder methods, called **before** `.start()`/`.run()`. For each declared StreamOperative class the SDK SHALL: (a) instantiate the class via its public no-arg constructor; (b) call its `factoryId()` method to obtain the controller-facing factory id; (c) call its `channels(ChannelBuilder)` method exactly once — the builder being the producer-first graph builder of `sdk-graph-authoring` — and freeze the resulting `OperativeTopology`; (d) verify wiring constraints (entry-channel deserializability, type-equality between a stream's payload type and its consumer Procedures' input types, node reachability from the entry, at most one output channel per node, acyclicity, node-identity and channel-name uniqueness, static-mode and dynamic-mode default-impl detection); (e) record `(factoryId → topology)` in the class registry. The registry MUST be frozen at `.start()` time. There SHALL be no `OperativeHandler`-style factory registration in the public surface.
 
 Dynamic entity mode SHALL be supported: a Procedure reached by a consumer edge declaring `keyBy`, returning an empty list from `entityKeys()`, SHALL be declared successfully and create Entities lazily per key at dispatch time, per the `operative-state-persistence` dynamic-entity behaviour. Eviction SHALL be off by default (`entityIdleTtl()` returns `Optional.empty()`); when a TTL is declared, the per-Procedure reaper SHALL evict idle Entities destructively by shipping `delete_entity_state`, and a recreated Entity SHALL cold-start fresh rather than restore from disk.
 
 Because Java's type erasure precludes Rust's compile-time topology refusals, every constraint Rust enforces at compile time SHALL be enforced at declaration time, throwing `OperativeConfigurationException` whose message carries the same diagnostic content and the same error name as the corresponding Rust `BuildTopologyError` variant.
 
-#### Scenario: Declaring an unbounded operative class before start() succeeds
-- **WHEN** user code calls `Flezha.newRunner("my_app").defineUnbounded(MarketOperative.class).start()`
-- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning an `UnboundedOperativeInstance`
+#### Scenario: Declaring a stream operative class before start() succeeds
+- **WHEN** user code calls `Flezha.newRunner("my_app").defineStream(MarketOperative.class).start()`
+- **THEN** the handshake init JSON SHALL include `"market"` (the value `MarketOperative::factoryId` returns) in `factory_ids`, and subsequent `AddOperative{factory_id:"market"}` commands SHALL succeed by spawning an `StreamOperativeInstance`
 
 #### Scenario: Declaring an operative type after start() is rejected
-- **WHEN** user code calls `.defineUnbounded(...)` on a `RunnerBuilder` whose `.start()` has already returned
+- **WHEN** user code calls `.defineStream(...)` on a `RunnerBuilder` whose `.start()` has already returned
 - **THEN** the SDK SHALL throw an `IllegalStateException`
 
-#### Scenario: Duplicate factoryId across two unbounded operative classes is rejected
-- **WHEN** two distinct UnboundedOperative classes both return `"market"` from `factoryId()` and both are declared on the same builder
-- **THEN** the second `.defineUnbounded(...)` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
+#### Scenario: Duplicate factoryId across two stream operative classes is rejected
+- **WHEN** two distinct StreamOperative classes both return `"market"` from `factoryId()` and both are declared on the same builder
+- **THEN** the second `.defineStream(...)` call SHALL throw an `IllegalArgumentException` naming the duplicate factoryId
 
 #### Scenario: Wiring mismatch fails declaration with a diagnosable error
 - **WHEN** an Operative wires `.into(OhlcProcedure.class)` onto `ParseProcedure`'s output stream but `ParseProcedure.outputType()` returns `Trade.class` while `OhlcProcedure.inputType()` returns `Candle.class`
-- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
+- **THEN** `.defineStream(...)` SHALL throw `OperativeConfigurationException` whose message names the channel, the stream's payload type (`Trade`), and the consumer-input type (`Candle`)
 
 #### Scenario: Typed entry channel deserializes at the edge
 - **WHEN** an Operative declares `c.input(Trade.class, "trade.raw").into(ParseProcedure.class)` and a JSON-encoded Trade arrives
-- **THEN** `.defineUnbounded(...)` SHALL succeed and `ParseProcedure.run` SHALL receive the Jackson-deserialized `Trade`, per the typed-entry-input contract of `sdk-graph-authoring`
+- **THEN** `.defineStream(...)` SHALL succeed and `ParseProcedure.run` SHALL receive the Jackson-deserialized `Trade`, per the typed-entry-input contract of `sdk-graph-authoring`
 
 #### Scenario: Unreachable node fails declaration
 - **WHEN** an Operative's `channels(c)` wires a Procedure that is not reachable from the entry channel
-- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` naming the unreachable Procedure
+- **THEN** `.defineStream(...)` SHALL throw `OperativeConfigurationException` naming the unreachable Procedure
 
 #### Scenario: Static-mode procedure without entitiesForOverridden is rejected
 - **WHEN** a Procedure returns a non-empty list from `entityKeys()` but its `entitiesForOverridden()` returns the default `false`
-- **THEN** `.defineUnbounded(...)` SHALL throw `OperativeConfigurationException` naming the Procedure and stating that static-mode procedures must override `entitiesFor` and `entitiesForOverridden`
+- **THEN** `.defineStream(...)` SHALL throw `OperativeConfigurationException` naming the Procedure and stating that static-mode procedures must override `entitiesFor` and `entitiesForOverridden`
 
 #### Scenario: Dynamic-mode procedure declares and creates entities lazily
 - **WHEN** a Procedure returning an empty `entityKeys()` is wired through an edge declaring `keyBy`, and two inputs arrive whose key function returns `"BTC"` and `"ETH"`
-- **THEN** `.defineUnbounded(...)` SHALL succeed, and the runtime SHALL lazily allocate exactly two Entities keyed `"BTC"` and `"ETH"`, each constructed with `initState(Optional.of(key), Optional.empty())`
+- **THEN** `.defineStream(...)` SHALL succeed, and the runtime SHALL lazily allocate exactly two Entities keyed `"BTC"` and `"ETH"`, each constructed with `initState(Optional.of(key), Optional.empty())`
 
 ### Requirement: Runner process singleton guard
 
 The Java SDK SHALL allow at most one runner to be **started** per JVM process. `Flezha.createRunner(...)` SHALL NOT claim the singleton slot — any number of unstarted runners may exist. The slot SHALL be claimed by compare-and-set at `.start()`/`.run()`; if a prior runner's `.start()`/`.run()` has already succeeded in this process and not yet closed, the call SHALL throw `IllegalStateException` naming the namespace of the already-running runner, and SHALL NOT connect, mutate any shared registry, or spawn any background thread. Calling `.start()` twice on the same runner SHALL throw `IllegalStateException`.
 
 #### Scenario: Second start() in the same JVM is rejected
-- **GIVEN** a JVM process where `Flezha.createRunner("ns1").defineUnbounded(A.class).start()` has already succeeded
-- **WHEN** code in the same process calls `Flezha.createRunner("ns2").defineUnbounded(B.class).start()`
+- **GIVEN** a JVM process where `Flezha.createRunner("ns1").defineStream(A.class).start()` has already succeeded
+- **WHEN** code in the same process calls `Flezha.createRunner("ns2").defineStream(B.class).start()`
 - **THEN** the call SHALL throw `IllegalStateException` whose message names `"ns1"` as the already-running namespace
 - **AND** no connection SHALL be attempted for `"ns2"`, and the process's stable identity, entity-state sink, and credit window SHALL remain exclusively `"ns1"`'s
 
@@ -744,7 +744,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 #### Scenario: A runner may be started again after the first one closes
 - **GIVEN** a JVM process where a runner for `"ns1"` was started and then fully closed via `.close()`
-- **WHEN** code in the same process calls `Flezha.createRunner("ns2").defineUnbounded(B.class).start()`
+- **WHEN** code in the same process calls `Flezha.createRunner("ns2").defineStream(B.class).start()`
 - **THEN** the call SHALL succeed and `"ns2"` SHALL become the process's active runner
 
 #### Scenario: Concurrent start() calls — exactly one wins
@@ -778,7 +778,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 #### Scenario: try-with-resources still works for short-lived usage
 - **GIVEN** a test that needs a runner for the duration of one test method
-- **WHEN** the test writes `try (FlezhaRunner r = Flezha.createRunner("test").defineUnbounded(A.class).start()) { ... }`
+- **WHEN** the test writes `try (FlezhaRunner r = Flezha.createRunner("test").defineStream(A.class).start()) { ... }`
 - **THEN** the runner SHALL be started for the block and gracefully closed at the end of it, exactly as `AutoCloseable` usage requires
 
 ### Requirement: Flezha static accessor for the active runner
@@ -789,7 +789,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 - **GIVEN** a JVM process with no runner started yet
 - **WHEN** code calls `Flezha.currentRunner()`
 - **THEN** it SHALL return `Optional.empty()`
-- **AND** after `Flezha.createRunner("ns1").defineUnbounded(A.class).start()` succeeds, `Flezha.currentRunner()` SHALL return `Optional.of(<that runner>)`
+- **AND** after `Flezha.createRunner("ns1").defineStream(A.class).start()` succeeds, `Flezha.currentRunner()` SHALL return `Optional.of(<that runner>)`
 - **AND** after that runner's `.close()` completes, `Flezha.currentRunner()` SHALL return `Optional.empty()` again
 - **AND** a runner created via `Flezha.createRunner(...)` but never started SHALL NOT appear in `currentRunner()`
 
@@ -797,7 +797,7 @@ The Java SDK SHALL allow at most one runner to be **started** per JVM process. `
 
 Each Entity SHALL invoke `run` on its own Procedure instance, as the Rust SDK does by holding one Procedure instance per Entity alongside that Entity's State, so that a class authored against either SDK means the same thing.
 
-Today `UnboundedOperativeInstance` builds one Procedure per `ProcedureDispatcher` and `ProcedureDispatcher` invokes `run` on that single object for every Entity it owns — static-key, keyless, and dynamic alike. The per-Entity instances it also constructs are used only for `initState` and a `schemaVersion()` read. No instance-level lock guards `run`; the per-Entity `stateLock` and `changeBufferLock` are distinct objects per Entity and serialise nothing between Entities, which drain concurrently on the worker pool. Any mutable field on a user's Procedure is therefore a shared, unsynchronised channel across Entity keys.
+Today `StreamOperativeInstance` builds one Procedure per `ProcedureDispatcher` and `ProcedureDispatcher` invokes `run` on that single object for every Entity it owns — static-key, keyless, and dynamic alike. The per-Entity instances it also constructs are used only for `initState` and a `schemaVersion()` read. No instance-level lock guards `run`; the per-Entity `stateLock` and `changeBufferLock` are distinct objects per Entity and serialise nothing between Entities, which drain concurrently on the worker pool. Any mutable field on a user's Procedure is therefore a shared, unsynchronised channel across Entity keys.
 
 #### Scenario: Instance state does not leak between Entity keys
 
@@ -916,9 +916,9 @@ core's documented contract. Fetchers SHALL be platform threads, never virtual
 ones: `FlzCore.poll` blocks in native code, which would pin a virtual
 thread's carrier. The runtime SHALL NOT reimplement kernel mechanisms the
 core owns — command handling, flushing, credit, DLQ parks, timer wheels, the
-bounded driver, reconnect, wire framing — and the classes that did
+workflow driver, reconnect, wire framing — and the classes that did
 (`runtime/control` handlers, `EntityFlusher`, `CreditWindow`, `DlqPark`,
-`TimerWheel`, `BoundedOperativeRunner`, the reconnect loop, `AckRegistry`)
+`TimerWheel`, `WorkflowOperativeRunner`, the reconnect loop, `AckRegistry`)
 SHALL be deleted, not shimmed. The Java SDK SHALL encode and decode the
 Activation/ActivationResult schema byte-identically to the core's hex-pinned
 fixtures, reproduced in a Java fixture suite.

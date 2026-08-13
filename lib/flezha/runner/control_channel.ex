@@ -20,7 +20,7 @@ defmodule Flezha.Runner.ControlChannel do
   @control_liveness_interval_ms 15_000
 
   # Re-attempt cadence for a journaled outbox whose operative is not bound yet
-  # (mirrors the unbounded outbox's `:outbox_retry` in `Flezha.State.WalWriter`).
+  # (mirrors the stream outbox's `:outbox_retry` in `Flezha.State.WalWriter`).
   @proc_outbox_retry_ms 1_000
 
   def start_link({namespace, runner_id, stream_ref}) do
@@ -216,8 +216,8 @@ defmodule Flezha.Runner.ControlChannel do
         handle_runner_shutdown_notification(state, notif, reference_id)
         {:noreply, state}
 
-      {:bounded_completed, %{} = completed, _reference_id} ->
-        handle_bounded_completed(state, completed)
+      {:workflow_completed, %{} = completed, _reference_id} ->
+        handle_workflow_completed(state, completed)
         {:noreply, state}
 
       {:proc_commit, %{} = commit, reference_id} ->
@@ -236,8 +236,8 @@ defmodule Flezha.Runner.ControlChannel do
         handle_update_factories(state, update)
         {:noreply, state}
 
-      {:spawn_bounded_request, %{} = request, reference_id} ->
-        handle_spawn_bounded(state, request, reference_id)
+      {:spawn_workflow_request, %{} = request, reference_id} ->
+        handle_spawn_workflow(state, request, reference_id)
         {:noreply, state}
 
       :not_sdk_initiated ->
@@ -255,13 +255,13 @@ defmodule Flezha.Runner.ControlChannel do
   # The spawn resolution ran off-process; write its reply on this channel, which
   # is the one process allowed to write control frames.
   @impl true
-  def handle_info({:spawn_bounded_result, reference_id, outcome, error}, state) do
+  def handle_info({:spawn_workflow_result, reference_id, outcome, error}, state) do
     emit_control_request(
       state,
       reference_id,
-      {:spawn_bounded_response,
-       %RunnerCommands.SpawnBoundedResponse{outcome: outcome, error: error}},
-      "spawn-bounded response #{outcome}"
+      {:spawn_workflow_response,
+       %RunnerCommands.SpawnWorkflowResponse{outcome: outcome, error: error}},
+      "spawn-workflow response #{outcome}"
     )
 
     {:noreply, state}
@@ -368,12 +368,12 @@ defmodule Flezha.Runner.ControlChannel do
   # `:not_sdk_initiated`.
   @sdk_initiated_commands [
     :runner_shutdown_notification,
-    :bounded_completed,
+    :workflow_completed,
     :proc_commit,
     :iter_commit,
     :iter_park,
     :update_factories,
-    :spawn_bounded_request
+    :spawn_workflow_request
   ]
 
   defp decode_sdk_initiated(message) do
@@ -418,12 +418,12 @@ defmodule Flezha.Runner.ControlChannel do
     emit_runner_shutdown_ack(state, operative_id, reference_id)
   end
 
-  # Converged teardown for every bounded exit trigger (quiescence, ctx.complete,
+  # Converged teardown for every workflow exit trigger (quiescence, ctx.complete,
   # loop terminal, max_duration, cooperative stop): surface the outcome + result
   # payload, then deregister-on-completion so the operative never replays on boot.
   # A `status = "error"` tears down identically — no retry.
-  defp handle_bounded_completed(state, completed) do
-    %RunnerCommands.BoundedCompleted{
+  defp handle_workflow_completed(state, completed) do
+    %RunnerCommands.WorkflowCompleted{
       operative_id: operative_id,
       status: status,
       error: error,
@@ -431,7 +431,7 @@ defmodule Flezha.Runner.ControlChannel do
     } = completed
 
     :telemetry.execute(
-      [:flezha, :bounded, :completed],
+      [:flezha, :workflow, :completed],
       %{count: 1},
       %{
         namespace: state.namespace,
@@ -443,12 +443,12 @@ defmodule Flezha.Runner.ControlChannel do
 
     if status == "error" do
       Logger.warning(
-        "[control_channel] bounded operative #{inspect(operative_id)} failed in namespace " <>
+        "[control_channel] workflow operative #{inspect(operative_id)} failed in namespace " <>
           "#{inspect(state.namespace)}: #{inspect(error)}"
       )
 
       :telemetry.execute(
-        [:flezha, :bounded, :failed],
+        [:flezha, :workflow, :failed],
         %{count: 1},
         %{namespace: state.namespace, operative_id: operative_id, error: error}
       )
@@ -479,7 +479,7 @@ defmodule Flezha.Runner.ControlChannel do
 
         {:error, reason} ->
           Logger.warning(
-            "[control_channel] bounded operative #{inspect(operative_id)} teardown failed: #{inspect(reason)}"
+            "[control_channel] workflow operative #{inspect(operative_id)} teardown failed: #{inspect(reason)}"
           )
       end
     end)
@@ -494,7 +494,7 @@ defmodule Flezha.Runner.ControlChannel do
     )
   end
 
-  # Proc-boundary commit (bounded-proc-journal + bounded-transactional-outbox):
+  # Proc-boundary commit (workflow-proc-journal + workflow-transactional-outbox):
   # append the `proc_committed` entry — entities ran, handoff, AND the procedure's
   # staged outbox in ONE record — and fsync BEFORE replying. The ack IS the
   # durable point the driver gates the next procedure on, and the point past
@@ -597,7 +597,7 @@ defmodule Flezha.Runner.ControlChannel do
   defp commit_status(:ok), do: :ok
   defp commit_status({:error, _}), do: :error
 
-  # Iteration boundary of a durable structured loop (`bounded-durable-loop`):
+  # Iteration boundary of a durable structured loop (`workflow-durable-loop`):
   # ONE durable `iter_committed(iter, consumed_offset)` record — with the
   # iteration's terminal handoff, so a crash can re-seed the next iteration —
   # then the ack. Everything after the ack is cleanup the commit does not depend
@@ -661,7 +661,7 @@ defmodule Flezha.Runner.ControlChannel do
   #
   # Off this process: `CompactEntity` is dispatched through `send_control`,
   # which is a call INTO this very channel — issuing it inline would be the
-  # channel calling itself (same reason the bounded-completed teardown runs in a
+  # channel calling itself (same reason the workflow-completed teardown runs in a
   # task). Best-effort besides: a failed or dropped compaction only means the
   # restore falls back to WAL replay, which the Watchdog's own size/age triggers
   # will re-attempt.
@@ -687,14 +687,14 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   # The SDK's loop found its inbox empty at a committed iteration boundary and
-  # tore its run down WITHOUT a completion (`bounded-durable-suspension`). Journal
+  # tore its run down WITHOUT a completion (`workflow-durable-suspension`). Journal
   # the park record — durable BEFORE the eviction, so a controller crash in
   # between still rediscovers the suspension — then hand the instance to its
   # Overwatch, which evicts it from this runner and keeps it resumable.
   #
   # Off this process: the eviction drives a `RemOperative` whose response returns
   # on THIS control stream, so doing it inline would deadlock the reader (same
-  # reason as the bounded-completed teardown).
+  # reason as the workflow-completed teardown).
   defp handle_iter_park(state, park) do
     %RunnerCommands.IterPark{
       operative_id: operative_id,
@@ -705,7 +705,7 @@ defmodule Flezha.Runner.ControlChannel do
     deadline = if wake_deadline_ms == 0, do: nil, else: wake_deadline_ms
 
     :telemetry.execute(
-      [:flezha, :bounded, :parked],
+      [:flezha, :workflow, :parked],
       %{count: 1},
       %{namespace: state.namespace, operative_id: operative_id, iter: iter}
     )
@@ -739,17 +739,17 @@ defmodule Flezha.Runner.ControlChannel do
     end)
   end
 
-  # A procedure asked for a bounded instance (`ctx.spawn_bounded`). The
+  # A procedure asked for a workflow instance (`ctx.spawn_workflow`). The
   # namespace is this channel's — never the requester's claim — so a request
   # cannot reach another namespace.
   #
   # Off this process: the resolution starts an operative, which drives
   # `AddOperative` and waits for its response on THIS control stream; running it
-  # inline would deadlock the reader (same reason as the bounded-completed
+  # inline would deadlock the reader (same reason as the workflow-completed
   # teardown). The reply is written back through `handle_info/2` so control
   # writes stay on this process.
-  defp handle_spawn_bounded(state, request, reference_id) do
-    %RunnerCommands.SpawnBoundedRequest{
+  defp handle_spawn_workflow(state, request, reference_id) do
+    %RunnerCommands.SpawnWorkflowRequest{
       instance_id: instance_id,
       factory_id: factory_id,
       payload: payload,
@@ -782,7 +782,7 @@ defmodule Flezha.Runner.ControlChannel do
         }
       )
 
-      send(channel, {:spawn_bounded_result, reference_id, Atom.to_string(name), error})
+      send(channel, {:spawn_workflow_result, reference_id, Atom.to_string(name), error})
     end)
   end
 

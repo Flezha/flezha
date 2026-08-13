@@ -1,6 +1,6 @@
 package com.flezha.sdk.runtime.operative.builder;
 
-import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import javax.annotation.Nonnull;
 
 /**
@@ -14,8 +14,8 @@ import javax.annotation.Nonnull;
  * </ol>
  *
  * <p>Out-of-range values fail registration with
- * {@link UnboundedOperativeConfigurationException#mailboxCapacityZero(String)} or
- * {@link UnboundedOperativeConfigurationException#mailboxCapacityTooLarge(String, long)}.
+ * {@link StreamOperativeConfigurationException#mailboxCapacityZero(String)} or
+ * {@link StreamOperativeConfigurationException#mailboxCapacityTooLarge(String, long)}.
  * Unparseable env values fall through to the default — runners tolerate
  * typos in env values during development. Split into a pure-function core
  * so operative tests don't have to mutate the process-global env var.
@@ -38,7 +38,7 @@ public final class MailboxCapacityResolver {
      * a string that fails to parse as a positive {@code int}, in which case
      * the default is used.
      *
-     * @throws UnboundedOperativeConfigurationException if the resolved value is out of
+     * @throws StreamOperativeConfigurationException if the resolved value is out of
      *     range {@code [1, 1_048_576]}.
      */
     static int resolveInner(@Nonnull String procedureName, int declared, boolean overridden, String envValue) {
@@ -50,10 +50,10 @@ public final class MailboxCapacityResolver {
             resolved = parsed != null ? parsed : DEFAULT_MAILBOX_CAPACITY;
         }
         if (resolved <= 0) {
-            throw UnboundedOperativeConfigurationException.mailboxCapacityZero(procedureName);
+            throw StreamOperativeConfigurationException.mailboxCapacityZero(procedureName);
         }
         if (resolved > MAX_MAILBOX_CAPACITY) {
-            throw UnboundedOperativeConfigurationException.mailboxCapacityTooLarge(procedureName, resolved);
+            throw StreamOperativeConfigurationException.mailboxCapacityTooLarge(procedureName, resolved);
         }
         return resolved;
     }

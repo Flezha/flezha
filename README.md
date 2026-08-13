@@ -12,7 +12,7 @@ kernel, the two operative profiles, and the diagrams. Vocabulary:
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
 - Per-Entity durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/resilience/state_persistence.md`](docs/resilience/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
-- Bounded operatives — a procedure tree with saga compensation, a durable loop, and suspension ([`docs/architecture/bounded_profile.md`](docs/architecture/bounded_profile.md))
+- Workflow operatives — a procedure tree with saga compensation, a durable loop, and suspension ([`docs/architecture/workflow_profile.md`](docs/architecture/workflow_profile.md))
 - Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
 - First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/kafka-producer.md`](docs/kafka-producer.md))
 - Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))

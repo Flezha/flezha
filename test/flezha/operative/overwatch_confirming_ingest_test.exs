@@ -45,7 +45,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
       namespace: "default",
       runner_id: "ex_1",
       factory_id: "chat",
-      builder: %Builder{id: inst, factory_id: "chat", kind: :unbounded, opts: []},
+      builder: %Builder{id: inst, factory_id: "chat", kind: :stream, opts: []},
       extensions: Table.new(Overwatch.__extensions_catalog__())
     }
 
@@ -90,7 +90,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
     # waits in the inbox, which is exactly the guarantee the verdict reports.
     stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> nil end)
 
-    state = state(inst, durable_bounded: true, suspended: true, channel: nil)
+    state = state(inst, durable_workflow: true, suspended: true, channel: nil)
 
     assert {:reply, {:ok, :suspended}, _state} =
              Overwatch.handle_call({:ingest, "turn", %{}}, self(), state)
@@ -116,7 +116,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
     inst = instance_id()
     stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:duplicate, 3} end)
 
-    state = state(inst, durable_bounded: true, channel: fake_channel(:ok))
+    state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
 
     assert {:reply, {:ok, :absorbed}, _state} =
              Overwatch.handle_call({:ingest, "again", %{}}, self(), state)
@@ -128,7 +128,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
     inst = instance_id()
     stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:error, :enospc} end)
 
-    state = state(inst, durable_bounded: true, channel: fake_channel(:ok))
+    state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
@@ -152,7 +152,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
     stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:ok, 1} end)
 
-    durable = state(inst, durable_bounded: true, channel: nil)
+    durable = state(inst, durable_workflow: true, channel: nil)
 
     assert {:reply, :ok, _} = Overwatch.handle_call({:ingest, "x", %{}}, self(), durable)
   end

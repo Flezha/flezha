@@ -66,7 +66,9 @@ fn print_help() {
     println!("    observe        Observability foundation inspection (sources, sinks, tail)");
     println!("    audit          Durable audit log inspection (list, read, tail, stats, rotate)");
     println!("    dlq            Dead-letter queue: inspect, replay, or drop parked payloads");
-    println!("    schedule       Cron-scheduled bounded operative spawns (add, list, remove, run)");
+    println!(
+        "    schedule       Cron-scheduled workflow operative spawns (add, list, remove, run)"
+    );
     println!("    help           Show this help message");
     println!();
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");

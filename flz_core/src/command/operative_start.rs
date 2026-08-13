@@ -1,9 +1,9 @@
 use prost::Message;
 
 use super::CommandAction;
-use crate::bounded::spec::BoundedSpec;
 use crate::pb::{AddOperative, AddOperativeResponse};
 use crate::runner::RunnerNode;
+use crate::workflow::spec::WorkflowSpec;
 
 impl CommandAction for AddOperative {
     fn handle(
@@ -15,15 +15,15 @@ impl CommandAction for AddOperative {
         let instance_id = self.operative_id.clone();
         let factory_id = self.factory_id.clone();
 
-        // Empty kind ⇒ `unbounded`, the wire default.
+        // Empty kind ⇒ `stream`, the wire default.
         let kind = if self.kind.is_empty() {
-            "unbounded"
+            "stream"
         } else {
             self.kind.as_str()
         };
 
         // Idempotent on reconnect: the controller re-issues AddOperative for
-        // every UnboundedOperative instance ProcessHub still has tagged to this
+        // every StreamOperative instance ProcessHub still has tagged to this
         // runner's profile after a restart. If the instance is already
         // in the local registry, skip without re-registering — keeps
         // the existing per-Entity state intact and prevents
@@ -36,8 +36,8 @@ impl CommandAction for AddOperative {
         }
 
         match kind {
-            "bounded" => {
-                if !runner.start_bounded_resumable(
+            "workflow" => {
+                if !runner.start_workflow_resumable(
                     factory_id.clone(),
                     instance_id.clone(),
                     self.init_values.clone(),
@@ -45,12 +45,12 @@ impl CommandAction for AddOperative {
                     self.proc_journal.as_ref().map(Into::into),
                 ) {
                     errors.push(format!(
-                        "BoundedOperative class with factory_id {} is not registered",
+                        "WorkflowOperative class with factory_id {} is not registered",
                         factory_id
                     ));
                 }
             }
-            "unbounded" => match runner.start_operative(factory_id.clone(), instance_id.clone()) {
+            "stream" => match runner.start_operative(factory_id.clone(), instance_id.clone()) {
                 Some(instance) => {
                     if !self.init_values.is_empty() {
                         if let Err(e) = crate::command::entity_state::apply_init_values(
@@ -63,7 +63,7 @@ impl CommandAction for AddOperative {
                 }
                 None => {
                     errors.push(format!(
-                        "UnboundedOperative class with factory_id {} is not registered",
+                        "StreamOperative class with factory_id {} is not registered",
                         factory_id
                     ));
                 }
@@ -92,24 +92,24 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
 
     let mut metadata = std::collections::HashMap::new();
 
-    // Every unbounded-only declaration reads the same topology; resolve it once.
-    // `None` for a bounded class, or one that never registered.
-    let unbounded = match kind {
-        "bounded" => None,
+    // Every stream-only declaration reads the same topology; resolve it once.
+    // `None` for a workflow class, or one that never registered.
+    let stream = match kind {
+        "workflow" => None,
         _ => crate::operative::registry::get_class(factory_id),
     };
 
     let effectively_once = match kind {
-        "bounded" => crate::bounded::registry::get_class(factory_id)
+        "workflow" => crate::workflow::registry::get_class(factory_id)
             .and_then(|spec| spec.topology.as_ref().map(|t| t.effectively_once))
             .unwrap_or(false),
-        _ => unbounded.as_ref().is_some_and(|t| t.effectively_once),
+        _ => stream.as_ref().is_some_and(|t| t.effectively_once),
     };
     if effectively_once {
         metadata.insert("effectively_once".to_string(), "true".to_string());
     }
 
-    if let Some(topology) = &unbounded {
+    if let Some(topology) = &stream {
         // Late-input correction. The controller owns the two prerequisites the
         // SDK cannot see — the input-log hold window and the snapshot age-floor
         // must both cover this window, or the past it promises to repair is
@@ -157,7 +157,7 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
     // The tree positions whose procedure declares `compensate`. A rewind can
     // only unwind a procedure whose plugin output is semantically undoable, and
     // the controller refuses one that is not — so it needs this before it wakes
-    // the instance (bounded-loop-rewind D5).
+    // the instance (workflow-loop-rewind D5).
     if let Some(procs) = declared_procs(kind, factory_id, |spec, node| {
         spec.topology
             .as_ref()
@@ -169,7 +169,7 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
 
     // The tree's leaf positions. The operative is DONE when all of them have
     // committed, and the controller derives that from the journal alone —
-    // which needs the leaf set (bounded-branching D4).
+    // which needs the leaf set (workflow-branching D4).
     if let Some(procs) = declared_procs(kind, factory_id, |spec, node| {
         spec.dag.children[node].is_empty()
     }) {
@@ -183,18 +183,18 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
 }
 
 /// Comma-separated tree positions of the procedures `select` picks out, or
-/// `None` for anything without a structured tree (run-sugar, unbounded) — the
-/// one seam every bounded procedure-set declaration rides. An empty string is
+/// `None` for anything without a structured tree (run-sugar, stream) — the
+/// one seam every workflow procedure-set declaration rides. An empty string is
 /// meaningful — "a tree, none of it selected" — and is not the same as absent.
 fn declared_procs(
     kind: &str,
     factory_id: &str,
-    select: impl Fn(&BoundedSpec, usize) -> bool,
+    select: impl Fn(&WorkflowSpec, usize) -> bool,
 ) -> Option<String> {
-    if kind != "bounded" {
+    if kind != "workflow" {
         return None;
     }
-    let spec = crate::bounded::registry::get_class(factory_id)?;
+    let spec = crate::workflow::registry::get_class(factory_id)?;
     spec.topology.as_ref()?;
     Some(
         (0..spec.dag.len())

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The rust-sdk-procedure-macros capability is the Rust realization of the SDK authoring contract. It provides the `#[flezha::procedure]` attribute macro (signature-to-types inference, `&mut` state inference, entity/mailbox/clock opt-ins, static and dynamic modes), the `#[derive(flezha::State)]` derive (field-granular `Change` enum + `apply_change` journaled through the existing WAL), and the `flezha::operative!` declarative macro for linear pipelines, plus inventory-based auto-registration. All macros expand to the existing `UnboundedOperative`/`Procedure`/`Change`/`Channel` traits with zero engine, protocol, or WAL change; macro-generated and hand-written procedures compose in the same operative.
+The rust-sdk-procedure-macros capability is the Rust realization of the SDK authoring contract. It provides the `#[flezha::procedure]` attribute macro (signature-to-types inference, `&mut` state inference, entity/mailbox/clock opt-ins, static and dynamic modes), the `#[derive(flezha::State)]` derive (field-granular `Change` enum + `apply_change` journaled through the existing WAL), and the `flezha::operative!` declarative macro for linear pipelines, plus inventory-based auto-registration. All macros expand to the existing `StreamOperative`/`Procedure`/`Change`/`Channel` traits with zero engine, protocol, or WAL change; macro-generated and hand-written procedures compose in the same operative.
 
 ## Requirements
 
@@ -84,16 +84,16 @@ The Rust SDK SHALL provide a `flezha::operative!` declarative macro that generat
 
 ### Requirement: Auto-registration without an explicit call
 
-The Rust SDK SHALL auto-register operatives produced by the single-procedure auto-wire path and the `operative!` macro, while keeping manual `register_unbounded` valid.
+The Rust SDK SHALL auto-register operatives produced by the single-procedure auto-wire path and the `operative!` macro, while keeping manual `register_stream` valid.
 
-#### Scenario: Auto-wired operative needs no register_unbounded
+#### Scenario: Auto-wired operative needs no register_stream
 
 - **WHEN** a single-procedure auto-wired operative is defined
-- **THEN** it is discovered and registered at startup without a `register_unbounded` call
+- **THEN** it is discovered and registered at startup without a `register_stream` call
 
 #### Scenario: Manual registration still works
 
-- **WHEN** a hand-written operative calls `register_unbounded::<R>()`
+- **WHEN** a hand-written operative calls `register_stream::<R>()`
 - **THEN** it registers exactly as before
 
 ### Requirement: Sugared and raw procedures compose

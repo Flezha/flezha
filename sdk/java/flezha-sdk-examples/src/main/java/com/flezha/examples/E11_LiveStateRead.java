@@ -1,7 +1,7 @@
 package com.flezha.examples;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
@@ -74,7 +74,7 @@ import java.util.Optional;
  * }</pre>
  *
  * <p>Both exit non-zero. The two are different diagnoses on purpose: eviction
- * unlinks the Entity's files, so after the fact only the SDK's bounded eviction
+ * unlinks the Entity's files, so after the fact only the SDK's workflow eviction
  * trace can tell you the key ever existed.
  *
  * <p>One caveat worth knowing before you wire a reader to it: each read is a
@@ -88,7 +88,7 @@ public final class E11_LiveStateRead {
 
     public record Trade(String symbol, double price, double qty) {}
 
-    public static final class MarketOperative implements UnboundedOperative {
+    public static final class MarketOperative implements StreamOperative {
         @Override
         public String factoryId() {
             // The FIRST path segment of `flz state get <operative>/...`.

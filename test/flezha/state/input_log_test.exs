@@ -86,7 +86,7 @@ defmodule Flezha.State.InputLogTest do
     assert InputLog.read_range(class, 0, 9) |> Enum.map(&elem(&1, 0)) == [4, 5, 6, 7, 8, 9]
   end
 
-  describe "the hold window (unbounded-late-input-correction G4)" do
+  describe "the hold window (stream-late-input-correction G4)" do
     setup do
       original = Application.get_env(:flezha, :input_log_hold_window_ms, 0)
       on_exit(fn -> Application.put_env(:flezha, :input_log_hold_window_ms, original) end)

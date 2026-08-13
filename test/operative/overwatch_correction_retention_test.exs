@@ -85,7 +85,7 @@ defmodule FlezhaTest.Operative.OverwatchCorrectionRetentionTest do
   end
 
   test "an age floor of 0 is satisfied, not raised — the polarity trap" do
-    class = "unbounded-hist-#{System.unique_integer([:positive])}"
+    class = "stream-hist-#{System.unique_integer([:positive])}"
     ref = attach([:flezha, :correction, :retention_derived])
 
     # 0 disables age compaction: WAL history is retained without an age bound,

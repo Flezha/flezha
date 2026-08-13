@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.StreamOperative;
 import java.util.List;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
  */
 class RunnerLifecycleTest {
 
-    public static final class OperativeA implements UnboundedOperative {
+    public static final class OperativeA implements StreamOperative {
         @Override
         public String factoryId() {
             return "lifecycle_a";
@@ -37,7 +37,7 @@ class RunnerLifecycleTest {
         public void channels(ChannelBuilder c) {}
     }
 
-    public static final class OperativeB implements UnboundedOperative {
+    public static final class OperativeB implements StreamOperative {
         @Override
         public String factoryId() {
             return "lifecycle_b";
@@ -47,7 +47,7 @@ class RunnerLifecycleTest {
         public void channels(ChannelBuilder c) {}
     }
 
-    public static final class OperativeC implements UnboundedOperative {
+    public static final class OperativeC implements StreamOperative {
         @Override
         public String factoryId() {
             return "lifecycle_c";
@@ -62,7 +62,7 @@ class RunnerLifecycleTest {
     void releaseSingletonSlot() {
         Flezha.currentRunner().ifPresent(FlezhaRunner::close);
         com.flezha.sdk.runtime.FlezhaImpl.resetForTests();
-        com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry.reset();
+        com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry.reset();
     }
 
     @Test
@@ -70,7 +70,7 @@ class RunnerLifecycleTest {
             "second start() in the same JVM is rejected naming the running namespace, without reaching the runtime")
     void secondStartIsRejected() {
         FlezhaRunner first =
-                Flezha.createRunner("ns1").defineUnbounded(OperativeA.class).start();
+                Flezha.createRunner("ns1").defineStream(OperativeA.class).start();
         int startsBefore = com.flezha.sdk.runtime.FlezhaImpl.STARTS.get();
 
         assertThatThrownBy(() -> Flezha.createRunner("ns2").start())
@@ -88,11 +88,11 @@ class RunnerLifecycleTest {
     @DisplayName("creating and mutating runners never claims the slot")
     void creatingRunnersNeverClaimsTheSlot() {
         FlezhaRunner active =
-                Flezha.createRunner("ns1").defineUnbounded(OperativeA.class).start();
+                Flezha.createRunner("ns1").defineStream(OperativeA.class).start();
 
         assertThatCode(() -> Flezha.createRunner("ns2")
-                        .defineUnbounded(OperativeB.class)
-                        .removeUnbounded(OperativeB.class))
+                        .defineStream(OperativeB.class)
+                        .removeStream(OperativeB.class))
                 .as("mutating an unstarted runner while another is active is legal")
                 .doesNotThrowAnyException();
 
@@ -102,9 +102,8 @@ class RunnerLifecycleTest {
     @Test
     @DisplayName("start() twice on the same runner is rejected")
     void doubleStartOnOneRunnerIsRejected() {
-        FlezhaRunner runner = Flezha.createRunner("ns_double")
-                .defineUnbounded(OperativeA.class)
-                .start();
+        FlezhaRunner runner =
+                Flezha.createRunner("ns_double").defineStream(OperativeA.class).start();
         assertThatThrownBy(runner::start)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("already started");
@@ -119,7 +118,7 @@ class RunnerLifecycleTest {
                 .as("the init handshake must carry an empty factory list")
                 .isEmpty();
         // Types may be defined later on the live runner.
-        runner.defineUnbounded(OperativeA.class);
+        runner.defineStream(OperativeA.class);
         assertThat(com.flezha.sdk.runtime.FlezhaImpl.LAST_DECLARED_SUPPLIER.get())
                 .containsExactly("lifecycle_a");
     }
@@ -128,9 +127,9 @@ class RunnerLifecycleTest {
     @DisplayName("a pre-start remove shapes the declared set the handshake reads")
     void preStartRemoveShapesTheHandshake() {
         FlezhaRunner runner = Flezha.createRunner("ns_shape")
-                .defineUnbounded(OperativeA.class)
-                .defineUnbounded(OperativeB.class)
-                .removeUnbounded(OperativeB.class)
+                .defineStream(OperativeA.class)
+                .defineStream(OperativeB.class)
+                .removeStream(OperativeB.class)
                 .start();
         assertThat(runner.getNamespace()).isEqualTo("ns_shape");
         assertThat(com.flezha.sdk.runtime.FlezhaImpl.LAST_DECLARED_SUPPLIER.get())
@@ -143,7 +142,7 @@ class RunnerLifecycleTest {
     @Test
     @DisplayName("a post-start define ships the full factory set")
     void postStartDefineShipsTheFullSet() {
-        Flezha.createRunner("ns_def").defineUnbounded(OperativeA.class).start().defineUnbounded(OperativeC.class);
+        Flezha.createRunner("ns_def").defineStream(OperativeA.class).start().defineStream(OperativeC.class);
 
         assertThat(com.flezha.sdk.runtime.FlezhaImpl.SYNCED_SETS)
                 .containsExactly(List.of("lifecycle_a", "lifecycle_c"));
@@ -153,13 +152,13 @@ class RunnerLifecycleTest {
     @DisplayName("a post-start remove (no live instances) ships the remaining full set")
     void postStartRemoveShipsTheRemainingSet() {
         Flezha.createRunner("ns_rem")
-                .defineUnbounded(OperativeA.class)
-                .defineUnbounded(OperativeC.class)
+                .defineStream(OperativeA.class)
+                .defineStream(OperativeC.class)
                 .start()
-                .removeUnbounded(OperativeC.class);
+                .removeStream(OperativeC.class);
 
         assertThat(com.flezha.sdk.runtime.FlezhaImpl.SYNCED_SETS).containsExactly(List.of("lifecycle_a"));
-        assertThat(com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry.registeredIds())
+        assertThat(com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry.registeredIds())
                 .as("the runtime-side class must be unregistered")
                 .doesNotContain("lifecycle_c");
     }
@@ -168,10 +167,10 @@ class RunnerLifecycleTest {
     @DisplayName("removing a type with live instances throws OperativeTypeInUseException and keeps it defined")
     void removeWithLiveInstancesRefuses() {
         FlezhaRunner runner =
-                Flezha.createRunner("ns_live").defineUnbounded(OperativeA.class).start();
+                Flezha.createRunner("ns_live").defineStream(OperativeA.class).start();
         com.flezha.sdk.runtime.FlezhaImpl.LIVE_INSTANCES.put("lifecycle_a", 1);
 
-        assertThatThrownBy(() -> runner.removeUnbounded(OperativeA.class))
+        assertThatThrownBy(() -> runner.removeStream(OperativeA.class))
                 .isInstanceOf(OperativeTypeInUseException.class)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("lifecycle_a");
@@ -185,20 +184,20 @@ class RunnerLifecycleTest {
 
         // Once the instances stop, the removal succeeds.
         com.flezha.sdk.runtime.FlezhaImpl.LIVE_INSTANCES.remove("lifecycle_a");
-        runner.removeUnbounded(OperativeA.class);
+        runner.removeStream(OperativeA.class);
         assertThat(com.flezha.sdk.runtime.FlezhaImpl.SYNCED_SETS).containsExactly(List.of());
     }
 
     @Test
     @DisplayName("removing an undefined type throws IllegalArgumentException naming the factory id")
     void removeUndefinedTypeIsRejected() {
-        FlezhaRunner runner = Flezha.createRunner("ns_undef").defineUnbounded(OperativeA.class);
-        assertThatThrownBy(() -> runner.removeUnbounded(OperativeB.class))
+        FlezhaRunner runner = Flezha.createRunner("ns_undef").defineStream(OperativeA.class);
+        assertThatThrownBy(() -> runner.removeStream(OperativeB.class))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("lifecycle_b");
         // Already-removed counts as undefined too.
-        runner.removeUnbounded(OperativeA.class);
-        assertThatThrownBy(() -> runner.removeUnbounded(OperativeA.class))
+        runner.removeStream(OperativeA.class);
+        assertThatThrownBy(() -> runner.removeStream(OperativeA.class))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("lifecycle_a");
     }
@@ -206,8 +205,8 @@ class RunnerLifecycleTest {
     @Test
     @DisplayName("defining a duplicate factory id on one runner is rejected")
     void duplicateFactoryIdIsRejected() {
-        FlezhaRunner runner = Flezha.createRunner("ns_dup").defineUnbounded(OperativeA.class);
-        assertThatThrownBy(() -> runner.defineUnbounded(OperativeA.class))
+        FlezhaRunner runner = Flezha.createRunner("ns_dup").defineStream(OperativeA.class);
+        assertThatThrownBy(() -> runner.defineStream(OperativeA.class))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("lifecycle_a");
     }
@@ -231,11 +230,11 @@ class RunnerLifecycleTest {
     @Test
     @DisplayName("a runner may be started again after the first one closes")
     void restartAfterCloseSucceeds() {
-        Flezha.createRunner("ns1").defineUnbounded(OperativeA.class).start().close();
+        Flezha.createRunner("ns1").defineStream(OperativeA.class).start().close();
         assertThat(Flezha.currentRunner()).isEmpty();
 
         FlezhaRunner second =
-                Flezha.createRunner("ns2").defineUnbounded(OperativeB.class).start();
+                Flezha.createRunner("ns2").defineStream(OperativeB.class).start();
         assertThat(second.getNamespace()).isEqualTo("ns2");
         assertThat(Flezha.currentRunner()).containsSame(second);
         assertThat(com.flezha.sdk.runtime.FlezhaImpl.LAST_DECLARED_SUPPLIER.get())
@@ -247,7 +246,7 @@ class RunnerLifecycleTest {
     @DisplayName("try-with-resources starts the runner for the block and closes it at the end")
     void tryWithResourcesWorks() {
         try (FlezhaRunner r =
-                Flezha.createRunner("ns_try").defineUnbounded(OperativeA.class).start()) {
+                Flezha.createRunner("ns_try").defineStream(OperativeA.class).start()) {
             assertThat(r.getNamespace()).isEqualTo("ns_try");
             assertThat(Flezha.currentRunner()).containsSame(r);
         }
@@ -257,9 +256,8 @@ class RunnerLifecycleTest {
     @Test
     @DisplayName("close() from another thread wakes a thread blocked in awaitTermination()")
     void closeWakesAwaitTermination() throws Exception {
-        FlezhaRunner runner = Flezha.createRunner("ns_await")
-                .defineUnbounded(OperativeA.class)
-                .start();
+        FlezhaRunner runner =
+                Flezha.createRunner("ns_await").defineStream(OperativeA.class).start();
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             Future<?> blocked = pool.submit(() -> {
@@ -282,7 +280,7 @@ class RunnerLifecycleTest {
     void currentRunnerReflectsLifecycle() {
         assertThat(Flezha.currentRunner()).isEmpty();
         FlezhaRunner runner =
-                Flezha.createRunner("ns_cur").defineUnbounded(OperativeA.class).start();
+                Flezha.createRunner("ns_cur").defineStream(OperativeA.class).start();
         assertThat(Flezha.currentRunner()).containsSame(runner);
         runner.close();
         assertThat(Flezha.currentRunner()).isEmpty();
@@ -291,8 +289,8 @@ class RunnerLifecycleTest {
     @Test
     @DisplayName("two concurrent start() calls — exactly one wins, the loser is told the winner's namespace")
     void concurrentStartsExactlyOneWins() throws Exception {
-        FlezhaRunner r1 = Flezha.createRunner("ns_one").defineUnbounded(OperativeA.class);
-        FlezhaRunner r2 = Flezha.createRunner("ns_two").defineUnbounded(OperativeB.class);
+        FlezhaRunner r1 = Flezha.createRunner("ns_one").defineStream(OperativeA.class);
+        FlezhaRunner r2 = Flezha.createRunner("ns_two").defineStream(OperativeB.class);
 
         CyclicBarrier barrier = new CyclicBarrier(2);
         ExecutorService pool = Executors.newFixedThreadPool(2);

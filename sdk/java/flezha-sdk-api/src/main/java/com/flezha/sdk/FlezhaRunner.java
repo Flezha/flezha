@@ -1,11 +1,11 @@
 package com.flezha.sdk;
 
-import com.flezha.sdk.bounded.BoundedOperative;
 import com.flezha.sdk.internal.RegistryCore;
 import com.flezha.sdk.internal.RunnerHandle;
 import com.flezha.sdk.internal.RuntimeBridge;
 import com.flezha.sdk.operative.Computation;
-import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.StreamOperative;
+import com.flezha.sdk.workflow.WorkflowOperative;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,11 +47,11 @@ public final class FlezhaRunner implements AutoCloseable {
      * empty; generation 2 must re-define its types). The runtime-side class
      * registries stay process-global behind these.
      */
-    private final RegistryCore<UnboundedOperative> unbounded =
-            new RegistryCore<>("com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry", "operative");
+    private final RegistryCore<StreamOperative> stream =
+            new RegistryCore<>("com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry", "operative");
 
-    private final RegistryCore<BoundedOperative> bounded =
-            new RegistryCore<>("com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry", "bounded");
+    private final RegistryCore<WorkflowOperative> workflow =
+            new RegistryCore<>("com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry", "workflow");
 
     private final AtomicReference<RunnerHandle> handle = new AtomicReference<>();
 
@@ -69,38 +69,38 @@ public final class FlezhaRunner implements AutoCloseable {
     }
 
     /**
-     * Declare an UnboundedOperative class the runtime can spawn instances of
+     * Declare a StreamOperative class the runtime can spawn instances of
      * later (via the controller's {@code AddOperative}). Calls the class's
      * {@code channels(...)} once and records the topology in the class
      * registry. Legal before and after {@link #start()}. An invalid topology
      * is reported here, at the declaring call site, as
-     * {@code UnboundedOperativeConfigurationException}.
+     * {@code StreamOperativeConfigurationException}.
      *
      * @throws IllegalArgumentException on a duplicate factory id.
      */
     @Nonnull
-    public FlezhaRunner defineUnbounded(@Nonnull Class<? extends UnboundedOperative> operativeClass) {
-        unbounded.register(operativeClass);
+    public FlezhaRunner defineStream(@Nonnull Class<? extends StreamOperative> operativeClass) {
+        stream.register(operativeClass);
         syncFactoriesIfStarted();
         return this;
     }
 
     /**
-     * Declare a {@link BoundedOperative} class. Sibling of
-     * {@link #defineUnbounded(Class)}; invalid authoring is reported here, at
+     * Declare a {@link WorkflowOperative} class. Sibling of
+     * {@link #defineStream(Class)}; invalid authoring is reported here, at
      * the declaring call site.
      *
      * @throws IllegalArgumentException on a factory id colliding with any declared class.
      */
     @Nonnull
-    public FlezhaRunner defineBounded(@Nonnull Class<? extends BoundedOperative> boundedClass) {
-        bounded.register(boundedClass);
+    public FlezhaRunner defineWorkflow(@Nonnull Class<? extends WorkflowOperative> workflowClass) {
+        workflow.register(workflowClass);
         syncFactoriesIfStarted();
         return this;
     }
 
     /**
-     * Remove a declared UnboundedOperative class from this runner. Legal
+     * Remove a declared StreamOperative class from this runner. Legal
      * before and after {@link #start()}.
      *
      * @throws IllegalArgumentException if the class's factory id is not
@@ -109,14 +109,14 @@ public final class FlezhaRunner implements AutoCloseable {
      *     operative instances of the factory exist — the type stays defined.
      */
     @Nonnull
-    public FlezhaRunner removeUnbounded(@Nonnull Class<? extends UnboundedOperative> operativeClass) {
-        return remove(unbounded, operativeClass);
+    public FlezhaRunner removeStream(@Nonnull Class<? extends StreamOperative> operativeClass) {
+        return remove(stream, operativeClass);
     }
 
-    /** Remove a declared {@link BoundedOperative} class. Sibling of {@link #removeUnbounded(Class)}. */
+    /** Remove a declared {@link WorkflowOperative} class. Sibling of {@link #removeStream(Class)}. */
     @Nonnull
-    public FlezhaRunner removeBounded(@Nonnull Class<? extends BoundedOperative> boundedClass) {
-        return remove(bounded, boundedClass);
+    public FlezhaRunner removeWorkflow(@Nonnull Class<? extends WorkflowOperative> workflowClass) {
+        return remove(workflow, workflowClass);
     }
 
     private <C extends Computation> FlezhaRunner remove(RegistryCore<C> core, Class<? extends C> cls) {
@@ -230,10 +230,10 @@ public final class FlezhaRunner implements AutoCloseable {
         return h;
     }
 
-    /** This runner's full current factory set: unbounded first, then bounded. */
+    /** This runner's full current factory set: stream first, then workflow. */
     private List<String> declaredFactoryIds() {
-        List<String> ids = new ArrayList<>(unbounded.factoryIds());
-        ids.addAll(bounded.factoryIds());
+        List<String> ids = new ArrayList<>(stream.factoryIds());
+        ids.addAll(workflow.factoryIds());
         return ids;
     }
 

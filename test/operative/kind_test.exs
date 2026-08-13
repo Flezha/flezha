@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Operative.KindTest do
   @moduledoc """
   `Flezha.Operative.Kind` capability model + the `:kind` field on
-  `Flezha.Operative.Builder`, including the `:bounded` kind and the `AddOperative`
+  `Flezha.Operative.Builder`, including the `:workflow` kind and the `AddOperative`
   wire `kind` field added by `operative-task-kind`.
   """
   use ExUnit.Case, async: true
@@ -13,10 +13,10 @@ defmodule FlezhaTest.Operative.KindTest do
   @persistence_flags [:persistent_state?, :time_travel?, :dynamic_entities?, :output_stall_watch?]
 
   describe "capabilities" do
-    test ":unbounded declares the full persistence surface" do
-      for flag <- @persistence_flags, do: assert(Kind.capable?(:unbounded, flag))
+    test ":stream declares the full persistence surface" do
+      for flag <- @persistence_flags, do: assert(Kind.capable?(:stream, flag))
 
-      assert Kind.capabilities(:unbounded) == %{
+      assert Kind.capabilities(:stream) == %{
                persistent_state?: true,
                time_travel?: true,
                dynamic_entities?: true,
@@ -25,32 +25,32 @@ defmodule FlezhaTest.Operative.KindTest do
     end
 
     test "an undeclared capability reads false" do
-      # :unbounded does not declare it, and an unknown kind declares nothing.
-      refute Kind.capable?(:unbounded, :scheduled?)
+      # :stream does not declare it, and an unknown kind declares nothing.
+      refute Kind.capable?(:stream, :scheduled?)
       refute Kind.capable?(:made_up_kind, :persistent_state?)
       assert Kind.capabilities(:made_up_kind) == %{}
     end
 
-    test ":bounded is stateless — declares no capabilities" do
-      assert Kind.capabilities(:bounded) == %{}
-      for flag <- @persistence_flags, do: refute(Kind.capable?(:bounded, flag))
+    test ":workflow is stateless — declares no capabilities" do
+      assert Kind.capabilities(:workflow) == %{}
+      for flag <- @persistence_flags, do: refute(Kind.capable?(:workflow, flag))
     end
 
-    test "known?/1 accepts :unbounded and :bounded, rejects others" do
-      assert Kind.known?(:unbounded)
-      assert Kind.known?(:bounded)
+    test "known?/1 accepts :stream and :workflow, rejects others" do
+      assert Kind.known?(:stream)
+      assert Kind.known?(:workflow)
       refute Kind.known?(:made_up_kind)
     end
   end
 
   describe "Builder kind field" do
-    test "an unspecified kind defaults to :unbounded" do
-      assert %Builder{id: "r", factory_id: "f"}.kind == :unbounded
+    test "an unspecified kind defaults to :stream" do
+      assert %Builder{id: "r", factory_id: "f"}.kind == :stream
     end
 
-    test "valid_kind accepts :unbounded and :bounded" do
-      assert Validator.valid_kind(:unbounded) == :ok
-      assert Validator.valid_kind(:bounded) == :ok
+    test "valid_kind accepts :stream and :workflow" do
+      assert Validator.valid_kind(:stream) == :ok
+      assert Validator.valid_kind(:workflow) == :ok
     end
 
     test "validate_operative rejects an unknown kind, naming it" do
@@ -62,7 +62,7 @@ defmodule FlezhaTest.Operative.KindTest do
 
   test "AddOperative protobuf carries an optional kind field" do
     assert :kind in Map.keys(RunnerCommands.AddOperative.__struct__())
-    # Default is the empty string ⇒ interpreted as :unbounded on the SDK side.
+    # Default is the empty string ⇒ interpreted as :stream on the SDK side.
     assert RunnerCommands.AddOperative.__struct__().kind == ""
   end
 end

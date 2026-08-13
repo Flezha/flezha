@@ -58,27 +58,27 @@ public final class FlzCore {
      */
     public static native void complete(long ctx, byte[] result);
 
-    /** Emit one output payload from a live bounded run-sugar body. */
-    public static native void boundedEmit(long ctx, String instanceId, byte[] payload);
+    /** Emit one output payload from a live workflow run-sugar body. */
+    public static native void workflowEmit(long ctx, String instanceId, byte[] payload);
 
     /**
-     * Block up to {@code timeoutMs} for the next inbox item of a live bounded
+     * Block up to {@code timeoutMs} for the next inbox item of a live workflow
      * run-sugar body. {@code null} = timeout; throws when the body is gone or
      * the inbox closed.
      */
-    public static native byte[] boundedRecv(long ctx, String instanceId, long timeoutMs);
+    public static native byte[] workflowRecv(long ctx, String instanceId, long timeoutMs);
 
-    /** Whether the named bounded body's cancellation token has tripped. */
-    public static native boolean boundedCancelled(long ctx, String instanceId);
+    /** Whether the named workflow body's cancellation token has tripped. */
+    public static native boolean workflowCancelled(long ctx, String instanceId);
 
     /**
-     * The ABI form of {@code ctx.spawnBounded}: spawn-or-deliver a bounded
+     * The ABI form of {@code ctx.spawnWorkflow}: spawn-or-deliver a workflow
      * instance in the runner's own namespace. {@code ifRunning} is the wire
      * string {@code "deliver"} or {@code "error"}. Returns the controller's
      * outcome string ({@code "spawned"}, {@code "delivered"}, ...); throws on
      * refusal, no control plane, or timeout.
      */
-    public static native String spawnBounded(
+    public static native String spawnWorkflow(
             long ctx, String instanceId, String factoryId, byte[] payload, String ifRunning);
 
     /** Wake every blocked poller and stop the runner loop. */

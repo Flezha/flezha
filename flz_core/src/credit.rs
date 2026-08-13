@@ -12,7 +12,7 @@
 //!  * the park lives in the data send path only; `arm`/`grant` run on the
 //!    control coordinator and never block, so heartbeats and grants keep
 //!    flowing while senders are parked;
-//!  * the park is a bounded `Condvar` wait loop (50 ms recheck), so a lost
+//!  * the park is a workflow `Condvar` wait loop (50 ms recheck), so a lost
 //!    grant degrades to a retry loop with warnings, never a silent freeze;
 //!  * [`CREDIT_PARKED`] advances on every wait iteration, so a credit-parked
 //!    runner classifies as fed-but-parked in the liveness self-report.

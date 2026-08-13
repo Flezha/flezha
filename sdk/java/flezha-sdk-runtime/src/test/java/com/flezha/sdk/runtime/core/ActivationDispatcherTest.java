@@ -2,19 +2,16 @@ package com.flezha.sdk.runtime.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.flezha.sdk.bounded.BoundedOperative;
-import com.flezha.sdk.bounded.BoundedOperativeCtx;
-import com.flezha.sdk.bounded.BoundedOperativeException;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
-import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.operative.StatelessTestProcedure;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
 import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.state.TimerOp;
+import com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.EventTimeFrom;
 import com.flezha.sdk.state.NoChange;
@@ -22,6 +19,9 @@ import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.TimerKind;
 import com.flezha.sdk.state.WallClock;
+import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.workflow.WorkflowOperativeCtx;
+import com.flezha.sdk.workflow.WorkflowOperativeException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -44,7 +44,7 @@ import org.junit.jupiter.api.Test;
  * behavioral assertions of the pre-core dispatcher suites (stream transforms,
  * merged input, dynamic/static entities, per-entity instances, timers,
  * checkpoint ack, verdict classification, output identity, state
- * serialization, restore fold, bounded run-sugar and compensation).
+ * serialization, restore fold, workflow run-sugar and compensation).
  */
 class ActivationDispatcherTest {
 
@@ -62,8 +62,8 @@ class ActivationDispatcherTest {
         RECORDED.clear();
         TRAVERSALS.set(0);
         TIMER_EVENTS.clear();
-        UnboundedOperativeClassRegistry.reset();
-        BoundedOperativeClassRegistry.reset();
+        StreamOperativeClassRegistry.reset();
+        WorkflowOperativeClassRegistry.reset();
         session = new FakeSession();
         dispatcher = new ActivationDispatcher(id -> session);
     }
@@ -111,7 +111,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("an input applies its Change, ships decodable change bytes, and stages the plugin output")
     void workAppliesChangesAndCollectsOutputs() {
-        UnboundedOperativeClassRegistry.registerClass(CounterOperative.class);
+        StreamOperativeClassRegistry.registerClass(CounterOperative.class);
         ItemEffect effect =
                 soleEffect(work("counter_op", 0, Optional.empty(), 7, input(0, "x", 1_000, OptionalLong.of(9), false)));
 
@@ -137,7 +137,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("a keyed plugin emit carries flz.entity / flz.seq / flz.key and the schema key")
     void keyedEmitCarriesIdentityStamps() {
-        UnboundedOperativeClassRegistry.registerClass(KeyedEmitOperative.class);
+        StreamOperativeClassRegistry.registerClass(KeyedEmitOperative.class);
         ItemEffect effect = soleEffect(work("keyed_op", 0, Optional.empty(), 5, input(0, "v", 1_000)));
 
         assertThat(effect.outputs()).hasSize(1);
@@ -158,7 +158,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("a transform chain is one fused closure; KeyRequest answers the key of the MAPPED value")
     void transformChainAndKeyRequest() {
-        UnboundedOperativeClassRegistry.registerClass(DynamicChainOperative.class);
+        StreamOperativeClassRegistry.registerClass(DynamicChainOperative.class);
 
         ActivationOutcome prepared = outcome(command(
                 "dyn_chain",
@@ -190,7 +190,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("a filtered-out payload consumes its offset with no invocation")
     void filteredPayloadStillAcks() {
-        UnboundedOperativeClassRegistry.registerClass(DynamicChainOperative.class);
+        StreamOperativeClassRegistry.registerClass(DynamicChainOperative.class);
         ItemEffect effect = soleEffect(
                 work("dyn_chain", 0, Optional.of("AAPL"), 0, input(0, "#comment", 1, OptionalLong.of(4), false)));
         assertThat(effect.verdict()).isInstanceOf(Verdict.Ok.class);
@@ -201,7 +201,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("flatMap fans one payload across keys; each Entity receives only its own slot")
     void fanOutKeysEveryYieldedValue() {
-        UnboundedOperativeClassRegistry.registerClass(FanOutOperative.class);
+        StreamOperativeClassRegistry.registerClass(FanOutOperative.class);
 
         ActivationOutcome prepared = outcome(command(
                 "fan_out",
@@ -222,7 +222,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("static mode: entitiesFor routes, and each Entity runs its OWN Procedure instance")
     void staticEntitiesUsePerEntityInstances() {
-        UnboundedOperativeClassRegistry.registerClass(StaticOperative.class);
+        StreamOperativeClassRegistry.registerClass(StaticOperative.class);
 
         soleEffect(work("static_op", 0, Optional.of("a"), 0, input(0, "a:1", 1)));
         soleEffect(work("static_op", 0, Optional.of("a"), 0, input(0, "a:2", 2)));
@@ -246,7 +246,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("merged entry channels each apply their own mapping at delivery")
     void mergedInputAppliesEdgeMapping() {
-        UnboundedOperativeClassRegistry.registerClass(MergeOperative.class);
+        StreamOperativeClassRegistry.registerClass(MergeOperative.class);
         soleEffect(work("merge_op", 0, Optional.empty(), 0, input(0, "x", 1)));
         soleEffect(work("merge_op", 0, Optional.empty(), 0, input(1, "y", 2)));
         assertThat(RECORDED).containsExactly("=A:x", "=B:y");
@@ -259,7 +259,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("an inter-proc emit becomes per-consumer Edge outputs carrying the post-transform value")
     void interProcEmitBecomesEdgeOutputs() {
-        UnboundedOperativeClassRegistry.registerClass(PipelineOperative.class);
+        StreamOperativeClassRegistry.registerClass(PipelineOperative.class);
         ItemEffect effect = soleEffect(work("pipeline_op", 0, Optional.empty(), 0, input(0, "v", 1)));
 
         assertThat(effect.outputs()).hasSize(1);
@@ -286,7 +286,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("verdict classification: NonRetryable vs retryable, stopping at the first failed item")
     void verdictClassificationStopsAtFirstFailure() {
-        UnboundedOperativeClassRegistry.registerClass(PoisonOperative.class);
+        StreamOperativeClassRegistry.registerClass(PoisonOperative.class);
         ActivationOutcome out = outcome(work(
                 "poison_op", 0, Optional.empty(), 0, input(0, "ok-1", 1), input(0, "bad", 2), input(0, "ok-2", 3)));
         List<ItemEffect> effects = ((ActivationOutcome.Work) out).effects();
@@ -309,7 +309,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("registrations ride the effect; a firing's removal leads its ops; now() equals firedAt")
     void timerOpsRideTheEffect() {
-        UnboundedOperativeClassRegistry.registerClass(TimerOperative.class);
+        StreamOperativeClassRegistry.registerClass(TimerOperative.class);
         ItemEffect armed = soleEffect(work("timer_op", 0, Optional.empty(), 0, input(0, "1000", 1_000)));
         assertThat(armed.timers())
                 .containsExactly(
@@ -329,7 +329,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("an event-time timer under a wall clock is refused inside the invocation")
     void eventTimeTimerWithoutEventTimeClockIsRefused() {
-        UnboundedOperativeClassRegistry.registerClass(WallTimerOperative.class);
+        StreamOperativeClassRegistry.registerClass(WallTimerOperative.class);
         ItemEffect effect = soleEffect(work("wall_timer_op", 0, Optional.empty(), 0, input(0, "x", 1)));
         assertThat(effect.verdict()).isInstanceOf(Verdict.RetryableError.class);
         assertThat(((Verdict.RetryableError) effect.verdict()).message()).contains("event");
@@ -342,7 +342,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("ctx.checkpoint() marks the effect; tier outputs carry no host-side identity stamps")
     void checkpointFlagAndTierOutputs() {
-        UnboundedOperativeClassRegistry.registerClass(CheckpointOperative.class);
+        StreamOperativeClassRegistry.registerClass(CheckpointOperative.class);
         ItemEffect open = soleEffect(work("ckpt_op", 0, Optional.empty(), 0, input(0, "accumulate", 1)));
         assertThat(open.checkpoint()).isFalse();
         assertThat(open.outputs()).hasSize(1);
@@ -362,7 +362,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("RestoreFold rebuilds snapshot + changes; SnapshotRequest and LiveStateRead read the result")
     void restoreSnapshotAndLiveRead() {
-        UnboundedOperativeClassRegistry.registerClass(CounterOperative.class);
+        StreamOperativeClassRegistry.registerClass(CounterOperative.class);
         ItemEffect first = soleEffect(work("counter_op", 0, Optional.empty(), 0, input(0, "a", 1)));
         soleEffect(work("counter_op", 0, Optional.empty(), 1, input(0, "b", 2)));
 
@@ -394,7 +394,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("ApplyState replaces the state from its JSON form; MigrationSerialize reads it back")
     void applyStateRoundTrips() {
-        UnboundedOperativeClassRegistry.registerClass(CounterOperative.class);
+        StreamOperativeClassRegistry.registerClass(CounterOperative.class);
         ActivationOutcome applied = outcome(command(
                 "counter_op",
                 0,
@@ -415,7 +415,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("KeyRequest answers the extractor's event time; a failing parse is a per-payload Err")
     void prepareEventTimeAndPerPayloadFailure() {
-        UnboundedOperativeClassRegistry.registerClass(TimerOperative.class);
+        StreamOperativeClassRegistry.registerClass(TimerOperative.class);
         ActivationOutcome prepared = outcome(command(
                 "timer_op",
                 0,
@@ -431,22 +431,22 @@ class ActivationDispatcherTest {
     }
 
     // ------------------------------------------------------------------
-    // bounded
+    // workflow
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("a run-sugar body emits and recvs through the session and reports BoundedDone")
-    void boundedRunSugar() {
-        BoundedOperativeClassRegistry.registerClass(GreetBounded.class);
+    @DisplayName("a run-sugar body emits and recvs through the session and reports WorkflowDone")
+    void workflowRunSugar() {
+        WorkflowOperativeClassRegistry.registerClass(GreetWorkflow.class);
         session.inbox.add("ping".getBytes(StandardCharsets.UTF_8));
 
         ActivationOutcome out = outcome(command(
-                "greet_bounded",
+                "greet_workflow",
                 0,
                 Optional.empty(),
-                new ActivationKind.BoundedRun("bob".getBytes(StandardCharsets.UTF_8))));
-        assertThat(out).isInstanceOf(ActivationOutcome.BoundedDone.class);
-        ActivationOutcome.BoundedDone done = (ActivationOutcome.BoundedDone) out;
+                new ActivationKind.WorkflowRun("bob".getBytes(StandardCharsets.UTF_8))));
+        assertThat(out).isInstanceOf(ActivationOutcome.WorkflowDone.class);
+        ActivationOutcome.WorkflowDone done = (ActivationOutcome.WorkflowDone) out;
         assertThat(done.completed()).isTrue();
         assertThat(new String(done.result(), StandardCharsets.UTF_8)).isEqualTo("done:bob");
         assertThat(session.emitted.stream()
@@ -457,10 +457,10 @@ class ActivationDispatcherTest {
 
     @Test
     @DisplayName("a throwing run-sugar body fails the activation with its classification")
-    void boundedRunSugarFailure() {
-        BoundedOperativeClassRegistry.registerClass(ThrowingBounded.class);
+    void workflowRunSugarFailure() {
+        WorkflowOperativeClassRegistry.registerClass(ThrowingWorkflow.class);
         ActivationOutcome out =
-                outcome(command("throwing_bounded", 0, Optional.empty(), new ActivationKind.BoundedRun(new byte[0])));
+                outcome(command("throwing_workflow", 0, Optional.empty(), new ActivationKind.WorkflowRun(new byte[0])));
         assertThat(out).isInstanceOf(ActivationOutcome.Failed.class);
         WorkError error = ((ActivationOutcome.Failed) out).error();
         assertThat(error.message()).contains("nope");
@@ -470,12 +470,12 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("CompensateRun decodes the recorded outputs and collects the undo emits")
     void compensateRunUndoesWithDecodedOutputs() {
-        BoundedOperativeClassRegistry.registerClass(SagaBounded.class);
-        ItemEffect forward = soleEffect(work("saga_bounded", 0, Optional.empty(), 0, input(0, "job", 1)));
+        WorkflowOperativeClassRegistry.registerClass(SagaWorkflow.class);
+        ItemEffect forward = soleEffect(work("saga_workflow", 0, Optional.empty(), 0, input(0, "job", 1)));
         assertThat(forward.outputs()).hasSize(1);
 
         ActivationOutcome out = outcome(command(
-                "saga_bounded",
+                "saga_workflow",
                 0,
                 Optional.empty(),
                 new ActivationKind.CompensateRun(
@@ -506,7 +506,7 @@ class ActivationDispatcherTest {
     @Test
     @DisplayName("a replayed item serves ctx.replaying() = true")
     void replayFlagReachesTheContext() {
-        UnboundedOperativeClassRegistry.registerClass(ReplayProbeOperative.class);
+        StreamOperativeClassRegistry.registerClass(ReplayProbeOperative.class);
         soleEffect(work("replay_probe", 0, Optional.empty(), 0, input(0, "x", 1, OptionalLong.empty(), true)));
         assertThat(RECORDED).containsExactly("replaying=true");
     }
@@ -520,8 +520,8 @@ class ActivationDispatcherTest {
     // fixtures
     // ==================================================================
 
-    /** A bounded session fake: scripted inbox, captured emits. */
-    static final class FakeSession implements BoundedSession {
+    /** A workflow session fake: scripted inbox, captured emits. */
+    static final class FakeSession implements WorkflowSession {
         final Deque<byte[]> inbox = new ArrayDeque<>();
         final List<byte[]> emitted = new ArrayList<>();
         boolean cancelled;
@@ -556,7 +556,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class CounterOperative implements UnboundedOperative {
+    public static final class CounterOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "counter_op";
@@ -624,7 +624,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class KeyedEmitOperative implements UnboundedOperative {
+    public static final class KeyedEmitOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "keyed_op";
@@ -666,7 +666,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class DynamicChainOperative implements UnboundedOperative {
+    public static final class DynamicChainOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "dyn_chain";
@@ -685,7 +685,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class FanOutOperative implements UnboundedOperative {
+    public static final class FanOutOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "fan_out";
@@ -731,7 +731,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class StaticOperative implements UnboundedOperative {
+    public static final class StaticOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "static_op";
@@ -791,7 +791,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class MergeOperative implements UnboundedOperative {
+    public static final class MergeOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "merge_op";
@@ -806,7 +806,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class PipelineOperative implements UnboundedOperative {
+    public static final class PipelineOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "pipeline_op";
@@ -845,7 +845,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class PoisonOperative implements UnboundedOperative {
+    public static final class PoisonOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "poison_op";
@@ -890,7 +890,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class TimerOperative implements UnboundedOperative {
+    public static final class TimerOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "timer_op";
@@ -964,7 +964,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class WallTimerOperative implements UnboundedOperative {
+    public static final class WallTimerOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "wall_timer_op";
@@ -1003,7 +1003,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class CheckpointOperative implements UnboundedOperative {
+    public static final class CheckpointOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "ckpt_op";
@@ -1050,7 +1050,7 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class ReplayProbeOperative implements UnboundedOperative {
+    public static final class ReplayProbeOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "replay_probe";
@@ -1089,19 +1089,19 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class GreetBounded implements BoundedOperative {
+    public static final class GreetWorkflow implements WorkflowOperative {
         @Override
         public String factoryId() {
-            return "greet_bounded";
+            return "greet_workflow";
         }
 
         @Override
-        public void run(BoundedOperativeCtx ctx, String args) throws BoundedOperativeException {
+        public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
             ctx.emit("hi " + args);
             ctx.recv().ifPresent(item -> {
                 try {
                     ctx.emit(item);
-                } catch (BoundedOperativeException e) {
+                } catch (WorkflowOperativeException e) {
                     throw new IllegalStateException(e);
                 }
             });
@@ -1109,22 +1109,22 @@ class ActivationDispatcherTest {
         }
     }
 
-    public static final class ThrowingBounded implements BoundedOperative {
+    public static final class ThrowingWorkflow implements WorkflowOperative {
         @Override
         public String factoryId() {
-            return "throwing_bounded";
+            return "throwing_workflow";
         }
 
         @Override
-        public void run(BoundedOperativeCtx ctx, String args) throws BoundedOperativeException {
-            throw BoundedOperativeException.nonRetryable("nope");
+        public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
+            throw WorkflowOperativeException.nonRetryable("nope");
         }
     }
 
-    public static final class SagaBounded implements BoundedOperative {
+    public static final class SagaWorkflow implements WorkflowOperative {
         @Override
         public String factoryId() {
-            return "saga_bounded";
+            return "saga_workflow";
         }
 
         @Override

@@ -1,0 +1,21 @@
+name: Naming
+
+# Repo-wide naming gate. The two operative kinds are `stream` and `workflow`;
+# this fails a PR that reintroduces `bounded`/`unbounded` as a kind name.
+# Deliberately unfiltered by path — the invariant covers docs and specs as much
+# as code — and toolchain-free, so it costs nothing next to the Format gate.
+# Local equivalent: `scripts/check-kind-naming.sh`.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  kind-naming:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - name: check-kind-naming
+        run: scripts/check-kind-naming.sh

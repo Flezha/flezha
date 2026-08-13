@@ -129,7 +129,7 @@ A timer registration, cancellation, and firing SHALL each be expressed as a
 There SHALL be no timer side-file, no timer journal entry type, no crash marker and
 no completeness oracle. A timer registration made during a replay-driven invocation
 SHALL be registered, not skipped — a timer is internal state, unlike
-`ctx.spawn_bounded`, which is skipped on replay because it is an external effect.
+`ctx.spawn_workflow`, which is skipped on replay because it is an external effect.
 
 #### Scenario: A crash before firing leaves the timer pending
 

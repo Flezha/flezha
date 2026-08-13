@@ -2,7 +2,7 @@
 
 The Rust SDK exposes a small set of traits for declaring how compute
 work is structured inside one logical runner instance. This doc
-walks the concepts (Unbounded Operative, Procedure, Entity, Runner),
+walks the concepts (Stream Operative, Procedure, Entity, Runner),
 the data flow end-to-end, and the public API. For the rationale, design
 decisions, and capability spec deltas, see
 `openspec/changes/operative-architecture/` (umbrella) and
@@ -11,7 +11,7 @@ decisions, and capability spec deltas, see
 ## Concepts at a glance
 
 > Dispatch note (`extract-sdk-poll-core`): the runtime described here is
-> hosted on the poll core — unbounded dispatch is served by the typed
+> hosted on the poll core — stream dispatch is served by the typed
 > layer's poll workers over `flz_core`'s activation engine. See
 > `docs/sdk_poll_core.md` for the boundary contract.
 
@@ -37,11 +37,11 @@ decisions, and capability spec deltas, see
             └─────────────────────────────────────────┘
 ```
 
-- **Unbounded Operative class** — the type-level declaration. One
-  Unbounded Operative class declares its channels and the Procedures
+- **Stream Operative class** — the type-level declaration. One
+  Stream Operative class declares its channels and the Procedures
   that produce/consume them, once per runner via
-  `FlezhaRunner::define_unbounded::<R>()` (legal before and after `start()`;
-  `remove_unbounded::<R>()` is its inverse). The topology is built and
+  `FlezhaRunner::define_stream::<R>()` (legal before and after `start()`;
+  `remove_stream::<R>()` is its inverse). The topology is built and
   validated at the declaring call site and shared (`Arc`) by every instance
   of that class.
 
@@ -80,12 +80,12 @@ decisions, and capability spec deltas, see
 ### Operative kind and capabilities (controller-side)
 
 On the controller, every operative is a **compute unit** that carries a **kind** (an
-atom, default `:unbounded`, set at start and frozen for its lifetime). Each kind
+atom, default `:stream`, set at start and frozen for its lifetime). Each kind
 declares a **sparse,
 default-`false` capability descriptor** in `Flezha.Operative.Kind` — the single
 source of truth listing only the capabilities a kind *has* (as `true`); the
 control plane reads every flag with `Flezha.Operative.Kind.capable?/2`, so any
-capability a kind does not declare reads `false`. The `:unbounded` kind declares
+capability a kind does not declare reads `false`. The `:stream` kind declares
 `persistent_state?` (per-entity WAL/snapshot/restore/time-travel/state
 introspection). Adding a
 capability later is a one-line extension: add the single gate that reads the
@@ -95,75 +95,75 @@ first gate is per-entity state introspection, which returns
 `{:error, {:unsupported_for_kind, :persistent_state}}` for a kind without
 `persistent_state?` instead of querying a compute unit that has no state.
 
-### The `:bounded` kind (run-once jobs)
+### The `:workflow` kind (run-once jobs)
 
-`:bounded` is a stateless, run-once compute unit — a job. It declares **no**
+`:workflow` is a stateless, run-once compute unit — a job. It declares **no**
 capabilities (so `persistent_state?` reads `false`, and the state-introspection
-gate rejects `flz operative state <bounded>`), has no procedures, entities, or input
-channel, and may emit output to bound plugins like an unbounded operative.
+gate rejects `flz operative state <workflow>`), has no procedures, entities, or input
+channel, and may emit output to bound plugins like a stream operative.
 
-Lifecycle: `flz operative start <id> <factory> --kind bounded` populates the optional
-`kind` field on the `AddOperative` wire message (empty ⇒ `:unbounded`, the
-default). The SDK holds a sealed unit registry (unbounded or bounded) resolved once
-per frame at the dispatch boundary; for a bounded operative it schedules the author's
-`BoundedOperative::run(ctx, args)` once on that instance's driver thread, with `args` taken from
-`init_values`. When `run` returns, the SDK emits a `BoundedCompleted`
+Lifecycle: `flz operative start <id> <factory> --kind workflow` populates the optional
+`kind` field on the `AddOperative` wire message (empty ⇒ `:stream`, the
+default). The SDK holds a sealed unit registry (stream or workflow) resolved once
+per frame at the dispatch boundary; for a workflow operative it schedules the author's
+`WorkflowOperative::run(ctx, args)` once on that instance's driver thread, with `args` taken from
+`init_values`. When `run` returns, the SDK emits a `WorkflowCompleted`
 SDK→Controller control message; the controller drives **deregister-on-completion**
 through the normal stop/teardown path (`OperativeManager.stop_operative/2`), so a
-finished bounded operative drops out of the durable registry — never replayed on boot, never
+finished workflow operative drops out of the durable registry — never replayed on boot, never
 misjudged by convergence. A `run` that errors is terminal (deregister + report
-`[:flezha, :bounded, :failed]`; no retry).
+`[:flezha, :workflow, :failed]`; no retry).
 
 Authoring (Rust SDK): a distinct lightweight trait, declared as a sibling of
-`define_unbounded`:
+`define_stream`:
 
 ```rust
 struct Greet;
-impl flezha_runner::BoundedOperative for Greet {
+impl flezha_runner::WorkflowOperative for Greet {
     fn factory_id() -> &'static str { "greet" }
-    fn run(ctx: &mut flezha_runner::BoundedCtx, args: &str)
-        -> Result<(), flezha_runner::BoundedError> {
+    fn run(ctx: &mut flezha_runner::WorkflowCtx, args: &str)
+        -> Result<(), flezha_runner::WorkflowError> {
         ctx.emit(format!("hello {args}").into_bytes())?;
         Ok(())
     }
 }
-flezha_runner::Flezha::create_runner("my_app")?.define_bounded::<Greet>()?.run()?;
+flezha_runner::Flezha::create_runner("my_app")?.define_workflow::<Greet>()?.run()?;
 ```
 
-Authoring (Java SDK): a distinct `com.flezha.sdk.bounded.BoundedOperative` interface, declared
-as a sibling of `defineUnbounded`:
+Authoring (Java SDK): a distinct `com.flezha.sdk.workflow.WorkflowOperative` interface, declared
+as a sibling of `defineStream`:
 
 ```java
-public final class GreetBounded implements BoundedOperative {
+public final class GreetWorkflow implements WorkflowOperative {
     public String factoryId() { return "greet"; }
-    public void run(BoundedCtx ctx, String args) throws BoundedException {
+    public void run(WorkflowCtx ctx, String args) throws WorkflowException {
         ctx.emit("hello " + args);
     }
 }
-Flezha.createRunner("my_app").defineBounded(GreetBounded.class).run();
+Flezha.createRunner("my_app").defineWorkflow(GreetWorkflow.class).run();
 ```
 
-The Java runtime mirrors the Rust shape: an unbounded instance or a bounded
+The Java runtime mirrors the Rust shape: a stream instance or a workflow
 instance in one per-runner registry, resolved once per activation at
 `ActivationDispatcher.dispatch`; an `AddOperative` whose
-`kind` resolves to `:bounded` schedules `BoundedOperative.run` once on the core's driver with
-`init_values` as `args`; `BoundedCtx.emit` writes an instance-id-keyed,
-empty-metadata frame on a secondary stream; and `BoundedCompleted` is emitted on
+`kind` resolves to `:workflow` schedules `WorkflowOperative.run` once on the core's driver with
+`init_values` as `args`; `WorkflowCtx.emit` writes an instance-id-keyed,
+empty-metadata frame on a secondary stream; and `WorkflowCompleted` is emitted on
 the control stream byte-identically to the Rust SDK, so the controller drives a
-Java bounded operative's teardown unchanged. Java bounded factories are advertised on connect
-alongside unbounded factories. Java v1 ships hand-written `BoundedOperative` impls only (no
-`@BoundedOperative` annotation sugar) and no bounded test harness; it inherits the same deferred
+Java workflow operative's teardown unchanged. Java workflow factories are advertised on connect
+alongside stream factories. Java v1 ships hand-written `WorkflowOperative` impls only (no
+`@WorkflowOperative` annotation sugar) and no workflow test harness; it inherits the same deferred
 gaps below.
 
-A near-instant bounded operative may run to completion and self-deregister before the start
+A near-instant workflow operative may run to completion and self-deregister before the start
 RPC confirms the unit's binding; that clean exit is reported as a successful
 start (`{:ok, …}` with no live `runner_id`), not a failure.
 
 Deferred for a later change (v1 known gaps): mid-run controller reboot may
-replay an in-flight bounded operative from the durable registry; no exactly-once
+replay an in-flight workflow operative from the durable registry; no exactly-once
 dedup or in-flight visibility/cancel. (A failing *entity* of a structured chain
 does retry with backoff — see
-`docs/resilience/bounded_operative.md` "Entity retry".)
+`docs/resilience/workflow_operative.md` "Entity retry".)
 
 ## Public API
 
@@ -171,12 +171,12 @@ The full surface is small:
 
 ```rust
 use flezha_runner::{
-    Flezha, ChannelBuilder, UnboundedOperative, Procedure, ProcedureCtx, ProcedureError,
+    Flezha, ChannelBuilder, StreamOperative, Procedure, ProcedureCtx, ProcedureError,
 };
 ```
 
-`FlezhaRunner::define_unbounded::<R: UnboundedOperative>()` declares one
-Unbounded Operative class on the runner `Flezha::create_runner(namespace)`
+`FlezhaRunner::define_stream::<R: StreamOperative>()` declares one
+Stream Operative class on the runner `Flezha::create_runner(namespace)`
 returns; `.start()` / `.run()` boots the SDK; the controller later spawns
 instances by calling `flz operative start <factory_id>`. A second `define_*`
 of the same factory id on the same runner is refused
@@ -195,10 +195,10 @@ stay callable after `start()`, with three caveats worth knowing:
   `UpdateFactories` control request, which is **fire-and-forget — there is no
   ack**. The reconnect init frame, serialized from the same per-runner set at
   send time, is the resync of record.
-- A parked/suspended durable bounded instance is absent from the SDK's
+- A parked/suspended durable workflow instance is absent from the SDK's
   live-instance registry, so the removal check cannot see it and `remove_*`
   succeeds; rehydration then fails placement. See
-  `docs/resilience/bounded_operative.md`.
+  `docs/resilience/workflow_operative.md`.
 
 Calling `define_*` / `remove_*` after `start()` requires binding the runner:
 in Rust a chained `Flezha::create_runner(ns)?.…start()?` drops the temporary
@@ -210,7 +210,7 @@ doctests the snippets in this file.
 ## Authoring sugar (default path)
 
 `#[flezha::procedure]`, `#[derive(flezha::State)]`, and `flezha::operative!` collapse
-the trait ceremony — they are **pure expansion** over the `UnboundedOperative`/`Procedure`/
+the trait ceremony — they are **pure expansion** over the `StreamOperative`/`Procedure`/
 `Change`/`Channel` traits below, so a sugared procedure and a hand-written one
 compose in the same operative and "ejecting" a sugared procedure to a full impl is a
 paste of its expansion. The single contract binding every SDK (Rust, Java, and
@@ -237,7 +237,7 @@ fn ohlc(price: f64, state: &mut OhlcState) -> Vec<u8> {
 
 fn all_tfs(_: &f64) -> Vec<&'static str> { vec!["1m", "1h", "1d", "1w"] }
 
-// Linear pipeline ⇒ no `channels()` block, auto-registered (no `define_unbounded`).
+// Linear pipeline ⇒ no `channels()` block, auto-registered (no `define_stream`).
 flezha_runner::operative! {
     id: "market",
     pipeline: input::<String> -> Parse -> Ohlc -> plugin::<Vec<u8>>("ohlc_kafka")
@@ -245,7 +245,7 @@ flezha_runner::operative! {
 ```
 
 Single-procedure `input → sink` operatives add `sink = "…"` to `#[flezha::procedure]` and
-need no `operative!` and no `define_unbounded`. Attribute opt-ins: `id`, `sink`,
+need no `operative!` and no `define_stream`. Attribute opt-ins: `id`, `sink`,
 `keys` + `entities_for` (static mode), `idle_ttl` + `max_entities` (the
 dynamic-mode knobs — the KEY itself is declared on the wiring with
 `.key_by(f)`, not on the procedure), `capacity`, `on_full`, `clock`. Anything
@@ -260,7 +260,7 @@ directly when an operative's topology is not a single procedure or a linear chai
 
 ```rust
 use flezha_runner::{
-    Flezha, ChannelBuilder, UnboundedOperative, Procedure, ProcedureCtx, ProcedureError,
+    Flezha, ChannelBuilder, StreamOperative, Procedure, ProcedureCtx, ProcedureError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -318,7 +318,7 @@ impl Procedure for OhlcProc {
 }
 
 struct MarketOperative;
-impl UnboundedOperative for MarketOperative {
+impl StreamOperative for MarketOperative {
     fn factory_id() -> &'static str { "market" }
 
     fn channels(c: &ChannelBuilder) {
@@ -333,7 +333,7 @@ impl UnboundedOperative for MarketOperative {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Flezha::create_runner("market_ns")?
-        .define_unbounded::<MarketOperative>()?
+        .define_stream::<MarketOperative>()?
         .run()?;
     // The controller's `flz operative start <market>` spawns an instance.
     Ok(())
@@ -349,8 +349,8 @@ The Java SDK is a port of the same model. Idiomatic differences:
   accessors so the runtime can verify wiring at registration time
   (Java's type erasure means most type bounds the Rust trait system
   enforces at compile time become runtime-checked
-  `UnboundedOperativeConfigurationException`s thrown by
-  `FlezhaRunner.defineUnbounded(...)`).
+  `StreamOperativeConfigurationException`s thrown by
+  `FlezhaRunner.defineStream(...)`).
 - `entitiesForOverridden()` replaces Rust's
   `const ENTITIES_FOR_OVERRIDDEN: bool` sentinel. There is no dynamic-mode
   sentinel on either side: dynamic mode is read off the wiring.
@@ -398,7 +398,7 @@ public final class OhlcProc implements Procedure<Double, OhlcState, byte[]> {
     }
 }
 
-public final class MarketOperative implements UnboundedOperative {
+public final class MarketOperative implements StreamOperative {
     @Override public String factoryId() { return "market"; }
     @Override public void channels(ChannelBuilder c) {
         c.input(String.class, "trade.raw")
@@ -413,7 +413,7 @@ public final class MarketOperative implements UnboundedOperative {
 public final class App {
     public static void main(String[] args) throws Exception {
         Flezha.createRunner("market_ns")
-                .defineUnbounded(MarketOperative.class)
+                .defineStream(MarketOperative.class)
                 .run();
         // Controller's `flz operative start <market>` spawns an instance.
     }
@@ -422,14 +422,14 @@ public final class App {
 
 #### Java authoring sugar
 
-The `@Procedure` / `@State` / `@UnboundedOperative` / `@EntitiesFor` annotations (annotation
+The `@Procedure` / `@State` / `@StreamOperative` / `@EntitiesFor` annotations (annotation
 processor `flezha-sdk-processor`) generate the impls above, mirroring the Rust
 macros under the same `docs/sdk_authoring_contract.md` contract. An `@Procedure`
 class declares a `run` method (`Output run(Input)` or
 `Output run(Input, StateHandle<State, Change>)`); the processor generates
 `<ClassName>Procedure` (the five `*Type()` getters, `name`, `initState`,
 `applyChange`), a single-procedure operative when `sink` is set, and a
-`GeneratedUnboundedOperatives.defineAll(FlezhaRunner)` aggregator so the author
+`GeneratedStreamOperatives.defineAll(FlezhaRunner)` aggregator so the author
 declares every sugared operative on the runner in one startup call — it takes
 the runner because the declared set is per-runner, not process-global.
 `@State` generates `<ClassName>Change` plus a `<ClassName>Handle` carrying a
@@ -491,8 +491,8 @@ Dynamic mode lifts the compile-time-keyset requirement, and it is declared on
 the **wiring**, not on the Procedure: an edge carrying `.key_by(f)` makes its
 consumer dynamic, and the consumer declares no keying member at all. That is
 what lets a reader of `channels()` see where work fans out. Use it only when
-the keyset is genuinely unbounded (per-user, per-session, per-arbitrary-symbol);
-for a bounded keyset, static mode is simpler and cheaper.
+the keyset is genuinely stream (per-user, per-session, per-arbitrary-symbol);
+for a workflow keyset, static mode is simpler and cheaper.
 
 A dynamic Procedure owns zero Entities at startup. The first input whose edge
 key function returns `key` lazily creates an `EntitySlot` (cold
@@ -571,7 +571,7 @@ impl Procedure for OhlcProc {
 }
 ```
 
-Resolution order at `define_unbounded::<R>()` time:
+Resolution order at `define_stream::<R>()` time:
 
 1. `Procedure::mailbox_capacity()` if `MAILBOX_CAPACITY_OVERRIDDEN = true`.
 2. `FLEZHA_MAILBOX_CAPACITY` env var (parsed as `usize`).
@@ -732,7 +732,7 @@ smaStream                        // SmaProc's output handle, from `.into(SmaProc
 
 The Java surface mirrors Rust: `kind` stays `INTER_PROCEDURE`, the channel
 descriptor carries `Optional<PluginSink> pluginSink`, duplicates raise
-`UnboundedOperativeConfigurationException.duplicatePluginSink(channel)` at
+`StreamOperativeConfigurationException.duplicatePluginSink(channel)` at
 registration time, and a serializer that throws
 surfaces as `ProcedureException.PluginSerializerFailure` (Java's structured-throw
 analog of Rust's `ProcedureError::PluginSerializerPanic`). Wire frames produced
@@ -824,7 +824,7 @@ The umbrella enumerates non-goals (`operative-architecture/proposal.md`
 
 | Concern | File |
 |---|---|
-| Unbounded Operative trait | `sdk/rust/src/operative/mod.rs` |
+| Stream Operative trait | `sdk/rust/src/operative/mod.rs` |
 | Procedure trait + ProcedureCtx | `sdk/rust/src/procedure/mod.rs`, `ctx.rs`, `error.rs` |
 | Channel<T> + ChannelBuilder | `sdk/rust/src/channel/mod.rs`, `builder.rs` (kernel types: `flz_core/src/channel.rs`) |
 | Topology builder | `sdk/rust/src/operative/builder.rs` |
@@ -869,12 +869,12 @@ stable registered type IDs; same wire format, `sdk_lang = 2`,
 
 Decisions referenced above:
 
-- **Decision 1 (umbrella)** — Unbounded Operative/Procedure trait surface, sync `run`,
+- **Decision 1 (umbrella)** — Stream Operative/Procedure trait surface, sync `run`,
   associated types over generics.
 - **Decision 2 (mvp-rust)** — Fluent channel builder with compile-time
   wiring constraints.
 - **Decision 3 (mvp-rust)** — Per-Operative channel-id table layout
-  (interned `u32` IDs frozen at `define_unbounded`).
+  (interned `u32` IDs frozen at `define_stream`).
 - **Decision 4 (mvp-rust)** — Cached `output_channel_id` on the
   dispatcher; zero name lookups during emit.
 - **Decision 7 (umbrella)** — Single-mode is the default; static-mode
@@ -969,7 +969,7 @@ observed in the 2026-05-15 live incident.
 
 Every inbound payload runs exactly one pre-delivery path — the `:on_input`
 extension chain, then `journal_input/2` (the durable input log for the
-effectively-once tier, the durable inbox for a durable bounded instance). Three
+effectively-once tier, the durable inbox for a durable workflow instance). Three
 entry points drive it, differing only in what they report back:
 
 | Entry point | Caller | Reports |

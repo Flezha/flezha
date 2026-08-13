@@ -29,7 +29,7 @@ defmodule Flezha.State.Registry do
   @journal_entity_key "_proc_journal"
   @inbox_entity_key "_proc_inbox"
 
-  # Reserved entity-keys of a bounded instance's proc-journal and durable inbox,
+  # Reserved entity-keys of a workflow instance's proc-journal and durable inbox,
   # each paired with the file it maps onto. They ride the Entity persistence
   # substrate — `wal_path/1` writes these names, so the
   # WalWriter/FsyncBatcher/delete machinery treats them as one more per-instance
@@ -59,28 +59,28 @@ defmodule Flezha.State.Registry do
   def reserved_entity_keys(), do: @reserved_entity_keys
 
   @doc """
-  Reserved journal identity for a bounded instance's proc-journal
-  (`bounded-proc-journal`). Bounded per-instance state is keyed by the
+  Reserved journal identity for a workflow instance's proc-journal
+  (`workflow-proc-journal`). Workflow per-instance state is keyed by the
   instance id in the class position, so both dir levels carry it.
   """
   @spec journal_id(binary()) :: entity_id()
   def journal_id(instance_id) when is_binary(instance_id),
     do: {instance_id, instance_id, @journal_entity_key}
 
-  @doc "On-disk path of a bounded instance's proc-journal."
+  @doc "On-disk path of a workflow instance's proc-journal."
   @spec journal_path(binary()) :: binary()
   def journal_path(instance_id) when is_binary(instance_id),
     do: wal_path(journal_id(instance_id))
 
   @doc """
-  Reserved inbox identity for a bounded instance's durable inbox
-  (`bounded-durable-suspension`) — the sibling of `journal_id/1`.
+  Reserved inbox identity for a workflow instance's durable inbox
+  (`workflow-durable-suspension`) — the sibling of `journal_id/1`.
   """
   @spec inbox_id(binary()) :: entity_id()
   def inbox_id(instance_id) when is_binary(instance_id),
     do: {instance_id, instance_id, @inbox_entity_key}
 
-  @doc "On-disk path of a bounded instance's durable inbox."
+  @doc "On-disk path of a workflow instance's durable inbox."
   @spec inbox_path(binary()) :: binary()
   def inbox_path(instance_id) when is_binary(instance_id),
     do: wal_path(inbox_id(instance_id))
@@ -147,7 +147,7 @@ defmodule Flezha.State.Registry do
   end
 
   @doc """
-  Path of a per-Entity saga compensation marker (`bounded-operative-saga`
+  Path of a per-Entity saga compensation marker (`workflow-operative-saga`
   §4.3). `:intent` marks that the Entity's procedure completed forward and may
   need undo; `:done` marks that its compensation already ran. Presence is the
   signal (empty file). Inert to `scan_dir/1` (unknown suffix), so a marker never
@@ -173,7 +173,7 @@ defmodule Flezha.State.Registry do
 
   @doc """
   Read an Entity's saga compensation markers, shipped back on `RestoreInitState`
-  so a respawned durable bounded driver finishes the remaining hooks: `intent` ⇒
+  so a respawned durable workflow driver finishes the remaining hooks: `intent` ⇒
   its procedure completed forward and may need undo; `done` ⇒ its compensation
   already ran (skip it).
   """

@@ -1,6 +1,6 @@
 defmodule FlezhaTest.State.CompensationMarkersTest do
   @moduledoc """
-  §4.3 durable saga compensation records (controller half). A durable bounded
+  §4.3 durable saga compensation records (controller half). A durable workflow
   operative ships `compensation_intent` / `compensation_done` frames; the stream
   channel persists them as per-Entity markers, and the bind-time restore path
   ships them back on `RestoreInitState` so a respawned driver finishes the

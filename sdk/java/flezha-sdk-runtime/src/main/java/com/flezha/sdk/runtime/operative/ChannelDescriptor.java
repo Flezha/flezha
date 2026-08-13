@@ -10,8 +10,8 @@ import java.util.function.Function;
 import javax.annotation.Nonnull;
 
 /**
- * Frozen runtime descriptor for one channel inside a {@link UnboundedOperativeTopology}.
- * Indexed by interned channel id (the position in {@link UnboundedOperativeTopology#channels}).
+ * Frozen runtime descriptor for one channel inside a {@link StreamOperativeTopology}.
+ * Indexed by interned channel id (the position in {@link StreamOperativeTopology#channels}).
  */
 public final class ChannelDescriptor {
 
@@ -72,7 +72,7 @@ public final class ChannelDescriptor {
 
     /**
      * Codec for this inter-procedure channel's payload, when declared. The
-     * bounded proc-journal encodes the handoff between two procedures with it, so a
+     * workflow proc-journal encodes the handoff between two procedures with it, so a
      * crash-resumed run can re-seed the next procedure instead of re-running the
      * chain from the top.
      */
@@ -108,7 +108,7 @@ public final class ChannelDescriptor {
 
     /**
      * The consuming procedure ids, mappings stripped — what the graph-shape
-     * walk and the bounded DAG builder need.
+     * walk and the workflow DAG builder need.
      */
     @Nonnull
     public List<Integer> consumerIds() {

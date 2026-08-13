@@ -1,7 +1,7 @@
 package com.flezha.examples;
 
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
@@ -120,7 +120,7 @@ public final class E02_StatefulCounter {
         }
     }
 
-    public static final class CounterOperative implements UnboundedOperative {
+    public static final class CounterOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "counter";

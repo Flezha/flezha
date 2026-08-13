@@ -2,20 +2,20 @@
 
 A procedure that detects a condition — a fraud signal, a batch that just
 closed, an alert worth investigating — often wants a short-lived worker for it.
-Before this capability the only way to start a bounded operative was from
+Before this capability the only way to start a workflow operative was from
 outside the cluster (`flz operative start`, or a cron `flz schedule`), so every
 pipeline that needed one grew its own external dispatcher.
 
-`ctx.spawn_bounded` (Rust) / `ctx.spawnBounded` (Java) closes that gap: one
-call, from inside any procedure, spawns-or-feeds a bounded instance in the
+`ctx.spawn_workflow` (Rust) / `ctx.spawnWorkflow` (Java) closes that gap: one
+call, from inside any procedure, spawns-or-feeds a workflow instance in the
 requester's own namespace.
 
 ## Contract
 
 | | |
 |---|---|
-| Callable from | any `Procedure::run` — unbounded or bounded |
-| Target kind | **bounded** only (convergence owns unbounded lifecycles) |
+| Callable from | any `Procedure::run` — stream or workflow |
+| Target kind | **workflow** only (convergence owns stream lifecycles) |
 | Namespace | the requester's, always — the wire carries no namespace field |
 | Verb | spawn-**or**-deliver on `(namespace, instance_id)` |
 | Blocking | never: the call returns a handle before the controller decides |
@@ -23,20 +23,20 @@ requester's own namespace.
 | Replay | live processing only; a replayed invocation issues nothing |
 
 ```rust
-let _ = ctx.spawn_bounded(
+let _ = ctx.spawn_workflow(
     format!("triage@{subject}"),   // instance id — the identity that dedups
-    "triage",                      // bounded factory id
+    "triage",                      // workflow factory id
     input.as_bytes().to_vec(),     // first input on a spawn, one more on a delivery
     IfRunning::Deliver,
 );
 ```
 
 ```java
-ctx.spawnBounded("triage@" + subject, "triage", input.getBytes(UTF_8), IfRunning.DELIVER);
+ctx.spawnWorkflow("triage@" + subject, "triage", input.getBytes(UTF_8), IfRunning.DELIVER);
 ```
 
-Worked examples: `sdk/rust/examples/spawn_bounded_worker.rs` and
-`sdk/java/flezha-sdk-examples/.../E08_SpawnBoundedWorker.java`.
+Worked examples: `sdk/rust/examples/spawn_workflow_worker.rs` and
+`sdk/java/flezha-sdk-examples/.../E08_SpawnWorkflowWorker.java`.
 
 ## Spawn-or-deliver is one verb, deliberately
 
@@ -101,16 +101,16 @@ answers `SkippedOnReplay` / `SKIPPED_ON_REPLAY` without touching the wire, so a
 replay never doubles the workers a run created.
 
 The workers a replay *would* have created are not re-requested. That is the
-correct trade: the first run already created them, and a bounded worker that
+correct trade: the first run already created them, and a workflow worker that
 finished is finished.
 
 ## What it inherits, and what it does not add
 
 The request is resolved on the same operative-management path
-`flz operative start` uses, so the spawned instance is an ordinary bounded
+`flz operative start` uses, so the spawned instance is an ordinary workflow
 operative in every respect: namespace quota (`max_operatives`,
 `max_entities_per_operative`), the durable inbox, loop and suspension
-semantics, `BoundedCompleted` teardown, retention, and `flz operative list`.
+semantics, `WorkflowCompleted` teardown, retention, and `flz operative list`.
 
 Nothing new is added: no separate registry, no spawn journal, no scheduling
 (that is `flz schedule`), and no cross-namespace reach.
@@ -128,7 +128,7 @@ Nothing new is added: no separate registry, no spawn journal, no scheduling
 
 ## See also
 
-- `docs/sdk_protocol_spec.md` — `SpawnBoundedRequest` / `SpawnBoundedResponse`
-- `docs/resilience/bounded_operative.md` — the lifecycle the spawned instance follows
+- `docs/sdk_protocol_spec.md` — `SpawnWorkflowRequest` / `SpawnWorkflowResponse`
+- `docs/resilience/workflow_operative.md` — the lifecycle the spawned instance follows
 - `docs/operative_forward_plugin.md` — feeding an operative that already exists,
   as configuration rather than from procedure code

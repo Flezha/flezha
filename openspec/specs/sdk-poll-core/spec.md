@@ -108,7 +108,7 @@ the completion and SHALL enter the existing retry→park ladder.
 
 The host layer (`flz_core::host`) SHALL support, for byte-level host
 classes, everything the typed Rust host can declare: single, static, and
-dynamic entity modes (dynamic with idle-TTL eviction and the bounded
+dynamic entity modes (dynamic with idle-TTL eviction and the workflow
 evicted-keys trace), the effectively-once tier and checkpoint
 ack-granularity (completions carrying `consumed_offset` / `checkpoint`
 drive the same effect-record and interval semantics), late-input
@@ -148,9 +148,9 @@ core-side; a prepare failure enters the input channel's retry→park ladder.
 - **WHEN** the host answers a prepare batch with a failure for one payload
 - **THEN** that payload SHALL climb the channel's retry→park ladder and no keyless-drop path SHALL exist
 
-### Requirement: Bounded lifecycles run under poll
+### Requirement: Workflow lifecycles run under poll
 
-Bounded classes of BOTH language paths SHALL be driven by the core's bounded
+Workflow classes of BOTH language paths SHALL be driven by the core's workflow
 driver with stage execution handed out as activations through the poll seam:
 the driver accumulates a stage's per-entity batch, submits one step activation
 per entity partition, and its barriers await step completions AND controller
@@ -163,24 +163,24 @@ recorded outputs; the proc-journal, staged outbox, durable loop, suspension,
 entity-retry, and rewind semantics are unchanged. The `run`-sugar class is
 expressible with no journal and no barriers.
 
-#### Scenario: A run-sugar bounded host class completes
-- **WHEN** a bounded host class declaring only a run body is spawned with args
-- **THEN** the host receives one activation carrying the seed, its completion's terminal outcome drives the same `BoundedCompleted` teardown the typed path produces
+#### Scenario: A run-sugar workflow host class completes
+- **WHEN** a workflow host class declaring only a run body is spawned with args
+- **THEN** the host receives one activation carrying the seed, its completion's terminal outcome drives the same `WorkflowCompleted` teardown the typed path produces
 
 #### Scenario: A structured chain's barrier waits for the host and the ack
-- **WHEN** a durable structured bounded class finishes a stage's activations
+- **WHEN** a durable structured workflow class finishes a stage's activations
 - **THEN** the driver SHALL commit the proc boundary only after every entity's completion arrived AND the controller acked `ProcCommit`, and a crash-resume SHALL skip journaled procs exactly as the driver suites pin
 
-#### Scenario: A Java bounded step costs one thread, not two
-- **WHEN** a Java bounded class runs a stage step
+#### Scenario: A Java workflow step costs one thread, not two
+- **WHEN** a Java workflow class runs a stage step
 - **THEN** exactly one thread SHALL be occupied by that step (the SDK thread
   running the code); no core thread SHALL be parked awaiting its reply — the
   reply SHALL be collected by the driver at its stage barrier
 
 #### Scenario: Typed Rust steps run on the SDK's poll workers
-- **WHEN** a typed Rust bounded class runs a parallel stage
+- **WHEN** a typed Rust workflow class runs a parallel stage
 - **THEN** its per-entity step activations SHALL be picked up and executed by
-  the same worker threads that serve unbounded activations, sibling entities
+  the same worker threads that serve stream activations, sibling entities
   MAY genuinely interleave, and a step that panics SHALL report failure
   through the barrier without killing the worker that ran it
 
@@ -226,7 +226,7 @@ activations (default 1024, env `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`), enforced at
 work handout: when the limit is reached, `poll` SHALL NOT hand out entity work,
 and a completion that drops the count below the limit SHALL resume handout.
 The limit SHALL NOT gate direct command activations (restore folds, snapshot
-requests, bounded step crossings — these are barrier-bounded by their drivers)
+requests, workflow step crossings — these are barrier-bounded by their drivers)
 nor the inline-serve deadlock-avoidance path.
 
 The core SHALL expose starvation — runnable work exists, no thread is inside
@@ -274,31 +274,31 @@ every `poll` pass promotes what has come due.
 - **THEN** the starvation wait SHALL wake no later than the due time, so the
   host can supply a thread to promote the firing
 
-### Requirement: A running bounded instance holds one driver thread
+### Requirement: A running workflow instance holds one driver thread
 
-The core SHALL drive each actively-running bounded instance from one dedicated
+The core SHALL drive each actively-running workflow instance from one dedicated
 thread, which holds the chain's position as a call stack and SHALL NOT run
 user code. This is a stated design position, not an incidental one: the
 per-instance resident cost SHALL be dominated by the instance's heap rather
 than by that thread, and the thread SHALL NOT poll while waiting at a stage
 barrier. Its stack size SHALL be configurable
-(`FLEZHA_BOUNDED_DRIVER_STACK_KIB`) and SHALL default to the platform default.
+(`FLEZHA_WORKFLOW_DRIVER_STACK_KIB`) and SHALL default to the platform default.
 
-A change that would make a bounded instance's concurrency bounded by work in
+A change that would make a workflow instance's concurrency bounded by work in
 flight rather than by instance count SHALL be justified against a measurement,
-not a prediction; `sdk/rust/tests/bounded_scaling.rs` is that measurement, and
-`docs/resilience/bounded_operative.md` records the envelope it produced.
+not a prediction; `sdk/rust/tests/workflow_scaling.rs` is that measurement, and
+`docs/resilience/workflow_operative.md` records the envelope it produced.
 
 #### Scenario: A blocked population's cost is its heap, not its threads
 
-- **WHEN** thousands of bounded instances are simultaneously blocked
+- **WHEN** thousands of workflow instances are simultaneously blocked
 - **THEN** the resident cost per instance SHALL be dominated by per-instance
   heap, and SHALL NOT change materially with the configured driver stack size —
   a blocked driver's stack is not resident
 
 #### Scenario: A driver waiting at a stage barrier consumes no CPU
 
-- **WHEN** a bounded instance is blocked mid-step, waiting on its stage barrier
+- **WHEN** a workflow instance is blocked mid-step, waiting on its stage barrier
 - **THEN** its driver SHALL wait without polling, so a population blocked in
   that state SHALL consume no measurable CPU
 

@@ -1,6 +1,6 @@
 defmodule FlezhaTest.State.ProcInboxTest do
   @moduledoc """
-  `bounded-durable-suspension` controller store: append-before-forward with
+  `workflow-durable-suspension` controller store: append-before-forward with
   monotonic offsets, dedup inside the undelivered window, truncation at the
   consumed offset, torn-tail recovery, and invisibility to the Entity scanners.
   """

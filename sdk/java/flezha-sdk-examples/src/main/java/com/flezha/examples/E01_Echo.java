@@ -2,7 +2,7 @@ package com.flezha.examples;
 
 import com.flezha.sdk.Flezha;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
@@ -21,7 +21,7 @@ import java.util.Optional;
  * <ol>
  *   <li>an <b>Procedure</b> — the unit of work, run per Entity;
  *   <li>an <b>Operative</b> — the topology that wires Procedures to Channels;
- *   <li><b>declaration</b>, via {@code Flezha.createRunner(...).defineUnbounded(...)}.
+ *   <li><b>declaration</b>, via {@code Flezha.createRunner(...).defineStream(...)}.
  * </ol>
  *
  * <p>{@code Change = NoChange} means "no state to persist", which opts the whole
@@ -80,7 +80,7 @@ public final class E01_Echo {
         }
     }
 
-    public static final class EchoOperative implements UnboundedOperative {
+    public static final class EchoOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "echo";
@@ -98,7 +98,7 @@ public final class E01_Echo {
         // then block until shutdown (SIGTERM or close() from another thread).
         // Use .start() instead of .run() to keep the calling thread.
         Flezha.createRunner(args.length > 0 ? args[0] : "my_app")
-                .defineUnbounded(EchoOperative.class)
+                .defineStream(EchoOperative.class)
                 .run();
     }
 

@@ -4,12 +4,12 @@ The controller's view of a runner is one box: a process that dials in, accepts o
 ships back state changes and outputs. This page opens that box.
 
 A runner is **two layers, not one**. Transport, ordering, durability, retries, timers, credit,
-routing and the bounded driver live in a single Rust kernel, `flz_core`. The host language SDK
+routing and the workflow driver live in a single Rust kernel, `flz_core`. The host language SDK
 — Rust, Java, and whatever comes next — brings the authoring surface a user writes against and
 the threads that run their code. The seam between them is one poll loop.
 
-Everything on the [kernel](kernel.md), [unbounded](unbounded_profile.md) and
-[bounded](bounded_profile.md) pages is the same regardless of which host SDK is running, and
+Everything on the [kernel](kernel.md), [stream](stream_profile.md) and
+[workflow](workflow_profile.md) pages is the same regardless of which host SDK is running, and
 that is precisely because those mechanisms sit below this seam.
 
 Mechanism-level detail: [`../sdk_poll_core.md`](../sdk_poll_core.md). The authoring surface
@@ -34,7 +34,7 @@ flowchart TB
         C2["per-entity ordering + exclusivity · mailboxes"]:::ctrl
         C3["durability: effect records · flusher · restore · compaction"]:::ctrl
         C4["retry→park ladder · deferred wakes · timers · credit"]:::ctrl
-        C5["routing · edge keys · the bounded driver"]:::ctrl
+        C5["routing · edge keys · the workflow driver"]:::ctrl
     end
 
     CTRL["🧠 Controller"]:::ctrl
@@ -106,7 +106,7 @@ flowchart LR
     end
 
     KR["KeyRequest — batched keying for unkeyed<br/>entry payloads bound for a keyed edge"]:::exec
-    BS["Bounded step — one per entity partition<br/>(or CompensateRun for an undo)"]:::exec
+    BS["Workflow step — one per entity partition<br/>(or CompensateRun for an undo)"]:::exec
 
     POLL --> WORK
     POLL --> CMD
@@ -183,7 +183,7 @@ contention to a runner that is merely working.
 Starvation is exposed as a blocking wait a host thread may park in, never as a callback: the
 core calls no host code, and a host that cannot starve simply never calls it.
 
-**Direct activations are exempt from the cap** — restore folds, snapshot requests and bounded
+**Direct activations are exempt from the cap** — restore folds, snapshot requests and workflow
 steps answer a caller already blocked on a rendezvous or a stage barrier, so holding one behind
 capped entity work would deadlock that caller. They are also what a queued direct activation
 with no thread inside `poll` reports as starvation: a blocked driver must be able to buy a
@@ -263,14 +263,14 @@ Promotion needs a thread in `poll`, so a due entry with every worker inside user
 starvation and reads as such: the starvation wait's deadline considers the nearest due entry,
 which is how a host that grows threads gets one there in time to promote the firing.
 
-## A bounded step
+## A workflow step
 
-The bounded driver is the core's. What the host contributes is the thread that runs one stage
+The workflow driver is the core's. What the host contributes is the thread that runs one stage
 of one entity partition.
 
 ```mermaid
 sequenceDiagram
-    participant DRV as 🧠 Bounded driver (in the core)
+    participant DRV as 🧠 Workflow driver (in the core)
     participant CORE as 🧠 poll queue
     participant W as ⚙️ Host thread
     participant CTRL as 🧠 Controller
@@ -291,12 +291,12 @@ sequenceDiagram
 A step therefore costs exactly **one** thread — the SDK's — and no core thread waits on a host.
 The driver is the only waiter, and its retry timing lives there too. Barriers, the proc
 journal, loop modes, suspension and rewind are unchanged driver machinery; see
-[`bounded_profile.md`](bounded_profile.md).
+[`workflow_profile.md`](workflow_profile.md).
 
-One OS driver thread per actively-running bounded instance is a deliberate, measured choice:
+One OS driver thread per actively-running workflow instance is a deliberate, measured choice:
 it is ~1.4 KiB of an instance's ~73 KiB, and 10 000 blocked instances cost about 0.5% of one
 core. The rationale and the measurement are in
-[`../resilience/bounded_operative.md`](../resilience/bounded_operative.md).
+[`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).
 
 ## The C ABI
 
@@ -323,7 +323,7 @@ flowchart LR
 Silent runtime skew is impossible by construction. `flz_core_declare_class` takes the
 **complete** host-class declaration — the channel graph, entity modes, clock kinds, the
 effectively-once tier and its ack granularity, the correction window, the record-header
-lang/format bytes, and the bounded lifecycle facts — so a field the core never learned is a
+lang/format bytes, and the workflow lifecycle facts — so a field the core never learned is a
 refusal, not a silent degrade.
 
 Ownership is "whoever allocates frees"; activation buffers the core hands out are freed with

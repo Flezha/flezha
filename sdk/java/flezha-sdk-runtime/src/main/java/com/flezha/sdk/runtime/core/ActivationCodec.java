@@ -93,7 +93,7 @@ public final class ActivationCodec {
                         .bool(request.wantKeys())
                         .bool(request.wantEventTime());
             }
-            case ActivationKind.BoundedRun run -> w.varint(7).bytes(run.args());
+            case ActivationKind.WorkflowRun run -> w.varint(7).bytes(run.args());
             case ActivationKind.CompensateRun comp -> w.varint(8).vec(comp.outputs(), Postcard.Writer::bytes);
         }
     }
@@ -109,7 +109,7 @@ public final class ActivationCodec {
             case 5 -> new ActivationKind.MigrationSerialize();
             case 6 -> new ActivationKind.KeyRequest(
                     Math.toIntExact(r.varint()), r.vec(Postcard.Reader::bytes), r.bool(), r.bool());
-            case 7 -> new ActivationKind.BoundedRun(r.bytes());
+            case 7 -> new ActivationKind.WorkflowRun(r.bytes());
             case 8 -> new ActivationKind.CompensateRun(r.vec(Postcard.Reader::bytes));
             default -> throw new IllegalArgumentException(
                     "postcard: unknown ActivationKind discriminant " + discriminant);
@@ -162,7 +162,7 @@ public final class ActivationCodec {
                 w.varint(7);
                 encodeWorkError(w, failed.error());
             }
-            case ActivationOutcome.BoundedDone done -> w.varint(8)
+            case ActivationOutcome.WorkflowDone done -> w.varint(8)
                     .bool(done.completed())
                     .bytes(done.result());
         }
@@ -179,7 +179,7 @@ public final class ActivationCodec {
             case 5 -> new ActivationOutcome.MigrationState(r.bytes());
             case 6 -> new ActivationOutcome.Prepared(r.vec(ActivationCodec::decodePrepareResult));
             case 7 -> new ActivationOutcome.Failed(decodeWorkError(r));
-            case 8 -> new ActivationOutcome.BoundedDone(r.bool(), r.bytes());
+            case 8 -> new ActivationOutcome.WorkflowDone(r.bool(), r.bytes());
             default -> throw new IllegalArgumentException(
                     "postcard: unknown ActivationOutcome discriminant " + discriminant);
         };

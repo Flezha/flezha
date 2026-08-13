@@ -113,10 +113,10 @@ fn print_state_help() {
         "    outbox <operative/procedure/key>         Effectively-once outbox status (lag, cursor, watermark)"
     );
     println!(
-        "    journal <operative/instance>             Bounded instance proc-journal (committed procs, iterations, park)"
+        "    journal <operative/instance>             Workflow instance proc-journal (committed procs, iterations, park)"
     );
     println!(
-        "    inbox <operative/instance>               Bounded instance durable inbox (offsets, undelivered tail)"
+        "    inbox <operative/instance>               Workflow instance durable inbox (offsets, undelivered tail)"
     );
     println!();
     println!("EXAMPLES:");

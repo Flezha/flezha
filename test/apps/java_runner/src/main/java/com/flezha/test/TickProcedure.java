@@ -9,7 +9,7 @@ import com.flezha.sdk.state.WallClock;
 import java.util.List;
 import java.util.Optional;
 
-/** Procedure backing {@link CoalescingCounterUnboundedOperative}: parses {@code "interval:ts:delta"}. */
+/** Procedure backing {@link CoalescingCounterStreamOperative}: parses {@code "interval:ts:delta"}. */
 public final class TickProcedure
         implements Procedure<String, TickProcedure.State, Void, TickChange, WallClock, Void> {
 

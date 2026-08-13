@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   @moduledoc """
-  §5a.1: `OperativeManager.request_stop/2` routes by kind — a bound `:bounded`
-  operative is stopped cooperatively (`ControlUnit.bounded_stop`), everything else
+  §5a.1: `OperativeManager.request_stop/2` routes by kind — a bound `:workflow`
+  operative is stopped cooperatively (`ControlUnit.workflow_stop`), everything else
   takes the hard `stop_operative/2` teardown. `stop_operative/2` releases BOTH the
   `:max_operatives` and `:max_entities_per_operative` quota, symmetrically with
   `start_operative/2` (the entity-quota leak fix).
@@ -42,30 +42,30 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
   defp unique_id, do: "op-#{System.unique_integer([:positive])}"
 
-  test "bounded + bound → cooperative BoundedStop, no hard teardown" do
+  test "workflow + bound → cooperative WorkflowStop, no hard teardown" do
     test_pid = self()
     proc_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :bounded}, runner_id: "exec1"})
+    {:ok, stub} = start_stub(%{builder: %{kind: :workflow}, runner_id: "exec1"})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
 
     ControlUnit
-    |> stub(:bounded_stop, fn "exec1", ^proc_id ->
-      send(test_pid, {:bounded_stop_called, proc_id})
+    |> stub(:workflow_stop, fn "exec1", ^proc_id ->
+      send(test_pid, {:workflow_stop_called, proc_id})
       :ok
     end)
 
     assert {:ok, :cooperative} = OperativeManager.request_stop(@namespace, proc_id)
-    assert_receive {:bounded_stop_called, ^proc_id}, 500
+    assert_receive {:workflow_stop_called, ^proc_id}, 500
     # Cooperative stop does not drive the hard teardown — the SDK winds down itself.
     refute_received {:stop_operative_received, _}
   end
 
-  test "unbounded → hard teardown (RemOperative), no cooperative stop" do
+  test "stream → hard teardown (RemOperative), no cooperative stop" do
     test_pid = self()
     proc_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :unbounded}, runner_id: "exec1"})
+    {:ok, stub} = start_stub(%{builder: %{kind: :stream}, runner_id: "exec1"})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
@@ -73,20 +73,20 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
 
     ControlUnit
-    |> stub(:bounded_stop, fn _e, _o ->
-      send(test_pid, {:bounded_stop_called, proc_id})
+    |> stub(:workflow_stop, fn _e, _o ->
+      send(test_pid, {:workflow_stop_called, proc_id})
       :ok
     end)
 
     assert :ok = OperativeManager.request_stop(@namespace, proc_id)
     assert_receive {:stop_operative_received, ^stub}, 500
-    refute_received {:bounded_stop_called, _}
+    refute_received {:workflow_stop_called, _}
   end
 
   test "stop_operative releases both the operative and entity quota" do
     test_pid = self()
     proc_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :bounded, entities: ["a", "b"]}})
+    {:ok, stub} = start_stub(%{builder: %{kind: :workflow, entities: ["a", "b"]}})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
@@ -107,7 +107,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   test "stop_operative with no entities releases only the operative quota" do
     test_pid = self()
     proc_id = unique_id()
-    builder = %Builder{id: proc_id, factory_id: "f", kind: :bounded}
+    builder = %Builder{id: proc_id, factory_id: "f", kind: :workflow}
     {:ok, stub} = start_stub(%{builder: builder})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
@@ -127,16 +127,16 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     refute_received {:dealloc, :max_entities_per_operative, _}
   end
 
-  test "stop_operative retains state + record for a finished bounded operative" do
+  test "stop_operative retains state + record for a finished workflow operative" do
     proc_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :bounded}})
+    {:ok, stub} = start_stub(%{builder: %{kind: :workflow}})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
     Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
 
-    # Simulate what `handle_bounded_completed` wrote before teardown: a completion
+    # Simulate what `handle_workflow_completed` wrote before teardown: a completion
     # record + retained Entity state.
     :ok =
       Completion.write(proc_id, %{
@@ -160,7 +160,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
   test "stop_operative deletes state when there is no completion record" do
     proc_id = unique_id()
-    {:ok, stub} = start_stub(%{builder: %{kind: :unbounded}})
+    {:ok, stub} = start_stub(%{builder: %{kind: :stream}})
     on_exit(fn -> if Process.alive?(stub), do: GenServer.stop(stub) end)
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)

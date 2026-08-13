@@ -1,7 +1,7 @@
 defmodule Flezha.State.ProcInbox do
   @moduledoc """
-  Per-instance durable inbox for a durable bounded operative
-  (`bounded-durable-suspension`).
+  Per-instance durable inbox for a durable workflow operative
+  (`workflow-durable-suspension`).
 
   One `inbox.wal` per instance at `<state_root>/<instance_id>/<instance_id>/
   inbox.wal`, written through the same `WalWriter` framing + `FsyncBatcher`

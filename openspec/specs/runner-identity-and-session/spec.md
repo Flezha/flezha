@@ -73,7 +73,7 @@ SHALL only increment a counter.
 - **WHEN** a new session `sess_new` takes over `S`
 - **THEN** `sess_old`'s channels are unbound from every affected Entity's write path before `sess_new`'s are bound, and no Change from `sess_old` lands in any Entity WAL after the unbind
 
-#### Scenario: Refusal is episode-bounded telemetry
+#### Scenario: Refusal is episode-workflow telemetry
 
 - **WHEN** a superseded session forwards many Changes after losing its binding
 - **THEN** one `stale_writer_refused` event is emitted for the episode and a counter tracks the rest

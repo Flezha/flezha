@@ -33,13 +33,13 @@ contains Entities.**
   An Operative is registered with a factory id; many instances of the same class
   can run across the cluster. Every Operative has a **kind**:
 
-  - **Unbounded Operative** (kind `unbounded`, the default) — a long-running,
-    always-on streaming unit. Implements the `UnboundedOperative` trait/interface
+  - **Stream Operative** (kind `stream`, the default) — a long-running,
+    always-on streaming unit. Implements the `StreamOperative` trait/interface
     and declares its Channels. This is the original Flezha workload.
 
-  - **Bounded Operative** (kind `bounded`) — an on-demand, terminating,
-    possibly-interactive process. Implements the `BoundedOperative`
-    trait/interface. It authors the same Procedures/Channels/Entities an unbounded
+  - **Workflow Operative** (kind `workflow`) — an on-demand, terminating,
+    possibly-interactive process. Implements the `WorkflowOperative`
+    trait/interface. It authors the same Procedures/Channels/Entities a stream
     operative does but runs them **sequentially** (a linear chain with a per-procedure
     count-based barrier; entities within a procedure still run in parallel), can
     **receive input after it starts** (an inbox), and terminates on the first exit
@@ -48,9 +48,24 @@ contains Entities.**
     compensation** hooks (reverse-order, per-entity undo on failure) and is
     **durable by default** (opt-out per class): it crash-resumes from the WAL and
     its finished state is retained for a window. `run(ctx, args)` is sugar for a
-    single-Procedure, single-Entity bounded operative. Both kinds share the
+    single-Procedure, single-Entity workflow operative. Both kinds share the
     `Computation` base trait/interface (whose only shared member is `factory_id()`).
-    See [`resilience/bounded_operative.md`](resilience/bounded_operative.md).
+    See [`resilience/workflow_operative.md`](resilience/workflow_operative.md).
+
+  <!-- kind-naming-record:begin -->
+  **Why `stream` and `workflow`, not `unbounded` and `bounded`.** Flink uses
+  those two words for a property of the *data* — is the input finite — while
+  Flezha's distinction is the *execution model*: does one run terminate. The
+  words survive here only as adjectives for the **run**, where they are true: a
+  workflow operative runs a *bounded* iteration to a terminal state, and a
+  stream operative folds an *unbounded* input forever. The caveat that settles
+  the question: a durable `PerInput` workflow operative's *input* is unbounded —
+  it consumes an inbox for the life of a chat session — and only its *iteration*
+  is bounded, so the old kind name was not merely unfamiliar but false. The
+  words also remain correct for unrelated capacity concepts such as a bounded mailbox;
+  `scripts/kind-naming-allowlist.txt` enumerates every surviving use
+  and `scripts/check-kind-naming.sh` fails a kind-sense reintroduction.
+  <!-- kind-naming-record:end -->
 
 - **Procedure** — a typed stage inside an Operative that processes inputs from a
   Channel. Implements the `Procedure` trait/interface and declares its `Input`,
@@ -91,8 +106,8 @@ contains Entities.**
 - **Merge** — a subscription of two or more Channels to ONE Procedure, each
   supplying a pure mapping from its payload into the Procedure's declared sum
   type `Input` (`c.merge::<I>().from(a, map_a).from(b, map_b).into::<Proc>()`).
-  On an unbounded Operative, entry and inter-procedure Channels are both valid
-  sources; a **bounded** Operative merges its procedures' output streams only —
+  On a stream Operative, entry and inter-procedure Channels are both valid
+  sources; a **workflow** Operative merges its procedures' output streams only —
   its spawn-args seed names no Channel, so an entry Channel there is refused at
   definition time. Per-source FIFO is preserved and nothing is ordered across
   sources; `entities_for` is evaluated on the mapped value; mappings run
@@ -132,11 +147,11 @@ contains Entities.**
   [`websocket_subscription_source.md`](websocket_subscription_source.md).
 
 - **Dead-letter queue (DLQ)** — the Controller's durable store for poison
-  payloads: inputs an Unbounded Procedure failed on every retry
+  payloads: inputs a Stream Procedure failed on every retry
   (`app_data/dlq/{operative_class}/{procedure_id}/`). A payload is parked
   durably *before* its Entity advances, keeping the min-watermark moving
   without ever silently dropping data; operators inspect/replay/drop entries
-  via `flz dlq`. Bounded operatives don't use it — their escape is AbortAll +
+  via `flz dlq`. Workflow operatives don't use it — their escape is AbortAll +
   saga compensation. See
   [`resilience/data_durability.md`](resilience/data_durability.md)
   "Dead-letter queue".
@@ -157,7 +172,7 @@ contains Entities.**
 
 - **Poll core (`flz_core`)** — the language-agnostic runner kernel: entity
   slots, mailboxes and drain gates, the flusher, credit, the DLQ ladder,
-  timers, routing, commands, the bounded driver and the transport loop, in
+  timers, routing, commands, the workflow driver and the transport loop, in
   one Rust crate. Host SDKs drive it exclusively through
   `poll() → Activation` / `complete(ActivationResult)`; the Rust SDK's typed
   layer is the first host (as a crate), non-Rust SDKs consume the C ABI
@@ -169,8 +184,8 @@ contains Entities.**
 - **Prepare crossing** — the batched `KeyRequest` activation asking a host
   for routing keys and/or event times the core cannot derive from bytes,
   resolved before any mailbox enqueue.
-- **Bounded session calls** — `flz_core_bounded_emit/recv/cancelled`: the
-  ABI surface a live run-sugar bounded body uses mid-activation (emit
+- **Workflow session calls** — `flz_core_workflow_emit/recv/cancelled`: the
+  ABI surface a live run-sugar workflow body uses mid-activation (emit
   output, drain the inbox, observe cancellation).
 - **Activation** — one unit of work the core hands a host: a per-entity
   batch of inputs and validated timer firings, or one of the five

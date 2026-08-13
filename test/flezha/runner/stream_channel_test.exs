@@ -244,8 +244,8 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       :ok
     end
 
-    test "a bounded operative is not flagged for output_stall on stream close", %{pid: pid} do
-      Flezha.Operative.ClassRegistry.put("bnd_op", :bounded)
+    test "a workflow operative is not flagged for output_stall on stream close", %{pid: pid} do
+      Flezha.Operative.ClassRegistry.put("bnd_op", :workflow)
       on_exit(fn -> Flezha.Operative.ClassRegistry.delete("bnd_op") end)
 
       :ok = GenServer.call(pid, {:operative_pid_update, "bnd_op", [self()]})
@@ -271,9 +271,9 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       refute_receive {:output_stall, "bnd_op"}, 100
     end
 
-    test "delete_entity_state is ignored for a bounded (non-dynamic) class", %{pid: pid} do
+    test "delete_entity_state is ignored for a workflow (non-dynamic) class", %{pid: pid} do
       class = "bnd_del_#{System.unique_integer([:positive])}"
-      Flezha.Operative.ClassRegistry.put(class, :bounded)
+      Flezha.Operative.ClassRegistry.put(class, :workflow)
       on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
 
       seg = {class, "proc", "seg"}

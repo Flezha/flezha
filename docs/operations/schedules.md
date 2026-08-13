@@ -1,6 +1,6 @@
 # Scheduled operative spawns (`flz schedule`)
 
-The controller can spawn a fresh **bounded** operative instance on a cron
+The controller can spawn a fresh **workflow** operative instance on a cron
 schedule — reports, cleanups, periodic analyses — without an external
 scheduler. A schedule is a durable registry entry; at each matching slot the
 controller starts an instance through the exact same path as
@@ -12,7 +12,7 @@ inherited).
 ```
 flz schedule add <name> --cron "<expr>" --tz <iana> --factory <factory_id>
                  [--namespace <ns> | -n <ns>] [--init_values <json> | -iv <json>]
-                 [--plugins <json> | -p <json>] [--kind bounded]
+                 [--plugins <json> | -p <json>] [--kind workflow]
 flz schedule list
 flz schedule remove <name>
 flz schedule run <name>
@@ -34,7 +34,7 @@ flz schedule run <name>
   a manual id (`<name>@manual-<unix-ts>`) distinct from cron slots.
 - `--plugins` takes the same JSON array as `flz operative start --plugins`
   and is validated against the enabled providers at `add` time. See
-  [Output plugins](#output-plugins) — a bounded job that produces anything
+  [Output plugins](#output-plugins) — a workflow job that produces anything
   needs it.
 
 Example:
@@ -45,7 +45,7 @@ flz schedule add digest --cron "0 8,20 * * *" --tz Europe/Tallinn --factory ai_d
 
 ## Output plugins
 
-A bounded instance runs to completion in milliseconds, so its plugins must be
+A workflow instance runs to completion in milliseconds, so its plugins must be
 attached **at spawn**; enabling one afterwards misses the whole run. A
 schedule without `--plugins` therefore fires a job with no output channel —
 it executes and everything it emits is dropped.
@@ -120,7 +120,7 @@ Slots are evaluated in the entry's IANA time zone:
   at most one slot is ever in flight, and abandoned slots are never
   back-filled. The schedule never parks and needs no operator action — a
   schedule added before its runner deploys simply keeps probing.
-- **Bounded only.** Unbounded operatives are owned by convergence; the
+- **Workflow only.** Stream operatives are owned by convergence; the
   scheduler refuses any other kind.
 - **Quotas bound each executing node separately.** Quota checks run on the
   node the start executes on, against its own stores — a routed start is

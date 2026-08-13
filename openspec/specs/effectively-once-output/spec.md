@@ -127,14 +127,14 @@ integration test that kills each party at every phase boundary.
 
 ### Requirement: Tier applies to both operative kinds
 
-Both unbounded and bounded operatives SHALL be able to opt into the tier with
-identical per-record semantics. Bounded proc-boundary staged flush (buffering
+Both stream and workflow operatives SHALL be able to opt into the tier with
+identical per-record semantics. Workflow proc-boundary staged flush (buffering
 outputs until proc commit) is explicitly out of scope and SHALL NOT be implied by
 this capability.
 
-#### Scenario: Bounded operative under the tier
+#### Scenario: Workflow operative under the tier
 
-- **WHEN** a bounded operative with the tier emits on a keyed channel and crashes
+- **WHEN** a workflow operative with the tier emits on a keyed channel and crashes
   before completion, then resumes
 - **THEN** its re-emitted outputs carry identical identity and a conforming sink
   deduplicates them

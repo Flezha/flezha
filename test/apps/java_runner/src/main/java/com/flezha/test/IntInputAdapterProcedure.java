@@ -14,7 +14,7 @@ import java.util.Optional;
  * by parsing the input as a {@code long} and recording a {@link CounterChange}.
  *
  * <p>Entry channels are restricted to {@code byte[] | String} in v1; this
- * adapter Procedure exists so {@code StatefulCounterUnboundedOperative} can be
+ * adapter Procedure exists so {@code StatefulCounterStreamOperative} can be
  * wired through an entry channel without changing the entry-channel type policy.
  */
 public final class IntInputAdapterProcedure

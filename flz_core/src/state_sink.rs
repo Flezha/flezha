@@ -57,7 +57,7 @@ pub const ENTITY_EFFECT_RECORD_PAYLOAD_ID: &str = "entity_effect_record";
 /// the controller routes it to the per-Entity file lifecycle.
 pub const DELETE_ENTITY_STATE_PAYLOAD_ID: &str = "delete_entity_state";
 
-/// Data-stream payload-ids for the bounded-operative saga compensation
+/// Data-stream payload-ids for the workflow-operative saga compensation
 /// change-log (SDK → controller), same frame layout as `entity_state_change`.
 /// `compensation_intent` records a procedure's completion; `compensation_done`
 /// records a compensation hook's completion. Both ride the reliable sink (with
@@ -95,7 +95,7 @@ const RECONNECT_REASON: &str = "broken_pipe_flood";
 struct SinkState {
     sink: Option<SendFrameFn>,
     /// `(payload_id, frame)` pairs produced while no sink was installed or a
-    /// write failed. Bounded; oldest is dropped on overflow. The payload-id is
+    /// write failed. Workflow; oldest is dropped on overflow. The payload-id is
     /// retained so a replayed frame is re-wrapped under its own id
     /// (`entity_state_change` vs a `compensation_*` record).
     ring: VecDeque<(String, Vec<u8>)>,
@@ -307,7 +307,7 @@ pub fn install_global_sink(send_fn: SendFrameFn) {
     }
 }
 
-/// Ship one bounded-operative saga compensation marker (`compensation_intent`
+/// Ship one workflow-operative saga compensation marker (`compensation_intent`
 /// or `compensation_done`) for an Entity through the reliable sink. The body is
 /// empty — the record's information is the Entity identity plus the payload-id
 /// — matching `Flezha.State.Wire.decode_frame/1` (crc32 over an empty body is 0).
@@ -317,7 +317,7 @@ pub fn send_compensation_record(payload_id: &str, entity_identity: &[u8]) {
 }
 
 /// Serializes every test that installs the process-global sink — the sink's own
-/// tests plus the SDK's bounded driver test — so they never clobber each
+/// tests plus the SDK's workflow driver test — so they never clobber each
 /// other's sink. Test support; always compiled so downstream test builds see it.
 #[doc(hidden)]
 pub static SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

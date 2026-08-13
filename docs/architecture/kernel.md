@@ -2,8 +2,8 @@
 
 The kernel is the substrate both profiles share: how a state change becomes durable, how an
 output gets an identity, how back-pressure is applied, who is allowed to write, and how the
-system knows work is flowing. Everything here is profile-agnostic — an unbounded operative and
-a bounded operative persist an entity through exactly the same machinery.
+system knows work is flowing. Everything here is profile-agnostic — a stream operative and
+a workflow operative persist an entity through exactly the same machinery.
 
 - [The write path](#the-write-path)
 - [The WAL record](#the-wal-record)
@@ -74,8 +74,8 @@ never heard of the tier — the default costs nothing.
 
 ## The WAL record
 
-Every durable file in Flezha — an entity WAL, the input log, the bounded proc journal, the
-bounded inbox — is the same framed, CRC-protected, append-only log.
+Every durable file in Flezha — an entity WAL, the input log, the workflow proc journal, the
+workflow inbox — is the same framed, CRC-protected, append-only log.
 
 ```
 ┌──────────┬─────────┬────────────┬────────────────┬──────────┐
@@ -97,7 +97,7 @@ A torn tail — a partial record from a crash mid-write — is detected by the C
 scan at open and truncated. `WalWriter.fold_records/3` is the one place that walk lives; every
 reader (entity WAL, input log, proc journal, retention rewriter, time-travel) goes through it.
 
-The bounded proc journal reuses byte 0–3 of the header for its **epoch**, which is safe because
+The workflow proc journal reuses byte 0–3 of the header for its **epoch**, which is safe because
 byte 9 is the format-id slot and the journal never writes an entity format id there. The input
 log writes an append timestamp into bytes 0–7 and deliberately forces byte 9 to zero, so an
 input record can never be mistaken for an effect record.
@@ -420,7 +420,7 @@ The distinction is a real honesty boundary, not a formality:
   Together they are a sufficient handle for exact append-only dedup.
 
 `flz.` is a reserved metadata namespace. A user emit carrying a `flz.`-prefixed key is rejected
-at emit time, so stamps cannot be forged or clobbered. The bounded transactional outbox mints
+at emit time, so stamps cannot be forged or clobbered. The workflow transactional outbox mints
 through the same controller-side function, with `flz.seq = <proc_idx>.<seq_in_proc>`.
 
 ## The epoch rule
@@ -438,7 +438,7 @@ flowchart TB
     subgraph BUMP["BUMP the epoch — the new output passes dedup and overwrites"]
         B1["late-input correction"]:::sink
         B2["flz operative replay"]:::sink
-        B3["flz operative rewind (bounded loop)"]:::sink
+        B3["flz operative rewind (workflow loop)"]:::sink
     end
     KEEP --> RULE["durable identity = (entity, seq, epoch)"]:::store
     BUMP --> RULE
@@ -541,7 +541,7 @@ not got back. (Bytes that never enter the buffer at all — a deduplicated re-se
 a refused stale write — are released immediately instead, so every byte is accounted for exactly
 once.)
 
-The park is a bounded re-check loop, not an indefinite block, so a lost grant degrades to a
+The park is a workflow re-check loop, not an indefinite block, so a lost grant degrades to a
 retry rather than a freeze. A sender parked for more than 5 s logs once. `credit_parked` rides
 the runner's data heartbeat, so "fed but parked" is distinguishable from "wedged" from the
 outside.
@@ -697,7 +697,7 @@ liveness pair:
 | Compaction timeout | a requested snapshot has not arrived in 30 s | resync |
 
 The catastrophic sweep is skipped for a checkpoint-ack operative, whose silence between
-checkpoints **is** its steady state, and for a bounded operative, which legitimately goes quiet
+checkpoints **is** its steady state, and for a workflow operative, which legitimately goes quiet
 between iterations.
 
 ### Stall localization

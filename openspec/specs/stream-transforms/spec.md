@@ -104,7 +104,7 @@ Transform and key closures SHALL be pure and total: they re-run on replay, and a
 closure that observed ambient state or produced a different value would rebuild a
 state the live run never had. A closure that panics or throws SHALL NOT terminate
 the routing thread; the failure SHALL ride the channel's existing retry-then-DLQ
-ladder — the same ladder a failing entry-channel parse rides — and on a bounded
+ladder — the same ladder a failing entry-channel parse rides — and on a workflow
 chain SHALL be contained so the operative still terminates observably.
 
 #### Scenario: A throwing transform does not kill routing
@@ -112,9 +112,9 @@ chain SHALL be contained so the operative still terminates observably.
 - **WHEN** a `map` closure throws on one input
 - **THEN** the routing thread SHALL survive, the input SHALL be retried per the channel's retry policy and parked to the DLQ on exhaustion, and subsequent inputs SHALL continue to be routed
 
-#### Scenario: A throwing transform on a bounded chain terminates observably
+#### Scenario: A throwing transform on a workflow chain terminates observably
 
-- **WHEN** a transform closure on a bounded operative's inter-procedure edge throws
+- **WHEN** a transform closure on a workflow operative's inter-procedure edge throws
 - **THEN** the chain SHALL abort through its existing compensate path and emit its terminal frame rather than stranding the instance
 
 ### Requirement: Transform and key declarations SHALL be validated at definition time

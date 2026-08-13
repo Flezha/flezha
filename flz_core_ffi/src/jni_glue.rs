@@ -176,9 +176,9 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_complete(
     }
 }
 
-/// Emit one output payload from a live bounded run-sugar body.
+/// Emit one output payload from a live workflow run-sugar body.
 #[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_boundedEmit(
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_workflowEmit(
     mut env: JNIEnv,
     _class: JClass,
     ctx: jlong,
@@ -199,18 +199,18 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_boundedEmit(
         Err(_) => return throw(&mut env, "instance id contains NUL"),
     };
     let status = unsafe {
-        crate::flz_core_bounded_emit(ctx, c_instance.as_ptr(), bytes.as_ptr(), bytes.len())
+        crate::flz_core_workflow_emit(ctx, c_instance.as_ptr(), bytes.as_ptr(), bytes.len())
     };
     if status != FLZ_OK {
         throw(&mut env, &last_error_of(ctx));
     }
 }
 
-/// Block up to `timeout_ms` for the next inbox item of a live bounded
+/// Block up to `timeout_ms` for the next inbox item of a live workflow
 /// run-sugar body. `null` = timeout; throws when the body is gone or the
 /// inbox closed.
 #[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_boundedRecv(
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_workflowRecv(
     mut env: JNIEnv,
     _class: JClass,
     ctx: jlong,
@@ -235,7 +235,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_boundedRecv(
     let mut buf: *mut u8 = std::ptr::null_mut();
     let mut len: usize = 0;
     let status = unsafe {
-        crate::flz_core_bounded_recv(
+        crate::flz_core_workflow_recv(
             ctx,
             c_instance.as_ptr(),
             timeout_ms.max(0) as u64,
@@ -264,9 +264,9 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_boundedRecv(
     }
 }
 
-/// Whether the named bounded body's cancellation token has tripped.
+/// Whether the named workflow body's cancellation token has tripped.
 #[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_boundedCancelled(
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_workflowCancelled(
     mut env: JNIEnv,
     _class: JClass,
     ctx: jlong,
@@ -281,13 +281,13 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_boundedCancelled(
         Ok(c) => c,
         Err(_) => return 1,
     };
-    unsafe { crate::flz_core_bounded_cancelled(ctx, c_instance.as_ptr()) as jboolean }
+    unsafe { crate::flz_core_workflow_cancelled(ctx, c_instance.as_ptr()) as jboolean }
 }
 
-/// Spawn-or-deliver a bounded instance; returns the controller's outcome
+/// Spawn-or-deliver a workflow instance; returns the controller's outcome
 /// string. Throws on refusal / no control plane / timeout.
 #[no_mangle]
-pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnBounded<'l>(
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnWorkflow<'l>(
     mut env: JNIEnv<'l>,
     _class: JClass,
     ctx: jlong,
@@ -319,7 +319,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnBounded<'l>(
     let mut out: *mut u8 = std::ptr::null_mut();
     let mut out_len: usize = 0;
     let status = unsafe {
-        crate::flz_core_spawn_bounded(
+        crate::flz_core_spawn_workflow(
             ctx,
             instance.as_ptr(),
             factory.as_ptr(),

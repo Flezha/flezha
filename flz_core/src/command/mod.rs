@@ -11,7 +11,6 @@ use crate::pb::command_request::Command;
 use crate::pb::{CommandRequest, CommandResponse};
 use crate::runner::RunnerNode;
 
-mod bounded_stop;
 mod compact;
 mod credit;
 mod entity_apply_state;
@@ -28,6 +27,7 @@ mod restore;
 mod runner_assign;
 mod runner_disconnect;
 mod streams_connect;
+mod workflow_stop;
 
 pub trait CommandAction {
     fn handle(
@@ -146,12 +146,12 @@ pub fn get_handler(_payload_id: &str, message: &[u8]) -> Result<FrameOutcome, Co
         // controller-side binding swap), so neither is handled — drop and log.
         Some(Command::RunnerReconnected(_)) => CommandActionType::NotificationIgnore,
         Some(Command::ReassignRunnerId(_)) => CommandActionType::NotificationIgnore,
-        // SDK is the SENDER for BoundedCompleted — receiving it is a protocol
+        // SDK is the SENDER for WorkflowCompleted — receiving it is a protocol
         // bug. Drop and log, like `RunnerShutdownNotification`.
-        Some(Command::BoundedCompleted(_)) => CommandActionType::NotificationIgnore,
-        // Cooperative external stop for a bounded operative (Controller -> SDK):
-        // trip the driver's cancellation token via the BoundedStop handler.
-        Some(Command::BoundedStop(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
+        Some(Command::WorkflowCompleted(_)) => CommandActionType::NotificationIgnore,
+        // Cooperative external stop for a workflow operative (Controller -> SDK):
+        // trip the driver's cancellation token via the WorkflowStop handler.
+        Some(Command::WorkflowStop(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
         // Credit-grant flow control (Controller -> SDK): the init arms the
         // sender window and acks in its CommandResponse; grants replenish it.
         Some(Command::CreditWindowInit(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
@@ -170,17 +170,17 @@ pub fn get_handler(_payload_id: &str, message: &[u8]) -> Result<FrameOutcome, Co
         Some(Command::UpdateFactories(_)) => CommandActionType::NotificationIgnore,
         // SDK is the SENDER for the spawn request — receiving one is a
         // protocol bug.
-        Some(Command::SpawnBoundedRequest(_)) => CommandActionType::NotificationIgnore,
+        Some(Command::SpawnWorkflowRequest(_)) => CommandActionType::NotificationIgnore,
         // Procedure-requested spawn resolved (Controller -> SDK): wakes the
         // requester's `SpawnHandle` with the outcome.
-        Some(Command::SpawnBoundedResponse(reply)) => {
+        Some(Command::SpawnWorkflowResponse(reply)) => {
             CommandActionType::AckSignal(if reply.error.is_empty() {
                 Ok(reply.outcome)
             } else {
                 Err(reply.error)
             })
         }
-        // Proc-journal durability replies (Controller -> SDK): wake the bounded
+        // Proc-journal durability replies (Controller -> SDK): wake the workflow
         // driver blocked at the proc-commit / iteration-commit barrier; a non-empty
         // error terminates the run abnormally.
         Some(Command::ProcCommitResponse(reply)) => {
@@ -382,8 +382,8 @@ mod tests {
         let reply = |outcome: &str, error: &str| {
             let bytes = CommandRequest {
                 reference_id: "ref-spawn".to_string(),
-                command: Some(Command::SpawnBoundedResponse(
-                    crate::pb::SpawnBoundedResponse {
+                command: Some(Command::SpawnWorkflowResponse(
+                    crate::pb::SpawnWorkflowResponse {
                         outcome: outcome.to_string(),
                         error: error.to_string(),
                     },

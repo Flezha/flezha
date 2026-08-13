@@ -21,11 +21,11 @@ or `startAsync()`.
 
 Declaring an operative class tells the runtime what it *may spawn instances of
 later* (via `AddOperative`). That is a definition, not a registration of a
-live instance — so the runner methods are `defineUnbounded(Class)` /
-`defineBounded(Class)` (Java), `define_unbounded::<R>()` /
-`define_bounded::<T>()` (Rust), legal before and after `start()`. The inverse
-of a definition is a removal: `removeUnbounded`/`removeBounded` /
-`remove_unbounded`/`remove_bounded` — every `define*` gets a matching
+live instance — so the runner methods are `defineStream(Class)` /
+`defineWorkflow(Class)` (Java), `define_stream::<R>()` /
+`define_workflow::<T>()` (Rust), legal before and after `start()`. The inverse
+of a definition is a removal: `removeStream`/`removeWorkflow` /
+`remove_stream`/`remove_workflow` — every `define*` gets a matching
 `remove*`, never an `undefine*`/`unregister*`/`drop*` synonym. `register*`
 survives only on internal registries, which do hold registrations.
 
@@ -42,7 +42,7 @@ independent implementation, so the two can never drift.
 
 Rust has no method overloading, and the two SDKs must keep matching shapes.
 When Java could overload (`define(Class)`) but Rust cannot, both SDKs get two
-explicit methods (`defineUnbounded`/`defineBounded`). Cross-SDK symmetry
+explicit methods (`defineStream`/`defineWorkflow`). Cross-SDK symmetry
 outranks Java-side call-site brevity.
 
 ### 5. Accessors return `Optional`/`Option`, never throw for "nothing is there yet"
@@ -62,8 +62,8 @@ always a named, catchable error — a Java exception
 call that caused it, never a bare panic or an unchecked runtime crash, and
 never deferred to a later call (no "poisoned builder"). The two SDKs must
 report the identical failure class with the same error name: what Java throws
-at `defineUnbounded(...)`, Rust returns as `Err` from
-`define_unbounded::<R>()`.
+at `defineStream(...)`, Rust returns as `Err` from
+`define_stream::<R>()`.
 
 ### 7. `create*` constructs an object the caller mutates; `new*` is not used
 

@@ -223,7 +223,7 @@ The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BE
 The agent SHALL resolve a per-Operative-class boolean `persistence_enabled` at the moment an Operative instance is added (`AddOperative` command processed in `Overwatch.init/1`) using the following ordered rule:
 
 1. If the agent's runtime config defines `operative_persistence.<OperativeClass>` for this Operative class, use that value.
-2. Otherwise, if the `AddOperative` metadata carries an Operative-class const value (`UnboundedOperative::PERSISTENCE_ENABLED`), use that value.
+2. Otherwise, if the `AddOperative` metadata carries an Operative-class const value (`StreamOperative::PERSISTENCE_ENABLED`), use that value.
 3. Otherwise, use the built-in default of `true`.
 
 The resolved value SHALL be bound to the Operative instance for its entire lifetime. Subsequent changes to the runner-side config or to the SDK's Operative-class const (via SDK redeploy) SHALL NOT affect already-running instances.
@@ -495,7 +495,7 @@ The wire payload SHALL be `entity_state` payload-id with the JSON object as the 
 
 Serialization SHALL take the Entity's state lock, SHALL NOT drain pending changes, and SHALL NOT trigger compaction or WAL truncation; the serialized value therefore includes applied-but-unflushed changes.
 
-State serialization SHALL go through a per-Procedure fn pointer captured at `register_unbounded::<R>()` time. The fn pointer downcasts the type-erased state held in `EntitySlot::state` to its statically-known `EntityState<S>` and emits `serde_json::Value` via the `S::State: Serialize` bound on the trait. No additional user-facing trait machinery is required beyond the existing `Serialize + DeserializeOwned` bounds on `Procedure::State`.
+State serialization SHALL go through a per-Procedure fn pointer captured at `register_stream::<R>()` time. The fn pointer downcasts the type-erased state held in `EntitySlot::state` to its statically-known `EntityState<S>` and emits `serde_json::Value` via the `S::State: Serialize` bound on the trait. No additional user-facing trait machinery is required beyond the existing `Serialize + DeserializeOwned` bounds on `Procedure::State`.
 
 #### Scenario: Single-mode Procedure returns its state at the procedure-name key
 
@@ -526,7 +526,7 @@ State serialization SHALL go through a per-Procedure fn pointer captured at `reg
 
 When the SDK receives an `AddOperative{operative_id, factory_id, init_values}` command and `init_values` is a non-empty JSON object, the SDK SHALL parse the JSON, walk its top-level keys, and for each key that matches a registered Procedure name on the Operative's class:
 
-- For single-mode Procedures: deserialize the JSON value directly into `S::State` via the per-Procedure `deserialize_state` fn pointer (captured at registration time and bounded on `S::State: DeserializeOwned`), then overwrite the freshly-`init_state`d Entity's state with the deserialized value.
+- For single-mode Procedures: deserialize the JSON value directly into `S::State` via the per-Procedure `deserialize_state` fn pointer (captured at registration time and workflow on `S::State: DeserializeOwned`), then overwrite the freshly-`init_state`d Entity's state with the deserialized value.
 - For static-mode Procedures: walk the inner object's keys; for each `(key, value)` pair where `key` is a declared `entity_key`, deserialize the inner value into `S::State` and overwrite that Entity's state.
 
 Top-level keys that do not match any Procedure name SHALL be ignored (with an `eprintln!` log line at the SDK boundary). Inner-object keys that do not match a declared `entity_key` SHALL also be ignored.
@@ -832,9 +832,9 @@ Java SDK preserves it — with neither behaviour documented as intended.
 
 The Controller re-forwards input only for classes whose inputs it journals
 before forwarding: the effectively-once tier, whose inputs land in the input
-log, and durable bounded instances, whose inputs land in the proc inbox.
+log, and durable workflow instances, whose inputs land in the proc inbox.
 `Overwatch.journal_input/2` passes every other operative through un-journaled,
-including a plain stateful unbounded operative — the default configuration,
+including a plain stateful stream operative — the default configuration,
 since persistence defaults to enabled and the tier is an explicit opt-in.
 
 #### Scenario: The contract distinguishes journaled from un-journaled classes

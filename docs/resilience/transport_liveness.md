@@ -83,7 +83,7 @@ Kraken WS plugin
   → Operative.Overwatch.handle_cast/handle_call({:io_in})   [io_in_received, forwarded, filtered_nil]
   → StreamChannel.handle_cast/handle_call({:io_in})      [io_in_received, send_frame_calls, nil_drops, last_send_ms]
   → Native.send_frame
-  → [crossbeam unbounded command channel]                [cmd_queue_depth]
+  → [crossbeam stream command channel]                [cmd_queue_depth]
   → flz-uds-driver loop (uds_driver.rs)                  [loop_iterations, last_loop_ms]
   → per-stream write_buffer (capped) → UnixStream write   [write_buffer_len, write_buffer_dropped, last_write_ms, frames_written]
 Inbound mirror: driver read → StreamChannel({:flz_data}) [flz_data_received] + [last_read_ms, frames_read]

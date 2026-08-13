@@ -125,7 +125,7 @@ path.
 
 ```
    Source has a transactional outbox        Source has no outbox
-   (effectively-once, or durable bounded)   (plain unbounded)
+   (effectively-once, or durable workflow)   (plain stream)
    ────────────────────────────────────     ──────────────────────
    identity stamped (flz.seq / flz.key)     no identity ledger
    worker retries until confirmed           worker retries until confirmed

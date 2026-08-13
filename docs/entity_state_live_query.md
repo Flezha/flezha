@@ -123,7 +123,7 @@ the safe direction: it claims no eviction it cannot show.
 ## Size bound
 
 The reply is bounded by the existing `:wal_high_watermark_bytes` (16 MiB
-default) — the same ceiling the bounded handoff uses. No new configuration key.
+default) — the same ceiling the workflow handoff uses. No new configuration key.
 Over it, the read is refused with the byte count and the selector that would
 narrow it:
 

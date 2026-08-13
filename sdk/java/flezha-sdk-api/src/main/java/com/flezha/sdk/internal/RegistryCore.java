@@ -8,7 +8,7 @@ import javax.annotation.Nonnull;
 
 /**
  * The ONE implementation behind a {@code FlezhaRunner}'s two declared factory
- * sets (unbounded + bounded). Instance-scoped: each runner carries its own
+ * sets (stream + workflow). Instance-scoped: each runner carries its own
  * cores, so a later runner starts with an empty declared set (generation 2
  * must re-define its types); the runtime-side class registries reached via
  * {@link RuntimeBridge} stay process-global and overwrite on insert.
@@ -29,7 +29,7 @@ public final class RegistryCore<C extends Computation> {
      * @param runtimeRegistryFqn the runtime-side class registry reached via
      *     {@link RuntimeBridge} ({@code registerClass(Class)} /
      *     {@code unregisterClass(String)} / {@code reset()})
-     * @param kindLabel {@code "operative"} / {@code "bounded"} — used in error
+     * @param kindLabel {@code "operative"} / {@code "workflow"} — used in error
      *     messages
      */
     public RegistryCore(@Nonnull String runtimeRegistryFqn, @Nonnull String kindLabel) {

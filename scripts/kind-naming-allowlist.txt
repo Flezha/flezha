@@ -1,0 +1,74 @@
+# Preserved occurrences of "bounded" / "unbounded".
+#
+# The two operative kinds are `stream` and `workflow`. The words "bounded" and
+# "unbounded" survive in this repository in two other senses, and this file
+# enumerates them so `scripts/check-kind-naming.sh` can tell them apart from a
+# kind-sense regression.
+#
+#   capacity — a mailbox with a capacity limit (`BoundedMailboxSource`,
+#              `:flezha_bounded_mailbox`, "backpressure and bounded mailboxes")
+#   english  — ordinary usage: "bounded by the deadline", "a bounded (1024)
+#              FIFO", "bounded cardinality", "unbounded growth"
+#
+# A block that deliberately spells the words out — a changelog entry or the
+# public-API rename table MENTIONING the retired names, the CLAUDE.md notes, the
+# glossary paragraph that retains `bounded`/`unbounded` as adjectives for the
+# RUN — is exempted instead by wrapping it in `kind-naming-record:begin` /
+# `kind-naming-record:end` comments. That keeps the exemption greppable and
+# scoped to the block, and it does not pin the prose's exact wording the way a
+# regex here would.
+#
+# Format: <path-prefix>:<regex>   (first colon separates; `*` matches any path)
+# The checker DELETES every match of <regex> from a line and then looks for a
+# residual identifier CONTAINING `bounded` — so `BoundedOperative` and
+# `spawn_bounded` are caught, not only the bare word, and a line carrying two
+# senses is excused only for the phrase named here.
+#
+# NOT a target of the rename and NOT listed here: the binding word family —
+# `bound`, `unbound`, `bind`, `rebind`, `misbound`, `inbound`, `outbound`,
+# `bound_runner`, `bound_ns`, `bound_operatives`, `plugin_bound`,
+# `require_bound_principal`, `principal_not_bound`. Those mean *attached to a
+# runner or namespace*, `unbound` ("not placed") is unrelated to `unbounded`,
+# and none of them contains `bounded` — so the family is untouched by
+# construction rather than by an entry here.
+
+# --- third-party API (crossbeam channel constructors) -------------------
+*:channel::\{?(un)?bounded
+*:= (un)?bounded(::<[^>]*>)?\(
+
+# --- capacity sense -----------------------------------------------------
+*:[Bb]ounded[ -]mailbox(es)?
+*:BoundedMailbox
+*:bounded_mailbox
+*:unbounded-mailbox
+*:mailbox is bounded
+*:mailbox boundedness
+openspec/specs/rust-sdk-dispatch/spec.md:operative-bounded-mailbox
+# historical archived-spec filename cited in a javadoc
+sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.java:boundeds\.md
+
+# --- plain English ------------------------------------------------------
+# One rule per shape. The first is the adjective list: "bounded X" where X is a
+# limit, not an operative concept. Extend the alternation rather than adding a
+# near-duplicate line — that is how `bounded queue` and `bounded-queue` once
+# ended up as two entries.
+*:[Bb]ounded `GenServer\.call`
+*:[Bb]ounded[ -](by|above|below|at|to|timeout|window|FIFO|cardinality|loss|buffer|queue|queueing|ring|backoff|exponential|governor|wait|time|ack|park|call|calls|margin|primitives|capacity|lock-free|outbound|per-|retry|retries|lookup|quota|degrade-to-solo|\"degrade)
+*:[Bb]ounded \(1024
+*:barrier-bounded
+# `Convergence.SafeCall.bounded/3` is a TIME-LIMITED `GenServer.call`, not a
+# kind — the one English-sense identifier in the tree, plus its own docs.
+*:SafeCall\.bounded
+*:`bounded/3`
+*:bounded\(target\(\)
+*:def bounded\(server
+*:fenced batch\. Bounded
+# "X is/stays bounded", and the unbounded-as-"without limit" family.
+*:(stays|SHALL be) bounded
+*:(memory|[Cc]ardinality|back-pressure|cost|wait|buffer|pull|park|handshake|depth) is bounded
+*:mailbox (is |)bounded
+*:mailbox boundedness
+*:unbounded[ -](growth|buffer|cardinality|allocation|count|body cap|history)
+*:(grow(s|ing)?|count is) unbounded
+openspec/specs/runner-controller-connection-healing/spec.md:bounded `:start_operative` retry
+

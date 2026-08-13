@@ -1,6 +1,6 @@
 defmodule Flezha.State.WalRewindTest do
   @moduledoc """
-  The non-destructive rewind primitive (`unbounded-late-input-correction` G2)
+  The non-destructive rewind primitive (`stream-late-input-correction` G2)
   and the event-time baseline it rewinds to.
 
   The distinction from `realign_epoch/4` is the whole point: a realign is a

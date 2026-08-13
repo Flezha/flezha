@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   @moduledoc """
-  SDK -> Controller `ProcCommit` dispatch path (`bounded-proc-journal` +
-  `bounded-transactional-outbox`): the ControlChannel appends the
+  SDK -> Controller `ProcCommit` dispatch path (`workflow-proc-journal` +
+  `workflow-transactional-outbox`): the ControlChannel appends the
   `proc_committed` entry — entities, handoff AND the procedure's staged outbox
   in one record — fsyncs, replies `ProcCommitResponse` under the request's
   reference_id, and only then flushes the outbox to the bound operative. A

@@ -11,7 +11,7 @@ import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
- * One Procedure in an UnboundedOperative topology. Stateless dispatcher; per-Entity
+ * One Procedure in a StreamOperative topology. Stateless dispatcher; per-Entity
  * {@code State} is held by the runtime and threaded through {@link #run} via
  * a {@link StateHandle}.
  *
@@ -37,7 +37,7 @@ import javax.annotation.Nonnull;
 public interface Procedure<
         Input, State, Output, ChangeT extends Change, ClockT extends com.flezha.sdk.state.Clock, ConfigT> {
 
-    /** Stable identifier within the UnboundedOperative class. Must be unique per UnboundedOperative. */
+    /** Stable identifier within the StreamOperative class. Must be unique per StreamOperative. */
     @Nonnull
     String name();
 
@@ -53,7 +53,7 @@ public interface Procedure<
     @Nonnull
     Class<ChangeT> changeType();
 
-    /** Compile-time typed Clock class. Drives v1 UnboundedOperativeConfigurationException for non-WallClock. */
+    /** Compile-time typed Clock class. Drives v1 StreamOperativeConfigurationException for non-WallClock. */
     @Nonnull
     Class<ClockT> clockType();
 
@@ -62,7 +62,7 @@ public interface Procedure<
     Class<ConfigT> configType();
 
     /**
-     * Initialize state for a new Entity. Called once per Entity at UnboundedOperative
+     * Initialize state for a new Entity. Called once per Entity at StreamOperative
      * startup. {@code entityKey} is empty for single-entity mode; present
      * for static mode. {@code initPayload} is empty on cold start; present
      * during a {@code RestoreInitState} round-trip — the user MAY inspect the
@@ -230,7 +230,7 @@ public interface Procedure<
      * {@link #mailboxCapacityOverridden()} to return {@code true} so the
      * runtime applies the Procedure value over any {@code FLEZHA_MAILBOX_CAPACITY}
      * env value. Capacity must be in {@code 1..=1_048_576}; out-of-range
-     * values fail {@code FlezhaRunner.defineUnbounded(...)} with the
+     * values fail {@code FlezhaRunner.defineStream(...)} with the
      * offending Procedure's name.
      */
     default int mailboxCapacity() {
@@ -259,10 +259,10 @@ public interface Procedure<
             throws ProcedureException;
 
     /**
-     * Optional saga <strong>compensation</strong> hook (bounded operatives only).
+     * Optional saga <strong>compensation</strong> hook (workflow operatives only).
      * A procedure whose {@link #run} commits a reversible side effect overrides
-     * this to undo it. The bounded driver fires it ONLY during abnormal-termination
-     * rollback — never on a clean completion, never for an unbounded operative —
+     * this to undo it. The workflow driver fires it ONLY during abnormal-termination
+     * rollback — never on a clean completion, never for a stream operative —
      * once per entity that ran, in reverse completion order, handing back that
      * entity's own collected outputs and its {@link StateHandle} so it can
      * reverse precisely. Compensation MUST be idempotent by author contract: a
@@ -270,7 +270,7 @@ public interface Procedure<
      *
      * <p>The default is a no-op; a procedure that overrides this MUST also
      * override {@link #compensateOverridden()} to return {@code true} so the
-     * bounded driver registers it as compensable (hookless procedures are
+     * workflow driver registers it as compensable (hookless procedures are
      * skipped during rollback).
      */
     default void compensate(

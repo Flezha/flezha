@@ -65,7 +65,7 @@ defmodule Flezha.AuthZ.Quotas do
 
       {:ok, %{quotas: quotas}} ->
         case Map.get(quotas, kind) do
-          # No quota configured for this kind → unbounded.
+          # No quota configured for this kind → stream.
           nil ->
             :ok
 

@@ -1,4 +1,4 @@
-//! `UnboundedInstance`: per-`AddOperative` runtime state.
+//! `StreamInstance`: per-`AddOperative` runtime state.
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -11,7 +11,7 @@ use crate::entity::EntitySlot;
 use crate::operative::topology::{EntityMode, OperativeTopology};
 use crate::persistence::resolve_persistence_enabled;
 
-pub struct UnboundedInstance {
+pub struct StreamInstance {
     pub topology: Arc<OperativeTopology>,
     pub instance_id: Arc<str>,
     /// Indexed by `ProcedureId`. Each entry is a Vec of entities for that
@@ -35,22 +35,22 @@ pub struct UnboundedInstance {
     /// Lazily populated; typed classes never touch it.
     pub host_prepare: Mutex<crate::host::HostPrepareState>,
     /// Frozen-at-instance-start persistence flag. Resolved from the
-    /// UnboundedOperative class const + runner override; propagated to every
+    /// StreamOperative class const + runner override; propagated to every
     /// `EntitySlot`. Subsequent runner config changes do not
     /// affect this instance — only `stop_operative` + `start_operative` cycles
     /// pick up new values.
     persistence_enabled: bool,
 }
 
-impl UnboundedInstance {
-    /// Construct a fresh `UnboundedInstance` with no runner persistence
+impl StreamInstance {
+    /// Construct a fresh `StreamInstance` with no runner persistence
     /// override. Equivalent to
-    /// `UnboundedInstance::with_persistence_override(.., None)`.
+    /// `StreamInstance::with_persistence_override(.., None)`.
     pub fn new(topology: Arc<OperativeTopology>, instance_id: Arc<str>) -> Arc<Self> {
         Self::with_persistence_override(topology, instance_id, None)
     }
 
-    /// Construct a fresh `UnboundedInstance` with an explicit runner
+    /// Construct a fresh `StreamInstance` with an explicit runner
     /// override for `operative_persistence.<OperativeClass>`. The runner
     /// override (when `Some`) wins over the class const.
     pub fn with_persistence_override(
@@ -60,7 +60,7 @@ impl UnboundedInstance {
     ) -> Arc<Self> {
         let persistence_enabled =
             resolve_persistence_enabled(topology.persistence_enabled_const, operator_override);
-        Arc::new_cyclic(|weak: &Weak<UnboundedInstance>| {
+        Arc::new_cyclic(|weak: &Weak<StreamInstance>| {
             let procedure_count = topology.procedures.len();
             let mut entities: Vec<Vec<Arc<EntitySlot>>> = Vec::with_capacity(procedure_count);
             let mut entity_key_to_idx: Vec<HashMap<&'static str, usize>> =
@@ -120,7 +120,7 @@ impl UnboundedInstance {
 
             // One reaper per dynamic Procedure that opts into a TTL. Default
             // `idle_ttl == None` spawns none — dynamic Entities then live
-            // as long as the UnboundedOperative, like static ones.
+            // as long as the StreamOperative, like static ones.
             let background_stop = Arc::new(AtomicBool::new(false));
             let mut background_handles: Vec<JoinHandle<()>> = Vec::new();
             for (procedure_id, registry) in dynamic_registries.iter().enumerate() {
@@ -135,7 +135,7 @@ impl UnboundedInstance {
                 }
             }
 
-            UnboundedInstance {
+            StreamInstance {
                 host_prepare: Mutex::new(crate::host::HostPrepareState::default()),
                 topology,
                 instance_id,
@@ -178,7 +178,7 @@ impl UnboundedInstance {
     }
 }
 
-impl Drop for UnboundedInstance {
+impl Drop for StreamInstance {
     fn drop(&mut self) {
         // Safety net for an instance dropped without `stop_operative`: signal the
         // background threads (don't join — Drop must not block on a sweep

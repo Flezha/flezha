@@ -3,31 +3,31 @@ package com.flezha.sdk.runtime.core;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.flezha.sdk.bounded.BoundedOperative;
-import com.flezha.sdk.bounded.BoundedOperativeException;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.procedure.StableId;
-import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
-import com.flezha.sdk.runtime.bounded.BoundedSpec;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ConsumerEdge;
 import com.flezha.sdk.runtime.operative.EdgeYield;
 import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
+import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
 import com.flezha.sdk.runtime.state.EntityId;
 import com.flezha.sdk.runtime.state.KryoCodec;
 import com.flezha.sdk.runtime.state.PendingTimers;
 import com.flezha.sdk.runtime.state.TimerOp;
 import com.flezha.sdk.runtime.state.TimerPolicy;
 import com.flezha.sdk.runtime.state.TimerSession;
+import com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry;
+import com.flezha.sdk.runtime.workflow.WorkflowSpec;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.EventTimeFrom;
 import com.flezha.sdk.state.StateHandle;
 import com.flezha.sdk.state.TimerKind;
+import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.workflow.WorkflowOperativeException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -49,9 +49,9 @@ import org.slf4j.LoggerFactory;
  * {@link Activation} into one {@link ActivationResult} by running user code —
  * no native calls, which is what makes the whole typed layer unit-testable
  * without the core. The only impurities are injected: a per-instance
- * {@link BoundedSession} for run-sugar bodies (and the api-side
+ * {@link WorkflowSession} for run-sugar bodies (and the api-side
  * {@code SpawnRequests} static, reached through {@code ProcedureCtx}'s
- * default {@code spawnBounded}).
+ * default {@code spawnWorkflow}).
  *
  * <p>The core guarantees per-Entity exclusivity — it never hands out a second
  * activation for the same Entity until the first completes — so there is no
@@ -68,10 +68,10 @@ public final class ActivationDispatcher {
             .build();
 
     private final ConcurrentHashMap<String, JavaInstance> instances = new ConcurrentHashMap<>();
-    private final Function<String, BoundedSession> boundedSessions;
+    private final Function<String, WorkflowSession> workflowSessions;
 
-    public ActivationDispatcher(@Nonnull Function<String, BoundedSession> boundedSessions) {
-        this.boundedSessions = boundedSessions;
+    public ActivationDispatcher(@Nonnull Function<String, WorkflowSession> workflowSessions) {
+        this.workflowSessions = workflowSessions;
     }
 
     /** Live operative instances keyed by operative id — the {@code operatives()} view. */
@@ -90,7 +90,7 @@ public final class ActivationDispatcher {
         try {
             JavaInstance instance = instances.computeIfAbsent(
                     activation.target().operative(), id -> JavaInstance.materialize(id, activation.factory()));
-            return new ActivationResult(activation.token(), instance.dispatch(activation, boundedSessions));
+            return new ActivationResult(activation.token(), instance.dispatch(activation, workflowSessions));
         } catch (Throwable t) {
             String message = t.getMessage() == null ? t.toString() : t.getMessage();
             LOG.error(
@@ -112,10 +112,10 @@ public final class ActivationDispatcher {
         private final String factoryId;
 
         @Nullable
-        private final UnboundedOperativeTopology topology;
+        private final StreamOperativeTopology topology;
 
         @Nullable
-        private final BoundedSpec boundedSpec;
+        private final WorkflowSpec workflowSpec;
 
         /** Per-Procedure routing instances — {@code entitiesFor} / {@code eventTime} only. */
         @SuppressWarnings("rawtypes")
@@ -140,12 +140,12 @@ public final class ActivationDispatcher {
         private JavaInstance(
                 String operativeId,
                 String factoryId,
-                @Nullable UnboundedOperativeTopology topology,
-                @Nullable BoundedSpec boundedSpec) {
+                @Nullable StreamOperativeTopology topology,
+                @Nullable WorkflowSpec workflowSpec) {
             this.operativeId = operativeId;
             this.factoryId = factoryId;
             this.topology = topology;
-            this.boundedSpec = boundedSpec;
+            this.workflowSpec = workflowSpec;
             if (topology != null) {
                 for (ProcedureDescriptor desc : topology.procedures()) {
                     Procedure<?, ?, ?, ?, ?, ?> instance = instantiate(desc);
@@ -157,11 +157,11 @@ public final class ActivationDispatcher {
         }
 
         static JavaInstance materialize(String operativeId, String factoryId) {
-            UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
+            StreamOperativeTopology topology = StreamOperativeClassRegistry.getTopology(factoryId);
             if (topology != null) {
                 return new JavaInstance(operativeId, factoryId, topology, null);
             }
-            BoundedSpec spec = BoundedOperativeClassRegistry.getSpec(factoryId);
+            WorkflowSpec spec = WorkflowOperativeClassRegistry.getSpec(factoryId);
             if (spec != null) {
                 return new JavaInstance(operativeId, factoryId, spec.topology().orElse(null), spec);
             }
@@ -187,7 +187,7 @@ public final class ActivationDispatcher {
             }
         }
 
-        ActivationOutcome dispatch(Activation activation, Function<String, BoundedSession> sessions) {
+        ActivationOutcome dispatch(Activation activation, Function<String, WorkflowSession> sessions) {
             return switch (activation.kind()) {
                 case ActivationKind.Work work -> dispatchWork(activation, work.items());
                 case ActivationKind.RestoreFold fold -> restoreFold(activation, fold);
@@ -201,7 +201,7 @@ public final class ActivationDispatcher {
                         stateJson(activation.target()));
                 case ActivationKind.ApplyState apply -> applyState(activation.target(), apply.stateJson());
                 case ActivationKind.KeyRequest request -> prepare(request);
-                case ActivationKind.BoundedRun run -> boundedRun(run.args(), sessions);
+                case ActivationKind.WorkflowRun run -> workflowRun(run.args(), sessions);
                 case ActivationKind.CompensateRun comp -> compensateRun(activation, comp.outputs());
             };
         }
@@ -475,30 +475,30 @@ public final class ActivationDispatcher {
         }
 
         // ------------------------------------------------------------------
-        // Bounded
+        // Workflow
         // ------------------------------------------------------------------
 
-        private ActivationOutcome boundedRun(byte[] args, Function<String, BoundedSession> sessions) {
-            if (boundedSpec == null || !boundedSpec.isRunSugar()) {
+        private ActivationOutcome workflowRun(byte[] args, Function<String, WorkflowSession> sessions) {
+            if (workflowSpec == null || !workflowSpec.isRunSugar()) {
                 throw new IllegalStateException(
-                        "BoundedRun activation for `" + factoryId + "`, which is not a run-sugar bounded class");
+                        "WorkflowRun activation for `" + factoryId + "`, which is not a run-sugar workflow class");
             }
-            BoundedOperative body;
+            WorkflowOperative body;
             try {
-                body = boundedSpec.operativeClass().getDeclaredConstructor().newInstance();
+                body = workflowSpec.operativeClass().getDeclaredConstructor().newInstance();
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException(
-                        "bounded class `" + factoryId + "` has no public no-arg constructor: " + e, e);
+                        "workflow class `" + factoryId + "` has no public no-arg constructor: " + e, e);
             }
-            SessionBoundedCtx ctx = new SessionBoundedCtx(sessions.apply(operativeId));
+            SessionWorkflowCtx ctx = new SessionWorkflowCtx(sessions.apply(operativeId));
             try {
                 body.run(ctx, new String(args, StandardCharsets.UTF_8));
-                return new ActivationOutcome.BoundedDone(ctx.completed, ctx.result);
-            } catch (BoundedOperativeException e) {
+                return new ActivationOutcome.WorkflowDone(ctx.completed, ctx.result);
+            } catch (WorkflowOperativeException e) {
                 String message = e.getMessage() == null ? e.toString() : e.getMessage();
                 return new ActivationOutcome.Failed(new WorkError(message, e.isNonRetryable()));
             } catch (Throwable t) {
-                LOG.warn("bounded run-sugar body `{}` failed: {}", operativeId, t.toString());
+                LOG.warn("workflow run-sugar body `{}` failed: {}", operativeId, t.toString());
                 return new ActivationOutcome.Failed(new WorkError(t.toString(), false));
             }
         }
@@ -543,7 +543,7 @@ public final class ActivationDispatcher {
         private void requireTopology(String kind) {
             if (topology == null) {
                 throw new IllegalStateException(
-                        kind + " activation for run-sugar bounded class `" + factoryId + "`, which has no procedures");
+                        kind + " activation for run-sugar workflow class `" + factoryId + "`, which has no procedures");
             }
         }
 
@@ -856,14 +856,14 @@ public final class ActivationDispatcher {
         }
     }
 
-    /** {@link com.flezha.sdk.bounded.BoundedOperativeCtx} over an injected {@link BoundedSession}. */
-    private static final class SessionBoundedCtx implements com.flezha.sdk.bounded.BoundedOperativeCtx {
+    /** {@link com.flezha.sdk.workflow.WorkflowOperativeCtx} over an injected {@link WorkflowSession}. */
+    private static final class SessionWorkflowCtx implements com.flezha.sdk.workflow.WorkflowOperativeCtx {
 
-        private final BoundedSession session;
+        private final WorkflowSession session;
         byte[] result = new byte[0];
         boolean completed;
 
-        SessionBoundedCtx(BoundedSession session) {
+        SessionWorkflowCtx(WorkflowSession session) {
             this.session = session;
         }
 
@@ -907,8 +907,8 @@ public final class ActivationDispatcher {
         @Override
         public void loopUntil(
                 @Nonnull java.util.function.BooleanSupplier predicate,
-                @Nonnull com.flezha.sdk.bounded.BoundedLoopBody body)
-                throws BoundedOperativeException {
+                @Nonnull com.flezha.sdk.workflow.WorkflowLoopBody body)
+                throws WorkflowOperativeException {
             while (!isCancelled() && !completed && !predicate.getAsBoolean()) {
                 body.run(this);
             }

@@ -332,18 +332,18 @@ message AddOperative {
     string operative_id = 1;
     string factory_id = 2;
     string init_values = 3;
-    string kind = 4; // operative kind; empty/absent ⇒ "unbounded"
+    string kind = 4; // operative kind; empty/absent ⇒ "stream"
 }
 
 message RemOperative {
     string operative_id = 1;
 }
 
-// SDK -> Controller. Emitted by a bounded-kind operative when its run-once
+// SDK -> Controller. Emitted by a workflow-kind operative when its run-once
 // function returns ("ok" | "error"). The Controller drives the normal
 // stop/teardown path (deregister-on-completion). Old Controllers ignore
 // the unknown variant.
-message BoundedCompleted {
+message WorkflowCompleted {
     string operative_id = 1;
     string status = 2;
     string error = 3;
@@ -652,24 +652,24 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 |-------|-------|
 | Direction | Controller -> SDK |
 | Proto message | `AddOperative { operative_id: string, factory_id: string, init_values: string, kind: string }` |
-| Behavior | SDK creates a new operative from the named factory. `kind` (empty ⇒ `"unbounded"`) selects the operative kind. For `"unbounded"`: an unbounded operative instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"bounded"`: a bounded operative instance whose `run(ctx, args)` is scheduled once on its driver thread with `args = init_values`. |
+| Behavior | SDK creates a new operative from the named factory. `kind` (empty ⇒ `"stream"`) selects the operative kind. For `"stream"`: a stream operative instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"workflow"`: a workflow operative instance whose `run(ctx, args)` is scheduled once on its driver thread with `args = init_values`. |
 | Response status | `"success"` on success, `"error"` on failure |
 | Response raw_data | empty |
-| Possible errors | Factory not found (unbounded or bounded class); JSON parse failure; deserialization failure; unknown `kind` |
+| Possible errors | Factory not found (stream or workflow class); JSON parse failure; deserialization failure; unknown `kind` |
 
-### BoundedCompleted
+### WorkflowCompleted
 
 | Field | Value |
 |-------|-------|
 | Direction | SDK -> Controller (same `control_command` envelope as `RunnerReconnected`) |
-| Proto message | `BoundedCompleted { operative_id: string, status: string, error: string }` |
-| Behavior | Emitted when a bounded-kind operative's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished operative leaves the durable registry; an errored operative is torn down identically (terminal — the platform never re-runs the operative; a structured chain's per-entity retry ladder runs *inside* the run, before this) and surfaced via `[:flezha, :bounded, :failed]`. |
+| Proto message | `WorkflowCompleted { operative_id: string, status: string, error: string }` |
+| Behavior | Emitted when a workflow-kind operative's `run` returns: `status` is `"ok"` or `"error"` (with `error`). The Controller drives the normal stop/teardown path (deregister-on-completion) so the finished operative leaves the durable registry; an errored operative is torn down identically (terminal — the platform never re-runs the operative; a structured chain's per-entity retry ladder runs *inside* the run, before this) and surfaced via `[:flezha, :workflow, :failed]`. |
 | Response | None (one-way notification; old Controllers ignore the unknown variant) |
 
 Both SDKs are at parity on this contract: the Rust and Java SDKs each read the
-optional `AddOperative.kind` field (empty ⇒ `"unbounded"`) and emit `BoundedCompleted`
-byte-identically, so the Controller decodes a Java bounded operative's completion exactly as a
-Rust one. A bounded operative's plugin output is a frame whose payload id is the operative's
+optional `AddOperative.kind` field (empty ⇒ `"stream"`) and emit `WorkflowCompleted`
+byte-identically, so the Controller decodes a Java workflow operative's completion exactly as a
+Rust one. A workflow operative's plugin output is a frame whose payload id is the operative's
 instance id with **empty** metadata (no `channel` key), written on a secondary
 stream — identical across both SDKs.
 
@@ -694,7 +694,7 @@ stream — identical across both SDKs.
 | Response status | `"success"` on success, `"error"` if the operative is not found or the selector is refused |
 | Response raw_data | JSON-serialized state bytes (the shape above) |
 | Response metadata | `flz.change_seq` — the seq the state was serialized at, present only when the selector names exactly one Entity |
-| Possible errors | `"UnboundedOperative instance with id {id} not found"`, plus the refusal set below |
+| Possible errors | `"StreamOperative instance with id {id} not found"`, plus the refusal set below |
 
 **Selector.** `procedure` and `entity_key` are optional; an empty string is
 absent, so a selector-less command encodes byte-identically to the pre-selector
@@ -899,12 +899,12 @@ register_factory(factory_id, settings, initial_state, handler_generator)
 
 Factories **must** be registered before calling `new()`.
 
-### 8.2 UnboundedOperative Interface
+### 8.2 StreamOperative Interface
 
 SDK implementations must support operatives that conform to this interface:
 
 ```
-interface UnboundedOperative:
+interface StreamOperative:
     run(input: OperativeInput) -> Result<OperativeResult, OperativeError>
     json_serialize_state() -> bytes
     json_deserialize_state(data: bytes) -> void
@@ -955,7 +955,7 @@ interface OperativeHandler<State, Input, Output>:
     post_create(state: &mut State) -> void  // optional, called after creation
 ```
 
-The SDK wraps this with input/output transformers into a full `UnboundedOperative` implementation.
+The SDK wraps this with input/output transformers into a full `StreamOperative` implementation.
 
 ### 8.5 SDK Entry Point
 
@@ -1346,7 +1346,7 @@ message RestoreInitState {
 ```
 
 The proc-journal is **not** here — it is instance-scoped and rides
-`AddOperative.proc_journal` (below). A durable bounded class with no
+`AddOperative.proc_journal` (below). A durable workflow class with no
 per-Entity state has no Entity WAL, so it receives no
 `RestoreInitState` at all; a journal delivered on this frame would never
 arrive and the driver would resume at iteration 0 on every bind.
@@ -1354,7 +1354,7 @@ arrive and the driver would resume at iteration 0 on every bind.
 ### Control command `AddOperative.proc_journal` (controller → SDK)
 
 `proc_journal` (absent unless the instance has a non-empty proc-journal)
-carries the committed proc indexes so a resumed durable structured bounded
+carries the committed proc indexes so a resumed durable structured workflow
 driver skips the procedures already committed in the in-flight iteration
 and enters the iteration after the last committed one, plus two handoff
 views:
@@ -1380,7 +1380,7 @@ message ProcJournalState {
 
 - `proc_handoffs` — what **each** procedure committed in the in-flight
   iteration released, keyed by its `proc_idx`. A procedure tree
-  (`bounded-branching`) re-seeds every uncommitted child branch from its
+  (`workflow-branching`) re-seeds every uncommitted child branch from its
   own parent's edge, filtered to the channel that child consumes, so the
   latest commit's handoff alone would strand a sibling.
 - `handoff` — the previous iteration's **terminal** batch, which re-seeds
@@ -1563,8 +1563,8 @@ message ProcCommit {
 }
 ```
 
-Emitted at each procedure barrier of a **durable structured** bounded
-operative (`bounded-proc-journal`): procedure `proc_idx` completed forward
+Emitted at each procedure barrier of a **durable structured** workflow
+operative (`workflow-proc-journal`): procedure `proc_idx` completed forward
 and released the inter-proc handoff batch, serialized through the
 producing channel's byte codec (`.codec()` / `.codec_with(...)`,
 required at registration for durable structured classes). Direction is
@@ -1575,7 +1575,7 @@ committed record. Opted-out classes (`PERSISTENCE_ENABLED = false`)
 skip the handshake entirely.
 
 `outbox` carries the procedure's **staged** plugin-bound output
-(`bounded-transactional-outbox`). Inside a structured procedure
+(`workflow-transactional-outbox`). Inside a structured procedure
 `ctx.emit` does not reach the wire: each entity buffers its serialized
 plugin output and it travels here, so a failed or aborted procedure
 leaks nothing. The controller journals handoff AND outbox in ONE
@@ -1621,7 +1621,7 @@ a journal with `flz state journal <operative/instance>`.
 
 `ProcJournalState.rewind_undo` (`repeated ProcCommittedProc`, tag 8) carries the
 procedures a **rewind** unwound that nothing has compensated yet
-(`bounded-loop-rewind`). The driver runs them through the ordinary compensation
+(`workflow-loop-rewind`). The driver runs them through the ordinary compensation
 planner — reverse iteration, reverse chain position — before resuming forward at
 `iter`, which the journal has already folded back to the rewound-to iteration.
 Each undo journals a `compensated` entry (an empty one for a hookless procedure),
@@ -1634,7 +1634,7 @@ instance, and the folded journal is what the SDK sees.
 **Outbox flush.** The response is the durable point past which the
 procedure's staged output may be seen, so the controller flushes it
 immediately AFTER emitting the ack, in journal order, through the same
-`:on_output` plugin fan-out live bounded output uses — stamping each
+`:on_output` plugin fan-out live workflow output uses — stamping each
 frame with the identity below. A successful flush appends an
 `outbox_flushed` entry; a delivery that cannot happen yet (the operative
 is not bound) is retried, never dropped. The next procedure is free to
@@ -1645,7 +1645,7 @@ its original keys before the resumed run advances — so a crash between
 commit and flush duplicates at worst (at-least-once with stable keys) and
 loses nothing.
 
-**Bounded output identity.** Every flushed outbox frame carries the same
+**Workflow output identity.** Every flushed outbox frame carries the same
 `flz.*` shape the effectively-once tier stamps, minted from the journal:
 
 | Key | Value |
@@ -1673,7 +1673,7 @@ message IterCommit {
 ```
 
 Emitted at each **iteration** boundary of a looping durable structured
-bounded operative (`bounded-durable-loop`), after the last procedure's
+workflow operative (`workflow-durable-loop`), after the last procedure's
 `ProcCommit` has been acked. A class opts into looping with
 `loop_mode()`: `PerInput` runs one iteration per inbox item (the
 chat-turn shape), `Chained` seeds each iteration from the previous one's
@@ -1730,10 +1730,10 @@ message IterPark {
 ```
 
 A `PerInput` loop whose inbox has been empty past the idle threshold
-(`FLEZHA_BOUNDED_PARK_IDLE_MS`, default 5 s) at a **committed** iteration
+(`FLEZHA_WORKFLOW_PARK_IDLE_MS`, default 5 s) at a **committed** iteration
 boundary tears its own run down and emits this instead of a
-`BoundedCompleted` — suspension is not a terminal outcome
-(`bounded-durable-suspension`). Parking is only ever offered at a
+`WorkflowCompleted` — suspension is not a terminal outcome
+(`workflow-durable-suspension`). Parking is only ever offered at a
 committed boundary, so "suspended ⇒ resumable from a clean boundary"
 holds; a `recv` mid-iteration blocks in memory as before.
 
@@ -1748,7 +1748,7 @@ Rehydration has one path, whichever wakes it: a new inbox append, or the
 journaled wake deadline (which the controller delivers as a synthetic
 inbox entry with an empty payload and `flz.wake = timer` metadata — a
 class declaring `wake_after()` accepts an empty entry payload as its
-tick). Both re-bind the instance through the normal bounded spawn path
+tick). Both re-bind the instance through the normal workflow spawn path
 on any live runner (existing session fencing applies), restoring
 journal + iteration-boundary snapshots and delivering the undelivered
 inbox tail. Because both wake sources go through the inbox, two racing
@@ -1785,13 +1785,13 @@ record.
 
 When the replacement drops a factory that still has controller-known
 operatives bound to that runner (the suspended-instance removal hole —
-see `docs/resilience/bounded_operative.md`), FleetManager logs a warning
+see `docs/resilience/workflow_operative.md`), FleetManager logs a warning
 naming the namespace, runner, factory id, and affected operatives.
 
-### Control command `SpawnBoundedRequest` (SDK → controller)
+### Control command `SpawnWorkflowRequest` (SDK → controller)
 
 ```protobuf
-message SpawnBoundedRequest {
+message SpawnWorkflowRequest {
     string instance_id = 1;
     string factory_id  = 2;
     bytes  payload     = 3;
@@ -1799,8 +1799,8 @@ message SpawnBoundedRequest {
 }
 ```
 
-A procedure asked for a bounded instance (`ctx.spawn_bounded` /
-`ctx.spawnBounded`, `procedure-requested-spawn`). The controller spawns
+A procedure asked for a workflow instance (`ctx.spawn_workflow` /
+`ctx.spawnWorkflow`, `procedure-requested-spawn`). The controller spawns
 `factory_id` under `instance_id` when that id is free — with `payload` as the
 instance's first input — and otherwise applies `if_running`: `deliver` feeds
 `payload` to the running instance's inbox, `error` refuses. An unrecognised
@@ -1816,10 +1816,10 @@ Resolution runs off the control channel (it starts an operative, which drives
 requests for one `(namespace, instance_id)` race-resolve at the operative
 registry: exactly one start wins and every loser converts to a delivery.
 
-### Control command `SpawnBoundedResponse` (controller → SDK)
+### Control command `SpawnWorkflowResponse` (controller → SDK)
 
 ```protobuf
-message SpawnBoundedResponse {
+message SpawnWorkflowResponse {
     string outcome = 1;  // spawned | delivered | already_running
                          // | factory_unknown | refused
     string error   = 2;  // detail for `refused`; empty otherwise
@@ -1832,7 +1832,7 @@ it only resolves its handle; an unobserved handle logs the failure once.
 
 ### Data frame metadata: durable-inbox offset (`flz.inbox_offset`)
 
-Post-start input for a **durable bounded** instance is appended to the
+Post-start input for a **durable workflow** instance is appended to the
 instance's `inbox.wal` **before** it is forwarded, and the forwarded
 frame carries the assigned offset:
 
@@ -1849,7 +1849,7 @@ cannot produce a duplicate turn.
 
 ### Data payload `correction_request` (SDK → controller)
 
-Late-input correction (`unbounded-late-input-correction`). An Entity saw an
+Late-input correction (`stream-late-input-correction`). An Entity saw an
 input whose extracted event time is behind its event-time high-water but inside
 the declared `correction_window`. Only the SDK can know that — the event time
 comes from the user's `TimeExtractor` — so detection is the SDK's half and

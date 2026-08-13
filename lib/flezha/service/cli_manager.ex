@@ -21,7 +21,7 @@ defmodule Flezha.Service.CliManager do
         init_values,
         opts \\ [],
         plugins_json \\ "[]",
-        kind \\ "unbounded"
+        kind \\ "stream"
       ) do
     opts_kw =
       Payloader.json_to_map(opts)
@@ -65,7 +65,7 @@ defmodule Flezha.Service.CliManager do
   # Resolve the wire kind string to its atom without minting atoms from
   # untrusted input: only already-known kinds convert; anything else stays a
   # string, which `Validator.valid_kind/1` rejects at start.
-  defp parse_kind(kind) when kind in [nil, "", "unbounded"], do: :unbounded
+  defp parse_kind(kind) when kind in [nil, "", "stream"], do: :stream
 
   defp parse_kind(kind) when is_binary(kind) do
     String.to_existing_atom(kind)
@@ -78,7 +78,7 @@ defmodule Flezha.Service.CliManager do
   ## Plugin-spec decoding lives in `Flezha.Plugin.SpecDecoder` — one decoder,
   ## shared with the schedule firing path.
 
-  @doc "Stops a operative (cooperatively for a bounded operative, hard otherwise)."
+  @doc "Stops a operative (cooperatively for a workflow operative, hard otherwise)."
   def operative_stop(namespace, operative_id) do
     case OperativeManager.request_stop(normalize_namespace(namespace), operative_id) do
       :ok ->
@@ -86,7 +86,7 @@ defmodule Flezha.Service.CliManager do
 
       {:ok, :cooperative} ->
         IO.puts(
-          "Cooperative stop requested for bounded operative '#{operative_id}'. " <>
+          "Cooperative stop requested for workflow operative '#{operative_id}'. " <>
             "It will finish in-flight work, then complete (cancelled) and be removed."
         )
 
@@ -96,7 +96,7 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  Rewind a bounded loop to the committed boundary of iteration `to_iter`: the
+  Rewind a workflow loop to the committed boundary of iteration `to_iter`: the
   iterations above it are compensated in reverse, state and handoff return to
   that boundary, the epoch is bumped so re-run output supersedes the unwound
   run's at a guarded sink, and the inbox items those iterations consumed are
@@ -636,7 +636,7 @@ defmodule Flezha.Service.CliManager do
         _ -> []
       end
 
-    # A finished bounded operative is gone from the live registry but its
+    # A finished workflow operative is gone from the live registry but its
     # completion record is retained within the window — surface it too.
     finished = finished_operatives(namespace_display, live)
 
@@ -707,7 +707,7 @@ defmodule Flezha.Service.CliManager do
     Enum.each(finished, fn {id, rec} -> display_finished_operative(id, rec) end)
   end
 
-  # Finished bounded operatives with a completion record still inside the
+  # Finished workflow operatives with a completion record still inside the
   # retention window, keyed by the operative_class dir (== operative_id).
   defp finished_operatives(namespace, live_ids) do
     now = System.system_time(:second)
@@ -722,7 +722,7 @@ defmodule Flezha.Service.CliManager do
             {:ok, %{namespace: ns, finished_at: fa} = rec}
             when ns == namespace and is_integer(fa) ->
               window =
-                Flezha.State.PersistenceResolver.bounded_completed_retention_hours(operative_id)
+                Flezha.State.PersistenceResolver.workflow_completed_retention_hours(operative_id)
 
               if fa + window * 3600 >= now, do: [{operative_id, rec}], else: []
 
@@ -740,7 +740,7 @@ defmodule Flezha.Service.CliManager do
     %{
       id: operative_id,
       namespace: Map.get(rec, :namespace),
-      kind: "bounded",
+      kind: "workflow",
       phase: "finished",
       status: Map.get(rec, :status),
       error: nil_if_empty(Map.get(rec, :error)),
@@ -751,7 +751,7 @@ defmodule Flezha.Service.CliManager do
 
   defp display_finished_operative(operative_id, rec) do
     IO.puts("Operative: #{operative_id}")
-    IO.puts("  Kind: bounded")
+    IO.puts("  Kind: workflow")
     IO.puts("  Phase: finished")
     IO.puts("  Status: #{Map.get(rec, :status)}")
 
@@ -771,12 +771,12 @@ defmodule Flezha.Service.CliManager do
   defp nil_if_empty(_), do: nil
 
   defp operative_kind(%{builder: %{kind: kind}}) when is_atom(kind), do: Atom.to_string(kind)
-  defp operative_kind(_), do: "unbounded"
+  defp operative_kind(_), do: "stream"
 
   # A live operative is "running", unless its loop is parked at a committed
   # iteration boundary — then it is "suspended": still registered, still
   # addressable, holding zero runner resources until an input (or its wake
-  # deadline) rehydrates it (`bounded-durable-suspension`).
+  # deadline) rehydrates it (`workflow-durable-suspension`).
   defp operative_phase(%{suspended: true}), do: "suspended"
   defp operative_phase(_state), do: "running"
 
@@ -1274,7 +1274,7 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  # Same ceiling the bounded handoff uses — a whole-Procedure read of a big
+  # Same ceiling the workflow handoff uses — a whole-Procedure read of a big
   # Operative is the way to blow it, and naming the narrowing selector is the
   # way out.
   defp within_read_ceiling(json) do
@@ -1572,8 +1572,8 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz state journal <operative/instance>` — render a bounded instance's
-  proc-journal entries (`bounded-proc-journal`) in append order: seq, type,
+  `flz state journal <operative/instance>` — render a workflow instance's
+  proc-journal entries (`workflow-proc-journal`) in append order: seq, type,
   proc index, iteration, the entities that ran, and the handoff batch size.
   """
   def state_journal(instance_id, output_format \\ "text") do
@@ -1607,7 +1607,7 @@ defmodule Flezha.Service.CliManager do
 
   # The leaf set is what "done" means for a tree-shaped chain: the operative is
   # complete when the in-flight iteration has committed every leaf. A class that
-  # declared none (run-sugar, unbounded, an older SDK) leaves it underivable.
+  # declared none (run-sugar, stream, an older SDK) leaves it underivable.
   defp print_journal_completion(nil, _complete),
     do: IO.puts("\n  complete: unknown (class declares no leaf procedures)")
 
@@ -1745,8 +1745,8 @@ defmodule Flezha.Service.CliManager do
   end
 
   @doc """
-  `flz state inbox <instance>` — the durable inbox of a bounded instance
-  (`bounded-durable-suspension`): every appended input with its offset, marking
+  `flz state inbox <instance>` — the durable inbox of a workflow instance
+  (`workflow-durable-suspension`): every appended input with its offset, marking
   which are still undelivered (above the consumed offset the last committed
   iteration recorded).
   """
@@ -3210,12 +3210,12 @@ defmodule Flezha.Service.CliManager do
         factory_id,
         namespace \\ "",
         init_values \\ "",
-        kind \\ "bounded",
+        kind \\ "workflow",
         plugins_json \\ ""
       ) do
     ns = normalize_namespace(namespace)
 
-    with :ok <- schedule_bounded_only(kind),
+    with :ok <- schedule_workflow_only(kind),
          {:ok, init_map} <- schedule_decode_init(init_values),
          :ok <- schedule_check_plugins(plugins_json, ns, name),
          {:ok, entry} <-
@@ -3332,8 +3332,8 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  defp schedule_bounded_only(kind) when kind in ["", "bounded"], do: :ok
-  defp schedule_bounded_only(kind), do: {:error, {:unschedulable_kind, kind}}
+  defp schedule_workflow_only(kind) when kind in ["", "workflow"], do: :ok
+  defp schedule_workflow_only(kind), do: {:error, {:unschedulable_kind, kind}}
 
   # Full provider-resolving check at add time, so a typo fails at the CLI
   # rather than at 08:00. A slot instance id only exists at fire time, so the
@@ -3404,7 +3404,7 @@ defmodule Flezha.Service.CliManager do
     do: "--init_values must be a JSON object"
 
   defp schedule_error_message({:unschedulable_kind, kind}),
-    do: "only bounded operatives are schedulable (got kind #{kind})"
+    do: "only workflow operatives are schedulable (got kind #{kind})"
 
   defp schedule_error_message({:invalid_plugins, msg}), do: "invalid --plugins: #{msg}"
 

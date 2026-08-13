@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The java-sdk-procedure-annotations capability is the Java realization of the SDK authoring contract. It provides an annotation processor for `@Procedure` / `@State` / `@UnboundedOperative` / `@EntitiesFor` (and `@EntityKey` for dynamic mode) that generates the six `*Type()` getters, `name`, `initState`, the `Procedure` implementation, `applyChange`, and `OperativeRegistry.registerUnbounded`. The processor mirrors the Rust SDK's signature-to-types, state, entity mode, and single-procedure auto-wiring inference rules so an equivalent operative expands to a structurally identical topology across both SDKs. Multi-procedure topology stays explicitly declared in a `channels()` method, and all generated code targets the existing trait/interface surface with no engine, protocol, or WAL change.
+The java-sdk-procedure-annotations capability is the Java realization of the SDK authoring contract. It provides an annotation processor for `@Procedure` / `@State` / `@StreamOperative` / `@EntitiesFor` (and `@EntityKey` for dynamic mode) that generates the six `*Type()` getters, `name`, `initState`, the `Procedure` implementation, `applyChange`, and `OperativeRegistry.registerStream`. The processor mirrors the Rust SDK's signature-to-types, state, entity mode, and single-procedure auto-wiring inference rules so an equivalent operative expands to a structurally identical topology across both SDKs. Multi-procedure topology stays explicitly declared in a `channels()` method, and all generated code targets the existing trait/interface surface with no engine, protocol, or WAL change.
 
 ## Requirements
 
@@ -23,7 +23,7 @@ The Java SDK SHALL provide an annotation processor that generates a complete `Pr
 #### Scenario: Generated procedure is referenceable in channels
 
 - **WHEN** an `@Procedure` class `StaticEntry` is processed
-- **THEN** its generated `Procedure` type can be named in a `@UnboundedOperative` `channels()` body via `from`/`into`
+- **THEN** its generated `Procedure` type can be named in a `@StreamOperative` `channels()` body via `from`/`into`
 
 ### Requirement: `@State` change generation
 
@@ -63,18 +63,18 @@ The Java SDK SHALL support a `@EntitiesFor` method annotation and `@Procedure` a
 - **WHEN** an `@Procedure` declares both `@EntitiesFor` (static) and `@EntityKey` (dynamic)
 - **THEN** the processor reports a compile-time error that the two modes are mutually exclusive
 
-### Requirement: `@UnboundedOperative` registration and explicit topology
+### Requirement: `@StreamOperative` registration and explicit topology
 
-The Java SDK SHALL support a `@UnboundedOperative` annotation that generates `OperativeRegistry.registerUnbounded`, while multi-procedure topology stays explicitly declared in a `channels()` method.
+The Java SDK SHALL support a `@StreamOperative` annotation that generates `OperativeRegistry.registerStream`, while multi-procedure topology stays explicitly declared in a `channels()` method.
 
 #### Scenario: Single-procedure operative is auto-wired and registered
 
 - **WHEN** a single `@Procedure` declares an `id` and `sink`
-- **THEN** the processor generates and registers an operative wiring input → procedure → sink with no explicit `registerUnbounded` call
+- **THEN** the processor generates and registers an operative wiring input → procedure → sink with no explicit `registerStream` call
 
 #### Scenario: Multi-procedure operative keeps explicit channels
 
-- **WHEN** a `@UnboundedOperative`-annotated class declares a `channels()` method wiring multiple procedures
+- **WHEN** a `@StreamOperative`-annotated class declares a `channels()` method wiring multiple procedures
 - **THEN** the processor generates registration but preserves the author's explicit topology
 
 ### Requirement: Mirrors the Rust inference rules

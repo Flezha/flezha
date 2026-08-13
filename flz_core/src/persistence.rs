@@ -4,14 +4,14 @@
 //! Three-way precedence:
 //!   1. Runner override (`operative_persistence.<OperativeClass>` in operative-start
 //!      metadata) wins if present.
-//!   2. Otherwise, the UnboundedOperative's class const `UnboundedOperative::PERSISTENCE_ENABLED`.
+//!   2. Otherwise, the StreamOperative's class const `StreamOperative::PERSISTENCE_ENABLED`.
 //!   3. The trait default of the const is `true`.
 //!
 //! Frozen at instance start: the resolved value is bound on
-//! `UnboundedInstance` at construction; subsequent runner config changes
+//! `StreamInstance` at construction; subsequent runner config changes
 //! only take effect on the next `stop_operative` + `start_operative` cycle.
 
-/// Resolve the persistence flag for an UnboundedOperative instance. The controller's
+/// Resolve the persistence flag for a StreamOperative instance. The controller's
 /// runtime config is parsed by upstream code into a `Option<bool>` keyed
 /// by `operative_persistence.<OperativeClass>`; the present value wins
 /// regardless of the class const.

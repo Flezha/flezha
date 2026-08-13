@@ -17,7 +17,7 @@ impl CommandAction for EntityApplyState {
     ) -> (String, Vec<u8>) {
         if !runner.has_operative(&self.operative_id) {
             errors.push(format!(
-                "UnboundedOperative instance with id {} not found",
+                "StreamOperative instance with id {} not found",
                 self.operative_id
             ));
             return ("entity_apply_state".to_string(), Vec::new());

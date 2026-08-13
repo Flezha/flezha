@@ -35,7 +35,7 @@ For the architecture rationale and the Tier-1 commitments behind it, see
   key within one linger window collapse to the most recent record.
   Records returning `None` are retained verbatim.
 
-- **`UnboundedOperative::PERSISTENCE_ENABLED`** — class-level toggle.
+- **`StreamOperative::PERSISTENCE_ENABLED`** — class-level toggle.
   Default `true`. Runner override via operative-start metadata key
   `operative_persistence.<OperativeClass>` wins. Frozen at instance start;
   changes only take effect on the next `stop_operative` + `start_operative`
@@ -124,7 +124,7 @@ records collapse to the single 50th record at flusher-drain time.
 
 ```rust
 struct MarketOperative;
-impl UnboundedOperative for MarketOperative {
+impl StreamOperative for MarketOperative {
     fn factory_id() -> &'static str { "market" }
     fn channels(c: &ChannelBuilder) { /* ... */ }
     const PERSISTENCE_ENABLED: bool = false;
@@ -205,7 +205,7 @@ decoding the header.
 | `Change` trait, `apply_change`, `StateHandle`, `ProcedureTestHarness` | the Rust SDK (`sdk/rust`) |
 | `S::Change` / `S::State` serialization (postcard) | the Rust SDK — the core never decodes a change body |
 | Flusher, coalescing, effect record, 16-byte header, CRC32 | the runner core (`flz_core`) |
-| `UnboundedOperative::PERSISTENCE_ENABLED` resolution | the SDK declares, the runner override at start wins |
+| `StreamOperative::PERSISTENCE_ENABLED` resolution | the SDK declares, the runner override at start wins |
 | Per-Procedure `compact_after_bytes` reported at bind | declared by the SDK, consumed by the controller |
 | WAL writer, fsync batcher, snapshots, retention, time travel | the controller |
 

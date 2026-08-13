@@ -33,7 +33,7 @@ pub fn handle_operative_command(args: &[String]) {
 }
 
 fn handle_start(args: &[String]) {
-    let example_usage = "Usage: flz operative start <operative_id> <factory_id> [--kind <unbounded|bounded>] [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>]";
+    let example_usage = "Usage: flz operative start <operative_id> <factory_id> [--kind <stream|workflow>] [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>]";
 
     if args.len() < 3 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
@@ -53,7 +53,7 @@ fn handle_start(args: &[String]) {
     };
 
     let kind =
-        extract_param(&args[3..], "--kind", "--kind").unwrap_or_else(|| "unbounded".to_string());
+        extract_param(&args[3..], "--kind", "--kind").unwrap_or_else(|| "stream".to_string());
 
     let mut opts: HashMap<String, String> = HashMap::new();
 
@@ -227,7 +227,7 @@ fn handle_send(args: &[String]) {
     }
 }
 
-/// `flz operative rewind <instance> --to-iteration N` — take a bounded loop back
+/// `flz operative rewind <instance> --to-iteration N` — take a workflow loop back
 /// to a committed iteration: the ones above it are compensated in reverse, state
 /// returns to that boundary, and the epoch is bumped so the re-run's output
 /// supersedes the unwound run's at a guarded sink.
@@ -480,7 +480,7 @@ fn print_operative_help() {
     println!("    info        Get operative info");
     println!("    io_listen   Listen to operative I/O");
     println!("    send        Send a payload to an operative's input stream");
-    println!("    rewind      Rewind a bounded loop to a committed iteration");
+    println!("    rewind      Rewind a workflow loop to a committed iteration");
     println!("    replay      Re-run an Entity's retained inputs from a point in the past");
     println!("    help        Show this help message");
     println!();

@@ -6,7 +6,7 @@ import com.flezha.sdk.authoring.InitState;
 import com.flezha.sdk.authoring.Journal;
 import com.flezha.sdk.authoring.Procedure;
 import com.flezha.sdk.authoring.State;
-import com.flezha.sdk.authoring.UnboundedOperative;
+import com.flezha.sdk.authoring.StreamOperative;
 import java.io.IOException;
 import java.io.Writer;
 import java.lang.annotation.Annotation;
@@ -33,21 +33,21 @@ import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 
 /**
- * Generates {@code Procedure} / {@code UnboundedOperative} implementations from the
- * {@code @Procedure} / {@code @State} / {@code @UnboundedOperative} authoring annotations,
+ * Generates {@code Procedure} / {@code StreamOperative} implementations from the
+ * {@code @Procedure} / {@code @State} / {@code @StreamOperative} authoring annotations,
  * mirroring the Rust SDK macros. See {@code docs/sdk_authoring_contract.md}.
  *
  * <p>Per round: {@code @State} classes generate a {@code <Name>Change}
  * (field-granular variants + {@code apply} + {@code kryoTypes}); {@code @Procedure}
  * classes generate a {@code <Name>Procedure} (and, with a {@code sink}, a
- * single-procedure {@code <Name>UnboundedOperative}); {@code @UnboundedOperative} classes are collected. On
- * the final round a {@code com.flezha.generated.GeneratedUnboundedOperatives.defineAll(FlezhaRunner)}
+ * single-procedure {@code <Name>StreamOperative}); {@code @StreamOperative} classes are collected. On
+ * the final round a {@code com.flezha.generated.GeneratedStreamOperatives.defineAll(FlezhaRunner)}
  * aggregator is emitted so authors register every sugared operative with one call.
  */
 @SupportedAnnotationTypes({
     "com.flezha.sdk.authoring.Procedure",
     "com.flezha.sdk.authoring.State",
-    "com.flezha.sdk.authoring.UnboundedOperative"
+    "com.flezha.sdk.authoring.StreamOperative"
 })
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 public final class FlezhaProcessor extends AbstractProcessor {
@@ -79,13 +79,11 @@ public final class FlezhaProcessor extends AbstractProcessor {
         for (Element e : roundEnv.getElementsAnnotatedWith(Procedure.class)) {
             generateProcedure((TypeElement) e);
         }
-        for (Element e : roundEnv.getElementsAnnotatedWith(UnboundedOperative.class)) {
-            if (implementsUnboundedOperative((TypeElement) e)) {
+        for (Element e : roundEnv.getElementsAnnotatedWith(StreamOperative.class)) {
+            if (implementsStreamOperative((TypeElement) e)) {
                 operativeFqns.add(((TypeElement) e).getQualifiedName().toString());
             } else {
-                error(
-                        e,
-                        "@UnboundedOperative requires the class to implement com.flezha.sdk.operative.UnboundedOperative");
+                error(e, "@StreamOperative requires the class to implement com.flezha.sdk.operative.StreamOperative");
             }
         }
 
@@ -510,7 +508,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 + "    }\n\n";
     }
 
-    // ---- @Procedure -> <Name>Procedure (+ <Name>UnboundedOperative) ---------------------------
+    // ---- @Procedure -> <Name>Procedure (+ <Name>StreamOperative) ---------------------------
 
     private void generateProcedure(TypeElement procedure) {
         String pkg = packageOf(procedure);
@@ -759,12 +757,12 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 error(procedure, "@Procedure(sink = ...) requires a non-void return type to feed the plugin");
                 return;
             }
-            generateSingleProcedureUnboundedOperative(
+            generateSingleProcedureStreamOperative(
                     pkg, procedureSimple, id, sink, inputType.toString(), outputType, onFull, procedure);
         }
     }
 
-    private void generateSingleProcedureUnboundedOperative(
+    private void generateSingleProcedureStreamOperative(
             String pkg,
             String procedureSimple,
             String id,
@@ -773,7 +771,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
             String outputType,
             String onFull,
             Element origin) {
-        String operativeSimple = procedureSimple.replaceFirst("Procedure$", "") + "UnboundedOperative";
+        String operativeSimple = procedureSimple.replaceFirst("Procedure$", "") + "StreamOperative";
         String operativeFqn = pkg.isEmpty() ? operativeSimple : pkg + "." + operativeSimple;
         String onFullCall = onFullCall(onFull, origin);
 
@@ -782,11 +780,11 @@ public final class FlezhaProcessor extends AbstractProcessor {
             b.append("package ").append(pkg).append(";\n\n");
         }
         b.append("import com.flezha.sdk.channel.ChannelBuilder;\n");
-        b.append("import com.flezha.sdk.operative.UnboundedOperative;\n\n");
+        b.append("import com.flezha.sdk.operative.StreamOperative;\n\n");
         b.append("/** Generated single-procedure auto-wire operative for ")
                 .append(procedureSimple)
                 .append(". */\n");
-        b.append("public final class ").append(operativeSimple).append(" implements UnboundedOperative {\n");
+        b.append("public final class ").append(operativeSimple).append(" implements StreamOperative {\n");
         b.append("    @Override public String factoryId() { return \"")
                 .append(id)
                 .append("\"; }\n");
@@ -813,14 +811,14 @@ public final class FlezhaProcessor extends AbstractProcessor {
         b.append("package com.flezha.generated;\n\n");
         b.append("import com.flezha.sdk.FlezhaRunner;\n\n");
         b.append("/** Generated aggregator: defines every sugared operative on the runner with one call. */\n");
-        b.append("public final class GeneratedUnboundedOperatives {\n");
-        b.append("    private GeneratedUnboundedOperatives() {}\n\n");
+        b.append("public final class GeneratedStreamOperatives {\n");
+        b.append("    private GeneratedStreamOperatives() {}\n\n");
         b.append("    public static void defineAll(FlezhaRunner runner) {\n");
         for (String fqn : operativeFqns) {
-            b.append("        runner.defineUnbounded(").append(fqn).append(".class);\n");
+            b.append("        runner.defineStream(").append(fqn).append(".class);\n");
         }
         b.append("    }\n}\n");
-        write("com.flezha.generated.GeneratedUnboundedOperatives", b.toString());
+        write("com.flezha.generated.GeneratedStreamOperatives", b.toString());
     }
 
     // ---- helpers ----------------------------------------------------------
@@ -850,8 +848,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
         return null;
     }
 
-    private boolean implementsUnboundedOperative(TypeElement t) {
-        TypeElement operative = elements.getTypeElement("com.flezha.sdk.operative.UnboundedOperative");
+    private boolean implementsStreamOperative(TypeElement t) {
+        TypeElement operative = elements.getTypeElement("com.flezha.sdk.operative.StreamOperative");
         if (operative == null) {
             return false;
         }

@@ -1,6 +1,6 @@
 defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   @moduledoc """
-  End-to-end proof for `unbounded-late-input-correction` against a live Rust
+  End-to-end proof for `stream-late-input-correction` against a live Rust
   runner.
 
   The `candle` fixture declares the tier, an `EventTimeFrom` clock, a keyed sink

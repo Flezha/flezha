@@ -1,8 +1,8 @@
 defmodule Flezha.State.ProcJournal do
   @moduledoc """
   Per-instance append-only proc-progress journal for durable structured
-  bounded operatives (`bounded-proc-journal`) and their transactional outbox
-  (`bounded-transactional-outbox`).
+  workflow operatives (`workflow-proc-journal`) and their transactional outbox
+  (`workflow-transactional-outbox`).
 
   One `proc.journal` per instance at
   `<state_root>/<instance_id>/<instance_id>/proc.journal`, written through the
@@ -20,11 +20,11 @@ defmodule Flezha.State.ProcJournal do
   inter-proc handoff, and the procedure's staged outbox — ONE durable write),
   `2 = outbox_flushed` (that outbox reached the plugins),
   `3 = iter_committed` (a loop iteration finished: the inbox offset it
-  consumed plus its terminal handoff — `bounded-durable-loop`),
+  consumed plus its terminal handoff — `workflow-durable-loop`),
   `4 = parked` (the loop is suspended at a committed boundary, with an
-  optional wake deadline — `bounded-durable-suspension`), `5 = compensated`
+  optional wake deadline — `workflow-durable-suspension`), `5 = compensated`
   (a compensation hook's undo outbox), `6 = rewound` (the loop was rewound to
-  the iteration in this entry's `iter` field — `bounded-loop-rewind`). Torn
+  the iteration in this entry's `iter` field — `workflow-loop-rewind`). Torn
   tails are truncated by the `WalWriter` open scan; the read path stops at the
   first invalid record.
 
@@ -70,7 +70,7 @@ defmodule Flezha.State.ProcJournal do
 
   A procedure's plugin-bound output is staged in the runner and journaled
   WITH its commit, so progress and outbox cannot tear apart. Delivery happens
-  only after that fsync, through the same `:on_output` fan-out an unbounded
+  only after that fsync, through the same `:on_output` fan-out a stream
   operative's effectively-once outbox uses, stamped with the deterministic key
   `(entity, proc_idx, seq_in_proc, epoch)`. `flush_pending/1` is the single flush
   path — driven post-ack by the `ControlChannel` and again on restore, it reads
@@ -298,7 +298,7 @@ defmodule Flezha.State.ProcJournal do
   `committed_proc_idxs` are the procedures already committed inside that
   still-in-flight iteration (skipped on resume) and `proc_handoffs` what each of
   them released, so every uncommitted child branch re-seeds from exactly its own
-  parent's edge (`bounded-branching`). `handoff` is the previous iteration's
+  parent's edge (`workflow-branching`). `handoff` is the previous iteration's
   terminal handoff — what a handoff-chained loop feeds its next iteration.
   `committed_procs` carries every forward proc commit with its iteration, which is
   what the driver folds into `plan_compensation`'s per-iteration `committed`
@@ -374,12 +374,12 @@ defmodule Flezha.State.ProcJournal do
 
   @doc """
   Whether the instance's in-flight iteration has committed every **leaf**
-  procedure of its tree — the completion rule of a branching bounded operative
-  (`bounded-branching`), derived from the journal alone.
+  procedure of its tree — the completion rule of a branching workflow operative
+  (`workflow-branching`), derived from the journal alone.
 
   `leaf_procs` is the class's declared leaf set (`ClassRegistry.leaf_procs/1`, from
   the SDK's `AddOperative` response). `nil` — a class that declared none
-  (run-sugar, unbounded, an SDK without the declaration) — is not derivable, so
+  (run-sugar, stream, an SDK without the declaration) — is not derivable, so
   the answer is `nil` rather than a guess. An empty journal is not complete.
   """
   @spec complete?(binary(), [non_neg_integer()] | nil) :: boolean() | nil
@@ -554,8 +554,8 @@ defmodule Flezha.State.ProcJournal do
   # ---------- Flush ----------
 
   # Deliver one journaled entry's outbox through the operative's `:on_output`
-  # chain — the same fan-out `StreamChannel` uses for live bounded output and
-  # `WalWriter` uses for the unbounded effectively-once outbox — then record the
+  # chain — the same fan-out `StreamChannel` uses for live workflow output and
+  # `WalWriter` uses for the stream effectively-once outbox — then record the
   # flush. The marker is written only after delivery, so a crash in between
   # re-drives (at-least-once with identical keys) rather than losing output.
   defp flush_entry(instance_id, pid, entry) do

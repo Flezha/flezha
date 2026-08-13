@@ -1,7 +1,7 @@
 package com.flezha.sdk.procedure;
 
 /**
- * Why a {@link ProcedureCtx#spawnBounded} request reached no instance. None of
+ * Why a {@link ProcedureCtx#spawnWorkflow} request reached no instance. None of
  * these fault the requesting procedure — they resolve its
  * {@link SpawnHandle}.
  */

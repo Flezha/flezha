@@ -18,7 +18,7 @@ The Java SDK SHALL include JUnit 5 unit tests that cover every component of the 
 
 #### Scenario: Old API tests removed
 - **WHEN** the unit test suite is enumerated for tests referencing `OperativeHandler`, `OperativeRunner.THREAD_SPAWN`, `FactoryRegistry.registerFactory`, `FactoryMetadata`, `InputTransformer`, or `OutputTransformer`
-- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `UnboundedOperative` / `Procedure` surface
+- **THEN** the count SHALL be zero — every such test is either deleted or rewritten against the new `StreamOperative` / `Procedure` surface
 
 ### Requirement: JNI Bridge Tests
 
@@ -38,11 +38,11 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The Java reference test app at `test/apps/java_runner/` SHALL implement three reference Operative classes (`DoNothingOperative`, `StoreInputOperative`, `CompareFilterOperative`) using the Java SDK's `UnboundedOperative` / `Procedure` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior. The factory ids registered by these Operative classes (via `UnboundedOperative::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_runner/` exposes. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Procedure `handleMessage`.
+The Java reference test app at `test/apps/java_runner/` SHALL implement three reference Operative classes (`DoNothingOperative`, `StoreInputOperative`, `CompareFilterOperative`) using the Java SDK's `StreamOperative` / `Procedure` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior. The factory ids registered by these Operative classes (via `StreamOperative::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_runner/` exposes. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Procedure `handleMessage`.
 
 #### Scenario: Java test app builds and runs
 - **WHEN** `mvn -f test/apps/java_runner/pom.xml package` produces `target/java_runner.jar` and `java -jar target/java_runner.jar my_namespace` is run while the agent is up
-- **THEN** the process SHALL register its three Operative classes via `Flezha.registerUnbounded(...)`, connect to the agent, and receive an `AssignRunnerId` without errors
+- **THEN** the process SHALL register its three Operative classes via `Flezha.registerStream(...)`, connect to the agent, and receive an `AssignRunnerId` without errors
 
 #### Scenario: Java test app mirrors Rust test app factory set
 - **WHEN** the list of factory ids registered by the Java test app is compared to those registered by `test/apps/rust_runner/`
@@ -50,7 +50,7 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement three re
 
 #### Scenario: Java test app uses the new Procedure / ProcedureCtx API exclusively
 - **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperativeHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperativeSettings`, `com.flezha.sdk.OperativeResult`, `com.flezha.sdk.OperativeRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
-- **THEN** zero matches SHALL be found — the test app's classes use only `UnboundedOperative`, `Procedure`, `ProcedureCtx`, `ChannelBuilder`, and `Flezha.registerUnbounded`
+- **THEN** zero matches SHALL be found — the test app's classes use only `StreamOperative`, `Procedure`, `ProcedureCtx`, `ChannelBuilder`, and `Flezha.registerStream`
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
@@ -228,38 +228,38 @@ Java SDK integration test class names and test descriptions SHALL use canonical 
 - **WHEN** `mvn -f sdk/java test` is run
 - **THEN** all integration test classes SHALL compile and run; no class name SHALL contain `Processor`, `Operator`, or `ComputeEngine`
 
-### Requirement: Reference Java test app registers a Bounded Operative
+### Requirement: Reference Java test app registers a Workflow Operative
 
-The Java reference test app at `test/apps/java_runner/` SHALL register at least one `BoundedOperative` class via `Flezha.registerBounded(...)`, mirroring the bounded operative that `test/apps/rust_runner/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The bounded operative SHALL be a hand-written `BoundedOperative` implementation (no annotation-processor sugar in v1). Registering the bounded operative SHALL NOT disturb the test app's unbounded operative registrations or its run-until-stdin-closes behavior.
+The Java reference test app at `test/apps/java_runner/` SHALL register at least one `WorkflowOperative` class via `Flezha.registerWorkflow(...)`, mirroring the workflow operative that `test/apps/rust_runner/` registers (an `EchoOperative` that emits its `args` as plugin output and returns success). The workflow operative SHALL be a hand-written `WorkflowOperative` implementation (no annotation-processor sugar in v1). Registering the workflow operative SHALL NOT disturb the test app's stream operative registrations or its run-until-stdin-closes behavior.
 
-#### Scenario: Java test app registers a bounded operative factory
+#### Scenario: Java test app registers a workflow operative factory
 
 - **WHEN** the Java test app starts and registers its operatives
-- **THEN** it SHALL call `Flezha.registerBounded(EchoOperative.class)`, and the handshake `factory_ids` SHALL include the bounded operative's factory id alongside the unbounded operative factory ids
+- **THEN** it SHALL call `Flezha.registerWorkflow(EchoOperative.class)`, and the handshake `factory_ids` SHALL include the workflow operative's factory id alongside the stream operative factory ids
 
-#### Scenario: Java and Rust test apps expose the same bounded operative factory
+#### Scenario: Java and Rust test apps expose the same workflow operative factory
 
-- **WHEN** the bounded operative factory ids registered by the Java test app are compared to those registered by `test/apps/rust_runner/`
-- **THEN** both SHALL expose the mirrored echo bounded-operative factory id, so the same `flz operative start … --kind bounded` exercises either runtime
+- **WHEN** the workflow operative factory ids registered by the Java test app are compared to those registered by `test/apps/rust_runner/`
+- **THEN** both SHALL expose the mirrored echo workflow-operative factory id, so the same `flz operative start … --kind workflow` exercises either runtime
 
-### Requirement: Integration matrix exercises a run-once Java bounded operative over both transports
+### Requirement: Integration matrix exercises a run-once Java workflow operative over both transports
 
-The Elixir↔Java integration suite SHALL exercise a run-once Java bounded operative against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the bounded operative's `run` executes exactly once with the supplied `args`; emitted output reaches a bound plugin; a `BoundedCompleted{status:"ok"}` is received and the bounded operative is torn down and absent from the durable registry; and a deliberately-failing bounded operative emits `BoundedCompleted{status:"error"}` with its message and is likewise deregistered without retry.
+The Elixir↔Java integration suite SHALL exercise a run-once Java workflow operative against the unchanged Elixir controller across both transports (`{transport: [:uds, :quic]}`). The suite SHALL assert, per transport: the workflow operative's `run` executes exactly once with the supplied `args`; emitted output reaches a bound plugin; a `WorkflowCompleted{status:"ok"}` is received and the workflow operative is torn down and absent from the durable registry; and a deliberately-failing workflow operative emits `WorkflowCompleted{status:"error"}` with its message and is likewise deregistered without retry.
 
-#### Scenario: Run-once Java bounded operative completes and is torn down over UDS
+#### Scenario: Run-once Java workflow operative completes and is torn down over UDS
 
 - **WHEN** the suite starts an `EchoOperative` on a Java runner over UDS with `args="hi"` and a bound output plugin
-- **THEN** the bounded operative SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `BoundedCompleted{status:"ok"}`, and the bounded operative SHALL be removed from the durable registry
+- **THEN** the workflow operative SHALL run once, its emitted output SHALL reach the plugin, the controller SHALL receive `WorkflowCompleted{status:"ok"}`, and the workflow operative SHALL be removed from the durable registry
 
-#### Scenario: Run-once Java bounded operative completes and is torn down over QUIC
+#### Scenario: Run-once Java workflow operative completes and is torn down over QUIC
 
 - **WHEN** the same scenario runs over QUIC
-- **THEN** the same assertions SHALL hold, exercising the full handshake + bounded operative spawn + run-once + emit + completion path on QUIC
+- **THEN** the same assertions SHALL hold, exercising the full handshake + workflow operative spawn + run-once + emit + completion path on QUIC
 
-#### Scenario: A failing Java bounded operative reports a terminal error
+#### Scenario: A failing Java workflow operative reports a terminal error
 
-- **WHEN** the suite starts a bounded operative whose `run` throws over either transport
-- **THEN** the controller SHALL receive `BoundedCompleted{status:"error"}` carrying the throwable's message, the bounded operative SHALL be deregistered without retry, and no operative process SHALL remain
+- **WHEN** the suite starts a workflow operative whose `run` throws over either transport
+- **THEN** the controller SHALL receive `WorkflowCompleted{status:"error"}` carrying the throwable's message, the workflow operative SHALL be deregistered without retry, and no operative process SHALL remain
 
 ### Requirement: ProcedureTestHarness replayEquals replays against the captured initial snapshot
 

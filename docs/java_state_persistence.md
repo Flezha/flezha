@@ -2,7 +2,7 @@
 
 The Java authoring surface for durable Entity state: six-parameter `Procedure`
 generic, `StateHandle<State, Change>` mutation chokepoint,
-`UnboundedOperative::persistenceEnabled` default-method, Kryo serialization with
+`StreamOperative::persistenceEnabled` default-method, Kryo serialization with
 stable registered type IDs.
 
 This doc is the Java-author counterpart to

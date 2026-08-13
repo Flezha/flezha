@@ -4,7 +4,7 @@ import java.util.concurrent.CompletableFuture;
 import javax.annotation.Nonnull;
 
 /**
- * The seam between {@link ProcedureCtx#spawnBounded} and the control plane. The
+ * The seam between {@link ProcedureCtx#spawnWorkflow} and the control plane. The
  * runtime installs a {@link Requester} when it opens the control stream; the api
  * layer — which cannot see the wire — routes every request through it.
  *
@@ -14,7 +14,7 @@ import javax.annotation.Nonnull;
  */
 public final class SpawnRequests {
 
-    /** Ships one {@code SpawnBoundedRequest} and returns its pending reply. */
+    /** Ships one {@code SpawnWorkflowRequest} and returns its pending reply. */
     @FunctionalInterface
     public interface Requester {
         @Nonnull

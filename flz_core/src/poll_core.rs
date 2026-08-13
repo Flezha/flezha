@@ -94,12 +94,12 @@ pub enum EnginePayload {
         kind: crate::schema::ActivationKind,
         reply: crossbeam::channel::Sender<crate::schema::ActivationOutcome>,
     },
-    /// One entity partition's share of a bounded stage (or of a saga undo).
-    /// Its exclusivity is the bounded driver's own stage serialization, and
+    /// One entity partition's share of a workflow stage (or of a saga undo).
+    /// Its exclusivity is the workflow driver's own stage serialization, and
     /// its completion answers that driver's barrier; a typed class runs it in
     /// process, a C-ABI host receives it as a `Work` / `CompensateRun`
     /// activation.
-    BoundedStep(crate::bounded::step::BoundedStep),
+    WorkflowStep(crate::workflow::step::WorkflowStep),
     /// A batched prepare crossing for one entry channel — pre-keying work,
     /// bound to no entity yet.
     Prepare(crate::host::PrepareCrossing),
@@ -287,9 +287,9 @@ impl DeferredWake {
 
 pub struct PollCore {
     ready: Mutex<VecDeque<Arc<EntitySlot>>>,
-    /// Command and bounded-step activations, handed out ahead of `ready`.
+    /// Command and workflow-step activations, handed out ahead of `ready`.
     /// Their entity gate is held by the enqueuer — the command thread, or the
-    /// bounded driver serializing its own stages — so handing them out never
+    /// workflow driver serializing its own stages — so handing them out never
     /// races a work assembly for the same entity.
     direct: Mutex<VecDeque<EngineActivation>>,
     cv: Condvar,
@@ -493,7 +493,7 @@ impl PollCore {
         if self.wakes.any_due(crate::util::wall_now_ms()) {
             return true;
         }
-        // A direct activation — a bounded step, a host crossing — is runnable
+        // A direct activation — a workflow step, a host crossing — is runnable
         // whatever the cap says, and a driver is blocked on it; queued entity
         // work at the cap is not runnable and is owed no thread.
         let runnable = !self.direct.lock_recover().is_empty()
@@ -755,7 +755,7 @@ impl PollCore {
         }
     }
 
-    /// Queue a non-work payload (command interaction, bounded step, prepare
+    /// Queue a non-work payload (command interaction, workflow step, prepare
     /// crossing) for a host worker, ahead of the ready queue.
     pub fn submit_direct(&self, payload: EnginePayload) -> u64 {
         let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
@@ -851,7 +851,7 @@ fn command_kind_name(kind: &crate::schema::ActivationKind) -> &'static str {
         ActivationKind::ApplyState { .. } => "apply_state",
         ActivationKind::MigrationSerialize => "migration_serialize",
         ActivationKind::KeyRequest(_) => "key_request",
-        ActivationKind::BoundedRun { .. } => "bounded_run",
+        ActivationKind::WorkflowRun { .. } => "workflow_run",
         ActivationKind::CompensateRun { .. } => "compensate_run",
     }
 }

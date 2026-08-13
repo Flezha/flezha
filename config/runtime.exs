@@ -360,7 +360,7 @@ config :flezha,
     sdk_token_ttl_seconds: 2_592_000,
     namespaces: %{}
   ],
-  # Scheduled bounded spawns. One job process per schedule in the
+  # Scheduled workflow spawns. One job process per schedule in the
   # `:flz_schedules` hub; on start it fires the single most recent slot inside
   # `misfire_grace_ms` (covering restart and migration gaps) and drops older
   # ones — missed slots are never back-filled.
@@ -466,10 +466,10 @@ if config_env() != :test do
       System.get_env("FLEZHA_OUTPUT_WATCHDOG_INTERVAL_MS", "10000") |> String.to_integer(),
     time_travel_retention_check_interval_ms:
       System.get_env("FLEZHA_RETENTION_CHECK_INTERVAL_MS", "60000") |> String.to_integer(),
-    # How long a finished bounded operative's data (retained Entity state +
+    # How long a finished workflow operative's data (retained Entity state +
     # completion record) is kept before the retention sweeper reclaims it.
-    default_bounded_completed_retention_hours:
-      System.get_env("FLEZHA_BOUNDED_RETENTION_HOURS", "72") |> String.to_integer(),
+    default_workflow_completed_retention_hours:
+      System.get_env("FLEZHA_WORKFLOW_RETENTION_HOURS", "72") |> String.to_integer(),
     # The single convergence Loop. `:tick_ms` is the per-operative decision
     # cadence; `:output_stall_grace_ms` is the minimum bound stability
     # window before an output-stall triggers a rebind.

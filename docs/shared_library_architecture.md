@@ -89,7 +89,7 @@ by every SDK:
 | `routing.rs` | `enqueue` + overflow policies, consumer-edge delivery, entry-parse and edge ladders, end-of-slice broadcast |
 | `flusher.rs`, `state_sink.rs`, `credit.rs`, `park.rs`, `correction.rs`, `timer.rs`, `restore.rs`, `header.rs` | Durability: WAL framing + linger drain, the reliable sink, credit windows, DLQ parks, late-input machinery, timers, restore payloads, record headers |
 | `fast.rs`, `control_unit.rs`, `runner.rs`, `command/` | RunnerNode, wire readers, control channel + reconnect, the 19 command handlers |
-| `bounded/` | The bounded driver (lifecycle, DAG walk, commits, saga), `step.rs` (a stage's step activations + its retry barrier), the spec/DAG kernel |
+| `workflow/` | The workflow driver (lifecycle, DAG walk, commits, saga), `step.rs` (a stage's step activations + its retry barrier), the spec/DAG kernel |
 
 `flz_core_ffi` wraps the same engine in a C ABI (poll/complete, versioned
 schema negotiation) for non-Rust hosts. What stays per-language: the
@@ -111,7 +111,7 @@ head back to the engine's ladder).
 Sticky per-Entity ordering is preserved: batch assembly runs under the
 single-active-drainer gates, an entity with an outstanding activation is
 never handed out again until its completion, and the inflight flag closes
-the classic push-vs-empty race (see `flz_core/src/mailbox.rs`). Bounded
+the classic push-vs-empty race (see `flz_core/src/mailbox.rs`). Workflow
 stage work rides the same workers: the driver hands each entity partition
 out as a step activation and waits at its barrier, so the core owns no
 thread that runs user code.
@@ -157,9 +157,9 @@ flezha/
 │       ├── lib.rs                # Flezha struct, public API
 │       ├── procedure/            # Procedure trait, ctx, clocks, errors
 │       ├── channel/              # Channel<T> + the builder DSL
-│       ├── operative/            # UnboundedOperative trait, builder, typed dispatcher
+│       ├── operative/            # StreamOperative trait, builder, typed dispatcher
 │       ├── entity/               # Typed halves: TypedBuffer, header/timer wrappers, restore fold
-│       └── bounded/              # BoundedOperative trait + spec build/validation
+│       └── workflow/              # WorkflowOperative trait + spec build/validation
 ├── sdk/java/                     # Java SDK (Maven multi-module)
 ├── sdk/python/                   # Python SDK (future)
 └── lib/                          # Elixir controller (uses shared lib via NIF)
@@ -171,10 +171,10 @@ The Java SDK is a **poll host over `flz_core`**: its runtime binds to
 `flz_core_ffi` (built with the `jni` feature, shipped as `libflz_core_ffi`)
 through the one-to-one `FlzCore` class — context creation with schema
 negotiation, class declaration (JSON), start, blocking poll, complete, the
-bounded session calls, spawn, shutdown. JVM poller threads loop
+workflow session calls, spawn, shutdown. JVM poller threads loop
 `poll → decode Activation → run user code → encode ActivationResult →
 complete`; the kernel (transport, ordering, durability, retries, timers,
-credit, routing, the bounded driver, reconnect) lives entirely in the core.
+credit, routing, the workflow driver, reconnect) lives entirely in the core.
 See `docs/sdk_poll_core.md`.
 
 ### The shipped binary
@@ -212,7 +212,7 @@ flezha/
    Java array, and the native buffer is freed through `flz_core_buf_free`
    before the JNI method returns. No native buffer escapes.
 2. Java-owned arrays handed into native methods (`declareClass`,
-   `complete`, `boundedEmit`, …) are copied into Rust-side buffers before
+   `complete`, `workflowEmit`, …) are copied into Rust-side buffers before
    the call returns; the JVM retains ownership.
 
 ### Native binary packaging

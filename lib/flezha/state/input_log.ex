@@ -503,7 +503,7 @@ defmodule Flezha.State.InputLog do
   # With the default `hold_window = 0` the time bound is "now", which every
   # retained record predates, so the watermark alone decides. A raised window
   # holds the tail: `nil` from the scan means nothing has aged out yet, which is
-  # "hold everything" — but now as a bounded, self-clearing state rather than
+  # "hold everything" — but now as a workflow, self-clearing state rather than
   # the permanent one it used to be.
   defp truncation_floor(_operative_class, nil), do: nil
 

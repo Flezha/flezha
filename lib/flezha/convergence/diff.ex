@@ -43,7 +43,7 @@ defmodule Flezha.Convergence.Diff do
           # mass-migrates healthy operatives on a transient read race.
           bound == :unknown -> {unb, mis}
           # Suspended at a committed iteration boundary: unbound BY DESIGN
-          # (`bounded-durable-suspension`). Rebinding it would undo the very
+          # (`workflow-durable-suspension`). Rebinding it would undo the very
           # eviction it asked for; its own wake sources bring it back.
           Map.get(observed_operative, :suspended?, false) -> {unb, mis}
           is_nil(bound) -> {[ref | unb], mis}

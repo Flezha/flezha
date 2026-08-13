@@ -35,11 +35,11 @@ controller's `alter_child_data` hook handles runner selection at operative start
 time.
 
 > **Note (operative-mvp-rust).** The Rust SDK now ships work as
-> `Unbounded Operative` / `Procedure` / `Entity` (see `docs/operative_architecture.md`).
-> Entity is **SDK-internal**: a single Unbounded Operative instance can have many
+> `Stream Operative` / `Procedure` / `Entity` (see `docs/operative_architecture.md`).
+> Entity is **SDK-internal**: a single Stream Operative instance can have many
 > Procedures, each with many Entities running in parallel inside the
 > runner process. ProcessHub continues per-operative placement at the
-> cluster level — one Unbounded Operative instance is one ProcessHub child — and is
+> cluster level — one Stream Operative instance is one ProcessHub child — and is
 > not aware of entities. The two-level distribution above is unchanged.
 
 ## Per-namespace ProcessHub instances

@@ -155,7 +155,7 @@ cluster the difference is empty, so it starts nothing. The durable copy is
 never wiped to force either outcome. See
 [`process_hub_recovery_model.md`](process_hub_recovery_model.md).
 
-**Bounded-kind operatives (durable crash-resume).** A `:bounded` operative is
+**Workflow-kind operatives (durable crash-resume).** A `:workflow` operative is
 **durable by default** (opt-out per class) and crash-resumes on the shared WAL
 substrate: on a runner/controller restart it restores its committed
 per-Entity state via the bind-time restore path and **re-runs its procedure
@@ -170,7 +170,7 @@ completion record are **retained for a window** (default 3 days) for post-hoc
 inspection via `flz operative info`. Execution is **at-least-once**: a
 non-idempotent fire-and-forget job should opt out of durability so a crash
 re-runs from a clean slate rather than a partial one. See
-[`bounded_operative.md`](bounded_operative.md). (A near-instant bounded operative
+[`workflow_operative.md`](workflow_operative.md). (A near-instant workflow operative
 completing during the start RPC's confirmation window is handled — a clean exit
 there is reported as a successful start.)
 
@@ -216,7 +216,7 @@ HTTP `/healthz` listener (opt-in, `FLEZHA_HEALTHZ_ENABLED=true`). Reads only
 
 Keeps the BEAM cluster connected: discovers peers on startup, reconnects with
 jittered backoff on disconnect, and gates namespace hub creation on
-`cluster_ready?/0`. A single-node deployment degrades to solo once the bounded
+`cluster_ready?/0`. A single-node deployment degrades to solo once the workflow
 formation timeout elapses, so it still boots without hanging.
 
 ---
@@ -323,7 +323,7 @@ repeats a crash produces.
 | Late-input correction | An event arriving behind the high-water mark but inside a declared window rewinds the Entity to a baseline, replays the slice in event-time order, and republishes under a bumped epoch — the keyed sink overwrites the stale rows. |
 | Checkpoint ack-granularity | An operative that folds many inputs into one coherent state push acknowledges at `ctx.checkpoint()` rather than per input. |
 
-Bounded operatives do not use the DLQ — their escape is AbortAll + saga
+Workflow operatives do not use the DLQ — their escape is AbortAll + saga
 compensation (§6).
 
 The same machinery carries **operative-to-operative** delivery
@@ -338,7 +338,7 @@ not survive a controller restart, identically to the Kafka and Postgres sink
 buffers; see `data_durability.md` "Operative to operative".
 
 See [`data_durability.md`](data_durability.md) for the semantics and the operator
-playbook, and [`../architecture/unbounded_profile.md`](../architecture/unbounded_profile.md)
+playbook, and [`../architecture/stream_profile.md`](../architecture/stream_profile.md)
 for the model and diagrams.
 
 ---
@@ -352,12 +352,12 @@ for the model and diagrams.
 | Controller graceful restart with live peer | None — peer sync | At-least-once |
 | Controller recovery-mode restart, sole instance | None — DETS replay | At-least-once |
 | Whole cluster cold boot | Recovered from DETS | n/a |
-| Bounded operative runner SIGKILL (durable) | None past last WAL fsync — restores + re-runs the chain | At-least-once |
-| Bounded operative runner SIGKILL (persistence opted out) | Full — re-runs from the top | At-least-once |
+| Workflow operative runner SIGKILL (durable) | None past last WAL fsync — restores + re-runs the chain | At-least-once |
+| Workflow operative runner SIGKILL (persistence opted out) | Full — re-runs from the top | At-least-once |
 | Operative-to-operative hop, target down or parked | None — retained and retried until confirmed | Effectively-once if the source has an outbox, else at-least-once |
 | Operative-to-operative hop, controller dies mid-queue | n/a | Queued-but-unconfirmed items lost (same as the Kafka / Postgres sink buffers) |
 
 For the full scenario matrix and operator playbook see
-[`data_durability.md`](data_durability.md); for the bounded operative model
+[`data_durability.md`](data_durability.md); for the workflow operative model
 (structure, lifecycle, saga, crash-resume, retention) see
-[`bounded_operative.md`](bounded_operative.md).
+[`workflow_operative.md`](workflow_operative.md).

@@ -1,6 +1,6 @@
 defmodule Flezha.State.PersistenceResolverTest do
   @moduledoc """
-  §5b.1: the kind+class `persistent_state?` resolution (bounded durable-by-default,
+  §5b.1: the kind+class `persistent_state?` resolution (workflow durable-by-default,
   opt-out per class) and the finished-job retention window resolver.
   """
   use ExUnit.Case, async: false
@@ -16,8 +16,8 @@ defmodule Flezha.State.PersistenceResolverTest do
 
     on_exit(fn ->
       Application.delete_env(:flezha, :operative_persistence)
-      Application.delete_env(:flezha, :bounded_completed_retention_hours)
-      Application.delete_env(:flezha, :default_bounded_completed_retention_hours)
+      Application.delete_env(:flezha, :workflow_completed_retention_hours)
+      Application.delete_env(:flezha, :default_workflow_completed_retention_hours)
       Application.put_env(:flezha, :default_compact_after_bytes, prev_bytes)
       Application.put_env(:flezha, :compact_after_age_ms, prev_age)
     end)
@@ -26,22 +26,22 @@ defmodule Flezha.State.PersistenceResolverTest do
   end
 
   describe "persistent_state?/3" do
-    test ":unbounded is always durable" do
-      assert PersistenceResolver.persistent_state?(:unbounded, "any_class")
+    test ":stream is always durable" do
+      assert PersistenceResolver.persistent_state?(:stream, "any_class")
     end
 
-    test ":bounded is durable by default" do
-      assert PersistenceResolver.persistent_state?(:bounded, "bnd_default")
+    test ":workflow is durable by default" do
+      assert PersistenceResolver.persistent_state?(:workflow, "bnd_default")
     end
 
-    test ":bounded honours a per-class operator opt-out; other classes stay durable" do
+    test ":workflow honours a per-class operator opt-out; other classes stay durable" do
       Application.put_env(:flezha, :operative_persistence, %{"bnd_optout" => false})
-      refute PersistenceResolver.persistent_state?(:bounded, "bnd_optout")
-      assert PersistenceResolver.persistent_state?(:bounded, "bnd_other")
+      refute PersistenceResolver.persistent_state?(:workflow, "bnd_optout")
+      assert PersistenceResolver.persistent_state?(:workflow, "bnd_other")
     end
 
-    test ":bounded honours an instance-metadata opt-out" do
-      refute PersistenceResolver.persistent_state?(:bounded, "bnd_meta", %{
+    test ":workflow honours an instance-metadata opt-out" do
+      refute PersistenceResolver.persistent_state?(:workflow, "bnd_meta", %{
                "operative_persistence_enabled" => false
              })
     end
@@ -118,25 +118,25 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
   end
 
-  describe "bounded_completed_retention_hours/2" do
+  describe "workflow_completed_retention_hours/2" do
     test "defaults to 72" do
-      assert PersistenceResolver.bounded_completed_retention_hours("c") == 72
+      assert PersistenceResolver.workflow_completed_retention_hours("c") == 72
     end
 
     test "honours the global default override" do
-      Application.put_env(:flezha, :default_bounded_completed_retention_hours, 5)
-      assert PersistenceResolver.bounded_completed_retention_hours("c") == 5
+      Application.put_env(:flezha, :default_workflow_completed_retention_hours, 5)
+      assert PersistenceResolver.workflow_completed_retention_hours("c") == 5
     end
 
     test "honours a per-class operator override; other classes fall back to default" do
-      Application.put_env(:flezha, :bounded_completed_retention_hours, %{"c" => 1})
-      assert PersistenceResolver.bounded_completed_retention_hours("c") == 1
-      assert PersistenceResolver.bounded_completed_retention_hours("d") == 72
+      Application.put_env(:flezha, :workflow_completed_retention_hours, %{"c" => 1})
+      assert PersistenceResolver.workflow_completed_retention_hours("c") == 1
+      assert PersistenceResolver.workflow_completed_retention_hours("d") == 72
     end
 
     test "honours an instance-metadata override" do
-      assert PersistenceResolver.bounded_completed_retention_hours("c", %{
-               "bounded_completed_retention_hours" => 3
+      assert PersistenceResolver.workflow_completed_retention_hours("c", %{
+               "workflow_completed_retention_hours" => 3
              }) == 3
     end
   end
@@ -169,7 +169,7 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
 
     test "a floor of 0 stays 0 — the polarity trap" do
-      class = "unbounded-hist-#{System.unique_integer([:positive])}"
+      class = "stream-hist-#{System.unique_integer([:positive])}"
       Application.put_env(:flezha, :compact_after_age_ms, 0)
       :ok = ClassRegistry.put_correction_window(class, 60_000)
 

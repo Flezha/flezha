@@ -90,7 +90,7 @@ public final class FlezhaImpl implements RunnerHandle {
             throw new OperativeTypeInUseException("factory '" + factoryId + "' has " + live
                     + " live operative instance(s); stop them before removing the type");
         }
-        com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry.unregisterClass(factoryId);
+        com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry.unregisterClass(factoryId);
     }
 
     @Override

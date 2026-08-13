@@ -15,7 +15,7 @@
 //! inter-procedure edges (producer-side evaluation, routed on `(edge, key)`),
 //! the five command activation kinds (restore fold, snapshot, live read,
 //! apply-state, migration serialize), the prepare crossing for keys/event
-//! times, and bounded lifecycles (run-sugar sessions + structured chains
+//! times, and workflow lifecycles (run-sugar sessions + structured chains
 //! whose stage and compensation bodies cross as activations).
 
 use std::any::{Any, TypeId};
@@ -23,14 +23,13 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use crate::bounded::{LoopMode, RollbackMode};
 use crate::channel::{
     BuildEntityArgs, ChannelDescriptor, ChannelKind, OverflowPolicy, RetryPolicy,
 };
 use crate::entity::{EntityItem, EntitySlot, ItemDisposition, ProcedureDispatcher};
 use crate::flusher::{EntityFlusher, FlushFrame, FlushableBuffer};
 use crate::header::HeaderTemplate;
-use crate::operative::instance::UnboundedInstance;
+use crate::operative::instance::StreamInstance;
 use crate::operative::topology::{
     AckGranularity, CorrectionPolicy, EntityMode, OperativeTopology, ProcedureDescriptor,
 };
@@ -38,6 +37,7 @@ use crate::poll_core::{EngineActivation, EnginePayload, PollCore, WorkItem};
 use crate::schema::{self, TimerOp};
 use crate::timer::PendingTimers;
 use crate::util::LockRecover;
+use crate::workflow::{LoopMode, RollbackMode};
 
 /// The declared clock of a host procedure — the core evaluates it and
 /// stamps `now` on every handed-out item; the host serves `ctx.now()` from
@@ -115,7 +115,7 @@ pub struct HostProcedureDecl {
     /// Dynamic mode: idle eviction TTL (absent = eviction off).
     #[serde(default)]
     pub idle_ttl_ms: Option<u64>,
-    /// Dynamic mode: lazy-creation cap (absent = unbounded).
+    /// Dynamic mode: lazy-creation cap (absent = stream).
     #[serde(default)]
     pub max_entities: Option<usize>,
     /// Whether the host overrides entities-for on this (static) procedure —
@@ -124,7 +124,7 @@ pub struct HostProcedureDecl {
     #[serde(default)]
     pub entities_for_overridden: bool,
     /// Whether the host declares a `compensate` hook on this procedure
-    /// (bounded classes: drives the saga plan and the controller's
+    /// (workflow classes: drives the saga plan and the controller's
     /// `compensable_procs` announcement).
     #[serde(default)]
     pub compensate_overridden: bool,
@@ -186,26 +186,26 @@ pub struct HostClassDecl {
     pub compact_after_bytes: Option<usize>,
     pub channels: Vec<HostChannelDecl>,
     pub procedures: Vec<HostProcedureDecl>,
-    /// Present for a bounded class. With empty `procedures` the class is
+    /// Present for a workflow class. With empty `procedures` the class is
     /// run-sugar (one imperative body); with procedures it is a structured
     /// chain over the same channels graph.
     #[serde(default)]
-    pub bounded: Option<HostBoundedDecl>,
+    pub workflow: Option<HostWorkflowDecl>,
 }
 
-/// Bounded lifecycle facts of a host class.
+/// Workflow lifecycle facts of a host class.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct HostBoundedDecl {
+pub struct HostWorkflowDecl {
     #[serde(default)]
     pub loop_mode: HostLoopMode,
     #[serde(default)]
     pub rollback_mode: HostRollbackMode,
     /// Total attempts of the per-entity stage retry ladder (0 collapses to
     /// fail-fast).
-    #[serde(default = "default_bounded_retry_attempts")]
+    #[serde(default = "default_workflow_retry_attempts")]
     pub retry_attempts: u32,
-    #[serde(default = "default_bounded_retry_backoff_ms")]
+    #[serde(default = "default_workflow_retry_backoff_ms")]
     pub retry_backoff_ms: u64,
     #[serde(default)]
     pub max_duration_ms: Option<u64>,
@@ -231,10 +231,10 @@ pub enum HostRollbackMode {
     KeepProgress,
 }
 
-fn default_bounded_retry_attempts() -> u32 {
+fn default_workflow_retry_attempts() -> u32 {
     3
 }
-fn default_bounded_retry_backoff_ms() -> u64 {
+fn default_workflow_retry_backoff_ms() -> u64 {
     500
 }
 
@@ -295,32 +295,32 @@ pub struct HostPayload {
 /// Validate the declaration and build the class topology. The controller's
 /// `AddOperative` then instantiates it exactly like a typed class.
 pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
-    if decl.procedures.is_empty() && decl.bounded.is_none() {
+    if decl.procedures.is_empty() && decl.workflow.is_none() {
         return Err("a host class declares at least one procedure".to_string());
     }
-    if let Some(bounded) = &decl.bounded {
+    if let Some(workflow) = &decl.workflow {
         if decl.procedures.is_empty() && !decl.channels.is_empty() {
             return Err(
-                "a run-sugar bounded class (no procedures) declares no channels".to_string(),
+                "a run-sugar workflow class (no procedures) declares no channels".to_string(),
             );
         }
         if decl.effectively_once {
-            return Err("a bounded class cannot declare effectively_once".to_string());
+            return Err("a workflow class cannot declare effectively_once".to_string());
         }
         if decl.correction_window_ms.is_some() {
-            return Err("a bounded class cannot declare correction_window_ms".to_string());
+            return Err("a workflow class cannot declare correction_window_ms".to_string());
         }
-        if bounded.retry_attempts > 1 && bounded.retry_backoff_ms == 0 {
+        if workflow.retry_attempts > 1 && workflow.retry_backoff_ms == 0 {
             return Err(format!(
-                "bounded retry ladder ({} attempts) declares a zero backoff base; retries \
+                "workflow retry ladder ({} attempts) declares a zero backoff base; retries \
                  would re-run the failing entity in a hot loop",
-                bounded.retry_attempts
+                workflow.retry_attempts
             ));
         }
         for proc_decl in &decl.procedures {
             if proc_decl.entity_mode == HostEntityModeDecl::Dynamic {
                 return Err(format!(
-                    "bounded procedure `{}` declares dynamic entity mode, which bounded \
+                    "workflow procedure `{}` declares dynamic entity mode, which workflow \
                      operatives do not support",
                     proc_decl.name
                 ));
@@ -329,21 +329,21 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
         if decl.procedures.is_empty() {
             // Run-sugar: one imperative body, no topology.
             let factory_id: &'static str = Box::leak(decl.factory_id.clone().into_boxed_str());
-            crate::bounded::registry::register_class(
+            crate::workflow::registry::register_class(
                 factory_id,
-                crate::bounded::spec::BoundedSpec {
+                crate::workflow::spec::WorkflowSpec {
                     run: host_run_unreachable,
                     topology: None,
                     dag: Default::default(),
-                    max_duration: bounded
+                    max_duration: workflow
                         .max_duration_ms
                         .map(std::time::Duration::from_millis),
-                    rollback_mode: rollback_of(bounded.rollback_mode),
+                    rollback_mode: rollback_of(workflow.rollback_mode),
                     loop_mode: LoopMode::Once,
-                    wake_after: bounded.wake_after_ms.map(std::time::Duration::from_millis),
+                    wake_after: workflow.wake_after_ms.map(std::time::Duration::from_millis),
                     retry: RetryPolicy {
-                        max_attempts: bounded.retry_attempts,
-                        backoff_base_ms: bounded.retry_backoff_ms,
+                        max_attempts: workflow.retry_attempts,
+                        backoff_base_ms: workflow.retry_backoff_ms,
                     },
                     persistence_enabled: decl.persistent,
                     host: true,
@@ -351,7 +351,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             );
             return Ok(());
         }
-        if bounded.loop_mode != HostLoopMode::Once || bounded.wake_after_ms.is_some() {
+        if workflow.loop_mode != HostLoopMode::Once || workflow.wake_after_ms.is_some() {
             // Loops iterate a structured chain; validated below with the DAG.
         }
     }
@@ -650,35 +650,35 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             HostAckGranularity::Checkpoint => AckGranularity::Checkpoint,
         },
     });
-    match &decl.bounded {
-        Some(bounded) => {
+    match &decl.workflow {
+        Some(workflow) => {
             let dag = build_host_dag(&topology)?;
-            if bounded.loop_mode == HostLoopMode::Chained && dag.single_leaf().is_none() {
+            if workflow.loop_mode == HostLoopMode::Chained && dag.single_leaf().is_none() {
                 return Err(format!(
                     "a handoff-chained loop needs exactly one terminal procedure; the graph \
                      has {}",
                     dag.leaves().count()
                 ));
             }
-            crate::bounded::registry::register_class(
+            crate::workflow::registry::register_class(
                 factory_id,
-                crate::bounded::spec::BoundedSpec {
+                crate::workflow::spec::WorkflowSpec {
                     run: host_run_unreachable,
                     topology: Some(topology),
                     dag,
-                    max_duration: bounded
+                    max_duration: workflow
                         .max_duration_ms
                         .map(std::time::Duration::from_millis),
-                    rollback_mode: rollback_of(bounded.rollback_mode),
-                    loop_mode: match bounded.loop_mode {
+                    rollback_mode: rollback_of(workflow.rollback_mode),
+                    loop_mode: match workflow.loop_mode {
                         HostLoopMode::Once => LoopMode::Once,
                         HostLoopMode::PerInput => LoopMode::PerInput,
                         HostLoopMode::Chained => LoopMode::Chained,
                     },
-                    wake_after: bounded.wake_after_ms.map(std::time::Duration::from_millis),
+                    wake_after: workflow.wake_after_ms.map(std::time::Duration::from_millis),
                     retry: RetryPolicy {
-                        max_attempts: bounded.retry_attempts,
-                        backoff_base_ms: bounded.retry_backoff_ms,
+                        max_attempts: workflow.retry_attempts,
+                        backoff_base_ms: workflow.retry_backoff_ms,
                     },
                     persistence_enabled: persistent,
                     host: true,
@@ -697,26 +697,26 @@ fn rollback_of(mode: HostRollbackMode) -> RollbackMode {
     }
 }
 
-/// `BoundedSpec.run` placeholder for host classes — the driver branches on
+/// `WorkflowSpec.run` placeholder for host classes — the driver branches on
 /// `spec.host` before ever calling it.
 fn host_run_unreachable(
-    _ctx: &mut crate::bounded::BoundedCtx,
+    _ctx: &mut crate::workflow::WorkflowCtx,
     _args: &str,
-) -> Result<(), crate::bounded::BoundedError> {
-    Err(crate::bounded::BoundedError::from(
-        "host bounded classes run through the poll crossing",
+) -> Result<(), crate::workflow::WorkflowError> {
+    Err(crate::workflow::WorkflowError::from(
+        "host workflow classes run through the poll crossing",
     ))
 }
 
 /// Kahn toposort of a structured host chain from its entry root, refusing
 /// what the typed builder refuses: several entry consumers, a procedure
 /// producing more than one channel, cycles, disconnected procedures.
-fn build_host_dag(topology: &OperativeTopology) -> Result<crate::bounded::spec::ProcDag, String> {
+fn build_host_dag(topology: &OperativeTopology) -> Result<crate::workflow::spec::ProcDag, String> {
     let entry = topology
         .channels
         .iter()
         .find(|c| c.kind == ChannelKind::Entry)
-        .ok_or("a structured bounded class declares one entry channel")?;
+        .ok_or("a structured workflow class declares one entry channel")?;
     if entry.consumers.len() != 1 {
         return Err(format!(
             "a bounded topology has a single root; entry channel `{}` feeds {} procedures",
@@ -797,7 +797,7 @@ fn build_host_dag(topology: &OperativeTopology) -> Result<crate::bounded::spec::
         .iter()
         .map(|&p| children[p as usize].iter().map(|cc| index_of[cc]).collect())
         .collect();
-    Ok(crate::bounded::spec::ProcDag {
+    Ok(crate::workflow::spec::ProcDag {
         order,
         parents: dag_parents,
         children: dag_children,
@@ -934,37 +934,37 @@ struct HostDispatcher {
     facts: Arc<HostProcedureFacts>,
 }
 
-/// Why the in-process bounded seams are unreachable for a host class: its work
+/// Why the in-process workflow seams are unreachable for a host class: its work
 /// leaves as a step activation the host polls, and the answer folds through
-/// [`fold_bounded_outcome`].
-fn host_bounded_unreachable(what: &str) -> crate::bounded::BoundedError {
-    crate::bounded::BoundedError::non_retryable(format!(
-        "host-run procedure: {what} reaches the host as a bounded step activation, \
+/// [`fold_workflow_outcome`].
+fn host_workflow_unreachable(what: &str) -> crate::workflow::WorkflowError {
+    crate::workflow::WorkflowError::non_retryable(format!(
+        "host-run procedure: {what} reaches the host as a workflow step activation, \
          never this in-process seam"
     ))
 }
 
-/// Map one bounded step's work outcome into the driver's collect sink: changes
+/// Map one workflow step's work outcome into the driver's collect sink: changes
 /// into that entity's flush buffer, edge outputs collected for the next stage,
 /// plugin outputs staged/forwarded by the sink. Runs on the thread that
 /// completed the step, with its driver parked at the barrier the fold's result
 /// answers.
-pub fn fold_bounded_outcome(
+pub fn fold_workflow_outcome(
     flush_buffer: &Mutex<Box<dyn FlushableBuffer>>,
     outcome: schema::ActivationOutcome,
-    sink: &mut dyn crate::bounded::BoundedCollectSink,
-) -> Result<(), crate::bounded::BoundedError> {
+    sink: &mut dyn crate::workflow::WorkflowCollectSink,
+) -> Result<(), crate::workflow::WorkflowError> {
     let effects = match outcome {
         schema::ActivationOutcome::Work(effects) => effects,
         schema::ActivationOutcome::Failed(err) => {
-            return Err(crate::bounded::BoundedError::new(
+            return Err(crate::workflow::WorkflowError::new(
                 err.message,
                 err.non_retryable,
             ));
         }
         _ => {
-            return Err(crate::bounded::BoundedError::from(
-                "bounded step answered with a non-work outcome".to_string(),
+            return Err(crate::workflow::WorkflowError::from(
+                "workflow step answered with a non-work outcome".to_string(),
             ));
         }
     };
@@ -972,10 +972,10 @@ pub fn fold_bounded_outcome(
         match effect.verdict {
             schema::Verdict::Ok => {}
             schema::Verdict::RetryableError { message } => {
-                return Err(crate::bounded::BoundedError::new(message, false));
+                return Err(crate::workflow::WorkflowError::new(message, false));
             }
             schema::Verdict::NonRetryableError { message } => {
-                return Err(crate::bounded::BoundedError::new(message, true));
+                return Err(crate::workflow::WorkflowError::new(message, true));
             }
         }
         if !effect.changes.is_empty() {
@@ -1011,7 +1011,7 @@ impl ProcedureDispatcher for HostDispatcher {
         _state: &mut Box<dyn Any + Send>,
         _flush_buffer: &mut Box<dyn FlushableBuffer>,
         _timers: &mut PendingTimers,
-        _instance: &Weak<crate::operative::instance::UnboundedInstance>,
+        _instance: &Weak<crate::operative::instance::StreamInstance>,
     ) -> ItemDisposition {
         tracing::error!(
             target: "flezha::host",
@@ -1061,9 +1061,9 @@ impl ProcedureDispatcher for HostDispatcher {
         _input: Arc<dyn Any + Send + Sync>,
         _state: &mut Box<dyn Any + Send>,
         _topology: &OperativeTopology,
-        _sink: &mut dyn crate::bounded::BoundedCollectSink,
-    ) -> Result<(), crate::bounded::BoundedError> {
-        Err(host_bounded_unreachable("a stage batch"))
+        _sink: &mut dyn crate::workflow::WorkflowCollectSink,
+    ) -> Result<(), crate::workflow::WorkflowError> {
+        Err(host_workflow_unreachable("a stage batch"))
     }
 
     fn compensate_collecting(
@@ -1071,9 +1071,9 @@ impl ProcedureDispatcher for HostDispatcher {
         _outputs: Vec<Arc<dyn Any + Send + Sync>>,
         _state: &mut Box<dyn Any + Send>,
         _topology: &OperativeTopology,
-        _sink: &mut dyn crate::bounded::BoundedCollectSink,
-    ) -> Result<(), crate::bounded::BoundedError> {
-        Err(host_bounded_unreachable("a saga undo"))
+        _sink: &mut dyn crate::workflow::WorkflowCollectSink,
+    ) -> Result<(), crate::workflow::WorkflowError> {
+        Err(host_workflow_unreachable("a saga undo"))
     }
 
     fn restore_state(
@@ -1225,10 +1225,10 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
             change_seq: 0,
             factory: crossing.instance.topology.factory_id.to_string(),
         },
-        EnginePayload::BoundedStep(step) => schema::Activation {
+        EnginePayload::WorkflowStep(step) => schema::Activation {
             token: act.token,
             target: entity_ref_of(&step.slot),
-            kind: bounded_step_kind(step),
+            kind: workflow_step_kind(step),
             change_seq: step.slot.change_seq.load(Ordering::Acquire),
             factory: step.slot.topology.factory_id.to_string(),
         },
@@ -1266,11 +1266,11 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
     }
 }
 
-/// One bounded step as the host receives it: a stage batch is an ordinary
+/// One workflow step as the host receives it: a stage batch is an ordinary
 /// `Work` activation (the driver's ladder and barriers stay driver-side, so the
 /// host runs exactly one attempt), an undo is a `CompensateRun`.
-fn bounded_step_kind(step: &crate::bounded::step::BoundedStep) -> schema::ActivationKind {
-    use crate::bounded::step::StepWork;
+fn workflow_step_kind(step: &crate::workflow::step::WorkflowStep) -> schema::ActivationKind {
+    use crate::workflow::step::StepWork;
     match &step.work {
         StepWork::Items(items) => {
             let now = host_clock_now(&step.slot);
@@ -1355,11 +1355,11 @@ pub fn apply_result(
             let _ = reply.send(result.outcome);
             return Ok(());
         }
-        EnginePayload::BoundedStep(step) => {
-            // A bounded stage step: its driver is parked at the barrier this
+        EnginePayload::WorkflowStep(step) => {
+            // A workflow stage step: its driver is parked at the barrier this
             // answer feeds, so the fold happens here rather than on a thread
             // waiting between the two.
-            crate::bounded::step::complete_bounded_step(step, result.outcome);
+            crate::workflow::step::complete_workflow_step(step, result.outcome);
             return Ok(());
         }
         EnginePayload::Prepare(crossing) => {
@@ -1699,64 +1699,64 @@ fn park_channel_of(slot: &Arc<EntitySlot>) -> String {
         .unwrap_or_else(|| "<unwired>".to_string())
 }
 
-/// Live run-sugar bodies keyed by instance id — what the ABI's bounded
+/// Live run-sugar bodies keyed by instance id — what the ABI's workflow
 /// session calls (`emit` / `recv` / `cancelled`) resolve against while the
 /// host runs the imperative body.
-static BOUNDED_SESSIONS: std::sync::LazyLock<dashmap::DashMap<String, Arc<HostBoundedSession>>> =
+static WORKFLOW_SESSIONS: std::sync::LazyLock<dashmap::DashMap<String, Arc<HostWorkflowSession>>> =
     std::sync::LazyLock::new(dashmap::DashMap::new);
 
-pub struct HostBoundedSession {
+pub struct HostWorkflowSession {
     cancel: Arc<std::sync::atomic::AtomicBool>,
-    inbox: Mutex<crossbeam::channel::Receiver<crate::bounded::instance::InboxItem>>,
+    inbox: Mutex<crossbeam::channel::Receiver<crate::workflow::instance::InboxItem>>,
 }
 
-/// The ABI's `flz_core_bounded_recv`: block up to `timeout` for the next
+/// The ABI's `flz_core_workflow_recv`: block up to `timeout` for the next
 /// inbox item of a live run-sugar body. `Ok(None)` = timeout; `Err` = no
 /// such session / inbox closed.
-pub fn bounded_session_recv(
+pub fn workflow_session_recv(
     instance_id: &str,
     timeout: std::time::Duration,
 ) -> Result<Option<Vec<u8>>, String> {
-    let session = BOUNDED_SESSIONS
+    let session = WORKFLOW_SESSIONS
         .get(instance_id)
         .map(|s| Arc::clone(s.value()))
-        .ok_or_else(|| format!("no live bounded run body for instance `{instance_id}`"))?;
+        .ok_or_else(|| format!("no live workflow run body for instance `{instance_id}`"))?;
     let inbox = { session.inbox.lock_recover() };
     match inbox.recv_timeout(timeout) {
         Ok(item) => Ok(Some(item.payload)),
         Err(crossbeam::channel::RecvTimeoutError::Timeout) => Ok(None),
         Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
-            Err("bounded inbox closed".to_string())
+            Err("workflow inbox closed".to_string())
         }
     }
 }
 
-/// The ABI's `flz_core_bounded_cancelled`.
-pub fn bounded_session_cancelled(instance_id: &str) -> bool {
-    BOUNDED_SESSIONS
+/// The ABI's `flz_core_workflow_cancelled`.
+pub fn workflow_session_cancelled(instance_id: &str) -> bool {
+    WORKFLOW_SESSIONS
         .get(instance_id)
         .map(|s| s.cancel.load(Ordering::Acquire))
         .unwrap_or(true)
 }
 
 /// Drive one host run-sugar body: register the session, cross the seed as a
-/// [`schema::ActivationKind::BoundedRun`] activation, and block for the
+/// [`schema::ActivationKind::WorkflowRun`] activation, and block for the
 /// terminal completion — exactly as long as a typed `run` body would run.
 /// Returns `(body outcome, result payload)` for the driver's `classify`.
 #[allow(clippy::type_complexity)]
-pub fn run_bounded_sugar(
+pub fn run_workflow_sugar(
     instance_id: &Arc<str>,
     factory_id: &str,
     args: &str,
     cancel: &Arc<std::sync::atomic::AtomicBool>,
-    inbox: crossbeam::channel::Receiver<crate::bounded::instance::InboxItem>,
+    inbox: crossbeam::channel::Receiver<crate::workflow::instance::InboxItem>,
 ) -> (
-    std::thread::Result<Result<(), crate::bounded::BoundedError>>,
+    std::thread::Result<Result<(), crate::workflow::WorkflowError>>,
     Vec<u8>,
 ) {
-    BOUNDED_SESSIONS.insert(
+    WORKFLOW_SESSIONS.insert(
         instance_id.to_string(),
-        Arc::new(HostBoundedSession {
+        Arc::new(HostWorkflowSession {
             cancel: Arc::clone(cancel),
             inbox: Mutex::new(inbox),
         }),
@@ -1770,31 +1770,31 @@ pub fn run_bounded_sugar(
         },
         change_seq: 0,
         factory: factory_id.to_string(),
-        kind: schema::ActivationKind::BoundedRun {
+        kind: schema::ActivationKind::WorkflowRun {
             args: args.as_bytes().to_vec(),
         },
         reply,
     });
     let outcome = rx.recv();
-    BOUNDED_SESSIONS.remove(instance_id.as_ref());
+    WORKFLOW_SESSIONS.remove(instance_id.as_ref());
     match outcome {
-        Ok(schema::ActivationOutcome::BoundedDone { result, .. }) => (Ok(Ok(())), result),
+        Ok(schema::ActivationOutcome::WorkflowDone { result, .. }) => (Ok(Ok(())), result),
         Ok(schema::ActivationOutcome::Failed(err)) => (
-            Ok(Err(crate::bounded::BoundedError::new(
+            Ok(Err(crate::workflow::WorkflowError::new(
                 err.message,
                 err.non_retryable,
             ))),
             Vec::new(),
         ),
         Ok(_) => (
-            Ok(Err(crate::bounded::BoundedError::from(
-                "bounded run answered with a non-terminal outcome",
+            Ok(Err(crate::workflow::WorkflowError::from(
+                "workflow run answered with a non-terminal outcome",
             ))),
             Vec::new(),
         ),
         Err(_) => (
-            Ok(Err(crate::bounded::BoundedError::from(
-                "host context dropped the bounded run activation",
+            Ok(Err(crate::workflow::WorkflowError::from(
+                "host context dropped the workflow run activation",
             ))),
             Vec::new(),
         ),
@@ -1831,7 +1831,7 @@ pub struct StagedEntry {
 /// A batched prepare crossing for one entry channel, handed to the host as a
 /// [`schema::ActivationKind::KeyRequest`].
 pub struct PrepareCrossing {
-    pub instance: Arc<UnboundedInstance>,
+    pub instance: Arc<StreamInstance>,
     pub channel: crate::channel::ChannelId,
     pub want_keys: bool,
     pub want_event_time: bool,
@@ -1873,7 +1873,7 @@ pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) 
 /// crossing when its consumers need keys/event times the core cannot derive
 /// from bytes. Returns the payload back when no crossing is needed.
 pub fn maybe_stage_prepare(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     channel_id: crate::channel::ChannelId,
     channel: &ChannelDescriptor,
     payload: Vec<u8>,
@@ -1912,7 +1912,7 @@ pub fn maybe_stage_prepare(
 /// End-of-slice broadcast, deferred behind any slice members still waiting
 /// in the prepare crossing — otherwise the close would overtake the very
 /// inputs being re-ordered. Instances with nothing staged broadcast at once.
-pub fn deferred_end_replay_slice(instance: &Arc<UnboundedInstance>) {
+pub fn deferred_end_replay_slice(instance: &Arc<StreamInstance>) {
     {
         let mut state = instance.host_prepare.lock_recover();
         if state.replay_staged > 0 {
@@ -1926,7 +1926,7 @@ pub fn deferred_end_replay_slice(instance: &Arc<UnboundedInstance>) {
 /// Assemble and submit the next crossing for a channel unless one is
 /// already in flight. Called at staging and at crossing completion.
 fn submit_next_crossing(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,
@@ -2029,7 +2029,7 @@ fn apply_prepare_outcome(
 /// Deliver one prepared payload to the channel's consumers through the one
 /// routing seam live delivery and replay slices share.
 fn deliver_prepared(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     channel_id: u32,
     channel: &ChannelDescriptor,
     entry: StagedEntry,
@@ -2056,7 +2056,7 @@ fn deliver_prepared(
 /// re-attempt is a single-payload blocking crossing, and exhaustion parks
 /// under the channel's identity exactly like a poison entry parse.
 fn spawn_prepare_ladder(
-    instance: Arc<UnboundedInstance>,
+    instance: Arc<StreamInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,
@@ -2106,7 +2106,7 @@ fn spawn_prepare_ladder(
 /// batch, and fire a deferred end-of-slice broadcast once the last waiting
 /// slice member resolved.
 fn finish_crossing(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     channel_id: u32,
     want_keys: bool,
     want_event_time: bool,

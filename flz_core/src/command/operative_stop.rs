@@ -13,7 +13,7 @@ impl CommandAction for RemOperative {
             runner.stop_operative(&self.operative_id);
             ("stop_operative".to_string(), Vec::new())
         } else {
-            errors.push("UnboundedOperative instance not found".to_string());
+            errors.push("StreamOperative instance not found".to_string());
             ("stop_operative".to_string(), Vec::new())
         }
     }

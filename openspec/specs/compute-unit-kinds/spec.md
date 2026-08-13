@@ -2,18 +2,21 @@
 
 ## Purpose
 
-The compute-unit-kinds capability defines the sparse, default-`false` **capability descriptor** model that lets the controller derive kind-divergent behaviour without forking the control plane or scattering `if kind == …` special cases. Each operative kind declares a sparse capability descriptor in `Flezha.Operative.Kind` that the control plane consults (`capabilities/1`, `capable?/2`); the control plane reads every capability with a default of `false`. The capability owns the one live capability gate today — per-entity state introspection, which fails with `{:error, {:unsupported_for_kind, :persistent_state}}` for a kind lacking `persistent_state?` instead of querying an operative that has no state. The kind discriminator itself (every operative carrying a `kind`, the recognized `:unbounded`/`:bounded` values, and the wire transport of the kind on `AddOperative`) is owned by the `operative-model` capability. New capability flags are additive and do not affect kinds that do not opt in.
+The compute-unit-kinds capability defines the sparse, default-`false` **capability descriptor** model that lets the controller derive kind-divergent behaviour without forking the control plane or scattering `if kind == …` special cases. Each operative kind declares a sparse capability descriptor in `Flezha.Operative.Kind` that the control plane consults (`capabilities/1`, `capable?/2`); the control plane reads every capability with a default of `false`. The capability owns the one live capability gate today — per-entity state introspection, which fails with `{:error, {:unsupported_for_kind, :persistent_state}}` for a kind lacking `persistent_state?` instead of querying an operative that has no state. The kind discriminator itself (every operative carrying a `kind`, the recognized `:stream`/`:workflow` values, and the wire transport of the kind on `AddOperative`) is owned by the `operative-model` capability. New capability flags are additive and do not affect kinds that do not opt in.
 
 ## Requirements
+
 ### Requirement: Each kind declares a sparse, default-false capability descriptor
 
-There SHALL be a single source of truth mapping a kind to a **sparse** capability descriptor — a map that declares only the capabilities the kind *has* (as `true`). The control plane SHALL read every capability with a default of `false`, so any capability a kind does not declare SHALL be treated as absent. Capabilities SHALL attach to the kind, not to user-authored operative code: choosing a kind SHALL be sufficient, and no SDK author SHALL be required to enumerate capability flags. This change defines exactly one capability, `persistent_state?` (the kind has per-entity durable state: write-ahead log, snapshots, restore, time-travel, and per-entity state introspection). The `:unbounded` kind SHALL declare `persistent_state?` `true`.
+There SHALL be a single source of truth mapping a kind to a **sparse** capability descriptor — a map that declares only the capabilities the kind *has* (as `true`). The control plane SHALL read every capability with a default of `false`, so any capability a kind does not declare SHALL be treated as absent. Capabilities SHALL attach to the kind, not to user-authored operative code: choosing a kind SHALL be sufficient, and no SDK author SHALL be required to enumerate capability flags. This change defines exactly one capability, `persistent_state?` (the kind has per-entity durable state: write-ahead log, snapshots, restore, time-travel, and per-entity state introspection). The `:stream` kind SHALL declare `persistent_state?` `true`.
 
-#### Scenario: `:unbounded` declares persistent state
-- **WHEN** the capability descriptor for kind `:unbounded` is requested
+#### Scenario: `:stream` declares persistent state
+
+- **WHEN** the capability descriptor for kind `:stream` is requested
 - **THEN** reading `persistent_state?` SHALL yield `true`
 
 #### Scenario: Undeclared capabilities read as false
+
 - **WHEN** the control plane reads a capability that a kind's descriptor does not declare
 - **THEN** the value SHALL be `false`, and the descriptor SHALL NOT be required to list every defined capability
 

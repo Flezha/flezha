@@ -2,8 +2,8 @@ package com.flezha.test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.flezha.generated.GeneratedUnboundedOperatives;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
+import com.flezha.generated.GeneratedStreamOperatives;
+import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.WallClock;
 import com.flezha.sdk.testing.ProcedureTestHarness;
@@ -15,7 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Asserts the {@code @Procedure} / {@code @State} / {@code @UnboundedOperative}-generated
+ * Asserts the {@code @Procedure} / {@code @State} / {@code @StreamOperative}-generated
  * operatives register and process input identically to the hand-written equivalents, and
  * that the 2-procedure reference operative matches the cross-SDK authoring contract
  * (see {@code docs/sdk_authoring_contract.md} §6).
@@ -24,7 +24,7 @@ class SugarTwinTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeClassRegistry.reset();
+        StreamOperativeClassRegistry.reset();
     }
 
     @Test
@@ -62,9 +62,9 @@ class SugarTwinTest {
     }
 
     @Test
-    void generatedUnboundedOperativesDefine() {
-        GeneratedUnboundedOperatives.defineAll(com.flezha.sdk.Flezha.createRunner("sugar_twin_ns"));
-        assertThat(com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry.factoryIds())
+    void generatedStreamOperativesDefine() {
+        GeneratedStreamOperatives.defineAll(com.flezha.sdk.Flezha.createRunner("sugar_twin_ns"));
+        assertThat(com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry.factoryIds())
                 .contains("java_sugar_do_nothing", "java_sugar_store", "java_sugar_static_entity");
     }
 

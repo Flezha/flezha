@@ -275,11 +275,11 @@ defmodule Flezha.State.WatchdogTest do
     refute_receive {:compaction_trigger, _, %{key: ^key}}, @quiet_ms
   end
 
-  test "a bounded class is not flagged for output stall or catastrophic dataflow", %{
+  test "a workflow class is not flagged for output stall or catastrophic dataflow", %{
     header: header
   } do
-    class = "BoundedWatch" <> uniq()
-    ClassRegistry.put(class, :bounded)
+    class = "WorkflowWatch" <> uniq()
+    ClassRegistry.put(class, :workflow)
     on_exit(fn -> ClassRegistry.delete(class) end)
 
     parent = self()
@@ -301,7 +301,7 @@ defmodule Flezha.State.WatchdogTest do
     :ok = WalWriter.append(w, 1, header, "a")
     :ok = WalWriter.append(w, 2, header, "b")
 
-    # The same stall signature that flags an unbounded class: window lapses,
+    # The same stall signature that flags a stream class: window lapses,
     # then a duplicate Change keeps it "not idle" with a frozen seq.
     Process.sleep(@stall_ms * 2)
     :duplicate = WalWriter.append(w, 1, header, "a")

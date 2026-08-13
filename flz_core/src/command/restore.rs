@@ -33,8 +33,8 @@ impl CommandAction for RestoreInitState {
     ) -> (String, Vec<u8>) {
         let terminal_seq = if let Some(slot) = find_entity_slot(runner, &self.entity_id) {
             restore_into_slot(&slot, self, errors)
-        } else if let Some((instance, slot)) = runner.find_bounded_entity(&self.entity_id) {
-            // Durable bounded Entity: rebuild its committed state in place and
+        } else if let Some((instance, slot)) = runner.find_workflow_entity(&self.entity_id) {
+            // Durable workflow Entity: rebuild its committed state in place and
             // release one count on the driver's crash-resume gate. The frame
             // landed regardless of apply success, so the gate never stalls on a
             // corrupt record.
@@ -76,7 +76,7 @@ impl CommandAction for RestoreInitState {
 
 /// Rebuild one live Entity's state from the shipped snapshot + change-log
 /// and re-arm its `change_seq` so post-restore appends stay contiguous (the
-/// controller then skips epoch realign). Shared by the unbounded and bounded
+/// controller then skips epoch realign). Shared by the stream and workflow
 /// restore paths; a host-run Entity folds through its `RestoreFold`
 /// activation, a typed one through the dispatcher's in-process
 /// `restore_state`. Returns the terminal WAL seq (0 on apply failure).

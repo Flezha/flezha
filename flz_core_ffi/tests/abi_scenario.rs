@@ -206,8 +206,8 @@ fn c_abi_full_scenario() {
 
     // -------------------------------------------------- input activations
     // Drive the instance the runner built: route two entry payloads.
-    let instance = flz_core::fast::live_unbounded_instance("abi_probe")
-        .expect("AddOperative built the instance");
+    let instance =
+        flz_core::fast::live_stream_instance("abi_probe").expect("AddOperative built the instance");
     let (sock, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
     let stream = Arc::new(flz_transport::transport::FlezhaStream::Unix(sock));
     let entry = instance.topology.channel(0).expect("entry channel");
@@ -440,7 +440,7 @@ fn c_abi_full_scenario() {
 
     // The fold's effect record consumed offset 7: a re-forwarded input at or
     // below the floor is skipped, one above it dispatches.
-    let eff_instance = flz_core::fast::live_unbounded_instance("eff-1").expect("eff instance");
+    let eff_instance = flz_core::fast::live_stream_instance("eff-1").expect("eff instance");
     let eff_entry = eff_instance.topology.channel(0).expect("entry channel");
     let wrap = eff_entry.wrap_input.as_ref().expect("entry wrapper");
     let below = wrap(b"dup".to_vec()).unwrap();
@@ -559,7 +559,7 @@ fn c_abi_full_scenario() {
             .then_some(())
         })
     });
-    let dyn_instance = flz_core::fast::live_unbounded_instance("dyn-1").expect("dyn instance");
+    let dyn_instance = flz_core::fast::live_stream_instance("dyn-1").expect("dyn instance");
     let dyn_entry = dyn_instance.topology.channel(0).expect("entry channel");
     // The wire-dispatch staging seam (the same call `OperativeDispatchHandle::
     // dispatch` makes): a keyed consumer holds the payload for the crossing.
@@ -609,12 +609,12 @@ fn c_abi_full_scenario() {
         },
     );
 
-    // ============================================ bounded run-sugar (ABI)
+    // ============================================ workflow run-sugar (ABI)
     let decl = br#"{
         "factory_id": "abi_sugar",
         "channels": [],
         "procedures": [],
-        "bounded": {}
+        "workflow": {}
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
@@ -626,23 +626,23 @@ fn c_abi_full_scenario() {
         flz_core::pb::command_request::Command::AddOperative(flz_core::pb::AddOperative {
             operative_id: "sugar-1".to_string(),
             factory_id: "abi_sugar".to_string(),
-            kind: "bounded".to_string(),
+            kind: "workflow".to_string(),
             init_values: "seed".to_string(),
             ..Default::default()
         }),
     );
     let (status, act) = abi_poll(ctx, 5_000);
-    assert_eq!(status, FLZ_POLL_ACTIVATION, "bounded seed hands out");
+    assert_eq!(status, FLZ_POLL_ACTIVATION, "workflow seed hands out");
     let act = act.unwrap();
     assert_eq!(act.target.operative, "sugar-1");
-    let schema::ActivationKind::BoundedRun { args } = &act.kind else {
-        panic!("expected a bounded run, got {:?}", act.kind);
+    let schema::ActivationKind::WorkflowRun { args } = &act.kind else {
+        panic!("expected a workflow run, got {:?}", act.kind);
     };
     assert_eq!(args, b"seed");
     // The session calls a live body uses, through the ABI.
     let instance_c = CString::new("sugar-1").unwrap();
     assert_eq!(
-        unsafe { flz_core_bounded_cancelled(ctx, instance_c.as_ptr()) },
+        unsafe { flz_core_workflow_cancelled(ctx, instance_c.as_ptr()) },
         0,
         "a live body is not cancelled"
     );
@@ -650,30 +650,30 @@ fn c_abi_full_scenario() {
         let mut buf: *mut u8 = std::ptr::null_mut();
         let mut len: usize = 0;
         let status =
-            unsafe { flz_core_bounded_recv(ctx, instance_c.as_ptr(), 50, &mut buf, &mut len) };
+            unsafe { flz_core_workflow_recv(ctx, instance_c.as_ptr(), 50, &mut buf, &mut len) };
         assert_eq!(status, FLZ_POLL_TIMEOUT, "an empty inbox times out");
     }
     assert_eq!(
-        unsafe { flz_core_bounded_emit(ctx, instance_c.as_ptr(), b"mid".as_ptr(), 3) },
+        unsafe { flz_core_workflow_emit(ctx, instance_c.as_ptr(), b"mid".as_ptr(), 3) },
         FLZ_OK
     );
     abi_complete(
         ctx,
         &schema::ActivationResult {
             token: act.token,
-            outcome: schema::ActivationOutcome::BoundedDone {
+            outcome: schema::ActivationOutcome::WorkflowDone {
                 completed: true,
                 result: b"done".to_vec(),
             },
         },
     );
-    await_frame(&frames, "BoundedCompleted teardown", |captured| {
+    await_frame(&frames, "WorkflowCompleted teardown", |captured| {
         captured.iter().find_map(|(id, m)| {
             (id == "control_command"
                 && flz_core::pb::CommandRequest::decode(m.as_slice()).is_ok_and(|r| {
                     matches!(
                         r.command,
-                        Some(flz_core::pb::command_request::Command::BoundedCompleted(ref c))
+                        Some(flz_core::pb::command_request::Command::WorkflowCompleted(ref c))
                             if c.operative_id == "sugar-1"
                                 && c.status == "ok"
                                 && c.result == b"done".to_vec()

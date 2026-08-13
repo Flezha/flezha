@@ -8,7 +8,7 @@ import java.util.OptionalInt;
 import javax.annotation.Nonnull;
 
 /**
- * Frozen runtime descriptor for one Procedure inside a {@link UnboundedOperativeTopology}.
+ * Frozen runtime descriptor for one Procedure inside a {@link StreamOperativeTopology}.
  *
  * <p>Carries the Procedure's class so the runtime can instantiate one Procedure per
  * Entity at operative-instance startup, plus the resolved input/output

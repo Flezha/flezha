@@ -1,13 +1,13 @@
-//! UnboundedOperative class + instance registries.
+//! StreamOperative class + instance registries.
 //!
-//! `OperativeClassRegistry`: process-global; one entry per UnboundedOperative class. Holds
-//! the immutable `Arc<OperativeTopology>` produced by `define_unbounded::<R>()`.
+//! `OperativeClassRegistry`: process-global; one entry per StreamOperative class. Holds
+//! the immutable `Arc<OperativeTopology>` produced by `define_stream::<R>()`.
 //! Looked up by controller-facing `factory_id` when `AddOperative` arrives.
 //!
 //! `OperativeRegistry`: per-`RunnerNode`; one entry per
 //! `AddOperative` (instance_id). Reuses the DashMap pattern from the
 //! pre-change `OperativeRegistry` so concurrent reader/writer access is
-//! procedureed. Values are a sealed [`Operative`] — operative or bounded — so the
+//! procedureed. Values are a sealed [`Operative`] — operative or workflow — so the
 //! dispatch boundary resolves the variant once per frame; the `Arc` keeps
 //! map values pointer-sized.
 
@@ -16,20 +16,20 @@ use std::sync::{Arc, RwLock};
 
 use lazy_static::lazy_static;
 
-use crate::bounded::instance::BoundedInstance;
 use crate::entity::EntitySlot;
-use crate::operative::instance::UnboundedInstance;
+use crate::operative::instance::StreamInstance;
 use crate::operative::topology::OperativeTopology;
+use crate::workflow::instance::WorkflowInstance;
 
 /// A control-plane-managed unit instance. Sealed two-variant enum: a new kind
 /// must be handled at every match, and the 2-variant match keeps the operative hot
 /// path branch-predictable rather than devirtualizing a single variant. Each
-/// variant carries its per-instance runtime state — a bounded operative's
-/// cancel/inbox/Entities live on its [`BoundedInstance`] (no bounded-specific
+/// variant carries its per-instance runtime state — a workflow operative's
+/// cancel/inbox/Entities live on its [`WorkflowInstance`] (no workflow-specific
 /// process-global).
 pub enum Operative {
-    Unbounded(Arc<UnboundedInstance>),
-    Bounded(Arc<BoundedInstance>),
+    Stream(Arc<StreamInstance>),
+    Workflow(Arc<WorkflowInstance>),
 }
 
 lazy_static! {
@@ -44,7 +44,7 @@ pub fn register_class(factory_id: &'static str, topology: Arc<OperativeTopology>
     CLASS_REGISTRY.write().unwrap().insert(factory_id, topology);
 }
 
-/// On-demand removal (`FlezhaRunner::remove_unbounded`). Idempotent on an
+/// On-demand removal (`FlezhaRunner::remove_stream`). Idempotent on an
 /// unknown id.
 pub fn unregister_class(factory_id: &str) {
     CLASS_REGISTRY.write().unwrap().remove(factory_id);
@@ -69,17 +69,17 @@ impl OperativeRegistry {
         }
     }
 
-    pub fn register_unbounded(&self, instance: Arc<UnboundedInstance>) -> Arc<UnboundedInstance> {
+    pub fn register_stream(&self, instance: Arc<StreamInstance>) -> Arc<StreamInstance> {
         let id = instance.instance_id.to_string();
         self.inner
-            .insert(id, Arc::new(Operative::Unbounded(Arc::clone(&instance))));
+            .insert(id, Arc::new(Operative::Stream(Arc::clone(&instance))));
         instance
     }
 
-    pub fn register_bounded(&self, instance: Arc<BoundedInstance>) {
+    pub fn register_workflow(&self, instance: Arc<WorkflowInstance>) {
         self.inner.insert(
             instance.instance_id.to_string(),
-            Arc::new(Operative::Bounded(instance)),
+            Arc::new(Operative::Workflow(instance)),
         );
     }
 
@@ -89,41 +89,41 @@ impl OperativeRegistry {
         self.inner.get(instance_id).map(|r| Arc::clone(r.value()))
     }
 
-    /// Resolve `instance_id` only when it is a operative; `None` for a bounded or
+    /// Resolve `instance_id` only when it is a operative; `None` for a workflow or
     /// an absent id.
-    pub fn get_unbounded(&self, instance_id: &str) -> Option<Arc<UnboundedInstance>> {
+    pub fn get_stream(&self, instance_id: &str) -> Option<Arc<StreamInstance>> {
         self.inner
             .get(instance_id)
             .and_then(|r| match &**r.value() {
-                Operative::Unbounded(ri) => Some(Arc::clone(ri)),
-                Operative::Bounded(_) => None,
+                Operative::Stream(ri) => Some(Arc::clone(ri)),
+                Operative::Workflow(_) => None,
             })
     }
 
-    /// Resolve `instance_id` only when it is a bounded operative; `None` for a
-    /// unbounded or an absent id.
-    pub fn get_bounded(&self, instance_id: &str) -> Option<Arc<BoundedInstance>> {
+    /// Resolve `instance_id` only when it is a workflow operative; `None` for a
+    /// stream or an absent id.
+    pub fn get_workflow(&self, instance_id: &str) -> Option<Arc<WorkflowInstance>> {
         self.inner
             .get(instance_id)
             .and_then(|r| match &**r.value() {
-                Operative::Bounded(bi) => Some(Arc::clone(bi)),
-                Operative::Unbounded(_) => None,
+                Operative::Workflow(bi) => Some(Arc::clone(bi)),
+                Operative::Stream(_) => None,
             })
     }
 
-    /// Locate a live bounded Entity slot by its wire identity, for the inbound
-    /// `RestoreInitState` handler (the unbounded scan does not see bounded
+    /// Locate a live workflow Entity slot by its wire identity, for the inbound
+    /// `RestoreInitState` handler (the stream scan does not see workflow
     /// Entities). Returns the owning instance (to record the restore against its
     /// gate) and the matched slot.
-    pub fn find_bounded_entity(
+    pub fn find_workflow_entity(
         &self,
         entity_id: &[u8],
-    ) -> Option<(Arc<BoundedInstance>, Arc<EntitySlot>)> {
+    ) -> Option<(Arc<WorkflowInstance>, Arc<EntitySlot>)> {
         self.inner.iter().find_map(|r| match &**r.value() {
-            Operative::Bounded(bi) => bi
+            Operative::Workflow(bi) => bi
                 .entity_by_identity(entity_id)
                 .map(|slot| (Arc::clone(bi), slot)),
-            Operative::Unbounded(_) => None,
+            Operative::Stream(_) => None,
         })
     }
 
@@ -138,8 +138,8 @@ impl OperativeRegistry {
         self.inner
             .iter()
             .filter(|r| match &**r.value() {
-                Operative::Unbounded(ri) => ri.topology.factory_id == factory_id,
-                Operative::Bounded(bi) => &*bi.factory_id == factory_id,
+                Operative::Stream(ri) => ri.topology.factory_id == factory_id,
+                Operative::Workflow(bi) => &*bi.factory_id == factory_id,
             })
             .count()
     }
@@ -148,14 +148,14 @@ impl OperativeRegistry {
         self.inner.contains_key(instance_id)
     }
 
-    /// Snapshot of the operative instances only — bounded carry no serializable
+    /// Snapshot of the operative instances only — workflow carry no serializable
     /// state, so the shutdown snapshot and `get_operatives` view skip them.
-    pub fn snapshot_unbounded(&self) -> HashMap<String, Arc<UnboundedInstance>> {
+    pub fn snapshot_stream(&self) -> HashMap<String, Arc<StreamInstance>> {
         self.inner
             .iter()
             .filter_map(|r| match &**r.value() {
-                Operative::Unbounded(ri) => Some((r.key().clone(), Arc::clone(ri))),
-                Operative::Bounded(_) => None,
+                Operative::Stream(ri) => Some((r.key().clone(), Arc::clone(ri))),
+                Operative::Workflow(_) => None,
             })
             .collect()
     }

@@ -14,7 +14,7 @@ use flz_transport::transport::FlezhaStream;
 
 use crate::channel::OverflowPolicy;
 use crate::entity::{make_entity_payload, EntityItem, EntitySlot};
-use crate::operative::instance::UnboundedInstance;
+use crate::operative::instance::StreamInstance;
 
 /// The Block-policy inline serve, installed by the in-process host: a full
 /// consumer is drained on the producing thread because a parked pool worker
@@ -149,7 +149,7 @@ pub fn enqueue(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy)
 /// the dead-letter queue under the entry channel's identity, exactly like a
 /// retry-exhausted invocation.
 pub struct EntryParseLadder {
-    pub instance: Arc<UnboundedInstance>,
+    pub instance: Arc<StreamInstance>,
     pub channel_id: u32,
     pub bytes: Vec<u8>,
     pub first_error: String,
@@ -260,7 +260,7 @@ pub(crate) fn run_retry_park_ladder(
 /// climbs this channel's retry→DLQ ladder, the same one a failing entry parse
 /// rides, and the remaining consumers are still served.
 pub fn route_to_consumers(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     channel: &crate::channel::ChannelDescriptor,
     value: &Arc<dyn Any + Send + Sync>,
     stream: &Arc<FlezhaStream>,
@@ -300,7 +300,7 @@ pub fn route_to_consumers(
 /// and pays nothing.
 #[allow(clippy::too_many_arguments)]
 fn deliver_edge(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     channel: &crate::channel::ChannelDescriptor,
     edge: &crate::channel::ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
@@ -328,7 +328,7 @@ fn deliver_edge(
 /// single-edge form of [`route_to_consumers`] for producer-side-evaluated
 /// outputs (the host already ran the edge's transforms and key).
 pub(crate) fn deliver_host_output(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     channel_id: u32,
     consumer: u32,
     value: &Arc<dyn Any + Send + Sync>,
@@ -367,7 +367,7 @@ pub(crate) fn deliver_host_output(
 /// registry, an unmapped static key — is the pre-existing silent skip.
 #[allow(clippy::too_many_arguments)]
 fn deliver_to_consumer(
-    instance: &UnboundedInstance,
+    instance: &StreamInstance,
     channel: &crate::channel::ChannelDescriptor,
     edge: &crate::channel::ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
@@ -482,7 +482,7 @@ fn deliver_to_consumer(
 /// a poison entry payload.
 #[allow(clippy::too_many_arguments)]
 fn spawn_edge_ladder(
-    instance: &Arc<UnboundedInstance>,
+    instance: &Arc<StreamInstance>,
     channel: &crate::channel::ChannelDescriptor,
     edge: &crate::channel::ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
@@ -523,7 +523,7 @@ pub(crate) fn spawn_park_thread(name: &str, run: impl FnOnce() + Send + 'static)
 }
 
 struct EdgeLadder {
-    instance: Arc<UnboundedInstance>,
+    instance: Arc<StreamInstance>,
     channel_id: u32,
     edge: crate::channel::ConsumerEdge,
     value: Arc<dyn Any + Send + Sync>,
@@ -576,7 +576,7 @@ fn run_edge_ladder(ladder: EdgeLadder) {
 ///
 /// Arrives on the frame-handling thread after every frame of the slice, so a
 /// Entity cannot still be receiving members when its slice is closed.
-pub fn end_replay_slice(instance: &UnboundedInstance) {
+pub fn end_replay_slice(instance: &StreamInstance) {
     let statics = instance.entities.iter().flatten().cloned();
     let dynamics = instance.dynamic_registries.iter().flatten().flat_map(|r| {
         r.entities

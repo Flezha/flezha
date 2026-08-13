@@ -5,19 +5,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.flezha.sdk.bounded.BoundedOperative;
-import com.flezha.sdk.bounded.BoundedOperativeCtx;
-import com.flezha.sdk.bounded.BoundedOperativeException;
 import com.flezha.sdk.channel.ChannelBuilder;
-import com.flezha.sdk.operative.UnboundedOperative;
+import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.procedure.ProcedureCtx;
-import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
-import com.flezha.sdk.runtime.bounded.BoundedSpec;
 import com.flezha.sdk.runtime.operative.StatelessTestProcedure;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
+import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
+import com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry;
+import com.flezha.sdk.runtime.workflow.WorkflowSpec;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
+import com.flezha.sdk.workflow.WorkflowOperative;
+import com.flezha.sdk.workflow.WorkflowOperativeCtx;
+import com.flezha.sdk.workflow.WorkflowOperativeException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Optional;
@@ -36,16 +36,16 @@ class HostClassDeclarationTest {
 
     @AfterEach
     void reset() {
-        UnboundedOperativeClassRegistry.reset();
-        BoundedOperativeClassRegistry.reset();
+        StreamOperativeClassRegistry.reset();
+        WorkflowOperativeClassRegistry.reset();
     }
 
     @Test
-    @DisplayName("an unbounded declaration emits channels and procedures in id order with tier facts")
-    void unboundedDeclaration() throws Exception {
-        UnboundedOperativeClassRegistry.registerClass(TierOperative.class);
-        UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology("decl_tier_op");
-        JsonNode decl = JSON.readTree(HostClassDeclaration.forUnbounded(topology));
+    @DisplayName("a stream declaration emits channels and procedures in id order with tier facts")
+    void streamDeclaration() throws Exception {
+        StreamOperativeClassRegistry.registerClass(TierOperative.class);
+        StreamOperativeTopology topology = StreamOperativeClassRegistry.getTopology("decl_tier_op");
+        JsonNode decl = JSON.readTree(HostClassDeclaration.forStream(topology));
 
         assertThat(decl.get("factory_id").asText()).isEqualTo("decl_tier_op");
         assertThat(decl.get("sdk_lang").asInt()).isEqualTo(2);
@@ -56,7 +56,7 @@ class HostClassDeclarationTest {
         assertThat(decl.has("persistent"))
                 .as("every procedure declares NoChange")
                 .isFalse();
-        assertThat(decl.has("bounded")).isFalse();
+        assertThat(decl.has("workflow")).isFalse();
 
         JsonNode channels = decl.get("channels");
         assertThat(channels).hasSize(2);
@@ -80,39 +80,39 @@ class HostClassDeclarationTest {
     }
 
     @Test
-    @DisplayName("a run-sugar bounded declaration is empty channels + procedures with the bounded block")
-    void runSugarBoundedDeclaration() throws Exception {
-        BoundedOperativeClassRegistry.registerClass(DeclBounded.class);
-        BoundedSpec spec = BoundedOperativeClassRegistry.getSpec("decl_bounded");
-        JsonNode decl = JSON.readTree(HostClassDeclaration.forBounded(spec));
+    @DisplayName("a run-sugar workflow declaration is empty channels + procedures with the workflow block")
+    void runSugarWorkflowDeclaration() throws Exception {
+        WorkflowOperativeClassRegistry.registerClass(DeclWorkflow.class);
+        WorkflowSpec spec = WorkflowOperativeClassRegistry.getSpec("decl_workflow");
+        JsonNode decl = JSON.readTree(HostClassDeclaration.forWorkflow(spec));
 
-        assertThat(decl.get("factory_id").asText()).isEqualTo("decl_bounded");
+        assertThat(decl.get("factory_id").asText()).isEqualTo("decl_workflow");
         assertThat(decl.get("channels")).isEmpty();
         assertThat(decl.get("procedures")).isEmpty();
         assertThat(decl.get("persistent").asBoolean()).isTrue();
 
-        JsonNode bounded = decl.get("bounded");
-        assertThat(bounded.get("loop_mode").asText()).isEqualTo("once");
-        assertThat(bounded.get("rollback_mode").asText()).isEqualTo("all_or_nothing");
-        assertThat(bounded.get("retry_attempts").asInt()).isEqualTo(3);
-        assertThat(bounded.get("retry_backoff_ms").asLong()).isEqualTo(500);
-        assertThat(bounded.get("max_duration_ms").asLong()).isEqualTo(30_000);
-        assertThat(bounded.has("wake_after_ms")).isFalse();
+        JsonNode workflow = decl.get("workflow");
+        assertThat(workflow.get("loop_mode").asText()).isEqualTo("once");
+        assertThat(workflow.get("rollback_mode").asText()).isEqualTo("all_or_nothing");
+        assertThat(workflow.get("retry_attempts").asInt()).isEqualTo(3);
+        assertThat(workflow.get("retry_backoff_ms").asLong()).isEqualTo(500);
+        assertThat(workflow.get("max_duration_ms").asLong()).isEqualTo(30_000);
+        assertThat(workflow.has("wake_after_ms")).isFalse();
     }
 
     @Test
     @DisplayName("forFactory resolves both registries and refuses an unknown id")
     void forFactoryResolvesRegistries() {
-        UnboundedOperativeClassRegistry.registerClass(TierOperative.class);
-        BoundedOperativeClassRegistry.registerClass(DeclBounded.class);
+        StreamOperativeClassRegistry.registerClass(TierOperative.class);
+        WorkflowOperativeClassRegistry.registerClass(DeclWorkflow.class);
         assertThat(HostClassDeclaration.forFactory("decl_tier_op")).isNotEmpty();
-        assertThat(HostClassDeclaration.forFactory("decl_bounded")).isNotEmpty();
+        assertThat(HostClassDeclaration.forFactory("decl_workflow")).isNotEmpty();
         assertThatThrownBy(() -> HostClassDeclaration.forFactory("missing"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("missing");
     }
 
-    public static final class TierOperative implements UnboundedOperative {
+    public static final class TierOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "decl_tier_op";
@@ -157,10 +157,10 @@ class HostClassDeclarationTest {
         }
     }
 
-    public static final class DeclBounded implements BoundedOperative {
+    public static final class DeclWorkflow implements WorkflowOperative {
         @Override
         public String factoryId() {
-            return "decl_bounded";
+            return "decl_workflow";
         }
 
         @Override
@@ -169,7 +169,7 @@ class HostClassDeclarationTest {
         }
 
         @Override
-        public void run(BoundedOperativeCtx ctx, String args) throws BoundedOperativeException {
+        public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
             ctx.complete(args);
         }
     }

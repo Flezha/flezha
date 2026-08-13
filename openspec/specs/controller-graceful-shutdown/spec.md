@@ -12,7 +12,7 @@ The controller-graceful-shutdown capability defines how the Flezha controller (B
 
 **Quiesce** SHALL set a process-tree-visible flag such that `Flezha.Service.OperativeManager.start_operative/2` returns `{:error, :shutting_down}` and `Flezha.Runner.FleetManager` rejects new runner connect attempts with a structured error. Already-running Operatives and already-connected runners SHALL NOT be affected by this phase.
 
-**Drain** SHALL migrate locally hosted Operatives to peers **while they are still alive** by calling `ProcessHub.Service.Migration.drain(hub_id, timeout: remaining_budget)` for every running namespace's hub, concurrently via a bounded `Task.async_stream` over the namespace list, where `remaining_budget` is the configured shutdown timeout minus elapsed time (floored at a small positive minimum). `drain/2` redistributes each local child through the migration-consent gate (live HotSwap handover) and force-migrates whatever is still deferred at its deadline. Per-hub outcomes SHALL be folded as follows:
+**Drain** SHALL migrate locally hosted Operatives to peers **while they are still alive** by calling `ProcessHub.Service.Migration.drain(hub_id, timeout: remaining_budget)` for every running namespace's hub, concurrently via a workflow `Task.async_stream` over the namespace list, where `remaining_budget` is the configured shutdown timeout minus elapsed time (floored at a small positive minimum). `drain/2` redistributes each local child through the migration-consent gate (live HotSwap handover) and force-migrates whatever is still deferred at its deadline. Per-hub outcomes SHALL be folded as follows:
 
 - `{:ok, %{migrated: m, forced: f}}` — counted into the drain outcome; `f > 0` SHALL be logged at WARNING but does not change the overall result.
 - `{:error, :no_target_nodes}` — the solo-node path: log `[shutdown] drain skipped (no peers); state will be restored on next boot via on-disk WAL/snapshot` and proceed (local Operatives terminate when the hub supervisor stops; WAL fsync flushes in finalise).
@@ -34,7 +34,7 @@ The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` 
 
 #### Scenario: Busy operative defers, then migrates within the drain window
 
-- **GIVEN** a draining controller hosting a durable bounded Operative that is mid-iteration when drain begins
+- **GIVEN** a draining controller hosting a durable workflow Operative that is mid-iteration when drain begins
 - **WHEN** the consent query runs
 - **THEN** the Operative defers, remains alive and locally hosted, and after it suspends at its next committed iteration boundary the drain's consent retry migrates it to a peer — counted in `migrated`, not `forced`
 

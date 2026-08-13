@@ -5,10 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.OverflowPolicy;
-import com.flezha.sdk.operative.UnboundedOperative;
-import com.flezha.sdk.operative.UnboundedOperativeConfigurationException;
+import com.flezha.sdk.operative.StreamOperative;
+import com.flezha.sdk.operative.StreamOperativeConfigurationException;
 import com.flezha.sdk.procedure.ProcedureCtx;
-import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
+import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.StateHandle;
 import java.util.Optional;
@@ -26,13 +26,13 @@ class BoundedMailboxTopologyTest {
 
     @BeforeEach
     void reset() {
-        UnboundedOperativeClassRegistry.reset();
+        StreamOperativeClassRegistry.reset();
     }
 
     @Test
     @DisplayName("default policy: entry channels DROP_NEWEST, inter-procedure BLOCK")
     void defaultPoliciesByKind() {
-        UnboundedOperativeTopology topology = UnboundedOperativeTopologyBuilder.build(new TwoStageUnboundedOperative());
+        StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new TwoStageStreamOperative());
         // Channel index 0 is the entry channel "input"; index 1 is the
         // inter-procedure channel "mid".
         assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_NEWEST);
@@ -42,24 +42,22 @@ class BoundedMailboxTopologyTest {
     @Test
     @DisplayName("onFull(DROP_OLDEST) overrides the per-kind default on an inter-procedure channel")
     void onFullOverridesDefault() {
-        UnboundedOperativeTopology topology =
-                UnboundedOperativeTopologyBuilder.build(new InterProcedureDropOldestUnboundedOperative());
+        StreamOperativeTopology topology =
+                StreamOperativeTopologyBuilder.build(new InterProcedureDropOldestStreamOperative());
         assertThat(topology.channels().get(1).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_OLDEST);
     }
 
     @Test
     @DisplayName("onFull on an entry channel overrides the per-kind default")
     void onFullOnEntryChannelOverrides() {
-        UnboundedOperativeTopology topology =
-                UnboundedOperativeTopologyBuilder.build(new EntryBlockUnboundedOperative());
+        StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new EntryBlockStreamOperative());
         assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.BLOCK);
     }
 
     @Test
     @DisplayName("Procedure.mailboxCapacity() override flows into the descriptor when overridden flag is set")
     void procedureOverrideHonored() {
-        UnboundedOperativeTopology topology =
-                UnboundedOperativeTopologyBuilder.build(new BigMailboxUnboundedOperative());
+        StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new BigMailboxStreamOperative());
         int procedureId = topology.procedureNameToId().get("big_mailbox_procedure");
         assertThat(topology.procedures().get(procedureId).mailboxCapacity()).isEqualTo(8192);
         assertThat(topology.procedures().get(procedureId).mailboxCapacityOverridden())
@@ -69,7 +67,7 @@ class BoundedMailboxTopologyTest {
     @Test
     @DisplayName("default mailbox capacity is 1024 when no override and no env var present")
     void defaultMailboxCapacity() {
-        UnboundedOperativeTopology topology = UnboundedOperativeTopologyBuilder.build(new TwoStageUnboundedOperative());
+        StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new TwoStageStreamOperative());
         for (ProcedureDescriptor desc : topology.procedures()) {
             assertThat(desc.mailboxCapacity()).isEqualTo(1024);
             assertThat(desc.mailboxCapacityOverridden()).isFalse();
@@ -79,8 +77,8 @@ class BoundedMailboxTopologyTest {
     @Test
     @DisplayName("mailboxCapacity = 0 fails registration with named factory")
     void zeroCapacityRejected() {
-        assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new ZeroCapacityUnboundedOperative()))
-                .isInstanceOf(UnboundedOperativeConfigurationException.class)
+        assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(new ZeroCapacityStreamOperative()))
+                .isInstanceOf(StreamOperativeConfigurationException.class)
                 .hasMessageContaining("zero_capacity_procedure")
                 .hasMessageContaining("mailboxCapacity = 0");
     }
@@ -88,8 +86,8 @@ class BoundedMailboxTopologyTest {
     @Test
     @DisplayName("mailboxCapacity above MAX is rejected with named factory + value")
     void tooLargeRejected() {
-        assertThatThrownBy(() -> UnboundedOperativeTopologyBuilder.build(new HugeCapacityUnboundedOperative()))
-                .isInstanceOf(UnboundedOperativeConfigurationException.class)
+        assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(new HugeCapacityStreamOperative()))
+                .isInstanceOf(StreamOperativeConfigurationException.class)
                 .hasMessageContaining("huge_capacity_procedure")
                 .hasMessageContaining("9999999");
     }
@@ -146,7 +144,7 @@ class BoundedMailboxTopologyTest {
         public void run(Integer input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class TwoStageUnboundedOperative implements UnboundedOperative {
+    public static final class TwoStageStreamOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "two_stage";
@@ -159,7 +157,7 @@ class BoundedMailboxTopologyTest {
         }
     }
 
-    public static final class InterProcedureDropOldestUnboundedOperative implements UnboundedOperative {
+    public static final class InterProcedureDropOldestStreamOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "interprocedure_drop_oldest";
@@ -172,7 +170,7 @@ class BoundedMailboxTopologyTest {
         }
     }
 
-    public static final class EntryBlockUnboundedOperative implements UnboundedOperative {
+    public static final class EntryBlockStreamOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "entry_block";
@@ -221,7 +219,7 @@ class BoundedMailboxTopologyTest {
         public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class BigMailboxUnboundedOperative implements UnboundedOperative {
+    public static final class BigMailboxStreamOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "big_mailbox";
@@ -268,7 +266,7 @@ class BoundedMailboxTopologyTest {
         public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class ZeroCapacityUnboundedOperative implements UnboundedOperative {
+    public static final class ZeroCapacityStreamOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "zero_cap";
@@ -315,7 +313,7 @@ class BoundedMailboxTopologyTest {
         public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
     }
 
-    public static final class HugeCapacityUnboundedOperative implements UnboundedOperative {
+    public static final class HugeCapacityStreamOperative implements StreamOperative {
         @Override
         public String factoryId() {
             return "huge_cap";

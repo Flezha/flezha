@@ -1,6 +1,6 @@
 defmodule FlezhaTest.State.ProcJournalTest do
   @moduledoc """
-  `bounded-proc-journal` controller store: entry codec round-trip, torn-tail
+  `workflow-proc-journal` controller store: entry codec round-trip, torn-tail
   recovery, oversize rejection, reserved-type tolerance, lifecycle (path
   helper, invisibility to the Entity scanners, delete), and the resume state
   the bind ships back on `AddOperative.proc_journal`.
@@ -69,7 +69,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     # Each committed procedure's handoff travels under its own proc_idx, so a
     # branching tree re-seeds every uncommitted child from ITS parent's edge and
-    # never from a sibling's (`bounded-branching`). The iteration-level handoff
+    # never from a sibling's (`workflow-branching`). The iteration-level handoff
     # is the previous iteration's terminal batch — none here.
     assert %{
              committed_proc_idxs: [0, 1],
@@ -245,7 +245,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     assert ProcJournal.restore_state(inst) == nil
   end
 
-  # ---------- transactional outbox (bounded-transactional-outbox) ----------
+  # ---------- transactional outbox (workflow-transactional-outbox) ----------
 
   defp outbox_item(seg, seq_in_proc, payload, channel \\ "out") do
     %{entity_id: seg, seq_in_proc: seq_in_proc, channel: channel, payload: payload}
@@ -458,7 +458,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     assert Overwatch.proc_journal_state(instance_id()) == nil
   end
 
-  # ---------- bounded-loop-rewind ----------
+  # ---------- workflow-loop-rewind ----------
 
   # Three committed iterations (0, 1, 2), each one proc that ran on `seg` and
   # staged one output — the shape every rewind test below rewinds out of.

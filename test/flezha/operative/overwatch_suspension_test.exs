@@ -1,11 +1,11 @@
 defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
   @moduledoc """
-  `bounded-durable-suspension` lifecycle on the Overwatch: park (evict from the
+  `workflow-durable-suspension` lifecycle on the Overwatch: park (evict from the
   runner, keep the registry entry), rehydrate on a new input or the durable
   timer, exactly one rehydration when both wake sources race, and rediscovery of
   a suspended instance from durable state alone after a controller redeploy.
 
-  Plus `bounded-loop-rewind`, which rides the same evict → rehydrate path: the
+  Plus `workflow-loop-rewind`, which rides the same evict → rehydrate path: the
   refusals (uncommitted target, uncompensable output) and the durable effect of
   the ones that go through.
 
@@ -49,9 +49,9 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       # The test process stands in for the operative's StreamChannel: a
       # forwarded input arrives as an `{:io_in, ...}` cast.
       channel: self(),
-      builder: %Builder{id: inst, factory_id: "chat", kind: :bounded, opts: []},
+      builder: %Builder{id: inst, factory_id: "chat", kind: :workflow, opts: []},
       extensions: Table.new(Overwatch.__extensions_catalog__()),
-      durable_bounded: true
+      durable_workflow: true
     }
 
     struct!(base, overrides)
@@ -203,7 +203,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
   test "a suspended instance is rediscovered from durable state after a redeploy" do
     inst = instance_id()
-    builder = %Builder{id: inst, factory_id: "chat", kind: :bounded, opts: []}
+    builder = %Builder{id: inst, factory_id: "chat", kind: :workflow, opts: []}
 
     # Durable state of a suspended instance: iteration 0 committed, then parked.
     :ok = ProcJournal.append_proc_committed(inst, 0, 0, [], [])
@@ -235,7 +235,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
            "it takes the normal bind path (which fails here only for lack of a runner)"
   end
 
-  # ---------- bounded-loop-rewind ----------
+  # ---------- workflow-loop-rewind ----------
 
   # The rewind rides the same evict → rehydrate path a park does, so the same
   # stubs stand in for the runner side.
@@ -325,14 +325,14 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
       st =
         state(inst,
-          durable_bounded: false,
+          durable_workflow: false,
           corrections: %{{inst, "proc", "k"} => 100}
         )
 
       assert Overwatch.migration_consent(st) == :defer
     end
 
-    test "an unsuspended durable bounded defers; a suspended one consents" do
+    test "an unsuspended durable workflow defers; a suspended one consents" do
       inst = instance_id()
       assert Overwatch.migration_consent(state(inst)) == :defer
       assert Overwatch.migration_consent(state(inst, suspended: true)) == :ready
@@ -340,7 +340,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     test "an effectively-once instance with pending outbox defers, drained consents" do
       inst = instance_id()
-      st = state(inst, durable_bounded: false, effectively_once: true)
+      st = state(inst, durable_workflow: false, effectively_once: true)
 
       stub(Flezha.State.Supervisor, :live_writers, fn _class -> [self()] end)
 
@@ -353,7 +353,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     test "an outbox-query failure fails open to :ready" do
       inst = instance_id()
-      st = state(inst, durable_bounded: false, effectively_once: true)
+      st = state(inst, durable_workflow: false, effectively_once: true)
 
       stub(Flezha.State.Supervisor, :live_writers, fn _class -> [self()] end)
       stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout -> exit(:timeout) end)
@@ -361,9 +361,9 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       assert Overwatch.migration_consent(st) == :ready
     end
 
-    test "an idle unbounded instance consents immediately" do
+    test "an idle stream instance consents immediately" do
       inst = instance_id()
-      assert Overwatch.migration_consent(state(inst, durable_bounded: false)) == :ready
+      assert Overwatch.migration_consent(state(inst, durable_workflow: false)) == :ready
     end
   end
 
@@ -397,14 +397,14 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
       # A stale debounce timer for an entity no longer pending: the pop leaves
       # `corrections` empty, which is the completion condition.
-      st = state(inst, durable_bounded: false, corrections: %{})
+      st = state(inst, durable_workflow: false, corrections: %{})
       {:noreply, _} = Overwatch.handle_info({:run_correction, {inst, "proc", "k"}}, st)
       assert_receive {:migration_ready, ^inst}
 
       # Another entity still pending: not complete, no signal.
       busy =
         state(inst,
-          durable_bounded: false,
+          durable_workflow: false,
           corrections: %{{inst, "proc", "other"} => 5}
         )
 

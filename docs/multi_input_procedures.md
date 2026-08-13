@@ -35,7 +35,7 @@ Full examples: `sdk/rust/examples/merged_input.rs`,
 ## What a merge does and does not promise
 
 - **Sources may be entry Channels or inter-procedure Channels**, freely mixed —
-  on an unbounded Operative (see [Bounded operatives](#bounded-operatives) for
+  on a stream Operative (see [Workflow operatives](#workflow-operatives) for
   the one restriction). An entry Channel maps like any other source, from
   whatever payload it declares (`Fn(T) -> I`, e.g. `Fn(Reading) -> I` in the
   shipped example), which removes the parser-Procedure detour for low-rate
@@ -75,17 +75,17 @@ Full examples: `sdk/rust/examples/merged_input.rs`,
 
   | Where the mapping sits | What a panic does |
   | --- | --- |
-  | unbounded, inter-procedure source | Runs under `ctx.emit`, inside the producing Procedure's invocation `catch_unwind`. Caught, attributed to that producer, rides **its** retry→DLQ ladder. |
-  | unbounded, entry-Channel source | Runs on the wire-reader path (`flz_core/src/fast.rs` → `routing::route_to_consumers`). `stream-transforms` closed the guard gap here: the edge closure is contained at the routing seam and the value climbs the Channel's own retry→DLQ ladder, the same one a failing entry **parse** rides. |
-  | bounded, inter-procedure source — forward | Runs on the driver thread in `extend_mapped`, outside any entity invocation. Contained there and turned into a terminal chain error: the saga unwinds the stages **recorded as completed** at that point, and the instance still reports `BoundedCompleted` (status `error`). Both SDKs unwind the same procedures in the same order. |
-  | bounded, inter-procedure source — crash-resume re-seed | Contained the same way and the instance still reports `error`. The resumed iteration seeds its completed list from the journal, so the journaled producer is unwound. |
+  | stream, inter-procedure source | Runs under `ctx.emit`, inside the producing Procedure's invocation `catch_unwind`. Caught, attributed to that producer, rides **its** retry→DLQ ladder. |
+  | stream, entry-Channel source | Runs on the wire-reader path (`flz_core/src/fast.rs` → `routing::route_to_consumers`). `stream-transforms` closed the guard gap here: the edge closure is contained at the routing seam and the value climbs the Channel's own retry→DLQ ladder, the same one a failing entry **parse** rides. |
+  | workflow, inter-procedure source — forward | Runs on the driver thread in `extend_mapped`, outside any entity invocation. Contained there and turned into a terminal chain error: the saga unwinds the stages **recorded as completed** at that point, and the instance still reports `WorkflowCompleted` (status `error`). Both SDKs unwind the same procedures in the same order. |
+  | workflow, inter-procedure source — crash-resume re-seed | Contained the same way and the instance still reports `error`. The resumed iteration seeds its completed list from the journal, so the journaled producer is unwound. |
 
-  The bounded rows are a guard this capability had to add: an edge closure is the
-  only author closure on a bounded chain that runs on the driver thread rather
+  The workflow rows are a guard this capability had to add: an edge closure is the
+  only author closure on a workflow chain that runs on the driver thread rather
   than inside an entity invocation, so without it an unwind would skip
-  `emit_bounded_completed` and strand the instance with no terminal frame. It is
+  `emit_workflow_completed` and strand the instance with no terminal frame. It is
   not retried — a mapping is required to be pure, so a re-run would panic
-  identically — and bounded has no DLQ; abort-and-compensate is its escape.
+  identically — and workflow has no DLQ; abort-and-compensate is its escape.
 
   "Recorded as completed" is the exact scope, and it is the ordinary mid-abort
   scope, not something the merge invented. On the **forward** site the mapping
@@ -126,19 +126,19 @@ Definition-time, alongside every other topology issue:
 
 | Refusal | Rust | Java |
 | --- | --- | --- |
-| fewer than two sources | `TopologyIssue::MergeTooFewSources` | `MergeTooFewSources` in the accumulated `UnboundedOperativeConfigurationException` |
+| fewer than two sources | `TopologyIssue::MergeTooFewSources` | `MergeTooFewSources` in the accumulated `StreamOperativeConfigurationException` |
 | same Channel subscribed twice | `TopologyIssue::DuplicateMergeSource` (names the Channel) | `DuplicateMergeSource` (names the Channel) |
 | source re-wiring an edge `.into` or another merge already declared | `TopologyIssue::EdgeAlreadyWired` (names Channel + Procedure) | `EdgeAlreadyWired` (names both) |
-| an entry Channel as a **bounded** merge source | `BuildBoundedError::MergeFromEntryChannel` | `MergeFromEntryChannel` in the `BoundedOperativeConfigurationException` |
+| an entry Channel as a **workflow** merge source | `BuildWorkflowError::MergeFromEntryChannel` | `MergeFromEntryChannel` in the `WorkflowOperativeConfigurationException` |
 | mapped type ≠ the Procedure's `Input` | compile error at `.into::<Proc>()` (`Procedure<Input = I>` bound) | registration error naming both types |
 
 The type check is the one asymmetry, and it is the established one: what Rust
 rejects at compile time, Java's erasure forces to registration time. Equal
 safety, different moment.
 
-## Bounded operatives
+## Workflow operatives
 
-A merge works in a bounded chain, over **inter-procedure** Channels: the mapping
+A merge works in a workflow chain, over **inter-procedure** Channels: the mapping
 is applied where the driver **accumulates** a producer's released batch into its
 child, and again where a crash-resume re-seeds that child from the journaled
 handoff, so a resumed merge sees exactly what the live one did. Both sites run
@@ -149,15 +149,15 @@ Both sites unwind the stages recorded as completed — the producer whose edge b
 up among them. The resumed chain seeds that list from the journal, so a procedure
 the journal already committed is unwound even though this pass never re-ran it.
 
-An **entry** Channel cannot be one of a bounded merge's sources, and that is
-refused at registration (`BuildBoundedError::MergeFromEntryChannel` /
-`MergeFromEntryChannel` in the Java exception). A bounded operative is seeded
+An **entry** Channel cannot be one of a workflow merge's sources, and that is
+refused at registration (`BuildWorkflowError::MergeFromEntryChannel` /
+`MergeFromEntryChannel` in the Java exception). A workflow operative is seeded
 from its spawn args — and, for a `PerInput` loop, from its inbox items — and
 neither carries the Channel a payload arrived on, so there is nothing to select
 a mapping by; a second entry Channel would additionally never be read. Merge the
 output streams of two or more of the operative's procedures instead. (The
-unbounded case is unaffected: there the controller stamps
-`metadata["channel"]` on every frame, which is exactly what the bounded seed
+stream case is unaffected: there the controller stamps
+`metadata["channel"]` on every frame, which is exactly what the workflow seed
 lacks.)
 
 ## Implementation map
@@ -169,18 +169,18 @@ lacks.)
   three `TopologyIssue` variants. `attach_consumer` is the one place a
   channel→procedure edge is recorded, so it is also where a second declaration
   on an already-mapped edge is refused.
-- `sdk/rust/src/bounded/spec.rs` (validation) with the `BuildBoundedError`
-  variants in `flz_core/src/bounded/spec.rs` — the bounded entry-source
+- `sdk/rust/src/workflow/spec.rs` (validation) with the `BuildWorkflowError`
+  variants in `flz_core/src/workflow/spec.rs` — the workflow entry-source
   refusal, beside the existing single-root rule.
 - `flz_core/src/routing.rs` — one mapping site, on the shared routing
   path.
-- `flz_core/src/bounded/driver.rs` — `ChainCtx::edge_map` + `extend_mapped`, applied
+- `flz_core/src/workflow/driver.rs` — `ChainCtx::edge_map` + `extend_mapped`, applied
   at the accumulate and journal re-seed sites, and the containment that keeps a
   panicking mapping from taking the driver thread with it.
 - Java mirrors: `com.flezha.sdk.channel.Merge`,
-  `runtime.operative.ConsumerEdge`, `UnboundedOperativeTopologyBuilder.MergeImpl`,
+  `runtime.operative.ConsumerEdge`, `StreamOperativeTopologyBuilder.MergeImpl`,
   and `runtime.core.ActivationDispatcher` (which evaluates `ConsumerEdge.transformValue`
-  producer-side, on every path an output leaves an entity by). The bounded chain
+  producer-side, on every path an output leaves an entity by). The workflow chain
   is the shared core's, so `extend_mapped` and its containment are not mirrored.
 
 ## Tests
@@ -194,11 +194,11 @@ as sources, per-source FIFO under interleaving, a replayed slice mapped exactly
 as live delivery mapped it, `entities_for` on the mapped value, and the
 definition-time refusals.
 
-The bounded halves are the diamond fan-in re-authored as a merge —
-`MergeBounded` in the Rust `bounded_driver_scenarios` and
-`MergeBoundedOperative` in Java's `BoundedKindTest` — each run forward and again
+The workflow halves are the diamond fan-in re-authored as a merge —
+`MergeWorkflow` in the Rust `workflow_driver_scenarios` and
+`MergeWorkflowOperative` in Java's `WorkflowKindTest` — each run forward and again
 resumed from a journal, so both the accumulate and the re-seed mapping sites are
-exercised. A third bounded fixture per SDK panics/throws from its mapping, and is driven
+exercised. A third workflow fixture per SDK panics/throws from its mapping, and is driven
 down **both** mapping sites.
 
 On the **forward** site each asserts the instance still reports `error` and

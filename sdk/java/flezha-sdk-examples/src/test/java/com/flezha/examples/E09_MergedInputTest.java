@@ -2,8 +2,8 @@ package com.flezha.examples;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
-import com.flezha.sdk.runtime.operative.builder.UnboundedOperativeTopologyBuilder;
+import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
+import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +13,7 @@ class E09_MergedInputTest {
     @Test
     @DisplayName("the two-entry merge registers, both sources wired to the one detector")
     void mergedTopologyRegisters() {
-        UnboundedOperativeTopology topology = UnboundedOperativeTopologyBuilder.build(new E09_MergedInput.Thermostat());
+        StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new E09_MergedInput.Thermostat());
 
         assertThat(topology.procedures()).hasSize(1);
         int detector = topology.procedureNameToId().get("detector");

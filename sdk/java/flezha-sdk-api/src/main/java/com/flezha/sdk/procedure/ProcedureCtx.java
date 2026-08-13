@@ -61,7 +61,7 @@ public interface ProcedureCtx {
     void checkpoint();
 
     /**
-     * Ask the controller for a bounded instance: start {@code factoryId} under
+     * Ask the controller for a workflow instance: start {@code factoryId} under
      * {@code instanceId} if that id is free, otherwise apply {@code ifRunning}
      * ({@link IfRunning#DELIVER} feeds the running instance,
      * {@link IfRunning#ERROR} reports {@link SpawnException.AlreadyRunning}).
@@ -87,7 +87,7 @@ public interface ProcedureCtx {
      * where skipping would rebuild a pending set the live run never had.
      */
     @Nonnull
-    default SpawnHandle spawnBounded(
+    default SpawnHandle spawnWorkflow(
             @Nonnull String instanceId,
             @Nonnull String factoryId,
             @Nonnull byte[] payload,
@@ -98,7 +98,7 @@ public interface ProcedureCtx {
     /**
      * Whether this invocation is re-running already-processed input. Runtime
      * detail: the dispatcher overrides it, and it is what makes
-     * {@link #spawnBounded} a live-processing-only side effect.
+     * {@link #spawnWorkflow} a live-processing-only side effect.
      */
     default boolean replaying() {
         return false;
@@ -173,7 +173,7 @@ public interface ProcedureCtx {
 
     /**
      * Emit a typed value on this Procedure's declared output channel. The channel
-     * id was cached at {@code registerUnbounded} time from
+     * id was cached at {@code registerStream} time from
      * {@code c.channel(T.class, "name").from(S.class)} wiring, so this call
      * performs no name lookups.
      *

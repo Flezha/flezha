@@ -3,9 +3,9 @@ package com.flezha.sdk.operative;
 import javax.annotation.Nonnull;
 
 /**
- * Shared base of the two operative kinds: a {@link UnboundedOperative}
+ * Shared base of the two operative kinds: a {@link StreamOperative}
  * (entity, stateful, long-running DAG) and a
- * {@link com.flezha.sdk.bounded.BoundedOperative} (stateless, run-once job).
+ * {@link com.flezha.sdk.workflow.WorkflowOperative} (stateless, run-once job).
  *
  * <p>The only member common to both kinds is the stable controller-facing
  * {@link #factoryId()} — the name {@code flz operative start <factory_id>}

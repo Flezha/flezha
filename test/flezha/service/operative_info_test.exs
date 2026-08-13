@@ -2,7 +2,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
   @moduledoc """
   §6.1: `flz operative info` surfaces the operative's `kind`, lifecycle `phase`
   (`running` for a live operative in Phase 1), and `uptime_ms`, in both the text
-  and JSON renderings. The richer bounded phases (compensating / completing /
+  and JSON renderings. The richer workflow phases (compensating / completing /
   finished) + elapsed-vs-max-duration + per-procedure progress arrive with the
   saga + retention + SDK-reporting work in later phases.
   """
@@ -38,9 +38,9 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     |> stub(:get_overwatch_state, fn _ns, "op-1" -> {:ok, state} end)
   end
 
-  defp bounded_state(uptime_ms) do
+  defp workflow_state(uptime_ms) do
     %{
-      builder: %{kind: :bounded},
+      builder: %{kind: :workflow},
       runner_id: "exec1",
       namespace: @namespace,
       started_at: System.system_time(:millisecond) - uptime_ms,
@@ -50,36 +50,36 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
   end
 
   test "json output carries kind, phase and uptime_ms" do
-    stub_one(bounded_state(120))
+    stub_one(workflow_state(120))
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
     %{"operatives" => [proc]} = Jason.decode!(out)
 
     assert proc["id"] == "op-1"
-    assert proc["kind"] == "bounded"
+    assert proc["kind"] == "workflow"
     assert proc["phase"] == "running"
     assert is_integer(proc["uptime_ms"]) and proc["uptime_ms"] >= 120
   end
 
   test "text output shows Kind / Phase / Uptime lines" do
-    stub_one(bounded_state(0))
+    stub_one(workflow_state(0))
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "text") end)
 
-    assert out =~ "Kind: bounded"
+    assert out =~ "Kind: workflow"
     assert out =~ "Phase: running"
     assert out =~ "Uptime (ms):"
   end
 
-  test "an unbounded operative reports its kind too" do
-    stub_one(%{bounded_state(0) | builder: %{kind: :unbounded}})
+  test "a stream operative reports its kind too" do
+    stub_one(%{workflow_state(0) | builder: %{kind: :stream}})
 
     out = capture_io(fn -> CliManager.operative_info(@namespace, "json") end)
     %{"operatives" => [proc]} = Jason.decode!(out)
-    assert proc["kind"] == "unbounded"
+    assert proc["kind"] == "stream"
   end
 
-  test "a finished bounded operative is surfaced from its completion record" do
+  test "a finished workflow operative is surfaced from its completion record" do
     # No live operatives; the finished one comes only from its on-disk record.
     stub(OperativeManager, :get_operative_ids, fn _ns -> {:ok, []} end)
 
@@ -96,7 +96,7 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
     %{"operatives" => procs} = Jason.decode!(out)
     proc = Enum.find(procs, &(&1["id"] == "done-1"))
 
-    assert proc["kind"] == "bounded"
+    assert proc["kind"] == "workflow"
     assert proc["phase"] == "finished"
     assert proc["status"] == "ok"
     assert proc["result"] == Base.encode64("RES")
@@ -104,8 +104,8 @@ defmodule FlezhaTest.Service.OperativeInfoTest do
 
   test "a finished operative outside the retention window is not surfaced" do
     stub(OperativeManager, :get_operative_ids, fn _ns -> {:ok, []} end)
-    Application.put_env(:flezha, :bounded_completed_retention_hours, %{"done-old" => 0})
-    on_exit(fn -> Application.delete_env(:flezha, :bounded_completed_retention_hours) end)
+    Application.put_env(:flezha, :workflow_completed_retention_hours, %{"done-old" => 0})
+    on_exit(fn -> Application.delete_env(:flezha, :workflow_completed_retention_hours) end)
 
     :ok =
       Completion.write("done-old", %{

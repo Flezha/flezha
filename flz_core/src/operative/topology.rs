@@ -1,5 +1,5 @@
 //! `OperativeTopology`: shared, immutable topology produced by
-//! `define_unbounded::<R>()`. Section 2 implements `build_topology`.
+//! `define_stream::<R>()`. Section 2 implements `build_topology`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ pub enum EntityMode {
     Single,
     /// Fixed keyset declared by `entity_keys()`; routed by `entities_for`.
     Static,
-    /// Unbounded keyset; Entities created lazily on first sight of the key the
+    /// Stream keyset; Entities created lazily on first sight of the key the
     /// consumer edge's `.key_by(...)` returns.
     Dynamic,
 }
@@ -31,9 +31,9 @@ pub struct ProcedureDescriptor {
     pub name: Arc<str>,
     pub entity_keys: Vec<&'static str>,
     pub entities_for_overridden: bool,
-    /// `Procedure::COMPENSATE_OVERRIDDEN`, captured at registration. The bounded
+    /// `Procedure::COMPENSATE_OVERRIDDEN`, captured at registration. The workflow
     /// saga driver fires compensation only for procedures with this set; a
-    /// unbounded operative never reads it.
+    /// stream operative never reads it.
     pub compensate_overridden: bool,
     /// Entity mode resolved at registration. Drives whether the
     /// dispatch path routes by static key, single slot, or the dynamic
@@ -87,8 +87,8 @@ pub struct OperativeTopology {
     pub procedures: Vec<ProcedureDescriptor>,
     pub procedure_name_to_id: HashMap<&'static str, ProcedureId>,
     pub factory_id: &'static str,
-    /// Captured `UnboundedOperative::PERSISTENCE_ENABLED` const at registration.
-    /// `UnboundedInstance::new` resolves the final per-instance flag using
+    /// Captured `StreamOperative::PERSISTENCE_ENABLED` const at registration.
+    /// `StreamInstance::new` resolves the final per-instance flag using
     /// this const + the runner override from operative-start metadata.
     pub persistence_enabled_const: bool,
     /// Effectively-once delivery tier, declared via

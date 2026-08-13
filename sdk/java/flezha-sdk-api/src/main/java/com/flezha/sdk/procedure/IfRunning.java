@@ -3,7 +3,7 @@ package com.flezha.sdk.procedure;
 import javax.annotation.Nonnull;
 
 /**
- * What {@link ProcedureCtx#spawnBounded} does when the requested instance id is
+ * What {@link ProcedureCtx#spawnWorkflow} does when the requested instance id is
  * already running.
  */
 public enum IfRunning {
@@ -18,7 +18,7 @@ public enum IfRunning {
         this.wire = wire;
     }
 
-    /** The policy as the controller reads it off {@code SpawnBoundedRequest}. */
+    /** The policy as the controller reads it off {@code SpawnWorkflowRequest}. */
     @Nonnull
     public String wire() {
         return wire;

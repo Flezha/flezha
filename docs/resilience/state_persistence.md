@@ -28,8 +28,8 @@ app_data/
         {entity_key}.outbox.dedup
     {instance_id}/
       {instance_id}/
-        proc.journal                     # bounded step progress
-        inbox.wal                      # bounded durable inbox
+        proc.journal                     # workflow step progress
+        inbox.wal                      # workflow durable inbox
 ```
 
 The path triple `(operative_class, procedure_id, entity_key)` uniquely
@@ -45,7 +45,7 @@ an older runner-keyed layout into the flat one.
 contains characters outside `[A-Za-z0-9_.-]`. Round-trippable via
 `Flezha.State.Registry.encode_entity_key/1` and `decode_entity_key/1`.
 
-A bounded instance's `proc.journal` and `inbox.wal` ride the **same**
+A workflow instance's `proc.journal` and `inbox.wal` ride the **same**
 WalWriter + FsyncBatcher substrate as an Entity, under two reserved
 entity keys (`_proc_journal`, `_proc_inbox`). They write no dedup side-file,
 which is what keeps `Registry.scan_dir/1` from ever surfacing one as a
@@ -335,7 +335,7 @@ there is no older value), the controller cannot decode the SDK's WAL bytes
 restoring an Entity as a side effect of a read.
 
 The reply is bounded by `:wal_high_watermark_bytes` — the same ceiling the
-bounded handoff uses. Over it, the read is refused with the byte count and the
+workflow handoff uses. Over it, the read is refused with the byte count and the
 selector that would narrow it; no new configuration key.
 
 Full surface, refusal table and worked examples:
@@ -477,11 +477,11 @@ What happens to that queue depends on whether the Controller can hand it
 back:
 
 * **Classes whose inputs are journaled before forwarding** — the
-  effectively-once tier (input log) and durable bounded instances (proc
+  effectively-once tier (input log) and durable workflow instances (proc
   inbox) — have their mailbox **cleared**. The queue is a subset of the
   durable log the Controller re-forwards, so keeping it would double-apply
   it and, during a correction, re-order it behind the replayed slice.
-* **Every other class** — including a plain stateful unbounded operative,
+* **Every other class** — including a plain stateful stream operative,
   the default configuration — keeps its queue. `Overwatch.journal_input/2`
   passes those inputs through un-journaled (see
   `docs/resilience/data_durability.md`), so the mailbox is the only copy

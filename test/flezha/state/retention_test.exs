@@ -38,7 +38,7 @@ defmodule Flezha.State.RetentionTest do
     on_exit(fn ->
       Application.delete_env(:flezha, :state_root)
       Application.delete_env(:flezha, :time_travel_retention_hours)
-      Application.delete_env(:flezha, :bounded_completed_retention_hours)
+      Application.delete_env(:flezha, :workflow_completed_retention_hours)
       File.rm_rf!(base)
     end)
 
@@ -100,7 +100,7 @@ defmodule Flezha.State.RetentionTest do
     end
   end
 
-  describe "finished-job retention (bounded)" do
+  describe "finished-job retention (workflow)" do
     test "retains a completion record within the window, reclaims it after" do
       root = Registry.state_root()
       now = System.system_time(:second)
@@ -116,7 +116,7 @@ defmodule Flezha.State.RetentionTest do
         })
 
       # Past the window (0h retention for this class) → reclaimed wholesale.
-      Application.put_env(:flezha, :bounded_completed_retention_hours, %{"bnd_old" => 0})
+      Application.put_env(:flezha, :workflow_completed_retention_hours, %{"bnd_old" => 0})
 
       :ok =
         Completion.write("bnd_old", %{
@@ -136,11 +136,11 @@ defmodule Flezha.State.RetentionTest do
   end
 
   describe "time-travel retention gating (kind-aware)" do
-    test "a bounded class is swept as retention_hours=0 (older snapshot reaped)" do
+    test "a workflow class is swept as retention_hours=0 (older snapshot reaped)" do
       header = TestHelpers.stub_header()
       class = "bnd_ret_" <> uniq()
       pid = {class, "proc", "seg"}
-      Flezha.Operative.ClassRegistry.put(class, :bounded)
+      Flezha.Operative.ClassRegistry.put(class, :workflow)
       on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
 
       {:ok, _} = Supervisor.find_or_start(pid)
@@ -149,7 +149,7 @@ defmodule Flezha.State.RetentionTest do
       {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
       {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
 
-      # snap@2 predates the window; a bounded class has no time-travel, so the
+      # snap@2 predates the window; a workflow class has no time-travel, so the
       # sweep forces retention_hours=0 → only the latest snapshot survives.
       File.touch!(Registry.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
       Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})
@@ -159,7 +159,7 @@ defmodule Flezha.State.RetentionTest do
       assert [{5, _}] = Registry.snapshot_paths(pid)
     end
 
-    test "an unbounded class keeps the older snapshot under the same window" do
+    test "a stream class keeps the older snapshot under the same window" do
       header = TestHelpers.stub_header()
       class = "cont_ret_" <> uniq()
       pid = {class, "proc", "seg"}
@@ -170,7 +170,7 @@ defmodule Flezha.State.RetentionTest do
       {:ok, _} = Snapshot.write_snapshot(pid, 2, header, "snap@2")
       {:ok, _} = Snapshot.write_snapshot(pid, 5, header, "snap@5")
 
-      # Same setup, but a (default) unbounded class keeps snap@2 as the
+      # Same setup, but a (default) stream class keeps snap@2 as the
       # retention floor because it is older than the 48h window.
       File.touch!(Registry.snapshot_path(pid, 2), System.os_time(:second) - 5 * 24 * 3600)
       Application.put_env(:flezha, :time_travel_retention_hours, %{class => 48})

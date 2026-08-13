@@ -44,13 +44,13 @@ public sealed interface ActivationKind {
             implements ActivationKind {}
 
     /**
-     * Discriminant 7 — a bounded run-sugar body: the seed args cross once;
+     * Discriminant 7 — a workflow run-sugar body: the seed args cross once;
      * emit/recv/cancelled ride their own ABI calls.
      */
-    record BoundedRun(@Nonnull byte[] args) implements ActivationKind {}
+    record WorkflowRun(@Nonnull byte[] args) implements ActivationKind {}
 
     /**
-     * Discriminant 8 — saga compensation for one bounded Entity: the recorded
+     * Discriminant 8 — saga compensation for one workflow Entity: the recorded
      * forward outputs cross; the host runs {@code compensate}.
      */
     record CompensateRun(@Nonnull List<byte[]> outputs) implements ActivationKind {}

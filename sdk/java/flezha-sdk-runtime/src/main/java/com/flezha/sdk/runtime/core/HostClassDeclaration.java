@@ -2,12 +2,12 @@ package com.flezha.sdk.runtime.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flezha.sdk.channel.ChannelKind;
-import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
-import com.flezha.sdk.runtime.bounded.BoundedSpec;
 import com.flezha.sdk.runtime.operative.ChannelDescriptor;
 import com.flezha.sdk.runtime.operative.ProcedureDescriptor;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeTopology;
+import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
+import com.flezha.sdk.runtime.operative.StreamOperativeTopology;
+import com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry;
+import com.flezha.sdk.runtime.workflow.WorkflowSpec;
 import com.flezha.sdk.state.EventTimeFrom;
 import com.flezha.sdk.state.LogicalClock;
 import com.flezha.sdk.state.NoChange;
@@ -46,19 +46,19 @@ public final class HostClassDeclaration {
     /** Resolve {@code factoryId} in the class registries and build its declaration. */
     @Nonnull
     public static byte[] forFactory(@Nonnull String factoryId) {
-        UnboundedOperativeTopology topology = UnboundedOperativeClassRegistry.getTopology(factoryId);
+        StreamOperativeTopology topology = StreamOperativeClassRegistry.getTopology(factoryId);
         if (topology != null) {
-            return forUnbounded(topology);
+            return forStream(topology);
         }
-        BoundedSpec spec = BoundedOperativeClassRegistry.getSpec(factoryId);
+        WorkflowSpec spec = WorkflowOperativeClassRegistry.getSpec(factoryId);
         if (spec != null) {
-            return forBounded(spec);
+            return forWorkflow(spec);
         }
         throw new IllegalStateException("factory `" + factoryId + "` is not registered");
     }
 
     @Nonnull
-    public static byte[] forUnbounded(@Nonnull UnboundedOperativeTopology topology) {
+    public static byte[] forStream(@Nonnull StreamOperativeTopology topology) {
         Map<String, Object> decl = base(topology.factoryId(), topology);
         // Persistence is what the class's Changes imply: a class whose every
         // Procedure declares NoChange has nothing to flush.
@@ -88,8 +88,8 @@ public final class HostClassDeclaration {
     }
 
     @Nonnull
-    public static byte[] forBounded(@Nonnull BoundedSpec spec) {
-        UnboundedOperativeTopology topology = spec.topology().orElse(null);
+    public static byte[] forWorkflow(@Nonnull WorkflowSpec spec) {
+        StreamOperativeTopology topology = spec.topology().orElse(null);
         Map<String, Object> decl =
                 base(spec.factoryId(), topology != null ? topology : emptyTopology(spec.factoryId()));
         if (spec.persistenceEnabled()) {
@@ -98,29 +98,29 @@ public final class HostClassDeclaration {
         decl.put("channels", topology == null ? List.of() : channels(topology));
         decl.put("procedures", topology == null ? List.of() : procedures(topology));
 
-        Map<String, Object> bounded = new LinkedHashMap<>();
-        bounded.put(
+        Map<String, Object> workflow = new LinkedHashMap<>();
+        workflow.put(
                 "loop_mode",
                 switch (spec.loopMode()) {
                     case ONCE -> "once";
                     case PER_INPUT -> "per_input";
                     case CHAINED -> "chained";
                 });
-        bounded.put(
+        workflow.put(
                 "rollback_mode",
                 switch (spec.rollbackMode()) {
                     case ALL_OR_NOTHING -> "all_or_nothing";
                     case KEEP_PROGRESS -> "keep_progress";
                 });
-        bounded.put("retry_attempts", spec.retry().maxAttempts());
-        bounded.put("retry_backoff_ms", spec.retry().backoffBaseMs());
-        spec.maxDuration().ifPresent(d -> bounded.put("max_duration_ms", d.toMillis()));
-        spec.wakeAfter().ifPresent(d -> bounded.put("wake_after_ms", d.toMillis()));
-        decl.put("bounded", bounded);
+        workflow.put("retry_attempts", spec.retry().maxAttempts());
+        workflow.put("retry_backoff_ms", spec.retry().backoffBaseMs());
+        spec.maxDuration().ifPresent(d -> workflow.put("max_duration_ms", d.toMillis()));
+        spec.wakeAfter().ifPresent(d -> workflow.put("wake_after_ms", d.toMillis()));
+        decl.put("workflow", workflow);
         return encode(decl);
     }
 
-    private static Map<String, Object> base(String factoryId, UnboundedOperativeTopology topology) {
+    private static Map<String, Object> base(String factoryId, StreamOperativeTopology topology) {
         Map<String, Object> decl = new LinkedHashMap<>();
         decl.put("factory_id", factoryId);
         int schemaVersion = topology.procedures().stream()
@@ -133,8 +133,8 @@ public final class HostClassDeclaration {
         return decl;
     }
 
-    private static UnboundedOperativeTopology emptyTopology(String factoryId) {
-        return new UnboundedOperativeTopology(
+    private static StreamOperativeTopology emptyTopology(String factoryId) {
+        return new StreamOperativeTopology(
                 factoryId,
                 List.of(),
                 Map.of(),
@@ -146,7 +146,7 @@ public final class HostClassDeclaration {
                 com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL);
     }
 
-    private static List<Map<String, Object>> channels(UnboundedOperativeTopology topology) {
+    private static List<Map<String, Object>> channels(StreamOperativeTopology topology) {
         List<Map<String, Object>> out = new ArrayList<>(topology.channels().size());
         for (ChannelDescriptor channel : topology.channels()) {
             Map<String, Object> c = new LinkedHashMap<>();
@@ -171,7 +171,7 @@ public final class HostClassDeclaration {
         return out;
     }
 
-    private static List<Map<String, Object>> procedures(UnboundedOperativeTopology topology) {
+    private static List<Map<String, Object>> procedures(StreamOperativeTopology topology) {
         List<Map<String, Object>> out = new ArrayList<>(topology.procedures().size());
         for (ProcedureDescriptor desc : topology.procedures()) {
             Map<String, Object> p = new LinkedHashMap<>();

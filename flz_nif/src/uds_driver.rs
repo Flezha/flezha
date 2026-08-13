@@ -582,7 +582,7 @@ mod tests {
         assert!(!would_overflow_write_buffer(512, 512, cap));
         assert!(would_overflow_write_buffer(512, 513, cap));
 
-        // Already at the cap: every further frame is dropped — bounded, not 1:1.
+        // Already at the cap: every further frame is dropped — workflow, not 1:1.
         assert!(would_overflow_write_buffer(cap, 1, cap));
         assert!(would_overflow_write_buffer(cap, 4096, cap));
     }

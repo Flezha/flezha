@@ -19,14 +19,14 @@ use flz_transport::service::payloader;
 use crate::channel::{BuildEntityArgs, ProcedureId};
 use crate::entity::EntitySlot;
 use crate::flusher::EntityFlusher;
-use crate::operative::instance::UnboundedInstance;
+use crate::operative::instance::StreamInstance;
 use crate::operative::topology::OperativeTopology;
 use crate::state_sink;
 
 const ENV_REAP_INTERVAL_MS: &str = "FLEZHA_REAP_INTERVAL_MS";
 const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// How many evicted keys the registry remembers so a live read can say
-/// "idle-evicted" rather than "never existed". Bounded — the trace is a
+/// "idle-evicted" rather than "never existed". Workflow — the trace is a
 /// diagnosis aid, not a record.
 const EVICTED_TRACE_CAP: usize = 1024;
 
@@ -54,7 +54,7 @@ pub enum GetOrCreateError {
 }
 
 /// Lazily-populated per-Procedure entity map plus the build context needed to
-/// allocate fresh slots. Owned by the `UnboundedInstance`, one per dynamic Procedure.
+/// allocate fresh slots. Owned by the `StreamInstance`, one per dynamic Procedure.
 pub struct DynamicEntityRegistry {
     pub entities: DashMap<String, Arc<EntitySlot>>,
     pub counters: DynamicEntityCounters,
@@ -65,7 +65,7 @@ pub struct DynamicEntityRegistry {
     procedure_id: ProcedureId,
     max_entities: usize,
     topology: Arc<OperativeTopology>,
-    instance: Weak<UnboundedInstance>,
+    instance: Weak<StreamInstance>,
     instance_id: Arc<str>,
     persistence_enabled: bool,
 }
@@ -76,7 +76,7 @@ impl DynamicEntityRegistry {
         procedure_id: ProcedureId,
         max_entities: usize,
         topology: Arc<OperativeTopology>,
-        instance: Weak<UnboundedInstance>,
+        instance: Weak<StreamInstance>,
         instance_id: Arc<str>,
         persistence_enabled: bool,
     ) -> Self {
@@ -172,7 +172,7 @@ impl DynamicEntityRegistry {
         }
     }
 
-    /// True when `key` is in the bounded eviction trace. False for a key that
+    /// True when `key` is in the workflow eviction trace. False for a key that
     /// never had an Entity — and for one evicted longer than
     /// [`EVICTED_TRACE_CAP`] evictions ago, which then reads as "no Entity by
     /// that key", the safe direction: it claims no eviction it cannot show.
@@ -193,7 +193,7 @@ impl DynamicEntityRegistry {
     }
 
     /// Allocate a fresh slot for `key`, wired exactly as the static-mode slots
-    /// `UnboundedInstance::new` builds.
+    /// `StreamInstance::new` builds.
     fn build_slot(&self, key: &str) -> Arc<EntitySlot> {
         let procedure_desc = self
             .topology

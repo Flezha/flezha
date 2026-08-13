@@ -45,8 +45,8 @@ public sealed interface ActivationOutcome {
     record Failed(@Nonnull WorkError error) implements ActivationOutcome {}
 
     /**
-     * Discriminant 8 — a bounded run-sugar body returned. {@code completed}
+     * Discriminant 8 — a workflow run-sugar body returned. {@code completed}
      * mirrors {@code ctx.complete(...)} having been called.
      */
-    record BoundedDone(boolean completed, @Nonnull byte[] result) implements ActivationOutcome {}
+    record WorkflowDone(boolean completed, @Nonnull byte[] result) implements ActivationOutcome {}
 }

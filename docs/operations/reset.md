@@ -16,7 +16,7 @@ It refuses to run while the Controller is up. Stop it first with
 Normally a reset is a choice. One case makes it a requirement:
 
 - **Upgrading across the Operative → Procedure → Entity rename.** That release
-  renamed the reserved on-disk names a bounded instance writes: `op.journal` →
+  renamed the reserved on-disk names a workflow instance writes: `op.journal` →
   `proc.journal`, and the reserved entity keys `_op_journal` → `_proc_journal`
   and `_op_inbox` → `_proc_inbox`. State written before the rename is **not
   readable** by the new build and is **not recovered** — there is no migrator,

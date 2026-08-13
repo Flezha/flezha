@@ -84,7 +84,7 @@ an `init_error`-parked operative.
   and `journal_input/2`
 
 #### Scenario: A suspended target reports success
-- **WHEN** the confirming entry point is invoked against a suspended durable bounded operative
+- **WHEN** the confirming entry point is invoked against a suspended durable workflow operative
 - **THEN** it SHALL return `{:ok, :suspended}`, the payload SHALL be durable in the operative's
   inbox, and the operative SHALL rehydrate and receive the payload in its undelivered tail
 
@@ -136,8 +136,8 @@ carries poison input, not a temporarily unreachable peer.
 ### Requirement: Effectively-once delivery across the hop for durable senders
 
 The system SHALL deliver each emitted payload to the target effectively once when the source
-operative has a transactional outbox — an effectively-once unbounded operative or a durable
-bounded operative — without introducing any new identity scheme, dedup store, or wire-format
+operative has a transactional outbox — an effectively-once stream operative or a durable
+workflow operative — without introducing any new identity scheme, dedup store, or wire-format
 change. The guarantee SHALL be composed from the existing identity stamps the sender's outbox
 already applies (`flz.seq`, `flz.key`, `flz.epoch`), the worker's retry-until-confirmed, and the
 target's existing duplicate absorption in `journal_input/2`.
@@ -147,7 +147,7 @@ transactional outbox SHALL receive retry-until-confirmed delivery without a de-d
 guarantee, and this asymmetry SHALL be documented.
 
 #### Scenario: A retried delivery is absorbed rather than duplicated
-- **WHEN** a durable bounded source emits a payload, the first delivery attempt is retried after
+- **WHEN** a durable workflow source emits a payload, the first delivery attempt is retried after
   the target has already durably journaled it, and the retry carries the same identity stamps
 - **THEN** the target SHALL absorb the retry as a duplicate, the worker SHALL observe
   `{:ok, :absorbed}`, and the target SHALL have journaled the payload exactly once

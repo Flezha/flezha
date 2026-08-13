@@ -235,8 +235,8 @@ defmodule Flezha.Runner.StreamChannel do
     {:noreply, mark_seen(state)}
   end
 
-  # Bounded-operative saga compensation markers (SDK → controller). A durable
-  # bounded records each procedure's forward completion (`compensation_intent`)
+  # Workflow-operative saga compensation markers (SDK → controller). A durable
+  # workflow records each procedure's forward completion (`compensation_intent`)
   # and each compensation's completion (`compensation_done`); persisted per
   # Entity and shipped back on the next `RestoreInitState` so a respawn finishes
   # the remaining hooks and skips already-undone ones. Fire-and-forget.
@@ -434,7 +434,7 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   # Emit `output_stall` for each mapped operative whose kind runs the output-stall
-  # watchdog. A kind without it (a durable bounded operative) legitimately goes
+  # watchdog. A kind without it (a durable workflow operative) legitimately goes
   # silent, so flagging it would spuriously rebind.
   defp emit_output_stall(operative_mapping) do
     for {operative_id, _} <- operative_mapping,
@@ -733,7 +733,7 @@ defmodule Flezha.Runner.StreamChannel do
     case StateWire.decode_entity_id(frame) do
       {:ok, {rc, sh, pk}} ->
         # Destructive idle-eviction is a dynamic-entity mode behaviour; ignore
-        # it for a kind without dynamic entities so a durable bounded operative's
+        # it for a kind without dynamic entities so a durable workflow operative's
         # state is never dropped out from under it.
         if ClassRegistry.capable?(rc, :dynamic_entities?) do
           spawn(fn -> Flezha.State.Supervisor.delete_entity({rc, sh, pk}) end)

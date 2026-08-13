@@ -1,5 +1,75 @@
 # Flezha repo notes
 
+## Operative kinds are `stream` and `workflow` (`rename-operative-kinds-to-stream-and-workflow`)
+
+<!-- kind-naming-record:begin -->
+- **`:unbounded` → `:stream`, `:bounded` → `:workflow`**, everywhere a developer
+  reads: kind atoms and wire literals, SDK types in both SDKs, protobuf message
+  names (tags 22/23/34/35 unchanged), CLI `--kind`, env vars, module/file/spec
+  directory names, comments and docs. BREAKING, no shim. Behaviour, durability
+  and every wire tag number are untouched — only names.
+- **GOTCHA — three senses of the word, and only one renamed.** *Kind* (renamed),
+  *capacity* (`BoundedMailboxSource`, `:flezha_bounded_mailbox`, "backpressure
+  and bounded mailboxes" — untouched) and *plain English* ("bounded by",
+  "a bounded (1024) FIFO", "unbounded growth" — untouched). A repo-wide
+  `s/bounded/workflow/` corrupts ~65 English uses and the mailbox subsystem, and
+  it still **compiles** — that is why `scripts/kind-naming-allowlist.txt` was
+  built BEFORE any edit and is the input to both the sweep and the gate.
+- **GOTCHA — the binding family shares no substring.** `bound`, `unbound`,
+  `bind`, `rebind`, `misbound`, `inbound`, `bound_runner`,
+  `require_bound_principal` mean *attached to a runner or namespace*;
+  `unbound` ("not placed") is unrelated to `unbounded`. Widening any pattern
+  from `bounded` to `bound` corrupts ~210 sites.
+- **GOTCHA — `crossbeam::channel::unbounded` / `bounded` are third-party
+  capacity APIs**, not kinds. They are allowlisted; renaming them is the one
+  corruption that *does* fail the build (it did, once, in `flz_transport`).
+- **GOTCHA — the English sense also appears as IDENTIFIERS, and those renames
+  compile.** `Convergence.SafeCall.bounded/3` is a *time-limited* `GenServer.
+  call`, not a kind; the sweep turned it into `SafeCall.workflow/3` across nine
+  files and nothing failed. Same class of silent damage: "bounded-retry
+  governor" (Overwatch's start ladder), "bounded ack-wait", "bounded outbound
+  queue" (Kafka), "**Bounded capacity**" (`mailbox.rs`), "bounded park"
+  (`routing.rs`), "bounded quota", "bounded margin", "bounded primitives". A
+  phrase allowlist is NOT enough — after the sweep, audit by grouping every
+  renamed occurrence by its neighbouring word and reading the groups whose
+  neighbour is not an operative noun. That audit is what found all of them.
+- **`scripts/check-kind-naming.sh` is the permanent gate** (CI workflow
+  `naming.yml`, path-unfiltered, toolchain-free). It matches any identifier
+  *containing* `bounded` — not just the bare word, so `BoundedOperative` and
+  `spawn_bounded` are caught — masks each allowlisted phrase out of the line,
+  and fails on the residue. Scope is `git ls-files`, so `openspec/changes/`
+  (which holds the archive), `target/` and `_build/` are excluded by being
+  ignored; `dist/` and binaries are excluded explicitly.
+- **The old words are KEPT where they are true**, as adjectives for the run:
+  a workflow operative runs a *bounded* iteration to a terminal state; a stream
+  operative folds an *unbounded* input forever. `docs/glossary.md` carries that,
+  the `PerInput` caveat (its input is unbounded; only its iteration is bounded —
+  the fact that makes the old name false rather than merely unfamiliar) and the
+  one-sentence rationale, so the question is settled rather than reopened.
+- **GOTCHA — the archive keeps the old ids.** `openspec/changes/archive/**` is a
+  historical record and is out of scope, so the change directories are still
+  `bounded-loop-rewind`, `bounded-proc-journal`, `bounded-entity-retry`, … even
+  though the section headings here and the live `openspec/specs/` capabilities
+  now say `workflow-*`. Grep the archive with the old name.
+- **UPGRADE — `flz controller stop && flz reset --yes` is mandatory.** The kind
+  atom is persisted in the ProcessHub DETS cspec AND in `ClassRegistry`'s
+  on-disk sidecar; nothing reads the retired atoms. Controller and every runner
+  redeploy together. `flezha_market` ConfigMaps referencing `FLEZHA_BOUNDED_*`
+  need the rename in that repo before its next deploy.
+- **GOTCHA — trybuild `.stderr` fixtures moved for a non-obvious reason.** Five
+  UI cases now print `flezha_runner::Stream` where they printed `Stream`;
+  renaming the sibling module `bounded` → `workflow` changed which path rustc
+  picks as shortest-visible. Semantically identical, blessed with
+  `TRYBUILD=overwrite`.
+- **GOTCHA — `EntityIdTest` pins byte OFFSETS, not just content.** Its fixture
+  name shortened by 3 bytes (`MarketUnboundedOperative` → `MarketStreamOperative`)
+  and every hard-coded index in the framing assertion had to move with it.
+- **Rebuilt artifacts**: `scripts/build-dist.sh` after `mvn clean` in
+  `sdk/java` — the committed `sdk/java/flezha-sdk/dist/`,
+  `test/apps/java_runner/dist/` and the five `flezha-sdk-native` binaries embed
+  the api classes, and the fat jar shades stale `target/classes` first.
+<!-- kind-naming-record:end -->
+
 ## Websocket subscription source (`add-websocket-subscription-source`)
 
 - **`subscription_url` + `subscribe_template` / `unsubscribe_template` on
@@ -91,7 +161,7 @@
   registration / cancellation / firing are records in the Entity's OWN change
   log, so crash-resume, replay and retention are free;
   (2) **the per-Entity event-time high-water** (from
-  `unbounded-late-input-correction`) is the event-time trigger — no scheduler,
+  `stream-late-input-correction`) is the event-time trigger — no scheduler,
   no watermark propagation;
   (3) **the nil-offset effect record** (`effectively-once-checkpoint-granularity`
   made `consumed_offset: Option<u64>` first-class) carries a firing, because a
@@ -141,7 +211,7 @@
   Entity and spawning the flusher thread for programs that will never produce a
   record.
 - **A registration made during a REPLAY is registered** — the deliberate
-  opposite of `ctx.spawn_bounded`'s `SkippedOnReplay`. A timer is internal
+  opposite of `ctx.spawn_workflow`'s `SkippedOnReplay`. A timer is internal
   state; skipping it would rebuild a pending set the live run never had. Both
   calls sit on the same `ProcedureCtx`, so it is a trap worth stating.
 - **`TimerPolicy` is what a Procedure declares about its timers, resolved
@@ -166,12 +236,12 @@
   for that.
 - **Refusals**: `EventTimeTimerWithoutEventTimeClock` (an event-time timer
   under a non-event-time clock), `TimerCapExceeded`
-  (`max_timers_per_entity()`, default 10 000), `TimersUnavailable` (a bounded
+  (`max_timers_per_entity()`, default 10 000), `TimersUnavailable` (a workflow
   stage or a `compensate` hook — structural: those contexts carry no session).
 - **LIMITS (documented, not fixed)**: dynamic eviction discards an Entity's
   timers with its state (legal, D6); a HOT-SWAP migration does not carry them
   (the handover ships JSON `State` and suppresses the WAL restore — they are
-  still on disk, so a later restore rebuilds them); bounded operatives have no
+  still on disk, so a later restore rebuilds them); workflow operatives have no
   timers (they have `wake_after`); resolution is milliseconds.
 - **Observability**: per-Procedure `TimerCounters` (pending / registered /
   fired / cancelled / refused) plus `timers_armed` + `timers_fired` in every
@@ -196,7 +266,7 @@
   `FunctionClauseError`, taking the runner connection with it — invisible to
   `mix test` (the unit suite never drives a real restore) and fatal to
   `late_input_correction_e2e`, `effectively_once_checkpoint_e2e` and the
-  bounded branching resume. It now goes through `ControlUnit.send_control_await/3`,
+  workflow branching resume. It now goes through `ControlUnit.send_control_await/3`,
   which is the ONE awaited-round-trip seam and owns the reply-ref bookkeeping.
 - **Docs/examples**: `docs/entity_timers.md`, plus sections in
   `docs/sdk_authoring_contract.md` (3.4), `docs/operative_architecture.md`,
@@ -260,7 +330,7 @@
 - **Tests**: `sdk/rust/tests/state_serialize.rs` (selector narrowing, dynamic
   coverage, refusals, unflushed-change seq, no-side-effects, the proto
   byte-identity pin, and the cross-language JSON fixture),
-  `UnboundedOperativeStateSerializerTest` (same set + the identical fixture
+  `StreamOperativeStateSerializerTest` (same set + the identical fixture
   literal — both encoders sort object keys),
   `test/flezha/service/cli_manager_state_get_test.exs` (every verdict as the
   operator sees it), e2e `dynamic_entity_e2e_test.exs` "a live dynamic Entity is
@@ -323,15 +393,15 @@
   (`transform_value` returns `Option`, `transformValue` returns `@Nullable`) —
   that is what keeps the "costs nothing when unused" promise true.
 - **Containment: `ConsumerEdge::transform_value` / `key_of` catch_unwind ONCE**,
-  and both seams read that one result. Unbounded → `spawn_edge_ladder` →
+  and both seams read that one result. Stream → `spawn_edge_ladder` →
   `run_retry_park_ladder` (extracted from `run_entry_parse_ladder`; Java:
   `DlqPark.retryThenPark`, extracted from `PrimaryStreamReader`) → retry per the
-  channel budget → DLQ park. Bounded → `extend_mapped` → terminal chain error the
+  channel budget → DLQ park. Workflow → `extend_mapped` → terminal chain error the
   saga compensates. Both verified to FAIL with the guard removed.
-- **An edge KEY never reaches the bounded driver** — a keyed edge makes its
-  consumer dynamic and `build_dag` refuses a dynamic bounded procedure. A
-  bounded ENTRY edge refuses ANY closure (`MergeFromEntryChannel`, message
-  widened): the bounded seed bypasses the routing seam entirely.
+- **An edge KEY never reaches the workflow driver** — a keyed edge makes its
+  consumer dynamic and `build_dag` refuses a dynamic workflow procedure. A
+  workflow ENTRY edge refuses ANY closure (`MergeFromEntryChannel`, message
+  widened): the workflow seed bypasses the routing seam entirely.
 - **D8 landed as ONE type, not two.** Rust: `Stream<'b, T, K = NodeTarget>` with
   `EntryStream<'b, T>` a type ALIAS (`K = EntryTarget`); the shared surface —
   `into`, the four transforms, `on_full`/`retry_*` — is one impl block, and
@@ -351,7 +421,7 @@
   (now `KeyByOnUnkeyableTarget`), Java's `@EntityKey` code generation (the
   annotation survives ONLY so declaring it errors with `.keyBy(f)` named).
 - **FIXED IN PASSING (pre-existing Java bug the e2e needed):**
-  `UnboundedOperativeStateSerializer` branched on `entityKeys().isEmpty()`, so a
+  `StreamOperativeStateSerializer` branched on `entityKeys().isEmpty()`, so a
   dynamic operative's `EntityState` reported only `entities.get(0)`. It branches
   on `dynamic()` now and emits the per-key map. **STILL OPEN (documented, not
   fixed):** Java never registers a lazily-created Entity with its flusher, so a
@@ -359,8 +429,8 @@
   arm asserts live state, not a WAL file.
 - **Tests**: `sdk/rust/tests/stream_transforms.rs` (own `[[test]]` entry,
   `bench-internals`; two cases share `ChainOperative`'s statics and serialize on
-  `CHAIN_LOCK`), `StreamTransformsTest.java`, bounded `PanickingTransformBounded`
-  / the existing `PanickingMergeBounded` (message now `edge transform panicked`
+  `CHAIN_LOCK`), `StreamTransformsTest.java`, workflow `PanickingTransformWorkflow`
+  / the existing `PanickingMergeWorkflow` (message now `edge transform panicked`
   / `edge transform threw`), `tests/ui/procedure_entity_key_removed.rs` +
   `entry_stream_has_no_plugin_sink.rs`, e2e
   `test/system/dynamic_entity_e2e_test.exs` on BOTH runtimes.
@@ -374,12 +444,12 @@
 - **`c.merge::<I>()` / `c.merge(I.class)`** — subscribe two or more source
   channels to ONE procedure whose `Input` is an author-declared sum type, each
   `.from(source, map)` supplying the mapping. Entry streams and inter-proc
-  streams are both sources on an UNBOUNDED operative, freely mixed (bounded
+  streams are both sources on a STREAM operative, freely mixed (workflow
   takes inter-proc only — see below). Single-input `.into` is unchanged.
 - **The whole feature is ONE field on the consumer edge.**
   `ChannelDescriptor.consumers` went from `Vec<ProcedureId>` to
   `Vec<ConsumerEdge>` (`procedure` + `Option<MergeMapFn>`); `consumer_ids()` /
-  `consumerIds()` is the id-only view the graph walks and the bounded DAG use.
+  `consumerIds()` is the id-only view the graph walks and the workflow DAG use.
   No wire change, no controller change, no journal-format change.
 - **GOTCHA — map at the ROUTING seam, not the delivery seam.** The mapping is
   applied in `dispatcher::route_to_consumers` (Rust) /
@@ -391,20 +461,20 @@
   would have forked live and replay.
 - **`entities_for` / `entity_key` see the MAPPED value** — they run after the
   edge map, so per-source entity mode is encoded in the enum, not per edge.
-- **Bounded works over INTER-PROC channels only**: `ChainCtx::edge_map` +
+- **Workflow works over INTER-PROC channels only**: `ChainCtx::edge_map` +
   `extend_mapped` apply the edge map where the driver accumulates a producer's
   batch into its child AND where `resumed_start` re-seeds from the journaled
-  handoff. Java mirrors both in `BoundedOperativeRunner`. Without this a merge
-  in a bounded chain would downcast-panic.
-- **GOTCHA — a merge mapping is the ONE author closure on a bounded chain that
+  handoff. Java mirrors both in `WorkflowOperativeRunner`. Without this a merge
+  in a workflow chain would downcast-panic.
+- **GOTCHA — a merge mapping is the ONE author closure on a workflow chain that
   runs on the DRIVER thread**, not inside an entity invocation, so it is the one
   the existing `catch_unwind`s miss. `extend_mapped` contains it (Rust) /
-  `BoundedOperativeRunner.extendMapped` rethrows as `BoundedOperativeException`
+  `WorkflowOperativeRunner.extendMapped` rethrows as `WorkflowOperativeException`
   (Java) into the chain's existing abort-and-compensate path; without that an
-  unwind skips `emit_bounded_completed` and the instance is stranded with no
+  unwind skips `emit_workflow_completed` and the instance is stranded with no
   terminal frame. No retry — a mapping is pure by contract, so a re-run panics
-  identically. Unbounded is already covered on the inter-proc side (the producer's
-  invocation guard); an unbounded ENTRY source is unguarded, exactly as the
+  identically. Stream is already covered on the inter-proc side (the producer's
+  invocation guard); a stream ENTRY source is unguarded, exactly as the
   entry parser on that same wire-reader seam already is.
 - **GOTCHA — the consumer-release block must sit AFTER the intent markers, the
   stage record and the proc-commit barrier.** That ordering is load-bearing now
@@ -416,7 +486,7 @@
   "stages recorded as completed" — a Rust sibling still in flight in the same
   level is NOT undone, which is the pre-existing mid-level abort shape (a failed
   `commit` at the same spot behaves identically), not a merge-specific hole.
-- **The two bounded mapping sites do NOT share an undo scope.** Forward
+- **The two workflow mapping sites do NOT share an undo scope.** Forward
   accumulate: parity, the producer whose edge blew up is always unwound on both
   SDKs (measured). Crash-resume re-seed: Rust's `drive_chain` seeds the resumed
   iteration's `completed` from `journaled_stages`' in-flight stages
@@ -425,26 +495,26 @@
   journaled procs without recording them, so NOTHING is unwound. Do not write
   "both SDKs unwind the same set" without saying which site.
 - **KNOWN LIMITATION (verified against HEAD, documented, NOT fixed) — a resumed
-  Java bounded chain compensates only what re-ran.** `runIteration` never seeds
+  Java workflow chain compensates only what re-ran.** `runIteration` never seeds
   `completed` from the proc-journal, so any abnormal exit from a resumed chain
   leaves the journaled-committed procedures un-undone; Rust unwinds them.
   Pre-existing and NOT merge-specific (it applies to a resumed Java chain
   failing anywhere forward) — a merge mapping throwing at the re-seed site is
-  one way to reach it. Symptom: a Java bounded instance that crashed mid-chain,
+  one way to reach it. Symptom: a Java workflow instance that crashed mid-chain,
   resumed, then failed reports `error` having compensated fewer procedures than
-  its Rust twin. Closing it is a bounded-resume semantics change, out of scope
+  its Rust twin. Closing it is a workflow-resume semantics change, out of scope
   here. Written up in `docs/multi_input_procedures.md` "Known limitation".
-- **GOTCHA — a bounded merge over an ENTRY channel is refused, not supported.**
-  The bounded seed (`driver.rs seed_bytes`, fed by the spawn args and by
+- **GOTCHA — a workflow merge over an ENTRY channel is refused, not supported.**
+  The workflow seed (`driver.rs seed_bytes`, fed by the spawn args and by
   `PerInput` inbox items) is a bare payload naming no channel, so no mapping
   could be selected and every entry channel past the first is unreadable —
   `build_dag` would happily accept the shape (`entry.consumers.len() == 1`
   holds) and every invocation would then fail the input-type check. Hence
-  `BuildBoundedError::MergeFromEntryChannel` / the same name in Java's
-  `BoundedSpec`. Unbounded is unaffected: the controller stamps
-  `metadata["channel"]` there, which is exactly what the bounded seed lacks.
+  `BuildWorkflowError::MergeFromEntryChannel` / the same name in Java's
+  `WorkflowSpec`. Stream is unaffected: the controller stamps
+  `metadata["channel"]` there, which is exactly what the workflow seed lacks.
 - **Refusals**: `TopologyIssue::MergeTooFewSources` / `DuplicateMergeSource` /
-  `EdgeAlreadyWired` (both SDKs, same names) + the bounded
+  `EdgeAlreadyWired` (both SDKs, same names) + the workflow
   `MergeFromEntryChannel`. Mapped-type mismatch is a COMPILE error in Rust
   (`Procedure<Input = I>` bound on `.into::<Proc>()`) and a registration error in
   Java (`wireConsumer` compares the declared merge type, not the channel
@@ -468,13 +538,13 @@
 - **Tests**: `sdk/rust/tests/merged_input.rs` (its own `[[test]]` entry,
   `required-features = ["bench-internals"]`; the three entry-merge cases share
   one static observer and serialize on `tuned_test_guard()`),
-  `MergedInputTest.java`, `E09_MergedInputTest.java`. The bounded halves are the
-  diamond fan-in re-authored as a merge — `MergeBounded` in
-  `bounded_driver_scenarios` and `MergeBoundedOperative` in `BoundedKindTest` —
+  `MergedInputTest.java`, `E09_MergedInputTest.java`. The workflow halves are the
+  diamond fan-in re-authored as a merge — `MergeWorkflow` in
+  `workflow_driver_scenarios` and `MergeWorkflowOperative` in `WorkflowKindTest` —
   each run forward AND resumed from a journal, which is what covers the
   accumulate and re-seed mapping sites; the entry-source refusal is pinned in
-  `dag_topology_is_validated` and `BoundedKindTest`. `PanickingMergeBounded` /
-  `ThrowingMergeBoundedOperative` pin the containment — both were confirmed to
+  `dag_topology_is_validated` and `WorkflowKindTest`. `PanickingMergeWorkflow` /
+  `ThrowingMergeWorkflowOperative` pin the containment — both were confirmed to
   FAIL (driver thread gone, `drain` times out / the completion latch never
   counts down) with the guard removed, and both assert the EXACT undo list on the
   FORWARD site (`undo-b` then `undo-a` — Rust's literals carry the output too,
@@ -495,12 +565,12 @@
 
 ## Procedure-requested spawn (`add-procedure-requested-spawn`)
 
-- **`ctx.spawn_bounded` / `ctx.spawnBounded`** — spawn-or-deliver a bounded
+- **`ctx.spawn_workflow` / `ctx.spawnWorkflow`** — spawn-or-deliver a workflow
   instance from inside any procedure, in the requester's own namespace. Free id
   ⇒ spawn with the payload as the first input; taken id ⇒ deliver
   (`IfRunning::Deliver`) or `already_running` (`Error`).
-- **The namespace is NOT on the wire.** `SpawnBoundedRequest{instance_id,
-  factory_id, payload, if_running}` (tag 34) + `SpawnBoundedResponse{outcome,
+- **The namespace is NOT on the wire.** `SpawnWorkflowRequest{instance_id,
+  factory_id, payload, if_running}` (tag 34) + `SpawnWorkflowResponse{outcome,
   error}` (tag 35). The controller takes the namespace from the ControlChannel
   the frame arrived on — cross-namespace spawning is impossible by
   construction, not by validation.
@@ -512,17 +582,17 @@
   the seed when a durable instance's inbox already holds entries — that is a
   restart, not a spawn, and the cspec (which carries the seed) is replayed on
   controller boot.
-- **`OperativeManager.start_bounded/5`** is the ONE place the registry's
+- **`OperativeManager.start_workflow/5`** is the ONE place the registry's
   duplicate-id refusal (`"operative id already in use"` → `:duplicate`) is
   recognised; `Schedule.Job` and `spawn_or_deliver/5` both go through it.
   `spawn_or_deliver/5` = existence check (`exist?/2`) → factory check
-  (`FleetManager.runners_for_factory`) → `start_bounded` → race-loser falls
+  (`FleetManager.runners_for_factory`) → `start_workflow` → race-loser falls
   back to `send_io_confirming` (the existing confirming ingest).
 - **GOTCHA — resolution must NOT run on the ControlChannel process.** It starts
   an operative, which drives `AddOperative` and waits for the response on that
-  same control stream. `handle_spawn_bounded/3` runs in a `Task` and sends
-  `{:spawn_bounded_result, ...}` back so the reply frame is still written by the
-  channel process (same reason as the bounded-completed teardown).
+  same control stream. `handle_spawn_workflow/3` runs in a `Task` and sends
+  `{:spawn_workflow_result, ...}` back so the reply frame is still written by the
+  channel process (same reason as the workflow-completed teardown).
 - **Failure isolation**: the SDK call returns a handle; refusals never reach
   `run`. Rust drops an unobserved handle into ONE process-wide reaper thread
   (`spawn.rs`); Java logs from the reply callback unless `await`/`tryResult`
@@ -540,13 +610,13 @@
   `InputEnvelope`) ⇒ `SkippedOnReplay`.
 - **Tests**: `test/flezha/service/operative_manager_spawn_test.exs` (ETS
   `insert_new` stands in for the registry's atomic claim, so the concurrent
-  burst exercises the real race), `control_channel_spawn_bounded_test.exs`,
+  burst exercises the real race), `control_channel_spawn_workflow_test.exs`,
   Rust `procedure::tests::spawn`, Java `SpawnHandleTest` + `SpawnRequesterTest`.
   GOTCHA: the Rust coordinator trigger is process-global — every test that
   installs one takes `runner::env_test_guard()`.
 - **Docs**: `docs/procedure_requested_spawn.md`, `docs/sdk_protocol_spec.md`,
-  `docs/resilience/bounded_operative.md`. Examples:
-  `sdk/rust/examples/spawn_bounded_worker.rs`, Java `E08_SpawnBoundedWorker`.
+  `docs/resilience/workflow_operative.md`. Examples:
+  `sdk/rust/examples/spawn_workflow_worker.rs`, Java `E08_SpawnWorkflowWorker`.
 
 ## Operative-to-operative messaging (`operative-to-operative-messaging`)
 
@@ -572,7 +642,7 @@
   a `channel: nil` clause (the old code would have exited on a call to nil).
 - **GOTCHA — an unbound stream is NOT uniformly an error.** `confirm_forward/2`
   maps `{:error, :no_stream}` to `:ok` for a durable target (effectively-once
-  or durable bounded: it is already journaled, the bind delivers it) and to
+  or durable workflow: it is already journaled, the bind delivers it) and to
   `{:error, :not_ready}` otherwise. Returning `not_ready` for a durable target
   would make the sender retry a payload the receiver already has, which for an
   effectively-once target appends at a NEW offset = a genuine duplicate.
@@ -641,11 +711,11 @@
 ## Runner entry point + dynamic type set (`sdk-runner-entrypoint-redesign`)
 
 - **Runner-as-handle, no builder, mirrored across both SDKs.**
-  `Flezha.createRunner(ns).defineUnbounded(A.class).run()` (Java) /
-  `Flezha::create_runner(ns)?.define_unbounded::<A>()?.run()?` (Rust) —
+  `Flezha.createRunner(ns).defineStream(A.class).run()` (Java) /
+  `Flezha::create_runner(ns)?.define_stream::<A>()?.run()?` (Rust) —
   Beam's `Pipeline.create()` shape: ONE concrete `FlezhaRunner` carries
   declaration and lifecycle. `RunnerBuilder`, `newRunner`/`new_runner`, both
-  Java registry facades (`UnboundedOperativeRegistry`/`BoundedOperativeRegistry`),
+  Java registry facades (`StreamOperativeRegistry`/`WorkflowOperativeRegistry`),
   freeze/unfreeze, and the zero-op refusal are GONE (no shim). Zero-operative
   start is LEGAL (the controller always accepted an empty factory list).
   `run()` = `start()` + `awaitTermination()` — never independent. Naming rules
@@ -663,7 +733,7 @@
 - **Removal authority is SDK-side and race-free by construction.** Rust: a
   `RunnerMessage::RemoveFactory` handled on the coordinator loop (serialized
   with `AddOperative`; seam = `RunnerNode::remove_factory`, unit-tested in
-  `fast.rs`); `BoundedInstance` carries `factory_id` for the scan. Java (no
+  `fast.rs`); `WorkflowInstance` carries `factory_id` for the scan. Java (no
   single coordinator thread): `FlezhaImpl.removeType` = unregister-first →
   scan live instances → re-register + throw `OperativeTypeInUseException`
   (extends ISE) on a live hit — the transient window is benign (a failing
@@ -672,12 +742,12 @@
   `NotDefined` / IAE naming the id.
 - **Rust: ONE public error.** `FlezhaError` (thiserror; `InvalidNamespace,
   AlreadyRunning, ConnectFailed, InvalidTopology(#[from] TopologyBuildError),
-  InvalidBounded(#[from] BuildBoundedError), DuplicateFactoryId, NotDefined,
+  InvalidWorkflow(#[from] BuildWorkflowError), DuplicateFactoryId, NotDefined,
   OperativeTypeInUse, NotStarted, RunnerUnavailable`) — the whole chain
   compiles under one `?`. `RunnerStartError`/`RunnerError` deleted. The
   per-issue topology enum was renamed `BuildTopologyError` → `TopologyIssue`
   (the per-kind `TopologyBuildError` keeps its documented name).
-  `operatives()` returns `Result<HashMap<String, Arc<UnboundedInstance>>, _>`
+  `operatives()` returns `Result<HashMap<String, Arc<StreamInstance>>, _>`
   (the `Arc<RwLock<Arc<Mutex<..>>>>` view + `snapshot_as_operative_view` are
   gone); `id()`/`getId()` → `namespace()`/`getNamespace()`.
 - **The slot is claimed at `start()`, not create.** Any number of unstarted
@@ -704,10 +774,10 @@
   The fat-jar module shades its own stale `target/classes` FIRST — after an
   api change, `mvn clean` in sdk/java or the shaded jar keeps old classes.
 - **Known limitation (documented, not fixed)**: a parked/suspended durable
-  bounded instance is absent from the SDK instance registry, so removing its
+  workflow instance is absent from the SDK instance registry, so removing its
   type succeeds SDK-side and rehydration later fails placement. FleetManager's
   dropped-factory warning is the tripwire
-  (`docs/resilience/bounded_operative.md`).
+  (`docs/resilience/workflow_operative.md`).
 - **Lifecycle tests**: Rust `sdk/rust/tests/runner_lifecycle.rs` — still ONE
   sequential `#[test]`; the fake `UnixListener` controller now CAPTURES +
   DECODES frames (init JSON factory_ids, UpdateFactories protobuf);
@@ -724,7 +794,7 @@
 
 - **The Java SDK is now at functional parity with Rust.** Every capability an end
   user can author in Rust — the effectively-once tier, checkpoint ack, late-input
-  correction, the full bounded durable stack (proc-journal, staged outbox, durable
+  correction, the full workflow durable stack (proc-journal, staged outbox, durable
   loop + suspension, entity retry, loop rewind, branching), dynamic entity mode,
   and the determinism contract — is available in Java. The e2e matrix no longer
   branches per runtime; there is ONE contract.
@@ -766,17 +836,17 @@
   flakes under load. Use `EffectRecordCapture` (test helper) which captures what
   actually SHIPPED. `stagedChanges()` IS safe — the flusher deliberately never
   drains it (an open interval is not flushable).
-- **GOTCHA — a bounded unit test's `WireWriter` IS the controller.** It must (a)
+- **GOTCHA — a workflow unit test's `WireWriter` IS the controller.** It must (a)
   `AckRegistry.complete()` every `ProcCommit`/`IterCommit` (the driver BLOCKS at each
   barrier; a silent fake controller hangs it for 30 s), (b) FLUSH each commit's
   outbox onto the secondary stream (output is staged now — the SDK no longer ships
   it, so every emit assertion depends on this), and (c) count its completion latch
-  only on `BOUNDED_COMPLETED`.
+  only on `WORKFLOW_COMPLETED`.
 - **GOTCHA — classify beyond-window at ADMISSION, not dispatch.** Dispatch is async
   on the pool, so folding the event-time high-water there means a burst classifies
   against a mark that has not moved yet.
 - **A park is SUSPENSION, not completion**: `IterPark` exits WITHOUT
-  `BoundedCompleted`. Emitting one would tear the instance down and lose the
+  `WorkflowCompleted`. Emitting one would tear the instance down and lose the
   iteration it parked at.
 - **Branching needed NO planner change**: BFS numbering already makes completion
   order topological and `planCompensation` already reverses it. What it DID need is
@@ -796,7 +866,7 @@
   forward and `compensating` builds). Java now stamps both, `StageRecord` gained
   `iter` (Rust parity), and `resumeIter/1` is the single definition of "the
   iteration a resumed instance runs next". Pinned by
-  `BoundedKindTest.perInputLoopCommitsPerIterationThenParks`, which asserts
+  `WorkflowKindTest.perInputLoopCommitsPerIterationThenParks`, which asserts
   `opCommitIters() == [0, 1]` — it fails with `[0, 0]` against the old code.
   Symptom to recognise: a `PER_INPUT`/`CHAINED` Java operative emits fine on its
   first turn and is silent forever after, with `flz state journal` showing an
@@ -851,14 +921,14 @@
   discards), `builder.rs` (`checkpoint_ack_without_the_tier_is_refused`),
   `wal_writer_outbox_test.exs` (nil-offset record flushes outputs, holds the
   watermark), `class_registry_test.exs`, `add_operative_response_test.exs`,
-  `watchdog_test.exs` (with a positive control — the pre-existing bounded
+  `watchdog_test.exs` (with a positive control — the pre-existing workflow
   catastrophic refute was vacuous: `:catastrophic_dataflow_timeout_ms` defaults to
   60 s and no test armed it), e2e `effectively_once_checkpoint_e2e_test.exs`
   (fixture `checkpoint_store`, `commit:` closes the interval).
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — `EffectRecord` encoder + `c.checkpointAck()`
   + `ctx.checkpoint()` + the staged interval.
 
-## Unbounded late-input correction (`unbounded-late-input-correction`)
+## Stream late-input correction (`stream-late-input-correction`)
 
 - **THERE IS NO SPLICE.** `Overwatch.journal_input/2` appends to the input log
   BEFORE forwarding (`overwatch.ex:634`); the SDK extracts event time later, in
@@ -933,7 +1003,7 @@
   Telemetry `[:flezha, :correction, :completed|:refused]`, `[:flezha, :state, :wal_rewind]`.
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — `c.correctionWindow(ms)` + event-time slice.
 
-## Bounded loop rewind (`bounded-loop-rewind`)
+## Workflow loop rewind (`workflow-loop-rewind`)
 
 - **Marker, not truncation**: `rewound` = proc-journal entry type 6, target =
   the entry's own `iter` field (empty payload), appended with
@@ -970,9 +1040,9 @@
   → `rehydrate/1`. No `parked` entry, no wake timer.
 - **Coverage guard** (`rewind_guard/2`, controller-side, before anything durable
   changes): an unwound proc that staged plugin output MUST declare `compensate`.
-  The keyed-channel half of the original spec is **unreachable for bounded** —
-  `BoundedEntitySink` stages `(channel, bytes)` and `outbox_items` drops the
-  key, so a bounded emit carries no `flz.key`. Facts ride the EXISTING
+  The keyed-channel half of the original spec is **unreachable for workflow** —
+  `WorkflowEntitySink` stages `(channel, bytes)` and `outbox_items` drops the
+  key, so a workflow emit carries no `flz.key`. Facts ride the EXISTING
   `AddOperativeResponse.metadata` map (`"compensable_procs" => "0,2"`, no proto
   change) → `ClassRegistry.put_compensable_ops/2` (same sidecar shape as the
   tier). The guard asks `ProcJournal.staged_channels_above/2` — the journal owns
@@ -980,7 +1050,7 @@
 - **`Overwatch.decode_declarations/1`** is the ONE place the `AddOperative`
   response is decoded → `%{effectively_once:, compensable_procs:}`. A new
   SDK-declared capability is added there and nowhere else. (`compensable_procs`
-  `nil` = the class declared nothing — Java/unbounded/run-sugar — vs `[]` = a
+  `nil` = the class declared nothing — Java/stream/run-sugar — vs `[]` = a
   chain with nothing compensable; a rewind treats those differently.)
 - **GOTCHA — a rewind does NOT replay inputs.** `ControlChannel` truncates the
   inbox to the consumed offset at every iteration commit
@@ -992,39 +1062,39 @@
   by truncating the state WAL. A hookless proc leaves its State change in place.
 - **CLI**: `flz operative rewind <instance> --to-iteration N`
   (`CliManager.operative_rewind/3`); `flz state journal` renders `rewound`.
-  Telemetry `[:flezha, :bounded, :rewind]`.
+  Telemetry `[:flezha, :workflow, :rewind]`.
 - **Tests**: `proc_journal_test.exs` (epoch bump, fold purge, outbox no longer
   owed, `rewind_undo` drain, re-run + second rewind),
   `overwatch_suspension_test.exs` (rewind + both refusals),
-  `cli_manager_rewind_test.exs`, `bounded_driver_scenarios` (reverse-order undo,
+  `cli_manager_rewind_test.exs`, `workflow_driver_scenarios` (reverse-order undo,
   hookless drain), e2e "loop rewind (rust/uds)" in
-  `bounded_crash_resume_e2e_test.exs` (fixture `chat_rewind_bounded` —
+  `workflow_crash_resume_e2e_test.exs` (fixture `chat_rewind_workflow` —
   `ChatReplyUndoable` keeps its undo handle in State and retracts in reverse;
   asserts `flz.epoch` 0 before / 1 after).
-- **Split**: unbounded late-input correction + `flz operative replay` were carved
-  out into the `unbounded-late-input-correction` openspec — its design needs four
+- **Split**: stream late-input correction + `flz operative replay` were carved
+  out into the `stream-late-input-correction` openspec — its design needs four
   primitives that do NOT exist (event-time→seq map, non-destructive WAL rebase,
   event-time-ordered replay splice, an actually-enforced input-log `hold_window`;
   `realign_epoch/4` wipes the WAL and every snapshot — it cannot be "scoped").
 
-## Bounded entity retry (`bounded-entity-retry`)
+## Workflow entity retry (`workflow-entity-retry`)
 
-- **Ladder (SDK, Rust)**: `run_entity_retrying` in `bounded/driver.rs` wraps the
+- **Ladder (SDK, Rust)**: `run_entity_retrying` in `workflow/driver.rs` wraps the
   pool task — only the FAILING entity re-runs its batch (siblings stay buffered
   at the barrier), fresh sink per attempt (a failed attempt's staged output is
   dropped, never double-emitted). Backoff REUSES `dispatcher::retry_backoff`
-  (the unbounded DLQ ladder's helper: `base × 2^(n-1)` ±50% jitter, capped
+  (the stream DLQ ladder's helper: `base × 2^(n-1)` ±50% jitter, capped
   `RETRY_BACKOFF_MAX_MS` = 5 s) and the wait is cancellation-aware
   (`sleep_cancellable`, ≤200 ms poll → a stop/`max_duration` ends it at once).
   Retries count into `entity::park::RETRIES_TOTAL` (same `data_heartbeat`
-  metric as unbounded).
-- **Policy**: `BoundedOperative::retry_attempts()` (default 3 TOTAL attempts) +
+  metric as stream).
+- **Policy**: `WorkflowOperative::retry_attempts()` (default 3 TOTAL attempts) +
   `retry_backoff()` (default 500 ms base) → resolved onto the SHARED
-  `channel::RetryPolicy` in `BoundedSpec.retry`; `0` collapses to one attempt
+  `channel::RetryPolicy` in `WorkflowSpec.retry`; `0` collapses to one attempt
   (fail-fast); `attempts > 1` with a zero backoff is rejected at registration
-  (`BuildBoundedError::ZeroRetryBackoff`).
-- **Classification**: `BoundedError { message, non_retryable }` (was a tuple
-  struct); `BoundedError::non_retryable/1`, `From<String>/<&str>` stay
+  (`BuildWorkflowError::ZeroRetryBackoff`).
+- **Classification**: `WorkflowError { message, non_retryable }` (was a tuple
+  struct); `WorkflowError::non_retryable/1`, `From<String>/<&str>` stay
   retryable. A procedure body classifies with the EXISTING
   `ProcedureError::non_retryable` — `run_collecting` carries `is_non_retryable()`
   through to the ladder. A panic stays retryable (author never classified it).
@@ -1033,22 +1103,22 @@
   (attempt counter resets). `run`-sugar has no entities → terminal on first Err.
   A stage error while the cancel token is set now reports `cancelled` (was
   `error`) — `run_stage_parallel`'s caller folds it through `abnormal_status`.
-- **Tests**: `bounded_driver_scenarios` (recover / exhaust+compensate /
+- **Tests**: `workflow_driver_scenarios` (recover / exhaust+compensate /
   non-retryable / attempts=0 / stop-interrupts-backoff / run-sugar counted
   once), `retry_policy_is_resolved_and_validated`, e2e "entity retry (rust/uds)"
-  in `test/system/bounded_crash_resume_e2e_test.exs` (fixture `retry_bounded`,
-  failures armed via `FLEZHA_BOUNDED_RETRY_FAILS`). GOTCHA: an e2e/unit scenario
+  in `test/system/workflow_crash_resume_e2e_test.exs` (fixture `retry_workflow`,
+  failures armed via `FLEZHA_WORKFLOW_RETRY_FAILS`). GOTCHA: an e2e/unit scenario
   must never busy-wait on the main test thread — it is the fake controller and
   must stay in `drain` to ack `ProcCommit`, else the driver's 30 s ack timeout
   fires (cancel from a helper thread instead).
-- **Docs**: `docs/resilience/bounded_operative.md` "Entity retry: the rung
-  before the abort" (incl. the bounded-vs-unbounded escape-ladder split),
-  `docs/resilience/data_durability.md` DLQ "Bounded equivalence".
+- **Docs**: `docs/resilience/workflow_operative.md` "Entity retry: the rung
+  before the abort" (incl. the workflow-vs-stream escape-ladder split),
+  `docs/resilience/data_durability.md` DLQ "Workflow equivalence".
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — `retryAttempts()` / `retryBackoff()` ladder.
 
-## Bounded durable loop + suspension (`bounded-durable-loop-and-suspension`)
+## Workflow durable loop + suspension (`workflow-durable-loop-and-suspension`)
 
-- **Loop (SDK)**: `BoundedOperative::loop_mode()` → `Once` (default, the
+- **Loop (SDK)**: `WorkflowOperative::loop_mode()` → `Once` (default, the
   old single pass, byte-identical) | `PerInput` (one iteration per inbox
   item — chat turns) | `Chained` (seeded by the previous iteration's
   terminal handoff). `drive_chain` is now an iteration loop around the
@@ -1077,12 +1147,12 @@
   `Registry.@reserved_files` keeps `inbox.wal` out of `scan_dir` (it
   would otherwise decode as an Entity named "inbox").
 - **Append-before-forward**: `Overwatch.journal_input/2` — the ONE durable
-  ingest seam (eff-once InputLog clause + durable-bounded ProcInbox clause).
+  ingest seam (eff-once InputLog clause + durable-workflow ProcInbox clause).
   Stamps `flz.inbox_offset`; a duplicate (`flz.msg_id`, else payload hash,
   inside the undelivered window) returns nil = absorbed; a failed append
   is NOT forwarded.
 - **Suspension**: SDK ships `IterPark` (tag 32) and exits WITHOUT
-  `BoundedCompleted` (`RunOutcome::Parked`). Controller journals
+  `WorkflowCompleted` (`RunOutcome::Parked`). Controller journals
   `parked(N[, deadline])` (type 4, ACTIVE) THEN
   `Overwatch.suspend/3` → `RemOperative` + `operative_set_runner(nil)`;
   Overwatch + registry entry STAY (zero *runner* resources).
@@ -1097,12 +1167,12 @@
   (`flz.wake=timer`), so racing wake sources collapse to one rehydration
   by construction. Boot: `suspended_on_disk?` (journal's last entry is
   `parked` AND nothing undelivered) → enter suspended, never bind.
-- **Knobs**: `FLEZHA_BOUNDED_PARK_IDLE_MS` (SDK-side, default 5 s
-  hysteresis), `BoundedOperative::wake_after()`.
+- **Knobs**: `FLEZHA_WORKFLOW_PARK_IDLE_MS` (SDK-side, default 5 s
+  hysteresis), `WorkflowOperative::wake_after()`.
 - **CLI**: `flz state inbox <instance>`; `flz state journal` renders
   `iter_committed`/`parked`.
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — `loopMode()` / `wakeAfter()` / `IterCommit` / `IterPark`.
-- **Tests**: `bounded_driver_scenarios` (loop turns → iteration commits +
+- **Tests**: `workflow_driver_scenarios` (loop turns → iteration commits +
   park + resume-at-iteration; journal-backed KeepProgress/AllOrNothing),
   `loop_authoring_is_validated`, `test/flezha/state/proc_inbox_test.exs`,
   `proc_journal_test.exs` (iter/park entries),
@@ -1110,19 +1180,19 @@
   boundary snapshot, IterPark→suspend),
   `test/flezha/operative/overwatch_suspension_test.exs` (park/rehydrate/
   timer/redeploy).
-- **Docs**: `docs/resilience/bounded_operative.md` "Durable loop and
+- **Docs**: `docs/resilience/workflow_operative.md` "Durable loop and
   suspension", `docs/resilience/data_durability.md` "the durable inbox",
   `docs/sdk_protocol_spec.md` `IterCommit`/`IterCommitResponse`/`IterPark`
   + `flz.inbox_offset`.
-- **Unblocks**: `operative-rewind-and-correction` → `bounded-loop-rewind`.
+- **Unblocks**: `operative-rewind-and-correction` → `workflow-loop-rewind`.
 
-## Bounded staged commit + transactional outbox (`bounded-staged-commit-and-outbox`)
+## Workflow staged commit + transactional outbox (`workflow-staged-commit-and-outbox`)
 
 - **Staging (SDK)**: inside a structured proc `ctx.emit` NEVER hits the wire —
-  `BoundedEntitySink` (per entity, per stage) buffers `(channel, bytes)`
+  `WorkflowEntitySink` (per entity, per stage) buffers `(channel, bytes)`
   when `ChainCtx.journaling()` (durable class AND coordinator installed);
   otherwise (opted-out / transport-less) it forwards direct, as before.
-  `BoundedCollectSink::emit_plugin_bytes(channel, bytes)` carries the
+  `WorkflowCollectSink::emit_plugin_bytes(channel, bytes)` carries the
   channel name (`descriptor.name`, same as the eff-once effect record).
   A failing stage drops its staged bytes with the `Err` — nothing leaks.
   `run`-sugar keeps the direct path (no barrier to stage against).
@@ -1138,7 +1208,7 @@
   effect-record format-id, so no collision), 0 until rewind bumps it.
 - **Flush**: `ProcJournal.flush_pending/2` is the ONE path — post-ack
   (`ControlChannel`, retry timer on `:no_overwatch`) and restore re-drive
-  (`Overwatch.replay_persisted_entities`, gated `kind == :bounded`, passes
+  (`Overwatch.replay_persisted_entities`, gated `kind == :workflow`, passes
   its own pid). Journal state (not memory) decides what is owed →
   idempotent by construction. Delivery = `GenServer.cast(overwatch,
   {:io_out, payload, stamps})`, same fan-out as `WalWriter`'s eff-once
@@ -1149,7 +1219,7 @@
 - **Ordering gotcha**: the undo record is journaled BEFORE the
   `compensation_done` marker — a crash between them re-runs the (idempotent)
   hook rather than losing its undo output.
-- **Tests**: `bounded_driver_scenarios` (staging, leak-nothing, run-sugar
+- **Tests**: `workflow_driver_scenarios` (staging, leak-nothing, run-sugar
   direct, `UndoSaga` comp staging; the fake controller now FLUSHES each
   commit's outbox on ack, which is why the old output assertions still
   hold), `test/flezha/state/proc_journal_test.exs` (crash-before-flush
@@ -1158,10 +1228,10 @@
   the marker append lands after the `:io_out` cast).
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — staged commit + `ProcCommit` outbox.
 - **Docs**: `docs/sdk_protocol_spec.md` `ProcCommit`/`ProcCommitResponse`,
-  `docs/resilience/data_durability.md` "Bounded operatives: staged commit
+  `docs/resilience/data_durability.md` "Workflow operatives: staged commit
   and the transactional outbox".
 
-## Bounded proc-journal (`bounded-proc-journal`)
+## Workflow proc-journal (`workflow-proc-journal`)
 
 - **Store**: `lib/flezha/state/proc_journal.ex` — per-instance `proc.journal` at
   `<state_root>/<inst>/<inst>/proc.journal` on the WalWriter+FsyncBatcher
@@ -1174,9 +1244,9 @@
   journal writer skips the outbox dedup side-file so it never registers a
   phantom Entity.
 - **Handshake**: SDK→controller `ProcCommit` (proto tag 28) at every proc
-  barrier of a durable structured bounded; ControlChannel appends +
+  barrier of a durable structured workflow; ControlChannel appends +
   fsyncs, replies `ProcCommitResponse` (tag 29) under the SAME reference_id
-  (journal-then-ack); driver blocks ≤30 s (`bounded/driver.rs
+  (journal-then-ack); driver blocks ≤30 s (`workflow/driver.rs
   commit_proc_boundary`), failure/timeout → terminal error + compensation.
   Telemetry `[:flezha, :state, :proc_commit]`.
 - **Resume**: journal state rides `RestoreInitState.proc_journal`
@@ -1186,7 +1256,7 @@
   accumulate during forward progress). Skipped procs still roll back on a
   later abnormal exit (folded from intent markers).
 - **Codec**: `.codec()` (postcard/serde) or `.codec_with(enc, dec)` on
-  inter-proc channels; REQUIRED for durable structured bounded classes —
+  inter-proc channels; REQUIRED for durable structured workflow classes —
   registration fails `MissingInterProcCodec` naming the channel. Opted-out
   classes skip journal + handshake entirely (re-run-from-top preserved).
 - **CLI**: `flz state journal <operative/instance>`
@@ -1195,11 +1265,11 @@
   resume-skip. The e2e no longer branches per runtime.
 - **Tests**: `test/flezha/state/proc_journal_test.exs`,
   `test/flezha/runner/control_channel_proc_commit_test.exs`, Rust
-  `bounded_driver_scenarios` (gating + resume-skip + codec validation),
-  e2e `test/system/bounded_crash_resume_e2e_test.exs` (proc A NOT re-run on
+  `workflow_driver_scenarios` (gating + resume-skip + codec validation),
+  e2e `test/system/workflow_crash_resume_e2e_test.exs` (proc A NOT re-run on
   rust; opted-out `optout_commit_block` re-runs from top).
 - **Docs**: `docs/sdk_protocol_spec.md` `ProcCommit`/`ProcCommitResponse`,
-  `docs/resilience/bounded_operative.md` "Durability" section.
+  `docs/resilience/workflow_operative.md` "Durability" section.
 
 ## Dead-letter queue (`platform-dead-letter-queue`)
 
@@ -1240,7 +1310,7 @@
   events (TelemetryBridge mapping + audit-sink allow-list).
 - **Observability**: `dlq_parked_total`, `dlq_dropped_by_retention_total`,
   `dlq_usage` metrics bridge to the bus (source `:flezha_dlq`).
-- **Bounded profile**: out of scope — AbortAll + saga compensation is the
+- **Workflow profile**: out of scope — AbortAll + saga compensation is the
   equivalent escape; nothing is written to the DLQ store.
 - **Tests**: `sdk/rust/tests/dlq_retry.rs`, Java `DlqRetryTest`,
   `test/flezha/dlq/store_test.exs`, WalWriter park cases in
@@ -1317,7 +1387,7 @@
   `flz.key`. User `flz.*` metadata rejected (`ReservedMetadataKey`).
   Non-keyed channels byte-identical (guarded by test + criterion bench).
   `flz.seq` is NOT an exact append-dedup handle until
-  `effectively-once-output` journals it; bounded operatives reject keyed
+  `effectively-once-output` journals it; workflow operatives reject keyed
   emits (their plugin wire carries no metadata). Controller untouched —
   stamps pass through `StreamChannel` → `Overwatch` `:on_output`.
 - **Downstream (not this change)**: flezha_market migration to the ctx
@@ -1337,7 +1407,7 @@
 - **SDK emit** = the producing half. Rust adds `ProcedureDispatcher::snapshot_frame`
   (the type-erased MIRROR of `restore_state`, NOT a third `build_state_fns` fn
   pointer — reuses the same postcard machinery restore decodes); Java's
-  `CompactEntityHandler` shares the `EntityLocator.findUnbounded` scan with
+  `CompactEntityHandler` shares the `EntityLocator.findStream` scan with
   `RestoreInitStateHandler` (cx-refine extraction) + Kryo. Both
   DRAIN pending changes first (`flush_one` / new `EntityFlusher.flushEntity/1`)
   so state == shipped WAL, then serialize under the state lock and ship
@@ -1912,7 +1982,7 @@
   implemented in `cli/src/audit.rs` and
   `Flezha.Service.CliManager.audit_log_render_*`.
 - **Shutdown integration**: `Flezha.Shutdown.Coordinator.do_finalise`
-  calls `Writer.close/0` BEFORE the `FsyncBatcher` flush, bounded
+  calls `Writer.close/0` BEFORE the `FsyncBatcher` flush, workflow
   by a 5 s timeout. Post-close signals are dropped with a per-sink
   counter increment.
 - **Runtime config knobs**: `:audit_log` map (see

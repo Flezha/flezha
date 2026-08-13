@@ -5,7 +5,7 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   elapses, the Operative's timer wheel fires it, and `on_timer`'s Change shows
   up in the Entity's state — with no further input to carry it.
 
-  That last clause is the whole point. Every other unbounded path in the system
+  That last clause is the whole point. Every other stream path in the system
   is input-driven; this is the only one where a Procedure acts because time
   passed. A test that sent a second input to "wake" it would prove nothing.
 

@@ -6,7 +6,7 @@ defmodule Flezha.State.GapRecoveryTest do
 
   Drives the production signature end-to-end: WAL frozen at
   `last_persisted_seq`, a gap arrives, the resync rewinds the SDK, and
-  the WAL resumes — a bounded, self-healed blip with telemetry.
+  the WAL resumes — a workflow, self-healed blip with telemetry.
   """
 
   use ExUnit.Case, async: false

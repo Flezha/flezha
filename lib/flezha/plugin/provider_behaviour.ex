@@ -167,7 +167,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
         {:unhealthy, Keyword.fetch!(reasons, :dead)}
 
       true ->
-        bounded_verdict(verdict_fun, pid, Keyword.get(reasons, :budget_ms, @probe_timeout_ms))
+        workflow_verdict(verdict_fun, pid, Keyword.get(reasons, :budget_ms, @probe_timeout_ms))
     end
   end
 
@@ -182,7 +182,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     Enum.find_value(keys, &Map.get(opts, &1))
   end
 
-  defp bounded_verdict(verdict_fun, pid, budget_ms) do
+  defp workflow_verdict(verdict_fun, pid, budget_ms) do
     parent = self()
     ref = make_ref()
 

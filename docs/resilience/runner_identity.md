@@ -84,7 +84,7 @@ ordered unbind-old **before** bind-new, in two halves:
   `{:error, :stale_writer}` instead of realigning or appending. Marks are
   pruned after 10 minutes on the periodic runner-cleanup tick.
 
-Refusals are loud but episode-bounded: the first refusal per (Entity,
+Refusals are loud but episode-workflow: the first refusal per (Entity,
 superseded session) emits `[:flezha, :state, :stale_writer_refused]`
 (bridged onto the observability bus); the rest only increment
 `stale_writer_refused` (per-channel liveness counter) /
@@ -112,7 +112,7 @@ by the **owning connection**, not by an SDK-echoed token:
   the session token.
 - **QUIC** — the NIF driver tags each `{:flz_stream, …, conn_id}` with the
   connection's id (the control stream's nif id); `Flezha.Transport.Server` keeps
-  a bounded `conn_id → session` map (a `Process.monitor` on the ControlChannel
+  a workflow `conn_id → session` map (a `Process.monitor` on the ControlChannel
   drops the entry when the session ends), replacing the `quic_current_ce_id`
   last-writer-wins scalar that misrouted on concurrent connect.
 

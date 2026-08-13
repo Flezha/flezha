@@ -16,20 +16,20 @@ import org.junit.jupiter.api.Test;
 /**
  * Mirror of the Rust SDK's {@code OldApiNotImportable} test (per
  * {@code operative-mvp-rust/boundeds.md §9.5}). Asserts that user code importing
- * any of the deleted legacy types (e.g. {@code UnboundedOperativeHandler}) fails
+ * any of the deleted legacy types (e.g. {@code StreamOperativeHandler}) fails
  * to compile after the cutover.
  */
 class OldApiNotImportableTest {
 
     @Test
-    @DisplayName("user code importing UnboundedOperativeHandler fails to compile")
-    void importingUnboundedOperativeHandlerFails() {
+    @DisplayName("user code importing StreamOperativeHandler fails to compile")
+    void importingStreamOperativeHandlerFails() {
         String src =
                 """
                 package nowhere;
-                import com.flezha.sdk.UnboundedOperativeHandler;
+                import com.flezha.sdk.StreamOperativeHandler;
                 public final class UsesLegacyApi {
-                    void foo(UnboundedOperativeHandler<?, ?, ?> h) { }
+                    void foo(StreamOperativeHandler<?, ?, ?> h) { }
                 }
                 """;
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
@@ -45,9 +45,9 @@ class OldApiNotImportableTest {
                 .call();
 
         assertThat(ok)
-                .as("import com.flezha.sdk.UnboundedOperativeHandler should not resolve after operative-mvp-java")
+                .as("import com.flezha.sdk.StreamOperativeHandler should not resolve after operative-mvp-java")
                 .isFalse();
-        assertThat(err.toString()).contains("com.flezha.sdk.UnboundedOperativeHandler");
+        assertThat(err.toString()).contains("com.flezha.sdk.StreamOperativeHandler");
     }
 
     @Test
@@ -97,17 +97,17 @@ class OldApiNotImportableTest {
         assertDoesNotCompile(
                 """
                 package nowhere;
-                import com.flezha.sdk.operative.UnboundedOperativeRegistry;
+                import com.flezha.sdk.operative.StreamOperativeRegistry;
                 public final class UsesLegacyApi {
-                    void foo() { UnboundedOperativeRegistry.factoryIds(); }
+                    void foo() { StreamOperativeRegistry.factoryIds(); }
                 }
                 """);
         assertDoesNotCompile(
                 """
                 package nowhere;
-                import com.flezha.sdk.bounded.BoundedOperativeRegistry;
+                import com.flezha.sdk.workflow.WorkflowOperativeRegistry;
                 public final class UsesLegacyApi {
-                    void foo() { BoundedOperativeRegistry.factoryIds(); }
+                    void foo() { WorkflowOperativeRegistry.factoryIds(); }
                 }
                 """);
     }

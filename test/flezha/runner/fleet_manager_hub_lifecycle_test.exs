@@ -4,7 +4,7 @@ defmodule Flezha.Runner.FleetManagerHubLifecycleTest do
   (durably-suspended) operatives. `runner_cleanup` reaps the dead runner ref but
   must NOT `stop_hub` while operatives remain — otherwise a parked fleet whose
   sole runner restarts loses every Overwatch and its durable registry, breaking
-  the "still addressable" promise (bounded_operative.md). When the registry is
+  the "still addressable" promise (workflow_operative.md). When the registry is
   empty, cleanup still tears the hub down.
 
   Drives `FleetManager` directly with a synthetic `:inactive` runner against a

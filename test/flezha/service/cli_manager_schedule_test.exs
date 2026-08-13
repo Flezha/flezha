@@ -44,7 +44,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
           "ai_digest",
           "prod",
           ~s({"mode": "daily"}),
-          "bounded"
+          "workflow"
         )
       end)
 
@@ -153,7 +153,7 @@ defmodule Flezha.Service.CliManagerScheduleTest do
     stub(FleetManager, :runners_for_factory, fn _, _ -> ["runner-1"] end)
     capture_io(fn -> CliManager.schedule_add("digest", "0 8 * * *", "Etc/UTC", "ai_digest") end)
 
-    expect(OperativeManager, :start_bounded, fn "default", id, factory_id, _init, _opts ->
+    expect(OperativeManager, :start_workflow, fn "default", id, factory_id, _init, _opts ->
       assert id =~ ~r/^digest@manual-\d+$/
       assert factory_id == "ai_digest"
       {:ok, %{operative_id: id}}

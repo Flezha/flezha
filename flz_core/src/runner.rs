@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crossbeam::channel::Sender;
 
-use crate::operative::instance::UnboundedInstance;
+use crate::operative::instance::StreamInstance;
 
 /// Process-global handle to the coordinator's message channel, installed
 /// once by `fast::start`. Lets components outside the coordinator (e.g.
@@ -57,10 +57,10 @@ pub fn coordinator_installed() -> bool {
     RECONNECT_TRIGGER.get().is_some()
 }
 
-/// Route a bounded's output to the coordinator (written on a secondary stream
+/// Route a workflow's output to the coordinator (written on a secondary stream
 /// tagged with `operative_id`; the controller fans it out to the unit's plugins).
-pub fn emit_bounded_output(operative_id: String, payload: Vec<u8>) {
-    coordinator_send(RunnerMessage::EmitBoundedOutput {
+pub fn emit_workflow_output(operative_id: String, payload: Vec<u8>) {
+    coordinator_send(RunnerMessage::EmitWorkflowOutput {
         operative_id,
         payload,
     });
@@ -69,7 +69,7 @@ pub fn emit_bounded_output(operative_id: String, payload: Vec<u8>) {
 /// Route an SDK-initiated control request to the coordinator (written verbatim
 /// under the caller's `reference_id`, so the controller's reply — an
 /// `ProcCommitResponse` / `IterCommitResponse` carrying the same id — wakes the
-/// waiter the caller registered). Carries the bounded driver's proc-boundary
+/// waiter the caller registered). Carries the workflow driver's proc-boundary
 /// commit, iteration commit, and park frames.
 pub fn emit_control_request(reference_id: String, command: crate::pb::command_request::Command) {
     coordinator_send(RunnerMessage::EmitControlRequest {
@@ -78,16 +78,16 @@ pub fn emit_control_request(reference_id: String, command: crate::pb::command_re
     });
 }
 
-/// Route a bounded's completion to the coordinator (written as a `BoundedCompleted`
+/// Route a workflow's completion to the coordinator (written as a `WorkflowCompleted`
 /// control frame so the controller deregisters the unit). `result` is the
 /// terminal result/error payload from `ctx.complete` (empty when none was set).
-pub fn emit_bounded_completed(
+pub fn emit_workflow_completed(
     operative_id: String,
     status: String,
     error: String,
     result: Vec<u8>,
 ) {
-    coordinator_send(RunnerMessage::EmitBoundedCompleted {
+    coordinator_send(RunnerMessage::EmitWorkflowCompleted {
         operative_id,
         status,
         error,
@@ -132,22 +132,22 @@ pub enum RunnerMessage {
     /// secondary stream. Routed through the coordinator for the same
     /// single-threaded-write reason as `SendControlKeepalive`.
     SendDataHeartbeat,
-    /// A bounded emitted output; the coordinator writes it on a secondary stream
+    /// A workflow emitted output; the coordinator writes it on a secondary stream
     /// tagged with `operative_id` for the controller to fan out to the unit's plugins.
-    EmitBoundedOutput {
+    EmitWorkflowOutput {
         operative_id: String,
         payload: Vec<u8>,
     },
-    /// A bounded reached an exit trigger; the coordinator writes a
-    /// `BoundedCompleted` frame so the controller deregisters the unit.
+    /// A workflow reached an exit trigger; the coordinator writes a
+    /// `WorkflowCompleted` frame so the controller deregisters the unit.
     /// `result` carries the terminal result/error payload (empty when none).
-    EmitBoundedCompleted {
+    EmitWorkflowCompleted {
         operative_id: String,
         status: String,
         error: String,
         result: Vec<u8>,
     },
-    /// An SDK-initiated control request (the bounded driver's `ProcCommit` /
+    /// An SDK-initiated control request (the workflow driver's `ProcCommit` /
     /// `IterCommit` / `IterPark`, or a post-start define/remove's
     /// `UpdateFactories`); the coordinator writes it verbatim under the
     /// caller's `reference_id`, which the controller echoes on its reply to wake
@@ -157,7 +157,7 @@ pub enum RunnerMessage {
         reference_id: String,
         command: crate::pb::command_request::Command,
     },
-    /// `FlezhaRunner::remove_unbounded` / `remove_bounded` on a started
+    /// `FlezhaRunner::remove_stream` / `remove_workflow` on a started
     /// runner. Handled on the coordinator loop so the live-instance check is
     /// serialized with `AddOperative` handling by construction: either the
     /// add lands first and the removal refuses, or the removal lands first
@@ -165,7 +165,7 @@ pub enum RunnerMessage {
     /// [`ClientResponseMessage::RemoveFactoryResult`].
     RemoveFactory {
         factory_id: String,
-        bounded: bool,
+        workflow: bool,
     },
 }
 
@@ -177,9 +177,9 @@ pub enum RunnerStatus {
 
 pub enum ClientResponseMessage {
     RunnerIdConfirmation,
-    /// Snapshot of live UnboundedOperative instances, returned to
+    /// Snapshot of live StreamOperative instances, returned to
     /// `FlezhaRunner::operatives()` callers.
-    ReturnOperatives(HashMap<String, Arc<UnboundedInstance>>),
+    ReturnOperatives(HashMap<String, Arc<StreamInstance>>),
     /// Reply to [`RunnerMessage::RemoveFactory`]: `Ok(())` = the class was
     /// unregistered; `Err(n)` = `n` live instances exist and the type stays
     /// defined.

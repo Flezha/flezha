@@ -1,6 +1,6 @@
 defmodule FlezhaTest.Runner.FleetManagerGhostTest do
   @moduledoc """
-  Regression coverage for the unbounded ghost-runner accumulation that
+  Regression coverage for the stream ghost-runner accumulation that
   appeared under rapid repeated runner kill/restart (chaos soak): a dead
   runner whose control channel closed was never removed from the active
   set when the disconnect handler's operative-reroute side effects raised

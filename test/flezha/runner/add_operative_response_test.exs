@@ -83,7 +83,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
     assert declarations(%{"leaf_procs" => "1,2"}).leaf_procs == [1, 2]
     # A linear chain's single terminal is the degenerate case.
     assert declarations(%{"leaf_procs" => "1"}).leaf_procs == [1]
-    # Absent = run-sugar / unbounded / an SDK that does not declare it — the
+    # Absent = run-sugar / stream / an SDK that does not declare it — the
     # controller cannot derive completion and must not guess.
     assert declarations(%{"other" => "x"}).leaf_procs == nil
   end

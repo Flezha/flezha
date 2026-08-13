@@ -15,9 +15,9 @@ defmodule Flezha.State.Retention do
   every pass ("compact and forget").
 
   On the same tick it also runs the **finished-job** sweep: a finished
-  bounded operative's retained state + completion record
+  workflow operative's retained state + completion record
   (`Flezha.State.Completion`) is removed once `finished_at +
-  bounded_completed_retention_hours` is in the past.
+  workflow_completed_retention_hours` is in the past.
 
   Holds its own sweep timer (`:time_travel_retention_check_interval_ms`,
   default 60 000 ms) after `convergence-self-healing` §4
@@ -89,7 +89,7 @@ defmodule Flezha.State.Retention do
         if ClassRegistry.capable?(operative_class, :time_travel?) do
           PersistenceResolver.retention_hours(operative_class)
         else
-          # No time-travel for this kind (a durable :bounded operative): keep
+          # No time-travel for this kind (a durable :workflow operative): keep
           # only the latest snapshot, never retain history for point-in-time.
           0
         end
@@ -98,8 +98,8 @@ defmodule Flezha.State.Retention do
     end)
   end
 
-  # Finished-job retention: reclaim a finished bounded operative's retained
-  # state + completion record once `finished_at + bounded_completed_retention_hours`
+  # Finished-job retention: reclaim a finished workflow operative's retained
+  # state + completion record once `finished_at + workflow_completed_retention_hours`
   # is in the past. A finished operative is fully torn down (no live writer), so
   # the whole class dir is safe to remove wholesale.
   defp sweep_completed() do
@@ -109,7 +109,7 @@ defmodule Flezha.State.Retention do
     Enum.each(class_dirs(root), fn operative_class ->
       with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
              Completion.read(operative_class),
-           window = PersistenceResolver.bounded_completed_retention_hours(operative_class),
+           window = PersistenceResolver.workflow_completed_retention_hours(operative_class),
            true <- finished_at + window * 3600 < now do
         _ = File.rm_rf(Path.join(root, operative_class))
       else

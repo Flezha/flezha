@@ -149,10 +149,10 @@ class FlezhaProcessorTest {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        JavaCompiler.CompilationTask bounded =
+        JavaCompiler.CompilationTask workflow =
                 compiler.getTask(null, fm, diags, List.of("-proc:only"), null, List.of(new StringSource(fqn, code)));
-        bounded.setProcessors(List.of(new FlezhaProcessor()));
-        boolean ok = bounded.call();
+        workflow.setProcessors(List.of(new FlezhaProcessor()));
+        boolean ok = workflow.call();
         assertThat(ok).as("compilation should fail on a malformed annotation").isFalse();
         return diags.getDiagnostics().stream()
                 .filter(d -> d.getKind() == Diagnostic.Kind.ERROR)

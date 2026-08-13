@@ -60,9 +60,9 @@ defmodule Flezha.State.TimeTravelTest do
              TimeTravel.query(pid, {:seq, 50})
   end
 
-  test "rejects a query for a bounded (non-time-travel) class" do
-    class = "tt_bounded_" <> uniq()
-    :ok = Flezha.Operative.ClassRegistry.put(class, :bounded)
+  test "rejects a query for a workflow (non-time-travel) class" do
+    class = "tt_workflow_" <> uniq()
+    :ok = Flezha.Operative.ClassRegistry.put(class, :workflow)
     on_exit(fn -> Flezha.Operative.ClassRegistry.delete(class) end)
 
     assert {:error, %{kind: :unsupported_for_kind}} =

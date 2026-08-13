@@ -88,7 +88,7 @@ public class ProcedureException extends Exception {
 
     /**
      * Thrown when an {@code emit} or {@code emitWithMeta} call references a
-     * channel name that was not declared on this UnboundedOperative's topology.
+     * channel name that was not declared on this StreamOperative's topology.
      */
     public static final class UnknownChannel extends ProcedureException {
         private final String channel;
@@ -137,7 +137,7 @@ public class ProcedureException extends Exception {
     /**
      * Thrown when an Entity already holds {@code maxTimersPerEntity()} pending
      * timers and registers one more. A per-Entity timer set is author-controlled
-     * memory multiplied by an unbounded Entity count; the cap is what keeps a
+     * memory multiplied by a stream Entity count; the cap is what keeps a
      * runaway registration a refusal rather than an OOM.
      */
     public static final class TimerCapExceeded extends ProcedureException {
@@ -149,14 +149,14 @@ public class ProcedureException extends Exception {
     }
 
     /**
-     * Thrown where timers do not apply — a bounded operative's stage (it has its
+     * Thrown where timers do not apply — a workflow operative's stage (it has its
      * own wake model) and a {@code compensate} hook. The refusal is structural:
      * those contexts carry no timer session at all.
      */
     public static final class TimersUnavailable extends ProcedureException {
 
         public TimersUnavailable() {
-            super("timers are not available in this context; only an unbounded operative's `run` /"
+            super("timers are not available in this context; only a stream operative's `run` /"
                     + " `onTimer` may register them");
         }
     }

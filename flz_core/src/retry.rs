@@ -1,10 +1,10 @@
 //! The retry ladder both operative profiles climb before their terminal escape.
 //!
 //! An invocation that fails retryably is re-run on its [`RetryPolicy`] — the
-//! input channel's for an unbounded procedure (`dead-letter-queue`),
-//! the class's for a bounded entity (`bounded-entity-retry`) — and only an
-//! exhausted (or author-classified non-retryable) failure escapes: the unbounded
-//! profile parks the payload to the dead-letter queue and advances, the bounded
+//! input channel's for a stream procedure (`dead-letter-queue`),
+//! the class's for a workflow entity (`workflow-entity-retry`) — and only an
+//! exhausted (or author-classified non-retryable) failure escapes: the stream
+//! profile parks the payload to the dead-letter queue and advances, the workflow
 //! profile fails the procedure into AbortAll + saga.
 //!
 //! What is shared is the **policy**: how long attempt `n` waits, that the wait
@@ -22,7 +22,7 @@ use crate::park::RETRIES_TOTAL;
 
 /// Record a failed-but-retryable attempt — count it (the `data_heartbeat`
 /// retry metric) and log it — and return how long to wait before the next one.
-/// `label` names the failing work (procedure, or bounded instance/procedure/
+/// `label` names the failing work (procedure, or workflow instance/procedure/
 /// entity).
 pub fn note_failed_attempt(
     label: &str,

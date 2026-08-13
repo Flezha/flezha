@@ -119,5 +119,5 @@ See also `docs/process_hub_architecture.md` (ProcessHub-in-flezha: two-level
 distribution, hooks, HotSwap, lifecycle scenarios), and
 `docs/resilience/graceful_shutdown.md` § "Migration consent" — every
 redistribution asks the Overwatch for consent first, so a mid-critical-work
-operative (correction in flight, durable bounded off an iteration boundary,
+operative (correction in flight, durable workflow off an iteration boundary,
 unflushed effectively-once outbox) defers its migration to a safe barrier.

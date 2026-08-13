@@ -94,7 +94,7 @@ impl ConsumerEdge {
     /// the consumer's input type (the transform-free case pays nothing).
     ///
     /// Contained: the closure is author code evaluated on the routing thread
-    /// (and, on a bounded chain, on the driver thread), so an unwind becomes an
+    /// (and, on a workflow chain, on the driver thread), so an unwind becomes an
     /// error the caller's ladder handles rather than a dead thread.
     pub fn transform_value(
         &self,
@@ -117,7 +117,7 @@ impl ConsumerEdge {
 }
 
 /// Run one edge closure, turning an unwind into the error its caller's
-/// retry→DLQ ladder (unbounded) or abort-and-compensate path (bounded) reads.
+/// retry→DLQ ladder (stream) or abort-and-compensate path (workflow) reads.
 fn contain<R>(what: &str, f: impl FnOnce() -> R) -> Result<R, String> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
         .map_err(|panic| format!("edge {what} panicked: {}", crate::util::format_panic(panic)))
@@ -222,15 +222,15 @@ pub struct ChannelDescriptor {
     pub retry: RetryPolicy,
     /// Symmetric byte codec for inter-procedure payloads, declared via
     /// `.codec()` / `.codec_with(...)`. Required on every inter-proc channel of
-    /// a durable structured bounded class so the stage handoff batch can be
+    /// a durable structured workflow class so the stage handoff batch can be
     /// journaled at the proc-commit barrier and re-seeded on crash-resume
-    /// (`bounded-proc-journal`). `None` elsewhere.
+    /// (`workflow-proc-journal`). `None` elsewhere.
     pub codec: Option<ChannelCodec>,
 }
 
 impl ChannelDescriptor {
     /// The consuming procedures, edge closures stripped — what the graph-shape
-    /// walks and the bounded DAG builder need.
+    /// walks and the workflow DAG builder need.
     pub fn consumer_ids(&self) -> impl Iterator<Item = ProcedureId> + '_ {
         self.consumers.iter().map(|e| e.procedure)
     }
@@ -267,7 +267,7 @@ pub type EntityBuilder =
 
 pub struct BuildEntityArgs<'a> {
     pub topology: Arc<crate::operative::topology::OperativeTopology>,
-    pub instance: std::sync::Weak<crate::operative::instance::UnboundedInstance>,
+    pub instance: std::sync::Weak<crate::operative::instance::StreamInstance>,
     /// The operative INSTANCE id (controller-assigned operative_id). The on-disk WAL
     /// is keyed by this, not the factory id, so two operatives of the same factory
     /// keep independent per-Entity state instead of colliding on one WAL.
@@ -278,7 +278,7 @@ pub struct BuildEntityArgs<'a> {
     /// procedures; `0..entity_keys().len()` for static-mode procedures.
     pub entity_index: usize,
     /// Frozen-at-instance-start persistence flag, propagated from the
-    /// `UnboundedInstance`. The `EntitySlot` carries this on its
+    /// `StreamInstance`. The `EntitySlot` carries this on its
     /// `persistence_enabled` field; the per-process flusher inspects it
     /// at drain time to decide whether to call `send_frame`.
     pub persistence_enabled: bool,

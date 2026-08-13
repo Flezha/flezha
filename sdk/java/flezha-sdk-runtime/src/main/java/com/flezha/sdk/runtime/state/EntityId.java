@@ -8,7 +8,7 @@ import javax.annotation.Nonnull;
 
 /**
  * Wire identity of an Entity. Combines the operative-instance id (= controller's
- * {@code operative_id}), the Procedure's name within the UnboundedOperative, and the entity
+ * {@code operative_id}), the Procedure's name within the StreamOperative, and the entity
  * key (empty string for single-entity mode).
  *
  * <p>The controller keys each per-Entity WAL by this identity and echoes it

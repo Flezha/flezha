@@ -494,7 +494,7 @@ defmodule Mix.Tasks.Bench do
   # so each dispatched input produces one `:on_output` event.
   defp expected_responses(:dynamic, total_messages), do: total_messages
 
-  # Per-shape wire input. The dynamic shape prefixes a bounded key
+  # Per-shape wire input. The dynamic shape prefixes a workflow key
   # (`k0`..`k7`) so a steady burst exercises 8 dynamic Entities per operative
   # without tripping the soft cap; other shapes are key-agnostic.
   defp input_for_shape(:dynamic, operative_id, msg_num) do

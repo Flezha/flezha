@@ -6,7 +6,7 @@ defmodule Flezha.Operative.ClassRegistry do
   `Flezha.State.Retention`, `Flezha.State.Watchdog`,
   `Flezha.Runner.StreamChannel`, and `Flezha.State.TimeTravel` are keyed
   purely by `operative_class` strings and never carry a `kind`. This registry
-  is the seam that lets those paths gate the unbounded-only capabilities
+  is the seam that lets those paths gate the stream-only capabilities
   (`time_travel?`, `dynamic_entities?`, `output_stall_watch?`) through
   `Flezha.Operative.Kind.capable?/2`.
 
@@ -18,11 +18,11 @@ defmodule Flezha.Operative.ClassRegistry do
        `<state_root>/<operative_class>/` — so a process-less `Retention` sweep
        (which walks class dirs on disk with no live Overwatch) still resolves
        the kind after teardown, while finished-job state is retained;
-    3. the default `:unbounded` — every class was unbounded before bounded
+    3. the default `:stream` — every class was stream before workflow
        operatives gained durable state, so an unknown class keeps the full
-       unbounded behaviour and gating is only ever *subtractive*.
+       stream behaviour and gating is only ever *subtractive*.
 
-  The sidecar is written only for non-`:unbounded` kinds, so an unbounded
+  The sidecar is written only for non-`:stream` kinds, so a stream
   operative's on-disk layout is unchanged. Like `Flezha.State.Completion`, the
   `kind` file is inert to every `Flezha.State.Registry` scanner.
   """
@@ -33,7 +33,7 @@ defmodule Flezha.Operative.ClassRegistry do
   require Logger
 
   @table :flezha_operative_class_registry
-  @default_kind :unbounded
+  @default_kind :stream
   @sidecar "kind"
   @tier_sidecar "effectively_once"
   @compensable_sidecar "compensable_procs"
@@ -78,7 +78,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
   @doc """
   Record `operative_class`'s `kind`: an in-memory ETS entry plus, for a
-  non-`:unbounded` kind, a durable sidecar so a process-less `Retention`
+  non-`:stream` kind, a durable sidecar so a process-less `Retention`
   sweep resolves the kind after teardown. Called at `Overwatch` bind.
   """
   @spec put(binary(), atom()) :: :ok
@@ -176,7 +176,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
   @doc """
   Record which of `operative_class`'s tree procedures are **leaves** — the set
-  whose commits mean the operative is done (`bounded-branching`). Same ETS +
+  whose commits mean the operative is done (`workflow-branching`). Same ETS +
   durable-sidecar shape as the compensable set, and read on the same evidence:
   the journal answers "complete?" with no runner to ask.
   """
@@ -196,7 +196,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
   @doc """
   Resolve `operative_class`'s leaf procedures: ETS → durable sidecar → `nil`
-  (the class declared nothing — run-sugar, unbounded, or an SDK without the
+  (the class declared nothing — run-sugar, stream, or an SDK without the
   declaration).
   """
   @spec leaf_procs(binary()) :: [non_neg_integer()] | nil
@@ -249,7 +249,7 @@ defmodule Flezha.Operative.ClassRegistry do
 
   # ---------- reads ----------
 
-  @doc "Resolve `operative_class`'s kind: ETS → durable sidecar → `:unbounded`."
+  @doc "Resolve `operative_class`'s kind: ETS → durable sidecar → `:stream`."
   @spec get(binary()) :: atom()
   def get(operative_class) when is_binary(operative_class) do
     case ets_lookup(operative_class) do

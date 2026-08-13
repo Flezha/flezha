@@ -41,10 +41,10 @@ The wire protocol SHALL define an SDK→controller control message `UpdateFactor
 
 ### Requirement: Dropped factory with live controller-known operatives logs a warning
 
-When a full-set replacement drops a factory that still has controller-known operatives bound to that runner (e.g. a parked/suspended durable bounded instance that is absent from the SDK's live-instance registry and therefore escaped the SDK-side removal check), FleetManager SHALL log a warning naming the namespace, runner, factory id, and the affected operatives. The warning is a tripwire, not enforcement — rehydration of such an operative will subsequently fail placement, and convergence surfaces it; a blocking policy is explicitly deferred.
+When a full-set replacement drops a factory that still has controller-known operatives bound to that runner (e.g. a parked/suspended durable workflow instance that is absent from the SDK's live-instance registry and therefore escaped the SDK-side removal check), FleetManager SHALL log a warning naming the namespace, runner, factory id, and the affected operatives. The warning is a tripwire, not enforcement — rehydration of such an operative will subsequently fail placement, and convergence surfaces it; a blocking policy is explicitly deferred.
 
 #### Scenario: Suspended-instance removal hole is surfaced
-- **GIVEN** a durable bounded operative of factory B is suspended (evicted from the SDK registry but registered on the controller as bound to runner R)
+- **GIVEN** a durable workflow operative of factory B is suspended (evicted from the SDK registry but registered on the controller as bound to runner R)
 - **WHEN** `UpdateFactories` from R drops factory B
 - **THEN** FleetManager SHALL apply the replacement AND log a warning naming B and the suspended operative
 

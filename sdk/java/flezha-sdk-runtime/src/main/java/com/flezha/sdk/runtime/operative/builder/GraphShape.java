@@ -9,7 +9,7 @@ import javax.annotation.Nonnull;
 /**
  * The shared graph-shape walk (`sdk-graph-authoring`): Kahn topological order
  * over the procedure nodes plus reachability from the entry. One walk serves
- * both the unbounded topology validation and the bounded execution-order
+ * both the unbounded topology validation and the workflow execution-order
  * construction — the shape rule is one rule, so its mechanism is one
  * mechanism. Mirrors the Rust SDK's {@code operative::builder::graph_order}.
  */
@@ -17,7 +17,7 @@ public final class GraphShape {
 
     /**
      * @param order node ids in Kahn topological order (FIFO — for a tree this
-     *     is exactly BFS from the root, so bounded {@code proc_idx} numbering
+     *     is exactly BFS from the root, so workflow {@code proc_idx} numbering
      *     stays stable)
      * @param pos node id → position in {@code order}; {@code -1} for a node on
      *     a cycle

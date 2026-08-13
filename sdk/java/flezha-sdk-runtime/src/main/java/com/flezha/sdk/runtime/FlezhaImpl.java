@@ -4,13 +4,13 @@ import com.flezha.sdk.OperativeTypeInUseException;
 import com.flezha.sdk.internal.RunnerHandle;
 import com.flezha.sdk.native_.FlzCore;
 import com.flezha.sdk.procedure.SpawnRequests;
-import com.flezha.sdk.runtime.bounded.BoundedOperativeClassRegistry;
 import com.flezha.sdk.runtime.config.FlezhaEnv;
 import com.flezha.sdk.runtime.core.ActivationDispatcher;
-import com.flezha.sdk.runtime.core.BoundedSession;
 import com.flezha.sdk.runtime.core.CoreSpawnRequester;
 import com.flezha.sdk.runtime.core.HostClassDeclaration;
-import com.flezha.sdk.runtime.operative.UnboundedOperativeClassRegistry;
+import com.flezha.sdk.runtime.core.WorkflowSession;
+import com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry;
+import com.flezha.sdk.runtime.workflow.WorkflowOperativeClassRegistry;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -103,7 +103,7 @@ public final class FlezhaImpl implements RunnerHandle {
         }
 
         ActivationDispatcher dispatcher =
-                new ActivationDispatcher(instanceId -> new FlzCoreBoundedSession(core, instanceId));
+                new ActivationDispatcher(instanceId -> new FlzCoreWorkflowSession(core, instanceId));
         SpawnRequests.install(new CoreSpawnRequester(core));
 
         FlezhaImpl handle = new FlezhaImpl(namespace, core, dispatcher, fetchers, declared, onTerminated);
@@ -143,8 +143,8 @@ public final class FlezhaImpl implements RunnerHandle {
             throw new OperativeTypeInUseException(
                     "factory '" + factoryId + "' has live operative instance(s); stop them before removing the type");
         }
-        if (UnboundedOperativeClassRegistry.unregisterClass(factoryId) == null) {
-            BoundedOperativeClassRegistry.unregisterClass(factoryId);
+        if (StreamOperativeClassRegistry.unregisterClass(factoryId) == null) {
+            WorkflowOperativeClassRegistry.unregisterClass(factoryId);
         }
         declared.remove(factoryId);
     }
@@ -160,8 +160,8 @@ public final class FlezhaImpl implements RunnerHandle {
             if (declared.contains(factoryId)) {
                 continue;
             }
-            if (UnboundedOperativeClassRegistry.getTopology(factoryId) == null
-                    && BoundedOperativeClassRegistry.getSpec(factoryId) == null) {
+            if (StreamOperativeClassRegistry.getTopology(factoryId) == null
+                    && WorkflowOperativeClassRegistry.getSpec(factoryId) == null) {
                 LOG.warn("syncFactories: `{}` is not in the class registries; skipping", factoryId);
                 continue;
             }
@@ -201,30 +201,30 @@ public final class FlezhaImpl implements RunnerHandle {
         terminationLatch.countDown();
     }
 
-    /** Production {@link BoundedSession}: the core's per-instance bounded ABI. */
-    private static final class FlzCoreBoundedSession implements BoundedSession {
+    /** Production {@link WorkflowSession}: the core's per-instance workflow ABI. */
+    private static final class FlzCoreWorkflowSession implements WorkflowSession {
         private final long core;
         private final String instanceId;
 
-        FlzCoreBoundedSession(long core, String instanceId) {
+        FlzCoreWorkflowSession(long core, String instanceId) {
             this.core = core;
             this.instanceId = instanceId;
         }
 
         @Override
         public void emit(@Nonnull byte[] payload) {
-            FlzCore.boundedEmit(core, instanceId, payload);
+            FlzCore.workflowEmit(core, instanceId, payload);
         }
 
         @Override
         @Nullable
         public byte[] recv(long timeoutMs) {
-            return FlzCore.boundedRecv(core, instanceId, timeoutMs);
+            return FlzCore.workflowRecv(core, instanceId, timeoutMs);
         }
 
         @Override
         public boolean cancelled() {
-            return FlzCore.boundedCancelled(core, instanceId);
+            return FlzCore.workflowCancelled(core, instanceId);
         }
     }
 }
