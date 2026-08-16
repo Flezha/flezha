@@ -304,7 +304,9 @@ Data is never lost and never silently dropped. See
 "is work flowing" — is the WAL sequence advancing — with an *is it being fed?* precondition, so
 an idle entity (no input, flat is correct) is distinguished from a stuck one (fed but not
 advancing). An empty intended set is never vacuously healthy: durable state on disk for an
-operative absent from the live intent degrades health. See
+operative absent from the live intent degrades health. The detectors are watched too: each
+periodic sensor stamps its own last completed pass, so one that wedges without crashing shows up
+as `sensor_stale` rather than silently switching detection off. See
 [`kernel.md`](kernel.md#health-and-liveness).
 
 ---
@@ -489,7 +491,7 @@ flowchart LR
         P6["dead-letter queue — retry, park durably, advance"]:::prot
         P7["baseline pull — CompactEntity instead of an empty push"]:::prot
         P8["single-owner write path — the WAL refuses a superseded session"]:::prot
-        P9["producing-liveness — fed AND advancing, plus intent-mismatch"]:::prot
+        P9["producing-liveness — fed AND advancing, plus intent-mismatch,<br/>a 503 on a wedged controller fabric, and stamped sensor freshness"]:::prot
         P10["late-input correction — rewind, replay in event-time order, bump the epoch"]:::prot
     end
     R1 --> P1

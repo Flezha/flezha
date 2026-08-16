@@ -622,7 +622,7 @@ flowchart LR
     P["<b>Probe</b><br/>what DOES run<br/>(live runners, operative state,<br/>plugin health) — pure observer"]:::ctrl
     D["<b>Diff</b><br/>pure comparison →<br/>unbound · misbound ·<br/>missing/extra/unhealthy plugins"]:::ctrl
     PL["<b>Planner</b><br/>ordered, backoff-filtered ops<br/>(≤ 20 per tick)"]:::ctrl
-    H["<b>Heal</b><br/>rebind_operative · start_plugin<br/>stop_plugin · restart_plugin<br/>evict_runner"]:::ctrl
+    H["<b>Heal</b><br/>rebind_operative · resync_runner<br/>start_plugin · stop_plugin · restart_plugin<br/>evict_runner"]:::ctrl
     S["<b>Snapshot</b><br/>the published health summary —<br/>read by /healthz and the CLI"]:::store
 
     I --> D
@@ -687,11 +687,13 @@ entities *is* that watermark, so any frozen entity still freezes the operative's
 the verdict names the entity actually responsible.
 
 The `State.Watchdog` sweeps every 10 s and runs four checks, of which the first two are the
-liveness pair:
+liveness pair. Each completed sweep stamps its own freshness into the convergence snapshot, so a
+watchdog that wedges without crashing surfaces as `sensor_stale` instead of silently switching
+detection off:
 
 | Sweep | Fires when | Action |
 | --- | --- | --- |
-| Output staleness | fed, but the sequence has not advanced for 60 s | `[:flezha, :state, :output_stall]` → resync, and the convergence loop ticks immediately |
+| Output staleness | fed, but the sequence has not advanced for 60 s | `[:flezha, :state, :output_stall]` and nothing else — the convergence loop ticks on it and applies the resync→rebind ladder. The sweep is a sensor; it invokes no remedy |
 | Catastrophic dataflow | produced output before, but has received **nothing** for 60 s | `[:flezha, :state, :catastrophic_dataflow_stop]` + a critical log — a dead feed |
 | Compaction trigger | the WAL is past its size or age floor | `CompactEntity` |
 | Compaction timeout | a requested snapshot has not arrived in 30 s | resync |
@@ -702,9 +704,10 @@ between iterations.
 
 ### Stall localization
 
-When a stream does go silent, a separate, detection-only classifier answers *which layer
-wedged*. It compares two consecutive snapshots of driver, channel, and operative counters and
-returns the **deepest** wedged layer, because a wedge downstream explains every symptom above it.
+When a stream does go silent, a separate classifier answers *which layer wedged*. It compares
+two consecutive snapshots of driver, channel, and operative counters and returns the **deepest**
+wedged layer, because a wedge downstream explains every symptom above it — then the pipeline
+heals that layer and the next tick surfaces whatever remains.
 
 ```mermaid
 flowchart TB
@@ -725,8 +728,10 @@ flowchart TB
 
 Each verdict carries an *is it being fed?* precondition of its own, so a quiet system does not
 read as a wedged one. It emits `[:flezha, :data_plane, :stall_localized]` on a **change** of
-verdict and drives no healing — it exists so an operator does not have to guess. Signals, the
-`/proc` fallback, and the counter set:
+verdict, and every verdict has exactly one consumer: a heal primitive where a BEAM-level remedy
+exists (wedged runner → evict, wedged connection → resync, wedged operative → rebind), and a
+`/healthz` 503 where only a process restart does. Signals, the scope table, the `/proc` fallback,
+and the counter set:
 [`../resilience/transport_liveness.md`](../resilience/transport_liveness.md).
 
 ### The `/healthz` contract
@@ -735,13 +740,19 @@ verdict and drives no healing — it exists so an operator does not have to gues
 | --- | --- | --- |
 | `healthy` | 200 | every hub is normal, and every bound operative is producing |
 | `recovering` | 200 | a hub is recovering, the registry is restoring, operatives are rebinding within the grace, or a tick is late |
-| `degraded` | 200 | operatives are output-stalled, stuck, plugin-unhealthy, or an intent mismatch was detected |
-| `unhealthy` | **503** | **only** when the convergence loop itself has stopped ticking |
+| `degraded` | 200 | operatives are output-stalled, stuck or plugin-unhealthy, an intent mismatch was detected, a data-plane wedge the pipeline owns was localized, or a periodic sensor stopped completing passes |
+| `unhealthy` | **503** | **only** when the convergence loop itself has stopped ticking, or the controller's own NIF driver thread is wedged and has stayed wedged |
 
 The endpoint holds no state — it reads the published convergence snapshot and nothing else.
 
-**503 is reserved for one condition on purpose.** A kubelet restart cannot re-bind an
+**503 is reserved for what a restart genuinely fixes.** A kubelet restart cannot re-bind an
 runner-orphaned operative, cannot repair a wiped registry, and cannot un-stall a data plane
 that is legitimately stopped — restarting the pod for any of those destroys a working controller
-to fix nothing. The only thing a restart genuinely fixes is a wedged loop, so that is the only
-thing that returns 503. The listener is opt-in (`FLEZHA_HEALTHZ_ENABLED`, port 9569).
+to fix nothing. Two conditions qualify, and the test is the same for both: *nothing this
+controller can do reaches it*. A wedged convergence loop is one. A wedged **controller-fabric**
+NIF driver thread (`driver_loop_frozen` / `nif_queue_backing_up`, sustained for
+`FLEZHA_FABRIC_503_POLLS` classifier polls, default 3) is the other — every heal the pipeline
+could issue travels through that thread, so the orchestrator's restart is the only remedy left.
+A wedged *runner* is not in this set: the pipeline evicts and rebinds it, and it stays
+`200 degraded`. `FLEZHA_FABRIC_503_POLLS=0` disables the fabric 503 outright. The listener is
+opt-in (`FLEZHA_HEALTHZ_ENABLED`, port 9569).

@@ -58,10 +58,11 @@ is covered by the *data-plane* `output_stall` + the runner's
 
 ## Data-plane stall localization
 
-Detection-only instrumentation that localizes a silent data-plane stall to the
-exact layer that wedged. **It changes no data-plane behaviour and triggers no
-remediation** — it is pure observability layered over the existing
-`Flezha.Observability` foundation and the convergence Loop.
+Instrumentation that localizes a silent data-plane stall to the exact layer that
+wedged. **It changes no data-plane behaviour** — the counters are passive and
+the classifier is pure — but its verdict is not observability-only: every layer
+it can name has exactly one consumer, a convergence heal primitive or a
+`/healthz` status. See "The stall classifier" below for the scope table.
 
 ### Why this exists
 

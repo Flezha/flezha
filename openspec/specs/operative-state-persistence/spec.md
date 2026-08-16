@@ -600,23 +600,32 @@ The Controller SHALL NOT leave an Entity indefinitely rejecting Changes with `{:
 - **AND WHEN** a Change arrives with `seq <= last_persisted_seq`
 - **THEN** it SHALL be silently deduped with a `dedup_drops_total` increment as today
 
-### Requirement: Per-Entity output-staleness watchdog with self-heal
+### Requirement: Per-Entity output-staleness watchdog is emit-only
 
-The Controller SHALL track, per persistence-enabled Entity, the wall-clock time at which `last_persisted_seq` last advanced. A periodic sweep SHALL run on a configurable interval and, for any Entity whose data stream is attached (the SDK is live and applying inputs) but whose `last_persisted_seq` has not advanced within `output_stall_timeout_ms` (configurable per Operative class; default 60_000), SHALL emit `[:flezha, :state, :output_stall]` telemetry (measurements `%{stalled_ms: integer(), last_seq: integer()}`, Entity metadata) and SHALL trigger the `RestoreInitState` resync recovery for that Entity.
+The Controller SHALL track, per persistence-enabled Entity, the wall-clock time at which `last_persisted_seq` last advanced. A periodic sweep SHALL run on a configurable interval and, for any Entity whose data stream is attached (the SDK is live and applying inputs) but whose `last_persisted_seq` has not advanced within `output_stall_timeout_ms` (configurable per Operative class; default 60_000), SHALL emit `[:flezha, :state, :output_stall]` telemetry (measurements `%{stalled_ms: integer(), last_seq: integer()}`, Entity metadata).
 
-This bounds the duration of any silent persistence/output freeze to at most one `output_stall_timeout_ms` window. Because WAL persistence and output-plugin delivery share the per-Entity outbox, recovering WAL advance SHALL also resume output (e.g. Kafka production) for that Entity.
+The sweep SHALL do nothing else. It SHALL NOT invoke `Flezha.State.Recovery.resync/2` or any other remedy, and SHALL keep no dedup bookkeeping of its own: the remedy is the convergence Loop's output-stall ladder (`resync_runner`, escalating to `rebind_operative`, under one per-target backoff — see `convergence-self-healing`). A sensor that also heals is a second, uncoordinated actor for one signal.
+
+This bounds the duration of any silent persistence/output freeze to at most one `output_stall_timeout_ms` window plus one convergence tick. Because WAL persistence and output-plugin delivery share the per-Entity outbox, recovering WAL advance SHALL also resume output (e.g. Kafka production) for that Entity.
+
+Each completed sweep SHALL stamp its own freshness into `Flezha.Convergence.Snapshot`, so a sweep that wedges without crashing is visible on `/healthz` rather than silently disabling detection.
 
 #### Scenario: A live entity whose WAL stops advancing is detected and recovered
 - **GIVEN** a persistence-enabled Entity whose data stream is attached and whose SDK continues to apply inputs (in-memory state advancing)
 - **WHEN** `last_persisted_seq` does not advance for longer than `output_stall_timeout_ms`
 - **THEN** the staleness sweep SHALL emit `[:flezha, :state, :output_stall]` with the stalled duration and last seq
-- **AND** the Controller SHALL trigger resync recovery for the Entity
-- **AND** after recovery the Entity's WAL SHALL advance and its outbox SHALL drain
+- **AND** the sweep SHALL trigger no recovery of its own
+- **AND** the convergence Loop SHALL apply the output-stall ladder, after which the Entity's WAL SHALL advance and its outbox SHALL drain
 
 #### Scenario: An idle entity is not falsely flagged
 - **GIVEN** a persistence-enabled Entity whose SDK is applying no inputs (genuinely idle, no Changes to persist)
 - **WHEN** the staleness sweep runs
 - **THEN** the Entity SHALL NOT be flagged as stalled and SHALL NOT be resynced (no Change is expected, so a non-advancing `last_persisted_seq` is correct)
+
+#### Scenario: A wedged sweep is visible within one healthz poll
+- **GIVEN** the staleness sweep stops completing passes without the process crashing
+- **WHEN** `/healthz` is queried once the stamp exceeds 3× the sweep interval
+- **THEN** it SHALL report `200 degraded` with `reason: sensor_stale` naming the watchdog
 
 ### Requirement: Compaction handshake is bounded and cannot wedge persistence
 
@@ -689,9 +698,10 @@ per-record check to the owning session's append path.
 - **WHEN** runner A re-sends a Change at or below seq N (a retransmit, not a restart)
 - **THEN** the Change SHALL be deduped and the WAL SHALL NOT realign
 
-#### Scenario: Output-stall resync resolves the owning runner
-- **WHEN** the Watchdog detects an output stall and triggers a resync for an Entity
+#### Scenario: An operator-triggered resync resolves the owning runner
+- **WHEN** a caller with no runner id of its own triggers a resync for an Entity (`flz state rotate`)
 - **THEN** `Flezha.State.Recovery.resolve_runner/1` SHALL resolve the owning runner id from the durable registry entry's metadata tag, keyed by the operative's operative_class (its `:operative_class` opt, defaulting to its id)
+- **AND** an output stall SHALL NOT be such a caller: the Watchdog emits only, and the convergence Loop's output-stall ladder owns that remedy (see `convergence-self-healing`)
 
 #### Scenario: A superseded session's divergent frames do not realign
 - **GIVEN** an Entity whose stable identity was taken over by a new session while the old session's frames are still in flight

@@ -161,7 +161,7 @@ The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operativ
 
 - **GIVEN** the Loop completes ticks slowly under CPU pressure but is not dead
 - **WHEN** `/healthz` is queried
-- **THEN** the status is `200` (healthy/degraded), and `503` fires only when the loop has not ticked within the authoritative tick-age bound.
+- **THEN** the status is `200` (healthy/degraded); loop slowness alone reaches `503` only once the loop has not ticked within the authoritative tick-age bound.
 
 #### Scenario: a recovery timeout surfaces as 200 recovering, not 503
 

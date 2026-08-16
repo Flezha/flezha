@@ -1,5 +1,13 @@
 # Convergence Subsystem — Reliability & Performance Audit
 
+> **Status: a dated audit, not a living reference.** Code paths, arities and line
+> numbers below describe the subsystem as it stood when the audit ran; several
+> have since changed (`Diff.compute/3` now takes sensor signals,
+> `FleetManager.evict_runner/2` takes a proved-wedge waiver, and the heal surface
+> has six primitives). For current behaviour read
+> [`convergence_loop.md`](convergence_loop.md). This document is kept for its
+> findings and their rationale.
+
 ## Context
 
 The convergence loop (`lib/flezha/convergence/`) is the controller's single self-healing

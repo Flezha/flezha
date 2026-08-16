@@ -34,9 +34,9 @@ Intent → Probe → Diff → Planner → Heal
 | `Convergence.Loop` | GenServer driving the tick; owns misbound-streak state and event subscriptions |
 | `Convergence.Intent` | Reads the ProcessHub registry to know what operatives and plugins _should_ exist |
 | `Convergence.Probe` | Reads live reality (active runners, operative states, hub recovery); pure observer |
-| `Convergence.Diff` | Pure function comparing intent vs reality → delta (unbound/misbound operatives, missing/extra plugins) |
+| `Convergence.Diff` | Pure function comparing intent vs reality vs this tick's sensor signals → delta (unbound/misbound/stalled operatives, missing/extra plugins, data-plane wedge) |
 | `Convergence.Planner` | Turns the delta into an ordered, backoff-filtered list of procs (cap: 20/tick) |
-| `Convergence.Heal` | Executes procs via four idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `evict_runner` |
+| `Convergence.Heal` | Executes procs via six idempotent primitives: `rebind_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner` |
 | `Convergence.Backoff` | Per-`{primitive, target}` exponential cooldown: 5 s → 30 s → 60 s → 300 s |
 | `Convergence.Snapshot` | ETS table holding the latest published health summary; read by `/healthz`, CLI, and telemetry |
 | `Convergence.RecoveryGate` | Classifies which namespaces are ready for healing based on per-hub recovery state; `:timeout` hubs are included rather than blocking all healing |
@@ -114,14 +114,21 @@ Sweeps every 10 s. For each persistence-enabled entity it checks:
 
 1. **Output staleness** — still receiving changes but seq has not advanced within
    `output_stall_timeout_ms` (default 60 s) → emits
-   `[:flezha, :state, :output_stall]` and triggers `State.Recovery.resync/2`.
-   A genuinely idle entity (no changes arriving) is never flagged.
+   `[:flezha, :state, :output_stall]` and **nothing else**. The remedy is the
+   convergence loop's output-stall ladder; the Watchdog is a sensor. A
+   genuinely idle entity (no changes arriving) is never flagged.
 2. **Compaction timeout** — a `CompactEntity` whose snapshot has not arrived
    within `compaction_timeout_ms` (default 30 s) → emits
    `[:flezha, :state, :compaction_timeout]` and triggers resync.
 
 The convergence loop subscribes to `[:flezha, :state, :output_stall]` and fires
-an immediate tick on receipt.
+an immediate tick on the FIRST flag for an instance; a re-flag while the stall
+is already recorded only refreshes its timestamp, so a frozen entity re-flagged
+every sweep drives one tick, not one per sweep.
+
+Each completed sweep stamps `Convergence.Snapshot.observe_sensor/3`. A Watchdog
+that wedges without crashing stops stamping, and `/healthz` reports
+`sensor_stale` within one poll instead of silently losing detection.
 
 ---
 
@@ -286,7 +293,7 @@ idle-but-healthy operative is therefore never mistaken for a stall.
 
 | Module | Role |
 |--------|------|
-| `State.Watchdog` | Emits `[:flezha, :state, :output_stall]` telemetry consumed by the convergence loop |
+| `State.Watchdog` | Emits `[:flezha, :state, :output_stall]` telemetry consumed by the convergence loop, and stamps its own sweep freshness into `Convergence.Snapshot` |
 | `Observability.TelemetryBridge` | Lifts all `[:flezha, ...]` telemetry onto the observability bus for Prometheus/OTLP/ring-buffer sinks |
 | `Observability.Bus` | Fan-out dispatcher; a broken sink never crashes the producer |
 
@@ -297,11 +304,13 @@ idle-but-healthy operative is therefore never mistaken for a stall.
 `flz_nif/src/driver_stats.rs`, `lib/flezha/transport/liveness_counters.ex`,
 `lib/flezha/convergence/stall_classifier.ex`
 
-Detection-only instrumentation that localizes a silent `io_in`/output stall to
-the exact layer that wedged. The output-stall watchdog (§4) tells you a stream
-went silent; this tells you **why** — was it the operative, the channel, the NIF
-command queue, the driver thread, the socket, or the runner? It adds **zero**
-data-plane behaviour and no remediation. See
+Instrumentation that localizes a silent `io_in`/output stall to the exact layer
+that wedged. The output-stall watchdog (§4) tells you a stream went silent; this
+tells you **why** — was it the operative, the channel, the NIF command queue, the
+driver thread, the socket, or the runner? It adds **zero** data-plane behaviour,
+and its verdict has exactly one consumer per layer: a convergence heal primitive
+where a BEAM-level remedy exists, a `/healthz` 503 where only a process restart
+does. See
 [`transport_liveness.md`](transport_liveness.md) for the full signal set,
 verdict decision tree, and the zero-code `/proc` fallback. Production
 data-freeze incidents are tracked one-entry-per-occurrence in

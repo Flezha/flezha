@@ -356,12 +356,19 @@ on any control-socket transport-edge event" requirement.
 
 ### Requirement: Convergence eviction is idempotent and safe on an active runner
 
-`FleetManager.evict_runner/1` driven by the convergence Loop SHALL be a no-op when the target runner is currently `:active` (its connection is open), and SHALL be idempotent on an unknown id. The authoritative connect-handler path (`previous_runner_id` presented by the SDK itself) remains unconditional.
+`FleetManager.evict_runner/2` driven by the convergence Loop SHALL be a no-op when the target runner is currently `:active` (its connection is open), and SHALL be idempotent on an unknown id. The authoritative connect-handler path (`previous_runner_id` presented by the SDK itself) remains unconditional.
+
+The guard protects a runner that is merely *observed* healthy against a stale snapshot. It SHALL NOT protect one the data-plane classifier PROVED wedged: an eviction carrying `proved_wedged: true` SHALL proceed despite the open connection. A pool-wedged runner heartbeats and holds its socket while processing nothing, so its connection being open is exactly what would otherwise make it unevictable forever.
 
 #### Scenario: a reconnected runner survives a stale eviction proc
 - **GIVEN** the Diff snapshot queued `default_X` for eviction but `default_X` reconnected before the heal ran
-- **WHEN** `evict_runner(default_X)` executes
+- **WHEN** `evict_runner(default_X)` executes with no proved-wedge reason
 - **THEN** FleetManager observes `default_X` is `:active` and performs no eviction, leaving its operatives producing.
+
+#### Scenario: a classifier-proved wedged runner is evicted while connected
+- **GIVEN** `default_X` is in the live active set and heartbeating, and the classifier reported `runner_pool_wedged` for it
+- **WHEN** `evict_runner(default_X, proved_wedged: true)` executes
+- **THEN** FleetManager evicts it despite the open connection, and its operatives rebind onto a live runner.
 
 ### Requirement: Runner liveness is session liveness, derived from one signal
 

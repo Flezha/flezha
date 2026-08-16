@@ -476,7 +476,7 @@ longer ride on it:
 | `persistent_state?` | durable per-Entity WAL + restore (crash-resume, state introspection) | always | durable-by-default (per-class opt-out) |
 | `time_travel?` | point-in-time queries + retention beyond the latest snapshot (`flz state at`) | yes | no |
 | `dynamic_entities?` | lazy per-key Entity creation + destructive idle eviction | yes | no |
-| `output_stall_watch?` | per-Entity output-staleness watchdog → forced rebind | yes | no |
+| `output_stall_watch?` | per-Entity output-staleness watchdog → the convergence loop's output-stall ladder | yes | no |
 
 `persistent_state?` is resolved per kind **and class** (in `PersistenceResolver`,
 because workflow's durability is a per-class opt-out); the other three are pure
