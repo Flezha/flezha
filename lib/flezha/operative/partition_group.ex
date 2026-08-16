@@ -358,10 +358,26 @@ defmodule Flezha.Operative.PartitionGroup do
   defp live_plugins(%Table{} = extensions) do
     extensions
     |> Table.serializable_plugins()
-    |> Enum.map(fn {_plugin_id, plugin} -> plugin end)
+    |> Enum.map(fn {_plugin_id, plugin} -> declared_opts_only(plugin) end)
   end
 
   defp live_plugins(_), do: []
+
+  # A running plugin's opts carry what `init_provider/1` derived at start — the
+  # websocket source's live `subscription`, for one — and re-enabling with those
+  # is refused as unknown options. The provider already knows what it accepts,
+  # so ask it per key; the derived values are re-derived by the new member's own
+  # `init_provider`, which is the only thing that can produce them for it.
+  defp declared_opts_only(%Plugin{provider: provider} = plugin) when is_atom(provider) do
+    if Code.ensure_loaded?(provider) and function_exported?(provider, :validate_opts, 1) do
+      kept = Map.filter(plugin.opts, fn {key, value} -> provider.validate_opts(%{key => value}) == :ok end)
+      %Plugin{plugin | opts: kept}
+    else
+      plugin
+    end
+  end
+
+  defp declared_opts_only(plugin), do: plugin
 
   # Re-point one member's plugin set at another member. Same rule the group
   # start's JSON fan-out applies, from decoded structs instead.

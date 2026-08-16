@@ -86,17 +86,6 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     * `:seed` — builders to pre-register as already-running operatives
   """
   @spec install(keyword()) :: :ets.tid()
-  @doc """
-  Give one member a live extension table — the plugins a `flz plugin enable`
-  attached after the start, which never reach `builder.opts[:plugins]`.
-  """
-  def put_live_extensions(member_id, table) do
-    :persistent_term.put({:fake_live_extensions, member_id}, table)
-    ExUnit.Callbacks.on_exit(fn ->
-      :persistent_term.erase({:fake_live_extensions, member_id})
-    end)
-  end
-
   def install(opts \\ []) do
     registry = :ets.new(:fake_start_registry, [:public, :set])
     owner = self()
@@ -141,6 +130,18 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     stub(Quotas, :record_deallocation, fn _ns, _key, _n -> :ok end)
 
     registry
+  end
+
+  @doc ~S"""
+  Give one member a live extension table — the plugins a `flz plugin enable`
+  attached after the start, which never reach `builder.opts[:plugins]`.
+  """
+  def put_live_extensions(member_id, table) do
+    :persistent_term.put({:fake_live_extensions, member_id}, table)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      :persistent_term.erase({:fake_live_extensions, member_id})
+    end)
   end
 
   @doc "The builders started since the last drain, in start order."
