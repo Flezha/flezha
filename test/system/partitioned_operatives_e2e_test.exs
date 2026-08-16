@@ -262,5 +262,28 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
                "#{member} received #{key}, which belongs to another partition"
       end
     end
+
+    # --- the target rescales, and the upstream follows it with no operator help ---
+    #
+    # ETH-USD (key group 213) belongs to downstream p1 of two and to p2 of three.
+    # Before this was fixed the upstream kept routing by the old ranges: the
+    # payload queued behind a worker whose member no longer existed and never
+    # arrived.
+    assert {:ok, rescaled} = PartitionGroup.rescale(namespace, downstream, 3)
+    assert rescaled.forwards_refreshed >= 1
+
+    moved_key = "ETH-USD"
+    new_target = owner(downstream, 3, moved_key)
+    assert new_target != owner(downstream, 2, moved_key), "the fixture must move the key"
+
+    OperativeManager.send_io(owner(upstream, 3, moved_key), namespace, "#{moved_key}:after", %{
+      "input_type" => "2"
+    })
+
+    assert wait_until(fn ->
+             File.exists?(Registry.wal_path({new_target, @dynamic_procedure, moved_key}))
+           end),
+           "#{moved_key} never reached #{new_target}, its owner after the rescale — " <>
+             "the upstream forward is still routing by the old member set"
   end
 end

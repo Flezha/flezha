@@ -19,6 +19,8 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
+  alias Flezha.Service.HubManager
+  alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Flezha.State.InputLog
   alias Flezha.State.Registry
@@ -192,6 +194,110 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
       # A re-run sees the source gone: nothing is owed, nothing is clobbered.
       assert {:ok, %{entities_moved: 0}} = PartitionGroup.rescale(@namespace, @group, 2)
       assert File.read!(Registry.wal_path({"ohlc#p1", "candle", "ETH-USD"})) == "eth"
+    end
+  end
+
+  describe "dependents and concurrency" do
+    test "a rescale nudges exactly the forwards that target this group" do
+      parent = self()
+      overwatch = spawn_link(fn -> Process.sleep(:infinity) end)
+
+      stub(HubManager, :operative_plugins, fn _ns ->
+        [
+          {"upstream",
+           [
+             %Flezha.Plugin{
+               id: "fwd_here",
+               provider: Flezha.Plugin.Provider.OperativeForward,
+               opts: %{target_operative_id: @group}
+             },
+             %Flezha.Plugin{
+               id: "fwd_elsewhere",
+               provider: Flezha.Plugin.Provider.OperativeForward,
+               opts: %{target_operative_id: "other_group"}
+             },
+             %Flezha.Plugin{
+               id: "a_websocket",
+               provider: Flezha.Plugin.Provider.Websocket,
+               opts: %{}
+             }
+           ]}
+        ]
+      end)
+
+      stub(OperativeManager, :get_operative_pid, fn _ns, id ->
+        send(parent, {:resolved, id})
+        {:ok, overwatch}
+      end)
+
+      assert {:ok, %{forwards_refreshed: 1}} = PartitionGroup.rescale(@namespace, @group, 2)
+
+      assert_receive {:resolved, "upstream"}, 500
+      # Only the forward pointing at THIS group is nudged; the other forward and
+      # the unrelated provider are left alone.
+      refute_receive {:resolved, _}, 100
+    end
+
+    test "an unreachable dependent is logged, not fatal — the rescale already succeeded" do
+      stub(HubManager, :operative_plugins, fn _ns ->
+        [
+          {"gone",
+           [
+             %Flezha.Plugin{
+               id: "fwd",
+               provider: Flezha.Plugin.Provider.OperativeForward,
+               opts: %{target_operative_id: @group}
+             }
+           ]}
+        ]
+      end)
+
+      stub(OperativeManager, :get_operative_pid, fn _ns, _id ->
+        {:error, "operative not found"}
+      end)
+
+      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, %{forwards_refreshed: 0, to: 2}} =
+                   PartitionGroup.rescale(@namespace, @group, 2)
+        end)
+
+      assert log =~ "gone"
+      assert log =~ "unreachable"
+    end
+
+    test "a second rescale of the same group is refused while one is running", %{
+      registry: registry
+    } do
+      parent = self()
+
+      # A helper holds the lock, standing in for the concurrent command. The
+      # requester id must be the HELPER's pid: `:global` treats a re-request by
+      # the same requester as re-entrant and grants it.
+      holder =
+        spawn_link(fn ->
+          lock = {{:flezha_partition_rescale, @namespace, @group}, self()}
+          true = :global.set_lock(lock, [node()], 0)
+          send(parent, :locked)
+
+          receive do
+            :release -> :global.del_lock(lock, [node()])
+          end
+        end)
+
+      assert_receive :locked, 1_000
+
+      assert {:error, message} = PartitionGroup.rescale(@namespace, @group, 2)
+      assert message =~ "a rescale of #{@group} is already running"
+
+      # Nothing was touched: no source disabled, no member stopped or started.
+      assert drain(:sources_off) == []
+      assert FakeStartRegistry.started() == []
+      assert length(:ets.tab2list(registry)) == 3
+
+      send(holder, :release)
     end
   end
 

@@ -62,6 +62,33 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
     GenServer.call(server, {:enqueue, message, metadata}, :infinity)
   end
 
+  @doc """
+  Take one payload another worker is handing over, without ever parking the
+  caller.
+
+  The hand-over moves payloads between two workers of the SAME plugin, so total
+  buffered volume is unchanged and the `:queue_max` back-pressure this would
+  otherwise trip is measuring the wrong thing — worse, the caller is the
+  Overwatch re-running `init_provider/1`, which must not block. The queue may
+  sit briefly above `:queue_max`; the next delivery brings it back under.
+  """
+  @spec absorb(GenServer.server(), {binary(), map()}) :: :ok
+  def absorb(server, {message, metadata}) when is_map(metadata) do
+    GenServer.call(server, {:absorb, message, metadata}, 5_000)
+  end
+
+  @doc """
+  Hand back everything this worker still owes and stop it.
+
+  Called when the worker's target no longer exists — a partition group rescaled
+  out from under it — so the payloads can be re-routed to their new owner
+  instead of dying with the worker. The in-flight head is included: it is peeked
+  rather than popped, and its delivery is against an operative that is gone, so
+  a duplicate is the safe direction and the at-least-once contract absorbs it.
+  """
+  @spec drain(GenServer.server()) :: [{binary(), map()}]
+  def drain(server), do: GenServer.call(server, :drain, 5_000)
+
   @doc "Synchronous counters read (plugin health/stats contract)."
   @spec stats(GenServer.server()) :: map()
   def stats(server), do: GenServer.call(server, :stats, 5_000)
@@ -105,6 +132,25 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
     end
 
     ProviderBehaviour.park_or_reply(state, from)
+  end
+
+  def handle_call({:absorb, message, metadata}, _from, state) do
+    state = %{
+      state
+      | buffer: :queue.in({message, metadata}, state.buffer),
+        buffer_len: state.buffer_len + 1
+    }
+
+    Telemetry.queue_depth(state.buffer_len, state.labels)
+    {:reply, :ok, deliver_next(state)}
+  end
+
+  def handle_call(:drain, _from, state) do
+    # Parked enqueue callers are released first: the payloads they were waiting
+    # behind are leaving with this reply, and a caller left parked against a
+    # stopping worker would wait out its own `:infinity` call.
+    Enum.each(state.waiters, &GenServer.reply(&1, :ok))
+    {:stop, :normal, :queue.to_list(state.buffer), %{state | waiters: []}}
   end
 
   def handle_call(:stats, _from, state) do

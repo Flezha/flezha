@@ -443,6 +443,28 @@ defmodule Flezha.Service.HubManager do
     end)
   end
 
+  @doc """
+  Every operative's declared plugins, as `{operative_id, [%Flezha.Plugin{}]}`.
+
+  Read from the same durable registry dump `operative_rows/1` walks, so asking
+  "who depends on X" costs one registry read rather than an Overwatch
+  round-trip per operative. Declared, not live: a plugin the cspec records but
+  whose host has not re-subscribed it yet still appears, which is what a caller
+  looking for dependents wants.
+  """
+  @spec operative_plugins(binary() | atom()) :: [{binary(), [Flezha.Plugin.t()]}]
+  def operative_plugins(namespace) do
+    with_live_hub(namespace, [], fn hub_id ->
+      hub_id
+      |> live_registry_dump()
+      |> Enum.map(fn {operative_id, entry} ->
+        {cspec, _node_pids, _metadata} = normalize_registry_entry(entry)
+        {operative_id, Keyword.get(cspec_opts(cspec), :plugins, [])}
+      end)
+      |> Enum.reject(fn {_id, plugins} -> plugins == [] end)
+    end)
+  end
+
   # The declared operative from a registry entry's cspec start-args — the same
   # `{namespace, operative}` / `{namespace, runner, operative}` arg shapes
   # `alter_child_data/2` rewrites. The durable record of everything a start

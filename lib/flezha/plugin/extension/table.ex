@@ -1126,6 +1126,12 @@ defmodule Flezha.Plugin.Extension.Table do
     %{table | retries: Map.put(table.retries, plugin_id, count + 1)}
   end
 
+  defp restarted_phase(%Plugin{provider: provider}) do
+    if Code.ensure_loaded?(provider) and function_exported?(provider, :activate, 1),
+      do: :prepared,
+      else: :running
+  end
+
   defp attempt_restart(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin) do
     Logger.info("[Extension.Table] attempt_restart begin plugin_id=#{plugin_id}")
 
@@ -1135,8 +1141,11 @@ defmodule Flezha.Plugin.Extension.Table do
       {:ok, fresh_plugin, owned_pid} ->
         table = %{table | plugins: Map.put(table.plugins, plugin_id, fresh_plugin)}
         # Restart drops back to :prepared so a downstream re-activate fires
-        # the provider's `activate/1` to reopen upstream resources.
-        table = %{table | phases: Map.put(table.phases, plugin_id, :prepared)}
+        # the provider's `activate/1` to reopen upstream resources — but a
+        # provider that exports none has nothing to reopen, and leaving it
+        # :prepared would have `plugin_health/3` report it healthy without ever
+        # probing until the next bind. Same rule `activate_plugin/3` applies.
+        table = %{table | phases: Map.put(table.phases, plugin_id, restarted_phase(plugin))}
         table = track_owned_pid(table, plugin_id, owned_pid)
 
         subs = fresh_plugin.subscriptions

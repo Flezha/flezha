@@ -584,6 +584,134 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
       wait_until(fn -> Enum.all?(workers, &(not Process.alive?(&1))) end)
     end
 
+    test "a re-resolve re-points the routes and hands the vanished member's queue over" do
+      base = uniq("grp")
+      source = uniq("src")
+
+      # Three members, but only p0 and p1 answer: p2's target is unreachable, so
+      # its worker accumulates exactly the way it does while a rescale has the
+      # group stopped.
+      three = group(base, 3)
+      reachable = Map.new(Enum.take(three, 2), &{&1.id, labelled_target(&1.id)})
+
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
+        if id == base, do: three, else: []
+      end)
+
+      resolve_to(reachable)
+
+      {:ok, opts, _worker} = prepare(source, base, %{retry_backoff_ms: 10_000})
+      assert length(opts.routes) == 3
+      [_p0, _p1, p2] = opts.routes
+
+      # ETH-USD (key group 213) belongs to p2 of three. Its worker cannot
+      # deliver, so the payload sits in the queue.
+      emit(opts, "eth-1", %{"flz.key" => "ETH-USD"})
+      emit(opts, "eth-2", %{"flz.key" => "ETH-USD"})
+      wait_until(fn -> ForwardWorker.stats(p2.pid).buffer_len == 2 end)
+
+      # The group rescales to two: p2 is gone and 213 now belongs to p1.
+      two = group(base, 2)
+      new_owner = Flezha.Partition.member_id(base, 1)
+
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
+        if id == base, do: two, else: []
+      end)
+
+      assert {:ok, fresh, _pid} = OperativeForward.init_provider(opts)
+      assert Enum.map(fresh.routes, & &1.id) == Enum.map(two, & &1.id)
+
+      # The orphaned worker is gone, and what it owed arrived at the new owner —
+      # in the order it was queued, before anything emitted afterwards.
+      wait_until(fn -> not Process.alive?(p2.pid) end)
+      assert_receive {:member_got, ^new_owner, "eth-1"}, 1_000
+      assert_receive {:member_got, ^new_owner, "eth-2"}, 1_000
+
+      emit(fresh, "eth-3", %{"flz.key" => "ETH-USD"})
+      assert_receive {:member_got, ^new_owner, "eth-3"}, 1_000
+    end
+
+    test "a surviving member keeps its own worker, and its queue with it" do
+      base = uniq("grp")
+      three = group(base, 3)
+
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
+        if id == base, do: three, else: []
+      end)
+
+      # Nothing answers, so every worker holds its payload.
+      resolve_to(%{})
+
+      {:ok, opts, _worker} = prepare(uniq("src"), base, %{retry_backoff_ms: 10_000})
+      [p0, _p1, _p2] = opts.routes
+
+      emit(opts, "sol-1", %{"flz.key" => "SOL-USD"})
+      wait_until(fn -> ForwardWorker.stats(p0.pid).buffer_len == 1 end)
+
+      two = group(base, 2)
+
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
+        if id == base, do: two, else: []
+      end)
+
+      assert {:ok, fresh, _pid} = OperativeForward.init_provider(opts)
+
+      # SOL-USD (group 60) is p0's under both shapes, so its worker is the same
+      # process and still owes the payload — a re-resolve must not cost a
+      # member that did not move anything.
+      surviving = Enum.find(fresh.routes, &(&1.id == p0.id))
+      assert surviving.pid == p0.pid
+      assert ForwardWorker.stats(p0.pid).buffer_len == 1
+    end
+
+    test "a drained payload that belongs nowhere is parked, never dropped" do
+      base = uniq("grp")
+      source = uniq("src")
+      three = group(base, 3)
+
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
+        if id == base, do: three, else: []
+      end)
+
+      resolve_to(%{})
+
+      {:ok, opts, _worker} = prepare(source, base, %{retry_backoff_ms: 10_000})
+      [_p0, _p1, p2] = opts.routes
+
+      emit(opts, "stranded", %{"flz.key" => "ETH-USD"})
+      wait_until(fn -> ForwardWorker.stats(p2.pid).buffer_len == 1 end)
+
+      # The target collapses to a single member owning only the low groups, so
+      # ETH-USD's group has no owner at all.
+      orphaned = [
+        %{
+          id: Flezha.Partition.member_id(base, 0),
+          partition: %{group: base, index: 0, count: 2, range: {0, 10}}
+        },
+        %{
+          id: Flezha.Partition.member_id(base, 1),
+          partition: %{group: base, index: 1, count: 2, range: {11, 20}}
+        }
+      ]
+
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
+        if id == base, do: orphaned, else: []
+      end)
+
+      parent = self()
+
+      expect(Flezha.Dlq.Store, :append, fn entry ->
+        send(parent, {:parked, entry})
+        {:ok, "ref"}
+      end)
+
+      assert {:ok, _fresh, _pid} = OperativeForward.init_provider(opts)
+
+      assert_receive {:parked, entry}, 1_000
+      assert entry.payload == "stranded"
+      assert entry.operative_class == source
+    end
+
     test "health reports the sickest worker, not the healthy majority" do
       base = uniq("grp")
       {_members, _targets} = partitioned_target(base, 3)

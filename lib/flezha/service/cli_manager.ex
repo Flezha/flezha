@@ -223,7 +223,8 @@ defmodule Flezha.Service.CliManager do
 
         IO.puts(
           "Operative #{group_id} rescaled #{result.from} -> #{result.to} " <>
-            "(#{result.entities_moved} entities moved, #{length(result.vacated)} trees removed):"
+            "(#{result.entities_moved} entities moved, #{length(result.vacated)} trees removed, " <>
+            "#{result.forwards_refreshed} forwarding plugin(s) re-pointed):"
         )
 
         Enum.each(result.members, &IO.puts("  #{&1}"))

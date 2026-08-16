@@ -21,6 +21,7 @@ defmodule Flezha.Operative.PartitionGroup do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Partition
   alias Flezha.Plugin
+  alias Flezha.Plugin.Provider.OperativeForward
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -217,11 +218,38 @@ defmodule Flezha.Operative.PartitionGroup do
   recoverable by re-running the command — each move is atomic per Entity, so a
   re-run re-derives what is left from what is on disk.
 
+  Exactly one rescale of a group runs at a time, cluster-wide. Two interleaved
+  ones would stop the members the other just started — each reads the member set
+  the other is rewriting — so the second is refused outright rather than
+  serialized behind the first, whose outcome it was not asked for.
+
   Options: `:quiesce_timeout_ms` (default 30_000) bounds the catch-up wait.
   """
   @spec rescale(String.t(), String.t(), pos_integer(), keyword()) ::
           {:ok, map()} | {:error, term()}
   def rescale(namespace, group_id, target, opts \\ []) do
+    # `:global` releases the lock when the holder dies, so a controller that
+    # crashes mid-rescale does not leave the group permanently un-rescalable —
+    # the re-run the crash recovery calls for is the next command.
+    lock = {{:flezha_partition_rescale, namespace, group_id}, self()}
+
+    case :global.trans(
+           lock,
+           fn -> do_rescale(namespace, group_id, target, opts) end,
+           [node() | Node.list()],
+           0
+         ) do
+      :aborted ->
+        {:error,
+         "a rescale of #{group_id} is already running in namespace #{namespace}; " <>
+           "wait for it to finish before starting another"}
+
+      result ->
+        result
+    end
+  end
+
+  defp do_rescale(namespace, group_id, target, opts) do
     with {:ok, members} <- rescale_members(namespace, group_id),
          {:ok, template, plugins} <- rescale_template(namespace, group_id, members),
          :ok <- check_partitionable(namespace, template, target, length(members)),
@@ -238,8 +266,45 @@ defmodule Flezha.Operative.PartitionGroup do
          from: length(members),
          to: target,
          entities_moved: length(moves),
-         vacated: vacated
+         vacated: vacated,
+         forwards_refreshed: refresh_forward_targets(namespace, group_id)
        })}
+    end
+  end
+
+  # A forward resolves its target's member set once, at `init_provider/1`, so a
+  # group that just changed shape leaves every upstream routing by yesterday's
+  # ranges: payloads for a member that no longer exists queue behind a worker
+  # that will never deliver, until the queue saturates and back-pressures the
+  # SOURCE operative. Nudging each dependent to re-prepare is what closes that,
+  # and the provider hands the orphaned queue to its new owner as it does.
+  #
+  # Best effort by design: the rescale itself has already succeeded, so a source
+  # this node cannot reach is logged rather than allowed to fail the command.
+  defp refresh_forward_targets(namespace, group_id) do
+    for {operative_id, plugins} <- HubManager.operative_plugins(namespace),
+        %Plugin{provider: OperativeForward, id: plugin_id, opts: opts} <- plugins,
+        Map.get(opts, :target_operative_id) == group_id,
+        nudge_plugin(namespace, operative_id, plugin_id),
+        reduce: 0 do
+      count -> count + 1
+    end
+  end
+
+  defp nudge_plugin(namespace, operative_id, plugin_id) do
+    case OperativeManager.get_operative_pid(namespace, operative_id) do
+      {:ok, pid} ->
+        send(pid, {:retry_plugin_restart, plugin_id})
+        true
+
+      {:error, reason} ->
+        Logger.warning(
+          "[PartitionGroup] #{operative_id} forwards to a group that just rescaled but is " <>
+            "unreachable (#{inspect(reason)}): its plugin #{plugin_id} keeps the old member " <>
+            "set until it next re-prepares"
+        )
+
+        false
     end
   end
 
@@ -285,6 +350,7 @@ defmodule Flezha.Operative.PartitionGroup do
   end
 
   @peer_call_timeout_ms 30_000
+  @stop_release_timeout_ms 15_000
   @quiesce_timeout_ms 30_000
   @quiesce_poll_ms 250
 
@@ -403,9 +469,36 @@ defmodule Flezha.Operative.PartitionGroup do
 
   defp member_node(member), do: Map.get(member, :node)
 
+  # A member's `:stop_operative` call replies before ProcessHub has finished
+  # unregistering the child, so a rescale that reuses an id — every rescale does,
+  # `#p0` survives any N — can lose the claim to the corpse of the member it just
+  # stopped. Wait for the very predicate the restart will check. Nothing durable
+  # has moved yet, so giving up here costs only the stop.
   defp stop_members(namespace, members) do
     Enum.each(members, &OperativeManager.stop_operative(namespace, &1.id, preserve_state: true))
-    :ok
+
+    await_ids_released(
+      namespace,
+      Enum.map(members, & &1.id),
+      System.monotonic_time(:millisecond) + @stop_release_timeout_ms
+    )
+  end
+
+  defp await_ids_released(namespace, ids, deadline) do
+    case Enum.find(ids, &(Validator.operative_unique(namespace, &1) != :ok)) do
+      nil ->
+        :ok
+
+      held ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          {:error,
+           "rescale aborted: #{held} was stopped but still holds its id after " <>
+             "#{@stop_release_timeout_ms}ms; nothing was moved — retry once it has gone"}
+        else
+          Process.sleep(@quiesce_poll_ms)
+          await_ids_released(namespace, ids, deadline)
+        end
+    end
   end
 
   # No member runs again until every owed move has landed. A move that fails

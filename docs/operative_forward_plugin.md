@@ -88,6 +88,26 @@ A target with one member (or an ordinary operative) behaves byte-identically to
 before, unkeyed messages included. Disabling the plugin stops **every** worker,
 and `health/1` reports the sickest of them.
 
+### When the target rescales
+
+`flz operative scale` on a partitioned target nudges every forward pointing at
+it to re-read the member set, so nothing keeps routing by the old ranges. What
+that re-read does:
+
+- a member that **survives** keeps its worker — the worker registry is keyed
+  `{plugin_id, member}` — and therefore keeps everything still queued in it;
+- a member that is **gone** hands its queue back before its worker stops, and
+  each payload is re-routed to whoever owns its key now. Nothing is dropped, and
+  because the hand-over runs while the plugin is being re-prepared (no emit can
+  be routed in between), a re-homed payload lands ahead of anything emitted
+  afterwards — per-key order survives the rescale.
+- a payload whose key belongs to **no** member after the rescale is parked, the
+  same way an unkeyed emit is.
+
+A source this controller cannot reach at that moment keeps the old member set
+until it next re-prepares; the rescale logs it rather than failing, since the
+rescale itself has already succeeded.
+
 ## Nothing ever blocks one Overwatch on another
 
 The `:on_output` callback enqueues into a long-lived per-`{plugin_id, target}`

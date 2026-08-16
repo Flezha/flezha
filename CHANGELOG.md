@@ -548,6 +548,34 @@
 
 ### Fixed
 
+- **A rescale left everything forwarding into the group routing by the old
+  member set.** `operative_forward` resolves its target's members once, at
+  `init_provider/1`, and nothing re-ran it: the workers stayed alive, so the
+  plugin reported healthy while the worker for a removed member retried
+  forever against an operative that no longer existed — until its queue
+  saturated and back-pressured the **source** operative's output chain. A
+  rescale now nudges every forward that targets the group to re-read the member
+  set, and reports how many it re-pointed. Surviving members keep their workers
+  and their queued payloads; a removed member hands its queue back before its
+  worker stops and each payload is re-routed to whoever owns its key now, in
+  order and without loss. A restarted provider that exports no `activate/1`
+  also returns to `:running` rather than sitting `:prepared` — where
+  `plugin_health/3` would have reported it healthy without probing until the
+  next bind.
+
+- **Two concurrent `flz operative scale` calls on one group could leave it half
+  started** — each read the member set the other was rewriting, so the loser's
+  rollback stopped the members the winner had just started. A rescale now takes
+  a cluster-wide lock on `{namespace, group}` and a second one is refused by
+  name. The lock is released if the holder dies, which is the crash case the
+  re-runnable move sequence already assumes.
+
+- **A rescale could restart a member before its id was released.** The stop
+  replies before ProcessHub finishes unregistering the child, so reusing the id
+  — every rescale reuses `#p0` — could lose the claim to the member it had just
+  stopped. The stop now waits for the same uniqueness predicate the restart
+  checks, and gives up before anything durable has moved.
+
 - **A dynamic Entity never restored its durable state on a rebind**
   (found implementing `add-partitioned-operatives`). The SDK's restore handler
   resolved the named Entity by walking `instance.entities` — the static and

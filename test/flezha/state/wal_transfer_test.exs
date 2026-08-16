@@ -77,6 +77,64 @@ defmodule FlezhaTest.State.WalTransferTest do
   end
 
   @tag :multi_node
+  test "an entity moves from a peer into another Operative's tree, source last" do
+    # This is the shape a partition rescale needs: the Entity keeps its
+    # procedure and key but changes OWNER, so it lands under a different
+    # Operative class — and the peer's copy may only go once ours is safe.
+    {class, procedure, key} = source = seed_entity("moveacross")
+    source_bytes = File.read!(Registry.wal_path(source))
+    destination = {class <> "_moved", procedure, key}
+
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:waltransfer2)
+    dest_root = TestHelpers.tmp_app_data_dir()
+    on_exit(fn -> File.rm_rf(dest_root) end)
+
+    # The peer inherited the old root, so the files live there and nowhere here.
+    refute File.exists?(Registry.wal_path(source))
+
+    assert {:ok, files} = WalTransfer.move_entity(peer_node, source, destination)
+    assert files > 0
+
+    assert File.read!(Registry.wal_path(destination)) == source_bytes
+    refute File.exists?(Registry.wal_path(destination) <> ".transferring")
+
+    # The peer no longer holds it — the delete runs only after the rename.
+    assert :erpc.call(peer_node, WalTransfer, :manifest, [source]) == []
+
+    # Re-running is a no-op: the source is gone, so nothing is owed and the
+    # destination is untouched. That is what makes a crashed rescale re-runnable.
+    assert {:ok, 0} = WalTransfer.move_entity(peer_node, source, destination)
+    assert File.read!(Registry.wal_path(destination)) == source_bytes
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  @tag :multi_node
+  test "a move whose pull fails leaves the peer's copy alone" do
+    source = seed_entity("movefail")
+    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:waltransfer3)
+    dest_root = TestHelpers.tmp_app_data_dir()
+    on_exit(fn -> File.rm_rf(dest_root) end)
+
+    # A destination whose entity key differs has no matching basename in this
+    # layout, so every file fails to resolve and the pull aborts.
+    {class, procedure, _key} = source
+    unresolvable = {class, procedure, "a-different-key"}
+
+    assert {:error, _reason} = WalTransfer.move_entity(peer_node, source, unresolvable)
+
+    # Nothing was deleted: a half-moved Entity is the one outcome that loses data.
+    assert Path.basename(Registry.wal_path(source)) in :erpc.call(
+             peer_node,
+             WalTransfer,
+             :manifest,
+             [source]
+           )
+
+    NodeTestHelper.stop_peer_node(peer_pid, peer_node)
+  end
+
+  @tag :multi_node
   test "an entity's files are pulled from a peer controller into this node's tree" do
     entity_id = {class, _, _} = seed_entity("xnode")
     source_bytes = File.read!(Registry.wal_path(entity_id))

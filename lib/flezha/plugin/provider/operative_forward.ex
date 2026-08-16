@@ -70,6 +70,9 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
     source_namespace = Map.get(opts, :source_namespace)
     source_operative_id = Map.get(opts, :source_operative_id)
     target = Map.get(opts, :target_operative_id)
+    # A re-prepare carries the member set this plugin last resolved; a first
+    # prepare carries none.
+    previous_routes = Map.get(opts, :routes, [])
 
     with :ok <- validate_target(target, source_namespace, source_operative_id),
          plugin_id = Map.get(opts, :plugin_id) || default_plugin_id(source_operative_id, target),
@@ -81,8 +84,59 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
         |> Map.put(:routes, routes)
         |> Map.put(:worker_pid, hd(routes).pid)
 
+      rehome_vanished_members(opts, previous_routes, routes)
+
       {:ok, opts, hd(routes).pid}
     end
+  end
+
+  # A re-run of `init_provider/1` re-reads the target's member set, which is how
+  # a rescaled target stops being routed by yesterday's ranges. Members that
+  # survive keep their worker — `ensure_worker/1` is keyed `{plugin_id, member}`
+  # — and therefore keep everything queued in it. A member that is GONE would
+  # otherwise leave a worker retrying forever against an operative that no
+  # longer exists, so its payloads are taken back and re-routed to whoever owns
+  # their key now.
+  #
+  # Synchronous on purpose: no emit can be routed while `init_provider/1` runs,
+  # so a re-homed payload lands ahead of anything emitted after the re-resolve
+  # and per-key order survives the rescale.
+  defp rehome_vanished_members(opts, previous, current) do
+    plugin_id = Map.fetch!(opts, :plugin_id)
+    surviving = MapSet.new(current, & &1.id)
+
+    for %{id: member_id, pid: pid} <- previous, not MapSet.member?(surviving, member_id) do
+      payloads = take_over(plugin_id, member_id, pid)
+
+      if payloads != [] do
+        Logger.info(
+          "[Plugin.Provider.OperativeForward] #{member_id} is no longer a member of " <>
+            "#{Map.get(opts, :target_operative_id)}; re-routing #{length(payloads)} " <>
+            "queued payload(s) to their new owner"
+        )
+      end
+
+      Enum.each(payloads, fn {message, metadata} ->
+        case route(current, metadata) do
+          {:ok, %{pid: new_pid}} -> ForwardWorker.absorb(new_pid, {message, metadata})
+          {:error, reason} -> park_unroutable(opts, message, metadata, reason)
+        end
+      end)
+    end
+
+    :ok
+  end
+
+  # Take what a worker still owes and leave it stopped. A successful drain stops
+  # it as it replies, which is what guarantees nothing is delivered from a queue
+  # already handed over; only a worker that could not be reached needs the
+  # supervisor to take it down, and a worker already dead owes nothing at all.
+  defp take_over(plugin_id, member_id, pid) do
+    if Process.alive?(pid), do: ForwardWorker.drain(pid), else: []
+  catch
+    :exit, _ ->
+      ForwardSup.stop_worker({plugin_id, member_id})
+      []
   end
 
   @doc """

@@ -220,6 +220,18 @@ Crash mid-rescale is recoverable by construction: before step 4 nothing durable
 has moved, and each move is atomic per Entity, so re-running `flz operative
 scale` re-derives the remaining moves from what is on disk and completes them.
 
+**Only one rescale of a group runs at a time, cluster-wide.** Two interleaved
+ones would each stop the members the other just started, so a second command is
+refused outright rather than queued behind an outcome it did not ask for. The
+lock is released if the controller holding it dies, which is exactly the
+re-runnable case above.
+
+**Forwards into the group follow it.** Anything forwarding to this group is
+nudged to re-read the member set as the rescale finishes — a surviving member
+keeps its worker and its queued payloads, a removed member hands its queue back
+to be re-routed to the new owner, and the command reports how many plugins were
+re-pointed. See [`operative_forward_plugin.md`](operative_forward_plugin.md).
+
 ### Runbook
 
 ```bash
@@ -288,6 +300,9 @@ will say so on the first frame.
 - Workflow operatives are not partitionable (`--partitions` is refused for
   `kind: workflow`).
 - Placement anti-affinity is deferred.
+- A rescale spanning two controllers is covered at the mechanism level only —
+  the file move between nodes and the new member adopting its tree each have
+  tests, but the orchestration above them is exercised single-node.
 - Each partition's sink plugins open their own connections; sharing a Postgres
   connection across sink workers is a named follow-up
   (`postgres-sink-connection-sharing`).
