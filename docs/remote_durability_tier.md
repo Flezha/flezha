@@ -162,6 +162,13 @@ A crash between the local append and the remote ship is the ordinary
 uncommitted-proc case: the SDK never saw the ack, so it re-runs the procedure on
 resume, and the existing idempotence machinery covers it.
 
+**The guarantee starts at the second barrier.** The gate is armed by the class
+declaration, which the controller learns from the `AddOperative` response — and
+a fast first procedure can reach its barrier before that response has been
+decoded. That first barrier therefore ships asynchronously. Nothing is lost by
+it: an unacked barrier is re-run on resume like any other, which is the same
+path a crash mid-ship takes. Every barrier after it is gated.
+
 **Stream classes cannot declare it.** They acknowledge at input rates, where a
 remote round trip per acknowledgement is not a guarantee anyone can keep;
 declaring it is refused at registration with an error naming the class.
@@ -216,8 +223,24 @@ Every manifest write carries the writer's WAL-owner epoch and is applied
 conditionally. A write from a stale epoch is refused, and the refused controller
 **stops shipping that reference** and raises an alarm rather than retrying —
 overwriting a claimant that legitimately superseded it is the one outcome worse
-than not shipping. This makes the remote store an external arbiter and is
+than not shipping. This makes the remote store an external arbiter, and it is
 strictly stronger than the local-only fencing it extends.
+
+**Know its reach.** The conditional write separates two writers only when their
+epochs *differ*; equal epochs overwrite, because a controller updates its own
+manifest many times within one epoch. The proc-journal, durable inbox, input log
+and registry cspec have no WAL-owner epoch and ship at 0 forever, so for those
+the write is ordered but not fenced. Garbage collection likewise assumes a single
+writer per backend: it is safe against the shipper's own in-flight uploads by
+construction, but a second controller mid-ship on the same backend can have its
+blobs collected between its upload and its manifest write. Both need a
+split-brain — two controllers owning one operative at once, which ProcessHub's
+`Singularity` placement is what normally prevents. **Do not read fencing as a
+substitute for single ownership.**
+
+A fenced reference stays fenced until the controller restarts; there is no verb
+to clear it. That is deliberate — the safe direction is to stop — but it means a
+fence is an operator event, not something the tier heals out of.
 
 ## Failure posture and alarms
 

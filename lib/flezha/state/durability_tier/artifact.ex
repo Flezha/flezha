@@ -89,6 +89,20 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def epoch(_ref), do: 0
 
   @doc """
+  `ref`'s saga compensation markers — which of its undo hooks have been
+  intended and which have already run.
+
+  They are presence-only files that no state change implies, and the resumed
+  workflow driver reads them off `RestoreInitState` to decide whether to
+  compensate or resume forward. A recovery that restored the data without them
+  resumes forward past a rollback it owes, so they travel on the manifest
+  rather than as blobs.
+  """
+  @spec markers(ref()) :: Manifest.markers()
+  def markers({:entity, entity_id}), do: Registry.compensation_markers(entity_id)
+  def markers(_ref), do: %{intent: false, done: false}
+
+  @doc """
   Whether `ref` has anything durable on disk right now. For an Entity this is
   `Restore.has_persisted_state?/1` — the same predicate the bind-time restore
   filters on, so the tier and the restore path can never disagree about which

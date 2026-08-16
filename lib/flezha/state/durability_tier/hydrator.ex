@@ -21,7 +21,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   require Logger
 
   alias Flezha.State.DurabilityTier.{Artifact, Backend, Manifest}
-  alias Flezha.State.InputLog
+  alias Flezha.State.{InputLog, Outbox, Registry}
 
   @doc """
   Hydrate every shipped reference of `operative_class` whose local files are
@@ -123,7 +123,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     else
       case fetch_and_write(module, opts, manifest) do
         :ok ->
-          seed_source_offsets(manifest)
+          seed_local_facts(manifest)
           emit(:hydrated, ref, manifest)
 
         {:error, reason} ->
@@ -182,12 +182,24 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     end
   end
 
-  # The consumed offset is normally rebuilt from the effect records in the WAL
-  # tail — but a compacted Entity ships a snapshot and no effect record, so the
-  # position its cut is consistent with would be lost. Seeding it from the
-  # manifest is what lets post-hydration replay resume at the shipped cut
-  # instead of at the start of the retained input log.
-  defp seed_source_offsets(%Manifest{ref: {:entity, {class, _, _} = entity_id}} = manifest) do
+  # Fetching the data is only half a restore. An Entity is also described by
+  # small local files that no record implies — its consumed offset, its WAL-owner
+  # epoch, its saga markers — and an Entity that comes back without them looks
+  # correct and behaves wrongly. Every write here is an overwrite of a fixed
+  # path, so a retry after a partial hydration converges.
+  defp seed_local_facts(%Manifest{ref: {:entity, {class, _, _} = entity_id}} = manifest) do
+    seed_consumed_offset(class, entity_id, manifest)
+    seed_epoch(entity_id, manifest)
+    seed_markers(entity_id, manifest)
+  end
+
+  defp seed_local_facts(_manifest), do: :ok
+
+  # Normally rebuilt from the effect records in the WAL tail — but a compacted
+  # Entity ships a snapshot and no effect record, so the position its cut is
+  # consistent with would be lost. Seeding it is what lets post-hydration replay
+  # resume at the shipped cut instead of at the start of the retained input log.
+  defp seed_consumed_offset(class, entity_id, manifest) do
     case Map.get(manifest.source_offsets, :consumed_offset) do
       offset when is_integer(offset) and offset >= 0 ->
         InputLog.record_consumed(class, entity_id, offset)
@@ -197,7 +209,36 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     end
   end
 
-  defp seed_source_offsets(_manifest), do: :ok
+  # The epoch's only home on disk is the dedup cache, which is not an artifact —
+  # so without this the recovered Entity reads epoch 0, its next manifest write
+  # is refused as stale against the epoch it shipped under, and it fences itself
+  # off permanently. It survives one disk loss and is silently unprotected
+  # against the next.
+  #
+  # The seq fields are deliberately neutral rather than restored.
+  # `last_persisted_seq` is ignored at writer open (the WAL scan is
+  # authoritative), and `outbox_flushed_seq` gates the boot re-drive with
+  # `seq > cursor` — a cursor restored ahead of the restored WAL would silently
+  # drop those effect records and never dispatch their outputs. `-1` re-drives
+  # everything, which the sinks' dedup absorbs: the cursor may lag, never lead.
+  defp seed_epoch(entity_id, %Manifest{epoch: epoch}) do
+    _ =
+      Outbox.write(entity_id, %{
+        last_persisted_seq: 0,
+        outbox_flushed_seq: -1,
+        epoch: epoch
+      })
+
+    :ok
+  end
+
+  defp seed_markers(entity_id, %Manifest{markers: markers}) do
+    for {kind, true} <- Map.to_list(markers || %{}) do
+      Registry.write_compensation_marker(entity_id, kind)
+    end
+
+    :ok
+  end
 
   defp emit(event, ref, manifest) do
     :telemetry.execute(

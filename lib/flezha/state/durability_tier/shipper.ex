@@ -283,9 +283,11 @@ defmodule Flezha.State.DurabilityTier.Shipper do
       manifest = manifest_for(state, ref)
       local_top = local_top(snapshots, bounds)
 
+      local = %{epoch: epoch, markers: Artifact.markers(ref)}
+
       with {:ok, shipped} <- ship_snapshots(state, ref, manifest, snapshots, local_top),
            {:ok, shipped, records} <- ship_records(state, ref, shipped, bounds, epoch) do
-        commit_cut(state, ref, manifest, %{shipped | epoch: epoch}, records, local_top)
+        commit_cut(state, ref, manifest, Map.merge(shipped, local), records, local_top)
       end
     end
   end

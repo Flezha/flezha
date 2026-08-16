@@ -197,6 +197,83 @@ defmodule Flezha.State.DurabilityTierTest do
     end
   end
 
+  # ---------- what a recovery has to put back besides the data ----------
+
+  describe "recovery restores an Entity's local facts" do
+    setup ctx do
+      Stub.install()
+      write_records(ctx.entity_id, 0..3)
+      # A runner restart realigned this Entity, which is the ordinary case: the
+      # epoch is bumped by `WalWriter.realign_epoch/4`, not only by a rewind.
+      set_epoch(ctx.entity_id, 2)
+      start_shipper()
+      ctx
+    end
+
+    test "a recovered Entity keeps shipping instead of fencing itself off", ctx do
+      ref = {:entity, ctx.entity_id}
+      assert :ok = Shipper.ship_now(ref)
+
+      wipe_local(ctx.entity_id)
+      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+
+      # The epoch's only home on disk is the dedup cache, which is not an
+      # artifact. Without it the recovered Entity reads epoch 0, its next
+      # manifest write is refused against the epoch it shipped under, and it
+      # stops being backed up — surviving one disk loss and silently losing
+      # protection against the next.
+      assert Outbox.read(ctx.entity_id).epoch == 2
+      assert :ok = Shipper.ship_now(ref)
+      refute Enum.any?(Shipper.status(), &(&1.ref == ref and &1.fenced))
+    end
+
+    test "the restored flush cursor lags rather than leads", ctx do
+      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      wipe_local(ctx.entity_id)
+      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+
+      # A cursor restored ahead of the restored WAL would drop those effect
+      # records from the boot re-drive (`seq > cursor`) and never dispatch their
+      # outputs. `-1` re-drives everything, which sink dedup absorbs.
+      assert Outbox.read(ctx.entity_id).outbox_flushed_seq == -1
+    end
+
+    test "the saga compensation markers survive a recovery", ctx do
+      # Without these the resumed driver never takes its compensation branch and
+      # resumes FORWARD, silently skipping a rollback it owes.
+      :ok = Registry.write_compensation_marker(ctx.entity_id, :intent)
+      :ok = Registry.write_compensation_marker(ctx.entity_id, :done)
+
+      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      wipe_local(ctx.entity_id)
+      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+
+      assert %{intent: true, done: true} = Registry.compensation_markers(ctx.entity_id)
+    end
+
+    test "an unset marker is not resurrected by a recovery", ctx do
+      :ok = Registry.write_compensation_marker(ctx.entity_id, :intent)
+      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+
+      wipe_local(ctx.entity_id)
+      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+
+      assert %{intent: true, done: false} = Registry.compensation_markers(ctx.entity_id)
+    end
+
+    test "a marker appearing rewrites an otherwise unchanged manifest", ctx do
+      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+      assert stored_manifest({:entity, ctx.entity_id}).markers.done == false
+
+      # No new records — only the marker. A cut comparison that ignored it would
+      # skip the write and the marker would never ship.
+      :ok = Registry.write_compensation_marker(ctx.entity_id, :done)
+      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+
+      assert stored_manifest({:entity, ctx.entity_id}).markers.done
+    end
+  end
+
   # ---------- atomicity, fencing, isolation ----------
 
   describe "failure handling" do

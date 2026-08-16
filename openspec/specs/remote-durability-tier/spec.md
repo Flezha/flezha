@@ -91,6 +91,11 @@ When a controller binds an operative whose local durable state is absent but who
 - **WHEN** hydration is requested for a named subset of a procedure's entity keys
 - **THEN** only those entities' artifacts are fetched and restored
 
+#### Scenario: Hydration restores the local facts, not only the data
+- **WHEN** an entity is hydrated whose shipped manifest was written under a non-zero WAL-owner epoch and which carried saga compensation markers
+- **THEN** the hydrated entity SHALL report that same epoch and those same markers locally, so its next manifest write is not refused as stale and a resumed workflow compensates rather than resuming forward past a rollback it owes
+- **AND** the restored outbox flush cursor SHALL NOT lead the restored records, so no effect record is dropped from the boot re-drive
+
 ### Requirement: Remote fencing via epoch-conditional writes
 Every manifest write SHALL carry the writer's epoch and be applied conditionally; a write from a stale epoch SHALL be refused by the backend contract, and a controller receiving such a refusal SHALL stop shipping for that entity and raise a fencing alarm rather than retry blindly.
 

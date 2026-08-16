@@ -30,6 +30,10 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @magic "FLZM"
   @version 1
 
+  # What makes two entries the same shipped cut. Everything the manifest asserts
+  # about the Entity, and nothing about when it was asserted.
+  @cut_keys [:epoch, :snapshots, :ranges, :file, :source_offsets, :markers]
+
   @type ref ::
           {:entity, Registry.entity_id()}
           | {:input_log, binary()}
@@ -42,6 +46,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
           blob: binary()
         }
   @type snapshot :: %{seq: non_neg_integer(), blob: binary()}
+  @type markers :: %{intent: boolean(), done: boolean()}
 
   @type t :: %__MODULE__{
           version: pos_integer(),
@@ -51,6 +56,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
           ranges: [range()],
           file: nil | %{blob: binary(), size: non_neg_integer(), sha: binary()},
           source_offsets: %{optional(atom()) => integer()},
+          markers: markers(),
           shipped_at_ms: integer()
         }
 
@@ -61,6 +67,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
             ranges: [],
             file: nil,
             source_offsets: %{},
+            markers: %{intent: false, done: false},
             shipped_at_ms: 0
 
   @spec new(ref()) :: t()
@@ -83,6 +90,10 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   Decode a manifest blob. `:error` for anything this build does not recognise —
   a caller treats that exactly like "no manifest", which is the safe direction:
   it hydrates nothing and ships a fresh entry.
+
+  A field this build knows and the stored entry lacks takes its struct default,
+  so a manifest written before a field existed decodes as "that fact was never
+  asserted" rather than failing.
   """
   @spec decode(binary()) :: {:ok, t()} | :error
   def decode(<<@magic, @version::32-big, body::binary>>) do
@@ -159,11 +170,14 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   Whether two entries describe the same shipped cut. `shipped_at_ms` is
   deliberately ignored: a re-ship that found nothing new must not rewrite the
   manifest, or a quiet entity would churn the backend once per sweep forever.
+
+  `markers` IS compared, and has to be: a compensation marker appears after the
+  state change it belongs to, so an entry that is otherwise identical must still
+  be rewritten or the marker never ships.
   """
   @spec same_cut?(t(), t()) :: boolean()
   def same_cut?(%__MODULE__{} = a, %__MODULE__{} = b) do
-    Map.take(a, [:epoch, :snapshots, :ranges, :file, :source_offsets]) ==
-      Map.take(b, [:epoch, :snapshots, :ranges, :file, :source_offsets])
+    Map.take(a, @cut_keys) == Map.take(b, @cut_keys)
   end
 
   @doc "Every blob key this entry references — the GC's live set."

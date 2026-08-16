@@ -191,13 +191,15 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
            "the input log never reached the durability backend"
 
     # --- the drill ----------------------------------------------------------
+    shipped_before = shipped_through(backend_opts, entity_ref)
+
     sigkill(os_pid(port_a))
     assert wait_until(fn -> exec_a not in FleetManager.active_runners(namespace) end, 60_000)
 
     destroy_local_state(operative_id)
     refute File.exists?(Path.join(Registry.state_root(), operative_id))
 
-    {_port_b, exec_b} = boot_runner(namespace, id_path)
+    {port_b, exec_b} = boot_runner(namespace, id_path)
     assert exec_b != exec_a
 
     force_fresh_rebind(namespace, operative_id)
@@ -218,9 +220,57 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
 
     # And the recovered operative still works: a new input folds onto the
     # restored state rather than onto a cold start.
-    send_inputs(operative_id, namespace, ["k3:a"])
+    send_inputs(operative_id, namespace, ["k3:a", "commit:2"])
     assert await_changelog(%{"k3" => "k3=a"}, 60_000)
+
+    # --- the drill, again ---------------------------------------------------
+    # Recovering once is worth nothing if it leaves the operative unprotected
+    # against the next failure, and a recovered Entity is only protected if
+    # hydration put back the local files that describe it as well as its data.
+    # This round is the end-to-end repeatability statement: the recovered Entity
+    # ships again, and survives a second disk loss.
+    #
+    # It does NOT pin the epoch specifically — this fixture's epoch never
+    # diverges, because a runner replacement restores contiguous seqs and so
+    # never realigns. `durability_tier_test.exs` sets a bumped epoch directly
+    # and is where "a recovered Entity keeps shipping instead of fencing itself
+    # off" actually bites.
+    assert wait_until(
+             fn -> shipped_through(backend_opts, entity_ref) > shipped_before end,
+             60_000
+           ),
+           "the recovered Entity never shipped again — it fenced itself off"
+
+    sigkill(os_pid(port_b))
+    assert wait_until(fn -> exec_b not in FleetManager.active_runners(namespace) end, 60_000)
+
+    destroy_local_state(operative_id)
+    {_port_c, exec_c} = boot_runner(namespace, id_path)
+    assert exec_c != exec_b
+    force_fresh_rebind(namespace, operative_id)
+
+    assert wait_until(
+             fn ->
+               case OperativeManager.get_entity_state(namespace, operative_id) do
+                 {:ok, json} -> json =~ "k1" and json =~ "k2" and json =~ "k3"
+                 _ -> false
+               end
+             end,
+             120_000
+           ),
+           "the second recovery lost the work the first one recovered"
   end
 
   defp fetch(opts, key), do: Backend.Postgres.get(key, opts)
+
+  # The highest seq the stored manifest covers, or -1 when there is none. Its
+  # growth is the observable that the reference is still being shipped.
+  defp shipped_through(opts, ref) do
+    with {:ok, blob} <- fetch(opts, Manifest.key(ref)),
+         {:ok, manifest} <- Manifest.decode(blob) do
+      Manifest.shipped_through(manifest)
+    else
+      _ -> -1
+    end
+  end
 end

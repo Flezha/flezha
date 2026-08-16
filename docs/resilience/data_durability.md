@@ -622,7 +622,10 @@ silently.
 applied conditionally, which makes the remote store an external arbiter: a stale
 claimant's write is refused, it stops shipping that reference and alarms rather
 than retrying. This extends the existing local epoch fencing outward — it does
-not replace it.
+not replace it, and it is not a substitute for single ownership: equal epochs
+overwrite, and the journal, inbox, input log and cspec carry no epoch at all. See
+[`../remote_durability_tier.md`](../remote_durability_tier.md) "Fencing" for the
+reach and for what garbage collection assumes.
 
 **Recovery** hydrates the manifest-referenced artifacts into the local layout
 and then runs the existing restore-and-replay path unchanged. Local state is
