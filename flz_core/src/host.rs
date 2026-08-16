@@ -184,6 +184,13 @@ pub struct HostClassDecl {
     /// Compaction threshold declaration (absent = platform default).
     #[serde(default)]
     pub compact_after_bytes: Option<usize>,
+    /// Synchronous remote durability (`remote-durability-tier`): the
+    /// controller ships each commit barrier to the durability backend before
+    /// acking it. Workflow classes only — a stream class commits at input
+    /// rates, where a remote round trip per ack is not a guarantee anyone can
+    /// keep, so declaring it there is refused rather than silently ignored.
+    #[serde(default)]
+    pub sync_durability: bool,
     pub channels: Vec<HostChannelDecl>,
     pub procedures: Vec<HostProcedureDecl>,
     /// Present for a workflow class. With empty `procedures` the class is
@@ -310,6 +317,13 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
         if decl.correction_window_ms.is_some() {
             return Err("a workflow class cannot declare correction_window_ms".to_string());
         }
+        if decl.sync_durability && !decl.persistent {
+            return Err(
+                "sync_durability requires persistent: there is no commit barrier to ship \
+                 for a class that journals nothing"
+                    .to_string(),
+            );
+        }
         if workflow.retry_attempts > 1 && workflow.retry_backoff_ms == 0 {
             return Err(format!(
                 "workflow retry ladder ({} attempts) declares a zero backoff base; retries \
@@ -346,6 +360,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
                         backoff_base_ms: workflow.retry_backoff_ms,
                     },
                     persistence_enabled: decl.persistent,
+                    sync_durability: decl.sync_durability,
                     host: true,
                 },
             );
@@ -354,6 +369,14 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
         if workflow.loop_mode != HostLoopMode::Once || workflow.wake_after_ms.is_some() {
             // Loops iterate a structured chain; validated below with the DAG.
         }
+    }
+    if decl.sync_durability && decl.workflow.is_none() {
+        return Err(format!(
+            "class `{}` declares sync_durability, which only a workflow class may: a stream \
+             class acknowledges at input rates, and a remote round trip per acknowledgement is \
+             not a guarantee it can keep",
+            decl.factory_id
+        ));
     }
     if decl.effectively_once && !decl.persistent {
         return Err("effectively_once requires persistent: the tier IS durable state".to_string());
@@ -477,6 +500,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
     let factory_id: &'static str = Box::leak(decl.factory_id.clone().into_boxed_str());
     let schema_version = decl.schema_version;
     let persistent = decl.persistent;
+    let sync_durability = decl.sync_durability;
     let correction = decl.correction_window_ms.map(|window_ms| CorrectionPolicy {
         window_ms,
         beyond_window: match decl.beyond_window_policy {
@@ -681,6 +705,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
                         backoff_base_ms: workflow.retry_backoff_ms,
                     },
                     persistence_enabled: persistent,
+                    sync_durability,
                     host: true,
                 },
             );
@@ -2296,5 +2321,76 @@ pub fn apply_state_locked(slot: &Arc<EntitySlot>, value: &serde_json::Value) -> 
         schema::ActivationOutcome::StateApplied => Ok(()),
         schema::ActivationOutcome::Failed(err) => Err(err.message),
         _ => Err("host answered with a non-apply outcome".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod sync_durability_decl_tests {
+    //! Synchronous remote durability is a workflow-only declaration
+    //! (`remote-durability-tier`). The refusal lives at the host-declaration
+    //! boundary rather than in a typed SDK, because that is where a
+    //! declaration can arrive from any host language.
+
+    fn decl(json: &str) -> Result<(), String> {
+        super::register_host_class_json(json.as_bytes())
+    }
+
+    fn factory(name: &str) -> String {
+        format!("{name}_{}", std::process::id())
+    }
+
+    #[test]
+    fn a_stream_class_declaring_sync_durability_is_refused_by_name() {
+        let id = factory("sync_stream");
+        let err = decl(&format!(
+            r#"{{"factory_id":"{id}","persistent":true,"sync_durability":true,
+                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
+                 "procedures":[{{"name":"p0"}}]}}"#
+        ))
+        .expect_err("a stream class must not be able to declare sync durability");
+
+        assert!(err.contains(&id), "the refusal names the class: {err}");
+        assert!(
+            err.contains("sync_durability"),
+            "the refusal names the reason: {err}"
+        );
+    }
+
+    #[test]
+    fn a_workflow_class_declaring_sync_durability_without_persistence_is_refused() {
+        let id = factory("sync_wf_transient");
+        let err = decl(&format!(
+            r#"{{"factory_id":"{id}","persistent":false,"sync_durability":true,
+                 "channels":[],"procedures":[],"workflow":{{}}}}"#
+        ))
+        .expect_err("there is no barrier to ship for a class that journals nothing");
+
+        assert!(err.contains("sync_durability requires persistent"), "{err}");
+    }
+
+    #[test]
+    fn a_durable_workflow_class_may_declare_it() {
+        let id = factory("sync_wf_ok");
+        decl(&format!(
+            r#"{{"factory_id":"{id}","persistent":true,"sync_durability":true,
+                 "channels":[],"procedures":[],"workflow":{{}}}}"#
+        ))
+        .expect("a durable workflow class declares sync durability");
+
+        let spec = crate::workflow::registry::get_class(&id).expect("class registered");
+        assert!(spec.sync_durability);
+    }
+
+    #[test]
+    fn undeclared_is_the_default() {
+        let id = factory("sync_wf_default");
+        decl(&format!(
+            r#"{{"factory_id":"{id}","persistent":true,
+                 "channels":[],"procedures":[],"workflow":{{}}}}"#
+        ))
+        .expect("a workflow class declaring nothing registers");
+
+        let spec = crate::workflow::registry::get_class(&id).expect("class registered");
+        assert!(!spec.sync_durability);
     }
 }

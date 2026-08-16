@@ -14,7 +14,9 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
 
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.ControlChannel
-  alias Flezha.State.{ProcInbox, ProcJournal, TestHelpers, Wire}
+  alias Flezha.State.DurabilityTier.Manifest
+  alias Flezha.State.{ProcInbox, ProcJournal, Registry, TestHelpers, Wire}
+  alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
   @namespace "ctrl-chan-proc-commit-test"
 
@@ -23,6 +25,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     ClassRegistry.ensure_table()
 
     on_exit(fn ->
+      Stub.uninstall()
       Application.delete_env(:flezha, :state_root)
       File.rm_rf(root)
     end)
@@ -114,6 +117,76 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     assert [%{payload: "one"}, %{payload: "two"}] = committed.payload.outbox
     assert %{type: :outbox_flushed, proc_idx: 0, payload: %{for_type: :proc_committed}} = flushed
     assert ProcJournal.pending_entries(inst) == []
+  end
+
+  describe "synchronous remote durability" do
+    setup do
+      Stub.install()
+      {:ok, _pid} = start_supervised(Flezha.State.DurabilityTier.Shipper)
+      :ok
+    end
+
+    test "the ack is withheld until the barrier is on the remote store" do
+      inst = "opc_sync_#{System.unique_integer([:positive])}"
+      ClassRegistry.put_sync_durability(inst, true)
+      {control_channel, stream_ref} = start_control_channel("sync")
+
+      seg = Wire.encode_entity_id(inst, "ProcA", "s0")
+      payload = build_proc_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-sync-ok")
+      send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+      assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
+
+      assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
+               decode_reply(reply).command
+
+      # The ack means remote-durable: the journal's manifest is in the store.
+      assert {:ok, _blob} =
+               Stub.get(Manifest.key({:entity, {inst, inst, Registry.journal_entity_key()}}), [])
+    end
+
+    test "a failed remote ship withholds the ack's success and re-runs the proc on resume" do
+      inst = "opc_sync_down_#{System.unique_integer([:positive])}"
+      ClassRegistry.put_sync_durability(inst, true)
+      {control_channel, stream_ref} = start_control_channel("syncdown")
+
+      seg = Wire.encode_entity_id(inst, "ProcA", "s0")
+      Stub.set_down(true)
+      payload = build_proc_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-sync-down")
+      send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+      assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
+
+      assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: error}} =
+               decode_reply(reply).command
+
+      assert error =~ "backend_down"
+
+      # The local append DID land — that is the crash window the mode is about.
+      # The SDK never saw a successful ack, so it re-runs the procedure on
+      # resume, and the journal it resumes against is the local one.
+      assert {:ok, [%{type: :proc_committed, proc_idx: 0}]} = ProcJournal.read(inst)
+
+      refute match?(
+               {:ok, _},
+               Stub.get(Manifest.key({:entity, {inst, inst, "_proc_journal"}}), [])
+             )
+    end
+
+    test "a class that declares nothing acks on local fsync exactly as before" do
+      inst = "opc_async_#{System.unique_integer([:positive])}"
+      {control_channel, stream_ref} = start_control_channel("async")
+
+      seg = Wire.encode_entity_id(inst, "ProcA", "s0")
+      Stub.set_down(true)
+      payload = build_proc_commit_payload(inst, 0, [seg], [{1, "handoff"}], "ref-async")
+      send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+      assert_receive {:test_writer_called, ^stream_ref, reply}, 1_000
+
+      assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
+               decode_reply(reply).command
+    end
   end
 
   test "a compensating commit journals a `compensated` entry with comp-marked keys" do

@@ -17,6 +17,9 @@ defmodule Flezha.Observability.Export.OtlpClient do
 
   @backoffs_ms [250, 500, 1_000, 2_000, 4_000]
   @max_attempts 5
+  @request_timeout_ms 10_000
+
+  alias Flezha.Http.Client, as: HttpClient
 
   # ---------- Public API ----------
 
@@ -125,19 +128,16 @@ defmodule Flezha.Observability.Export.OtlpClient do
     if String.ends_with?(base, suffix), do: base, else: base <> suffix
   end
 
-  defp ensure_conn(%{conn: conn} = state, scheme, host, port) when not is_nil(conn) do
-    case Mint.HTTP.open?(conn) do
-      true -> {:ok, state}
-      false -> open_new(state, scheme, host, port)
-    end
-  end
-
-  defp ensure_conn(state, scheme, host, port), do: open_new(state, scheme, host, port)
-
-  defp open_new(state, scheme, host, port) do
-    case Mint.HTTP.connect(scheme, host, port) do
-      {:ok, conn} -> {:ok, %{state | conn: conn}}
-      {:error, reason} -> {:error, reason}
+  # The connection is kept across posts and reopened on disconnect; only the
+  # exchange itself is shared with the durability tier's S3 backend.
+  defp ensure_conn(state, scheme, host, port) do
+    if HttpClient.open?(state.conn) do
+      {:ok, state}
+    else
+      case HttpClient.connect(scheme, host, port) do
+        {:ok, conn} -> {:ok, %{state | conn: conn}}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -146,76 +146,16 @@ defmodule Flezha.Observability.Export.OtlpClient do
       [{"content-type", "application/x-protobuf"}] ++
         Enum.map(extra, fn {k, v} -> {to_string(k), to_string(v)} end)
 
-    case Mint.HTTP.request(conn, "POST", path, headers, body) do
-      {:ok, conn, ref} ->
-        case recv_response(conn, ref, 10_000) do
-          {:ok, conn, status} -> {:ok, %{state | conn: conn}, status}
-          {:error, reason, conn} -> {:error, reason, %{state | conn: conn}}
-        end
-
-      {:error, conn, reason} ->
-        {:error, reason, %{state | conn: conn}}
+    case HttpClient.request(conn, "POST", path, headers, body, @request_timeout_ms) do
+      {:ok, conn, status, _headers, _body} -> {:ok, %{state | conn: conn}, status}
+      {:error, reason, conn} -> {:error, reason, %{state | conn: conn}}
     end
-  end
-
-  defp recv_response(conn, ref, timeout) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    recv_loop(conn, ref, deadline, nil)
-  end
-
-  defp recv_loop(conn, ref, deadline, status_acc) do
-    timeout = max(deadline - System.monotonic_time(:millisecond), 0)
-
-    receive do
-      message ->
-        case Mint.HTTP.stream(conn, message) do
-          {:ok, conn, responses} ->
-            {status_acc, done?} = drain_responses(responses, ref, status_acc, false)
-
-            if done? do
-              {:ok, conn, status_acc || 0}
-            else
-              recv_loop(conn, ref, deadline, status_acc)
-            end
-
-          {:error, conn, reason, _responses} ->
-            {:error, reason, conn}
-
-          :unknown ->
-            recv_loop(conn, ref, deadline, status_acc)
-        end
-    after
-      timeout ->
-        {:error, :timeout, conn}
-    end
-  end
-
-  defp drain_responses([], _ref, status, done?), do: {status, done?}
-
-  defp drain_responses([{:status, ref, code} | rest], ref, _status, _done) do
-    drain_responses(rest, ref, code, false)
-  end
-
-  defp drain_responses([{:headers, ref, _h} | rest], ref, status, done) do
-    drain_responses(rest, ref, status, done)
-  end
-
-  defp drain_responses([{:data, ref, _body} | rest], ref, status, done) do
-    drain_responses(rest, ref, status, done)
-  end
-
-  defp drain_responses([{:done, ref} | rest], ref, status, _done) do
-    drain_responses(rest, ref, status, true)
-  end
-
-  defp drain_responses([_other | rest], ref, status, done) do
-    drain_responses(rest, ref, status, done)
   end
 
   defp close_conn(%{conn: nil} = state), do: state
 
   defp close_conn(%{conn: conn} = state) do
-    _ = Mint.HTTP.close(conn)
+    HttpClient.close(conn)
     %{state | conn: nil}
   end
 

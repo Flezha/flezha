@@ -80,6 +80,11 @@ pub struct WorkflowSpec {
     /// Class-level persistence toggle; when true, a structured workflow's
     /// per-Entity Changes are flushed to the WAL as they apply.
     pub persistence_enabled: bool,
+    /// Synchronous remote durability: the controller completes the remote ship
+    /// of a commit barrier before acking it, so the ack the driver observes
+    /// implies the barrier survives losing this controller's disk (RPO 0).
+    /// Inert unless the controller has a durability backend configured.
+    pub sync_durability: bool,
     /// A host (C-ABI) class: the run-sugar body and every stage body run
     /// host-side, crossed through the poll surface. The driver branches on
     /// this before touching `run`.
@@ -98,6 +103,7 @@ impl std::fmt::Debug for WorkflowSpec {
             .field("loop_mode", &self.loop_mode)
             .field("retry", &self.retry)
             .field("persistence_enabled", &self.persistence_enabled)
+            .field("sync_durability", &self.sync_durability)
             .finish()
     }
 }

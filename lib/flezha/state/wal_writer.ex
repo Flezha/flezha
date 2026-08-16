@@ -21,6 +21,7 @@ defmodule Flezha.State.WalWriter do
   alias Flezha.Operative.ClassRegistry
 
   alias Flezha.State.{
+    DurabilityTier,
     FsyncBatcher,
     InputLog,
     Metrics,
@@ -854,6 +855,12 @@ defmodule Flezha.State.WalWriter do
     if is_integer(entry.consumed_offset) do
       InputLog.record_consumed(rc, state.entity_id, entry.consumed_offset)
     end
+
+    # An integer offset on a checkpoint-ack class means an interval just closed:
+    # state and source position are consistent at exactly this cut, which is the
+    # cut the remote durability tier wants. Every other class reaches the tier
+    # through compaction, a commit barrier, or the backstop sweep.
+    DurabilityTier.on_effect_flushed(state.entity_id, entry.consumed_offset)
   end
 
   defp schedule_outbox_retry(%{outbox_retry_timer: nil} = state) do
@@ -1113,6 +1120,31 @@ defmodule Flezha.State.WalWriter do
                                                 {:cont, acc} | {:halt, acc})) :: acc
         when acc: term()
   def fold_records(device, acc, fun), do: fold_records(device, 0, acc, fun)
+
+  @doc """
+  `fold_records/3` over a path: open read-only, fold, close. A file that is
+  missing or unreadable folds to `acc` unchanged — absent history is no records,
+  which is what every reader of this framing already means by it.
+
+  The one definition of the open-fold-close dance, shared by the record-log
+  reader, time travel, and the remote durability tier's ship.
+  """
+  @spec fold_path(binary(), acc, ({non_neg_integer(), binary(), binary()}, acc ->
+                                    {:cont, acc} | {:halt, acc})) :: acc
+        when acc: term()
+  def fold_path(path, acc, fun) do
+    case :file.open(path, [:raw, :read, :binary]) do
+      {:ok, device} ->
+        try do
+          fold_records(device, acc, fun)
+        after
+          :file.close(device)
+        end
+
+      {:error, _} ->
+        acc
+    end
+  end
 
   defp fold_records(device, position, acc, fun) do
     case decode_record(device, position) do

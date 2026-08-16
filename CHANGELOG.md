@@ -126,6 +126,46 @@
 
 ### Added
 
+- **A controller can now survive dying with its disk**
+  (`add-remote-durability-tier`). Every durable byte flezha owned lived on the
+  owning controller's local disk — Entity WALs and snapshots, workflow
+  proc-journals, durable inboxes, the effectively-once input log, and the
+  ProcessHub registry cspec that records which operatives exist at all — and
+  `WalTransfer` moves a subset only at migration time. Losing the disk lost all
+  of it. The new `Flezha.State.DurabilityTier` ships those as immutable
+  artifacts to a remote backend and hydrates them back when a controller binds
+  an operative whose local state is absent.
+
+  **Off by default.** With `FLEZHA_DURABILITY_BACKEND=none` (the default) no
+  process starts, no backend is contacted, and every acknowledgement path gates
+  on local fsync exactly as before. Backends are `postgres` (over the
+  already-present `postgrex`) and `s3` (hand-rolled sigv4 over `:mint`); a
+  backend implements only `put`/`get`/`list`/`delete`/`put_if` and never learns
+  WAL semantics.
+
+  Shipping reuses the boundaries that already existed — compaction completion,
+  checkpoint-interval close, workflow `ProcCommit`/`IterCommit` — plus one
+  backstop sweep (`ship_interval_ms`, default 30 s) for entities that reach
+  none of them. A shipped WAL artifact is a **seq-addressed record bundle** read
+  at ship time, never a file byte range, because compaction and correction
+  rewrite the live WAL in place. The per-reference manifest is written **last**
+  through an epoch-conditional write, so a crash mid-upload leaves the previous
+  entry authoritative and the orphan blobs invisible to recovery.
+
+  A workflow class may declare `SYNC_DURABILITY` (Rust) / `syncDurability()`
+  (Java): the controller then completes the remote ship of a commit barrier
+  before acking it, so the ack the driver blocks on implies the commit survives
+  losing the disk (RPO 0). Stream classes are refused it at registration.
+  Everything else ships asynchronously and never delays an append, ack or
+  watermark advance; a stalled shipper raises the alarm-grade
+  `[:flezha, :state, :rpo_exceeded]`, surfaced in `flz controller status` and
+  `/healthz`. A stale-epoch manifest refusal fences that reference and alarms
+  rather than overwriting a claimant that superseded it.
+
+  Rollback is `backend: none` — local state is authoritative throughout, so
+  disabling the tier alters nothing on disk. See
+  [`docs/remote_durability_tier.md`](docs/remote_durability_tier.md).
+
 - **Every controller node is a valid entry point for every namespace command**
   (`schedule-spawn-without-runner`). A new cluster directory
   (`Flezha.Cluster.Directory`, one `:pg` scope — no new dependency) lets each

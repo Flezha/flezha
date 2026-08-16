@@ -49,6 +49,7 @@ defmodule Flezha.Operative.ClassRegistry do
   @checkpoint_sidecar "checkpoint_ack"
   @correction_sidecar "correction_window_ms"
   @compact_bytes_sidecar "compact_after_bytes"
+  @sync_durability_sidecar "sync_durability"
 
   # Every per-class SDK declaration, keyed `{operative_class, key}` in the ETS
   # table. `delete/1` evicts them all, so a class that rebinds without a
@@ -59,7 +60,8 @@ defmodule Flezha.Operative.ClassRegistry do
     :compensable_procs,
     :leaf_procs,
     :correction_window_ms,
-    :compact_after_bytes
+    :compact_after_bytes,
+    :sync_durability
   ]
 
   # ---------- table lifecycle ----------
@@ -113,7 +115,8 @@ defmodule Flezha.Operative.ClassRegistry do
           compensable_procs: [non_neg_integer()] | nil,
           leaf_procs: [non_neg_integer()] | nil,
           correction_window_ms: pos_integer() | nil,
-          compact_after_bytes: pos_integer() | nil
+          compact_after_bytes: pos_integer() | nil,
+          sync_durability: boolean()
         }
 
   @doc """
@@ -133,7 +136,8 @@ defmodule Flezha.Operative.ClassRegistry do
       compensable_procs: parse_ops(Map.get(metadata, "compensable_procs")),
       leaf_procs: parse_ops(Map.get(metadata, "leaf_procs")),
       correction_window_ms: parse_window(Map.get(metadata, "correction_window_ms")),
-      compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes"))
+      compact_after_bytes: parse_window(Map.get(metadata, "compact_after_bytes")),
+      sync_durability: Map.get(metadata, "durability") == "sync_remote"
     }
   end
 
@@ -183,6 +187,29 @@ defmodule Flezha.Operative.ClassRegistry do
     put_leaf_ops(operative_class, declarations.leaf_procs)
     put_correction_window(operative_class, declarations.correction_window_ms)
     put_compact_after_bytes(operative_class, declarations.compact_after_bytes)
+    put_sync_durability(operative_class, declarations.sync_durability)
+  end
+
+  @doc """
+  Record whether `operative_class` requires its commit barriers to be remotely
+  durable before they are acked (`remote-durability-tier`). Same ETS +
+  durable-sidecar shape as the tier: the gate is consulted on the commit path
+  of an instance that may have been bound by a previous controller.
+  """
+  @spec put_sync_durability(binary(), boolean()) :: :ok
+  def put_sync_durability(operative_class, sync?)
+      when is_binary(operative_class) and is_boolean(sync?) do
+    put_declaration(operative_class, :sync_durability, @sync_durability_sidecar, sync?)
+  end
+
+  @doc """
+  Resolve `operative_class`'s synchronous-durability declaration: ETS →
+  durable sidecar → `false` (the cost-free default).
+  """
+  @spec sync_durability?(binary()) :: boolean()
+  def sync_durability?(operative_class) when is_binary(operative_class) do
+    declaration(operative_class, :sync_durability, @sync_durability_sidecar, &(&1 == "true")) ==
+      true
   end
 
   @doc """

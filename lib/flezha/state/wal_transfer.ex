@@ -157,49 +157,19 @@ defmodule Flezha.State.WalTransfer do
     end
   end
 
+  # `Registry.atomic_install/2` owns the `.transferring` → fsync → rename dance;
+  # this only fills the handle it is given.
   defp pull_file(source_node, {_, _, _} = entity_id, name, timeout) do
-    dest = Registry.entity_file_path(entity_id, name)
+    case Registry.entity_file_path(entity_id, name) do
+      nil ->
+        {:error, {:unknown_file, name}}
 
-    if dest == nil do
-      {:error, {:unknown_file, name}}
-    else
-      transferring = dest <> ".transferring"
-      File.mkdir_p!(Path.dirname(dest))
-
-      case :file.open(transferring, [:raw, :write, :binary]) do
-        {:ok, fd} ->
-          copy_then_commit(source_node, entity_id, name, fd, transferring, dest, timeout)
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      dest ->
+        Registry.atomic_install(
+          dest,
+          &copy_chunks(source_node, entity_id, name, &1, 0, timeout)
+        )
     end
-  end
-
-  defp copy_then_commit(source_node, entity_id, name, fd, transferring, dest, timeout) do
-    result =
-      with :ok <- copy_chunks(source_node, entity_id, name, fd, 0, timeout),
-           :ok <- :file.datasync(fd) do
-        :ok
-      end
-
-    _ = :file.close(fd)
-
-    case result do
-      :ok ->
-        case File.rename(transferring, dest) do
-          :ok -> :ok
-          {:error, reason} -> discard(transferring, reason)
-        end
-
-      {:error, reason} ->
-        discard(transferring, reason)
-    end
-  end
-
-  defp discard(transferring, reason) do
-    _ = File.rm(transferring)
-    {:error, reason}
   end
 
   defp copy_chunks(source_node, entity_id, name, fd, offset, timeout) do

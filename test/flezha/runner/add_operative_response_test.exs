@@ -28,7 +28,8 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
                compensable_procs: nil,
                leaf_procs: nil,
                correction_window_ms: nil,
-               compact_after_bytes: nil
+               compact_after_bytes: nil,
+               sync_durability: false
              }
     end
   end
@@ -40,7 +41,8 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
              compensable_procs: nil,
              leaf_procs: nil,
              correction_window_ms: nil,
-             compact_after_bytes: nil
+             compact_after_bytes: nil,
+             sync_durability: false
            }
   end
 
@@ -65,6 +67,14 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
     # Per-input is the tier's default granularity — an undeclaring class keeps it.
     refute declarations(%{"effectively_once" => "true"}).checkpoint_ack
     refute declarations(%{"ack_granularity" => "per_input"}).checkpoint_ack
+  end
+
+  test "synchronous remote durability resolves from the metadata; anything else is async" do
+    assert declarations(%{"durability" => "sync_remote"}).sync_durability
+    # Async is the cost-free default: a class that declares nothing never makes
+    # a commit barrier wait on a remote store.
+    refute declarations(%{"other" => "x"}).sync_durability
+    refute declarations(%{"durability" => "async"}).sync_durability
   end
 
   test "compensable chain positions resolve to a list" do

@@ -168,6 +168,36 @@ contains Entities.**
   durable records in the Entity's change log — so a crash-resume owes exactly
   the timers it owed before. See [`entity_timers.md`](entity_timers.md).
 
+- **Remote durability tier** — the opt-in shipping of an operative's durable
+  artifacts (Entity WALs and snapshots, proc-journal, durable inbox, input log,
+  registry cspec) to a Postgres or S3-compatible backend, so a controller that
+  dies **with its disk** is recoverable. Off by default; the local write path is
+  untouched and local files stay authoritative. Not a pluggable WAL: the
+  backend stores opaque blobs and never learns WAL semantics. See
+  [`remote_durability_tier.md`](remote_durability_tier.md).
+
+- **Artifact vs manifest** — an **artifact** is one immutable shipped blob: a
+  snapshot file, or a **seq-addressed record bundle** (the records with seq in
+  `(last_shipped, cut]`, read from the WAL *at ship time* — never a file byte
+  range, because compaction and correction rewrite the live WAL in place). A
+  **manifest** is the per-reference entry naming the artifacts that make up one
+  cut, written **last** and epoch-stamped. Recovery reads only the manifest, so
+  a torn upload is invisible; unreferenced blobs are orphans the tier's garbage
+  collection reclaims.
+
+- **Synchronous durability** — a workflow class declaring `SYNC_DURABILITY` /
+  `syncDurability()`: the controller completes the remote ship of a commit
+  barrier before acking it, so the acknowledgement the driver blocks on implies
+  the commit survives losing the controller's disk (RPO 0). Stream classes are
+  refused it — they acknowledge at input rates, where a remote round trip per
+  ack is not a guarantee anyone can keep.
+
+- **RPO breach** — local durable progress that has gone unshipped past
+  `rpo_target_ms`. Alarm-grade (`[:flezha, :state, :rpo_exceeded]`), surfaced in
+  `flz controller status` and `/healthz`. Distinct from a *fence*
+  (`[:flezha, :state, :ship_fenced]`), which is a stale-epoch refusal meaning
+  another controller owns that reference's remote lineage.
+
 ## Poll core vocabulary
 
 - **Poll core (`flz_core`)** — the language-agnostic runner kernel: entity

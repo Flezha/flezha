@@ -228,12 +228,19 @@ defmodule Flezha.State.Registry do
   end
 
   @doc """
-  Entity ids under one Operative class. `all_entities/0` walks the whole tree,
-  so this is the per-Operative view every caller actually wants.
+  Entity ids under one Operative class — the per-Operative view every caller
+  actually wants.
+
+  Scans only this class's subtree. Filtering `all_entities/0` would make every
+  caller pay for the whole state root, which turns any per-operative loop into
+  a walk of every operative on the node.
   """
   @spec entities_of(binary()) :: [entity_id()]
   def entities_of(operative_class) when is_binary(operative_class) do
-    all_entities() |> Enum.filter(fn {class, _, _} -> class == operative_class end)
+    for procedure_id <- list_dir(Path.join(state_root(), operative_class)),
+        entity_key <- entity_keys_under({operative_class, procedure_id, ""}),
+        uniq: true,
+        do: {operative_class, procedure_id, entity_key}
   end
 
   @doc """
@@ -321,13 +328,61 @@ defmodule Flezha.State.Registry do
   """
   @spec all_entities() :: [entity_id()]
   def all_entities() do
-    root = state_root()
+    Enum.flat_map(operative_classes(), &entities_of/1)
+  end
 
-    for rc <- list_dir(root),
-        sh <- list_dir(Path.join(root, rc)),
-        entity_key <- entity_keys_under({rc, sh, ""}),
-        uniq: true,
-        do: {rc, sh, entity_key}
+  @doc """
+  Operative classes holding durable state on this node — the on-disk answer to
+  "which operatives are here at all", shared by the retention sweep, the remote
+  durability tier's backstop, and `all_entities/0`.
+
+  Class-level sidecars (`kind`, `input.log`, the declaration files) are regular
+  files, so the directory filter is what separates a class from its own
+  metadata.
+  """
+  @spec operative_classes() :: [binary()]
+  def operative_classes() do
+    root = state_root()
+    root |> list_dir() |> Enum.filter(&File.dir?(Path.join(root, &1)))
+  end
+
+  @doc """
+  Replace `path` atomically: `write.(fd)` fills a `.transferring` sibling, which
+  is fsynced and then renamed over `path`. Any failure removes the sibling and
+  leaves whatever was there before — never a half-written file, and never a
+  residue the Entity scanners would surface (`.transferring` matches none of
+  their suffixes).
+
+  The one definition of how a durable file lands, shared by the
+  cross-controller pull and the remote durability tier's hydration.
+  """
+  @spec atomic_install(binary(), (:file.io_device() -> :ok | {:error, term()})) ::
+          :ok | {:error, term()}
+  def atomic_install(path, write) when is_function(write, 1) do
+    transferring = path <> ".transferring"
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         {:ok, fd} <- :file.open(transferring, [:raw, :write, :binary]) do
+      result = with :ok <- write.(fd), do: :file.datasync(fd)
+      _ = :file.close(fd)
+
+      case result do
+        :ok -> rename_or_discard(transferring, path)
+        {:error, _} = err -> discard_install(transferring, err)
+      end
+    end
+  end
+
+  defp rename_or_discard(transferring, path) do
+    case File.rename(transferring, path) do
+      :ok -> :ok
+      {:error, _} = err -> discard_install(transferring, err)
+    end
+  end
+
+  defp discard_install(transferring, err) do
+    _ = File.rm(transferring)
+    err
   end
 
   @doc """

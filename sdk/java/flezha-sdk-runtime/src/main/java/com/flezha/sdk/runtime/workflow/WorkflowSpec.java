@@ -32,6 +32,7 @@ public final class WorkflowSpec {
     private final Optional<Duration> maxDuration;
     private final RollbackMode rollbackMode;
     private final boolean persistenceEnabled;
+    private final boolean syncDurability;
     private final com.flezha.sdk.workflow.LoopMode loopMode;
     private final com.flezha.sdk.channel.RetryPolicy retry;
     private final Optional<Duration> wakeAfter;
@@ -44,6 +45,7 @@ public final class WorkflowSpec {
             Optional<Duration> maxDuration,
             RollbackMode rollbackMode,
             boolean persistenceEnabled,
+            boolean syncDurability,
             com.flezha.sdk.workflow.LoopMode loopMode,
             Optional<Duration> wakeAfter,
             com.flezha.sdk.channel.RetryPolicy retry) {
@@ -57,6 +59,7 @@ public final class WorkflowSpec {
         this.maxDuration = maxDuration;
         this.rollbackMode = rollbackMode;
         this.persistenceEnabled = persistenceEnabled;
+        this.syncDurability = syncDurability;
     }
 
     @Nonnull
@@ -117,6 +120,15 @@ public final class WorkflowSpec {
 
     public boolean persistenceEnabled() {
         return persistenceEnabled;
+    }
+
+    /**
+     * Synchronous remote durability: the controller ships each commit barrier
+     * to its durability backend before acknowledging it (RPO 0). Inert unless
+     * the controller has a backend configured.
+     */
+    public boolean syncDurability() {
+        return syncDurability;
     }
 
     /** True when this spec runs the bare {@code run} body (no declared procedures). */
@@ -184,6 +196,7 @@ public final class WorkflowSpec {
                     probe.maxDuration(),
                     probe.rollbackMode(),
                     probe.persistenceEnabled(),
+                    probe.syncDurability(),
                     com.flezha.sdk.workflow.LoopMode.ONCE,
                     java.util.Optional.empty(),
                     resolveRetry(factoryId, probe));
@@ -227,6 +240,7 @@ public final class WorkflowSpec {
                 probe.maxDuration(),
                 probe.rollbackMode(),
                 probe.persistenceEnabled(),
+                probe.syncDurability(),
                 probe.loopMode(),
                 probe.wakeAfter(),
                 resolveRetry(factoryId, probe));

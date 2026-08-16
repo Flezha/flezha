@@ -8,6 +8,8 @@
 # `:memory_drift` is the long-running load harness in
 # `test/load/memory_drift_test.exs`; it also requires
 # `MIX_RUN_MEMORY_DRIFT=1`.
+# `:s3_integration` needs the `minio` compose service (localhost:9100) and
+# `S3_INTEGRATION=1`.
 # `:multi_node` boots a peer BEAM and stops it mid-suite, which disturbs the
 # shared cluster state the boot-time runners and the concurrently-running
 # namespace tests depend on. Run with `mix test --include multi_node`.
@@ -17,6 +19,7 @@ ExUnit.start(
     :java_sdk,
     :kafka_integration,
     :postgres_integration,
+    :s3_integration,
     :testnet,
     :memory_drift,
     :credit_soak,

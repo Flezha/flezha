@@ -101,6 +101,39 @@ defmodule Flezha.State.PersistenceResolverTest do
     end
   end
 
+  describe "sync_durability?/2" do
+    test "a class that declares nothing never waits on a remote store" do
+      refute PersistenceResolver.sync_durability?("undeclared_sync_class")
+    end
+
+    test "the SDK declaration governs" do
+      Flezha.Operative.ClassRegistry.put_sync_durability("sdk_sync_class", true)
+      on_exit(fn -> Flezha.Operative.ClassRegistry.delete("sdk_sync_class") end)
+
+      assert PersistenceResolver.sync_durability?("sdk_sync_class")
+    end
+
+    test "an operator override wins over the SDK declaration, in both directions" do
+      Flezha.Operative.ClassRegistry.put_sync_durability("ovr_sync_class", true)
+      Application.put_env(:flezha, :sync_durability, %{"ovr_sync_class" => false})
+
+      on_exit(fn ->
+        Flezha.Operative.ClassRegistry.delete("ovr_sync_class")
+        Application.delete_env(:flezha, :sync_durability)
+      end)
+
+      refute PersistenceResolver.sync_durability?("ovr_sync_class")
+
+      Application.put_env(:flezha, :sync_durability, %{"ovr_sync_class" => true})
+      Flezha.Operative.ClassRegistry.put_sync_durability("ovr_sync_class", false)
+      assert PersistenceResolver.sync_durability?("ovr_sync_class")
+    end
+
+    test "instance metadata resolves ahead of the declaration" do
+      assert PersistenceResolver.sync_durability?("meta_sync_class", %{"sync_durability" => true})
+    end
+  end
+
   describe "compact_after_age_ms/0" do
     test "defaults to 300_000" do
       Application.delete_env(:flezha, :compact_after_age_ms)

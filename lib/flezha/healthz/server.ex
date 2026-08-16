@@ -136,6 +136,7 @@ defmodule Flezha.Healthz.Server do
     pending_restore = Map.get(current, :pending_restore, false)
     unmet_intent_ms = Map.get(current, :unmet_intent_ms)
     last_tick_at = Map.get(current, :last_tick_at)
+    rpo_breaches = Flezha.State.DurabilityTier.breaches()
 
     cond do
       any_recovering?(recovery_states) ->
@@ -201,6 +202,21 @@ defmodule Flezha.Healthz.Server do
            status: "recovering",
            reason: "restoring_registry",
            intended_operatives: intended,
+           bound_operatives: bound,
+           producing_operatives: producing
+         })}
+
+      # A remote-durability RPO breach is degraded, never 503: local durability
+      # is intact and a kubelet restart cannot reach the backend that is not
+      # answering. The alarm belongs on the probe all the same — a widening RPO
+      # that is only visible in the backend is the failure this tier exists to
+      # prevent.
+      rpo_breaches != [] ->
+        {:degraded,
+         encode_json(%{
+           status: "degraded",
+           reason: "durability_rpo_exceeded",
+           rpo_breached_refs: length(rpo_breaches),
            bound_operatives: bound,
            producing_operatives: producing
          })}

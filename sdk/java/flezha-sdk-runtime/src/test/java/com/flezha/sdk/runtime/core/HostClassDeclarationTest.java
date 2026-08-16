@@ -98,6 +98,20 @@ class HostClassDeclarationTest {
         assertThat(workflow.get("retry_backoff_ms").asLong()).isEqualTo(500);
         assertThat(workflow.get("max_duration_ms").asLong()).isEqualTo(30_000);
         assertThat(workflow.has("wake_after_ms")).isFalse();
+        assertThat(decl.has("sync_durability"))
+                .as("asynchronous remote durability is the cost-free default")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("a workflow class declaring synchronous durability ships the flag")
+    void syncDurabilityDeclaration() throws Exception {
+        WorkflowOperativeClassRegistry.registerClass(SyncDurableWorkflow.class);
+        WorkflowSpec spec = WorkflowOperativeClassRegistry.getSpec("decl_sync_workflow");
+        assertThat(spec.syncDurability()).isTrue();
+
+        JsonNode decl = JSON.readTree(HostClassDeclaration.forWorkflow(spec));
+        assertThat(decl.get("sync_durability").asBoolean()).isTrue();
     }
 
     @Test
@@ -126,6 +140,23 @@ class HostClassDeclarationTest {
                     .into(DeclProc.class)
                     .keyed()
                     .output("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    public static final class SyncDurableWorkflow implements WorkflowOperative {
+        @Override
+        public String factoryId() {
+            return "decl_sync_workflow";
+        }
+
+        @Override
+        public boolean syncDurability() {
+            return true;
+        }
+
+        @Override
+        public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
+            ctx.complete(args);
         }
     }
 

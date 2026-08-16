@@ -369,5 +369,59 @@ defmodule Flezha.State.WatchdogTest do
     refute log =~ checkpoint
   end
 
+  test "a remote-durability RPO breach alarms once and clears when it catches up" do
+    rpo_id = {__MODULE__, :rpo_exceeded, System.unique_integer([:positive])}
+    parent = self()
+
+    :telemetry.attach(
+      rpo_id,
+      [:flezha, :state, :rpo_exceeded],
+      fn _e, meas, meta, _ -> send(parent, {:rpo_exceeded, meas, meta}) end,
+      nil
+    )
+
+    FlezhaTest.Helper.DurabilityBackendStub.install()
+
+    Application.put_env(
+      :flezha,
+      :durability_tier,
+      Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
+    )
+
+    on_exit(fn ->
+      :telemetry.detach(rpo_id)
+      FlezhaTest.Helper.DurabilityBackendStub.uninstall()
+    end)
+
+    {:ok, _pid} = start_supervised(Flezha.State.DurabilityTier.Shipper)
+
+    entity_id = {"rpo_#{uniq()}", "proc", "k1"}
+    path = Flezha.State.Registry.wal_path(entity_id)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, TestHelpers.build_wal_record(0, "change"))
+
+    ref = {:entity, entity_id}
+    FlezhaTest.Helper.DurabilityBackendStub.set_down(true)
+    assert {:error, :backend_down} = Flezha.State.DurabilityTier.Shipper.ship_now(ref)
+    Process.sleep(5)
+
+    assert ExUnit.CaptureLog.capture_log(fn -> :ok = Watchdog.sweep_now() end) =~
+             "RPO exceeded"
+
+    assert_receive {:rpo_exceeded, %{lag_ms: lag}, %{ref: reported}}, 1_000
+    assert lag >= 0
+    assert reported == inspect(ref)
+
+    # Latched: a sustained outage alarms once per breach, not once per sweep.
+    :ok = Watchdog.sweep_now()
+    refute_receive {:rpo_exceeded, _, _}, @quiet_ms
+
+    # And it re-arms once the reference catches up and falls behind again.
+    FlezhaTest.Helper.DurabilityBackendStub.set_down(false)
+    assert :ok = Flezha.State.DurabilityTier.Shipper.ship_now(ref)
+    :ok = Watchdog.sweep_now()
+    assert Flezha.State.DurabilityTier.breaches() == []
+  end
+
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
 end

@@ -109,6 +109,16 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
         metadata.insert("effectively_once".to_string(), "true".to_string());
     }
 
+    // Synchronous remote durability (`remote-durability-tier`): the controller
+    // withholds the commit-barrier ack until the barrier is on the durability
+    // backend, so the class must say so before the first barrier arrives.
+    // Workflow-only — `register_host_class` refuses it on a stream class.
+    if kind == "workflow"
+        && crate::workflow::registry::get_class(factory_id).is_some_and(|spec| spec.sync_durability)
+    {
+        metadata.insert("durability".to_string(), "sync_remote".to_string());
+    }
+
     if let Some(topology) = &stream {
         // Late-input correction. The controller owns the two prerequisites the
         // SDK cannot see — the input-log hold window and the snapshot age-floor
@@ -203,4 +213,46 @@ fn declared_procs(
             .collect::<Vec<_>>()
             .join(","),
     )
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    //! The `AddOperativeResponse` metadata is the controller's only view of
+    //! what a class declared. A capability the controller must gate on — here
+    //! synchronous remote durability — is worthless if it never reaches this
+    //! map, and a class that declares nothing must still encode to zero bytes.
+
+    use super::{metadata_response, AddOperativeResponse, Message};
+
+    fn register_workflow(id: &str, sync: bool) {
+        let json = format!(
+            r#"{{"factory_id":"{id}","persistent":true,"sync_durability":{sync},
+                 "channels":[],"procedures":[],"workflow":{{}}}}"#
+        );
+        crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    }
+
+    #[test]
+    fn a_sync_declaring_workflow_class_ships_the_durability_key() {
+        let id = format!("meta_sync_{}", std::process::id());
+        register_workflow(&id, true);
+
+        let encoded = metadata_response("workflow", &id);
+        assert!(!encoded.is_empty());
+
+        let decoded = AddOperativeResponse::decode(encoded.as_slice()).expect("response decodes");
+
+        assert_eq!(
+            decoded.metadata.get("durability").map(String::as_str),
+            Some("sync_remote")
+        );
+    }
+
+    #[test]
+    fn a_class_declaring_nothing_still_encodes_to_zero_bytes() {
+        let id = format!("meta_plain_{}", std::process::id());
+        register_workflow(&id, false);
+
+        assert!(metadata_response("workflow", &id).is_empty());
+    }
 }

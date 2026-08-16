@@ -16,6 +16,7 @@ defmodule Flezha.Operative.Replay do
 
   alias Flezha.Operative.Overwatch
   alias Flezha.State.Commands
+  alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.ProcInbox
@@ -151,6 +152,14 @@ defmodule Flezha.Operative.Replay do
   # combination has no persistent state.
   defp restorable_entities(kind, operative_class) do
     if PersistenceResolver.persistent_state?(kind, operative_class) do
+      # Remote hydration runs first, and in this one place: a controller
+      # adopting an operative whose disk is gone then finds its Entities,
+      # proc-journal, durable inbox and input log on disk by the time this walks
+      # them — and every caller (bind restore, the tier's awaited restore, the
+      # resume-gate count) sees the same set. Inert unless a durability backend
+      # is configured and the local state really is absent.
+      DurabilityTier.hydrate_operative(operative_class)
+
       operative_class
       |> Registry.entities_of()
       |> Enum.filter(&Restore.has_persisted_state?/1)

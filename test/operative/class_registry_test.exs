@@ -141,7 +141,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
         compensable_procs: [0, 2],
         leaf_procs: [1, 2],
         correction_window_ms: 60_000,
-        compact_after_bytes: 4_194_304
+        compact_after_bytes: 4_194_304,
+        sync_durability: true
       })
 
     assert ClassRegistry.effectively_once?(class)
@@ -150,6 +151,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     assert ClassRegistry.leaf_procs(class) == [1, 2]
     assert ClassRegistry.correction_window_ms(class) == 60_000
     assert ClassRegistry.compact_after_bytes(class) == 4_194_304
+    assert ClassRegistry.sync_durability?(class)
 
     # A class that rebinds having dropped its declarations must not read the
     # previous bind's — every sidecar goes with the claim.
@@ -160,7 +162,8 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
         compensable_procs: nil,
         leaf_procs: nil,
         correction_window_ms: nil,
-        compact_after_bytes: nil
+        compact_after_bytes: nil,
+        sync_durability: false
       })
 
     refute ClassRegistry.effectively_once?(class)
@@ -169,6 +172,25 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     refute ClassRegistry.leaf_procs(class)
     refute ClassRegistry.correction_window_ms(class)
     refute ClassRegistry.compact_after_bytes(class)
+    refute ClassRegistry.sync_durability?(class)
+  end
+
+  test "sync durability defaults false, survives eviction, and reverts when dropped",
+       %{class: class} do
+    refute ClassRegistry.sync_durability?(class)
+
+    :ok = ClassRegistry.put_sync_durability(class, true)
+    assert ClassRegistry.sync_durability?(class)
+    assert File.read!(sync_durability_sidecar(class)) == "true"
+
+    # The commit gate is read on an instance a previous controller may have
+    # bound, so it must answer without the in-memory entry.
+    :ok = ClassRegistry.delete(class)
+    assert ClassRegistry.sync_durability?(class)
+
+    :ok = ClassRegistry.put_sync_durability(class, false)
+    refute ClassRegistry.sync_durability?(class)
+    refute File.exists?(sync_durability_sidecar(class))
   end
 
   describe "correction window declaration" do
@@ -209,6 +231,9 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
 
   defp checkpoint_sidecar(class),
     do: Path.join([Registry.state_root(), class, "checkpoint_ack"])
+
+  defp sync_durability_sidecar(class),
+    do: Path.join([Registry.state_root(), class, "sync_durability"])
 
   defp correction_sidecar(class),
     do: Path.join([Registry.state_root(), class, "correction_window_ms"])

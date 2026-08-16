@@ -1,6 +1,7 @@
 defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.DurabilityTier
   alias Flezha.Service.Identificator
   alias Flezha.Service.Payloader
   alias Flezha.Runner.FleetManager
@@ -264,6 +265,16 @@ defmodule Flezha.Runner.ControlChannel do
       "spawn-workflow response #{outcome}"
     )
 
+    {:noreply, state}
+  end
+
+  # A synchronous-durability barrier finished its remote ship; write the ack
+  # here, where control frames are written. A failed ship rides back in the
+  # ack's `error` field and the SDK aborts the run — the class asked for RPO 0,
+  # so a barrier that is not remotely durable must not be reported as committed.
+  @impl true
+  def handle_info({:commit_shipped, reference_id, label, response_fun, post_fun, ship}, state) do
+    if journal_then_ack(state, reference_id, ship, label, response_fun), do: post_fun.()
     {:noreply, state}
   end
 
@@ -555,24 +566,51 @@ defmodule Flezha.Runner.ControlChannel do
       }
     )
 
-    durable? =
-      journal_then_ack(
-        state,
-        reference_id,
-        result,
-        "proc-journal commit operative=#{inspect(operative_id)} proc_idx=#{proc_idx}",
-        &{:proc_commit_response,
-         %RunnerCommands.ProcCommitResponse{
-           operative_id: operative_id,
-           proc_idx: proc_idx,
-           error: &1
-         }}
-      )
+    commit_then_ack(
+      state,
+      reference_id,
+      operative_id,
+      result,
+      "proc-journal commit operative=#{inspect(operative_id)} proc_idx=#{proc_idx}",
+      &{:proc_commit_response,
+       %RunnerCommands.ProcCommitResponse{
+         operative_id: operative_id,
+         proc_idx: proc_idx,
+         error: &1
+       }},
+      # Flush AFTER the ack (the durable point has passed, so the output may
+      # now be seen). The next procedure is free to run while this lands — the
+      # chain hands data forward through the handoff, never through the sink.
+      fn -> flush_proc_outbox(operative_id) end
+    )
+  end
 
-    # Flush AFTER the ack (the durable point has passed, so the output may now
-    # be seen). The next procedure is free to run while this lands — the chain
-    # hands data forward through the handoff, never through the sink.
-    if durable?, do: flush_proc_outbox(operative_id)
+  # The durability gate around `journal_then_ack/5`. A class that declared
+  # synchronous remote durability must have its barrier on the remote store
+  # BEFORE the ack, so the ack the SDK observes implies remote durability
+  # (RPO 0). The ship runs in a task and replies through this process, which is
+  # the one allowed to write control frames — the same off-process shape the
+  # spawn-workflow resolution uses, and for the same reason.
+  #
+  # Every other class acks on local fsync exactly as before and reaches the
+  # remote store asynchronously, off this path.
+  defp commit_then_ack(state, reference_id, operative_id, result, label, response_fun, post_fun) do
+    if result == :ok and DurabilityTier.sync_class?(operative_id) do
+      channel = self()
+
+      Task.start(fn ->
+        send(
+          channel,
+          {:commit_shipped, reference_id, label, response_fun, post_fun,
+           DurabilityTier.commit_sync(operative_id)}
+        )
+      end)
+    else
+      if journal_then_ack(state, reference_id, result, label, response_fun) do
+        post_fun.()
+        DurabilityTier.on_workflow_commit(operative_id)
+      end
+    end
   end
 
   # The protocol's core invariant, in one place: the reply to a durability
@@ -634,25 +672,26 @@ defmodule Flezha.Runner.ControlChannel do
       }
     )
 
-    durable? =
-      journal_then_ack(
-        state,
-        reference_id,
-        result,
-        "proc-journal iteration commit operative=#{inspect(operative_id)} iter=#{iter}",
-        &{:iter_commit_response,
-         %RunnerCommands.IterCommitResponse{
-           operative_id: operative_id,
-           iter: iter,
-           error: &1
-         }}
-      )
+    runner_id = state.runner_id
 
-    if durable? do
-      snapshot_iteration_boundary(state.runner_id, operative_id)
-      flush_proc_outbox(operative_id)
-      if consumed_offset > 0, do: Flezha.State.ProcInbox.truncate(operative_id, consumed_offset)
-    end
+    commit_then_ack(
+      state,
+      reference_id,
+      operative_id,
+      result,
+      "proc-journal iteration commit operative=#{inspect(operative_id)} iter=#{iter}",
+      &{:iter_commit_response,
+       %RunnerCommands.IterCommitResponse{
+         operative_id: operative_id,
+         iter: iter,
+         error: &1
+       }},
+      fn ->
+        snapshot_iteration_boundary(runner_id, operative_id)
+        flush_proc_outbox(operative_id)
+        if consumed_offset > 0, do: Flezha.State.ProcInbox.truncate(operative_id, consumed_offset)
+      end
+    )
   end
 
   # Boundary snapshot: ask the SDK to compact every Entity of the instance, so a

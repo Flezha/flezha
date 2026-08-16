@@ -106,7 +106,7 @@ defmodule Flezha.State.Retention do
     now = System.system_time(:second)
     root = Registry.state_root()
 
-    Enum.each(class_dirs(root), fn operative_class ->
+    Enum.each(Registry.operative_classes(), fn operative_class ->
       with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
              Completion.read(operative_class),
            window = PersistenceResolver.workflow_completed_retention_hours(operative_class),
@@ -116,13 +116,6 @@ defmodule Flezha.State.Retention do
         _ -> :ok
       end
     end)
-  end
-
-  defp class_dirs(root) do
-    case File.ls(root) do
-      {:ok, names} -> Enum.filter(names, &File.dir?(Path.join(root, &1)))
-      {:error, _} -> []
-    end
   end
 
   # Effectively-once tier: truncate each operative's input-log below its

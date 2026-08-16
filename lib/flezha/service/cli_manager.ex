@@ -1815,7 +1815,10 @@ defmodule Flezha.Service.CliManager do
   defp parse_state_path(path_string) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        if has_persisted_state?(rc, sh, pk) do
+        # A controller that adopted this operative may hold it only remotely.
+        # The manifest is per-Entity, so answering about one key fetches one
+        # key's artifacts — never the whole Procedure. Inert with no backend.
+        if has_persisted_state?(rc, sh, pk) or hydrated_state?(rc, sh, pk) do
           {:ok, {rc, sh, pk}}
         else
           {:error, "no persisted state at #{path_string}"}
@@ -1830,6 +1833,11 @@ defmodule Flezha.Service.CliManager do
     Enum.any?(Flezha.State.Registry.all_entities(), fn {r, s, p} ->
       r == rc and s == sh and p == pk
     end)
+  end
+
+  defp hydrated_state?(rc, sh, pk) do
+    Flezha.State.DurabilityTier.hydrate_entities(rc, sh, [pk])
+    has_persisted_state?(rc, sh, pk)
   end
 
   defp parse_state_target(s) do
@@ -1993,7 +2001,7 @@ defmodule Flezha.Service.CliManager do
   including graceful-shutdown state and configuration knobs.
   """
   def controller_status(output_format \\ "text") do
-    status = safe_shutdown_status()
+    status = Map.merge(safe_shutdown_status(), durability_status())
 
     case output_format do
       "json" ->
@@ -2012,9 +2020,27 @@ defmodule Flezha.Service.CliManager do
         IO.puts("signal_handler_status:         #{status.signal_handler_status}")
         IO.puts("graceful_shutdown_enabled:     #{status.graceful_shutdown_enabled}")
         IO.puts("graceful_shutdown_timeout_ms:  #{status.graceful_shutdown_timeout_ms}")
+        IO.puts("durability_backend:            #{status.durability_backend}")
+        IO.puts("durability_rpo_breaches:       #{status.durability_rpo_breaches}")
+        IO.puts("durability_fenced:             #{status.durability_fenced}")
     end
 
     :ok
+  end
+
+  # Remote durability tier, as an operator reads it: which backend is
+  # configured, how many references are past their RPO target, and how many
+  # were fenced off by a higher-epoch claimant. A stalled shipper must be
+  # visible here rather than only by inspecting the backend.
+  defp durability_status() do
+    backend =
+      Application.get_env(:flezha, :durability_tier, []) |> Keyword.get(:backend, :none)
+
+    %{
+      durability_backend: backend,
+      durability_rpo_breaches: length(Flezha.State.DurabilityTier.breaches()),
+      durability_fenced: Enum.count(Flezha.State.DurabilityTier.status(), & &1.fenced)
+    }
   end
 
   defp safe_shutdown_status() do

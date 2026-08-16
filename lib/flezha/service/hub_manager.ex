@@ -6,6 +6,7 @@ defmodule Flezha.Service.HubManager do
   alias ProcessHub.Service.HookManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.RegistryUpdate
+  alias Flezha.State.DurabilityTier
 
   require Logger
 
@@ -515,12 +516,19 @@ defmodule Flezha.Service.HubManager do
       # peer handling this runner's disconnect misses the operative otherwise.
       # Returned, not discarded: a "No child found" is the whole signal that a
       # binding never reached the durable row.
-      ProcessRegistry.update(
-        hub_id,
-        operative_id,
-        RegistryUpdate.set_runner_tag(runner_id),
-        propagate: true
-      )
+      result =
+        ProcessRegistry.update(
+          hub_id,
+          operative_id,
+          RegistryUpdate.set_runner_tag(runner_id),
+          propagate: true
+        )
+
+      # The cspec just changed: shipping state without it would give a
+      # recovering controller perfect Entities for operatives it does not know
+      # exist.
+      DurabilityTier.ship_cspec(hub_id)
+      result
     end)
   end
 
@@ -562,8 +570,9 @@ defmodule Flezha.Service.HubManager do
   away from. Dispatching from inside the write orders the re-assert after it
   instead of racing it.
   """
-  def hook_reassert_binding(_hub_id, %{child_id: operative_id} = hook_data) do
+  def hook_reassert_binding(hub_id, %{child_id: operative_id} = hook_data) do
     local = node()
+    DurabilityTier.ship_cspec(hub_id)
 
     Enum.each(Map.get(hook_data, :node_pids, []), fn
       {^local, pid} when is_pid(pid) -> send(pid, {:reassert_binding, operative_id})

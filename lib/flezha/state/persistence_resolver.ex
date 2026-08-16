@@ -32,6 +32,9 @@ defmodule Flezha.State.PersistenceResolver do
        un-snapshotted WAL record is older than this is compacted even
        if it never reaches `compact_after_bytes`. Default `300_000`.
        `0` disables the age trigger.
+    * `:sync_durability` — `%{<OperativeClass> => boolean}`. Whether a commit
+       barrier must be remotely durable before it is acked. Default: the SDK
+       declaration, else `false`.
     * `:credit_window_bytes` — `%{<OperativeClass> => pos_integer}`.
        Byte window offered in `CreditWindowInit` for a state stream whose
        first Change belongs to that class. Global default
@@ -153,6 +156,23 @@ defmodule Flezha.State.PersistenceResolver do
       _ ->
         Application.get_env(:flezha, :default_compact_after_bytes, @default_compact_after_bytes)
     end
+  end
+
+  @doc """
+  Whether `operative_class` requires its commit barriers to reach the remote
+  durability tier before they are acked (`remote-durability-tier`, RPO 0).
+
+  Same three-source cascade as every other per-class knob, with the SDK
+  declaration as the default — so an operator can force a class either way
+  (`:sync_durability => %{class => bool}`) without an SDK change, and a class
+  that declares nothing costs nothing.
+  """
+  @spec sync_durability?(binary(), map()) :: boolean()
+  def sync_durability?(operative_class, metadata \\ %{}) when is_binary(operative_class) do
+    resolve(:sync_durability, :sync_durability, operative_class, metadata,
+      valid: &is_boolean/1,
+      default: fn -> ClassRegistry.sync_durability?(operative_class) end
+    )
   end
 
   @spec output_stall_timeout_ms(binary(), map()) :: non_neg_integer()

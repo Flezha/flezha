@@ -292,6 +292,55 @@ config :flezha,
   credit_flow_control_enabled:
     System.get_env("FLEZHA_CREDIT_FLOW_CONTROL", "true") in ["1", "true", "yes", "on"],
   # ------------------------------------------------------------------------------------------------
+  # Remote durability tier (remote-durability-tier): ships immutable artifacts —
+  # compaction snapshots, seq-addressed WAL record bundles, proc-journal and
+  # inbox suffixes, the input log, the ProcessHub registry cspec — to a remote
+  # backend so a controller that dies WITH its disk is recoverable.
+  #
+  # `backend: :none` (the default) wires nothing into the supervision tree and
+  # leaves every ack path gating on local fsync exactly as before.
+  durability_tier: [
+    backend:
+      case System.get_env("FLEZHA_DURABILITY_BACKEND", "none") |> String.downcase() do
+        "postgres" -> :postgres
+        "s3" -> :s3
+        _ -> :none
+      end,
+    # Backstop for entities that reach no compaction / checkpoint / commit
+    # boundary — the bound on how stale a quiet entity's remote copy gets.
+    ship_interval_ms:
+      System.get_env("FLEZHA_DURABILITY_SHIP_INTERVAL_MS", "30000") |> String.to_integer(),
+    # Time since the last successful ship at which the RPO alarm fires. Two
+    # sweeps' worth by default, so one missed sweep is not an alarm.
+    rpo_target_ms:
+      System.get_env("FLEZHA_DURABILITY_RPO_TARGET_MS", "120000") |> String.to_integer(),
+    # Orphan-blob collection: blobs no live manifest references (torn uploads,
+    # superseded ranges). Never touches a referenced key.
+    gc_interval_ms:
+      System.get_env("FLEZHA_DURABILITY_GC_INTERVAL_MS", "3600000") |> String.to_integer(),
+    backend_opts: [
+      # Postgres backend (`postgrex`, already in tree for the Postgres sink).
+      hostname: System.get_env("FLEZHA_DURABILITY_PG_HOST", "localhost"),
+      port: System.get_env("FLEZHA_DURABILITY_PG_PORT", "5432") |> String.to_integer(),
+      database: System.get_env("FLEZHA_DURABILITY_PG_DATABASE", "flezha"),
+      username: System.get_env("FLEZHA_DURABILITY_PG_USERNAME", "flezha"),
+      # Prefer the env-var form: the password then never lands in config,
+      # worker state, or a log line.
+      password_env: System.get_env("FLEZHA_DURABILITY_PG_PASSWORD_ENV"),
+      ssl: System.get_env("FLEZHA_DURABILITY_PG_SSL", "false") in ["1", "true", "yes", "on"],
+      table: System.get_env("FLEZHA_DURABILITY_PG_TABLE", "flezha_durability_artifacts"),
+      auto_create:
+        System.get_env("FLEZHA_DURABILITY_PG_AUTO_CREATE", "true") in ["1", "true", "yes", "on"],
+      # S3-compatible backend (hand-rolled sigv4 over `:mint`).
+      endpoint: System.get_env("FLEZHA_DURABILITY_S3_ENDPOINT"),
+      bucket: System.get_env("FLEZHA_DURABILITY_S3_BUCKET"),
+      region: System.get_env("FLEZHA_DURABILITY_S3_REGION", "us-east-1"),
+      access_key_id: System.get_env("FLEZHA_DURABILITY_S3_ACCESS_KEY_ID"),
+      secret_access_key_env: System.get_env("FLEZHA_DURABILITY_S3_SECRET_ENV"),
+      prefix: System.get_env("FLEZHA_DURABILITY_S3_PREFIX", "flezha")
+    ]
+  ],
+  # ------------------------------------------------------------------------------------------------
   # Durable audit log (audit-log).
   #
   # Operator opt-in: default OFF. When enabled the audit-log subsystem

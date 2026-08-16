@@ -51,22 +51,8 @@ defmodule Flezha.State.RecordLog do
   """
   @spec read(binary(), decoder()) :: [term()]
   def read(path, decode) when is_binary(path) and is_function(decode, 3) do
-    case :file.open(path, [:raw, :read, :binary]) do
-      {:ok, device} ->
-        try do
-          fold(device, decode, [])
-        after
-          :file.close(device)
-        end
-
-      {:error, _} ->
-        []
-    end
-  end
-
-  defp fold(device, decode, acc) do
-    device
-    |> WalWriter.fold_records(acc, fn {seq, header, body}, acc ->
+    path
+    |> WalWriter.fold_path([], fn {seq, header, body}, acc ->
       case decode.(seq, header, body) do
         {:ok, entry} -> {:cont, [entry | acc]}
         {:error, _} -> {:cont, acc}

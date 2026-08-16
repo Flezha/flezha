@@ -584,6 +584,51 @@ heal the recent past. A target older than retention is refused with
 - **The window is bounded by retention, by construction.** There is no
   unbounded-history correction.
 
+## Remote durability tier: surviving the loss of a controller's disk
+
+Everything above is local. A controller that dies **with its disk** takes its
+operatives' state — and the registry record of which operatives existed — with
+it; `WalTransfer` is a one-shot pull at migration time, not replication. The
+remote durability tier is the answer, and it is **off by default**
+(`FLEZHA_DURABILITY_BACKEND=none`), under which behaviour is byte-identical to a
+build without it.
+
+When enabled, it ships immutable artifacts — compaction snapshots,
+seq-addressed WAL record bundles, proc-journal and inbox suffixes, the input log,
+the registry cspec — to a Postgres or S3-compatible backend at boundaries that
+already exist (checkpoint close, compaction, workflow commit barriers), plus one
+backstop timer. The per-reference manifest is written last, so a torn upload is
+invisible to recovery.
+
+**RPO by kind:**
+
+| Kind | Mode | Loss when the disk is gone |
+| --- | --- | --- |
+| Workflow | declared `SYNC_DURABILITY` | **none** — the barrier is remote before it is acked |
+| Workflow | default | at most the work since the last shipped barrier |
+| Stream | checkpoint-ack | at most the current, unclosed interval |
+| Stream | per-input | at most one `ship_interval_ms` (default 30 s) |
+
+**Failure posture.** Async shipping never touches an ack path: a failing backend
+delays no append, fsync, ack or watermark advance, and retries on the shared
+backoff ladder while local operation continues. What degrades is the guarantee,
+and it is loud — `[:flezha, :state, :rpo_exceeded]` is alarm-grade, surfaced in
+`flz controller status` and `/healthz`. Synchronous mode instead stalls the
+opted-in workflow at its barrier: visible, bounded by the existing ack budget,
+and correct, because the class asked for RPO 0. Neither mode loses data
+silently.
+
+**Fencing.** Every manifest write carries the writer's WAL-owner epoch and is
+applied conditionally, which makes the remote store an external arbiter: a stale
+claimant's write is refused, it stops shipping that reference and alarms rather
+than retrying. This extends the existing local epoch fencing outward — it does
+not replace it.
+
+**Recovery** hydrates the manifest-referenced artifacts into the local layout
+and then runs the existing restore-and-replay path unchanged. Local state is
+never overwritten. Full detail, configuration and the kill-the-disk drill:
+[`../remote_durability_tier.md`](../remote_durability_tier.md).
+
 ## How to avoid loss — operator playbook
 
 - **Deploy / upgrade runners with a graceful stop, never a kill.** Send SIGTERM (or

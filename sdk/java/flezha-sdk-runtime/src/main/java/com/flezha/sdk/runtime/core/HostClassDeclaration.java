@@ -95,6 +95,9 @@ public final class HostClassDeclaration {
         if (spec.persistenceEnabled()) {
             decl.put("persistent", true);
         }
+        if (spec.syncDurability()) {
+            decl.put("sync_durability", true);
+        }
         decl.put("channels", topology == null ? List.of() : channels(topology));
         decl.put("procedures", topology == null ? List.of() : procedures(topology));
 

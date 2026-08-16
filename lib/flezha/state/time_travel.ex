@@ -129,21 +129,7 @@ defmodule Flezha.State.TimeTravel do
   end
 
   defp scan_seq_at_or_before_path(path, ts) do
-    case :file.open(path, [:raw, :read, :binary]) do
-      {:ok, device} ->
-        try do
-          scan_seq_at_or_before(device, ts)
-        after
-          :file.close(device)
-        end
-
-      {:error, _} ->
-        nil
-    end
-  end
-
-  defp scan_seq_at_or_before(device, ts) do
-    WalWriter.fold_records(device, nil, fn {seq, header, body}, found ->
+    WalWriter.fold_path(path, nil, fn {seq, header, body}, found ->
       case Wire.decode_effect_record(header, body) do
         %{event_time: event_time} when event_time <= ts -> {:cont, seq}
         _ -> {:cont, found}
@@ -166,37 +152,26 @@ defmodule Flezha.State.TimeTravel do
   end
 
   defp read_wal_in_range(entity_id, snapshot_seq, target_seq) do
-    path = Registry.wal_path(entity_id)
-
-    if File.exists?(path) do
-      {:ok, dev} = :file.open(path, [:raw, :read, :binary])
-
-      try do
-        gather(dev, snapshot_seq, target_seq)
-      after
-        :file.close(dev)
-      end
-    else
-      {<<>>, snapshot_seq}
-    end
-  end
-
-  defp gather(dev, snapshot_seq, target_seq) do
     {acc, terminal} =
-      WalWriter.fold_records(dev, {[], snapshot_seq}, fn {seq, header, bytes},
-                                                         {acc, terminal} = unchanged ->
-        cond do
-          seq > target_seq ->
-            {:halt, unchanged}
-
-          seq > snapshot_seq ->
-            {:cont, {[WalWriter.encode_record(seq, header, bytes) | acc], max(terminal, seq)}}
-
-          true ->
-            {:cont, unchanged}
-        end
-      end)
+      WalWriter.fold_path(
+        Registry.wal_path(entity_id),
+        {[], snapshot_seq},
+        &gather(&1, &2, snapshot_seq, target_seq)
+      )
 
     {acc |> Enum.reverse() |> IO.iodata_to_binary(), terminal}
+  end
+
+  defp gather({seq, header, bytes}, {acc, terminal} = unchanged, snapshot_seq, target_seq) do
+    cond do
+      seq > target_seq ->
+        {:halt, unchanged}
+
+      seq > snapshot_seq ->
+        {:cont, {[WalWriter.encode_record(seq, header, bytes) | acc], max(terminal, seq)}}
+
+      true ->
+        {:cont, unchanged}
+    end
   end
 end

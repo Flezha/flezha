@@ -99,7 +99,11 @@ cannot read arbitrary paths off the node. Telemetry:
 Source files are left in place; the Retention sweeper reaps orphans.
 
 This is **one-shot at migration time, not replication**. A controller that dies
-together with its disk takes its operatives' state with it.
+together with its disk takes its operatives' state with it — unless the
+**remote durability tier** is enabled, which ships the same files as immutable
+artifacts to a Postgres or S3-compatible backend and hydrates them back into
+this layout on a fresh node. Off by default; see
+[`../remote_durability_tier.md`](../remote_durability_tier.md).
 
 ## WAL record format
 

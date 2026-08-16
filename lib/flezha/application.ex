@@ -18,6 +18,9 @@ defmodule Flezha.Application do
 
     _ = Flezha.Boot.StatePathMigrator.migrate()
 
+    # `[]` unless a remote durability backend is configured. Ahead of
+    # HubManager because the boot-time cspec hydration among these children
+    # must land before ProcessHub opens `registry.dets` at hub start.
     children =
       [
         # SignalHandler is started FIRST so OS signal handlers are
@@ -33,20 +36,23 @@ defmodule Flezha.Application do
         Flezha.Convergence.Snapshot,
         # The cluster directory scope must be up before its writers:
         # HubManager joins hub pids, FleetManager joins capability groups.
-        Flezha.Cluster.Directory,
-        Flezha.Service.HubManager,
-        Flezha.Observability.Supervisor,
-        Flezha.Shutdown.Coordinator,
-        Flezha.Runner.FleetSupervisor,
-        FleetManager,
-        # Cluster formation must start BEFORE the transport accepts runner
-        # connects, so a hub is never created on a not-yet-clustered node.
-        # The transport must not accept connects before the cluster is
-        # formed, so a hub is never created on a not-yet-clustered node.
-        # `Flezha.Convergence.Loop` (started after the State trio below)
-        # owns all bind/rebind/plugin-restart healing.
-        Flezha.Cluster.Orchestrator
+        Flezha.Cluster.Directory
       ] ++
+        Flezha.State.DurabilityTier.children() ++
+        [
+          Flezha.Service.HubManager,
+          Flezha.Observability.Supervisor,
+          Flezha.Shutdown.Coordinator,
+          Flezha.Runner.FleetSupervisor,
+          FleetManager,
+          # Cluster formation must start BEFORE the transport accepts runner
+          # connects, so a hub is never created on a not-yet-clustered node.
+          # The transport must not accept connects before the cluster is
+          # formed, so a hub is never created on a not-yet-clustered node.
+          # `Flezha.Convergence.Loop` (started after the State trio below)
+          # owns all bind/rebind/plugin-restart healing.
+          Flezha.Cluster.Orchestrator
+        ] ++
         authz_children() ++
         installer_children() ++
         transport_children() ++

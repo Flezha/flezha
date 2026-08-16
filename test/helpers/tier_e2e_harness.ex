@@ -8,7 +8,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
   """
 
   import ExUnit.Assertions
-  import ExUnit.Callbacks, only: [on_exit: 1]
+  import ExUnit.Callbacks, only: [on_exit: 1, start_supervised!: 1]
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Runner.FleetManager
@@ -49,7 +49,7 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
       NodeTestHelper.start_runner_port(namespace,
         runtime: Keyword.get(opts, :runtime, :rust),
         transport: :uds,
-        env: [{"FLEZHA_RUNNER_ID_PATH", id_path}],
+        env: [{"FLEZHA_RUNNER_ID_PATH", id_path} | Keyword.get(opts, :env, [])],
         connect_timeout: 120_000
       )
 
@@ -64,6 +64,21 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     end)
 
     {port, runner_id}
+  end
+
+  @doc """
+  Kill the Overwatch so its supervised replacement re-binds, without waiting
+  for the replacement to be observable.
+
+  For a workflow operative the replacement is what `force_fresh_rebind/2`
+  cannot wait on: a resumed chain can run to completion and deregister between
+  two polls, so "a live replacement pid" is a state the test may legitimately
+  never see. The terminal completion record is the thing to wait on instead.
+  """
+  def kill_overwatch(namespace, operative_id) do
+    {:ok, pid} = OperativeManager.get_operative_pid(namespace, operative_id)
+    Process.exit(pid, :kill)
+    :ok
   end
 
   @doc """
@@ -85,6 +100,74 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
              60_000
            ),
            "no replacement Overwatch came up after the kill"
+  end
+
+  @doc """
+  Point the remote durability tier at the compose Postgres and start its
+  shipper for the duration of the test, on a table of its own so concurrent
+  cases never share a manifest namespace.
+
+  The short ship interval is deliberate: the drill's whole claim is a bound on
+  loss, so the backstop must be observable inside one test.
+  """
+  def install_durability_tier() do
+    table = "flezha_durability_e2e_#{System.unique_integer([:positive])}"
+
+    opts =
+      FlezhaTest.Helper.PostgresSink.conn_opts()
+      |> Keyword.merge(table: table, auto_create: true)
+
+    Application.put_env(:flezha, :durability_tier,
+      backend: {Flezha.State.DurabilityTier.Backend.Postgres, opts},
+      ship_interval_ms: 2_000,
+      rpo_target_ms: 30_000,
+      gc_interval_ms: 3_600_000
+    )
+
+    start_supervised!(Flezha.State.DurabilityTier.Backend.Postgres.child_spec(opts))
+    start_supervised!(Flezha.State.DurabilityTier.Shipper)
+
+    on_exit(fn -> Application.delete_env(:flezha, :durability_tier) end)
+    opts
+  end
+
+  @doc """
+  Destroy every local durable byte one operative owns — its Entity WALs,
+  snapshots, proc-journal, durable inbox, input log and class sidecars — and
+  evict its in-memory class declarations.
+
+  Scoped to the operative's own class directory rather than the whole state
+  root: the suite shares one controller, so wiping the root would take other
+  tests' state with it. For the operative under drill the effect is identical —
+  nothing of it survives locally, and only the remote manifest can bring it
+  back.
+  """
+  def destroy_local_state(operative_id) do
+    reserved =
+      Enum.map(
+        Flezha.State.Registry.reserved_entity_keys(),
+        &{operative_id, operative_id, &1}
+      )
+
+    # `delete_entity/1` is the existing hard-delete: it stops the writer, drops
+    # its fsync mark, unlinks the files and forgets the watermark. The stop must
+    # be graceful — a killed writer is transient-restarted, and the replacement
+    # would hold an open handle to the unlinked file while hydration writes a
+    # new one underneath it.
+    for entity_id <- Flezha.State.Registry.entities_of(operative_id) ++ reserved do
+      Flezha.State.Supervisor.delete_entity(entity_id)
+    end
+
+    case Flezha.State.Supervisor.lookup({operative_id, :input_log}) do
+      {:ok, pid} -> GenServer.stop(pid, :normal, 5_000)
+      :error -> :ok
+    end
+
+    File.rm_rf!(Path.join(Flezha.State.Registry.state_root(), operative_id))
+    Flezha.Operative.ClassRegistry.delete(operative_id)
+    :ok
+  catch
+    :exit, _ -> :ok
   end
 
   def os_pid(port) do

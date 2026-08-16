@@ -28,6 +28,11 @@ defmodule Flezha.State.Watchdog do
       `entity_state_snapshot` response does not arrive within
       `compaction_timeout_ms` is timed out so it cannot block persistence.
 
+    * **Remote RPO.** When a remote durability backend is configured, a
+      reference whose local progress has gone unshipped past the RPO target
+      raises an alarm — a stalled shipper must never be discoverable only by
+      inspecting the backend. Inert (one ETS read) while the tier is off.
+
   Both emit telemetry and trigger the shared `Flezha.State.Recovery`
   resync. Because WAL persistence and output-plugin delivery share the
   per-Entity outbox, recovering WAL advance also resumes output.
@@ -39,7 +44,16 @@ defmodule Flezha.State.Watchdog do
 
   alias Flezha.Convergence.Backoff
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Commands, PersistenceResolver, Recovery, Registry, Supervisor, WalWriter}
+
+  alias Flezha.State.{
+    Commands,
+    DurabilityTier,
+    PersistenceResolver,
+    Recovery,
+    Registry,
+    Supervisor,
+    WalWriter
+  }
 
   # Consecutive compaction failures at which the miss stops being treated as
   # transient. The backoff schedule has four rungs (5s/30s/60s/300s); crossing
@@ -50,7 +64,11 @@ defmodule Flezha.State.Watchdog do
   # handshake plus the runner that owns it, so the timeout path can recover.
   # `backoff` is the shared per-`{:compaction, entity_id}` strike/cooldown table
   # that keeps a repeatedly-failing Entity from re-triggering every sweep.
-  defstruct compactions: %{}, last_resync: %{}, catastrophic: %{}, backoff: Backoff.new()
+  defstruct compactions: %{},
+            last_resync: %{},
+            catastrophic: %{},
+            rpo_breached: MapSet.new(),
+            backoff: Backoff.new()
 
   # ---------- Public API ----------
 
@@ -141,6 +159,10 @@ defmodule Flezha.State.Watchdog do
 
     now = :erlang.monotonic_time(:millisecond)
 
+    # A snapshot just replaced the WAL prefix it subsumes — the exact boundary
+    # at which the remote copy should move from record bundles to a baseline.
+    DurabilityTier.on_compaction_completed(entity_id)
+
     {:noreply,
      %{
        state
@@ -175,6 +197,35 @@ defmodule Flezha.State.Watchdog do
     |> sweep_catastrophic_dataflow(now)
     |> sweep_compaction_triggers(now)
     |> sweep_compactions(now)
+    |> sweep_rpo()
+  end
+
+  # A remote-durability reference whose local progress has been unshipped past
+  # the RPO target. Latched per reference so a sustained backend outage alarms
+  # once per breach rather than every sweep, and cleared when it catches up —
+  # the same shape as the catastrophic-dataflow latch.
+  defp sweep_rpo(state) do
+    breaches = DurabilityTier.breaches()
+    breached = MapSet.new(breaches, & &1.ref)
+
+    breaches
+    |> Enum.reject(&MapSet.member?(state.rpo_breached, &1.ref))
+    |> Enum.each(&flag_rpo_exceeded(&1.ref, &1.lag_ms))
+
+    %{state | rpo_breached: breached}
+  end
+
+  defp flag_rpo_exceeded(ref, lag) do
+    Logger.error(
+      "[watchdog] remote durability RPO exceeded for #{inspect(ref)}: #{lag}ms of local " <>
+        "progress is not on the remote store — investigate the durability backend"
+    )
+
+    :telemetry.execute(
+      [:flezha, :state, :rpo_exceeded],
+      %{lag_ms: lag, target_ms: DurabilityTier.rpo_target_ms()},
+      %{ref: inspect(ref)}
+    )
   end
 
   # The automatic snapshot trigger: size (un-snapshotted WAL bytes past the

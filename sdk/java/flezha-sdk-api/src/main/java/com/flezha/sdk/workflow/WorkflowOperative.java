@@ -176,4 +176,21 @@ public interface WorkflowOperative extends Computation {
     default boolean persistenceEnabled() {
         return true;
     }
+
+    /**
+     * Synchronous remote durability: the controller completes the remote ship
+     * of each commit barrier — the proc-journal suffix and the inbox the
+     * barrier consumed — before it acknowledges the barrier. The
+     * acknowledgement this driver blocks on therefore implies the commit
+     * survives losing the controller's disk (RPO 0), at the cost of one remote
+     * round trip per barrier.
+     *
+     * <p>Inert unless the controller has a durability backend configured, and
+     * available to workflow classes only: a stream class acknowledges at input
+     * rates, where a remote round trip per acknowledgement is not a guarantee
+     * anyone can keep.
+     */
+    default boolean syncDurability() {
+        return false;
+    }
 }
