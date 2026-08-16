@@ -131,9 +131,10 @@ Slots are evaluated in the entry's IANA time zone:
 Two layers, deliberately separated:
 
 - **The definition** persists in node-local DETS at
-  `<FLEZHA_SCHEDULE_DIR>/schedules.dets` (default `app_data/schedules`) —
-  the same posture as the other control-plane registries — and survives
-  controller restarts.
+  `<FLEZHA_SCHEDULE_DIR>/schedules.dets` (default `app_data/schedules`) and
+  survives controller restarts. Unlike the operative registry, the schedule
+  store is **not** covered by the remote durability tier — it is local-only,
+  which is the real force behind the define-everywhere rule below.
 - **Who runs it** is decided by the dedicated `:flz_schedules` ProcessHub.
   Every controller asserts the definitions its own store holds; the hub's
   `Singularity` redundancy leaves **exactly one schedule process cluster-wide**

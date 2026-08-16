@@ -13,8 +13,8 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 | Document | What it covers |
 | --- | --- |
 | **This file** | Roles, the workload model, the eight kernel invariants, process topology, on-disk layout, the failure model |
-| [`kernel.md`](kernel.md) | The shared durable substrate: the input log, the atomic effect record, WAL + snapshot, the outbox, the watermark, output identity, the epoch rule, flow control, health |
-| [`stream_profile.md`](stream_profile.md) | Streaming: per-entity recovery, the dead-letter queue, late-input correction, checkpoint intervals |
+| [`kernel.md`](kernel.md) | The shared durable substrate: the input log, the atomic effect record, WAL + snapshot, the outbox, the watermark, output identity, the epoch rule, flow control, the remote durability tier, health |
+| [`stream_profile.md`](stream_profile.md) | Streaming: per-entity recovery, the dead-letter queue, late-input correction, checkpoint intervals, partitioned operatives |
 | [`workflow_profile.md`](workflow_profile.md) | Jobs and sessions: the procedure tree, the proc journal, the transactional outbox, saga compensation, the durable loop, suspension, rewind |
 | [`runner.md`](runner.md) | Inside a runner: the shared kernel, the poll boundary, per-entity exclusivity, and what each host SDK owns |
 
@@ -37,8 +37,13 @@ links; the deep docs live in [`../resilience/`](../resilience/) and
 - **Sink adapter** — where output goes (Kafka, Postgres, anything). Also a pluggable edge.
 
 An **entity's durable state is node-local**. It is not replicated across controller nodes;
-cross-node state transfer happens only through the live handover an operative migration
-performs. Cross-node WAL replication is a deliberate non-goal.
+cross-node state transfer happens through the live handover an operative migration performs,
+and continuous cross-node WAL replication is a deliberate non-goal. What stands against losing
+a controller *with its disk* is the opt-in
+[remote durability tier](kernel.md#the-remote-durability-tier): immutable artifacts shipped to
+a remote backend at the durability boundaries that already exist, hydrated back through the
+ordinary restore path. The default (`backend: none`) is local-only and byte-identical to a
+build without the tier.
 
 ## The workload model
 
@@ -82,7 +87,9 @@ flowchart LR
 ```
 
 - **Operative** — the unit you start and stop. It has a **kind**, frozen at start:
-  `stream` (default) or `workflow`.
+  `stream` (default) or `workflow`. A stream operative may be started with `--partitions N`,
+  which materializes it as N ordinary instances (`<id>#p0..#p{N-1}`) splitting the key space
+  by key group — see [`stream_profile.md`](stream_profile.md#partitioned-operatives).
 - **Procedure** — a typed stage inside an operative. Declares `Input`, `Output`, `State`,
   `Change`, and `Clock` types.
 - **Entity** — the per-key state-bearing slice of a procedure. Durability is per entity:
@@ -325,6 +332,8 @@ flowchart TB
         A1["Shutdown.SignalHandler<br/><i>first: SIGTERM handlers before anything else</i>"]:::ctrl
         A2["Service.EventManager · BootLoader · Service.Identificator"]:::ctrl
         A3["Convergence.Snapshot<br/><i>the published health ETS table</i>"]:::ctrl
+        A3a["Cluster.Directory<br/><i>the :pg cluster directory, before its writers</i>"]:::ctrl
+        A3b["State.DurabilityTier — cspec hydration · Shipper<br/><i>empty unless a remote backend is configured;<br/>before HubManager: the hub must not open registry.dets<br/>before the remote cspec is hydrated</i>"]:::store
         A4["Service.HubManager<br/><i>one ProcessHub hub per namespace</i>"]:::ctrl
         A5["Observability.Supervisor"]:::ctrl
         A6["Shutdown.Coordinator"]:::ctrl
@@ -336,7 +345,7 @@ flowchart TB
         A12["State.Supervisor · State.FsyncBatcher<br/>State.Retention · State.Watchdog · Dlq.Store"]:::store
         A13["Convergence.Loop<br/><i>the single self-healer</i>"]:::ctrl
         A14["Healthz.Server<br/><i>opt-in</i>"]:::ctrl
-        A1 --> A2 --> A3 --> A4 --> A5 --> A6 --> A7 --> A8 --> A9 --> A10 --> A11 --> A12 --> A13 --> A14
+        A1 --> A2 --> A3 --> A3a --> A3b --> A4 --> A5 --> A6 --> A7 --> A8 --> A9 --> A10 --> A11 --> A12 --> A13 --> A14
     end
 
     subgraph PEROP["per operative instance"]
@@ -393,17 +402,21 @@ sequenceDiagram
 
     Note over OW: convergence sees an unbound operative and binds it
     OW->>EX: Ping (proves the reply path is intact)
-    OW->>EX: AddOperative {operative_id, factory_id, kind, init_values, resume_entity_count}
+    OW->>EX: AddOperative {operative_id, factory_id, kind, init_values, resume_entity_count,<br/>partition_index · partition_count · key_group_from · key_group_to — partition members only}
     EX-->>OW: AddOperativeResponse {metadata}
-    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_procs · leaf_procs · compact_after_bytes
+    Note over OW: decode_declarations — the ONE seam where the SDK declares capability:<br/>effectively_once · ack_granularity · correction_window_ms<br/>compensable_procs · leaf_procs · compact_after_bytes<br/>keyed (only when false) · durability (sync_remote)
     OW->>EX: RestoreInitState per persisted entity (snapshot + WAL tail)
     Note over OW,EX: only now does input flow
 ```
 
-Those six metadata keys are the complete set of SDK→controller declarations, and the shared
+Those eight metadata keys are the complete set of SDK→controller declarations, and the shared
 runner core emits them for every host language — a Java class and a Rust class declaring the
 same thing send the same map. A class that declares nothing — a plain stream class — sends
-an empty map and the controller keeps every default. Wire detail:
+an empty map and the controller keeps every default. `keyed` is declared only when it is
+*false* (a keyless class cannot be partitioned, and the controller preflight uses that to
+refuse a repeat partitioned start without touching a runner); `durability=sync_remote` is a
+workflow class asking the [remote durability tier](kernel.md#the-remote-durability-tier) to
+gate its barrier acks on the remote ship. Wire detail:
 [`../sdk_protocol_spec.md`](../sdk_protocol_spec.md).
 
 ---
@@ -480,6 +493,8 @@ flowchart LR
         R8["a superseded runner realigns the WAL onto a stale lineage"]:::risk
         R9["/healthz is green while the data plane is dead"]:::risk
         R10["a late input lands after the window it belongs to already closed"]:::risk
+        R11["a controller node dies WITH its disk —<br/>state and the record of what existed, gone"]:::risk
+        R12["a partitioned member is fed a key it does not own"]:::risk
     end
     subgraph PROT["What closes it"]
         direction TB
@@ -493,6 +508,8 @@ flowchart LR
         P8["single-owner write path — the WAL refuses a superseded session"]:::prot
         P9["producing-liveness — fed AND advancing, plus intent-mismatch,<br/>a 503 on a wedged controller fabric, and stamped sensor freshness"]:::prot
         P10["late-input correction — rewind, replay in event-time order, bump the epoch"]:::prot
+        P11["remote durability tier (opt-in) — artifact shipping at durable boundaries,<br/>manifest-last, hydrate on a fresh node"]:::prot
+        P12["key-group guard — first-frame park naming the routing contract,<br/>never silently wrong state"]:::prot
     end
     R1 --> P1
     R2 --> P2
@@ -504,6 +521,8 @@ flowchart LR
     R8 --> P8
     R9 --> P9
     R10 --> P10
+    R11 --> P11
+    R12 --> P12
 
     classDef risk fill:#fee2e2,stroke:#991b1b,color:#111
     classDef prot fill:#dcfce7,stroke:#166534,color:#111
@@ -524,6 +543,8 @@ the user's concern there. The effectively-once tier is what closes them.
 | Whole-cluster cold boot | recovered from DETS + the on-disk WAL | n/a |
 | Workflow operative SIGKILL, durable | none past the last committed proc | at-least-once |
 | Workflow operative SIGKILL, persistence opted out | full — re-runs from the top | at-least-once |
+| Controller dies with its disk, `backend: none` (default) | that node's operatives: total | n/a |
+| Controller dies with its disk, remote tier enabled | workflow `sync_remote`: none; otherwise ≤ one checkpoint / ship interval | effectively-once — replays absorbed by sink dedup |
 
 The full scenario matrix and the operator playbook are in
 [`../resilience/data_durability.md`](../resilience/data_durability.md).

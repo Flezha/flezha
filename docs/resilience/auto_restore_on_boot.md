@@ -1,9 +1,11 @@
 # Auto-restore on boot
 
-This is the single restart-survival mechanism in Flezha. On boot, the
-controller rehydrates the operative list from the durable ProcessHub registry
-and ships the on-disk WAL + snapshot to each runner so operatives resume
-from their last persisted state.
+This is the restart-survival mechanism in Flezha for a controller whose disk
+survived. On boot, the controller rehydrates the operative list from the
+durable ProcessHub registry and ships the on-disk WAL + snapshot to each runner
+so operatives resume from their last persisted state. (Losing the disk itself
+is the [remote durability tier](../remote_durability_tier.md)'s problem — when
+a backend is configured, both layers below can be rehydrated from it first.)
 
 ## Two persistence layers
 
@@ -11,6 +13,7 @@ from their last persisted state.
 |---|---|---|
 | ProcessHub durable registry (operative specs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (configures `registry_backend: {:durable_ets, ...}`) |
 | Per-Entity WAL + snapshots (change-by-change progress) | `app_data/state/<operative_class>/<procedure_id>/<entity_key>.{wal,snap.N,outbox.dedup}` | `Flezha.State.Supervisor` and friends |
+| *(opt-in)* remote manifest + artifacts backing both layers above | Postgres / S3, `FLEZHA_DURABILITY_BACKEND` | `Flezha.State.DurabilityTier` (`Shipper` out, `Hydrator` back) |
 
 The path layout is **flat in the operative_class direction** — there is
 no `runner_id` component. A runner pod restart that rotates
@@ -23,7 +26,11 @@ controller ships it to the new runner on Entity stream attach.
    `Flezha.Boot.StatePathMigrator.migrate/0` synchronously **before**
    `Flezha.State.Supervisor` starts. It is idempotent: a one-shot
    migration from the legacy runner-keyed layout to the flat
-   layout, no-op on subsequent runs.
+   layout, no-op on subsequent runs. When a remote durability backend is
+   configured, `DurabilityTier.Hydrator.hydrate_cspecs_on_boot/0` also runs
+   here — a one-shot child ahead of `HubManager`, because the registry cspec
+   must be on disk *before* any hub opens `registry.dets`, or a late-landing
+   cspec is invisible to the orphan reconcile.
 2. `Flezha.Service.HubManager` starts each per-namespace ProcessHub
    with `registry_backend: {:durable_ets, [path: ...]}` and
    `auto_recovery: [reconcile_grace_ms:, reconcile_interval_ms:,
@@ -59,17 +66,17 @@ controller ships it to the new runner on Entity stream attach.
 
 | Scenario | Replay? | Result |
 |---|---|---|
-| Cluster-wide cold boot (all controllers down, all return) | Only where the marker was cleared first | Each such node calls `start_children` for its persistent rows. ProcessHub's hash ring picks the canonical owner; idempotent on duplicate `child_id`. Plugins re-subscribed via `Overwatch.init/1`; Entity state shipped via `dispatch_restore_init_state/2` on stream-attach. A cold boot with markers intact comes back empty until an operator arms replay. |
-| Single-controller restart into healthy cluster | No | The marker survived on disk, so the returning node goes straight to `:normal`. ProcessHub has already redistributed its work; the durable registry on disk does not trample peer state. |
+| Cluster-wide cold boot (all controllers down, all return) | Yes — automatic | Each node's first reconcile round finds the whole difference between its durable registry and the (empty) observed cluster, and calls `start_children` for its persistent rows. ProcessHub's hash ring picks the canonical owner; idempotent on duplicate `child_id`. Plugins re-subscribed via `Overwatch.init/1`; Entity state shipped via `dispatch_restore_init_state/2` on stream-attach. No operator step. |
+| Single-controller restart into healthy cluster | No | The reconcile's difference against the live cluster is empty, so the returning node starts nothing and reaches `:normal` after the grace. ProcessHub has already redistributed its work; the durable registry on disk does not trample peer state. |
 | Rolling k8s rollout | No | Same as single-controller, repeated per pod. No stampede. |
-| Single-node deployment | Only with the marker cleared | No peer can hand the rows back, so a restart is empty until the marker is removed while the node is down; then `:recovering`; replay; `:normal`. |
+| Single-node deployment | Yes — automatic | No peer can hand the rows back, so the first reconcile round's difference is the whole durable list: `:recovering` → replay → `:normal`, with no operator step. |
 | Runner pod restart with `runner_id` rotation | N/A | Controller never went down. New `runner_id` is assigned via the existing flow; flat WAL layout means state is found and shipped via `RestoreInitState`. Zero data loss. |
 | HotSwap migration, source runner alive (operative moves A → B) | N/A | `prepare_handover_state` serializes from the runner and ships the state in-band; `dispatch_restore_init_state/2` does NOT fire (handover delivers state). State files on A are not deleted (retention sweeper handles long-term orphans). |
-| HotSwap migration, source runner already dead (A lost its last runner) | N/A | The runner is the state source, so the handover is **empty** and `arrived_via_hotswap?` stays `false`. B pulls A's Entity files over `:erpc` (`Flezha.State.WalTransfer`) into its own `state_root` and replays them. One-shot at migration time, not replication. |
+| HotSwap migration, source runner already dead (A lost its last runner) | N/A | The runner is the state source, so the handover is **empty** and `arrived_via_hotswap?` stays `false`. B pulls A's Entity files over `:erpc` (`Flezha.State.WalTransfer`) into its own `state_root` and replays them. One-shot at migration time, not replication (unless the remote durability tier is enabled, which ships artifacts continuously). |
 | HotSwap mid-flight crash on destination | N/A | Source state files preserved. ProcessHub retries the migration. |
 | Network partition during boot | Yes (suspect) | Brief duplicate-start window during heal; ProcessHub's `Divergence` strategy resolves. Documented limitation. Operators in fragile environments can `FLEZHA_AUTO_RESTORE_ENABLED=false`. |
-| Quorum loss (3-node cluster, 2 die) | No (returning) | Returning nodes keep their markers, so they skip replay; survivor authoritative and they reconcile against ProcessHub placement. |
-| Subset-rejoin (cluster down, only some nodes return) | Yes | **Single tolerated data-loss case** — rows held only on the non-rejoining nodes are lost. |
+| Quorum loss (3-node cluster, 2 die) | Only the survivor's gaps | Returning nodes observe the survivor's live rows and start only what nothing in the cluster holds; the survivor stays authoritative for what it already runs. |
+| Subset-rejoin (cluster down, only some nodes return) | Yes | **Single tolerated data-loss case** — rows held only on the non-rejoining nodes are lost (with the remote tier enabled, the missing nodes' cspecs and state hydrate from the backend instead). |
 | Mixed-version rolling upgrade | Per-node | Forward+backward-compatible row schema. |
 | Registry corruption | Empty replay | DETS rotates to `corrupt-<monotonic>`; boot continues empty. |
 | Operator restored old `operatives.dets` from backup | Per-row | Eager reconcile drops rows ProcessHub doesn't claim. |

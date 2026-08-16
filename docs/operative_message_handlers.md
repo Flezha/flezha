@@ -35,6 +35,12 @@ the same key returns `{:error, {:handler_key_conflict, key}}` and the
 existing handler is left untouched. Conflicts surface at enable-time, not
 at dispatch-time, so misconfiguration is loud and deterministic.
 
+When `operative_id` names a **partition group** (`--partitions N`),
+`enable_plugin/2` fans out once per member, injecting that member's
+partition opts and suffixing the plugin id with `#pK`; a partial enable
+reports an error. A group id has no single Overwatch — the request
+envelope below is per member.
+
 ## Request envelope
 
 Callers send a fixed BEAM envelope directly to the target operative's

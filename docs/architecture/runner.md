@@ -34,7 +34,7 @@ flowchart TB
         C2["per-entity ordering + exclusivity · mailboxes"]:::ctrl
         C3["durability: effect records · flusher · restore · compaction"]:::ctrl
         C4["retry→park ladder · deferred wakes · timers · credit"]:::ctrl
-        C5["routing · edge keys · the workflow driver"]:::ctrl
+        C5["routing · edge keys · the key-group guard · the workflow driver"]:::ctrl
     end
 
     CTRL["🧠 Controller"]:::ctrl
@@ -106,7 +106,7 @@ flowchart LR
     end
 
     KR["KeyRequest — batched keying for unkeyed<br/>entry payloads bound for a keyed edge"]:::exec
-    BS["Workflow step — one per entity partition<br/>(or CompensateRun for an undo)"]:::exec
+    BS["Workflow step — one per entity of the stage<br/>(or CompensateRun for an undo)"]:::exec
 
     POLL --> WORK
     POLL --> CMD
@@ -128,6 +128,11 @@ flowchart LR
 The other 14 control commands never surface — a `Ping` generates no activation. The change
 bytes in a result are **opaque to the core**: postcard from a Rust host, Kryo from a Java one.
 That is the same property that lets the controller store them without decoding.
+
+The [key-group guard](stream_profile.md#partitioned-operatives) also lives below the seam:
+`AddOperative` carries a partition member's owned range, and a computed entity key that hashes
+outside it takes the park exit on the first frame — so every host gets the mis-route refusal
+without writing a line of it.
 
 ## The core decides, the SDK brings the threads
 
@@ -266,7 +271,7 @@ which is how a host that grows threads gets one there in time to promote the fir
 ## A workflow step
 
 The workflow driver is the core's. What the host contributes is the thread that runs one stage
-of one entity partition.
+of one entity.
 
 ```mermaid
 sequenceDiagram
@@ -275,7 +280,7 @@ sequenceDiagram
     participant W as ⚙️ Host thread
     participant CTRL as 🧠 Controller
 
-    Note over DRV: level N — enqueue one step activation per entity partition
+    Note over DRV: level N — enqueue one step activation per entity of the stage
     DRV->>CORE: step activations (direct — exempt from the cap)
     W->>CORE: poll()
     CORE-->>W: Work batch for this partition

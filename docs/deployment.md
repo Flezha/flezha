@@ -43,6 +43,14 @@ Key variables:
 | `FLEZHA_CLUSTER_DISCOVERY` | — | Discovery strategy (`k8s_pod_discovery` in K8s) |
 | `FLEZHA_RECONNECT_INTERVAL` | `2000` | Reconnect interval in ms |
 | `FLEZHA_MAX_RECONNECTS` | `10` | Max reconnect attempts |
+| `FLEZHA_HEALTHZ_ENABLED` | `false` | Opt-in `/healthz` HTTP listener (`FLEZHA_HEALTHZ_PORT` 9569, `FLEZHA_HEALTHZ_BIND` `127.0.0.1`) — required for orchestrator liveness probes |
+| `FLEZHA_FABRIC_503_POLLS` | `3` | Consecutive classifier polls a controller-fabric wedge (`driver_loop_frozen` / `nif_queue_backing_up`) must hold before `/healthz` answers 503 and the orchestrator restarts the pod; `0` disables the fabric 503 |
+| `FLEZHA_DURABILITY_BACKEND` | `none` | Remote durability tier backend: `none`, `postgres`, or `s3`. `none` = local-only, byte-identical to a build without the tier |
+| `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` | `30000` | Backstop ship sweep for entities that hit no compaction/checkpoint/commit boundary |
+| `FLEZHA_DURABILITY_RPO_TARGET_MS` | `120000` | Unshipped-progress age at which the alarm-grade `rpo_exceeded` fires (`/healthz` reports `durability_rpo_exceeded`) |
+| `FLEZHA_DURABILITY_GC_INTERVAL_MS` | `3600000` | Orphan-blob collection interval |
+| `FLEZHA_DURABILITY_PG_*` | — | Postgres backend: `_HOST` (`localhost`), `_PORT` (`5432`), `_DATABASE` / `_USERNAME` (`flezha`), `_PASSWORD_ENV` (names the env var holding the password — never the password itself), `_SSL` (`false`), `_TABLE` (`flezha_durability_artifacts`), `_AUTO_CREATE` (`true`) |
+| `FLEZHA_DURABILITY_S3_*` | — | S3 backend: `_ENDPOINT`, `_BUCKET`, `_REGION` (`us-east-1`), `_ACCESS_KEY_ID`, `_SECRET_ENV` (names the env var holding the secret), `_PREFIX` (`flezha`) |
 | `RUSTLER_SKIP_COMPILATION` | — | Set to `true` to skip NIF cargo build (used in prod image Stage 2) |
 
 ### Graceful-restart entrypoint (image-level)
@@ -289,6 +297,8 @@ Key ConfigMap values:
 | `FLEZHA_SERVER_CERT_PATH` | `/flezha/app_data/certs/server.pem` | Auto-generated on first run |
 | `FLEZHA_SERVER_KEY_PATH` | `/flezha/app_data/certs/server.key` | Auto-generated on first run |
 | `FLEZHA_CLUSTER_DISCOVERY` | `k8s_pod_discovery` | K8s pod-based cluster formation |
+| `FLEZHA_HEALTHZ_ENABLED` / `_PORT` | `true` / `9569` | Backs the DaemonSet's `/healthz` liveness probe; a sustained controller-fabric wedge answers 503 and kubelet restarts the pod |
+| `FLEZHA_DURABILITY_*` | (unset = `none`) | To enable the remote durability tier in K8s, add the backend family from the env table above to the ConfigMap (the `_PASSWORD_ENV` / `_SECRET_ENV` indirection pairs with a Secret-sourced env var) |
 
 ### Host paths (per-node persistence)
 

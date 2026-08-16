@@ -38,11 +38,11 @@ set and the convergence loop re-adds anything missing. See
 | **Controller graceful restart / rolling deploy with a live peer** | **No loss** | At-least-once | The new instance syncs the registry from the surviving peer; runners stay connected. |
 | **Controller plain restart, sole instance** | **No loss** | At-least-once | The first reconcile round replays the operative list from the durable registry; `/healthz` honestly reports `recovering` until rebound. No operator step, and no variant of this restart discards the list. |
 | **Whole cluster down → cold start** | Recovered from the durable registry | n/a | No peer survives, so the reconcile's difference is the whole list and disk is the only record. |
-| **Procedure migrated to a controller with no local WAL** (node loss / redistribution / lost hostPath), runner live | **No loss** | At-least-once | The WAL is node-local and unreplicated, so the new controller starts baseline-less. Its first `entity_state_change` (empty WAL, `seq > 0`) triggers a `CompactEntity` **pull** — the runner ships a full-state snapshot that becomes the new baseline; deltas shed while awaiting it are superseded by the snapshot. The controller never pushes an empty `RestoreInitState` (which would reset the live Entity to `init_state`). See [`state_persistence.md`](state_persistence.md) "Baseline recovery: push vs pull". |
+| **Procedure migrated to a controller with no local WAL** (node loss / redistribution / lost hostPath), runner live | **No loss** | At-least-once | The WAL is node-local (and, with the remote durability tier enabled, the new controller hydrates it from the manifest instead), so absent both, the new controller starts baseline-less. Its first `entity_state_change` (empty WAL, `seq > 0`) triggers a `CompactEntity` **pull** — the runner ships a full-state snapshot that becomes the new baseline; deltas shed while awaiting it are superseded by the snapshot. The controller never pushes an empty `RestoreInitState` (which would reset the live Entity to `init_state`). See [`state_persistence.md`](state_persistence.md) "Baseline recovery: push vs pull". |
 | **Node rejoins a live cluster** | Synced from peers; local durable copy kept | n/a | The reconcile's difference against live peers is empty, so the node starts nothing. The on-disk copy is no longer discarded to force that — a peer reporting an empty registry must not be able to erase state cluster-wide. |
 | **Kafka/broker down, runners alive** | No loss | Buffered, resumes | Producer reconnects (see kafka producer recovery); offset resumes when the broker returns. |
 | **Sustained overload** (state changes outpace fsync — the 06-21 OOM shape) | **No loss** (credit-speaking SDK) | At-least-once | Credit-grant flow control: the sender's byte window (default 16 MiB) is minted back only on WAL fsync, so an exhausted window *parks* the SDK's flush path instead of growing controller memory — park, never drop. Shedding is unreachable for a conformant sender; any shed/overrun on a credit session emits `[:flezha, :state, :credit_anomaly]`. Pre-credit SDKs keep the legacy status-flag + shed/resync path. See [`state_persistence.md`](state_persistence.md) "Flow control". |
-| **Workflow operative runner SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new runner, restores committed Entity state via the restore-before-run gate, and resumes **at the first un-journaled procedure**: the proc-journal (`proc.journal`, one gated `ProcCommit` fsync per proc barrier) records each completed procedure + its inter-proc handoff, so committed procs are **skipped, not redone**, and the next proc is seeded from the journaled handoff (Rust SDK; Java keeps the pre-journal full re-run until its parity change). Inspect with `flz state journal`. See [`workflow_operative.md`](workflow_operative.md). |
+| **Workflow operative runner SIGKILL** (durable, the default) | **Brief best-effort loss** (async WAL lag) | At-least-once | Respawns on a new runner, restores committed Entity state via the restore-before-run gate, and resumes **at the first un-journaled procedure**: the proc-journal (`proc.journal`, one gated `ProcCommit` fsync per proc barrier) records each completed procedure + its inter-proc handoff, so committed procs are **skipped, not redone**, and the next proc is seeded from the journaled handoff (both SDKs). Inspect with `flz state journal`. See [`workflow_operative.md`](workflow_operative.md). |
 | **Looping workflow operative runner SIGKILL** (durable) | **Brief best-effort loss** (async WAL lag) | At-least-once | Resumes at the iteration **after** the last journaled `iter_committed` — committed turns never re-run, and the in-flight one re-runs from its own last committed proc. Input it had not consumed is still in the durable inbox. See [`workflow_operative.md`](workflow_operative.md) "Durable loop and suspension". |
 | **Input sent to a suspended / crashed / migrating workflow instance** (durable) | **No loss** | n/a | The controller appends it to the instance's `inbox.wal` before forwarding, so it is delivered on rehydrate rather than dropped — and a suspended instance is *woken* by the append. Duplicates inside the undelivered window are absorbed. See "Workflow operatives: the durable inbox". |
 | **Controller redeploy while a workflow instance is suspended** | **No loss** | n/a | Suspension is durable state (`parked` journal entry + inbox + snapshots), not a live process: the instance is rediscovered from disk on boot, stays evicted, and rehydrates on the next input or its wake deadline exactly as if nothing happened. |
@@ -336,6 +336,15 @@ option, because what a sender gets follows from what it already declares:
 | durable workflow | effectively-once |
 | plain stream (no outbox) | at-least-once, best effort — no de-duplication |
 
+**A partitioned target adds a routing precondition.** Forwarding into a
+partition group routes each message by `hash(flz.key)` to the owning member —
+and a message *without* `flz.key` (an unkeyed emit, or any workflow-outbox
+output) is **parked to the source's DLQ** with
+`partitioned target requires keyed emit` rather than delivered anywhere.
+Round-robin or payload-hash fallback would scatter one key across partitions
+and detonate downstream where the cause is invisible. Single-partition targets
+are unchanged. See [`../operative_forward_plugin.md`](../operative_forward_plugin.md).
+
 An acknowledgement is only worth having if the sender can act on it, and acting
 means re-sending from a durable record. A source with no outbox has nothing to
 re-send from, so an ack mode would sell it a guarantee that cannot be honoured.
@@ -406,7 +415,10 @@ the untruncated log, which still holds the originals. See
 ## Dead-letter queue: poison payloads park, never drop
 
 A permanently-failing (poison) payload in a Stream operative is never
-silently discarded (`dead-letter-queue`). A failing invocation —
+silently discarded (`dead-letter-queue`). A failing invocation is not the
+only way in: an unroutable forward into a partition group (no `flz.key`)
+and the SDK's dispatch-time out-of-range key-group guard both park with
+no invocation failure at all. A failing invocation —
 returned error or panic/exception, same policy in both SDKs — is retried
 up to the input channel's `retry_max` (default 3 total attempts,
 exponential backoff + jitter; authors classify errors non-retryable via

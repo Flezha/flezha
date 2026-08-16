@@ -71,6 +71,7 @@ Configurable root via `:flezha, :state_root` (default `app_data/state`).
 | `Flezha.State.Restore` | Assembles `RestoreInitState` payload (snapshot + tail WAL). |
 | `Flezha.State.TimeTravel` | Point-in-time query engine backing `flz state at`. |
 | `Flezha.State.WalTransfer` | Cross-controller, destination-pulled copy of one Entity's durable files at migration time. See below. |
+| `Flezha.State.DurabilityTier` (+ `Shipper` / `Hydrator` / `Manifest` / `Backend`) | Opt-in remote artifact shipping and boot/bind-time hydration — off by default (`backend: none`). See [`../remote_durability_tier.md`](../remote_durability_tier.md). |
 
 ## Cross-controller transfer
 
@@ -443,15 +444,17 @@ fire-and-forget and reads no reply).
 ### Self-healing recovery (`Flezha.State.Watchdog` + `Flezha.State.Recovery`)
 
 A live Entity's persistence/output path must not be able to stall
-silently and permanently. Three failure edges are detected here; two
-recover via the shared `RestoreInitState` resync
+silently and permanently. Three operative-level failure edges are
+detected here; two recover via the shared `RestoreInitState` resync
 (`Flezha.State.Recovery.resync/2`), and the third is **emit-only** —
 the `Watchdog` is a sensor and the convergence Loop owns every
-operative-level remedy:
+operative-level remedy. (With a remote durability backend configured,
+the sweep additionally latches RPO breaches and emits the alarm-grade
+`[:flezha, :state, :rpo_exceeded]` — also emit-only.)
 
 * **Seq gap (populated WAL)** — a Change with `seq > last_persisted_seq
   + 1` while `last_persisted_seq >= 0` is no longer a terminal
-  `{:error, {:gap}}`; `Flezha.Runner.StreamChannel` emits
+  `{:error, {:gap}}`; `Flezha.State.WalWriter` emits
   `[:flezha, :state, :seq_gap]` and resyncs so the SDK rewinds and
   resends from `terminal_seq + 1`.
 * **Output staleness** — `Watchdog` flags an Entity that is still

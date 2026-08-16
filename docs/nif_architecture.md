@@ -285,6 +285,7 @@ Each stream has an `active` flag:
 | `start_uds_server` | `(socket_path, acceptor_pid) → {:ok, server_ref}` | Start UDS server |
 | `start_quic_server` | `(bind_address, cert_path, key_path, acceptor_pid) → {:ok, server_ref}` | Start QUIC server |
 | `stop_server` | `(server_ref) → :ok` | Stop server, close all streams |
+| `driver_stats` | `(server_ref) → map \| :undefined` | Driver-thread self-report (loop heartbeat, command-queue depth, per-stream counters). Sole source of the fabric verdicts (`driver_loop_frozen` / `nif_queue_backing_up`) that a sustained wedge escalates to `/healthz 503 data_plane_fabric_wedged`. `:undefined` for QUIC |
 
 ### Stream Procedures
 

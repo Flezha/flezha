@@ -66,7 +66,9 @@ Registration refuses anything that is not a DAG rooted at the entry, naming the 
 
 Within one procedure, entities run in parallel exactly as in stream — single or static
 entity mode, per-entity state, per-entity WAL. Dynamic entity mode is refused: a workflow chain
-needs a known entity set to know when a procedure is *done*.
+needs a known entity set to know when a procedure is *done*. `--partitions` is refused too —
+[partitioning](stream_profile.md#partitioned-operatives) is a stream concern; a workflow scales
+by spawning instances.
 
 `run(ctx, args)` is sugar for a single-procedure, single-entity workflow operative — the simplest
 case, and the only form with a directly interactive inbox.
@@ -139,6 +141,12 @@ Two properties of that barrier are worth being explicit about:
 
 The driver blocks on each `ProcCommit` ack for up to 30 s. A refusal or a timeout is terminal and
 drives compensation — a step whose durability the controller will not confirm has not happened.
+
+A class declaring `durability: :sync_remote` raises that bar one notch: the controller ships the
+journal suffix to the [remote durability tier](kernel.md#the-remote-durability-tier) and awaits
+the backend ack *before* replying — so the commit survives losing the controller's disk (RPO 0),
+at the cost of one remote round-trip per barrier. The SDK already blocks there; nothing else
+changes.
 
 **On a crash, a committed procedure is not re-run.** The journal carries its handoff, so the
 resumed driver skips it and seeds the next level from the durable batch. Without the journal —
@@ -432,7 +440,7 @@ flz operative rewind <instance> --to-iteration N
 Everything on this page is host-language-neutral. The chain is driven by the shared runner
 core, which owns the level barrier, the proc journal handshake, the staged outbox, the
 compensation plan, the loop, suspension and rewind. A host SDK supplies the procedure bodies
-and the threads that run them — one **step activation** per entity partition, handed out under
+and the threads that run them — one **step activation** per entity of the stage, handed out under
 poll and answered at the barrier the core already owns. Rust runs a step on a pool worker,
 Java on a virtual thread; neither owns the chain's position, so there is no per-host resume or
 compensation semantics to compare.

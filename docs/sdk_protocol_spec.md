@@ -333,6 +333,8 @@ message AddOperative {
     string factory_id = 2;
     string init_values = 3;
     string kind = 4; // operative kind; empty/absent ⇒ "stream"
+    uint32 resume_entity_count = 5;        // see "Per-Entity State Persistence"
+    ProcJournalState proc_journal = 6;     // see the workflow proc-journal section
     // Partitioned operatives. A partition_count below 2 is unpartitioned —
     // every bind that predates partitioning, and every --partitions 1 start —
     // and proto3 omits all four zero-valued scalars, so such a frame is

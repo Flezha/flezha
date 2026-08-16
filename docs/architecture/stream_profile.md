@@ -5,14 +5,16 @@ firehose. It has no beginning and no end, it processes message by message with n
 each of its entities recovers on its own without disturbing the others.
 
 It runs on the [kernel](kernel.md) unchanged. What is specific to it is the shape of its
-recovery, its escape hatch for a poison payload, its ability to correct the past, and its
-ability to acknowledge in batches rather than one input at a time.
+recovery, its escape hatch for a poison payload, its ability to correct the past, its ability
+to acknowledge in batches rather than one input at a time, and its ability to run one logical
+stream across N machines.
 
 - [Happy path](#happy-path)
 - [Per-entity recovery](#per-entity-recovery)
 - [Dead-letter queue](#dead-letter-queue)
 - [Checkpoint ack-granularity](#checkpoint-ack-granularity)
 - [Late-input correction](#late-input-correction)
+- [Partitioned operatives](#partitioned-operatives)
 
 ---
 
@@ -317,3 +319,75 @@ event-time-bucketed keys — a candle, an aggregate, anything whose key is deriv
 it belongs to — because the corrected run emits the same key set. It is not safe for a key set
 that shrinks. Details:
 [`../resilience/data_durability.md`](../resilience/data_durability.md#late-input-correction-fix-the-past-and-the-sinks-fix-themselves).
+
+## Partitioned operatives
+
+A stream operative binds to exactly one runner, so entities fan out across one machine's cores
+and no further. `--partitions N` is the way past that box: one logical stream materializes as
+**N ordinary operative instances** (`ohlc#p0..#p2`), each a full, unmodified operative — its own
+Overwatch, registry row, runner binding, input log, state tree, plugins, and DLQ identity.
+There is **no group record**: each member's durable start opts self-describe (`group`,
+`partition`, `partitions`, key-group range), and every group-level view — the single
+`flz operative list` row, `info`'s coverage check — is recomputed from the rows at read time,
+so nothing exists that could diverge from the registry. Placement, convergence, rebind,
+migration and recovery all operate per member, unchanged.
+
+```mermaid
+flowchart TB
+    SRC["🌐 Source — the ASK is split, never the data:<br/>each member subscribes upstream to only its items"]:::src
+    subgraph GROUP["group &quot;ohlc&quot; — a DERIVED view over 3 ordinary instances"]
+        direction LR
+        P0["ohlc#p0<br/>key groups 0–85"]:::exec
+        P1["ohlc#p1<br/>key groups 86–170"]:::exec
+        P2["ohlc#p2<br/>key groups 171–255"]:::exec
+    end
+    HASH{{"group(key) = fnv1a128(key) mod 256<br/>ONE hash, THREE pinned implementations —<br/>Rust · Java · Elixir, one fixture set"}}:::ctrl
+    FWD["operative_forward into the group:<br/>route each message by hash(flz.key)<br/>missing key → loud DLQ park, never round-robin"]:::ctrl
+    GUARD["SDK guard at dispatch: a key outside the member's<br/>range parks on the FIRST frame, naming the contract —<br/>never silently wrong state"]:::prot
+    D0[("💾 own WAL tree")]:::store
+    D1[("💾 own WAL tree")]:::store
+    D2[("💾 own WAL tree")]:::store
+
+    SRC --> P0
+    SRC --> P1
+    SRC --> P2
+    FWD --> HASH --> GROUP
+    P0 --- GUARD
+    P0 -.-> D0
+    P1 -.-> D1
+    P2 -.-> D2
+
+    classDef ctrl fill:#dbeafe,stroke:#1e40af,color:#111
+    classDef exec fill:#dcfce7,stroke:#166534,color:#111
+    classDef src fill:#ede9fe,stroke:#6b21a8,color:#111
+    classDef store fill:#e5e7eb,stroke:#374151,color:#111
+    classDef prot fill:#dcfce7,stroke:#166534,color:#111
+```
+
+- **Key groups, not `mod N`.** Keys hash into 256 fixed key groups; each partition owns a
+  contiguous range, stored explicitly in its opts and shipped on `AddOperative` — never derived
+  from `(p, N)` at read time. A rescale therefore moves whole group slices instead of rehoming
+  nearly every key, and a later weighted assignment needs no format change.
+- **The routing contract is guarded, not trusted.** The item string a source subscribes with,
+  and the `flz.key` a forward routes on, must equal what `key_by` extracts. The SDK checks every
+  computed entity key against the member's own range and parks the first violation with an error
+  naming the contract; a topology with no keyed entry procedure refuses the partitioned start
+  outright (`PartitionsWithoutKeyedProcedure`) — N private copies of one unkeyed entity would be
+  N divergent states that all look like "the" state.
+- **Sources split the ask.** The websocket subscription source filters its desired item set to
+  the member's groups before subscribing (server-side split — total bandwidth equals one
+  connection's, divided); `http_poll` renders `{{partition_index}}`/`{{partition_count}}` into
+  its URL once at init. `flz plugin enable <group>` fans out over the members with the partition
+  opts injected.
+- **Rescale is quiesce → move → restart.** `flz operative scale <group> M` waits until sources
+  are off, every member's watermark is caught up and the group DLQ is empty; recomputes the
+  ranges; moves each rehomed entity's durable file set (same-controller rename, cross-controller
+  `WalTransfer` pull); starts M members, which restore through the ordinary bind. Entity
+  identity contains the key and no runner, so no storage format changes — a crash mid-rescale
+  re-derives the remaining moves from what is on disk.
+
+A hot *single* key is still bounded by one machine — inherent to per-key ordering (Flink is
+identical); the documented answer is two-stage aggregation. Partition spread across runners is
+statistical (HRW) for now. The full contract — preflight, id budget, quota, coverage
+validation, `flz state get <group>/...` resolution:
+[`../partitioned_operatives.md`](../partitioned_operatives.md).

@@ -3,8 +3,10 @@
 > **Status: a dated audit, not a living reference.** Code paths, arities and line
 > numbers below describe the subsystem as it stood when the audit ran; several
 > have since changed (`Diff.compute/3` now takes sensor signals,
-> `FleetManager.evict_runner/2` takes a proved-wedge waiver, and the heal surface
-> has six primitives). For current behaviour read
+> `FleetManager.evict_runner/2` takes a proved-wedge waiver, the heal surface
+> has six primitives, and the output-stall response is a two-rung
+> `resync_runner` → `rebind_operative` ladder rather than an immediate rebind).
+> For current behaviour read
 > [`convergence_loop.md`](convergence_loop.md). This document is kept for its
 > findings and their rationale.
 

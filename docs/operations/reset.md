@@ -7,6 +7,14 @@ wants to throw away every Entity's WAL/snapshot, every ProcessHub
 durable registry, and (optionally) the on-disk TLS material and UDS
 sockets.
 
+> **A clean slate only with `FLEZHA_DURABILITY_BACKEND=none`.** With a
+> remote durability backend configured, the next boot hydrates the
+> registry cspec from the remote store *before* the hub starts, and the
+> operatives it names re-hydrate their state at bind — the wiped state
+> (and the record of what exists) comes straight back, by design. To
+> genuinely start fresh, also set the backend to `none` for that boot,
+> or purge the remote prefix/table first.
+
 It refuses to run while the Controller is up. Stop it first with
 `flz controller stop` (see
 [`../resilience/graceful_shutdown.md`](../resilience/graceful_shutdown.md)).
@@ -167,3 +175,7 @@ the right files in place.
 - **Time-travel-aware trimming.** Use `flz state retention <operative> <hours>` instead.
 - **Cluster-wide reset.** Single-node procedure; run `flz reset` per
   node.
+- **Purging the remote durability backend.** `flz reset` touches local
+  disk only. Shipped artifacts and manifests in Postgres/S3 stay, and
+  will re-hydrate on the next boot unless the backend is disabled or
+  its prefix/table is purged out of band.

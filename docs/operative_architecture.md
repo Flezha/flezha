@@ -27,7 +27,8 @@ decisions, and capability spec deltas, see
                                 ▼
             ┌─────────────────────────────────────────┐
             │             OperativeInstance            │
-            │   (one per `flz operative start`)        │
+            │   (one per start; `--partitions N`       │
+            │    starts N of these — see below)        │
             │                                          │
             │   ┌────────────┐   ┌──────────────┐      │
             │   │ Procedure A│ ->│ Procedure B  │ -> ... -> Plugin

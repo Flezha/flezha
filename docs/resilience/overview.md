@@ -13,8 +13,9 @@ The system has three layers:
 - **Prevention** — bound mailboxes, WAL durability, graceful drain
 - **Detection** — watchdog sweeps, control-channel liveness, seq-gap detection,
   convergence probes
-- **Recovery** — convergence loop rebind/plugin-restart/evict, Overwatch retry,
-  SDK reconnect, ProcessHub cold-boot recovery, entity resync
+- **Recovery** — convergence loop resync/rebind/plugin-restart/evict, Overwatch
+  retry, SDK reconnect, ProcessHub cold-boot recovery, entity resync, and the
+  opt-in remote durability tier (rehydrate a controller that lost its disk)
 
 ---
 
@@ -90,6 +91,7 @@ fires, so a hard restart restores state from disk rather than losing it.
 | `State.TimeTravel` | Point-in-time query: replay WAL up to a target seq or timestamp |
 | `State.Watchdog` | Detects an entity still receiving changes but whose seq stopped advancing |
 | `State.PersistenceResolver` | Resolves per-operative persistence config from runner override → operative metadata → global default |
+| `State.DurabilityTier` (+ `Shipper` / `Hydrator` / `Manifest` / `Backend`) | Opt-in remote artifact shipping — snapshots, WAL record ranges, journal/inbox suffixes, the registry cspec — and hydration back on a fresh node. Off by default (`backend: none`); see [`../remote_durability_tier.md`](../remote_durability_tier.md) |
 
 **Back-pressure:** when a WAL writer's pending bytes exceed the high-watermark
 (default 16 MiB), it sends an `EntityMailboxStatus{status: "full"}` command to
@@ -120,6 +122,10 @@ Sweeps every 10 s. For each persistence-enabled entity it checks:
 2. **Compaction timeout** — a `CompactEntity` whose snapshot has not arrived
    within `compaction_timeout_ms` (default 30 s) → emits
    `[:flezha, :state, :compaction_timeout]` and triggers resync.
+3. **RPO breach** (remote durability tier only) — local durable progress that
+   has gone unshipped past `rpo_target_ms` → emits the alarm-grade
+   `[:flezha, :state, :rpo_exceeded]`; surfaced by `/healthz` as
+   `degraded, reason: durability_rpo_exceeded`.
 
 The convergence loop subscribes to `[:flezha, :state, :output_stall]` and fires
 an immediate tick on the FIRST flag for an instance; a re-flag while the stall
@@ -134,9 +140,9 @@ that wedges without crashing stops stamping, and `/healthz` reports
 
 ## 5. Seq-Gap Self-Heal
 
-`lib/flezha/runner/stream_channel.ex`
+`lib/flezha/state/wal_writer.ex`
 
-When `StreamChannel` receives a change frame with
+When a `WalWriter` receives a change frame with
 `seq > last_persisted_seq + 1`, it emits `[:flezha, :state, :seq_gap]` and
 calls `State.Recovery.resync/2` so the SDK rewinds and resends from
 `terminal_seq + 1`. This is silent and automatic — no operator action required.
@@ -152,6 +158,12 @@ calls `State.Recovery.resync/2` so the SDK rewinds and resends from
 | `Boot.StatePathMigrator` | One-shot, idempotent rename of legacy runner-keyed WAL paths to the flat layout; runs before any WalWriter opens |
 | `Boot.RecoveryHooks` | Installs telemetry forwarders for ProcessHub's `pre_recovery_replay` / `post_recovery_replay` lifecycle events |
 | `BootLoader` | Runs pre-boot hooks (sockets, certs) and gates hub creation on cluster readiness |
+
+When a remote durability backend is configured, one step precedes all of this:
+`DurabilityTier.Hydrator.hydrate_cspecs_on_boot/0` runs as a one-shot child
+ahead of `HubManager`, so a fresh node rebuilds the registry cspec from the
+remote store *before* any hub opens `registry.dets` — otherwise the orphan
+reconcile below could never see the restored operatives.
 
 **ProcessHub recovery gate:** `HubManager` starts each namespace hub with a
 durable registry backend and an orphan reconcile. Every node periodically
@@ -211,7 +223,7 @@ HTTP `/healthz` listener (opt-in, `FLEZHA_HEALTHZ_ENABLED=true`). Reads only
 | Status | HTTP | Condition |
 |--------|------|-----------|
 | `healthy` | 200 | All hubs `:normal` and `producing_operatives == bound_operatives` |
-| `degraded` | 200 | Operatives output-stalled or STUCK, `intent_mismatch`, a data-plane wedge the convergence pipeline owns (`data_plane_wedged`), or a periodic sensor that stopped completing passes (`sensor_stale`). Kubelet must not restart — the loop is healing, or an operator decision is owed |
+| `degraded` | 200 | Operatives output-stalled or STUCK, `intent_mismatch`, a data-plane wedge the convergence pipeline owns (`data_plane_wedged`), a periodic sensor that stopped completing passes (`sensor_stale`), or remote-ship lag past the RPO target (`durability_rpo_exceeded`). Kubelet must not restart — the loop is healing, or an operator decision is owed |
 | `recovering` | 200 | Any hub in `:recovery_pending \| :recovering` |
 | `unhealthy` | 503 | Convergence loop itself is wedged (`tick_stale \| recovery_failed`), or the controller's own data-plane fabric is (`data_plane_fabric_wedged`: `driver_loop_frozen` / `nif_queue_backing_up` sustained for `FLEZHA_FABRIC_503_POLLS` classifier polls, default 3, `0` disables) |
 

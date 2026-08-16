@@ -51,7 +51,9 @@ When a `{:ok, pid}` value is returned the extension table monitors
 the existing restart machinery
 (`Flezha.Plugin.Extension.Table.handle_down/5`). Restarts re-enter
 the `:prepared` → `:running` transition, so `activate/1` runs again on
-every restart.
+every restart. A provider that exports no `activate/1` goes straight to
+`:running` — a stuck `:prepared` used to make `plugin_health/3` report
+healthy without ever probing.
 
 ## What NOT to put in `init_provider/1`
 
@@ -70,7 +72,7 @@ every restart.
 | `Plugin.Provider.HttpPoll` | validates the URL, channel, headers and tunables; performs no request | starts the poller, whose first request is scheduled rather than executed |
 | `Plugin.Provider.Kafka.Producer` | starts a local `ProducerSup` worker | not needed — broker connection is lazy on first publish |
 | `Plugin.Provider.Filter` | validates filter rules | not needed — work runs on `:on_input` / `:on_output` |
-| `Plugin.Provider.OperativeForward` | refuses a self / cross-namespace target, starts a `ForwardSup` worker | not needed — delivery is driven by `:on_output` |
+| `Plugin.Provider.OperativeForward` | refuses a self / cross-namespace target, resolves the target's member set and starts one `ForwardSup` worker per member (`{plugin_id, member}`), re-resolving on every re-prepare; exports `terminate_provider/1` to stop them all | not needed — delivery is driven by `:on_output` |
 | `Plugin.Provider.BeamMsgForward`, `MessageForward`, `MonitoredIoForward`, `StdOut`, `Metrics` | stores config | not needed — naturally quiescent until input arrives |
 
 ## Phase introspection
@@ -135,4 +137,8 @@ Two rules worth stating, both learned the hard way:
 uniformly — owned pids are killed, timers are cancelled, monitors are
 demonitored, and `PluginManager` registrations are released regardless
 of phase. Provider authors do NOT need to write phase-aware cleanup
-code.
+code — with one exception: the table tracks exactly one `:owned_pid`,
+so a provider owning processes beyond it (`operative_forward`'s one
+worker per target partition, say) must implement the optional,
+idempotent `terminate_provider/1` callback, which runs on both teardown
+and disable.

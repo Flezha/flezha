@@ -238,7 +238,7 @@ At runtime the full contract crosses the boundary:
 - **Workflow lifecycles run under poll**: a run-sugar body is one
   `WorkflowRun` activation plus the session calls (`flz_core_workflow_emit` /
   `_recv` / `_cancelled`); a structured chain hands out one **step
-  activation** per entity partition — a `Work` batch, or `CompensateRun` for
+  activation** per entity of the stage — a `Work` batch, or `CompensateRun` for
   an undo — and collects the answers at its stage barrier. Both language
   paths take that route, so a step costs exactly one thread (the SDK's) and
   no core thread waits on a host: the driver is the only waiter, and its

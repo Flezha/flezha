@@ -330,7 +330,7 @@ of its own. The published map includes:
 |---------|---------|---------|---------|
 | `FLEZHA_USE_CONVERGENCE_HEALTH` | `:convergence_health_enabled` | `true` | Master kill-switch; `false` removes `Loop` from the supervision tree. `Convergence.Snapshot` always starts so recovery-state reads work even with the loop disabled. |
 | `FLEZHA_CONVERGENCE_TICK_MS` | `:convergence_tick_ms` | `5000` | Tick interval. |
-| `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `:convergence_output_stall_grace_ms` | `60000` | How long an output stall must persist before an immediate tick is triggered (separate from the watchdog's own `output_stall_timeout_ms`). |
+| `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `:convergence_output_stall_grace_ms` | `60000` | How long a recorded stall stays live in `stalled_operatives` (the age-out window / STUCK grace). The immediate tick fires on the *first* flag; this knob does not delay it. Separate from the watchdog's own `output_stall_timeout_ms`. |
 | `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `:convergence_unmet_intent_grace_ms` | `120000` | How long `bound < intended` may hold (while not recovering) before `/healthz` escalates `recovering → degraded` and the `:unmet_intent` alarm fires. ~10 ticks at the default cadence. |
 | `FLEZHA_FABRIC_503_POLLS` | `:convergence_fabric_503_polls` | `3` | Consecutive classifier polls a controller-fabric wedge must hold before `/healthz` answers 503. `0` disables the fabric 503 — the knob and its escape hatch are the same setting. |
 

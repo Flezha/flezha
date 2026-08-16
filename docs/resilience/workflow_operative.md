@@ -377,7 +377,12 @@ resumes **at the first procedure not recorded in the proc-journal**
 (`workflow-proc-journal`): at every procedure barrier the Rust driver ships
 `ProcCommit` (proc index, entities that ran, the inter-proc handoff serialized through
 the channel's byte codec) and blocks until the controller has fsynced the
-`proc_committed` entry into the instance's `proc.journal`. On resume the journal
+`proc_committed` entry into the instance's `proc.journal`. A class declaring
+`SYNC_DURABILITY = true` (`durability: :sync_remote` on the wire) additionally
+has the controller ship the journal suffix to the
+[remote durability tier](../remote_durability_tier.md) and await the backend
+ack before replying — the RPO-0 mode, workflow-only; stream classes are
+refused it. On resume the journal
 state rides `AddOperative.proc_journal` — the **bind**, not a per-Entity
 restore, because the journal is instance-scoped: a class whose procedures hold
 no per-Entity state has no Entity WAL and so receives no `RestoreInitState`

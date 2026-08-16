@@ -25,10 +25,14 @@ Flezha distributes operatives at two independent levels:
    each operative, using a per-namespace consistent hash ring. Controller nodes
    running the same namespace cluster together via Erlang distribution +
    ProcessHub's coordinator.
-2. **Within-controller level — runner selection.** Once an controller owns an operative,
+2. **Within-controller level — runner selection.** Once a controller owns an operative,
    it picks one of its locally-connected runners (Rust/Java SDK clients) to
-   spawn the operative on. Today this pick is `Enum.random` filtered by factory
-   support (`lib/flezha/service/operative_manager.ex`).
+   spawn the operative on. The pick is a deterministic rendezvous hash over the
+   operative id, filtered by factory support
+   (`OperativeManager.assign_runner/3` → `pick_runner/2`,
+   `lib/flezha/service/operative_manager.ex`) — which is also what spreads a
+   partitioned group's members across runners (statistically; anti-affinity is
+   a named follow-up).
 
 The two levels are decoupled. ProcessHub knows nothing about runners; the
 controller's `alter_child_data` hook handles runner selection at operative start
@@ -40,7 +44,10 @@ time.
 > Procedures, each with many Entities running in parallel inside the
 > runner process. ProcessHub continues per-operative placement at the
 > cluster level — one Stream Operative instance is one ProcessHub child — and is
-> not aware of entities. The two-level distribution above is unchanged.
+> not aware of entities. The two-level distribution above is unchanged. (A
+> *partitioned* operative — `flz operative start <id> --partitions N` — is N
+> such children, `<id>#p0..#p{N-1}`, which ProcessHub may place on N different
+> nodes; see `docs/partitioned_operatives.md`.)
 
 ## Per-namespace ProcessHub instances
 
@@ -81,7 +88,7 @@ ProcessHub.child_spec(%ProcessHub{
 | Distribution | `ConsistentHashing` | `operative_id` hashes to a node on the ring. Adding/removing a node reshuffles only the affected slice. |
 | Synchronization | `PubSub` | Registry changes (process starts/stops) are broadcast to all nodes. Each node has the same view of "which operative lives where". |
 | Migration | `HotSwap{handover: true}` | On graceful node leave, operative state is captured on the source, shipped to the target, and only then is the source process terminated. See [HotSwap with handover](#hotswap-with-handover) below. |
-| Redundancy | `Singularity` | Each operative runs on exactly one node. No replicas. |
+| Redundancy | `Singularity` | Each operative *instance* runs on exactly one node. No replicas. (A partitioned group's N instances may land on N nodes — that is N children, not replication.) |
 | Partition tolerance | `Divergence` | Each network partition independently redistributes. On heal, the larger partition's state wins. |
 
 ## Hooks Flezha registers
@@ -90,9 +97,10 @@ Flezha plugs into ProcessHub via two hooks (`lib/flezha/service/hub_manager.ex`)
 
 - `child_data_alter` — fires when ProcessHub is about to start an operative on
   this node. Flezha rewrites the child_spec to bake in the assigned
-  `runner_id`, picked by `OperativeManager.assign_runner(namespace,
-  factory_id)`. Raises if no runner declaring that factory is currently
-  connected. **Net effect:** every operative restart re-runs runner selection.
+  `runner_id`, picked by `OperativeManager.assign_runner/3` (rendezvous hash
+  over the operative id). Raises if no runner declaring that factory is
+  currently connected. **Net effect:** every operative restart re-runs runner
+  selection.
 - `child_registered` → `hook_insert_pid` — fires after an operative has started.
   Flezha pushes the new local PID to all stream channels of the assigned
   `runner_id` so subsequent I/O routes to the right process.
@@ -287,7 +295,7 @@ These are common assumptions to double-check against the actual code:
 | Concern | File |
 |---|---|
 | Hub spec, hooks, alter_child_data | `lib/flezha/service/hub_manager.ex` |
-| Runner selection (random within namespace+factory) | `lib/flezha/service/operative_manager.ex` |
+| Runner selection (rendezvous hash within namespace+factory) | `lib/flezha/service/operative_manager.ex` |
 | FleetManager (tracks runners, factories, disconnect branches) | `lib/flezha/runner/fleet_manager.ex` |
 | Operative wrapper, HotSwap callbacks | `lib/flezha/operative/overwatch.ex` |
 | Control channel (runner handshake, EOF detection) | `lib/flezha/runner/control_channel.ex` |
@@ -342,9 +350,12 @@ The persistence module (`lib/flezha/state/`) is per-Entity and
 ProcessHub-agnostic. ProcessHub picks the controller host; the persistence
 module owns the per-Entity WAL on whichever host the Overwatch is
 currently running on. Migrating an Overwatch to a peer host moves the
-in-memory state via `runner_migrate`; the new host's
-persistence module starts a fresh WAL (no replication is in scope for
-v1).
+in-memory state via `runner_migrate`; when the source runner is already
+dead, the destination pulls the entity's durable files over
+`Flezha.State.WalTransfer` (see above). Continuous replication remains
+out of scope locally — the opt-in remote durability tier
+(`docs/remote_durability_tier.md`) is the cross-node artifact-shipping
+answer.
 
 ## Related docs
 

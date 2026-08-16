@@ -11,6 +11,7 @@ a workflow operative persist an entity through exactly the same machinery.
 - [When a change becomes durable](#when-a-change-becomes-durable)
 - [Snapshots, compaction, and restore](#snapshots-compaction-and-restore)
 - [The minimum watermark and retention](#the-minimum-watermark-and-retention)
+- [The remote durability tier](#the-remote-durability-tier)
 - [Delivery guarantees](#delivery-guarantees)
 - [Determinism](#determinism)
 - [Output identity](#output-identity)
@@ -288,6 +289,65 @@ the entity parks the poison payload durably and advances past it.
 The truncation floor is `min(watermark, the newest offset older than the hold window)`. The
 hold window (`:input_log_hold_window_ms`, default `0`) is what a correcting operative needs — it
 is the guarantee that the inputs a correction wants to replay are still on disk.
+
+## The remote durability tier
+
+Everything above is node-local, and by default that is the whole story: a controller that dies
+**with its disk** takes its operatives' state — and the registry record of their existence —
+with it. The remote durability tier is the opt-in answer (`FLEZHA_DURABILITY_BACKEND`, default
+`none` — byte-identical to a build without the tier). It is **not** a pluggable WAL: the local
+write path is untouched, every ack still gates on local fsync, and the local files stay
+authoritative. What ships are **immutable artifacts**, at boundaries that already exist.
+
+```mermaid
+flowchart LR
+    subgraph LOCAL["🧠 Controller — local, authoritative"]
+        direction TB
+        WAL[("💾 entity WAL + snapshots")]:::store
+        JRN[("💾 proc journal · inbox · input log")]:::store
+        CSPEC[("💾 registry cspec")]:::store
+        SH["Shipper<br/>at compaction · checkpoint close ·<br/>Iter/ProcCommit · ship_interval_ms backstop"]:::ctrl
+        WAL --> SH
+        JRN --> SH
+        CSPEC --> SH
+    end
+    subgraph REMOTE["remote backend — Postgres | S3"]
+        direction TB
+        ART[("artifacts<br/>snapshots · seq-addressed record ranges<br/>journal + inbox suffixes · cspec · source offsets")]:::store
+        MAN[("per-entity manifest — written LAST<br/>conditional write = the epoch fence")]:::store
+    end
+    SH -->|"1 · artifacts first"| ART
+    SH -->|"2 · manifest last — put_if"| MAN
+    MAN -.->|"hydrate: manifest → artifacts →<br/>the ORDINARY restore path"| LOCAL
+    classDef ctrl fill:#dbeafe,stroke:#1e40af,color:#111
+    classDef store fill:#e5e7eb,stroke:#374151,color:#111
+```
+
+- **Ship triggers are the existing boundaries.** Compaction already produces the snapshot
+  artifact; a checkpoint close already defines the stream interval; `IterCommit`/`ProcCommit`
+  already define the workflow commit points. One backstop timer (`ship_interval_ms`, default
+  30 s) covers entities that hit none of them. No barrier alignment exists or is needed — the
+  effect record already binds state and offset per entity, so every entity's shipped cut is
+  independently consistent.
+- **Manifest-last is the atomicity.** Artifacts upload first; the manifest entry naming them is
+  written last. A torn upload leaves orphan blobs recovery never sees (a periodic GC collects
+  them by comparing `list()` against manifests). Recovery reads only the manifest and feeds the
+  existing restore-and-replay path — there is no second restore implementation.
+- **The epoch fence extends outward.** The manifest's conditional write makes the remote store
+  an external arbiter: a superseded controller fails its `put_if` and must stop shipping, so two
+  controllers can never both own an operative's remote lineage.
+- **Per-class sync mode.** A workflow class declaring `durability: :sync_remote` has its barrier
+  acks gated on the remote ship — RPO 0, one LAN round-trip per barrier at Hz rates. Stream
+  classes are refused sync: at ~100K changes/s it would be a lie. Async shipping never blocks
+  the hot path; a stalled shipper raises the alarm-grade `[:flezha, :state, :rpo_exceeded]`
+  (surfaced in `flz controller status` and `/healthz`) instead of silently widening the loss
+  window.
+
+The backend contract is four blob operations — `put / get / list / put_if` — so backends store
+bytes and never re-implement WAL semantics. Boot ordering matters exactly once: on a fresh node
+the registry cspec is hydrated **before** the hub opens `registry.dets`, so the orphan reconcile
+can see the restored operatives; entity state then hydrates through the ordinary bind. Full
+detail: [`../remote_durability_tier.md`](../remote_durability_tier.md).
 
 ---
 
