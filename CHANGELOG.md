@@ -189,6 +189,32 @@
 
 ### Added
 
+- **The authoring sugar can now feed a `.keyed()` channel.** A keyed output
+  channel accepts only `emit_keyed`, but `#[flezha::procedure]` / `@Procedure`
+  always generated a plain `emit` — so every procedure with a keyed sink had to
+  be hand-written as a full `Procedure` impl, and a partitioned operative wants
+  keyed sinks on *all* of its outputs. Both SDKs gain a `key` opt-in naming a
+  function from the output to its natural key: Rust
+  `#[flezha::procedure(key = my_fn)]` with `fn(&Output) -> String`, Java
+  `@Procedure(key = "myMethod")` with `static String myMethod(Output)`. The
+  generated emit then carries the key and the runtime stamps `flz.key`.
+  Declaring `key` on a procedure with no output is a compile-time /
+  annotation-processing error. Nothing changes for a procedure that does not
+  declare it.
+
+- **The testnet WS server speaks Kraken-v2 subscriptions.** It understood only
+  its own `{"event_type":"subscribe",…}` payload, whose generators were global
+  to the server — so a partitioned operative could not be exercised against it:
+  every member would have received every symbol and parked the out-of-range
+  half. It now also accepts
+  `{"method":"subscribe"|"unsubscribe","params":{"channel":…,"symbol":[…]},"req_id":N}`,
+  acks once per symbol echoing the `req_id` the subscription source correlates
+  on, and runs generators **per connection per symbol**. Generator tuning moves
+  server-side (`FLEZHA_TESTNET_CONFIG`: per-channel generator + cadence,
+  per-symbol overrides layered on shared defaults), since a v2 subscribe
+  carries no room for it. The legacy payload is unchanged, and a disconnect now
+  stops that connection's generators instead of leaking them.
+
 - **One stream operative can now run across N machines**
   (`add-partitioned-operatives`). A stream operative bound to exactly one
   runner, so a single logical stream could never use more than one machine —

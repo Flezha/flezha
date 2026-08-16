@@ -626,6 +626,11 @@ public final class FlezhaProcessor extends AbstractProcessor {
         String sink = ann.sink();
         int capacity = ann.capacity();
         String onFull = ann.onFull();
+        String emitKey = ann.key();
+        if (!emitKey.isEmpty() && !emits) {
+            error(procedure, "@Procedure(key = ...) requires a non-void return type; there is no emit to key");
+            return;
+        }
 
         StringBuilder b = new StringBuilder();
         if (!pkg.isEmpty()) {
@@ -729,6 +734,11 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(changeType)
                 .append("> state, ProcedureCtx ctx) throws ProcedureException {\n");
         String call = stateful ? "impl.run(input, " + handleArg + ")" : "impl.run(input)";
+        // `key = "m"` routes the emit through emitKeyed — the only form a
+        // `.keyed()` channel accepts — keeping keyed sinks reachable from the sugar.
+        String emitPresent = emitKey.isEmpty()
+                ? "ctx.emit(%s);"
+                : "ctx.emitKeyed(" + userFqn + "." + emitKey + "(%s), %s);";
         if (!emits) {
             b.append("        ").append(call).append(";\n");
         } else if (optional) {
@@ -737,14 +747,18 @@ public final class FlezhaProcessor extends AbstractProcessor {
                     .append("> out = ")
                     .append(call)
                     .append(";\n");
-            b.append("        if (out.isPresent()) { ctx.emit(out.get()); }\n");
+            b.append("        if (out.isPresent()) { ")
+                    .append(emitPresent.replace("%s", "out.get()"))
+                    .append(" }\n");
         } else {
             b.append("        ")
                     .append(outputType)
                     .append(" out = ")
                     .append(call)
                     .append(";\n");
-            b.append("        if (out != null) { ctx.emit(out); }\n");
+            b.append("        if (out != null) { ")
+                    .append(emitPresent.replace("%s", "out"))
+                    .append(" }\n");
         }
         b.append("    }\n");
         b.append("}\n");

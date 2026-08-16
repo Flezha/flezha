@@ -137,6 +137,73 @@ class FlezhaProcessorTest {
         assertThat(diagnose("t.BadOpt", code)).anyMatch(m -> m.contains("Optional<Output>"));
     }
 
+    @Test
+    void rejectsKeyOnVoidReturn() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "bad_key", key = "k")
+                public class BadKey {
+                    public static String k(String out) { return out; }
+                    public void run(String in) { }
+                }
+                """;
+        assertThat(diagnose("t.BadKey", code)).anyMatch(m -> m.contains("there is no emit to key"));
+    }
+
+    @Test
+    void keyOptInGeneratesAKeyedEmit() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "keyed")
+                public class Plain {
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(generated("t.Plain", "t.PlainProcedure", code)).contains("ctx.emit(out);");
+
+        String keyed =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "keyed", key = "k")
+                public class Keyed {
+                    public static String k(String out) { return out; }
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(generated("t.Keyed", "t.KeyedProcedure", keyed)).contains("ctx.emitKeyed(t.Keyed.k(out), out);");
+    }
+
+    /** Runs the processor over a well-formed source and returns the generated procedure's text. */
+    private String generated(String fqn, String generatedFqn, String code) {
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        DiagnosticCollector<JavaFileObject> diags = new DiagnosticCollector<>();
+        StandardJavaFileManager fm = compiler.getStandardFileManager(diags, null, StandardCharsets.UTF_8);
+        Path gen;
+        try {
+            gen = Files.createDirectories(out.resolve("gen-" + generatedFqn));
+            fm.setLocation(StandardLocation.CLASS_OUTPUT, List.of(out.toFile()));
+            fm.setLocation(StandardLocation.SOURCE_OUTPUT, List.of(gen.toFile()));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        JavaCompiler.CompilationTask task =
+                compiler.getTask(null, fm, diags, List.of("-proc:only"), null, List.of(new StringSource(fqn, code)));
+        task.setProcessors(List.of(new FlezhaProcessor()));
+        assertThat(task.call())
+                .as("processing a well-formed @Procedure should succeed: %s", diags.getDiagnostics())
+                .isTrue();
+        try {
+            return Files.readString(gen.resolve(generatedFqn.replace('.', '/') + ".java"));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private List<String> diagnose(String fqn, String code) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         DiagnosticCollector<JavaFileObject> diags = new DiagnosticCollector<>();

@@ -2,6 +2,8 @@ import WebSocket from 'ws';
 import ServerContract from './server_contract';
 import { Generator, GeneratorSubscription } from '../generator/generator_contract';
 import { loadGenerators } from '../generator/generator_loader';
+import { loadTestnetConfig, TestnetConfig } from './testnet_config';
+import { SubscriptionRouter } from './subscription_router';
 
 type Payload = {
   event_type: string;
@@ -13,18 +15,22 @@ type SubscriptionEvent = {
   default_message?: string;
   /** Legacy: interval for default_message echo. */
   interval?: number;
-  /** New: activate named generators with per-generator intervals and config. */
+  /** Legacy: activate named generators with per-generator intervals and config. */
   generators?: GeneratorSubscription[];
 };
 
 export default class ServerImpl implements ServerContract {
   private port: number;
   private generators: Map<string, Generator>;
-  private intervals: NodeJS.Timeout[] = [];
+  private config: TestnetConfig;
+  /** Per-connection state, so a disconnect stops exactly that socket's timers. */
+  private connections: Map<WebSocket, { router: SubscriptionRouter; legacy: NodeJS.Timeout[] }> =
+    new Map();
 
-  constructor(port: number, generatorsPath: string) {
+  constructor(port: number, generatorsPath: string, configPath?: string) {
     this.port = port;
     this.generators = loadGenerators(generatorsPath);
+    this.config = loadTestnetConfig(configPath);
   }
 
   public start() {
@@ -34,6 +40,10 @@ export default class ServerImpl implements ServerContract {
 
     server.on('connection', (ws) => {
       console.log('Testnet client connected');
+      this.connections.set(ws, {
+        router: new SubscriptionRouter(this.generators, this.config, (message) => ws.send(message)),
+        legacy: [],
+      });
 
       ws.on('message', (message: string) => this.handle_message(ws, message));
       ws.on('close', () => this.handle_close(ws));
@@ -45,12 +55,25 @@ export default class ServerImpl implements ServerContract {
   }
 
   handle_close(ws: WebSocket) {
+    const connection = this.connections.get(ws);
+    if (connection) {
+      connection.router.close();
+      connection.legacy.forEach(clearInterval);
+      this.connections.delete(ws);
+    }
     console.log('Testnet client disconnected');
   }
 
   handle_message(ws: WebSocket, message: string) {
+    const raw = message.toString();
+    const connection = this.connections.get(ws);
+
+    // Kraken-v2 subscriptions first: they are what the reconciling WS source
+    // sends, and a partitioned member's applied set is exactly these frames.
+    if (connection?.router.handle(raw)) return;
+
     try {
-      const payload: Payload = JSON.parse(message.toString());
+      const payload: Payload = JSON.parse(raw);
 
       switch (payload.event_type) {
         case 'subscribe':
@@ -81,7 +104,7 @@ export default class ServerImpl implements ServerContract {
         ws.send(subscription.default_message!);
       }, subscription.interval);
 
-      this.intervals.push(intervalId);
+      this.connections.get(ws)?.legacy.push(intervalId);
     }
   }
 
@@ -124,7 +147,7 @@ export default class ServerImpl implements ServerContract {
         }
       }, interval);
 
-      this.intervals.push(intervalId);
+      this.connections.get(ws)?.legacy.push(intervalId);
     }
   }
 }

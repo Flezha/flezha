@@ -35,6 +35,14 @@ public @interface Procedure {
     /** Plugin sink name; set to opt into single-procedure auto-wiring. */
     String sink() default "";
 
+    /**
+     * Name of a {@code static String <name>(Output out)} method on this class supplying the
+     * emit's natural key. Set it to feed a {@code .keyed()} channel: the generated run then
+     * calls {@code ctx.emitKeyed(...)}, the only emit such a channel accepts. Requires a
+     * non-void return type.
+     */
+    String key() default "";
+
     /** Static-mode entity keys. Requires a {@link EntitiesFor} method. */
     String[] keys() default {};
 

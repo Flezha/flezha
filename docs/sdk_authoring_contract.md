@@ -120,6 +120,16 @@ generates the emit call, so the author never touches the procedure context. The
 unit return (`()` / `void`, no output channel) and the unconditional `O`
 return (always emit) are unchanged.
 
+**Keyed output (`key`).** A `.keyed()` output channel accepts only
+`emit_keyed` / `emitKeyed`, so a sugared procedure needs one more opt-in to
+feed it: `key` names a function from the output to its natural key (Rust:
+`#[flezha::procedure(key = fn)]` with `fn(&Output) -> String`; Java:
+`key = "methodName"` naming a `static String methodName(Output out)` on the
+authoring class). The generated emit carries that key and the runtime stamps
+`flz.key` on the wire frame. Without it the sugar could reach only unkeyed
+sinks, forcing every keyed-output procedure to be hand-written. Declaring
+`key` on a procedure with no output is an error.
+
 ### 3.3 Single hand-written path determinism
 
 A procedure that mutates state **only** through generated journaling mutators has
