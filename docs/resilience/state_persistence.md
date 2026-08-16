@@ -426,9 +426,11 @@ fire-and-forget and reads no reply).
 ### Self-healing recovery (`Flezha.State.Watchdog` + `Flezha.State.Recovery`)
 
 A live Entity's persistence/output path must not be able to stall
-silently and permanently. Three failure edges now recover via the shared
-`RestoreInitState` resync (`Flezha.State.Recovery.resync/2`) and emit
-telemetry:
+silently and permanently. Three failure edges are detected here; two
+recover via the shared `RestoreInitState` resync
+(`Flezha.State.Recovery.resync/2`), and the third is **emit-only** —
+the `Watchdog` is a sensor and the convergence Loop owns every
+operative-level remedy:
 
 * **Seq gap (populated WAL)** — a Change with `seq > last_persisted_seq
   + 1` while `last_persisted_seq >= 0` is no longer a terminal
@@ -437,13 +439,28 @@ telemetry:
   resends from `terminal_seq + 1`.
 * **Output staleness** — `Watchdog` flags an Entity that is still
   receiving Changes but whose persisted seq froze past
-  `output_stall_timeout_ms`, emits `[:flezha, :state, :output_stall]`,
-  and resyncs. A genuinely idle Entity (no Changes arriving) is not
-  flagged.
+  `output_stall_timeout_ms` and emits
+  `[:flezha, :state, :output_stall]`. It does **nothing else**: the
+  remedy is the convergence Loop's output-stall ladder
+  (`resync_runner`, escalating to `rebind_operative` — see
+  `docs/resilience/convergence_loop.md`), under one per-target backoff.
+  The Watchdog's former direct `Recovery.resync/2` call and its
+  `last_resync` dedup map are deleted; they were a second, uncoordinated
+  actor racing the Loop's own rebind. A genuinely idle Entity (no
+  Changes arriving) is not flagged.
 * **Compaction timeout** — a `CompactEntity` whose snapshot does not
   return within `compaction_timeout_ms` emits
   `[:flezha, :state, :compaction_timeout]` and resyncs; compaction stays
-  retriable.
+  retriable. This one stays with the Watchdog because it owns the
+  handshake end to end — it dispatched the `CompactEntity`, so it is the
+  only thing that can time it out and re-dispatch it.
+
+**Sweep freshness.** Each completed sweep stamps
+`Flezha.Convergence.Snapshot.observe_sensor(:watchdog, at, period)`. A
+Watchdog that wedges without crashing stops stamping, and `/healthz`
+reports `200 degraded, reason: sensor_stale` within one poll instead of
+silently losing detection. The mark is written by the sensor, never
+polled from it, so reading it cannot block on the wedged process.
 
 ### Baseline recovery: push vs pull
 

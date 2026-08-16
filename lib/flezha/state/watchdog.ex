@@ -1,10 +1,20 @@
 defmodule Flezha.State.Watchdog do
   @moduledoc """
   Sweeper that makes a stalled per-Entity persistence/output path
-  *detectable and self-healing* instead of silently frozen. Holds its own
-  sweep timer (`:output_watchdog_interval_ms`, default 10 s); the
-  convergence `Loop` consumes the `:output_stall` telemetry the sweep
-  emits.
+  *detectable* instead of silently frozen. Holds its own sweep timer
+  (`:output_watchdog_interval_ms`, default 10 s); the convergence `Loop`
+  consumes the `:output_stall` telemetry the sweep emits.
+
+  This is a **sensor**: it observes and emits, and decides no remedy of its
+  own. The one exception is the compaction handshake it owns end to end —
+  it dispatched the `CompactEntity`, so it is also the one that can time it
+  out and, at give-up, re-dispatch it. Every operative-level remedy belongs
+  to the convergence `Loop`, which is why an output stall produces telemetry
+  and nothing else.
+
+  Each completed sweep stamps `Flezha.Convergence.Snapshot` so a Watchdog
+  that wedges without crashing is visible on `/healthz` within one poll
+  rather than silently turning detection off.
 
   Three sweeps run on each pass:
 
@@ -32,17 +42,13 @@ defmodule Flezha.State.Watchdog do
       reference whose local progress has gone unshipped past the RPO target
       raises an alarm — a stalled shipper must never be discoverable only by
       inspecting the backend. Inert (one ETS read) while the tier is off.
-
-  Both emit telemetry and trigger the shared `Flezha.State.Recovery`
-  resync. Because WAL persistence and output-plugin delivery share the
-  per-Entity outbox, recovering WAL advance also resumes output.
   """
 
   use GenServer
 
   require Logger
 
-  alias Flezha.Convergence.Backoff
+  alias Flezha.Convergence.{Backoff, Snapshot}
   alias Flezha.Operative.ClassRegistry
 
   alias Flezha.State.{
@@ -65,7 +71,6 @@ defmodule Flezha.State.Watchdog do
   # `backoff` is the shared per-`{:compaction, entity_id}` strike/cooldown table
   # that keeps a repeatedly-failing Entity from re-triggering every sweep.
   defstruct compactions: %{},
-            last_resync: %{},
             catastrophic: %{},
             rpo_breached: MapSet.new(),
             backoff: Backoff.new()
@@ -136,9 +141,11 @@ defmodule Flezha.State.Watchdog do
   def handle_info(_msg, state), do: {:noreply, state}
 
   defp schedule_sweep() do
-    interval = Application.get_env(:flezha, :output_watchdog_interval_ms, 10_000)
+    interval = sweep_interval_ms()
     if interval > 0, do: Process.send_after(self(), :sweep_tick, interval)
   end
+
+  defp sweep_interval_ms(), do: Application.get_env(:flezha, :output_watchdog_interval_ms, 10_000)
 
   @impl true
   def handle_cast({:compaction_started, entity_id, runner_id}, state) do
@@ -192,12 +199,18 @@ defmodule Flezha.State.Watchdog do
   defp sweep(state) do
     now = :erlang.monotonic_time(:millisecond)
 
-    state
-    |> sweep_output_staleness(now)
-    |> sweep_catastrophic_dataflow(now)
-    |> sweep_compaction_triggers(now)
-    |> sweep_compactions(now)
-    |> sweep_rpo()
+    swept =
+      state
+      |> sweep_output_staleness(now)
+      |> sweep_catastrophic_dataflow(now)
+      |> sweep_compaction_triggers(now)
+      |> sweep_compactions(now)
+      |> sweep_rpo()
+
+    # Stamped AFTER the last sweep, so the mark means "a full pass completed",
+    # not "a pass started". A Watchdog wedged mid-sweep therefore goes stale.
+    Snapshot.observe_sensor(:watchdog, now, sweep_interval_ms())
+    swept
   end
 
   # A remote-durability reference whose local progress has been unshipped past
@@ -349,21 +362,19 @@ defmodule Flezha.State.Watchdog do
   end
 
   defp sweep_output_staleness(state, now) do
-    Enum.reduce(Registry.all_entities(), state, fn {rc, _sh, _pk} = pid, acc ->
+    Enum.each(Registry.all_entities(), fn {rc, _sh, _pk} = pid ->
       timeout = PersistenceResolver.output_stall_timeout_ms(rc)
 
       with true <- ClassRegistry.capable?(rc, :output_stall_watch?),
            true <- timeout > 0,
            {:ok, writer} <- Supervisor.lookup(pid),
            {:ok, status} <- safe_stall_status(writer),
-           true <- stalled?(status, now, timeout),
-           false <- recently_resynced?(acc, pid, now, timeout) do
-        flag_output_stall(pid, status, now, timeout)
-        %{acc | last_resync: Map.put(acc.last_resync, pid, now)}
-      else
-        _ -> acc
+           true <- stalled?(status, now, timeout) do
+        flag_output_stall(pid, status, now)
       end
     end)
+
+    state
   end
 
   # Stalled = Changes still arriving (not idle) but the persisted seq has
@@ -373,27 +384,17 @@ defmodule Flezha.State.Watchdog do
       now - status.last_advance_at >= timeout
   end
 
-  defp recently_resynced?(state, pid, now, timeout) do
-    case Map.get(state.last_resync, pid) do
-      nil -> false
-      at -> now - at < timeout
-    end
-  end
-
   # The entity's `operative_class` is, by the flezha operative convention
   # (`OperativeManager`: "the operative_id is used as the operative_class identifier"),
   # the operative-instance id the convergence Loop binds. Emitting it as
   # `operative_instance` lets the Loop rebind the exact stalled instance
   # rather than the factory/class name.
-  defp flag_output_stall({rc, sh, pk} = pid, status, now, _timeout) do
+  defp flag_output_stall({rc, sh, pk}, status, now) do
     :telemetry.execute(
       [:flezha, :state, :output_stall],
       %{stalled_ms: now - status.last_advance_at, last_seq: status.last_persisted_seq},
       %{operative_class: rc, operative_instance: rc, procedure: sh, key: pk}
     )
-
-    _ = Recovery.resync(pid, reason: :output_stall)
-    :ok
   end
 
   defp sweep_compactions(state, now) do

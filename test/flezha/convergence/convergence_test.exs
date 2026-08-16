@@ -340,6 +340,97 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
+  describe "data-plane verdict → heal op (D3)" do
+    # One healthy operative bound to the runner every verdict below names, so
+    # the resolution is exercised against the same probed reality the other
+    # invariants are classified from.
+    defp wedge_reality() do
+      %{
+        active_runners: %{ns: MapSet.new(["e_live", "e_second"])},
+        operatives: %{
+          {:ns, "rc_a"} => %{bound_runner: "e_live"},
+          {:ns, "rc_b"} => %{bound_runner: "e_live"},
+          {:ns, "rc_other"} => %{bound_runner: "e_second"}
+        }
+      }
+    end
+
+    defp wedge_intent() do
+      %Intent{
+        operatives: [
+          %{namespace: :ns, operative_id: "rc_a", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "rc_b", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "rc_other", factory_id: nil, plugins: []}
+        ]
+      }
+    end
+
+    defp plan_for(verdict) do
+      wedge_intent()
+      |> Diff.compute(wedge_reality(), %{verdict: verdict})
+      |> Planner.plan(Backoff.new())
+    end
+
+    test "a wedged runner pool is evicted" do
+      assert [%{primitive: :evict_runner, target: "e_live", args: args}] =
+               plan_for({:runner_pool_wedged, %{runner_id: "e_live", dispatches: 7}})
+
+      assert args == %{reason: :data_plane_wedge, layer: :runner_pool_wedged}
+    end
+
+    test "a runner that stopped consuming is evicted, resolved through its data transport" do
+      verdict =
+        {:runner_not_consuming, %{transport: {:uds_data, "e_live", :primary}, stream_id: 1}}
+
+      assert [%{primitive: :evict_runner, target: "e_live"}] = plan_for(verdict)
+    end
+
+    test "a wedged channel resyncs every operative on that runner, in place" do
+      verdict = {:channel_not_sending, %{runner_id: "e_live", channel: "c1"}}
+
+      assert [
+               %{primitive: :resync_runner, namespace: :ns, target: "rc_a"},
+               %{primitive: :resync_runner, namespace: :ns, target: "rc_b"}
+             ] = plan_for(verdict)
+    end
+
+    test "a wedged operative is rebound, named by the verdict" do
+      assert [%{primitive: :rebind_operative, namespace: :ns, target: "rc_other", args: args}] =
+               plan_for({:operative_not_forwarding, %{operative_id: "rc_other"}})
+
+      assert args.reason == :data_plane_wedge
+    end
+
+    test "a fabric verdict plans nothing — no BEAM-level heal reaches it" do
+      for layer <- [:driver_loop_frozen, :nif_queue_backing_up] do
+        assert plan_for({layer, %{transport: {:uds_data, "e_live", :primary}}}) == []
+      end
+    end
+
+    test "a verdict naming nothing the probe observed plans nothing" do
+      assert plan_for({:runner_pool_wedged, %{runner_id: "e_never_seen"}}) == []
+      assert plan_for({:operative_not_forwarding, %{operative_id: "rc_never_seen"}}) == []
+      assert plan_for({:channel_not_sending, %{runner_id: "e_never_seen", channel: "c"}}) == []
+    end
+
+    test "an :ok verdict clears the recorded wedge" do
+      delta = Diff.compute(wedge_intent(), wedge_reality(), %{verdict: :ok})
+      assert delta.data_plane_wedge == nil
+      assert delta.data_plane_layer == nil
+      assert Diff.empty?(delta)
+    end
+
+    test "wedge ops ride the standard per-target backoff" do
+      verdict = {:runner_pool_wedged, %{runner_id: "e_live"}}
+      now = System.monotonic_time(:millisecond)
+      backoff = Backoff.update(Backoff.new(), {:evict_runner, "e_live"}, :error, now)
+
+      assert wedge_intent()
+             |> Diff.compute(wedge_reality(), %{verdict: verdict})
+             |> Planner.plan(backoff) == []
+    end
+  end
+
   describe "SafeCall.bounded/3" do
     test "returns {:ok, reply} for a healthy call" do
       {:ok, pid} = Agent.start_link(fn -> :state end)
@@ -444,15 +535,27 @@ defmodule Flezha.ConvergenceTest do
   end
 
   describe "Heal" do
-    test "the heal surface is exactly the five reachable primitives" do
+    test "the heal surface is exactly the six reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
                Enum.sort([
                  :rebind_operative,
+                 :resync_runner,
                  :start_plugin,
                  :stop_plugin,
                  :restart_plugin,
                  :evict_runner
                ])
+    end
+
+    test "resync_runner against an unknown operative is a failed heal, not a crash" do
+      op = %{
+        primitive: :resync_runner,
+        namespace: "ghost_ns",
+        target: "ghost_operative",
+        args: %{reason: :output_stall}
+      }
+
+      assert Heal.execute(op) == :error
     end
 
     test "evict_runner on an unknown id is an idempotent :ok" do
@@ -475,72 +578,142 @@ defmodule Flezha.ConvergenceTest do
     end
   end
 
-  describe "Loop output-stall rebind injection" do
-    alias Flezha.Convergence.{Backoff, Intent, Loop}
+  describe "output-stall ladder (D1)" do
+    @stall_ns :stall_ns
 
-    test "stalled operative not in plan gets a rebind_operative op injected with reason: :output_stall" do
-      ns = "stall_ns_#{System.unique_integer([:positive])}"
-      operative_id = "operative_stalled"
-
+    defp stalled_diff(operative_id, extra \\ []) do
       intent = %Intent{
-        operatives: [%{namespace: ns, operative_id: operative_id, factory_id: nil, plugins: []}]
+        operatives: [
+          %{namespace: @stall_ns, operative_id: operative_id, factory_id: nil, plugins: []}
+        ]
       }
 
-      ready = MapSet.new([ns])
-      stalled = %{operative_id => System.monotonic_time(:millisecond)}
+      reality = %{
+        active_runners: %{@stall_ns => MapSet.new(["e_live"])},
+        operatives: %{{@stall_ns, operative_id} => Enum.into(extra, %{bound_runner: "e_live"})}
+      }
 
-      injected = Loop.inject_stall_rebinds_for_test([], stalled, intent, ready, Backoff.new())
-
-      assert [
-               %{
-                 primitive: :rebind_operative,
-                 target: ^operative_id,
-                 args: %{reason: :output_stall}
-               }
-             ] =
-               injected
+      Diff.compute(intent, reality, %{stalled: [operative_id]})
     end
 
-    test "stalled operative already in plan is not duplicated" do
-      ns = "stall_ns2_#{System.unique_integer([:positive])}"
-      operative_id = "operative_dup"
-
-      intent = %Intent{
-        operatives: [%{namespace: ns, operative_id: operative_id, factory_id: nil, plugins: []}]
-      }
-
-      ready = MapSet.new([ns])
-      stalled = %{operative_id => System.monotonic_time(:millisecond)}
-
-      existing_op = %{
-        primitive: :rebind_operative,
-        namespace: ns,
-        target: operative_id,
-        args: %{}
-      }
-
-      result =
-        Loop.inject_stall_rebinds_for_test([existing_op], stalled, intent, ready, Backoff.new())
-
-      assert length(result) == 1
-      assert hd(result) == existing_op
+    test "a flagged instance resolves to a stalled divergence carrying its namespace" do
+      assert %Diff{stalled_operatives: [{@stall_ns, "op_a"}]} = stalled_diff("op_a")
     end
 
-    test "stalled operative in backoff cooldown is filtered out" do
-      ns = "stall_ns3_#{System.unique_integer([:positive])}"
-      operative_id = "operative_cooldown"
+    test "a flag for an operative this tick is not healing resolves to nothing" do
+      # Not declared, or declared in a namespace still mid-recovery — the
+      # caller passes only the recovery-ready operatives.
+      delta = Diff.compute(%Intent{operatives: []}, %{}, %{stalled: ["ghost"]})
+      assert delta.stalled_operatives == []
+      assert Diff.empty?(delta)
+    end
 
-      intent = %Intent{
-        operatives: [%{namespace: ns, operative_id: operative_id, factory_id: nil, plugins: []}]
-      }
+    test "the first eligible attempt resyncs the existing binding, not a migration" do
+      assert [%{primitive: :resync_runner, target: "op_a", args: %{reason: :output_stall}}] =
+               Planner.plan(stalled_diff("op_a"), Backoff.new())
+    end
 
-      ready = MapSet.new([ns])
-      stalled = %{operative_id => System.monotonic_time(:millisecond)}
+    test "a stall that survived the resync escalates to rebind_operative" do
       now = System.monotonic_time(:millisecond)
-      backoff = Backoff.update(Backoff.new(), {:rebind_operative, operative_id}, :error, now)
 
-      result = Loop.inject_stall_rebinds_for_test([], stalled, intent, ready, backoff)
-      assert result == []
+      # One ladder attempt recorded and its cooldown already elapsed: the same
+      # stall is still flagged, so the next rung is the migration.
+      backoff =
+        Backoff.update(Backoff.new(), Planner.ladder_key("op_a"), :error, now - 10_000)
+
+      assert [%{primitive: :rebind_operative, target: "op_a", args: %{reason: :output_stall}}] =
+               Planner.plan(stalled_diff("op_a"), backoff)
+    end
+
+    test "both rungs share one cooldown key, so escalating does not restart the throttle" do
+      for primitive <- [:resync_runner, :rebind_operative] do
+        assert Planner.key(%{primitive: primitive, target: "r", args: %{reason: :output_stall}}) ==
+                 Planner.ladder_key("r")
+      end
+    end
+
+    test "a stalled operative already covered by the plan is not laddered too" do
+      # Also unbound, so the structural bind op already names it.
+      delta = stalled_diff("op_dup", bound_runner: nil)
+
+      assert [%{primitive: :rebind_operative, target: "op_dup", args: args}] =
+               Planner.plan(delta, Backoff.new())
+
+      refute Map.has_key?(args, :reason)
+    end
+
+    test "a stalled operative in backoff cooldown is filtered out" do
+      now = System.monotonic_time(:millisecond)
+      backoff = Backoff.update(Backoff.new(), Planner.ladder_key("op_cool"), :error, now)
+
+      assert Planner.plan(stalled_diff("op_cool"), backoff) == []
+    end
+
+    test "the ladder is not starved by a plan that filled the per-tick budget" do
+      delta = %Diff{stalled_diff("op_a") | stalled_operatives: [{@stall_ns, "op_a"}]}
+
+      assert [%{primitive: :resync_runner, target: "op_a"}] =
+               Planner.plan(delta, Backoff.new(), max_ops: 0)
+    end
+
+    test "a ladder rung is recognisable as one; a structural op is not" do
+      assert Planner.ladder?(%{
+               primitive: :resync_runner,
+               target: "r",
+               args: %{reason: :output_stall}
+             })
+
+      refute Planner.ladder?(%{primitive: :rebind_operative, target: "r", args: %{}})
+    end
+  end
+
+  describe "reconcile-round cooperation (D7)" do
+    alias Flezha.Convergence.Loop
+
+    test "a round that started orphans triggers one immediate tick" do
+      assert :ok =
+               Loop.handle_telemetry(
+                 [:flezha, :boot, :reconcile_round],
+                 %{started: 2, duplicates: 0, elapsed_ms: 4},
+                 %{first_round: false},
+                 self()
+               )
+
+      assert_receive :reconcile_started, 500
+    end
+
+    test "a quiet round triggers nothing — the Loop's cadence is unchanged" do
+      assert :ok =
+               Loop.handle_telemetry(
+                 [:flezha, :boot, :reconcile_round],
+                 %{started: 0, duplicates: 0, elapsed_ms: 1},
+                 %{first_round: false},
+                 self()
+               )
+
+      refute_receive :reconcile_started, 50
+    end
+
+    test "the post-round plan adopts what the round started rather than fighting it" do
+      # The reconcile started two operatives; by the time the completion event
+      # reaches the Loop they probe as bound to a live runner, so the Diff sees
+      # no divergence and the plan names neither of them.
+      intent = %Intent{
+        operatives: [
+          %{namespace: :ns, operative_id: "adopted_a", factory_id: nil, plugins: []},
+          %{namespace: :ns, operative_id: "adopted_b", factory_id: nil, plugins: []}
+        ]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e_live"])},
+        operatives: %{
+          {:ns, "adopted_a"} => %{bound_runner: "e_live"},
+          {:ns, "adopted_b"} => %{bound_runner: "e_live"}
+        }
+      }
+
+      assert Planner.plan(Diff.compute(intent, reality), Backoff.new()) == []
     end
   end
 

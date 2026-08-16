@@ -7,16 +7,24 @@ defmodule Flezha.Boot.RecoveryHooks do
   is observed to hold. These handlers only surface that lifecycle to
   Flezha's observability layer.
 
-  `reconcile_round` / `reconcile_duplicate` are forwarded because
-  `Convergence.Health` independently binds and rebinds operatives on its
-  own tick, so both loops can act on the same missing operative. The
-  telemetry is what tells us whether they actually contend in
-  production; neither loop is gated on the other.
+  `reconcile_round` is forwarded because `Convergence.Loop` consumes it:
+  a round that started orphans triggers one immediate tick, so the plan
+  adopts what the round just started instead of a later tick finding them
+  half-bound.
+
+  `reconcile_duplicate` is an **alarm**, not a metric. Every start path
+  resolves through the registry's id claim, so one operative observed on
+  two nodes means either a cross-node partition recovery (inherent, and
+  already resolved keep-one/stop-others by the time the hook fires) or a
+  start-authority violation. The kept/stopped nodes ride the event so the
+  two cases are distinguishable at a glance.
 
   When the kill-switch `:flezha, :auto_restore_enabled` is `false`,
   ProcessHub does not fire these hooks (auto_recovery is off), so
   `register/1` is a no-op in that mode.
   """
+
+  require Logger
 
   alias Flezha.Service.Identificator
   alias ProcessHub.Constant.Hook
@@ -100,20 +108,28 @@ defmodule Flezha.Boot.RecoveryHooks do
   end
 
   @doc """
-  One operative observed running on more than one node — the signal that
-  the reconcile and `Convergence.Health` both started it.
+  One operative observed running on more than one node, already resolved
+  keep-one/stop-others upstream. Alarm-grade: outside a cross-node
+  partition-recovery window it means a start bypassed the id claim.
   """
   @spec reconcile_duplicate(atom(), map()) :: :ok
   def reconcile_duplicate(hub_id, hook_data) do
+    operative_id = Map.get(hook_data, :child_id)
+    kept = Map.get(hook_data, :kept_node)
+    stopped = Map.get(hook_data, :stopped_nodes, [])
+
+    Logger.error(
+      "[boot] duplicate operative binding resolved: #{inspect(operative_id)} was running on " <>
+        "#{Map.get(hook_data, :instance_count, 0)} nodes; kept #{inspect(kept)}, stopped " <>
+        "#{inspect(stopped)}. Expected only while recovering from a cross-node partition — " <>
+        "otherwise a start bypassed the operative id claim"
+    )
+
     emit(
       :reconcile_duplicate,
       hub_id,
       %{instance_count: Map.get(hook_data, :instance_count, 0)},
-      %{
-        operative_id: Map.get(hook_data, :child_id),
-        kept_node: Map.get(hook_data, :kept_node),
-        stopped_nodes: Map.get(hook_data, :stopped_nodes, [])
-      }
+      %{operative_id: operative_id, kept_node: kept, stopped_nodes: stopped}
     )
   end
 

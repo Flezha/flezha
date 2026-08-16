@@ -75,10 +75,19 @@ defmodule Flezha.Runner.FleetManager do
   a live runner on the next convergence tick. Idempotent — an unknown
   id returns `:ok`. Driven by `Flezha.Convergence.Heal.execute/1` and by the
   reconnect binding-swap in `runner_connect` (to close the prior session).
+
+  `proved_wedged: true` waives the "never evict a live runner" guard. The
+  guard exists to protect a HEALTHY runner from a stale snapshot; a runner the
+  data-plane classifier caught still connected and still heartbeating while
+  processing nothing is not healthy, and its connection being open is the
+  reason nothing else can dislodge it.
   """
-  @spec evict_runner(binary()) :: :ok
-  def evict_runner(runner_id) when is_binary(runner_id) do
-    GenServer.call(__MODULE__, {:evict_runner, runner_id})
+  @spec evict_runner(binary(), keyword()) :: :ok
+  def evict_runner(runner_id, opts \\ []) when is_binary(runner_id) do
+    GenServer.call(
+      __MODULE__,
+      {:evict_runner, runner_id, Keyword.get(opts, :proved_wedged, false)}
+    )
   end
 
   @doc """
@@ -344,7 +353,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
-  def handle_call({:evict_runner, runner_id}, _from, state) do
+  def handle_call({:evict_runner, runner_id, proved_wedged}, _from, state) do
     # Safe no-op on a healthy target: never evict a runner that is
     # currently `:active` (connection open). The convergence Diff runs off
     # a snapshot that can lag a reconnect by a tick; acting on that stale
@@ -352,7 +361,7 @@ defmodule Flezha.Runner.FleetManager do
     # change exists to remove. The authoritative live set is the gate.
     # (The reconnect binding-swap closes a prior session by id directly, not
     # through this guarded path.)
-    if runner_active?(state, runner_id) do
+    if not proved_wedged and runner_active?(state, runner_id) do
       {:reply, :ok, state}
     else
       {:reply, :ok, state |> do_evict_runner(runner_id) |> sync_directory()}

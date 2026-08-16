@@ -36,6 +36,35 @@ defmodule Flezha.Convergence.StallClassifier do
 
   @defaults %{driver_freeze_ms: 5_000, stall_ms: 30_000, queue_high: 256}
 
+  # What KIND of thing each layer says is wedged. This is the taxonomy half of
+  # a verdict and belongs beside the checks that mint them: the Diff resolves a
+  # scope to the live entity that can be healed, the Planner picks the remedy,
+  # and `/healthz` owns `:fabric`. Adding a verdict therefore declares its scope
+  # here and nowhere else.
+  #
+  # `:fabric` is the controller's own NIF driver thread. No BEAM-level remedy
+  # reaches it — every heal the convergence pipeline could issue travels through
+  # that thread — which is why it is the one scope that becomes a `503` instead
+  # of an op.
+  @layer_scopes %{
+    driver_loop_frozen: :fabric,
+    nif_queue_backing_up: :fabric,
+    socket_write_blocked: :connection,
+    runner_not_consuming: :runner,
+    runner_pool_wedged: :runner,
+    channel_not_sending: :connection,
+    operative_not_forwarding: :operative
+  }
+
+  @doc "The layer a verdict names, or `nil` for `:ok`."
+  @spec layer(verdict()) :: atom() | nil
+  def layer(:ok), do: nil
+  def layer({layer, _ctx}), do: layer
+
+  @doc "Which kind of thing `layer` says is wedged; `nil` for no/unknown layer."
+  @spec layer_scope(atom() | nil) :: :fabric | :runner | :connection | :operative | nil
+  def layer_scope(layer), do: Map.get(@layer_scopes, layer)
+
   @doc """
   Classify the stall, if any. `previous` is `nil` on the first tick (no deltas
   yet → always `:ok`). `opts` overrides `#{inspect(@defaults)}`.

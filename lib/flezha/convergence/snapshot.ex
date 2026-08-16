@@ -3,11 +3,17 @@ defmodule Flezha.Convergence.Snapshot do
   The single published source of truth read by `/healthz`, the CLI
   status surface, and telemetry consumers.
 
-  Owns one public ETS table holding two kinds of row:
+  Owns one public ETS table holding three kinds of row:
 
     * `{:recovery, hub_id} => state` — the per-hub recovery lifecycle
       state, cached from ProcessHub's `recovery_state_changed` hook and
       seeded by `HubManager.start_hub/1` via `observe_recovery/2`.
+
+    * `{:sensor, name} => {at_ms, period_ms}` — the last completed pass of
+      a periodic sensor, stamped by the sensor itself (`observe_sensor/3`).
+      A sensor that wedges without crashing stops stamping, which is how
+      `/healthz` sees detection die. Written by the sensor rather than
+      polled from it, so reading it never blocks on the wedged process.
 
     * `:current => map` — the latest reality + health summary published
       by `Flezha.Convergence.Loop` once per tick.
@@ -66,6 +72,20 @@ defmodule Flezha.Convergence.Snapshot do
     |> Map.get({namespace, operative_id}, :unknown)
   end
 
+  @doc """
+  Stamp a periodic sensor's completed pass: `at_ms` is monotonic and
+  `period_ms` is the sensor's own cadence, so a reader can bound staleness
+  without knowing which sensor it is looking at.
+  """
+  @spec observe_sensor(atom(), integer(), non_neg_integer()) :: :ok
+  def observe_sensor(name, at_ms, period_ms) when is_atom(name) do
+    insert({:sensor, name}, {at_ms, period_ms})
+  end
+
+  @doc "Every stamped sensor as `{name, {at_ms, period_ms}}`."
+  @spec sensors() :: %{atom() => {integer(), non_neg_integer()}}
+  def sensors(), do: tagged_rows(:sensor)
+
   @doc "Last known recovery state for `hub_id`; `:unknown` if never observed."
   @spec recovery_state(atom()) :: atom()
   def recovery_state(hub_id) when is_atom(hub_id) do
@@ -74,16 +94,7 @@ defmodule Flezha.Convergence.Snapshot do
 
   @doc "All observed `{hub_id => state}` recovery entries."
   @spec recovery_states() :: %{atom() => atom()}
-  def recovery_states() do
-    case :ets.whereis(@table) do
-      :undefined ->
-        %{}
-
-      tid ->
-        :ets.select(tid, [{{{:recovery, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}])
-        |> Map.new()
-    end
-  end
+  def recovery_states(), do: tagged_rows(:recovery)
 
   @doc """
   Record an observed recovery transition from a non-telemetry source —
@@ -160,6 +171,20 @@ defmodule Flezha.Convergence.Snapshot do
   end
 
   # ---------- internals ----------
+
+  # Every `{tag, name} => value` row as `%{name => value}`; the shape both
+  # keyed row families (`:recovery`, `:sensor`) are read back with.
+  defp tagged_rows(tag) do
+    case :ets.whereis(@table) do
+      :undefined ->
+        %{}
+
+      tid ->
+        tid
+        |> :ets.select([{{{tag, :"$1"}, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+        |> Map.new()
+    end
+  end
 
   defp lookup(key) do
     case :ets.whereis(@table) do

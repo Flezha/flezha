@@ -72,6 +72,24 @@ defmodule FlezhaTest.Runner.FleetManagerGhostTest do
     assert "ghost_b" in active, "live peer must survive the disconnect"
   end
 
+  test "a live runner is protected from eviction, unless the classifier proved it wedged" do
+    seed_active(["wedged_one", "healthy_one"])
+
+    # The guard: a stale convergence snapshot must never evict a runner whose
+    # connection is open.
+    :ok = FleetManager.evict_runner("wedged_one")
+    assert "wedged_one" in FleetManager.active_runners(@namespace)
+
+    # The waiver: a pool-wedged runner is still connected — being connected is
+    # exactly what stops anything else from dislodging it — so the verdict-
+    # driven eviction has to get through, and only that one.
+    :ok = FleetManager.evict_runner("wedged_one", proved_wedged: true)
+
+    active = FleetManager.active_runners(@namespace)
+    refute "wedged_one" in active
+    assert "healthy_one" in active
+  end
+
   test "active set does not accumulate ghosts under repeated kill/restart churn" do
     # Simulate N rounds of: fresh runner connects (added to active set by a
     # peer), prior one's control channel closes. The active set must never

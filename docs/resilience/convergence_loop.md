@@ -14,9 +14,10 @@ Intent.declared()
       │
       ▼
 Probe.snapshot()          ← reality
+StallClassifier.classify()   ← sensor signals (verdict, stalled ids)
       │
       ▼
-Diff.compute(intent, reality)    ← pure function
+Diff.compute(intent, reality, signals)    ← pure function
       │
       ▼
 Planner.plan(delta, backoff)     ← pure function
@@ -35,6 +36,14 @@ Snapshot.publish(reality, health)   ← healthz / CLI / telemetry
 orchestrates the pipeline by calling the pure modules in sequence. All state
 mutation is in `Heal`; every other module is side-effect-free.
 
+**One chain of custody.** Sensors sense, exactly one actor acts, healthz reads
+the actor's snapshot, the orchestrator restarts on healthz — each level watches
+the level below. `State.Watchdog`, `StallClassifier`, `LivenessCounters` and
+`RecoveryTracker` emit facts and invoke no remedy of their own; the Loop is the
+only module that heals. That is why the Watchdog no longer calls
+`State.Recovery.resync/2` for an output stall: two uncoordinated remediation
+paths for one signal is the failure this design exists to remove.
+
 ---
 
 ## Modules
@@ -44,9 +53,9 @@ mutation is in `Heal`; every other module is side-effect-free.
 | `Convergence.Loop` | GenServer owning the tick timer, misbound-streak table, event subscriptions, and try/rescue guard |
 | `Convergence.Intent` | Reads the ProcessHub registry: declared operatives, their declared plugins, and factory ids |
 | `Convergence.Probe` | Reads live reality: active runners per namespace, per-operative Overwatch state (incl. provider plugin health via `Extension.Table.health/1`), hub recovery phase |
-| `Convergence.Diff` | Pure function: intent vs reality → `%Diff{unbound_operatives, misbound_operatives, missing_plugins, extra_plugins, unhealthy_plugins}` |
-| `Convergence.Planner` | Pure function: `%Diff{}` + `%Backoff{}` → ordered op list, filtered by cooldown, capped at `max_ops` (default 20) |
-| `Convergence.Heal` | Five idempotent primitives: `rebind_operative`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner` |
+| `Convergence.Diff` | Pure function: intent + reality + this tick's sensor signals (classifier verdict, stalled ids) → `%Diff{unbound_operatives, misbound_operatives, stalled_operatives, missing_plugins, extra_plugins, unhealthy_plugins, data_plane_wedge, data_plane_layer}` |
+| `Convergence.Planner` | Pure function: `%Diff{}` + `%Backoff{}` → ordered op list, filtered by cooldown, capped at `max_ops` (default 20). The ONE place a divergence becomes an op |
+| `Convergence.Heal` | Six idempotent primitives: `rebind_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner` |
 | `Convergence.Backoff` | Per-`{primitive, target}` cooldown table: `5 s → 30 s → 60 s → 300 s`; reset on success |
 | `Convergence.Snapshot` | Shared ETS table read by `/healthz`, CLI, and telemetry; also caches per-hub recovery state |
 | `Convergence.RecoveryGate` | Single query point for hub recovery state: classifies which namespaces are ready for healing; exposes `await_recovery_complete/2` |
@@ -65,6 +74,15 @@ immediately when:
   heartbeats, not merely absent operative output)
 - `:runner_connected_event` fires (a runner reconnected — an immediate tick
   detects and rebinds the operative rather than waiting up to 5 s)
+- a `[:flezha, :boot, :reconcile_round]` round completes with `started > 0`
+  (the ProcessHub orphan reconcile started operatives — the tick adopts them
+  rather than a later tick finding them half-bound). A quiet round triggers
+  nothing.
+
+An output stall already recorded only refreshes its timestamp: the Watchdog
+re-flags a frozen Entity every sweep, and the ladder for that operative is
+already walking on the periodic tick, so re-flagging must not drive the whole
+loop at sweep cadence.
 
 **Recovery gate:** `RecoveryGate.ready_namespaces/1` is called on every tick to
 determine which namespaces are eligible for healing. A namespace's hub must be in
@@ -123,6 +141,21 @@ Migrates an operative from a dead or wrong runner to a live one:
 
 Idempotent — if the operative is already correctly bound, the call is a no-op.
 
+`Heal.skip_rebind?/4` normally skips a rebind whose bound runner is back in the
+live, factory-owning active set — a stale snapshot must not churn a healthy
+operative. It does NOT skip when the op carries `reason: :output_stall` or
+`reason: :data_plane_wedge`: both prove the binding is not producing, which is
+exactly what the guard is not meant to protect.
+
+### `resync_runner`
+
+Re-issues the `RestoreInitState` handshake for every persisted Entity of an
+operative against the runner it is **already** bound to — the same replay a
+rebind performs after migrating, without the migration. It is the rung below
+`rebind_operative`: no placement decision, no handover, no WAL replay through a
+new binding. An operative with no live pid or no binding has nothing to resync;
+that is a failed heal, and the next tick reaches it through `rebind_operative`.
+
 ### `start_plugin` / `stop_plugin`
 
 Reconcile an operative's running plugin set against its declared cspec manifest.
@@ -151,6 +184,43 @@ retries it as a missing plugin under backoff.
 Forcibly drops a dead runner binding from the FleetManager table. Called once
 per dead runner (keyed per-runner in backoff, not per-operative) before the
 associated operatives are rebound.
+
+`FleetManager.evict_runner/2` normally refuses to evict a runner that is in the
+active set, for the same reason `skip_rebind?` exists. An op carrying a proved
+wedge passes `proved_wedged: true` and waives it: a pool-wedged runner is still
+connected, and being connected is precisely what stops anything else from
+dislodging it.
+
+---
+
+## The output-stall ladder
+
+`State.Watchdog` emits `[:flezha, :state, :output_stall]` and does nothing
+else. The Loop records the instance in `stalled_operatives` (aged out after
+`:convergence_output_stall_grace_ms`) and passes the flagged ids into
+`Diff.compute/3` as a signal; the Diff resolves each to a declared
+`{namespace, operative_id}` (which is also what drops a flag for an operative
+this tick is not healing), and the Planner emits one op per stalled operative
+the plan does not already cover:
+
+| Ladder attempt | Op |
+|---|---|
+| first eligible | `resync_runner` — cheap, connection-level, no migration |
+| subsequent | `rebind_operative` — the stall survived the resync |
+
+Both rungs carry `args: %{reason: :output_stall}` and share ONE cooldown key
+(`Planner.ladder_key/1`), so escalating walks a single 5 s → 30 s → 60 s →
+300 s ladder instead of restarting the throttle under a fresh key. The rung is
+read off that entry's attempt count — no second per-operative counter.
+
+A ladder op's `:ok` means the remedy was *applied*, not that the stall cleared:
+only the Watchdog going quiet proves that. The cooldown therefore advances on
+either outcome (which is what reaches the next rung), and the entry is reset
+when the operative ages out of `stalled_operatives` — a operative that resumed
+producing starts again from the cheap rung.
+
+The ladder is appended past `max_ops`: a operative that has stopped producing
+must not be starved by a large structural divergence filling the tick's budget.
 
 ---
 
@@ -205,7 +275,25 @@ of its own. The published map includes:
   classification to WAL-seq-only. One root cause freezing several markers
   yields the single deepest verdict per operative. Heartbeats and channel
   state are never producing-liveness inputs. Report-only: healing stays on
-  the `:output_stall → rebind` path.
+  the output-stall ladder.
+- `data_plane_layer` / `data_plane_streak` — this tick's data-plane
+  classifier verdict and how many consecutive polls have reported that same
+  layer (a different layer, or `:ok`, restarts the count). A layer the
+  convergence pipeline can heal surfaces as `200 degraded` with reason
+  `data_plane_wedged`; a controller-fabric layer (`driver_loop_frozen`,
+  `nif_queue_backing_up`) sustained for `:convergence_fabric_503_polls` polls
+  is `503 data_plane_fabric_wedged`, because no BEAM-level heal reaches a
+  wedged NIF driver thread — every heal this controller could issue travels
+  through it. See `docs/resilience/transport_liveness.md`.
+- **Sensor freshness.** Periodic sensors stamp their own last completed pass
+  into `Snapshot.observe_sensor/3` (`{:sensor, name} => {at_ms, period_ms}`);
+  `State.Watchdog` does so after each full sweep. `/healthz` reports a sensor
+  older than 3× its own cadence as `200 degraded, reason: sensor_stale`
+  naming it. A sensor that has never stamped is not stale (boot is not a
+  wedge), and neither is one whose cadence is `0` (deliberately disabled).
+  The sensor writes the mark rather than being polled for it, so reading it
+  never blocks on the very process that wedged — timestamps, not a
+  watchdog-for-the-watchdog loop.
 - `intent_mismatch` — operatives with durable evidence of prior intent
   (first-level `app_data/state/` directories, mtime-cached, plus
   durable-registry rows of running hubs) that are absent from the live
@@ -244,6 +332,7 @@ of its own. The published map includes:
 | `FLEZHA_CONVERGENCE_TICK_MS` | `:convergence_tick_ms` | `5000` | Tick interval. |
 | `FLEZHA_CONVERGENCE_OUTPUT_STALL_GRACE_MS` | `:convergence_output_stall_grace_ms` | `60000` | How long an output stall must persist before an immediate tick is triggered (separate from the watchdog's own `output_stall_timeout_ms`). |
 | `FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS` | `:convergence_unmet_intent_grace_ms` | `120000` | How long `bound < intended` may hold (while not recovering) before `/healthz` escalates `recovering → degraded` and the `:unmet_intent` alarm fires. ~10 ticks at the default cadence. |
+| `FLEZHA_FABRIC_503_POLLS` | `:convergence_fabric_503_polls` | `3` | Consecutive classifier polls a controller-fabric wedge must hold before `/healthz` answers 503. `0` disables the fabric 503 — the knob and its escape hatch are the same setting. |
 
 ---
 

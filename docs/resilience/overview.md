@@ -204,9 +204,15 @@ HTTP `/healthz` listener (opt-in, `FLEZHA_HEALTHZ_ENABLED=true`). Reads only
 | Status | HTTP | Condition |
 |--------|------|-----------|
 | `healthy` | 200 | All hubs `:normal` and `producing_operatives == bound_operatives` |
-| `degraded` | 200 | One or more operatives output-stalled (kubelet must not restart — the loop is healing) |
+| `degraded` | 200 | Operatives output-stalled or STUCK, `intent_mismatch`, a data-plane wedge the convergence pipeline owns (`data_plane_wedged`), or a periodic sensor that stopped completing passes (`sensor_stale`). Kubelet must not restart — the loop is healing, or an operator decision is owed |
 | `recovering` | 200 | Any hub in `:recovery_pending \| :recovering` |
-| `unhealthy` | 503 | Convergence loop itself is wedged (`tick_stale \| recovery_failed`) |
+| `unhealthy` | 503 | Convergence loop itself is wedged (`tick_stale \| recovery_failed`), or the controller's own data-plane fabric is (`data_plane_fabric_wedged`: `driver_loop_frozen` / `nif_queue_backing_up` sustained for `FLEZHA_FABRIC_503_POLLS` classifier polls, default 3, `0` disables) |
+
+The 503 set is exactly "nothing this controller can do reaches it". A wedged
+NIF driver thread qualifies because every heal the pipeline could issue travels
+through that thread; a wedged *runner* does not, because the pipeline evicts and
+rebinds it. See `docs/resilience/convergence_loop.md` and
+`docs/resilience/transport_liveness.md`.
 
 ---
 

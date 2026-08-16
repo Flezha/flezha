@@ -17,17 +17,23 @@ defmodule Flezha.Healthz.Server do
       - `200 OK` `{"status":"degraded", ...}` when
         `producing_operatives < bound_operatives` (operatives output-stalled or
         STUCK — per-operative detail `wal_frozen | watermark_frozen |
-        outbox_flat` in `stuck_operatives`) or when `intent_mismatch` is
+        outbox_flat` in `stuck_operatives`), when `intent_mismatch` is
         non-empty (durable state evidence for operatives absent from the
-        live intended set — a wiped registry must never read healthy).
-        Neither is a restart signal — kubelet must leave the pod alone
-        while the Loop rebinds / the operator resumes or deletes state.
+        live intended set — a wiped registry must never read healthy), or
+        when a periodic sensor has stopped completing passes
+        (`sensor_stale`). None is a restart signal — kubelet must leave the
+        pod alone while the Loop rebinds / the operator resumes or deletes
+        state.
       - `200 OK` `{"status":"recovering", ...}` when any hub is in
         `:recovery_pending | :recovering` (kubelet must NOT restart
         during a planned recovery).
       - `503 Service Unavailable` `{"status":"unhealthy", ...}` ONLY when
         the convergence Loop itself is wedged (`reason` ∈
-        `tick_stale | recovery_failed`).
+        `tick_stale | recovery_failed`) or the controller's own data-plane
+        fabric is (`data_plane_fabric_wedged` — a NIF driver thread no
+        BEAM-level heal can reach, sustained for
+        `:convergence_fabric_503_polls` classifier polls). A verdict the
+        convergence pipeline can heal stays `degraded`.
 
     * `GET /` — `pong\\n` (cheap probe target).
     * Anything else → `404 / 405 / 400`.
@@ -38,7 +44,7 @@ defmodule Flezha.Healthz.Server do
 
   use GenServer
 
-  alias Flezha.Convergence.Snapshot
+  alias Flezha.Convergence.{Snapshot, StallClassifier}
   alias Flezha.Http.Listener
 
   # ---------- Public API ----------
@@ -137,6 +143,11 @@ defmodule Flezha.Healthz.Server do
     unmet_intent_ms = Map.get(current, :unmet_intent_ms)
     last_tick_at = Map.get(current, :last_tick_at)
     rpo_breaches = Flezha.State.DurabilityTier.breaches()
+    stale_sensors = stale_sensors()
+    data_plane = data_plane_verdict(current)
+
+    degraded =
+      degraded_reasons(stalled, plugin_degraded, stuck, mismatch, stale_sensors, data_plane)
 
     cond do
       any_recovering?(recovery_states) ->
@@ -152,6 +163,21 @@ defmodule Flezha.Healthz.Server do
            status: "unhealthy",
            reason: "tick_stale",
            tick_age_ms: tick_age(last_tick_at)
+         })}
+
+      # The controller's own driver thread is wedged and has stayed wedged.
+      # Ranked with `tick_stale`, above every degraded case: a heal issued from
+      # this controller would travel through the very thread that is not
+      # moving, so only the orchestrator's restart can clear it.
+      match?({:fabric, _layer, _polls}, data_plane) ->
+        {:fabric, layer, polls} = data_plane
+
+        {:unhealthy,
+         encode_json(%{
+           status: "unhealthy",
+           reason: "data_plane_fabric_wedged",
+           layer: to_string(layer),
+           polls: polls
          })}
 
       loop_tick_gapped?(last_tick_at) ->
@@ -221,20 +247,23 @@ defmodule Flezha.Healthz.Server do
            producing_operatives: producing
          })}
 
-      # Never 503 on intent mismatch: the data plane may be legitimately
-      # stopped, and a kubelet restart cannot repair missing intent.
-      producing < bound or mismatch != [] ->
+      # Never 503 on intent mismatch or a dead sensor: the data plane may be
+      # legitimately stopped, and a kubelet restart repairs neither missing
+      # intent nor a supervisor-restartable sensor.
+      producing < bound or degraded != [] ->
         {:degraded,
          encode_json(%{
            status: "degraded",
-           reason: degraded_reason(stalled, plugin_degraded, stuck, mismatch),
+           reason: degraded_reason(degraded),
            tick_age_ms: tick_age(last_tick_at),
            bound_operatives: bound,
            producing_operatives: producing,
            stalled_operatives: stalled,
            stuck_operatives: stuck,
            plugin_degraded_operatives: plugin_degraded,
-           intent_mismatch: mismatch
+           intent_mismatch: mismatch,
+           stale_sensors: stale_sensors,
+           data_plane_layer: pipeline_layer(data_plane)
          })}
 
       true ->
@@ -248,19 +277,35 @@ defmodule Flezha.Healthz.Server do
     end
   end
 
-  # One composed reason string; "output_stalled" is the fallback when a
-  # producing shortfall carries no per-operative attribution.
-  defp degraded_reason(stalled, plugin_degraded, stuck, mismatch) do
+  # Every reason this tick is degraded. The list IS the branch condition, so
+  # the condition and the reported reason cannot drift apart.
+  defp degraded_reasons(stalled, plugin_degraded, stuck, mismatch, stale_sensors, data_plane) do
     [
       if(stalled != [] or map_size(stuck) > 0, do: "output_stalled"),
       if(plugin_degraded != [], do: "plugin_unhealthy"),
-      if(mismatch != [], do: "intent_mismatch")
+      if(mismatch != [], do: "intent_mismatch"),
+      if(stale_sensors != [], do: "sensor_stale"),
+      if(match?({:pipeline, _layer}, data_plane), do: "data_plane_wedged")
     ]
     |> Enum.reject(&is_nil/1)
-    |> case do
-      [] -> "output_stalled"
-      parts -> Enum.join(parts, "+")
-    end
+  end
+
+  # A producing shortfall with no per-operative attribution still owes a reason.
+  defp degraded_reason([]), do: "output_stalled"
+  defp degraded_reason(parts), do: Enum.join(parts, "+")
+
+  # A sensor is stale once its last completed pass is older than 3× its own
+  # cadence — enough headroom for one missed pass under load, short enough that
+  # a wedged sensor shows up within a poll. A sensor that has never stamped is
+  # NOT stale (it may not have run yet, which boot legitimately looks like), and
+  # neither is one whose cadence is 0 (deliberately disabled).
+  defp stale_sensors() do
+    now = now_ms()
+
+    for {name, {at, period}} <- Snapshot.sensors(),
+        period > 0,
+        now - at > period * 3,
+        do: to_string(name)
   end
 
   defp collect_recovery_states() do
@@ -293,6 +338,31 @@ defmodule Flezha.Healthz.Server do
   # as a freeze/wake in progress (recovering), not a wedge.
   defp loop_tick_gapped?(nil), do: false
   defp loop_tick_gapped?(last_tick_at), do: now_ms() - last_tick_at > tick_ms() * 3
+
+  # This tick's data-plane verdict, split by who owns the remedy: `:fabric` is
+  # the orchestrator's (a 503), `:pipeline` is the convergence loop's (degraded,
+  # never a restart signal — that would interrupt the heal already under way).
+  #
+  # A fabric verdict counts only once it has held for the configured number of
+  # consecutive classifier polls; `0` disables the fabric 503 entirely, which is
+  # also the rollback switch for the whole behaviour.
+  defp data_plane_verdict(current) do
+    layer = Map.get(current, :data_plane_layer)
+    polls = Map.get(current, :data_plane_streak, 0)
+    window = fabric_503_polls()
+
+    case StallClassifier.layer_scope(layer) do
+      nil -> nil
+      :fabric -> if window > 0 and polls >= window, do: {:fabric, layer, polls}
+      _ -> {:pipeline, layer}
+    end
+  end
+
+  defp pipeline_layer({:pipeline, layer}), do: to_string(layer)
+  defp pipeline_layer(_verdict), do: nil
+
+  defp fabric_503_polls(),
+    do: Application.get_env(:flezha, :convergence_fabric_503_polls, 3)
 
   defp tick_ms(), do: Application.get_env(:flezha, :convergence_tick_ms, 5_000)
 

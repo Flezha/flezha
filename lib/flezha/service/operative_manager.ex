@@ -12,7 +12,10 @@ defmodule Flezha.Service.OperativeManager do
   alias Flezha.Runner.FleetManager
   alias Flezha.Convergence.SafeCall
   alias Flezha.Operative.Builder, as: OperativeBuilder
+  alias Flezha.Service.Validator
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
+
+  @id_in_use Validator.id_in_use()
 
   def operative_registry(namespace) do
     case HubManager.get_registry(namespace) do
@@ -105,9 +108,16 @@ defmodule Flezha.Service.OperativeManager do
   them, forwarded at most once (`routed: true`). The executing node
   re-validates everything, so a stale directory answer costs one failed
   forward, never a wrong start.
+
+  This is the single start-authority seam: every in-cluster starter — the
+  CLI/manager, a schedule's slot, a procedure's `spawn_workflow`, and the
+  orphan reconcile through the same durable registry — resolves the id claim
+  here. A start that loses the claim answers `:duplicate` and leaves the
+  winner strictly alone; it is never reported as a failed start, because the
+  failure path stops the child it names.
   """
   @spec start_operative(String.t(), OperativeBuilder.t(), keyword()) ::
-          {:ok, map()} | {:error, term()}
+          {:ok, map()} | :duplicate | {:error, term()}
   def start_operative(namespace, operative, opts \\ []) do
     if Keyword.get(opts, :routed, false) or locally_startable?(namespace, operative.factory_id) do
       do_start_operative(namespace, operative)
@@ -192,11 +202,33 @@ defmodule Flezha.Service.OperativeManager do
       {:error, {:quota_exceeded, _, _} = qerr} ->
         {:error, qerr}
 
+      {:error, @id_in_use} ->
+        claim_lost(namespace, operative.id)
+
       {:error, reason} when is_binary(reason) ->
         {:error, %{operative_id: operative.id, node: node(), reason: reason}}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # Losing the id claim is not a failed start: another path already runs this
+  # operative. Conceding is the WHOLE remedy — the winner is never stopped,
+  # restarted, or rebound, which is exactly what the generic failure path
+  # (`stop_child_quietly/2`) would have done to it.
+  #
+  # A claim refused with no live winner behind it is a different thing — a
+  # stale registry row — and stays an error so it is not silently accepted.
+  defp claim_lost(namespace, operative_id) do
+    if exist?(namespace, operative_id) do
+      Logger.debug(
+        "Operative #{operative_id} start conceded: id already claimed by a live instance"
+      )
+
+      :duplicate
+    else
+      {:error, %{operative_id: operative_id, node: node(), reason: @id_in_use}}
     end
   end
 
@@ -458,25 +490,20 @@ defmodule Flezha.Service.OperativeManager do
   Start a workflow instance of `factory_id` under `instance_id`, answering
   `:duplicate` when that id is already claimed.
 
-  The one place the registry's duplicate-id refusal is recognised, shared by
-  every in-cluster spawner — a schedule's slot firing and a procedure's
-  `spawn_or_deliver/5` — so how a collision reports is decided once.
+  Shared by every in-cluster spawner — a schedule's slot firing and a
+  procedure's `spawn_or_deliver/5`. The duplicate verdict itself is minted by
+  `start_operative/3`, the one start-authority seam.
   """
   @spec start_workflow(String.t(), String.t(), String.t(), map(), Keyword.t()) ::
           {:ok, map()} | :duplicate | {:error, term()}
   def start_workflow(namespace, instance_id, factory_id, init_values \\ %{}, opts \\ []) do
-    builder = %OperativeBuilder{
+    start_operative(namespace, %OperativeBuilder{
       id: instance_id,
       factory_id: factory_id,
       kind: :workflow,
       init_values: init_values,
       opts: opts
-    }
-
-    case start_operative(namespace, builder) do
-      {:error, %{reason: "operative id already in use"}} -> :duplicate
-      other -> other
-    end
+    })
   end
 
   @typedoc """
@@ -682,12 +709,6 @@ defmodule Flezha.Service.OperativeManager do
             end
 
           _ ->
-            Logger.warning(
-              "Operative #{operative.id} failed to start. " <>
-                "Started: #{inspect(result.started)}, Errors: #{inspect(result.errors)}, " <>
-                "Status: #{inspect(result.status)}"
-            )
-
             reason =
               case Enum.find(result.errors || [], fn {cid, _} -> cid == operative.id end) do
                 {_cid, {:error, reason}} -> reason
@@ -696,14 +717,35 @@ defmodule Flezha.Service.OperativeManager do
                 _ -> :unknown
               end
 
-            _ = stop_child_quietly(namespace, operative.id)
-            {:error, %{operative_id: operative.id, node: node(), reason: reason}}
+            if claim_loss?(reason) do
+              claim_lost(namespace, operative.id)
+            else
+              Logger.warning(
+                "Operative #{operative.id} failed to start. " <>
+                  "Started: #{inspect(result.started)}, Errors: #{inspect(result.errors)}, " <>
+                  "Status: #{inspect(result.status)}"
+              )
+
+              _ = stop_child_quietly(namespace, operative.id)
+              {:error, %{operative_id: operative.id, node: node(), reason: reason}}
+            end
         end
 
       {:error, reason} ->
-        {:error, %{operative_id: operative.id, node: node(), reason: reason}}
+        if claim_loss?(reason),
+          do: claim_lost(namespace, operative.id),
+          else: {:error, %{operative_id: operative.id, node: node(), reason: reason}}
     end
   end
+
+  # The registry refused the id: a live instance already holds it. Taking the
+  # failure path on that verdict would call `stop_child_quietly/2` on the id —
+  # killing the winner — which is precisely the start-authority violation the
+  # claim exists to prevent.
+  defp claim_loss?(:already_started), do: true
+  defp claim_loss?({:already_started, _ids}), do: true
+  defp claim_loss?(@id_in_use), do: true
+  defp claim_loss?(_reason), do: false
 
   defp stop_child_quietly(namespace, operative_id) do
     try do

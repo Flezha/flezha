@@ -9,8 +9,9 @@ defmodule Flezha.Convergence.Planner do
   claims its operatives. Ops still inside their `Backoff` cooldown are dropped,
   and the per-tick op count is capped at `max_ops`.
 
-  Adding a failure mode does NOT touch the Planner — it surfaces through
-  an existing `Delta` field healed by one of the four primitives.
+  This is the ONE place a divergence becomes an op. Adding a failure mode does
+  NOT touch the Planner — it surfaces through an existing `Delta` field healed
+  by one of the existing primitives.
   """
 
   alias Flezha.Convergence.{Backoff, Diff}
@@ -19,27 +20,122 @@ defmodule Flezha.Convergence.Planner do
 
   @default_max_ops 20
 
+  # The `args.reason` that marks an op as a rung of the output-stall ladder.
+  @ladder_reason :output_stall
+  # ...and the reason stamped on an op the data-plane classifier drove.
+  @wedge_reason :data_plane_wedge
+
+  # Reasons whose evidence is "this target is demonstrably not producing", as
+  # opposed to a structural divergence (misbound, unbound, plugin drift).
+  @proved_not_producing [@ladder_reason, @wedge_reason]
+
   @spec plan(Diff.t(), Backoff.t(), keyword()) :: [op()]
   def plan(%Diff{} = delta, %Backoff{} = backoff, opts \\ []) do
     max_ops = Keyword.get(opts, :max_ops, @default_max_ops)
 
-    delta
-    |> ordered_ops()
-    |> Backoff.filter(backoff, &key/1)
-    |> Enum.take(max_ops)
+    planned =
+      delta
+      |> ordered_ops()
+      |> Backoff.filter(backoff, &key/1)
+      |> Enum.take(max_ops)
+
+    # The ladder is appended past `max_ops` on purpose: a operative that has
+    # stopped producing must not be starved by a large structural divergence
+    # filling the tick's budget.
+    planned ++ stall_ops(delta, backoff, planned)
   end
 
-  @doc "Backoff key for an op: `{primitive, target}`."
+  @doc """
+  Backoff key for an op: `{primitive, target}`.
+
+  The output-stall ladder is the exception: both of its rungs key on
+  `ladder_key/1`, so escalating from `resync_runner` to `rebind_operative`
+  walks one cooldown instead of restarting the throttle under a fresh key.
+  """
   @spec key(op()) :: Backoff.key()
+  def key(%{target: target, args: %{reason: @ladder_reason}}), do: ladder_key(target)
   def key(%{primitive: primitive, target: target}), do: {primitive, target}
 
+  @doc "The one cooldown key both rungs of `target`'s output-stall ladder share."
+  @spec ladder_key(term()) :: Backoff.key()
+  def ladder_key(target), do: {@ladder_reason, target}
+
+  @doc """
+  Whether an op is a ladder rung. Its `:ok` means the remedy was APPLIED, not
+  that the stall cleared, so the Loop advances the cooldown on either outcome
+  — that is what reaches the next rung instead of re-firing this one.
+  """
+  @spec ladder?(op()) :: boolean()
+  def ladder?(%{args: %{reason: @ladder_reason}}), do: true
+  def ladder?(_op), do: false
+
+  @doc """
+  Whether this op's reason PROVES its target is not producing.
+
+  `Heal` reads it to waive the guards that exist to spare a *healthy* target —
+  the active-runner rebind check and the "never evict a live runner" rule.
+  Neither an output-stalled operative nor a classifier-wedged runner is
+  healthy, and in the wedge case the target still being connected is exactly
+  what stops anything else from dislodging it.
+  """
+  @spec proved_wedged?(op()) :: boolean()
+  def proved_wedged?(%{args: %{reason: reason}}), do: reason in @proved_not_producing
+  def proved_wedged?(_op), do: false
+
+  # One op per stalled operative the plan does not already cover, laddered:
+  # resync the existing binding first (cheap, no migration), migrate only once
+  # that failed to restore production. The rung is read off the ladder's own
+  # cooldown attempt count — the counter that already throttles it — so there
+  # is no second piece of per-operative bookkeeping.
+  defp stall_ops(%Diff{stalled_operatives: []}, _backoff, _planned), do: []
+
+  defp stall_ops(%Diff{stalled_operatives: stalled}, backoff, planned) do
+    covered = MapSet.new(planned, & &1.target)
+
+    stalled
+    |> Enum.reject(fn {_ns, rid} -> MapSet.member?(covered, rid) end)
+    |> Enum.map(fn {ns, rid} ->
+      op(stall_rung(backoff, rid), ns, rid, %{reason: @ladder_reason})
+    end)
+    |> Backoff.filter(backoff, &key/1)
+  end
+
+  defp stall_rung(backoff, target) do
+    case Backoff.attempt(backoff, ladder_key(target)) do
+      0 -> :resync_runner
+      _ -> :rebind_operative
+    end
+  end
+
   # Prerequisite order: evictions, then (re)binds, then plugin starts.
-  # Each group preserves Delta order within it.
+  # Each group preserves Delta order within it. The data-plane wedge sits
+  # between them because it is at most one op and may be either kind.
   defp ordered_ops(%Diff{} = d) do
     eviction_ops(d) ++
+      wedge_ops(d) ++
       bind_ops(d) ++
       plugin_ops(d)
   end
+
+  # The tick's classifier verdict, already resolved to the entity that can be
+  # healed. Remedy by scope: a wedged runner is evicted (its operatives rebind
+  # through the existing ordering), a wedged connection is resynced in place,
+  # a wedged operative is rebound.
+  defp wedge_ops(%Diff{data_plane_wedge: nil}), do: []
+
+  defp wedge_ops(%Diff{data_plane_wedge: {:runner, runner_id}, data_plane_layer: layer}) do
+    [op(:evict_runner, nil, runner_id, wedge_args(layer))]
+  end
+
+  defp wedge_ops(%Diff{data_plane_wedge: {:connection, refs}, data_plane_layer: layer}) do
+    Enum.map(refs, fn {ns, rid} -> op(:resync_runner, ns, rid, wedge_args(layer)) end)
+  end
+
+  defp wedge_ops(%Diff{data_plane_wedge: {:operative, {ns, rid}}, data_plane_layer: layer}) do
+    [op(:rebind_operative, ns, rid, wedge_args(layer))]
+  end
+
+  defp wedge_args(layer), do: %{reason: @wedge_reason, layer: layer}
 
   defp eviction_ops(%Diff{misbound_operatives: misbound}) do
     misbound

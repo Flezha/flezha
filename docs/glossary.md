@@ -198,6 +198,42 @@ contains Entities.**
   (`[:flezha, :state, :ship_fenced]`), which is a stale-epoch refusal meaning
   another controller owns that reference's remote lineage.
 
+## Control-plane liveness vocabulary
+
+- **Chain of custody** — the rule that decides which module may act on a
+  failure signal: sensors sense, exactly one actor acts, `/healthz` reads the
+  actor's snapshot, the orchestrator restarts on `/healthz`. Each level watches
+  the level below. `State.Watchdog`, `StallClassifier`, `LivenessCounters` and
+  `RecoveryTracker` are sensors — they emit facts and invoke no remedy;
+  `Convergence.Loop` is the only actor. A sensor that also heals (as the
+  Watchdog once did, calling `Recovery.resync/2` on an output stall) is two
+  uncoordinated remediation paths for one signal, with no shared backoff.
+
+- **Fabric wedge** — a data-plane stall inside the *controller's own* NIF
+  driver thread (`driver_loop_frozen`, `nif_queue_backing_up`). Distinguished
+  from every other classifier verdict by remedy, not by severity: no BEAM-level
+  heal reaches it, because every heal the convergence pipeline could issue
+  travels through that same thread. Sustained past `FLEZHA_FABRIC_503_POLLS`
+  consecutive polls it becomes `/healthz` `503 data_plane_fabric_wedged`, which
+  makes the orchestrator's restart the remedy. A wedged *runner* is not a
+  fabric wedge — the pipeline evicts and rebinds it, and it stays `200
+  degraded`.
+
+- **Sensor freshness** — a periodic sensor's own stamp of its last *completed*
+  pass, written into `Convergence.Snapshot` (`observe_sensor/3`). A sensor
+  older than 3× its own cadence is `/healthz` `200 degraded, reason:
+  sensor_stale`. The point is to catch a sensor that wedges **without
+  crashing**, which a supervisor cannot see; the mark is written by the sensor
+  rather than polled from it, so reading it never blocks on the wedged process.
+  Never stamped ≠ stale (boot is not a wedge).
+
+- **Start authority** — the single id claim every operative start resolves
+  through (`Distributor.init_registry_check/3`, reached identically by the
+  ProcessHub orphan reconcile and by `OperativeManager.start_operative/3`). The
+  loser of a claim answers `:duplicate` after verifying the winner is live and
+  does nothing to it. `reconcile_duplicate` firing outside a cross-node
+  partition recovery means a start bypassed the claim.
+
 ## Poll core vocabulary
 
 - **Poll core (`flz_core`)** — the language-agnostic runner kernel: entity

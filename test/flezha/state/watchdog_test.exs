@@ -107,8 +107,9 @@ defmodule Flezha.State.WatchdogTest do
     {pid, w}
   end
 
-  test "a live entity whose seq froze is flagged and resynced", %{header: header} do
-    {entity_id, writer} = live_writer("stall_", header)
+  test "a live entity whose seq froze is flagged, and the sensor heals nothing",
+       %{header: header} do
+    {_entity_id, writer} = live_writer("stall_", header)
 
     # Let the advance window lapse, then keep Changes arriving (duplicates)
     # without advancing the seq — the stall signature.
@@ -123,8 +124,21 @@ defmodule Flezha.State.WatchdogTest do
     # by the flezha convention it equals the on-disk `operative_class`.
     assert meta.operative_instance == "TestOperative"
     assert meta.operative_class == "TestOperative"
-    assert_receive {:resync_called, ^entity_id, opts}, 1_000
-    assert opts[:reason] == :output_stall
+
+    # The Watchdog emits and stops there. Its former direct resync is the
+    # second actor the convergence pipeline replaced with the output-stall
+    # ladder; a resync from here would race that ladder under no backoff.
+    refute_receive {:resync_called, _entity_id, _opts}, @quiet_ms
+  end
+
+  test "every completed sweep stamps the sensor freshness mark" do
+    Flezha.Convergence.Snapshot.observe_sensor(:watchdog, -1, 0)
+
+    :ok = Watchdog.sweep_now()
+
+    assert %{watchdog: {at, period}} = Flezha.Convergence.Snapshot.sensors()
+    assert period > 0
+    assert :erlang.monotonic_time(:millisecond) - at < 1_000
   end
 
   test "a genuinely idle entity is not flagged", %{header: header} do

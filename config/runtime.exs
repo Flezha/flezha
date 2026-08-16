@@ -541,6 +541,14 @@ if config_env() != :test do
     convergence_tick_latency_threshold_ms:
       System.get_env("FLEZHA_CONVERGENCE_TICK_LATENCY_THRESHOLD_MS", "1000")
       |> String.to_integer(),
+    # Consecutive classifier polls reporting a controller-fabric wedge
+    # (`driver_loop_frozen` / `nif_queue_backing_up`) before /healthz answers
+    # 503. No BEAM-level heal reaches a wedged NIF driver thread, so the
+    # orchestrator's restart is the remedy; the window is what keeps a single
+    # transient poll from flapping the pod. `0` disables the fabric 503 —
+    # the escape hatch and the knob are the same setting.
+    convergence_fabric_503_polls:
+      System.get_env("FLEZHA_FABRIC_503_POLLS", "3") |> String.to_integer(),
     # /healthz listener — default bind 0.0.0.0 so a kubelet httpGet probe reaches the pod IP.
     healthz_enabled: System.get_env("FLEZHA_HEALTHZ_ENABLED", "false") in ["true", "1"],
     healthz_port: System.get_env("FLEZHA_HEALTHZ_PORT", "9569") |> String.to_integer(),

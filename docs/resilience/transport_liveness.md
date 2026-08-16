@@ -157,9 +157,47 @@ each tick (control driver `get_stats` + registered data-stream `driver_stats` +
 `LivenessCounters.snapshot_all`), classifies it, and on verdict change logs a
 `[convergence] data-plane stall localized: layer=…` warning (and an info line
 on clear) plus one `[:flezha, :data_plane, :stall_localized]` event (carrying
-`%{layer: …}`). The classifier feeds **no** heal
-decision — the existing `:output_stall → rebind` path is untouched — and any
-error in the step is swallowed so instrumentation can never break convergence.
+`%{layer: …}`). Any error in the step is swallowed so the classifier can never
+break the tick it feeds.
+
+Every verdict has exactly one consumer — a heal primitive where a BEAM-level
+remedy exists, a `/healthz` status where only a process restart does. The
+verdict is passed into `Diff.compute/3` in-process on the tick that computed it
+(no telemetry subscription, no side channel), and the Diff resolves it against
+the same probed reality every other invariant is classified from: a verdict
+naming a runner or operative the probe did not observe heals nothing and is
+dropped rather than becoming a no-op op every tick.
+
+Each layer declares its **scope** (`StallClassifier.layer_scope/1`) — the
+taxonomy lives beside the checks that mint the verdicts, so adding one declares
+its consumer in exactly one place. The Diff resolves a scope to the live entity
+that can be healed; the Planner picks the remedy.
+
+| Verdict scope | Consumer | Remedy |
+|---|---|---|
+| `runner_not_consuming`, `runner_pool_wedged` | Diff → Planner | `evict_runner` — the planner's existing ordering rebinds that runner's operatives |
+| `socket_write_blocked`, `channel_not_sending` | Diff → Planner | `resync_runner` for every operative bound to that runner — in place, no migration |
+| `operative_not_forwarding` | Diff → Planner | `rebind_operative` for the named operative |
+| `driver_loop_frozen`, `nif_queue_backing_up` | Snapshot → `/healthz` | `503 data_plane_fabric_wedged` — no BEAM-level heal reaches a wedged NIF thread |
+
+Ops ride the standard per-target `Backoff`, and a target the classifier proved
+wedged is not protected by the guards that exist to spare a *healthy* one:
+neither `Heal.skip_rebind?/4`'s active-runner check nor
+`FleetManager.evict_runner/2`'s "never evict a live runner" rule. A pool-wedged
+runner is still connected — that is precisely why nothing else can dislodge it.
+
+`classify/3` returns ONE deepest-wins verdict per tick, so the pipeline heals
+that layer and the next tick surfaces whatever remains. There is no remedy
+fan-out.
+
+> **Dormant verdicts.** `channel_not_sending` and `operative_not_forwarding`
+> cannot currently fire: `StreamChannel.bump_send/1` / `bump_drop/1` bump
+> `io_in_received` together with exactly one of `send_frame_calls` /
+> `nil_drops`, and `Ingest.record_io/2` bumps `io_in_received` together with
+> exactly one of `forwarded` / `filtered_nil`, so each verdict's "flat while
+> fed" condition is unsatisfiable by construction. The counters are placed at
+> the branch that chose a path rather than where the path completed. Their heal
+> mappings exist and are unit-tested; they activate when the counters move.
 
 Verdicts, evaluated top-down (the deepest wedged layer wins, since it explains
 every layer above it). Each has a built-in "is it actually being fed?"
@@ -201,8 +239,8 @@ still. `out_pending_seq` deliberately counts only output-bearing records —
 `outbox_durable_seq` advances on every fsynced record, so reusing it would read a
 Entity that persists state but emits nothing as a permanently frozen outbox.
 
-Like the data-plane classifier it is report-only — healing stays on the
-`:output_stall → rebind` path. See `docs/resilience/convergence_loop.md`
+Unlike the data-plane classifier this one is report-only — healing stays on the
+output-stall ladder. See `docs/resilience/convergence_loop.md`
 "Health publishing" for the `/healthz` contract (including the
 `intent_mismatch` reason).
 

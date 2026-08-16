@@ -40,7 +40,10 @@ defmodule Flezha.Convergence.Loop do
   # migration + WAL replay.
   @misbound_min_ticks 2
 
-  @telemetry_subs [[:flezha, :state, :output_stall]]
+  @telemetry_subs [
+    [:flezha, :state, :output_stall],
+    [:flezha, :boot, :reconcile_round]
+  ]
   @handler_id {__MODULE__, :events}
 
   defstruct tick_ms: @default_tick_ms,
@@ -49,20 +52,24 @@ defmodule Flezha.Convergence.Loop do
             # {namespace, operative_id} => consecutive ticks observed misbound.
             misbound_streaks: %{},
             # operative_instance => monotonic_ms when last flagged stalled.
-            # Reported to /healthz as degraded; the Watchdog resyncs the
-            # operative in place. Entries age out after the output-stall grace.
+            # Reported to /healthz as degraded and healed by the output-stall
+            # ladder (resync, then rebind). Entries age out after the grace.
             stalled_operatives: %{},
             # operative_ids whose declared plugins were missing or self-reported
             # unhealthy on the last tick. Reported to /healthz as degraded;
             # kept only to log set transitions, not steady state.
             plugin_degraded: [],
-            # Previous data-plane liveness snapshot + last emitted stall layer.
-            # Detection only — the classifier never feeds a heal decision.
+            # Previous data-plane liveness snapshot, this tick's classifier
+            # verdict, and how many consecutive polls have reported that same
+            # layer. The verdict feeds the Diff (layers a heal primitive can
+            # reach) and the Snapshot (fabric layers, which only a process
+            # restart clears — /healthz turns those into a 503 past the streak).
             prev_liveness: nil,
-            last_stall_verdict: :ok,
+            stall_verdict: :ok,
+            stall_streak: 0,
             # operative_id => %{detail:, entity:} producing-liveness STUCK
             # verdicts (fed but progress markers flat past grace). Report-only:
-            # healing stays on the :output_stall → rebind path.
+            # healing stays on the output-stall ladder.
             stuck_operatives: %{},
             # [{taken_at_ms, tier-cursor markers}] — grace-window baselines for
             # the classifier's cursor-delta checks. Holds only Entities with
@@ -109,6 +116,14 @@ defmodule Flezha.Convergence.Loop do
         )
       )
 
+    # Detach first: `terminate/2` only runs when the Loop is trapping exits, so
+    # a supervisor restart otherwise leaves the previous incarnation's handler
+    # registered under this id. `attach_many` would then refuse as
+    # `:already_exists` and the new Loop would never hear another sensor event
+    # — a silently deaf actor, which is the failure class this loop exists to
+    # close.
+    _ = :telemetry.detach(@handler_id)
+
     _ =
       :telemetry.attach_many(@handler_id, @telemetry_subs, &__MODULE__.handle_telemetry/4, self())
 
@@ -137,10 +152,23 @@ defmodule Flezha.Convergence.Loop do
     {:noreply, run_tick(state)}
   end
 
+  # An already-recorded stall only refreshes its timestamp: the Watchdog
+  # re-flags a frozen Entity every sweep, and the ladder for that operative is
+  # already walking on the periodic tick. Ticking per re-flag instead would make
+  # a handful of stalled Entities drive the whole loop at sweep cadence.
   def handle_info({:output_stall, operative_id}, %__MODULE__{} = state)
       when is_binary(operative_id) do
+    known? = Map.has_key?(state.stalled_operatives, operative_id)
     now = System.monotonic_time(:millisecond)
     state = %{state | stalled_operatives: Map.put(state.stalled_operatives, operative_id, now)}
+
+    if known?, do: {:noreply, state}, else: {:noreply, run_tick(state)}
+  end
+
+  # A reconcile round that started orphans: converge against them now rather
+  # than at the next tick, so the plan adopts what the round just started
+  # instead of a later tick finding them half-bound.
+  def handle_info(:reconcile_started, %__MODULE__{} = state) do
     {:noreply, run_tick(state)}
   end
 
@@ -165,6 +193,18 @@ defmodule Flezha.Convergence.Loop do
 
     if is_binary(operative_id) and is_pid(loop_pid),
       do: send(loop_pid, {:output_stall, operative_id})
+
+    :ok
+  catch
+    _, _ -> :ok
+  end
+
+  # The hook fires at round COMPLETION, so this is an adopt-and-converge
+  # trigger, not a hold. A quiet round (`started = 0`) changed nothing and
+  # costs nothing.
+  def handle_telemetry([:flezha, :boot, :reconcile_round], measurements, _metadata, loop_pid) do
+    if Map.get(measurements, :started, 0) > 0 and is_pid(loop_pid),
+      do: send(loop_pid, :reconcile_started)
 
     :ok
   catch
@@ -197,9 +237,14 @@ defmodule Flezha.Convergence.Loop do
     started_at = System.monotonic_time(:millisecond)
 
     # Age out stalled entries the Watchdog has stopped re-flagging: a
-    # operative that resumed producing leaves the set without a manual clear.
-    stalled = expire_stalled(state.stalled_operatives, started_at, state.output_stall_grace_ms)
-    state = %{state | stalled_operatives: stalled}
+    # operative that resumed producing leaves the set without a manual clear,
+    # and its ladder cooldown is released with it.
+    state = expire_stalled(state, started_at)
+    stalled = state.stalled_operatives
+
+    # The data-plane verdict is computed BEFORE the plan because the Diff
+    # consumes it: a wedged layer is a divergence like any other.
+    state = classify_data_plane(state)
 
     intent = Intent.declared()
     reality = Probe.snapshot()
@@ -209,7 +254,12 @@ defmodule Flezha.Convergence.Loop do
     # half-restored registry) without blocking healing for ready namespaces.
     ready = RecoveryGate.ready_namespaces(intent)
     heal_operatives = Enum.filter(intent.operatives, &MapSet.member?(ready, &1.namespace))
-    delta = Diff.compute(%Intent{operatives: heal_operatives}, reality)
+
+    delta =
+      Diff.compute(%Intent{operatives: heal_operatives}, reality, %{
+        verdict: state.stall_verdict,
+        stalled: Map.keys(stalled)
+      })
 
     {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
     state = %{state | misbound_streaks: streaks}
@@ -218,10 +268,7 @@ defmodule Flezha.Convergence.Loop do
     maybe_log_plugin_degraded(plugin_degraded, state.plugin_degraded)
     state = %{state | plugin_degraded: plugin_degraded}
 
-    plan = Planner.plan(delta, state.backoff)
-    plan = inject_stall_rebinds(plan, stalled, intent, ready, state.backoff)
-
-    {backoff, issued} = execute_plan(plan, state.backoff)
+    {backoff, issued} = execute_plan(Planner.plan(delta, state.backoff), state.backoff)
 
     elapsed = System.monotonic_time(:millisecond) - started_at
 
@@ -248,19 +295,26 @@ defmodule Flezha.Convergence.Loop do
       %{state: :ticking}
     )
 
-    classify_data_plane(state)
+    state
   end
 
-  # Detection-only: localise a silent data-plane stall to one layer and emit a
-  # single event when the verdict changes. This adds NO heal action — the
-  # existing `:output_stall → rebind` path is untouched — and any error here is
-  # swallowed so instrumentation can never break convergence.
+  # Localise a silent data-plane stall to one layer, emit a single event when
+  # the verdict changes, and carry the layer + consecutive-poll streak forward:
+  # the Diff heals the layers a primitive can reach, /healthz reports the
+  # fabric ones. Any error here is swallowed — the classifier is instrumentation
+  # feeding a decision, and must never be able to skip the tick that decides.
   defp classify_data_plane(%__MODULE__{} = state) do
     if LivenessCounters.poll_enabled?() do
       current = build_liveness_snapshot()
       verdict = StallClassifier.classify(current, state.prev_liveness, %{})
-      maybe_emit_stall(verdict, state.last_stall_verdict)
-      %{state | prev_liveness: current, last_stall_verdict: verdict_key(verdict)}
+      maybe_emit_stall(verdict, StallClassifier.layer(state.stall_verdict))
+
+      %{
+        state
+        | prev_liveness: current,
+          stall_verdict: verdict,
+          stall_streak: stall_streak(state, verdict)
+      }
     else
       state
     end
@@ -270,6 +324,17 @@ defmodule Flezha.Convergence.Loop do
       state
   catch
     _, _ -> state
+  end
+
+  # Consecutive polls reporting the SAME layer. A different layer (or `:ok`)
+  # restarts the count, so the persistence window /healthz reads can never be
+  # satisfied by a run of unrelated one-poll verdicts.
+  defp stall_streak(_state, :ok), do: 0
+
+  defp stall_streak(%__MODULE__{} = state, verdict) do
+    if StallClassifier.layer(verdict) == StallClassifier.layer(state.stall_verdict),
+      do: state.stall_streak + 1,
+      else: 1
   end
 
   defp build_liveness_snapshot() do
@@ -297,11 +362,11 @@ defmodule Flezha.Convergence.Loop do
     %{drivers: control_drivers ++ data_drivers, channels: channels, operatives: operatives}
   end
 
-  defp maybe_emit_stall(:ok, last) when last not in [nil, :ok] do
+  defp maybe_emit_stall(:ok, last) when last != nil do
     Logger.info("[convergence] data-plane stall cleared (was #{inspect(last)})")
   end
 
-  defp maybe_emit_stall(:ok, _last), do: :ok
+  defp maybe_emit_stall(:ok, nil), do: :ok
 
   defp maybe_emit_stall({layer, ctx}, last) when layer != last do
     # Telemetry feeds the bus; the log line is what an operator greps during
@@ -319,11 +384,8 @@ defmodule Flezha.Convergence.Loop do
 
   defp maybe_emit_stall(_verdict, _last), do: :ok
 
-  defp verdict_key(:ok), do: :ok
-  defp verdict_key({layer, _ctx}), do: layer
-
   # Producing-liveness from durable progress markers (report-only; the
-  # Watchdog's :output_stall → rebind path stays the heal). Reads the
+  # output-stall ladder stays the heal). Reads the
   # existing WalWriter state at tick cadence; a failure here must never
   # skip the tick's heals or publish.
   defp classify_progress(%__MODULE__{} = state, now) do
@@ -541,8 +603,21 @@ defmodule Flezha.Convergence.Loop do
     {new_streaks, %{delta | misbound_operatives: ready}}
   end
 
-  defp expire_stalled(stalled, now, grace_ms) do
-    :maps.filter(fn _operative, since -> now - since < grace_ms end, stalled)
+  # Drop stalled entries past the grace and release their ladder cooldown with
+  # them: the cooldown records how far up the ladder a LIVE stall has walked, so
+  # a operative that resumed producing must start from the cheap rung again.
+  defp expire_stalled(%__MODULE__{} = state, now) do
+    {kept, expired} =
+      Enum.split_with(state.stalled_operatives, fn {_operative, since} ->
+        now - since < state.output_stall_grace_ms
+      end)
+
+    backoff =
+      Enum.reduce(expired, state.backoff, fn {operative_id, _since}, acc ->
+        Backoff.update(acc, Planner.ladder_key(operative_id), :ok, now)
+      end)
+
+    %{state | stalled_operatives: Map.new(kept), backoff: backoff}
   end
 
   # Operatives whose declared plugins diverge from production reality this tick:
@@ -571,56 +646,19 @@ defmodule Flezha.Convergence.Loop do
     end
   end
 
-  # Inject backoff-filtered rebind_operative ops for stalled operatives not already
-  # covered by the plan. Uses args.reason :output_stall so Heal skips the
-  # active-runner guard that would block a healthy-but-frozen operative.
-  @doc false
-  def inject_stall_rebinds_for_test(plan, stalled, intent, ready, backoff) do
-    inject_stall_rebinds(plan, stalled, intent, ready, backoff)
-  end
-
-  defp inject_stall_rebinds(plan, stalled, %Intent{operatives: intent_operatives}, ready, backoff) do
-    covered = MapSet.new(plan, fn op -> op.target end)
-    ns_by_operative = Map.new(intent_operatives, fn r -> {r.operative_id, r.namespace} end)
-    now = System.monotonic_time(:millisecond)
-
-    stall_ops =
-      stalled
-      |> Map.keys()
-      |> Enum.reject(&MapSet.member?(covered, &1))
-      |> Enum.flat_map(fn operative_id ->
-        case Map.get(ns_by_operative, operative_id) do
-          nil ->
-            []
-
-          ns ->
-            if MapSet.member?(ready, ns) do
-              [
-                %{
-                  primitive: :rebind_operative,
-                  namespace: ns,
-                  target: operative_id,
-                  args: %{reason: :output_stall}
-                }
-              ]
-            else
-              []
-            end
-        end
-      end)
-      |> Backoff.filter(backoff, &Planner.key/1, now)
-
-    plan ++ stall_ops
-  end
-
   defp execute_plan(plan, backoff) do
     now = System.monotonic_time(:millisecond)
 
     Enum.reduce(plan, {backoff, 0}, fn op, {acc_backoff, count} ->
       result = Heal.execute(op)
-      {Backoff.update(acc_backoff, Planner.key(op), result, now), count + 1}
+      {Backoff.update(acc_backoff, Planner.key(op), ladder_outcome(op, result), now), count + 1}
     end)
   end
+
+  # Only the Watchdog going quiet proves a stall cleared, and `expire_stalled/2`
+  # is where that resets the entry — so a ladder rung advances its cooldown on
+  # either outcome (see `Planner.ladder?/1`).
+  defp ladder_outcome(op, result), do: if(Planner.ladder?(op), do: :error, else: result)
 
   defp publish(%Intent{operatives: operatives}, reality, %__MODULE__{} = state) do
     # `intended` = declared operatives (what should be bound); `bound` = operatives
@@ -664,7 +702,9 @@ defmodule Flezha.Convergence.Loop do
       producing_operatives: producing,
       pending_restore: pending_restore,
       unmet_intent_ms: unmet_intent_since && now - unmet_intent_since,
-      operative_health: operative_health_map(operatives, reality, state)
+      operative_health: operative_health_map(operatives, reality, state),
+      data_plane_layer: StallClassifier.layer(state.stall_verdict),
+      data_plane_streak: state.stall_streak
     })
 
     %{state | unmet_intent_since: unmet_intent_since}

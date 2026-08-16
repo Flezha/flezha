@@ -253,6 +253,29 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert {:driver_loop_frozen, _} = StallClassifier.classify(curr, prev)
   end
 
+  test "every verdict layer declares the scope that decides its consumer" do
+    # The scope is what routes a verdict: `:fabric` reaches /healthz as a 503
+    # (only a restart clears it), everything else is healed by the pipeline.
+    scopes = %{
+      driver_loop_frozen: :fabric,
+      nif_queue_backing_up: :fabric,
+      socket_write_blocked: :connection,
+      runner_not_consuming: :runner,
+      runner_pool_wedged: :runner,
+      channel_not_sending: :connection,
+      operative_not_forwarding: :operative
+    }
+
+    for {layer, scope} <- scopes do
+      assert StallClassifier.layer_scope(layer) == scope
+    end
+
+    assert StallClassifier.layer_scope(nil) == nil
+    assert StallClassifier.layer_scope(:not_a_verdict) == nil
+    assert StallClassifier.layer(:ok) == nil
+    assert StallClassifier.layer({:runner_pool_wedged, %{}}) == :runner_pool_wedged
+  end
+
   # ---------- builders ----------
 
   defp snapshot(opts \\ []) do

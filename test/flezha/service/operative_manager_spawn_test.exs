@@ -194,4 +194,62 @@ defmodule FlezhaTest.Service.OperativeManagerSpawnTest do
 
     assert reason =~ "quota_exceeded"
   end
+
+  describe "start authority — the one id claim (D6)" do
+    defp builder(id) do
+      %Flezha.Operative.Builder{id: id, factory_id: @factory, kind: :stream, init_values: %{}}
+    end
+
+    test "a start that loses the claim concedes; the winner is left strictly alone", %{
+      registry: registry
+    } do
+      assert {:ok, _} = OperativeManager.start_operative(@namespace, builder("r1"))
+      winner = instance_pid(registry, "r1")
+
+      # Stopping the id here would tear down the instance that WON the claim —
+      # the start-authority violation the duplicate verdict exists to prevent.
+      reject(&ProcessHub.stop_children/3)
+
+      assert :duplicate = OperativeManager.start_operative(@namespace, builder("r1"))
+      assert instance_pid(registry, "r1") == winner
+      assert Process.alive?(winner)
+    end
+
+    test "a claim refused by the registry's own check also concedes", %{registry: registry} do
+      assert {:ok, _} = OperativeManager.start_operative(@namespace, builder("r1"))
+      winner = instance_pid(registry, "r1")
+
+      # The pre-check (`Validator.operative_unique/2`) sees the row first, so
+      # this is the branch a non-racing duplicate start takes.
+      reject(&ProcessHub.stop_children/3)
+      assert :duplicate = OperativeManager.start_operative(@namespace, builder("r1"))
+      assert Process.alive?(winner)
+    end
+
+    test "a refusal with no live winner behind it stays an error" do
+      # A registry row whose process is gone: conceding would silently accept a
+      # start that produced nothing.
+      stub(ProcessHub, :child_lookup, fn _hub, id -> {id, [{node(), self()}]} end)
+      stub(HubManager, :get_pid, fn _ns, _id -> {:error, "no pid found"} end)
+
+      assert {:error, %{reason: reason}} =
+               OperativeManager.start_operative(@namespace, builder("ghost"))
+
+      assert reason == Flezha.Service.Validator.id_in_use()
+    end
+
+    test "a concurrent burst of plain starts yields exactly one instance" do
+      outcomes =
+        1..8
+        |> Task.async_stream(
+          fn _n -> OperativeManager.start_operative(@namespace, builder("r_race")) end,
+          max_concurrency: 8,
+          timeout: 10_000
+        )
+        |> Enum.map(fn {:ok, outcome} -> outcome end)
+
+      assert Enum.count(outcomes, &match?({:ok, _}, &1)) == 1
+      assert Enum.count(outcomes, &(&1 == :duplicate)) == 7
+    end
+  end
 end

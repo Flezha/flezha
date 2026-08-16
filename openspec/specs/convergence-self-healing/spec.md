@@ -5,32 +5,23 @@ TBD - created by archiving change unified-convergence-loop. Update Purpose after
 ## Requirements
 ### Requirement: Single convergence loop owns all self-healing decisions
 
-The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`). No module other than the Loop emits heal actions (rebind, restart-plugin, reconnect-stream, evict-runner, etc.). Watchdog, FleetManager, HubManager, Healthz, StreamChannel — each emits *events* or *facts*; none of them decide what to fix.
+The system MUST run exactly one self-healing decision loop (`Flezha.Convergence.Loop`). No module other than the Loop emits heal actions (`rebind_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`). Watchdog, FleetManager, HubManager, Healthz, StreamChannel — each emits *events* or *facts*; none of them decide what to fix, and none of them invoke a remediation function directly. In particular the Watchdog SHALL NOT call `Recovery.resync` (or any other remedy) itself; its output-stall handling is emit-only, and its former direct-resync path (including the `last_resync` dedup state) is deleted.
 
 #### Scenario: stall is observed in one place, decision happens in another
 - **GIVEN** the State Watchdog detects output stall for operative `btc_kraken` procedure 0
 - **WHEN** the Watchdog flags the stall
 - **THEN** the Watchdog emits a `[:flezha, :state, :output_stall]` event with `%{operative_class, operative_instance, procedure, key}`
-- **AND** the Watchdog performs no heal action of its own
-- **AND** the Convergence Loop records the stalled instance, and on its next tick the Diff classifies the divergence, the Planner emits a `rebind_operative` op (with `reason: :output_stall`), and the Heal executes it under per-target backoff.
+- **AND** the Watchdog performs no heal action of its own — no direct `Recovery.resync`, no dedup bookkeeping
+- **AND** the Convergence Loop records the stalled instance, and on its next tick the Diff classifies the divergence and the Planner emits the output-stall ladder op (`resync_runner` first, escalating to `rebind_operative`) under per-target backoff.
 
 ### Requirement: The reconciler is a pure-function pipeline, not scattered handlers
 
-The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/2` (divergence delta) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (bounded primitives). Adding a failure mode means extending the Diff/Planner/Heal seams, NOT adding a new self-healing module or scattering decision branches across services. The heal surface is a fixed, small set of idempotent primitives.
+The self-healing decision logic MUST be expressed as a pure-function pipeline under `lib/flezha/convergence/`: `Probe.snapshot/0` (observe reality) → `Intent` (declared state) → `Diff.compute/3` (divergence delta, over probed reality AND this tick's sensor signals) → `Planner` (ordered, backoff-filtered ops) → `Heal.execute/1` (bounded primitives). Adding a failure mode means extending the Diff/Planner/Heal seams, NOT adding a new self-healing module or scattering decision branches across services. The heal surface is a fixed, small set of idempotent primitives. The Planner SHALL be the only place a divergence becomes an op — no caller may inject ops into or around a produced plan.
 
-Recovery-gating queries (namespace readiness, await-recovery-complete) SHALL be issued via `Flezha.Convergence.RecoveryGate`. `Probe` SHALL NOT expose `recovery_state/1`, `recovery_states/0`, or `await_recovery_complete/2` as its own functions; callers MUST use `RecoveryGate` directly.
-
-#### Scenario: a new divergence reuses the existing seams
-- **GIVEN** a new failure mode "wedged stream channel" must be healed
-- **WHEN** it is added
-- **THEN** the Probe surfaces the fact (per-pid strike counters), the Diff classifies it (`wedged_channels`), the Planner emits an existing primitive (`reconnect_stream`), and the Heal executes it
-- **AND** no new top-level self-healing GenServer is introduced.
-
-#### Scenario: recovery-gate queries go through RecoveryGate
-
-- **WHEN** the Loop needs to determine which namespaces are ready for healing
-- **THEN** it calls `Flezha.Convergence.RecoveryGate.ready_namespaces/1`
-- **AND** there is no equivalent function exposed on `Probe` or implemented inline in `Loop`
+#### Scenario: a new signal enters through the Diff, not around the plan
+- **WHEN** a sensor produces a fact the Loop must heal from (the data-plane classifier verdict, the Watchdog's stalled instances)
+- **THEN** it is passed into `Diff.compute/3` as a signal alongside the Probe snapshot, surfaces as a `%Diff{}` field, and becomes an op inside `Planner.plan/3`
+- **AND** no module appends, filters, or rewrites ops after the Planner has produced them
 
 ### Requirement: A hub stuck in `:recovery_timeout` does not permanently block healing for its namespace
 
@@ -55,6 +46,8 @@ A `Logger.warning` MUST be emitted for each `:recovery_timeout` namespace includ
 
 Each heal primitive MUST re-read the authoritative live state at execution time and do nothing if the target is no longer broken. A detection slip (a reconnect or recovery between the snapshot and the heal) MUST NOT disrupt a working operative, runner, or producer.
 
+The guard protects a target that is merely *observed* healthy. It SHALL NOT protect a target whose op carries a reason that PROVES it is not producing (`:output_stall`, `:data_plane_wedge`): neither `Heal.skip_rebind?/4`'s active-runner check nor `FleetManager.evict_runner/2`'s "never evict a live runner" rule applies to one. A pool-wedged runner is still connected, and being connected is exactly what stops anything else from dislodging it.
+
 #### Scenario: a reconnected runner is not evicted
 - **GIVEN** the Diff snapshot marked runner `default_X` for eviction
 - **AND** `default_X` re-established its transport connection before the heal ran
@@ -62,10 +55,15 @@ Each heal primitive MUST re-read the authoritative live state at execution time 
 - **THEN** FleetManager observes `default_X` is currently `:active` and performs no eviction
 - **AND** the operatives bound to `default_X` keep producing.
 
+#### Scenario: a classifier-proved wedged runner IS evicted while connected
+- **GIVEN** runner `default_X` is in the live active set, heartbeating, and the classifier reported `runner_pool_wedged` for it
+- **WHEN** `Heal.execute(:evict_runner)` runs with `args.reason == :data_plane_wedge`
+- **THEN** FleetManager evicts it despite the open connection, and its operatives rebind onto a live runner
+
 #### Scenario: an output-stalled operative is always re-wired
 - **GIVEN** operative `btc_kraken` is bound to an active runner but has not produced output past the stall grace
-- **WHEN** the Planner emits a `rebind_operative` op with `reason: :output_stall`
-- **THEN** the Heal migrates the operative to an available runner even though its bound runner is active (the silent-freeze self-heal MUST NOT be skipped by the healthy-target guard).
+- **WHEN** the Planner emits the output-stall ladder op (`resync_runner`, then `rebind_operative` on persistence) with `reason: :output_stall`
+- **THEN** the Heal applies it even though its bound runner is active (the silent-freeze self-heal MUST NOT be skipped by the healthy-target guard).
 
 ### Requirement: A failed heal SHALL NOT erase the divergence it failed to fix
 
@@ -151,7 +149,7 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 ### Requirement: /healthz never lies
 
-The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, recovery state, and the intent-mismatch list from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. `producing_operatives` MUST be derived from the producing-liveness classification (durable progress markers with the fed precondition) — an IDLE operative counts as producing, a STUCK operative does not. It returns `200 healthy`, `200 degraded` (bound ≠ producing, plugin-degraded, or non-empty intent mismatch), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`) or `recovery_failed`. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
+The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operatives`, recovery state, the intent-mismatch list, the current data-plane fabric verdict, and sensor freshness from a single `Convergence.Snapshot.current/0` reader. It MUST NOT compute these from independent paths. `producing_operatives` MUST be derived from the producing-liveness classification (durable progress markers with the fed precondition) — an IDLE operative counts as producing, a STUCK operative does not. It returns `200 healthy`, `200 degraded` (bound ≠ producing, plugin-degraded, non-empty intent mismatch, or `sensor_stale`), `200 recovering`/`restoring_registry` (planned recovery — kubelet MUST NOT restart), or `503 unhealthy` ONLY on an authoritative dead-loop (`tick_stale`), `recovery_failed`, or a persistent controller-fabric data-plane wedge (`driver_loop_frozen` or `nif_queue_backing_up` sustained for `FLEZHA_FABRIC_503_POLLS` consecutive classifier polls — default 3, `0` disables the fabric 503 — reason `data_plane_fabric_wedged` naming the layer). BEAM-remediable verdicts MUST NOT produce `503` — they are healed by the convergence pipeline and surface as `degraded`. An empty intended set MUST NOT short-circuit to `200 healthy` while durable evidence of intent exists.
 
 #### Scenario: healthz reflects reality even when bound and producing diverge
 
@@ -179,6 +177,25 @@ The `/healthz` HTTP endpoint MUST derive `bound_operatives`, `producing_operativ
 - **WHEN** `/healthz` is queried on each
 - **THEN** the idle controller reports `200 healthy` with `producing_operatives=5`, and the wiped controller reports `200 degraded` with `reason: intent_mismatch`
 
+#### Scenario: a frozen NIF driver reaches 503
+
+- **GIVEN** the classifier reports `driver_loop_frozen` (heartbeat flat while frames are queued) for `FLEZHA_FABRIC_503_POLLS` consecutive polls
+- **WHEN** `/healthz` is queried
+- **THEN** the status is `503 unhealthy` with `reason: data_plane_fabric_wedged` and `layer: driver_loop_frozen` in the body
+- **AND** the orchestrator restarts the controller — the only remedy that reaches a wedged NIF thread
+
+#### Scenario: a transient fabric verdict does not flap the pod
+
+- **GIVEN** `driver_loop_frozen` is reported for a single poll and clears on the next
+- **WHEN** `/healthz` is queried during and after
+- **THEN** the status never reaches 503, and a busy-but-healthy controller under sustained load reports 200 throughout
+
+#### Scenario: a runner-side wedge stays 200
+
+- **GIVEN** the classifier reports a persistent `runner_not_consuming` verdict
+- **WHEN** `/healthz` is queried
+- **THEN** the status is `200 degraded` (the convergence pipeline owns the remedy) and never `503`
+
 ### Requirement: Output-stalled operatives SHALL be actively rebound, not only reported as degraded
 
 When `Flezha.Convergence.Loop` receives an `{:output_stall, operative_id}` message from the Watchdog telemetry handler, it SHALL:
@@ -186,25 +203,24 @@ When `Flezha.Convergence.Loop` receives an `{:output_stall, operative_id}` messa
 1. Record the stall timestamp in `stalled_operatives` (existing behaviour — for healthz reporting).
 2. Trigger an immediate convergence tick (same as `runner_connected_event`).
 
-On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject additional `rebind_operative` ops for every operative whose `operative_id` is in `stalled_operatives` and which is not already covered by the plan, using `args: %{reason: :output_stall}`. These injected ops SHALL be filtered through the standard per-target `Backoff` so a persistently stalled operative follows the 5s → 30s → 60s → 300s cooldown, not a per-tick storm.
+On each tick, after `Planner.plan/2` produces its plan, the Loop SHALL inject additional ops for every operative whose `operative_id` is in `stalled_operatives` and which is not already covered by the plan, using `args: %{reason: :output_stall}` — laddered: `resync_runner` on the first eligible attempt (cheap connection-level resync, no migration), escalating to `rebind_operative` on subsequent eligible attempts while the stall persists. These injected ops SHALL be filtered through the standard per-target `Backoff` so a persistently stalled operative follows the 5s → 30s → 60s → 300s cooldown, not a per-tick storm.
 
 `Heal.skip_rebind?/4` SHALL NOT skip a rebind when `args.reason == :output_stall`, even if the operative's currently-bound runner is in the live active set. The output-stall condition proves the binding is not producing; the active-runner guard exists only to avoid disrupting a healthy operative, which an output-stalled operative is not.
 
-#### Scenario: output-stalled operative is rebound on the next tick
+#### Scenario: output-stalled operative walks the resync-then-rebind ladder
 
 - **GIVEN** operative `btc_kraken` is bound to active runner `ex1` and has not produced output past the output-stall grace period
 - **WHEN** the Watchdog flags it and the convergence Loop receives the stall event
 - **THEN** the Loop triggers an immediate tick
-- **AND** a `rebind_operative` op with `args: %{reason: :output_stall}` is issued for `btc_kraken`
-- **AND** `skip_rebind?` returns `false` even though `ex1` is still active
-- **AND** the operative is migrated to a new runner and begins producing again
+- **AND** the first eligible attempt issues a `resync_runner` op with `args: %{reason: :output_stall}`
+- **AND** if the stall persists past the next backoff window, the following attempt issues `rebind_operative`, `skip_rebind?` returns `false` even though `ex1` is still active, and the operative is migrated and begins producing again
 
 #### Scenario: repeated stalls are backoff-throttled
 
-- **GIVEN** operative `btc_kraken` was just rebound due to an output stall 2 seconds ago
+- **GIVEN** operative `btc_kraken` was just resynced due to an output stall 2 seconds ago
 - **WHEN** the Watchdog flags another output stall for `btc_kraken`
-- **THEN** the injected rebind op is filtered out by Backoff (5s cooldown not yet elapsed)
-- **AND** no rebind is issued on this tick
+- **THEN** the injected op is filtered out by Backoff (5s cooldown not yet elapsed)
+- **AND** no op is issued on this tick
 
 ### Requirement: Rolling upgrade preserves producing-operatives count
 
@@ -299,3 +315,54 @@ When an SDK runner process restarts and presents `previous_runner_id`, the contr
 
 **Migration**: Any test or external code that calls `Backoff.schedule_ms/0` should inline the value `[5_000, 30_000, 60_000, 300_000]` or read the module attribute `@schedule_ms` if needed for compile-time assertions.
 
+### Requirement: Data-plane stall verdicts feed the convergence pipeline
+
+The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `evict_runner` (planner ordering already rebinds an evicted runner's operatives); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; the operative-scoped verdict (`operative_not_forwarding`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
+
+#### Scenario: A wedged runner pool is evicted from a classifier verdict
+- **WHEN** the classifier reports `runner_pool_wedged` (heartbeats flowing, dispatch counter frozen) for a runner that remains in the active set
+- **THEN** the same tick's plan issues an `evict_runner` op with the verdict as reason, the runner's operatives are rebound by the existing planner ordering, and repeats are backoff-throttled on the standard ladder
+
+#### Scenario: A wedged channel is resynced, a wedged operative is rebound
+- **WHEN** the classifier reports `channel_not_sending` for a fed channel, and on a later tick `operative_not_forwarding` for a fed operative
+- **THEN** the plan issues `resync_runner` for the first and `rebind_operative` for the second, each under per-target backoff, and `skip_rebind?` does not skip the rebind despite the bound runner being active
+
+#### Scenario: One verdict per tick, deepest first
+- **WHEN** both a channel and the runner beneath it are wedged
+- **THEN** the classifier reports only the deeper runner-scoped verdict, that layer is healed first, and any surviving channel wedge surfaces on a later tick
+
+### Requirement: Sensor freshness is visible
+
+Periodic sensors SHALL stamp their last completed pass into the convergence Snapshot — initially the Watchdog's sweep timestamp (in-tick computations are already covered by the tick-age bound) — and `/healthz` SHALL report a sensor whose stamp is older than 3× its period as `200 degraded` with `reason: sensor_stale` naming the sensor. Sensor watching SHALL be implemented as Snapshot fields read by healthz, not as a new monitoring process.
+
+#### Scenario: A wedged Watchdog is visible within one poll
+- **WHEN** the Watchdog stops completing sweeps without crashing
+- **THEN** `/healthz` reports `200 degraded` with `reason: sensor_stale` and `sensor: watchdog` once the stamp exceeds 3× the sweep period
+
+#### Scenario: A crashed-and-restarted sensor recovers silently
+- **WHEN** the Watchdog crashes, is restarted by its supervisor, and completes a sweep
+- **THEN** the stamp is fresh again and healthz drops the `sensor_stale` reason with no operator action
+
+### Requirement: Operative starts have a single idempotent authority
+
+Every path that starts or binds an operative — the ProcessHub orphan reconcile, the Convergence planner, manager/CLI starts, scheduled spawns, and procedure-requested spawns — SHALL resolve through the registry's duplicate-id claim. On a collision the loser SHALL observe the duplicate verdict, verify the winner is live, and no-op; it SHALL NOT stop, restart, or rebind the winner's instance. The `reconcile_duplicate` telemetry event (upstream: one operative observed on multiple nodes, resolved keep-one/stop-others) SHALL be reclassified alarm-grade carrying the kept/stopped nodes: a firing outside a cross-node partition-recovery window indicates a start-authority violation.
+
+#### Scenario: Concurrent reconcile and planner starts collapse to one instance
+- **WHEN** the orphan reconcile and the Convergence planner both attempt to start the same operative in the same window on one node
+- **THEN** exactly one instance runs, the losing path no-ops after verifying the winner is live, and no stop/restart churn is observed on the winner
+
+#### Scenario: Duplicate telemetry distinguishes its two cases
+- **WHEN** `reconcile_duplicate` fires
+- **THEN** it is emitted alarm-grade on the observability bus with kept/stopped node metadata, so a partition-recovery resolution and a start-authority violation are distinguishable at a glance
+
+### Requirement: Convergence cooperates with reconcile rounds instead of racing them
+
+`Flezha.Convergence.Loop` SHALL consume `reconcile_round` completion events (the hook fires at round completion, carrying `started`/`duplicates`/`elapsed_ms`): a round reporting `started > 0` SHALL trigger an immediate convergence tick whose plan adopts the reconcile-started operatives — no rebind, stop, or duplicate-start op is emitted against an operative the round just started and that probes as live-bound. A round reporting `started = 0` SHALL trigger nothing. The boot/recovery window remains gated by the existing RecoveryGate hold, unchanged.
+
+#### Scenario: A reconcile-started operative is adopted, not fought
+- **WHEN** a steady-state reconcile round starts two orphaned operatives and the completion event reaches the Loop
+- **THEN** the Loop ticks immediately, the Diff observes both operatives bound, and the plan contains no op targeting them
+
+#### Scenario: Quiet rounds are free
+- **WHEN** a reconcile round completes with `started = 0`
+- **THEN** no extra tick is triggered and the Loop's cadence is unchanged

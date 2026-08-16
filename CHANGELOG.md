@@ -70,6 +70,69 @@
 
 ### Changed
 
+- **The control plane has one actor, and every failure signal has one consumer**
+  (`close-control-plane-silent-wedges`). Three silent-wedge classes closed
+  subtractively, under one rule: sensors sense, exactly one actor acts,
+  `/healthz` reads the actor's snapshot, the orchestrator restarts on
+  `/healthz`.
+
+  `Flezha.State.Watchdog` is a pure sensor again. Its direct
+  `State.Recovery.resync/2` on an output stall, its `last_resync` dedup map and
+  `recently_resynced?/4` are **deleted** — they were a second, uncoordinated
+  remediation path racing the convergence Loop's own rebind with no shared
+  backoff. The remedy is not lost: the Loop's output-stall response is now a
+  ladder, `resync_runner` (a new `Heal` primitive re-running the
+  `RestoreInitState` handshake against the runner the operative is already
+  bound to — no migration) escalating to `rebind_operative` when the stall
+  survives it. Both rungs share ONE cooldown key so escalating walks a single
+  5 s → 30 s → 60 s → 300 s ladder, and the rung is read off that entry's
+  attempt count rather than a second counter. Measured end to end: 0.84 ms from
+  sweep to remedy decision, because the Loop ticks on the stall event rather
+  than waiting out `tick_ms`.
+
+  The data-plane stall classifier's verdict — computed every tick and, until
+  now, read by nothing — is passed into `Diff.compute/3` in-process (no
+  telemetry subscription, no side channel) and mapped by remedy: wedged runner
+  → `evict_runner`, wedged connection → `resync_runner` for that runner's
+  operatives, wedged operative → `rebind_operative`. Ops ride the standard
+  per-target backoff, and a target the classifier *proved* wedged is no longer
+  protected by the guards that exist to spare a healthy one — neither
+  `skip_rebind?`'s active-runner check nor `FleetManager.evict_runner/2`'s
+  "never evict a live runner" rule, which had made a pool-wedged (still
+  connected) runner unevictable.
+
+  Controller-fabric verdicts (`driver_loop_frozen`, `nif_queue_backing_up`)
+  reach `/healthz` as `503 data_plane_fabric_wedged` once sustained for
+  `FLEZHA_FABRIC_503_POLLS` consecutive polls (default 3; `0` disables the
+  fabric 503 and is the rollback switch). No BEAM-level heal reaches a wedged
+  NIF driver thread — every heal this controller could issue travels through
+  it — so the orchestrator's restart is the remedy. Verdicts the pipeline owns
+  stay `200 degraded`.
+
+  Sensors are now watched with timestamps rather than another process: a
+  periodic sensor stamps its own last completed pass into
+  `Convergence.Snapshot`, and `/healthz` reports one older than 3× its cadence
+  as `200 degraded, reason: sensor_stale`. A Watchdog that wedges without
+  crashing is visible within one poll instead of silently turning detection
+  off.
+
+  Start authority is one claim: `OperativeManager.start_operative/3` now mints
+  the `:duplicate` verdict itself (the CLI, schedules, procedure-requested
+  spawns and the ProcessHub orphan reconcile all resolve through the same
+  registry check), and a start that loses it verifies the winner is live and
+  does nothing to it. Previously the loser took the generic failure path, which
+  called `stop_child_quietly/2` on the id — **stopping the winner**. A reconcile
+  round completing with `started > 0` now triggers one adopt-and-converge tick,
+  and `reconcile_duplicate` is alarm-grade with its kept/stopped nodes.
+
+  Also fixed: a restarted `Convergence.Loop` left the previous incarnation's
+  telemetry handler registered, so `attach_many` refused as `:already_exists`
+  and the new Loop never heard another sensor event — a silently deaf actor, of
+  exactly the class this change closes.
+
+  One config key added (`FLEZHA_FABRIC_503_POLLS`); no new module, loop,
+  GenServer or telemetry subscription; no wire, storage or SDK change.
+
 - **Workflow stage work runs on the SDK's workers, in both languages**
   (`workflow-steps-through-sdk`). The workflow driver used to fan a stage out
   onto a second, core-owned thread pool, and a Java step cost TWO threads: one

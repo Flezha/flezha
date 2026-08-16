@@ -29,6 +29,10 @@ defmodule Flezha.Healthz.ServerTest do
     # starts with a clean slate. The healthz reader now uses Snapshot directly.
     Snapshot.reset_recovery_states()
 
+    # A fresh sensor mark, so the sensor-freshness reader is neutral for every
+    # test that is not about it (the app's own Watchdog stamps this row too).
+    fresh_sensor()
+
     {:ok, _pid} = start_supervised(Server)
     {:ok, port} = Server.listen_port()
 
@@ -43,6 +47,7 @@ defmodule Flezha.Healthz.ServerTest do
       })
 
       Snapshot.reset_recovery_states()
+      fresh_sensor()
 
       if previous_port,
         do: Application.put_env(:flezha, :healthz_port, previous_port),
@@ -63,6 +68,27 @@ defmodule Flezha.Healthz.ServerTest do
       producing_operatives: max(bound - length(stalled), 0),
       tick_latency_p99_ms: 0,
       tick_breach_streak: 0
+    })
+  end
+
+  @sensor_period_ms 10_000
+
+  defp fresh_sensor(),
+    do: Snapshot.observe_sensor(:watchdog, System.monotonic_time(:millisecond), @sensor_period_ms)
+
+  # A snapshot whose data-plane verdict is `layer`, held for `polls` polls.
+  defp publish_verdict(layer, polls) do
+    Snapshot.publish(%{
+      last_tick_at: System.monotonic_time(:millisecond),
+      stalled_operatives: [],
+      stuck_operatives: %{},
+      intent_mismatch: [],
+      intended_operatives: 1,
+      bound_operatives: 1,
+      producing_operatives: 1,
+      pending_restore: false,
+      data_plane_layer: layer,
+      data_plane_streak: polls
     })
   end
 
@@ -382,6 +408,130 @@ defmodule Flezha.Healthz.ServerTest do
     assert status == 200
     decoded = Jason.decode!(body)
     assert decoded["status"] == "recovering"
+  end
+
+  describe "controller-fabric wedge → 503 (D4)" do
+    setup do
+      previous = Application.get_env(:flezha, :convergence_fabric_503_polls)
+      Application.put_env(:flezha, :convergence_fabric_503_polls, 3)
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:flezha, :convergence_fabric_503_polls, previous),
+          else: Application.delete_env(:flezha, :convergence_fabric_503_polls)
+      end)
+
+      :ok
+    end
+
+    test "a sustained frozen NIF driver → 503 naming the layer", %{port: port} do
+      publish_verdict(:driver_loop_frozen, 3)
+
+      {status, _headers, body} = get(port, "/healthz")
+      decoded = Jason.decode!(body)
+
+      assert status == 503
+      assert decoded["status"] == "unhealthy"
+      assert decoded["reason"] == "data_plane_fabric_wedged"
+      assert decoded["layer"] == "driver_loop_frozen"
+      assert decoded["polls"] == 3
+    end
+
+    test "a single-poll transient never reaches 503", %{port: port} do
+      for polls <- [1, 2] do
+        publish_verdict(:nif_queue_backing_up, polls)
+        assert {200, _headers, _body} = get(port, "/healthz")
+      end
+    end
+
+    test "a busy-but-healthy controller reports 200 throughout", %{port: port} do
+      for _ <- 1..5 do
+        publish_verdict(nil, 0)
+        {status, _headers, body} = get(port, "/healthz")
+        assert status == 200
+        assert Jason.decode!(body)["status"] == "healthy"
+      end
+    end
+
+    test "a runner-side wedge stays 200 degraded — the pipeline owns that remedy",
+         %{port: port} do
+      for layer <- [:runner_not_consuming, :runner_pool_wedged, :channel_not_sending] do
+        publish_verdict(layer, 10)
+        {status, _headers, body} = get(port, "/healthz")
+        decoded = Jason.decode!(body)
+
+        assert status == 200
+        assert decoded["status"] == "degraded"
+        assert decoded["reason"] =~ "data_plane_wedged"
+        assert decoded["data_plane_layer"] == to_string(layer)
+      end
+    end
+
+    test "FLEZHA_FABRIC_503_POLLS=0 disables the fabric 503 entirely", %{port: port} do
+      Application.put_env(:flezha, :convergence_fabric_503_polls, 0)
+      publish_verdict(:driver_loop_frozen, 99)
+
+      assert {200, _headers, _body} = get(port, "/healthz")
+    end
+  end
+
+  describe "sensor freshness (D5)" do
+    test "a Watchdog that stopped sweeping → 200 degraded, reason sensor_stale",
+         %{port: port} do
+      publish_verdict(nil, 0)
+
+      Snapshot.observe_sensor(
+        :watchdog,
+        System.monotonic_time(:millisecond) - @sensor_period_ms * 4,
+        @sensor_period_ms
+      )
+
+      {status, _headers, body} = get(port, "/healthz")
+      decoded = Jason.decode!(body)
+
+      assert status == 200
+      assert decoded["status"] == "degraded"
+      assert decoded["reason"] =~ "sensor_stale"
+      assert decoded["stale_sensors"] == ["watchdog"]
+    end
+
+    test "a restarted sensor completing one sweep clears the reason with no operator action",
+         %{port: port} do
+      publish_verdict(nil, 0)
+
+      Snapshot.observe_sensor(
+        :watchdog,
+        System.monotonic_time(:millisecond) - @sensor_period_ms * 4,
+        @sensor_period_ms
+      )
+
+      assert Jason.decode!(elem(get(port, "/healthz"), 2))["status"] == "degraded"
+
+      fresh_sensor()
+
+      assert Jason.decode!(elem(get(port, "/healthz"), 2))["status"] == "healthy"
+    end
+
+    test "a sensor with no completed pass yet is not stale — boot is not a wedge",
+         %{port: port} do
+      publish_verdict(nil, 0)
+      # During boot a sensor is alive but has stamped nothing; an absent stamp
+      # must read as "not yet", never as stale.
+      refute Map.has_key?(Snapshot.sensors(), :never_swept_sensor)
+
+      {status, _headers, body} = get(port, "/healthz")
+      assert status == 200
+      assert Jason.decode!(body)["status"] == "healthy"
+    end
+
+    test "a sensor whose cadence is disabled is never stale", %{port: port} do
+      publish_verdict(nil, 0)
+      Snapshot.observe_sensor(:watchdog, System.monotonic_time(:millisecond) - 600_000, 0)
+
+      {status, _headers, body} = get(port, "/healthz")
+      assert status == 200
+      assert Jason.decode!(body)["status"] == "healthy"
+    end
   end
 
   defp get(port, path), do: request(port, "GET", path)

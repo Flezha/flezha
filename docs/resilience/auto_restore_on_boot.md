@@ -87,13 +87,46 @@ flz boot await --timeout 60
 flz boot import-legacy-snapshot /path/to/snap.flz [--force]
 ```
 
+## Start authority
+
+The orphan reconcile and the convergence Loop are not gated on each other —
+they do not need to be, because **every** start resolves through one claim and
+they cooperate rather than race.
+
+**One claim.** Both paths reach the same seam:
+`Distributor.compose_start_operation(hub, specs, check_existing: true)` — the
+reconcile via `Recovery.start_orphans/4`, flezha via
+`OperativeManager.start_operative/3` → `ProcessHub.start_child/3`, which is a
+call into the hub coordinator. The claim itself is
+`Distributor.init_registry_check/3`, with the local `DistributedSupervisor`'s
+`{:already_started, pid}` as the backstop for the registry-propagation window.
+A start that loses the claim answers `:duplicate` after verifying the winner is
+live, and does **nothing** to the winner — never stops, restarts, or rebinds it.
+
+**Cooperation, not a hold.** ProcessHub's `reconcile_round` hook fires at round
+*completion*, so an in-flight hold is not buildable from it — and the window
+where contention concentrates, boot, is already held (the Loop blocks on
+`RecoveryGate` until hubs reach `:normal`, and the first reconcile round is what
+reaches `:normal`). For steady-state rounds: a round reporting `started > 0`
+triggers one immediate convergence tick, whose plan *adopts* the started
+operatives — they probe as bound, so no op targets them. A round reporting
+`started = 0` triggers nothing.
+
+**`reconcile_duplicate` is an alarm, not a metric.** Upstream it reports one
+operative observed on more than one node, already resolved keep-one/stop-others
+(`kept_node` / `stopped_nodes` ride the event, and the keeper is the node the
+distribution strategy assigns). That is inherent while recovering from a
+cross-node partition. Fired at any other time it means a start bypassed the
+claim, so it is logged at `error` and bridged to the observability bus as
+`:flezha_boot / :reconcile_duplicate`.
+
 ## Configuration
 
 | Env var | Application key | Default | Purpose |
 |---|---|---|---|
 | `FLEZHA_AUTO_RESTORE_ENABLED` | `:flezha, :auto_restore_enabled` | `true` | Kill-switch. When `false`, the auto-recovery hooks do not register; durable registry mutations still happen. |
 | `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS` | `:flezha, :process_hub_reconcile_grace_ms` | `45_000` | How long after coordinator start the first reconcile round runs. That round is what reaches `:normal`, so this is also how long a hub stays `:recovering`. Set above the runner handshake window: an orphan start needs a runner to place against. |
-| `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | `:flezha, :process_hub_reconcile_interval_ms` | `30_000` | Rate limit on subsequent rounds. `Flezha.Convergence.Health` binds on its own 5 s tick, so both loops can act on the same missing operative; `reconcile_duplicate` telemetry is what reports it when they do. |
+| `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` | `:flezha, :process_hub_reconcile_interval_ms` | `30_000` | Rate limit on subsequent rounds. See "Start authority" below for how the reconcile and the convergence Loop stay out of each other's way. |
 | `FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS` | `:flezha, :process_hub_stopped_row_ttl_ms` | `2_592_000_000` (30 d) | How long a deliberately stopped operative keeps its durable row. The row is what makes the stop survive a node's absence instead of being resurrected by a peer, so this is the window in which `flz operative stop` stays honoured. |
 | `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `:flezha, :boot_replay_timeout_ms` | `60_000` | How long boot waits for every hub to leave `:recovery_pending`, and how long a connecting runner waits for that during cluster formation. Not passed to ProcessHub — its own gate is `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS`. |
 | `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | `:flezha, :process_hub_registry_root` | `app_data/process_hub` | Parent dir for each per-namespace `<hub_id>/registry.dets`. |

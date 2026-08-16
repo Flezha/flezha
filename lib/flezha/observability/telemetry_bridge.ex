@@ -25,6 +25,7 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :wal, :backpressure] => {:flezha_state, :wal_backpressure, :metric},
     [:flezha, :state, :fsync, :tick] => {:flezha_state, :fsync_tick, :event},
     [:flezha, :boot, :recovery_complete] => {:flezha_boot, :recovery_complete, :event},
+    [:flezha, :boot, :reconcile_duplicate] => {:flezha_boot, :reconcile_duplicate, :event},
     [:flezha, :shutdown, :requested] => {:flezha_shutdown, :requested, :event},
     [:flezha, :shutdown, :phase_started] => {:flezha_shutdown, :phase_started, :event},
     [:flezha, :shutdown, :phase_completed] => {:flezha_shutdown, :phase_completed, :event},

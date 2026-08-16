@@ -1,32 +1,66 @@
 defmodule Flezha.Convergence.Diff do
   @moduledoc """
-  One pure function — `compute/2` — turning declared `Intent` and probed
-  reality into a structured `Delta` enumerating every invariant violation.
-  This is NOT a per-failure-mode dispatch: each `Delta` field corresponds
-  to one invariant, and all catalogue rows reduce to populating these
-  fields.
+  One pure function — `compute/3` — turning declared `Intent`, probed
+  reality, and this tick's sensor `signals` into a structured `Delta`
+  enumerating every invariant violation. This is NOT a per-failure-mode
+  dispatch: each `Delta` field corresponds to one invariant, and all
+  catalogue rows reduce to populating these fields.
   """
 
+  alias Flezha.Convergence.StallClassifier
+
   @type operative_ref :: {atom(), binary()}
+
+  @typedoc """
+  The tick's data-plane stall verdict resolved to the entity a heal primitive
+  can act on, or `nil` when the verdict is `:ok`, fabric-scoped (only a
+  process restart reaches those — `/healthz` owns them), or names nothing the
+  probe observed.
+  """
+  @type wedge ::
+          nil
+          | {:runner, binary()}
+          | {:connection, [operative_ref()]}
+          | {:operative, operative_ref()}
+
+  @typedoc """
+  Facts the sensors produced this tick, as opposed to what the Probe observed:
+  the data-plane classifier `:verdict` and the `:stalled` operative ids the
+  Watchdog has flagged. Every entry is optional — a Diff computed without them
+  simply reports no divergence in those fields.
+  """
+  @type signals :: %{
+          optional(:verdict) => StallClassifier.verdict(),
+          optional(:stalled) => [binary()]
+        }
 
   @type t :: %__MODULE__{
           unbound_operatives: [operative_ref()],
           misbound_operatives: [{operative_ref(), binary()}],
+          stalled_operatives: [operative_ref()],
           missing_plugins: [{operative_ref(), binary(), map()}],
           extra_plugins: [{operative_ref(), binary(), pid()}],
-          unhealthy_plugins: [{operative_ref(), binary(), map(), term()}]
+          unhealthy_plugins: [{operative_ref(), binary(), map(), term()}],
+          data_plane_wedge: wedge(),
+          data_plane_layer: atom() | nil
         }
 
   defstruct unbound_operatives: [],
             misbound_operatives: [],
+            stalled_operatives: [],
             missing_plugins: [],
             extra_plugins: [],
-            unhealthy_plugins: []
+            unhealthy_plugins: [],
+            data_plane_wedge: nil,
+            data_plane_layer: nil
 
-  @spec compute(Flezha.Convergence.Intent.t(), map()) :: t()
-  def compute(%Flezha.Convergence.Intent{operatives: declared}, reality) do
+  @spec compute(Flezha.Convergence.Intent.t(), map(), signals()) :: t()
+  def compute(intent, reality, signals \\ %{})
+
+  def compute(%Flezha.Convergence.Intent{operatives: declared}, reality, signals) do
     active = Map.get(reality, :active_runners, %{})
     observed = Map.get(reality, :operatives, %{})
+    verdict = Map.get(signals, :verdict, :ok)
 
     {unbound, misbound} =
       Enum.reduce(declared, {[], []}, fn %{namespace: ns, operative_id: rid}, {unb, mis} ->
@@ -58,10 +92,91 @@ defmodule Flezha.Convergence.Diff do
     %__MODULE__{
       unbound_operatives: Enum.reverse(unbound),
       misbound_operatives: Enum.reverse(misbound),
+      stalled_operatives: stalled_refs(declared, Map.get(signals, :stalled, [])),
       missing_plugins: missing,
       extra_plugins: extra,
-      unhealthy_plugins: unhealthy
+      unhealthy_plugins: unhealthy,
+      data_plane_wedge: resolve_wedge(verdict, active, observed),
+      data_plane_layer: StallClassifier.layer(verdict)
     }
+  end
+
+  # I3: declared to produce, observed not producing. The Watchdog names the
+  # instance; resolving it against `declared` is what supplies the namespace and
+  # what drops a flag for an operative this tick is not healing (an id no longer
+  # declared, or one in a namespace still mid-recovery — the caller passes only
+  # recovery-ready operatives).
+  defp stalled_refs(_declared, []), do: []
+
+  defp stalled_refs(declared, stalled) do
+    ids = MapSet.new(stalled)
+
+    for %{namespace: ns, operative_id: rid} <- declared,
+        MapSet.member?(ids, rid),
+        do: {ns, rid}
+  end
+
+  # I4: the classifier's single deepest verdict, resolved against the SAME
+  # probed reality every other invariant is classified against — a verdict
+  # naming a runner or operative the probe did not observe heals nothing and is
+  # dropped rather than turned into a no-op op every tick.
+  defp resolve_wedge(:ok, _active, _observed), do: nil
+
+  defp resolve_wedge({layer, ctx}, active, observed) do
+    case StallClassifier.layer_scope(layer) do
+      :runner -> wedged_runner(ctx, active)
+      :connection -> wedged_connection(ctx, observed)
+      :operative -> wedged_operative(ctx, observed)
+      # `:fabric` is /healthz's to report; `nil` is a layer with no scope.
+      _ -> nil
+    end
+  end
+
+  defp wedged_runner(ctx, active) do
+    case runner_of(ctx) do
+      nil -> nil
+      id -> if live_runner?(id, active), do: {:runner, id}
+    end
+  end
+
+  # Every operative bound to the wedged runner: the connection carries all of
+  # them, so the resync is per operative on the one runner they share.
+  defp wedged_connection(ctx, observed) do
+    case runner_of(ctx) do
+      nil ->
+        nil
+
+      id ->
+        case for {ref, %{bound_runner: ^id}} <- observed, do: ref do
+          [] -> nil
+          refs -> {:connection, Enum.sort(refs)}
+        end
+    end
+  end
+
+  # The verdict names an operative id; the namespace comes from the probe, so a
+  # verdict for an operative this controller does not hold resolves to nothing.
+  defp wedged_operative(%{operative_id: rid}, observed) do
+    case for {{_ns, ^rid} = ref, _obs} <- observed, do: ref do
+      [ref | _] -> {:operative, ref}
+      [] -> nil
+    end
+  end
+
+  defp wedged_operative(_ctx, _observed), do: nil
+
+  # A driver verdict names its transport; only the per-runner data transports
+  # (`{:uds_data, runner_id, type}`) identify a runner. A control-transport
+  # verdict names no runner and heals nothing here.
+  defp runner_of(%{runner_id: id}) when is_binary(id), do: id
+  defp runner_of(%{transport: {:uds_data, id, _type}}) when is_binary(id), do: id
+  defp runner_of(_ctx), do: nil
+
+  defp live_runner?(id, active) do
+    Enum.any?(active, fn
+      {_ns, :unknown} -> false
+      {_ns, set} -> MapSet.member?(set, id)
+    end)
   end
 
   # I2: a operative's declared plugin set (durable cspec) vs the set actually
@@ -120,6 +235,7 @@ defmodule Flezha.Convergence.Diff do
   @spec empty?(t()) :: boolean()
   def empty?(%__MODULE__{} = d) do
     d.unbound_operatives == [] and d.misbound_operatives == [] and
-      d.missing_plugins == [] and d.extra_plugins == [] and d.unhealthy_plugins == []
+      d.stalled_operatives == [] and d.missing_plugins == [] and d.extra_plugins == [] and
+      d.unhealthy_plugins == [] and d.data_plane_wedge == nil
   end
 end

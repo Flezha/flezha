@@ -88,4 +88,51 @@ defmodule Flezha.Boot.RecoveryHooksTest do
 
     assert :ok = RecoveryHooks.register(:any_hub_id)
   end
+
+  test "reconcile_duplicate alarms with the kept and stopped nodes (D8)" do
+    test_pid = self()
+    handler_id = "reconcile-duplicate-test-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler_id,
+      [:flezha, :boot, :reconcile_duplicate],
+      fn event, measurements, metadata, _ ->
+        send(test_pid, {:telemetry, event, measurements, metadata})
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok =
+                 RecoveryHooks.reconcile_duplicate(:market_hub, %{
+                   child_id: "btc_kraken",
+                   instance_count: 2,
+                   kept_node: :a@host,
+                   stopped_nodes: [:b@host]
+                 })
+      end)
+
+    # Alarm-grade: a start-authority violation must be greppable at error level,
+    # not buried in a metric only a dashboard reads.
+    assert log =~ "[error]"
+    assert log =~ "btc_kraken"
+
+    assert_receive {:telemetry, [:flezha, :boot, :reconcile_duplicate], measurements, metadata},
+                   500
+
+    assert measurements.instance_count == 2
+    assert metadata.operative_id == "btc_kraken"
+    assert metadata.kept_node == :a@host
+    assert metadata.stopped_nodes == [:b@host]
+  end
+
+  test "the duplicate alarm is bridged onto the observability bus" do
+    assert Map.fetch!(
+             Flezha.Observability.TelemetryBridge.mapping(),
+             [:flezha, :boot, :reconcile_duplicate]
+           ) == {:flezha_boot, :reconcile_duplicate, :event}
+  end
 end

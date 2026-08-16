@@ -11,6 +11,7 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.Validator
 
   @doc "Starts a operative."
   def operative_start(
@@ -56,8 +57,15 @@ defmodule Flezha.Service.CliManager do
     }
 
     case OperativeManager.start_operative(normalize_namespace(namespace), operative) do
-      {:ok, _} -> IO.puts("Operative has been started")
-      {:error, reason} -> cli_error!("Error starting operative: #{inspect(reason)}")
+      {:ok, _} ->
+        IO.puts("Operative has been started")
+
+      # The id was claimed by a live instance, which this start left running.
+      :duplicate ->
+        cli_error!("Error starting operative: #{Validator.id_in_use()}")
+
+      {:error, reason} ->
+        cli_error!("Error starting operative: #{inspect(reason)}")
     end
   end
 
