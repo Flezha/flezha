@@ -64,6 +64,30 @@ operative logic, and the platform cannot tell a productive loop from a runaway
 one by topology alone. Queue-depth telemetry is the signal an operator watches
 instead.
 
+## A partitioned target routes per message
+
+When `:target_operative_id` names a partition group (`docs/partitioned_operatives.md`),
+the provider resolves the member set and their key-group ranges at
+`init_provider` and keeps **one worker per target member** — the existing
+`{plugin_id, target}` keying already distinguishes them. Each message routes by
+`group(flz.key)` to the member whose range owns it, so repeated outputs for one
+key always take the same member.
+
+Per-member workers rather than one router worker: a worker is one queue with
+one in-flight slot, so a shared one would head-of-line-block every partition
+behind the slowest, while per-key ordering only requires per-member FIFO. One
+unreachable member's worker retries without touching its siblings.
+
+A message with **no `flz.key`** — an unkeyed emit, or any workflow-outbox
+output, which never carries a key — is parked via the DLQ store with
+`partitioned target requires keyed emit`, naming the source, the target and the
+contract. It is never round-robined and never payload-hashed: both scatter one
+key across partitions and detonate downstream, where the cause is invisible.
+
+A target with one member (or an ordinary operative) behaves byte-identically to
+before, unkeyed messages included. Disabling the plugin stops **every** worker,
+and `health/1` reports the sickest of them.
+
 ## Nothing ever blocks one Overwatch on another
 
 The `:on_output` callback enqueues into a long-lived per-`{plugin_id, target}`

@@ -18,6 +18,7 @@ defmodule Flezha.Service.PluginManagerTest do
   use Mimic
 
   alias Flezha.Plugin
+  alias Flezha.Operative.PartitionGroup
   alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
   alias ProcessHub.Service.ProcessRegistry
@@ -150,6 +151,128 @@ defmodule Flezha.Service.PluginManagerTest do
     test "is a no-op (returns error) when the plugin_id is not in the cspec" do
       assert {:error, "plugin not found"} = PluginManager.disable_plugin("never_enabled")
     end
+  end
+
+  describe "a partition group fans enable and disable over its members" do
+    @group "ohlc"
+
+    setup %{overwatch: overwatch} do
+      members =
+        3
+        |> Flezha.Partition.ranges()
+        |> Enum.with_index()
+        |> Enum.map(fn {range, index} ->
+          %{
+            id: Flezha.Partition.member_id(@group, index),
+            partition: %{group: @group, index: index, count: 3, range: range}
+          }
+        end)
+
+      {:ok, cspecs} = Agent.start_link(fn -> %{} end)
+      member_ids = Enum.map(members, & &1.id)
+
+      Mimic.stub(PartitionGroup, :members, fn _ns, id ->
+        if id == @group, do: members, else: []
+      end)
+
+      OperativeManager
+      |> Mimic.stub(:get_operative_pid, fn _ns, id ->
+        if id in member_ids, do: {:ok, overwatch}, else: {:error, "operative not found"}
+      end)
+
+      ProcessRegistry
+      |> Mimic.stub(:update, fn _hub_id, operative_id, fun, _opts ->
+        if operative_id in member_ids do
+          Agent.update(cspecs, fn store ->
+            base = Map.get(store, operative_id, member_cspec(operative_id))
+            {updated, _, _} = fun.(base, [], %{})
+            Map.put(store, operative_id, updated)
+          end)
+
+          :ok
+        else
+          {:error, :not_found}
+        end
+      end)
+
+      %{members: members, cspecs: cspecs}
+    end
+
+    test "every member gets its own suffixed instance carrying its partition", %{cspecs: cspecs} do
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operative_id: @group}
+
+      assert {:ok, message} = PluginManager.enable_plugin("ohlc_ws", plugin)
+      assert message =~ "3 partitions"
+
+      store = Agent.get(cspecs, & &1)
+
+      for index <- 0..2 do
+        member_id = Flezha.Partition.member_id(@group, index)
+        plugin_id = "ohlc_ws" <> Flezha.Partition.member_suffix(index)
+
+        assert [{^plugin_id, persisted}] = plugins_of(store[member_id])
+        assert persisted.operative_id == member_id
+        assert persisted.opts.partition_index == index
+        assert persisted.opts.partition_count == 3
+        assert persisted.opts.url == "wss://x"
+
+        {from, to} = Enum.at(Flezha.Partition.ranges(3), index)
+        assert persisted.opts.key_group_from == from
+        assert persisted.opts.key_group_to == to
+      end
+    end
+
+    test "disable is symmetric — every suffixed instance goes", %{cspecs: cspecs} do
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operative_id: @group}
+      assert {:ok, _} = PluginManager.enable_plugin("ohlc_ws", plugin)
+
+      assert {:ok, message} = PluginManager.disable_plugin_group("ohlc_ws")
+      assert message =~ "3 partitions"
+
+      store = Agent.get(cspecs, & &1)
+      assert Enum.all?(Map.values(store), &(plugins_of(&1) == []))
+      assert Map.keys(PluginManager.get_plugins()) == []
+    end
+
+    test "a partial enable names who succeeded and who did not", %{
+      members: members,
+      overwatch: overwatch
+    } do
+      failing = Enum.at(members, 1).id
+
+      OperativeManager
+      |> Mimic.stub(:get_operative_pid, fn _ns, id ->
+        if id == failing, do: {:error, "operative not found"}, else: {:ok, overwatch}
+      end)
+
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operative_id: @group}
+
+      assert {:error, message} = PluginManager.enable_plugin("ohlc_ws", plugin)
+      assert message =~ "of 3 partitions"
+      assert message =~ failing
+    end
+
+    defp member_cspec(member_id) do
+      %{
+        id: member_id,
+        start:
+          {Flezha.Operative.Overwatch, :start_link,
+           [
+             {@namespace,
+              %Flezha.Operative.Builder{
+                id: member_id,
+                factory_id: "do_nothing",
+                init_values: %{},
+                opts: [plugins: []]
+              }}
+           ]}
+      }
+    end
+
+    defp plugins_of(nil), do: []
+
+    defp plugins_of(%{start: {_m, _f, [{_ns, %Flezha.Operative.Builder{opts: opts}}]}}),
+      do: Keyword.get(opts, :plugins, [])
   end
 
   defp build_plugin(id, opts) do

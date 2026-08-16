@@ -75,6 +75,29 @@ contains Entities.**
   snapshot, outbox dedup) lives at the Entity level on disk:
   `app_data/state/{operative_class}/{procedure_id}/{entity_key}.*`.
 
+- **Partition** — one member of a partitioned stream Operative: an *ordinary*
+  operative instance named `<id>#pK`, with its own Overwatch, registry row,
+  runner binding, input log, state tree, plugins and DLQ identity. `flz
+  operative start <id> --partitions N` starts N of them. Nothing in placement,
+  convergence, migration or recovery treats a partition specially — that is
+  what makes machine scale-out cost no second lifecycle.
+
+- **Key group** — one of the 256 buckets a routing key hashes into,
+  `fnv1a128(key) mod 256`, using the constants frozen by `StableId`. Each
+  partition owns a contiguous *range* of key groups, carried explicitly in its
+  cspec opts and on its `AddOperative` — never re-derived from
+  `(partition, partitions)`, so a rescale's recomputed ranges need no format
+  change. Key groups are what make a rescale move whole slices instead of
+  rehoming nearly every key the way `hash mod N` would.
+
+- **Group** — the logical operative N partitions make up, named by the base id.
+  It is a *derived* view: each member's opts carry `group`, `partition`,
+  `partitions` and its range, and every group-level answer (the single `flz
+  operative list` row, `info`'s "all 256 key groups owned exactly once"
+  coverage check, a forward's routing table) is recomputed from the member rows
+  at read time. There is deliberately no stored group record to drift from the
+  registry. See [`partitioned_operatives.md`](partitioned_operatives.md).
+
 - **Live read vs time-travel read** — two different questions about one Entity's
   state. A **live read** (`flz state get <operative/procedure[/key]>`) asks the
   runner holding the Entity for its current in-memory value: the freshest value
@@ -280,6 +303,8 @@ Runner.
   two profiles, and the diagrams.
 - `docs/operative_architecture.md` — Operative/Procedure/Entity deep dive.
 - `docs/stream_transforms.md` — edge transforms + edge keying (`key_by`).
+- `docs/partitioned_operatives.md` — running one stream Operative across N
+  machines: key groups, the routing contract, rescale.
 - `docs/sdk_protocol_spec.md` — Wire protocol between Runners and the
   Controller.
 - `docs/process_hub_architecture.md` — Two-level distribution (ProcessHub picks

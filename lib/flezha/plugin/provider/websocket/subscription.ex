@@ -28,16 +28,25 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   @req_id_placeholder "{{req_id}}"
   @ack_modes ["required", "none"]
 
-  @enforce_keys [:url, :subscribe_template, :unsubscribe_template]
+  @enforce_keys [:subscribe_template, :unsubscribe_template]
   defstruct @enforce_keys ++
               [
+                # Exactly one of these two is set: a polled endpoint, or a
+                # literal list. Both feed the same desired/reconcile machinery.
+                url: nil,
+                items: nil,
+                # The partition's owned key-group range, when this plugin
+                # belongs to a group member. `nil` = the whole space.
+                range: nil,
                 headers: %{},
                 interval_ms: @default_interval_ms,
                 ack_mode: "required"
               ]
 
   @type t() :: %__MODULE__{
-          url: binary(),
+          url: binary() | nil,
+          items: [binary()] | nil,
+          range: {non_neg_integer(), non_neg_integer()} | nil,
           subscribe_template: binary(),
           unsubscribe_template: binary(),
           headers: %{binary() => binary()},
@@ -56,16 +65,29 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   """
   @spec from_opts(map()) :: {:ok, t() | nil} | {:error, binary()}
   def from_opts(opts) do
-    case Map.get(opts, :subscription_url) do
-      nil -> {:ok, nil}
-      "" -> {:ok, nil}
-      url -> build(opts, url)
+    url = blank_to_nil(Map.get(opts, :subscription_url))
+    items = Map.get(opts, :subscription_items)
+
+    cond do
+      url != nil and items != nil ->
+        {:error,
+         "websocket subscription_url and subscription_items are mutually exclusive — " <>
+           "a source is either polled or literal"}
+
+      url == nil and items == nil ->
+        {:ok, nil}
+
+      true ->
+        build(opts, url, items)
     end
   end
 
-  defp build(opts, url) do
-    with {:ok, url} <-
-           HttpFetch.validate_url(url, "websocket", :subscription_url, :subscription_headers),
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value), do: value
+
+  defp build(opts, url, items) do
+    with {:ok, url} <- validate_url(url),
+         {:ok, items} <- validate_items(items),
          {:ok, headers} <-
            HttpFetch.validate_headers(
              Map.get(opts, :subscription_headers),
@@ -79,12 +101,45 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
       {:ok,
        %__MODULE__{
          url: url,
+         items: items,
+         range: range(opts),
          headers: headers,
          interval_ms: interval_ms,
          subscribe_template: subscribe,
          unsubscribe_template: unsubscribe,
          ack_mode: ack_mode
        }}
+    end
+  end
+
+  defp validate_url(nil), do: {:ok, nil}
+
+  defp validate_url(url),
+    do: HttpFetch.validate_url(url, "websocket", :subscription_url, :subscription_headers)
+
+  defp validate_items(nil), do: {:ok, nil}
+
+  defp validate_items(items) when is_list(items) do
+    if Enum.all?(items, &(is_binary(&1) and &1 != "")) do
+      {:ok, Enum.uniq(items)}
+    else
+      {:error, "websocket subscription_items must be a list of non-empty strings"}
+    end
+  end
+
+  defp validate_items(_items),
+    do: {:error, "websocket subscription_items must be a list of non-empty strings"}
+
+  # The member's owned key-group range, injected into the plugin's opts by the
+  # group fan-out. A partitioned member asks upstream only for its own share,
+  # so nothing is received and discarded.
+  defp range(opts) do
+    with count when is_integer(count) and count >= 2 <- Map.get(opts, :partition_count),
+         from when is_integer(from) <- Map.get(opts, :key_group_from),
+         to when is_integer(to) <- Map.get(opts, :key_group_to) do
+      {from, to}
+    else
+      _ -> nil
     end
   end
 
@@ -159,12 +214,12 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
   A failure here is *no information* to the caller — never an empty desired set,
   which would read as "unsubscribe everything".
   """
-  @spec desired_set(binary()) :: {:ok, MapSet.t()} | {:error, atom()}
-  def desired_set(body) do
+  @spec desired_set(t(), binary()) :: {:ok, MapSet.t()} | {:error, atom()}
+  def desired_set(%__MODULE__{} = subscription, body) do
     case Jason.decode(body) do
       {:ok, %{"items" => items}} when is_list(items) ->
         if Enum.all?(items, &is_binary/1) do
-          {:ok, MapSet.new(items)}
+          {:ok, owned(subscription, items)}
         else
           {:error, :items_must_be_strings}
         end
@@ -176,6 +231,29 @@ defmodule Flezha.Plugin.Provider.Websocket.Subscription do
         {:error, :invalid_json}
     end
   end
+
+  @doc """
+  The desired set of a literal `subscription_items` source, or `nil` for a
+  polled one (whose set only exists once a poll has landed).
+  """
+  @spec static_desired(t() | nil) :: MapSet.t() | nil
+  def static_desired(%__MODULE__{items: items} = subscription) when is_list(items),
+    do: owned(subscription, items)
+
+  def static_desired(_subscription), do: nil
+
+  @doc "Whether this source is polled (as opposed to a literal item list)."
+  @spec polled?(t() | nil) :: boolean()
+  def polled?(%__MODULE__{url: url}), do: url != nil
+  def polled?(_subscription), do: false
+
+  # Keep only the items this partition owns. The one filter point: everything
+  # downstream — the applied set, the delta frames, the durable
+  # `applied_subscriptions`, the connect-time re-assert — derives from here.
+  defp owned(%__MODULE__{range: nil}, items), do: MapSet.new(items)
+
+  defp owned(%__MODULE__{range: range}, items),
+    do: items |> Enum.filter(&Flezha.Partition.owns?(range, &1)) |> MapSet.new()
 
   @doc """
   Does this decoded inbound frame accept the request it names? An

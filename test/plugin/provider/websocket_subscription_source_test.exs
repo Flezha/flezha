@@ -764,4 +764,136 @@ defmodule Flezha.Plugin.Provider.WebsocketSubscriptionSourceTest do
       assert report.last_error == :nxdomain
     end
   end
+
+  ## ---------- partitioned sources ----------
+
+  describe "partition filtering" do
+    # ranges(3) = [{0, 84}, {85, 169}, {170, 255}]; SOL-USD hashes to group 60,
+    # BTC-USD to 129, ETH-USD to 213 — one item per partition, pinned by
+    # `Flezha.PartitionTest`.
+    @items ["SOL-USD", "BTC-USD", "ETH-USD"]
+
+    defp partitioned(index) do
+      range = Enum.at(Flezha.Partition.ranges(3), index)
+      state(%{subscription: subscription(%{range: range})})
+    end
+
+    test "each member's desired set contains only the items it owns" do
+      for {index, owned} <- [{0, ["SOL-USD"]}, {1, ["BTC-USD"]}, {2, ["ETH-USD"]}] do
+        assert {:reply, [frame], updated} = poll(partitioned(index), source(@items))
+        assert items_of(frame) == owned
+        assert method_of(frame) == "subscribe"
+        assert Enum.sort(updated.desired) == owned
+      end
+    end
+
+    test "a member never commits another member's item to its durable applied set" do
+      {:reply, [frame], updated} = poll(partitioned(1), source(@items))
+      {:ok, committed} = Websocket.handle_in(ack(req_id(frame)), updated)
+
+      assert Enum.sort(committed.applied) == ["BTC-USD"]
+      assert_receive {:"$gen_cast", {:plugin_opt_persist, _, :applied_subscriptions, ["BTC-USD"]}}
+    end
+
+    test "a new item is picked up by exactly the member owning its key group" do
+      # ETH-USD appears in the published list; only p2 subscribes to it.
+      for {index, expected} <- [{0, []}, {1, []}, {2, ["ETH-USD"]}] do
+        state = partitioned(index)
+        {_, updated} = settle(poll(state, source(["SOL-USD", "BTC-USD"])))
+        {:ok, committed} = commit_all(updated)
+
+        case poll(committed, source(@items, 2)) do
+          {:reply, [frame], _} -> assert items_of(frame) == expected
+          {:ok, _} -> assert expected == []
+        end
+      end
+    end
+
+    test "an unpartitioned plugin still sees the whole list" do
+      assert {:reply, [frame], _} = poll(state(), source(@items))
+      assert Enum.sort(items_of(frame)) == Enum.sort(@items)
+    end
+  end
+
+  describe "a static subscription_items source" do
+    test "drives the same reconcile and ack gating as a polled list" do
+      assert {:ok, opts} =
+               Websocket.init_provider(%{
+                 uri: "wss://test.local",
+                 subscription_items: ["BTC-USD", "ETH-USD"],
+                 subscribe_template: @sub_template,
+                 unsubscribe_template: @unsub_template
+               })
+
+      assert opts.subscription.items == ["BTC-USD", "ETH-USD"]
+      assert opts.subscription.url == nil
+      refute Subscription.polled?(opts.subscription)
+
+      desired = Subscription.static_desired(opts.subscription)
+      assert Enum.sort(desired) == ["BTC-USD", "ETH-USD"]
+
+      # The reconcile is the loop: with nothing applied, connect subscribes.
+      state = state(%{subscription: opts.subscription, desired: desired})
+      assert {:reply, frames, updated} = Websocket.handle_connect(101, %{}, state)
+      subscribe = Enum.find(frames, &(method_of(&1) == "subscribe"))
+      assert Enum.sort(items_of(subscribe)) == ["BTC-USD", "ETH-USD"]
+
+      # Uncommitted until acknowledged, exactly like a polled delta.
+      assert updated.applied == MapSet.new()
+      {:ok, committed} = Websocket.handle_in(ack(req_id(subscribe)), updated)
+      assert Enum.sort(committed.applied) == ["BTC-USD", "ETH-USD"]
+    end
+
+    test "a static list is partition-filtered like a polled one" do
+      assert {:ok, opts} =
+               Websocket.init_provider(%{
+                 uri: "wss://test.local",
+                 subscription_items: ["SOL-USD", "BTC-USD", "ETH-USD"],
+                 subscribe_template: @sub_template,
+                 unsubscribe_template: @unsub_template,
+                 partition_index: 1,
+                 partition_count: 3,
+                 key_group_from: 85,
+                 key_group_to: 169
+               })
+
+      assert Enum.sort(Subscription.static_desired(opts.subscription)) == ["BTC-USD"]
+    end
+
+    test "declaring both sources is refused at init" do
+      assert {:error, message} =
+               Websocket.init_provider(%{
+                 uri: "wss://test.local",
+                 subscription_url: "https://cfg.internal/subs",
+                 subscription_items: ["BTC-USD"],
+                 subscribe_template: @sub_template,
+                 unsubscribe_template: @unsub_template
+               })
+
+      assert message =~ "mutually exclusive"
+    end
+
+    test "a non-string item list is refused" do
+      assert {:error, message} =
+               Websocket.init_provider(%{
+                 uri: "wss://test.local",
+                 subscription_items: [1, 2],
+                 subscribe_template: @sub_template,
+                 unsubscribe_template: @unsub_template
+               })
+
+      assert message =~ "non-empty strings"
+    end
+  end
+
+  # Fold a `{:reply, frames, state}` / `{:ok, state}` pair into `{frames, state}`.
+  defp settle({:reply, frames, state}), do: {frames, state}
+  defp settle({:ok, state}), do: {[], state}
+
+  # Acknowledge every in-flight request so the deltas commit.
+  defp commit_all(state) do
+    Enum.reduce(Map.keys(state.inflight), {:ok, state}, fn id, {:ok, acc} ->
+      Websocket.handle_in(ack(id), acc)
+    end)
+  end
 end

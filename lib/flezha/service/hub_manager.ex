@@ -428,11 +428,14 @@ defmodule Flezha.Service.HubManager do
       |> Enum.map(fn {operative_id, entry} ->
         {cspec, node_pids, metadata} = normalize_registry_entry(entry)
 
+        builder = cspec_operative(cspec)
+
         %{
           id: operative_id,
           health: Snapshot.operative_health(namespace, operative_id),
           runner: Map.get(metadata, :tag),
-          factory: cspec_factory_id(cspec),
+          factory: builder && Map.get(builder, :factory_id),
+          partition: Flezha.Partition.identity(cspec_opts(cspec)),
           node: live_node(node_pids)
         }
       end)
@@ -440,18 +443,28 @@ defmodule Flezha.Service.HubManager do
     end)
   end
 
-  # The declared factory from a registry entry's cspec start-args — the same
+  # The declared operative from a registry entry's cspec start-args — the same
   # `{namespace, operative}` / `{namespace, runner, operative}` arg shapes
-  # `alter_child_data/2` rewrites.
-  defp cspec_factory_id(%{start: {_m, _f, [arg]}}) do
+  # `alter_child_data/2` rewrites. The durable record of everything a start
+  # declared, which is why partition identity lives there.
+  defp cspec_operative(%{start: {_m, _f, [arg]}}) do
     case arg do
-      {_namespace, %{} = operative} -> Map.get(operative, :factory_id)
-      {_namespace, _runner, %{} = operative} -> Map.get(operative, :factory_id)
+      {_namespace, %{} = operative} -> operative
+      {_namespace, _runner, %{} = operative} -> operative
       _ -> nil
     end
   end
 
-  defp cspec_factory_id(_), do: nil
+  defp cspec_operative(_), do: nil
+
+  # The builder opts a registry entry's cspec start-args carry, or `[]` — where
+  # a partition member's identity is durable.
+  defp cspec_opts(cspec) do
+    case cspec_operative(cspec) do
+      nil -> []
+      operative -> Map.get(operative, :opts, [])
+    end
+  end
 
   defp normalize_registry_entry({cspec, node_pids, metadata}), do: {cspec, node_pids, metadata}
   defp normalize_registry_entry({cspec, node_pids}), do: {cspec, node_pids, %{}}

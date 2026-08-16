@@ -212,6 +212,10 @@ defmodule Flezha.Operative.Lifecycle do
       operative_class = Overwatch.operative_class(state)
       _ = ClassRegistry.put(operative_class, state.builder.kind)
       _ = ClassRegistry.put_declarations(operative_class, declarations)
+      # Partitionability is a class-code fact, so it is recorded against the
+      # factory: a later `--partitions N` start of a known-keyless class is
+      # then refused before a runner is touched.
+      _ = ClassRegistry.put_keyless(operative.factory_id, declarations.keyless)
       _ = ClassRegistry.put_overwatch(operative_class, owner)
 
       # The declaration is durable now, so the retention floors it needs resolve
@@ -391,6 +395,10 @@ defmodule Flezha.Operative.Lifecycle do
   The minimal SDK operative for a running-operative migrate: the factory + the
   current (snapshot-derived) init_values, no plugins (the controller-side
   plugin table is untouched on a running migrate).
+
+  Partition identity is the one thing that must survive: it arms the SDK's
+  mis-route guard, and a member that migrates without it starts accepting keys
+  it does not own.
   """
   @spec migrate_operative(Overwatch.t()) :: Flezha.Operative.Builder.t()
   def migrate_operative(%Overwatch{} = state) do
@@ -403,7 +411,7 @@ defmodule Flezha.Operative.Lifecycle do
       id: state.id,
       factory_id: state.factory_id,
       init_values: init_values,
-      opts: []
+      opts: Keyword.take(state.builder.opts, Flezha.Partition.opt_keys())
     }
   end
 

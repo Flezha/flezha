@@ -86,6 +86,17 @@ message AddOperative {
     // Absent when the instance has no journal (fresh spawn, opted-out class,
     // stream operative) — the driver then keeps the re-run-from-top behaviour.
     ProcJournalState proc_journal = 6;
+    // Partitioned operatives: this member's identity within its group. A
+    // `partition_count` below 2 means unpartitioned — the whole key space is
+    // this instance's, which is every operative that predates partitioning.
+    uint32 partition_index = 7;
+    uint32 partition_count = 8;
+    // The inclusive key-group range (0..255) this member owns. Shipped
+    // explicitly rather than derived from (index, count) so a rescale's
+    // recomputed ranges — and a later weighted assignment — need no format
+    // change. The SDK refuses a key hashing outside this range.
+    uint32 key_group_from = 9;
+    uint32 key_group_to = 10;
 }
 
 // SDK -> Controller, as the CommandResponse raw_data of AddOperative.

@@ -98,6 +98,23 @@ cannot read arbitrary paths off the node. Telemetry:
 
 Source files are left in place; the Retention sweeper reaps orphans.
 
+### Moving one Entity to another owner (partition rescale)
+
+`WalTransfer.move_entity/3` is the same machinery pointed at a *different
+Operative class*: a partition rescale recomputes which member owns each key
+group, and every Entity whose owner changes moves into the new member's tree
+under the same procedure and key. On one controller that is an atomic rename
+per file; across controllers it is the pull above with `:as` naming the
+destination Entity, and the source copy is removed only after every file has
+landed. Either way the move is atomic per Entity, so re-running
+`flz operative scale` after a crash re-derives what is left from what is on
+disk and moves nothing twice.
+
+The rescale gathers the group's Entities on the node that ran it and stamps
+`state_source_node` on the new members' opts; a member ProcessHub then places
+elsewhere pulls its class tree from there before restoring. See
+[`../partitioned_operatives.md`](../partitioned_operatives.md).
+
 This is **one-shot at migration time, not replication**. A controller that dies
 together with its disk takes its operatives' state with it — unless the
 **remote durability tier** is enabled, which ships the same files as immutable

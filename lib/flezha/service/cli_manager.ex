@@ -5,6 +5,8 @@ defmodule Flezha.Service.CliManager do
 
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.MonitoredIOForward
+  alias Flezha.Operative.PartitionGroup
+  alias Flezha.Partition
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Service.ConfigManager
   alias Flezha.Service.HubManager
@@ -28,24 +30,92 @@ defmodule Flezha.Service.CliManager do
       |> atom_converter()
       |> Keyword.new()
 
-    case SpecDecoder.decode(plugins_json, normalize_namespace(namespace), operative_id) do
-      {:ok, []} ->
-        start_operative(namespace, operative_id, factory_id, init_values, opts_kw, kind)
+    {partitions, opts_kw} = pop_partitions(opts_kw)
 
-      {:ok, plugins} ->
-        start_operative(
-          namespace,
-          operative_id,
-          factory_id,
-          init_values,
-          Keyword.put(opts_kw, :plugins, plugins),
-          kind
-        )
+    if partitions >= 2 do
+      start_partitioned(
+        namespace,
+        operative_id,
+        factory_id,
+        init_values,
+        opts_kw,
+        kind,
+        partitions,
+        plugins_json
+      )
+    else
+      case SpecDecoder.decode(plugins_json, normalize_namespace(namespace), operative_id) do
+        {:ok, []} ->
+          start_operative(namespace, operative_id, factory_id, init_values, opts_kw, kind)
 
-      {:error, reason} ->
-        cli_error!("Error starting operative: #{inspect(reason)}")
+        {:ok, plugins} ->
+          start_operative(
+            namespace,
+            operative_id,
+            factory_id,
+            init_values,
+            Keyword.put(opts_kw, :plugins, plugins),
+            kind
+          )
+
+        {:error, reason} ->
+          cli_error!("Error starting operative: #{inspect(reason)}")
+      end
     end
   end
+
+  # `--partitions` arrives as a decimal string like every CLI opt. Absent or
+  # `1` takes the ordinary single-instance path, byte-identical to before
+  # partitioning existed.
+  defp pop_partitions(opts_kw) do
+    case Keyword.pop(opts_kw, :partitions) do
+      {nil, rest} ->
+        {1, rest}
+
+      {raw, rest} ->
+        case Integer.parse(to_string(raw)) do
+          {n, ""} when n >= 1 -> {n, rest}
+          _ -> cli_error!("Error starting operative: --partitions must be a positive integer")
+        end
+    end
+  end
+
+  defp start_partitioned(
+         namespace,
+         operative_id,
+         factory_id,
+         init_values,
+         opts_kw,
+         kind,
+         partitions,
+         plugins_json
+       ) do
+    operative = %Flezha.Operative.Builder{
+      id: operative_id,
+      factory_id: factory_id,
+      kind: parse_kind(kind),
+      init_values: Payloader.json_to_map(init_values),
+      opts: opts_kw
+    }
+
+    case PartitionGroup.start(
+           normalize_namespace(namespace),
+           operative,
+           partitions,
+           plugins_json
+         ) do
+      {:ok, %{members: members, warnings: warnings}} ->
+        Enum.each(warnings, &IO.puts("WARNING: #{&1}"))
+        IO.puts("Operative #{operative_id} started with #{length(members)} partitions:")
+        Enum.each(members, &IO.puts("  #{&1}"))
+
+      {:error, reason} ->
+        cli_error!("Error starting operative: #{format_reason(reason)}")
+    end
+  end
+
+  defp format_reason(reason) when is_binary(reason), do: reason
+  defp format_reason(reason), do: inspect(reason)
 
   defp start_operative(namespace, operative_id, factory_id, init_values, opts_kw, kind) do
     operative = %Flezha.Operative.Builder{
@@ -87,7 +157,31 @@ defmodule Flezha.Service.CliManager do
 
   @doc "Stops a operative (cooperatively for a workflow operative, hard otherwise)."
   def operative_stop(namespace, operative_id) do
-    case OperativeManager.request_stop(normalize_namespace(namespace), operative_id) do
+    namespace_display = normalize_namespace(namespace)
+
+    case PartitionGroup.members(namespace_display, operative_id) do
+      [] -> stop_one(namespace_display, operative_id)
+      members -> stop_group(namespace_display, operative_id, members)
+    end
+  end
+
+  defp stop_group(namespace, group_id, members) do
+    results = Enum.map(members, &{&1.id, OperativeManager.request_stop(namespace, &1.id)})
+
+    case Enum.reject(results, fn {_id, result} -> result == :ok or match?({:ok, _}, result) end) do
+      [] ->
+        IO.puts("Operative group #{group_id} stopped (#{length(results)} partitions)")
+
+      failed ->
+        cli_error!(
+          "Error stopping operative group #{group_id}: " <>
+            Enum.map_join(failed, "; ", fn {id, err} -> "#{id}: #{inspect(err)}" end)
+        )
+    end
+  end
+
+  defp stop_one(namespace, operative_id) do
+    case OperativeManager.request_stop(namespace, operative_id) do
       :ok ->
         IO.puts("Operative has been stopped")
 
@@ -99,6 +193,43 @@ defmodule Flezha.Service.CliManager do
 
       {:error, reason} ->
         cli_error!("Error stopping operative: #{inspect(reason)}")
+    end
+  end
+
+  @doc """
+  `flz operative scale <group> <M>` — rescale a partition group to M members.
+
+  Quiesces the group (sources off, input logs consumed, DLQs empty), moves
+  every Entity whose key group changes owner, then starts M members with the
+  recomputed ranges. Refuses — changing nothing — when the quiesce cannot be
+  reached or the new member set fails preflight.
+  """
+  def operative_scale(namespace, group_id, target, opts_json \\ "{}") do
+    target =
+      case Integer.parse(to_string(target)) do
+        {n, ""} when n >= 1 -> n
+        _ -> cli_error!("Error scaling operative: <partitions> must be a positive integer")
+      end
+
+    opts =
+      case Payloader.json_to_map(opts_json) do
+        %{"timeout_ms" => raw} -> [quiesce_timeout_ms: String.to_integer(to_string(raw))]
+        _ -> []
+      end
+
+    case PartitionGroup.rescale(normalize_namespace(namespace), group_id, target, opts) do
+      {:ok, result} ->
+        Enum.each(result.warnings, &IO.puts("WARNING: #{&1}"))
+
+        IO.puts(
+          "Operative #{group_id} rescaled #{result.from} -> #{result.to} " <>
+            "(#{result.entities_moved} entities moved, #{length(result.vacated)} trees removed):"
+        )
+
+        Enum.each(result.members, &IO.puts("  #{&1}"))
+
+      {:error, reason} ->
+        cli_error!("Error scaling operative: #{format_reason(reason)}")
     end
   end
 
@@ -377,7 +508,12 @@ defmodule Flezha.Service.CliManager do
       "on_snapshot" => :on_snapshot,
       "on_terminate" => :on_terminate,
       "snapshot_interval" => :snapshot_interval,
-      "plugins" => :plugins
+      "plugins" => :plugins,
+      "partitions" => :partitions,
+      "group" => :group,
+      "partition" => :partition,
+      "key_group_from" => :key_group_from,
+      "key_group_to" => :key_group_to
     }
 
     Enum.reduce(orig_map, %{}, fn {key, value}, acc ->
@@ -449,8 +585,56 @@ defmodule Flezha.Service.CliManager do
   """
   def list_operatives(namespace, output_format \\ "text") do
     namespace_display = normalize_namespace(namespace)
-    rows = HubManager.operative_rows(namespace_display)
+
+    rows =
+      namespace_display
+      |> HubManager.operative_rows()
+      |> group_partition_rows()
+
     render_operative_list(rows, namespace_display, output_format)
+  end
+
+  @doc """
+  Collapse a partition group's member rows into one logical row.
+
+  A pure function between `HubManager.operative_rows/1` and the renderers, so
+  the group view is recomputed from the rows on every read — there is no stored
+  group record that could disagree with them. Ungrouped operatives pass
+  through untouched, which is why `cluster_status` (whose per-node counts are
+  per-process facts) simply does not call this.
+  """
+  @spec group_partition_rows([map()]) :: [map()]
+  def group_partition_rows(rows) do
+    plain = Enum.reject(rows, &(&1[:partition] != nil))
+    Enum.sort_by(plain ++ Enum.map(partition_groups(rows), &group_row/1), &inspect(&1.id))
+  end
+
+  defp group_row(report) do
+    members = report.members
+
+    %{
+      id: report.group,
+      health: worst_health(members),
+      runner: Enum.map_join(members, ", ", &"p#{&1.partition.index}→#{label_or(&1.runner, "-")}"),
+      factory: members |> hd() |> Map.get(:factory),
+      partitions: "#{length(members)}/#{report.declared}",
+      node: members |> hd() |> Map.get(:node),
+      members: members
+    }
+  end
+
+  # A group is exactly as healthy as its sickest member: an aggregate that
+  # rounded up would hide the one partition that stopped serving its keys.
+  @health_order [:healthy, :degraded, :unbound, :failed]
+  defp worst_health(rows) do
+    rows
+    |> Enum.map(& &1.health)
+    |> Enum.max_by(fn health ->
+      case Enum.find_index(@health_order, &(&1 == health)) do
+        nil -> length(@health_order)
+        index -> index
+      end
+    end)
   end
 
   defp render_operative_list(rows, namespace, "json") do
@@ -464,6 +648,7 @@ defmodule Flezha.Service.CliManager do
             runner: r.runner,
             node: r.node && to_string(r.node)
           }
+          |> put_unless_nil(:partitions, r[:partitions])
         end)
     }
 
@@ -482,6 +667,7 @@ defmodule Flezha.Service.CliManager do
       "  ",
       String.pad_trailing("OPERATIVE", 34),
       String.pad_trailing("HEALTH", 10),
+      String.pad_trailing("PARTS", 8),
       String.pad_trailing("NODE", 22),
       "RUNNER"
     ])
@@ -491,11 +677,15 @@ defmodule Flezha.Service.CliManager do
         "  ",
         String.pad_trailing(to_string(r.id), 34),
         String.pad_trailing(to_string(r.health), 10),
+        String.pad_trailing(label_or(r[:partitions], "-"), 8),
         String.pad_trailing(label_or(r.node, "(unplaced)"), 22),
         label_or(r.runner, "(none)")
       ])
     end)
   end
+
+  defp put_unless_nil(map, _key, nil), do: map
+  defp put_unless_nil(map, key, value), do: Map.put(map, key, value)
 
   @doc """
   Cluster topology for operators: the elected leader, whether this node is the
@@ -694,13 +884,20 @@ defmodule Flezha.Service.CliManager do
 
     finished_data = Enum.map(finished, fn {id, rec} -> finished_operative_json(id, rec) end)
 
-    result = %{namespace: namespace_display, operatives: live_data ++ finished_data}
+    result = %{
+      namespace: namespace_display,
+      operatives: live_data ++ finished_data,
+      groups: Enum.map(partition_groups(namespace_display), &group_report_json/1)
+    }
+
     IO.puts(Jason.encode!(result))
   end
 
   defp handle_operative_info_output(live, finished, namespace_display, _) do
     IO.puts("Operative information for namespace '#{namespace_display}':")
     IO.puts("")
+
+    Enum.each(partition_groups(namespace_display), &display_group_report/1)
 
     Enum.each(live, fn operative_id ->
       case OperativeManager.get_overwatch_state(namespace_display, operative_id) do
@@ -715,6 +912,89 @@ defmodule Flezha.Service.CliManager do
     end)
 
     Enum.each(finished, fn {id, rec} -> display_finished_operative(id, rec) end)
+  end
+
+  defp group_report_json(report) do
+    %{
+      group: report.group,
+      partitions: report.declared,
+      members:
+        Enum.map(report.members, fn m ->
+          %{
+            id: m.id,
+            partition: m.partition.index,
+            key_groups: Tuple.to_list(m.partition.range),
+            runner: m.runner,
+            health: m.health
+          }
+        end),
+      coverage: coverage_json(report.coverage)
+    }
+  end
+
+  defp coverage_json(:ok), do: %{complete: true}
+
+  defp coverage_json({:error, %{gaps: gaps, overlaps: overlaps}}) do
+    %{
+      complete: false,
+      gaps: Enum.map(gaps, &Tuple.to_list/1),
+      overlaps: Enum.map(overlaps, fn {group, ids} -> %{key_group: group, owners: ids} end)
+    }
+  end
+
+  # Every partition group among `rows`, with its members in partition order and
+  # the read-time coverage check. There is no stored group record, so the check
+  # is what turns a missing member into a visible fault rather than a quietly
+  # short list. The one grouping both group views read.
+  defp partition_groups(rows) when is_list(rows) do
+    rows
+    |> Enum.filter(&(&1[:partition] != nil))
+    |> Enum.group_by(& &1.partition.group)
+    |> Enum.map(fn {group, group_rows} ->
+      members = Enum.sort_by(group_rows, & &1.partition.index)
+
+      %{
+        group: group,
+        declared: members |> Enum.map(& &1.partition.count) |> Enum.max(),
+        members: members,
+        coverage: Partition.coverage(Enum.map(members, &{&1.id, &1.partition.range}))
+      }
+    end)
+    |> Enum.sort_by(& &1.group)
+  end
+
+  defp partition_groups(namespace) when is_binary(namespace),
+    do: namespace |> HubManager.operative_rows() |> partition_groups()
+
+  defp display_group_report(report) do
+    IO.puts("Partition group: #{report.group} (#{length(report.members)}/#{report.declared})")
+
+    Enum.each(report.members, fn m ->
+      {from, to} = m.partition.range
+
+      IO.puts(
+        "  p#{m.partition.index}  #{String.pad_trailing(m.id, 30)} " <>
+          "key groups #{from}-#{to}  #{label_or(m.runner, "(none)")}  #{m.health}"
+      )
+    end)
+
+    case report.coverage do
+      :ok ->
+        IO.puts("  coverage: all #{Partition.key_groups()} key groups owned exactly once")
+
+      {:error, %{gaps: gaps, overlaps: overlaps}} ->
+        IO.puts("  WARNING: key-group coverage is broken — traffic for the named groups is lost")
+
+        Enum.each(gaps, fn {from, to} ->
+          IO.puts("    gap: key groups #{from}-#{to} are owned by no member")
+        end)
+
+        Enum.each(overlaps, fn {group, owners} ->
+          IO.puts("    overlap: key group #{group} is claimed by #{Enum.join(owners, ", ")}")
+        end)
+    end
+
+    IO.puts("")
   end
 
   # Finished workflow operatives with a completion record still inside the
@@ -876,10 +1156,13 @@ defmodule Flezha.Service.CliManager do
     IO.puts("")
   end
 
-  @doc "Disables plugin."
+  @doc """
+  Disables a plugin — or, when the id was fanned out over a partition group,
+  every `#pK` instance of it.
+  """
   def disable_plugin(plugin_id) do
-    case PluginManager.disable_plugin(plugin_id) do
-      {:ok, _msg} -> IO.puts("Plugin #{plugin_id} disabled successfully.")
+    case PluginManager.disable_plugin_group(plugin_id) do
+      {:ok, msg} -> IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
       {:error, reason} -> cli_error!("Error disabling plugin: #{inspect(reason)}.")
     end
   end
@@ -1239,7 +1522,7 @@ defmodule Flezha.Service.CliManager do
   """
   def state_get(path_string, output_format \\ "text", opts \\ []) do
     with {:ok, {operative_id, procedure, entity_key}} <- parse_live_path(path_string),
-         {:ok, namespace} <- running_namespace(operative_id),
+         {:ok, namespace, targets} <- resolve_state_targets(operative_id, entity_key),
          :ok <-
            Flezha.AuthZ.authorize(
              cli_context(opts),
@@ -1247,10 +1530,7 @@ defmodule Flezha.Service.CliManager do
              Flezha.AuthZ.Scope.build(namespace)
            ),
          {:ok, json, change_seq} <-
-           OperativeManager.get_entity_state(namespace, operative_id, %{
-             procedure: procedure,
-             entity_key: entity_key
-           }),
+           read_entity_state(namespace, targets, procedure, entity_key),
          :ok <- within_read_ceiling(json) do
       print_state_get(path_string, json, change_seq, output_format)
     else
@@ -1260,12 +1540,73 @@ defmodule Flezha.Service.CliManager do
 
   # The read authorizes and resolves against the namespace that actually holds
   # the Operative rather than assuming `default`.
-  defp running_namespace(operative_id) do
+  #
+  # A partition group id names no operative — it names N — so a keyed read
+  # resolves the one member owning the key's group, and a procedure-level read
+  # fans out over every member and merges: each holds only its own share.
+  defp resolve_state_targets(operative_id, entity_key) do
     case OperativeManager.namespace_of(operative_id) do
+      {:ok, namespace} ->
+        {:ok, namespace, [operative_id]}
+
+      :error ->
+        with {:ok, namespace} <- group_namespace(operative_id),
+             members = PartitionGroup.members(namespace, operative_id) do
+          {:ok, namespace, owning_members(members, entity_key)}
+        end
+    end
+  end
+
+  defp group_namespace(operative_id) do
+    case OperativeManager.namespace_of_group(operative_id) do
       {:ok, namespace} -> {:ok, namespace}
       :error -> {:error, {:no_operative, operative_id}}
     end
   end
+
+  defp owning_members(members, nil), do: Enum.map(members, & &1.id)
+
+  defp owning_members(members, entity_key) do
+    case Enum.find(members, &Partition.owns?(&1.partition.range, entity_key)) do
+      nil -> Enum.map(members, & &1.id)
+      member -> [member.id]
+    end
+  end
+
+  defp read_entity_state(namespace, [operative_id], procedure, entity_key) do
+    OperativeManager.get_entity_state(namespace, operative_id, %{
+      procedure: procedure,
+      entity_key: entity_key
+    })
+  end
+
+  defp read_entity_state(namespace, targets, procedure, entity_key) do
+    targets
+    |> Enum.map(&read_entity_state(namespace, [&1], procedure, entity_key))
+    |> Enum.filter(&match?({:ok, _json, _seq}, &1))
+    |> case do
+      [] ->
+        {:error, {:no_operative, hd(targets)}}
+
+      reads ->
+        merged =
+          Enum.reduce(reads, %{}, fn {:ok, json, _seq}, acc ->
+            case Jason.decode(json) do
+              {:ok, decoded} when is_map(decoded) -> deep_merge(acc, decoded)
+              _ -> acc
+            end
+          end)
+
+        {:ok, Jason.encode!(merged), Enum.map(reads, fn {:ok, _, seq} -> seq end) |> Enum.max()}
+    end
+  end
+
+  # Two members answer the same procedure with disjoint entity keys, so the
+  # merge is per-procedure, per-key — never a whole-value overwrite.
+  defp deep_merge(left, right) when is_map(left) and is_map(right),
+    do: Map.merge(left, right, fn _key, l, r -> deep_merge(l, r) end)
+
+  defp deep_merge(_left, right), do: right
 
   # `<operative>/<procedure>[/<entity_key>]` for a LIVE read. No on-disk check,
   # unlike `parse_state_path/1`: a resident Entity may have no WAL yet, and a

@@ -333,6 +333,17 @@ message AddOperative {
     string factory_id = 2;
     string init_values = 3;
     string kind = 4; // operative kind; empty/absent ⇒ "stream"
+    // Partitioned operatives. A partition_count below 2 is unpartitioned —
+    // every bind that predates partitioning, and every --partitions 1 start —
+    // and proto3 omits all four zero-valued scalars, so such a frame is
+    // byte-identical to a pre-partition one.
+    uint32 partition_index = 7;
+    uint32 partition_count = 8;
+    // The inclusive key-group range (0..255) this member owns, shipped
+    // explicitly rather than derived from (index, count) so a rescale's
+    // recomputed ranges need no format change.
+    uint32 key_group_from = 9;
+    uint32 key_group_to = 10;
 }
 
 message RemOperative {
@@ -655,7 +666,24 @@ All commands are sent as `CommandRequest` messages from the controller to the SD
 | Behavior | SDK creates a new operative from the named factory. `kind` (empty ⇒ `"stream"`) selects the operative kind. For `"stream"`: a stream operative instance, deserializing non-empty `init_values` JSON into state via `json_deserialize_state()`, then `post_alter()`. For `"workflow"`: a workflow operative instance whose `run(ctx, args)` is scheduled once on its driver thread with `args = init_values`. |
 | Response status | `"success"` on success, `"error"` on failure |
 | Response raw_data | empty |
-| Possible errors | Factory not found (stream or workflow class); JSON parse failure; deserialization failure; unknown `kind` |
+| Possible errors | Factory not found (stream or workflow class); JSON parse failure; deserialization failure; unknown `kind`; `PartitionsWithoutKeyedProcedure` |
+
+#### Partition identity
+
+`partition_index` / `partition_count` / `key_group_from` / `key_group_to` carry
+one member of a partitioned operative (`docs/partitioned_operatives.md`). With
+`partition_count < 2` the instance owns the whole key space and the dispatch
+guard is one integer comparison; with `partition_count ≥ 2` the SDK checks that
+each computed entity key hashes into `[key_group_from, key_group_to]` and parks
+a miss with an error naming the key, its key group, the owning partition and
+the contract. The migrate-time `AddOperative` carries the same fields, so a
+member that moves runners re-arms its guard.
+
+A bind asking a class with no keyed entry-fed procedure to be partitioned is
+refused with `PartitionsWithoutKeyedProcedure`: only the SDK can see whether a
+class is keyed. Such a class additionally answers `keyed: "false"` in the
+`AddOperative` response metadata, so the controller refuses a later partitioned
+start before touching a runner.
 
 ### WorkflowCompleted
 

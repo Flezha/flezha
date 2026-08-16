@@ -420,6 +420,189 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     assert :counters.get(journaled, 1) == 1
   end
 
+  ## ---------- partitioned targets ----------
+
+  describe "a partitioned target" do
+    # ranges(2) = [{0, 127}, {128, 255}]; SOL-USD hashes to group 60 (p0),
+    # BTC-USD to 129 and ETH-USD to 213 (both p1).
+    defp group(base, count) do
+      count
+      |> Flezha.Partition.ranges()
+      |> Enum.with_index()
+      |> Enum.map(fn {range, index} ->
+        %{
+          id: Flezha.Partition.member_id(base, index),
+          partition: %{group: base, index: index, count: count, range: range}
+        }
+      end)
+    end
+
+    # A target per member that names itself on every ingest, so a routing
+    # assertion is about WHICH member received a payload, not merely that one did.
+    defp labelled_target(member_id) do
+      test_pid = self()
+      spawn_link(fn -> labelled_loop(test_pid, member_id) end)
+    end
+
+    defp labelled_loop(test_pid, member_id) do
+      receive do
+        {:"$gen_call", {from, ref}, {:ingest, message, _metadata}} ->
+          send(test_pid, {:member_got, member_id, message})
+          send(from, {ref, :ok})
+          labelled_loop(test_pid, member_id)
+      end
+    end
+
+    defp partitioned_target(base, count) do
+      members = group(base, count)
+      targets = Map.new(members, &{&1.id, labelled_target(&1.id)})
+
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
+        if id == base, do: members, else: []
+      end)
+
+      resolve_to(targets)
+      {members, targets}
+    end
+
+    test "one worker per member, and the same key always takes the same one" do
+      base = uniq("grp")
+      {members, _targets} = partitioned_target(base, 2)
+
+      {:ok, opts, _worker} = prepare(uniq("src"), base)
+      assert length(opts.routes) == 2
+      assert Enum.map(opts.routes, & &1.id) == Enum.map(members, & &1.id)
+
+      owner = Flezha.Partition.member_id(base, 1)
+
+      emit(opts, "a", %{"flz.key" => "BTC-USD"})
+      emit(opts, "b", %{"flz.key" => "BTC-USD"})
+
+      assert_receive {:member_got, ^owner, "a"}, 1_000
+      assert_receive {:member_got, ^owner, "b"}, 1_000
+    end
+
+    test "keys land on the member whose range owns them" do
+      base = uniq("grp")
+      {_members, _targets} = partitioned_target(base, 2)
+      {:ok, opts, _worker} = prepare(uniq("src"), base)
+
+      p0 = Flezha.Partition.member_id(base, 0)
+      p1 = Flezha.Partition.member_id(base, 1)
+
+      emit(opts, "sol", %{"flz.key" => "SOL-USD"})
+      emit(opts, "eth", %{"flz.key" => "ETH-USD"})
+
+      assert_receive {:member_got, ^p0, "sol"}, 1_000
+      assert_receive {:member_got, ^p1, "eth"}, 1_000
+    end
+
+    test "one unreachable member does not hold up its siblings" do
+      base = uniq("grp")
+      members = group(base, 2)
+      reachable = Flezha.Partition.member_id(base, 0)
+      target = labelled_target(reachable)
+
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, id ->
+        if id == base, do: members, else: []
+      end)
+
+      # Only p0 resolves; p1's worker retries against a target that is not there.
+      resolve_to(%{reachable => target})
+
+      {:ok, opts, _worker} = prepare(uniq("src"), base, %{retry_backoff_ms: 10})
+
+      emit(opts, "stuck", %{"flz.key" => "BTC-USD"})
+      emit(opts, "flows", %{"flz.key" => "SOL-USD"})
+
+      assert_receive {:member_got, ^reachable, "flows"}, 1_000
+    end
+
+    test "an unkeyed message is parked with the contract it violated, never guessed" do
+      base = uniq("grp")
+      {_members, _targets} = partitioned_target(base, 2)
+      source = uniq("src")
+      {:ok, opts, _worker} = prepare(source, base)
+
+      parent = self()
+
+      expect(Flezha.Dlq.Store, :append, fn entry ->
+        send(parent, {:parked, entry})
+        {:ok, "ref"}
+      end)
+
+      emit(opts, "no-key", %{})
+
+      assert_receive {:parked, entry}, 1_000
+      assert entry.operative_class == source
+      assert entry.entity_key == base
+      assert entry.payload == "no-key"
+      assert entry.error =~ "partitioned target requires keyed emit"
+      assert entry.error =~ source
+      assert entry.error =~ base
+
+      refute_receive {:member_got, _, "no-key"}, 200
+    end
+
+    test "an unkeyed message to a single-member target still flows" do
+      id = uniq("plain")
+      target = fake_target(fn _ -> :ok end)
+      stub(Flezha.Operative.PartitionGroup, :members, fn _ns, _id -> [] end)
+      resolve_to(%{id => target})
+
+      {:ok, opts, _worker} = prepare(uniq("src"), id)
+      assert length(opts.routes) == 1
+
+      emit(opts, "unkeyed", %{})
+      assert_receive {:target_got, "unkeyed", _}, 1_000
+    end
+
+    test "disabling the plugin stops every member's worker" do
+      base = uniq("grp")
+      {_members, _targets} = partitioned_target(base, 3)
+      source = uniq("src")
+
+      plugin =
+        Flezha.Plugin.new(
+          id: "fwd_grp",
+          provider: OperativeForward,
+          opts: %{target_operative_id: base},
+          namespace: "default",
+          operative_id: source,
+          subscriptions: [{:on_output, []}]
+        )
+
+      table = Table.new(Flezha.Operative.Overwatch.__extensions_catalog__())
+      {:ok, table} = Table.subscribe(table, "fwd_grp", plugin)
+
+      workers = Enum.map(table.plugins["fwd_grp"].opts.routes, & &1.pid)
+      assert length(workers) == 3
+      assert Enum.all?(workers, &Process.alive?/1)
+
+      _table = Table.unsubscribe(table, "fwd_grp")
+
+      wait_until(fn -> Enum.all?(workers, &(not Process.alive?(&1))) end)
+    end
+
+    test "health reports the sickest worker, not the healthy majority" do
+      base = uniq("grp")
+      {_members, _targets} = partitioned_target(base, 3)
+      {:ok, opts, _worker} = prepare(uniq("src"), base)
+
+      assert OperativeForward.health(opts) == :healthy
+
+      [_p0, p1, _p2] = opts.routes
+
+      # The kill is the point of the test; its supervisor report is not.
+      ExUnit.CaptureLog.capture_log(fn ->
+        Process.exit(p1.pid, :kill)
+        wait_until(fn -> not Process.alive?(p1.pid) end)
+      end)
+
+      assert OperativeForward.health(opts) == {:unhealthy, :worker_dead}
+    end
+  end
+
   defp wait_until(fun, attempts \\ 100) do
     cond do
       fun.() -> :ok

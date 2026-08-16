@@ -140,7 +140,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
                 # them off rather than two that can drift.
                 subscription_interval_ms: nil,
                 subscription_headers: %{},
-                subscription_ack_mode: nil
+                subscription_ack_mode: nil,
+                subscription_items: nil,
+                partition_index: nil,
+                partition_count: nil,
+                key_group_from: nil,
+                key_group_to: nil
               ]
 
   @known_opts [
@@ -158,7 +163,13 @@ defmodule Flezha.Plugin.Provider.Websocket do
     :subscription_headers,
     :subscribe_template,
     :unsubscribe_template,
-    :subscription_ack_mode
+    :subscription_ack_mode,
+    :subscription_items,
+    # Injected by a partition group's plugin fan-out, not written by hand.
+    :partition_index,
+    :partition_count,
+    :key_group_from,
+    :key_group_to
   ]
 
   # This provider's own committed state, read back out of the cspec on a
@@ -493,7 +504,9 @@ defmodule Flezha.Plugin.Provider.Websocket do
         Map.merge(state, %{
           subscription: subscription,
           applied: MapSet.new(Keyword.get(opts, :applied_subscriptions, [])),
-          desired: nil,
+          # A literal item list is the desired set from the start; a polled
+          # one has none until a poll lands.
+          desired: Subscription.static_desired(subscription),
           inflight: %{},
           next_req_id: 1,
           cycle: 0,
@@ -545,7 +558,14 @@ defmodule Flezha.Plugin.Provider.Websocket do
     # Issue the subscribe via Fresh's reply form so the frame is sent
     # after the upgrade lands. A re-entrant `Fresh.send/2` here races the
     # upgrade and crashes with `{:badkey, :extensions, nil}`.
-    case subscription_frames(state) do
+    #
+    # Re-assert what is already applied, then converge on whatever the desired
+    # set says beyond it — which is what makes a literal `subscription_items`
+    # source subscribe with no poll to wait for. A polled source has no desired
+    # set yet on a first connect, so the reconcile is a no-op there.
+    {state, deltas} = reconcile(state)
+
+    case subscription_frames(state) ++ deltas do
       [] -> {:ok, state}
       frames -> {:reply, frames, state}
     end
@@ -802,7 +822,7 @@ defmodule Flezha.Plugin.Provider.Websocket do
   end
 
   defp decoded_source(state, body) do
-    case Subscription.desired_set(body) do
+    case Subscription.desired_set(state.subscription, body) do
       {:ok, desired} -> reconcile(%{state | desired: desired, last_error: nil})
       {:error, reason} -> {poll_failed(state, reason), []}
     end
@@ -816,6 +836,10 @@ defmodule Flezha.Plugin.Provider.Websocket do
 
     %{state | last_error: reason}
   end
+
+  # No subscription source at all — a plain static plugin, whose state carries
+  # no reconcile keys.
+  defp reconcile(state) when not is_map_key(state, :desired), do: {state, []}
 
   # Nothing has been fetched yet, so there is no desired set to converge on.
   defp reconcile(%{desired: nil} = state), do: {state, []}
@@ -1013,10 +1037,16 @@ defmodule Flezha.Plugin.Provider.Websocket do
       ref -> Process.cancel_timer(ref, async: true, info: false)
     end
 
-    %{
-      state
-      | poll_timer: Process.send_after(self(), :subscription_poll, subscription.interval_ms)
-    }
+    # A literal item list has no endpoint to poll; its desired set is already
+    # final and the reconcile at connect is the whole loop.
+    if Subscription.polled?(subscription) do
+      %{
+        state
+        | poll_timer: Process.send_after(self(), :subscription_poll, subscription.interval_ms)
+      }
+    else
+      %{state | poll_timer: nil}
+    end
   end
 
   defp schedule_subscription_poll(state), do: state

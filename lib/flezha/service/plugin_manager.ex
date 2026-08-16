@@ -19,6 +19,7 @@ defmodule Flezha.Service.PluginManager do
   use GenServer
 
   alias Flezha.Plugin
+  alias Flezha.Operative.PartitionGroup
   alias Flezha.Service.RegistryUpdate
   alias Flezha.Service.Identificator
   alias Flezha.Service.OperativeManager
@@ -35,10 +36,40 @@ defmodule Flezha.Service.PluginManager do
         {:error, "init-state plugins must be attached at operative start"}
 
       true ->
-        case GenServer.call(__MODULE__, {:enable_plugin, plugin_id, plugin}) do
-          {:ok, msg} -> {:ok, msg}
-          {:error, reason} -> {:error, reason}
+        case PartitionGroup.members(plugin.namespace, plugin.operative_id) do
+          [] -> do_enable_plugin(plugin_id, plugin)
+          members -> enable_across_group(plugin_id, plugin, members)
         end
+    end
+  end
+
+  defp do_enable_plugin(plugin_id, plugin) do
+    case GenServer.call(__MODULE__, {:enable_plugin, plugin_id, plugin}) do
+      {:ok, msg} -> {:ok, msg}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # A group id names no operative — it names N of them. Enable runs once per
+  # member with that member's partition opts injected and its `#pK` appended to
+  # the plugin id, which is also what keeps this node's plugin ids unique when
+  # two members land here. Every member's outcome is reported: a partial enable
+  # is a real state and must never read as success.
+  defp enable_across_group(plugin_id, plugin, members) do
+    results =
+      Enum.map(members, fn %{id: member_id, partition: partition} ->
+        member_plugin = Plugin.for_partition(%{plugin | id: plugin_id}, member_id, partition)
+        {member_id, do_enable_plugin(member_plugin.id, member_plugin)}
+      end)
+
+    case Enum.reject(results, &match?({_id, {:ok, _}}, &1)) do
+      [] ->
+        {:ok, "plugin enabled on #{length(results)} partitions"}
+
+      failed ->
+        {:error,
+         "enabled on #{length(results) - length(failed)} of #{length(results)} partitions; " <>
+           Enum.map_join(failed, "; ", fn {id, err} -> "#{id}: #{inspect(err)}" end)}
     end
   end
 
@@ -56,6 +87,29 @@ defmodule Flezha.Service.PluginManager do
     case GenServer.call(__MODULE__, {:disable_plugin, plugin_id}) do
       {:ok, msg} -> {:ok, msg}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Disable every plugin instance a group enable fanned out — `<plugin_id>#p0`
+  … — or the plain `plugin_id` when it names an ordinary plugin.
+  """
+  @spec disable_plugin_group(binary()) :: {:ok, binary()} | {:error, term()}
+  def disable_plugin_group(plugin_id) do
+    case GenServer.call(__MODULE__, {:fanned_out_ids, plugin_id}) do
+      [] ->
+        disable_plugin(plugin_id)
+
+      ids ->
+        results = Enum.map(ids, &{&1, disable_plugin(&1)})
+
+        case Enum.reject(results, &match?({_id, {:ok, _}}, &1)) do
+          [] ->
+            {:ok, "plugin disabled on #{length(results)} partitions"}
+
+          failed ->
+            {:error, Enum.map_join(failed, "; ", fn {id, err} -> "#{id}: #{inspect(err)}" end)}
+        end
     end
   end
 
@@ -111,6 +165,20 @@ defmodule Flezha.Service.PluginManager do
       end
 
     {:reply, reply, new_state}
+  end
+
+  def handle_call({:fanned_out_ids, plugin_id}, _from, state) do
+    ids =
+      if Map.has_key?(state, plugin_id) do
+        []
+      else
+        state
+        |> Map.keys()
+        |> Enum.filter(&fanned_out_from?(&1, plugin_id))
+        |> Enum.sort()
+      end
+
+    {:reply, ids, state}
   end
 
   def handle_call({:disable_plugin, plugin_id}, _from, state) do
@@ -195,6 +263,10 @@ defmodule Flezha.Service.PluginManager do
   end
 
   ## Private
+
+  # `id` is `base` with a partition suffix — `ohlc_ws#p2` for base `ohlc_ws`.
+  defp fanned_out_from?(id, base),
+    do: match?({^base, _index}, Flezha.Partition.split_member_suffix(id))
 
   defp plugin_id_unique(plugins, plugin_id) do
     case Map.get(plugins, plugin_id, nil) do

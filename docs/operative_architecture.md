@@ -515,6 +515,15 @@ Two per-Procedure knobs:
   the controller), and a later input cold-starts fresh — no
   restore-from-disk. (Deliberate: keeps recreate off any blocking
   controller round-trip that could stall a poll worker.)
+
+A **bind-time restore** is the other direction and does materialize a slot: the
+controller ships one `RestoreInitState` per Entity that has durable state, and
+the SDK creates the dynamic Entity to fold it into. Without that, a dynamic
+Entity would cold-start on top of its own WAL after every rebind. The two rules
+do not conflict — eviction deletes the files, so no restore is ever shipped for
+an evicted Entity. This is also what carries a key across a partition rescale,
+where the state was moved into another member's tree before that member ever
+saw the key.
 - `max_entities() -> usize` (default `100_000`) — soft cap. At the cap,
   new-key inputs are dropped (`inputs_dropped_capped_total`); existing keys
   are unaffected. Bounds memory against a runaway `.key_by`, not
@@ -522,6 +531,25 @@ Two per-Procedure knobs:
 
 Per-Procedure counters (`DynamicEntityCounters`): `entities_created_total`,
 `entities_evicted_total`, `inputs_dropped_capped_total`.
+
+## Partitioning: one logical Operative, N instances
+
+Everything above is per *instance*, and an instance binds to one runner — so
+the machine is the ceiling for one Operative. `--partitions N` lifts it by
+starting N ordinary instances (`<id>#p0` … `<id>#p{N-1}`), each owning a
+contiguous range of the 256 key groups a routing key hashes into.
+
+Nothing in this document changes for a partition: it is an ordinary instance
+with an ordinary topology, ordinary Entities and an ordinary lifecycle. The
+only addition on the dispatch path is one comparison — and, when
+`partition_count ≥ 2`, a check that each computed entity key hashes into the
+member's own range, which parks a mis-route before any state for that key
+exists. A class with no keyed entry-fed procedure refuses to be partitioned at
+all: N members would each fold a slice of the input into a private copy of the
+same state.
+
+See [`partitioned_operatives.md`](partitioned_operatives.md) for the group
+model, the source-filtering and forward-routing halves, and rescale.
 
 ## Per-Entity timers: the two trigger paths
 

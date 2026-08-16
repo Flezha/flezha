@@ -24,6 +24,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
     for raw <- ["", nil] do
       assert ClassRegistry.decode_declarations(raw) == %{
                effectively_once: false,
+               keyless: false,
                checkpoint_ack: false,
                compensable_procs: nil,
                leaf_procs: nil,
@@ -37,6 +38,7 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
   test "undecodable raw_data resolves the defaults" do
     assert ClassRegistry.decode_declarations(<<255, 255, 255, 1>>) == %{
              effectively_once: false,
+             keyless: false,
              checkpoint_ack: false,
              compensable_procs: nil,
              leaf_procs: nil,
@@ -44,6 +46,16 @@ defmodule FlezhaTest.Runner.AddOperativeResponseTest do
              compact_after_bytes: nil,
              sync_durability: false
            }
+  end
+
+  test "keyless is declared only when true — a keyed class says nothing" do
+    # `partitioned-operatives`: the SDK announces `keyed: "false"` for a class
+    # with no keyed entry-fed procedure, so the controller can refuse a
+    # partitioned start of it before touching a runner. A keyed class declares
+    # nothing, which is what keeps its response byte-identical.
+    assert declarations(%{"keyed" => "false"}).keyless
+    refute declarations(%{}).keyless
+    refute declarations(%{"keyed" => "true"}).keyless
   end
 
   test "a declared compact_after_bytes resolves from the metadata; absent or invalid is nil" do

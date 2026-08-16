@@ -23,10 +23,17 @@ defmodule Flezha.Plugin.SpecDecoder do
   @doc """
   Decode `plugins_json` into plugin structs bound to `namespace` and
   `operative_id`. An empty/blank spec decodes to `[]`.
+
+  `partition_opts` (a partition member's `Flezha.Partition.member_opts/4`) fans
+  the same spec out to one member: `partition_index` / `partition_count` /
+  `key_group_from` / `key_group_to` are merged into every plugin's opts as
+  integers — the JSON path cannot carry tuples — and the plugin's own id gains
+  the member's `#pK` suffix so two members landing on one node do not collide
+  in a provider's worker registry.
   """
-  @spec decode(binary() | nil, atom() | binary(), binary()) ::
+  @spec decode(binary() | nil, atom() | binary(), binary(), keyword()) ::
           {:ok, [Plugin.t()]} | {:error, term()}
-  def decode(plugins_json, namespace, operative_id) do
+  def decode(plugins_json, namespace, operative_id, partition_opts \\ []) do
     case decode_json(plugins_json) do
       {:ok, []} ->
         {:ok, []}
@@ -35,7 +42,7 @@ defmodule Flezha.Plugin.SpecDecoder do
         providers = ConfigManager.get_enabled_plugins()
 
         Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
-          case build_plugin(spec, providers, namespace, operative_id) do
+          case build_plugin(spec, providers, namespace, operative_id, partition_opts) do
             {:ok, plugin} -> {:cont, {:ok, [plugin | acc]}}
             {:error, _} = err -> {:halt, err}
           end
@@ -76,25 +83,31 @@ defmodule Flezha.Plugin.SpecDecoder do
 
   defp decode_json(_), do: {:ok, []}
 
-  defp build_plugin(spec, providers, namespace, operative_id) when is_map(spec) do
+  defp build_plugin(spec, providers, namespace, operative_id, partition_opts) when is_map(spec) do
     with {:ok, plugin_id} <- fetch_string(spec, "id"),
          {:ok, provider_id} <- fetch_string(spec, "provider"),
          {:ok, provider_mod} <- resolve_provider(providers, provider_id),
          {:ok, raw_opts} <- fetch_map(spec, "opts"),
          {:ok, subscriptions} <- build_subscriptions(Map.get(spec, "subscriptions", [])) do
-      {:ok,
-       %Plugin{
-         id: plugin_id,
-         provider: provider_mod,
-         opts: atomize_keys(raw_opts),
-         subscriptions: subscriptions,
-         namespace: namespace,
-         operative_id: operative_id
-       }}
+      plugin = %Plugin{
+        id: plugin_id,
+        provider: provider_mod,
+        opts: atomize_keys(raw_opts),
+        subscriptions: subscriptions,
+        namespace: namespace,
+        operative_id: operative_id
+      }
+
+      {:ok, bind_to_partition(plugin, operative_id, partition_opts)}
     end
   end
 
-  defp build_plugin(_, _, _, _), do: {:error, {:invalid_opts, :plugin_spec_not_a_map}}
+  defp build_plugin(_, _, _, _, _), do: {:error, {:invalid_opts, :plugin_spec_not_a_map}}
+
+  defp bind_to_partition(plugin, _operative_id, []), do: plugin
+
+  defp bind_to_partition(plugin, operative_id, partition_opts),
+    do: Plugin.for_partition(plugin, operative_id, Flezha.Partition.identity(partition_opts))
 
   defp fetch_string(spec, key) do
     case Map.get(spec, key) do

@@ -80,6 +80,33 @@ impl<T> LockRecover<T> for Mutex<T> {
     }
 }
 
+#[cfg(test)]
+mod partition_hash_tests {
+    //! The routing guard and the controller's placement must agree bit for
+    //! bit: a one-bit drift parks every frame of a partitioned operative. The
+    //! twin assertions live in `Flezha.PartitionTest` and `StableIdTest`.
+
+    use super::{fnv1a128, key_group, FNV128_OFFSET_BASIS};
+
+    #[test]
+    fn key_group_matches_the_cross_language_fixture() {
+        assert_eq!(key_group("BTC-USD"), 129);
+        assert_eq!(key_group("ETH-USD"), 213);
+        assert_eq!(key_group("SOL-USD"), 60);
+        assert_eq!(key_group(""), 141);
+        assert_eq!(key_group("a"), 100);
+    }
+
+    #[test]
+    fn key_group_is_the_digest_low_byte() {
+        for key in ["BTC-USD", "", "a", &"x".repeat(512)] {
+            let digest = fnv1a128(FNV128_OFFSET_BASIS, key.as_bytes());
+            assert_eq!(key_group(key) as u128, digest % 256);
+            assert!(key_group(key) < 256);
+        }
+    }
+}
+
 /// Render a contained panic payload as the error string ladders and abort
 /// paths report.
 pub fn format_panic(payload: Box<dyn std::any::Any + Send>) -> String {
@@ -90,6 +117,36 @@ pub fn format_panic(payload: Box<dyn std::any::Any + Send>) -> String {
     } else {
         "<non-string panic payload>".to_string()
     }
+}
+
+/// FNV-1a-128 offset basis, frozen by the cross-language `StableId` spec.
+pub const FNV128_OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58d;
+
+/// The FNV-128 prime, `2^88 + 0x13b`.
+const FNV128_PRIME: u128 = 0x0000000001000000000000000000013b;
+
+/// FNV-1a-128 (frozen by spec: xor byte, multiply by the FNV 128 prime),
+/// continuing from `hash` so a caller can chain several byte runs.
+///
+/// The one implementation behind both `StableId::derive` and [`key_group`];
+/// the controller's `Flezha.Partition` and Java's `StableId` carry the same
+/// constants, pinned by one shared fixture-vector set.
+pub fn fnv1a128(mut hash: u128, bytes: &[u8]) -> u128 {
+    for &b in bytes {
+        hash ^= b as u128;
+        hash = hash.wrapping_mul(FNV128_PRIME);
+    }
+    hash
+}
+
+/// How many key groups a partitioned operative's key space is divided into.
+pub const KEY_GROUPS: u32 = 256;
+
+/// The key group a routing key belongs to: `fnv1a128(key) mod 256`. The
+/// controller assigns each partition a contiguous range of these and the
+/// dispatch guard refuses a key outside its own.
+pub fn key_group(key: &str) -> u32 {
+    (fnv1a128(FNV128_OFFSET_BASIS, key.as_bytes()) & (KEY_GROUPS as u128 - 1)) as u32
 }
 
 /// Wall time as milliseconds since the Unix epoch. The dispatcher's wall

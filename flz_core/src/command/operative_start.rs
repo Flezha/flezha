@@ -1,6 +1,7 @@
 use prost::Message;
 
 use super::CommandAction;
+use crate::operative::instance::KeyGroupRange;
 use crate::pb::{AddOperative, AddOperativeResponse};
 use crate::runner::RunnerNode;
 use crate::workflow::spec::WorkflowSpec;
@@ -50,23 +51,35 @@ impl CommandAction for AddOperative {
                     ));
                 }
             }
-            "stream" => match runner.start_operative(factory_id.clone(), instance_id.clone()) {
-                Some(instance) => {
-                    if !self.init_values.is_empty() {
-                        if let Err(e) = crate::command::entity_state::apply_init_values(
-                            &instance,
-                            &self.init_values,
-                        ) {
-                            errors.push(e);
+            "stream" => match partition_refusal(self, &factory_id) {
+                // A keyless class cannot be partitioned: each member would
+                // fold its own input slice into a private copy of "the one"
+                // state — N divergent partial truths, silently. Only the SDK
+                // can tell (key closures are compiled code, never on the
+                // wire), so the authoritative refusal is here, at the bind.
+                Some(refusal) => errors.push(refusal),
+                None => match runner.start_operative(
+                    factory_id.clone(),
+                    instance_id.clone(),
+                    self.key_group_range(),
+                ) {
+                    Some(instance) => {
+                        if !self.init_values.is_empty() {
+                            if let Err(e) = crate::command::entity_state::apply_init_values(
+                                &instance,
+                                &self.init_values,
+                            ) {
+                                errors.push(e);
+                            }
                         }
                     }
-                }
-                None => {
-                    errors.push(format!(
-                        "StreamOperative class with factory_id {} is not registered",
-                        factory_id
-                    ));
-                }
+                    None => {
+                        errors.push(format!(
+                            "StreamOperative class with factory_id {} is not registered",
+                            factory_id
+                        ));
+                    }
+                },
             },
             other => {
                 errors.push(format!(
@@ -80,6 +93,59 @@ impl CommandAction for AddOperative {
             "start_operative".to_string(),
             metadata_response(kind, &factory_id),
         )
+    }
+}
+
+impl AddOperative {
+    /// The member's owned key-group range. `partition_count < 2` is every
+    /// pre-partition bind and every `--partitions 1` start; it reads as the
+    /// whole space with the dispatch guard inert.
+    fn key_group_range(&self) -> KeyGroupRange {
+        if self.partition_count < 2 {
+            return KeyGroupRange::UNPARTITIONED;
+        }
+        KeyGroupRange {
+            index: self.partition_index,
+            count: self.partition_count,
+            from: self.key_group_from,
+            to: self.key_group_to,
+        }
+    }
+}
+
+/// Whether at least one procedure fed by an entry channel is keyed — a
+/// `key_by` edge (`Dynamic`) or a declared keyset (`Static`). The one
+/// definition of "partitionable", read by both the bind refusal and the
+/// declaration the controller preflights against.
+fn has_keyed_entry_procedure(topology: &crate::operative::topology::OperativeTopology) -> bool {
+    use crate::channel::ChannelKind;
+    use crate::operative::topology::EntityMode;
+
+    topology
+        .channels
+        .iter()
+        .filter(|channel| channel.kind == ChannelKind::Entry)
+        .flat_map(|channel| channel.consumers.iter())
+        .filter_map(|edge| topology.procedure(edge.procedure))
+        .any(|procedure| matches!(procedure.mode, EntityMode::Dynamic | EntityMode::Static))
+}
+
+/// `Some(error)` when this bind asks a class that cannot be partitioned to be.
+fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String> {
+    if command.partition_count < 2 {
+        return None;
+    }
+    let topology = crate::operative::registry::get_class(factory_id)?;
+    if has_keyed_entry_procedure(&topology) {
+        None
+    } else {
+        Some(format!(
+            "PartitionsWithoutKeyedProcedure: class {} has no keyed entry-fed procedure, \
+             so its {} partitions would each fold a slice of the input into a private copy \
+             of the same state — declare `key_by` on the entry edge (or entity keys on the \
+             procedure) before partitioning",
+            factory_id, command.partition_count
+        ))
     }
 }
 
@@ -120,6 +186,15 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
     }
 
     if let Some(topology) = &stream {
+        // Partitionability. Declared only when the answer is `false` — that
+        // is the refusable fact, and saying nothing otherwise keeps a keyed
+        // class's response byte-identical. With it recorded, a later
+        // `--partitions N` start of this class is refused at the controller
+        // before a runner is touched.
+        if !has_keyed_entry_procedure(topology) {
+            metadata.insert("keyed".to_string(), "false".to_string());
+        }
+
         // Late-input correction. The controller owns the two prerequisites the
         // SDK cannot see — the input-log hold window and the snapshot age-floor
         // must both cover this window, or the past it promises to repair is
@@ -254,5 +329,118 @@ mod metadata_tests {
         register_workflow(&id, false);
 
         assert!(metadata_response("workflow", &id).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod partition_tests {
+    //! The bind is where partitioning is refused or armed. Only the SDK can
+    //! tell whether a class is keyed — key closures are compiled code, never
+    //! on the wire — so a keyless class must be turned away here, and a keyed
+    //! one must come back with its range on the instance.
+
+    use super::{partition_refusal, AddOperative, AddOperativeResponse, KeyGroupRange, Message};
+
+    fn register(id: &str, entity_mode: &str, entity_keys: &str) {
+        let json = format!(
+            r#"{{"factory_id":"{id}","persistent":true,
+                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
+                 "procedures":[{{"name":"p","entity_mode":"{entity_mode}",
+                                 "entity_keys":[{entity_keys}]}}]}}"#
+        );
+        crate::host::register_host_class_json(json.as_bytes()).expect("class registers");
+    }
+
+    fn partitioned(factory_id: &str, count: u32) -> AddOperative {
+        AddOperative {
+            operative_id: "inst".into(),
+            factory_id: factory_id.into(),
+            partition_index: 1,
+            partition_count: count,
+            key_group_from: 85,
+            key_group_to: 169,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_keyless_class_is_refused_with_the_contract_named() {
+        let id = format!("part_keyless_{}", std::process::id());
+        register(&id, "single", "");
+
+        let refusal = partition_refusal(&partitioned(&id, 3), &id).expect("refused");
+        assert!(
+            refusal.contains("PartitionsWithoutKeyedProcedure"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("key_by"), "{refusal}");
+    }
+
+    #[test]
+    fn a_keyless_class_declares_itself_so_the_controller_can_refuse_first() {
+        let id = format!("part_declare_{}", std::process::id());
+        register(&id, "single", "");
+
+        let encoded = super::metadata_response("stream", &id);
+        let decoded = AddOperativeResponse::decode(encoded.as_slice()).expect("decodes");
+        assert_eq!(
+            decoded.metadata.get("keyed").map(String::as_str),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn a_keyed_class_is_accepted_and_says_nothing_extra() {
+        let id = format!("part_dynamic_{}", std::process::id());
+        register(&id, "dynamic", "");
+
+        assert!(partition_refusal(&partitioned(&id, 3), &id).is_none());
+        // Declaring nothing keeps a keyed class's response byte-identical.
+        assert!(super::metadata_response("stream", &id).is_empty());
+    }
+
+    #[test]
+    fn a_statically_keyed_class_partitions_normally() {
+        let id = format!("part_static_{}", std::process::id());
+        register(&id, "static", r#""BTC-USD","ETH-USD""#);
+
+        assert!(partition_refusal(&partitioned(&id, 3), &id).is_none());
+    }
+
+    #[test]
+    fn an_unpartitioned_bind_is_never_refused_and_owns_the_whole_space() {
+        let id = format!("part_none_{}", std::process::id());
+        register(&id, "single", "");
+
+        let mut command = partitioned(&id, 3);
+        command.partition_count = 0;
+
+        assert!(partition_refusal(&command, &id).is_none());
+        assert_eq!(command.key_group_range(), KeyGroupRange::UNPARTITIONED);
+        assert!(!command.key_group_range().partitioned());
+    }
+
+    #[test]
+    fn a_one_member_group_is_unpartitioned_too() {
+        let id = format!("part_one_{}", std::process::id());
+        register(&id, "single", "");
+
+        let mut command = partitioned(&id, 1);
+        command.partition_count = 1;
+
+        assert!(partition_refusal(&command, &id).is_none());
+        assert_eq!(command.key_group_range(), KeyGroupRange::UNPARTITIONED);
+    }
+
+    #[test]
+    fn a_partitioned_bind_carries_its_range_verbatim() {
+        let id = format!("part_range_{}", std::process::id());
+        register(&id, "dynamic", "");
+
+        let range = partitioned(&id, 3).key_group_range();
+        assert_eq!(range.index, 1);
+        assert_eq!(range.count, 3);
+        assert_eq!((range.from, range.to), (85, 169));
+        assert!(range.partitioned());
     }
 }

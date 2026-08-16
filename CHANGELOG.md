@@ -189,6 +189,58 @@
 
 ### Added
 
+- **One stream operative can now run across N machines**
+  (`add-partitioned-operatives`). A stream operative bound to exactly one
+  runner, so a single logical stream could never use more than one machine —
+  the only way past that box was hand-sharding into N unrelated operatives with
+  hand-split source configs, no routing-correctness check, no unified view, and
+  no way to change N later without orphaning entity state.
+
+  `flz operative start ohlc candles --partitions 3` materializes one logical
+  operative as three **ordinary** instances (`ohlc#p0` … `ohlc#p2`), each with
+  its own Overwatch, ProcessHub child, registry row, runner binding, input log,
+  state tree, plugins and DLQ identity. Placement, convergence, rebind,
+  migration and recovery act per member, unchanged. There is no group record:
+  each member's cspec opts carry `group`/`partition`/`partitions` and its owned
+  key-group range, and every group view is recomputed from the member rows.
+
+  Keys hash into 256 key groups via the FNV-1a-128 already frozen by
+  `StableId`; each partition owns a contiguous range, shipped explicitly rather
+  than derived from `(index, count)`. Three implementations (`Flezha.Partition`,
+  `flz_core::util::key_group`, Java's `StableId`) are pinned against one shared
+  fixture-vector set.
+
+  - **Sources filter the ask, not the data.** The websocket subscription
+    source filters its desired set to the partition's range before reconciling
+    (new static `subscription_items` opt supplies a literal list through the
+    same machinery, mutually exclusive with `subscription_url`); `http_poll`
+    gains `{{partition_index}}` / `{{partition_count}}` URL placeholders
+    rendered once at init, with URL validation running on the rendered value.
+  - **`operative_forward` routes per message** by `hash(flz.key)` to the owning
+    member, one worker per target member. A message with no `flz.key` is parked
+    with `partitioned target requires keyed emit` — never round-robined.
+  - **The SDK refuses a mis-routed key on its first frame**, naming the key,
+    its key group, the owning partition and the contract, before any state for
+    that key exists. Additive `AddOperative` fields (`partition_index`,
+    `partition_count`, `key_group_from`, `key_group_to`) carry the range; a
+    class with no keyed entry-fed procedure is refused with
+    `PartitionsWithoutKeyedProcedure`.
+  - **`flz operative scale <group> M`** rescales under an explicit quiesce
+    (sources off, input logs consumed, DLQs empty), moves every Entity whose
+    key group changes owner (rename on one controller, `WalTransfer` pull
+    across controllers), then starts M members with the recomputed ranges. A
+    refusal changes nothing; a crash mid-move is re-runnable.
+  - **CLI**: `flz operative list` shows one row per group with per-member
+    placement, `info` validates that all 256 key groups are owned exactly once
+    and renders gaps/overlaps as warnings, `stop <group>` fans out, and
+    `flz state get <group>/<procedure>/<key>` resolves the owning member by
+    hash. `flz plugin enable/disable <group>` fans out with partition opts
+    injected and `#pK`-suffixed plugin ids.
+
+  `--partitions 1` (the default) is byte-identical to before; all proto fields
+  are additive with zero values meaning "unpartitioned". See
+  `docs/partitioned_operatives.md`.
+
 - **A controller can now survive dying with its disk**
   (`add-remote-durability-tier`). Every durable byte flezha owned lived on the
   owning controller's local disk — Entity WALs and snapshots, workflow
@@ -495,6 +547,19 @@
   Naming rules for future SDK surface: `docs/sdk_naming_conventions.md`.
 
 ### Fixed
+
+- **A dynamic Entity never restored its durable state on a rebind**
+  (found implementing `add-partitioned-operatives`). The SDK's restore handler
+  resolved the named Entity by walking `instance.entities` — the static and
+  single slots — while a dynamic Entity lives in its Procedure's registry and
+  has no slot until its first input. Every `RestoreInitState` for one was
+  therefore acked with its terminal seq and discarded, and the next input
+  cold-started the Entity on top of its own WAL. The handler now materializes
+  the named dynamic Entity and folds the state into it. Eviction is unchanged
+  and does not conflict: it deletes the files, so no restore is ever shipped for
+  an evicted Entity. This is also what carries a key across a partition
+  rescale, where its state moved into another member's tree before that member
+  ever saw the key.
 
 - A controller that lost **every runner** for a namespace could neither keep its
   operatives nor move them, and the healing machinery hid the damage

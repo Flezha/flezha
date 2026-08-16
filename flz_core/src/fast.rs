@@ -72,18 +72,26 @@ impl RunnerNode {
 
     /// Spawn a StreamOperative instance from a registered StreamOperative class. `factory_id`
     /// is looked up in the global class registry; `instance_id` is what
-    /// the wire calls `operative_id`. Idempotent on duplicate
-    /// `instance_id`: returns the existing instance.
+    /// the wire calls `operative_id`. `partition` is the member's owned
+    /// key-group range (`KeyGroupRange::UNPARTITIONED` for an ordinary
+    /// operative). Idempotent on duplicate `instance_id`: returns the
+    /// existing instance.
     pub fn start_operative(
         &self,
         factory_id: String,
         instance_id: String,
+        partition: crate::operative::instance::KeyGroupRange,
     ) -> Option<Arc<StreamInstance>> {
         if let Some(existing) = self.operative_registry.get_stream(&instance_id) {
             return Some(existing);
         }
         let topology = get_operative_class(&factory_id)?;
-        let instance = StreamInstance::new(topology, Arc::from(instance_id.as_str()));
+        let instance = StreamInstance::with_options(
+            topology,
+            Arc::from(instance_id.as_str()),
+            None,
+            partition,
+        );
         Some(self.operative_registry.register_stream(instance))
     }
 

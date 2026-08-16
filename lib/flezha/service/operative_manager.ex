@@ -12,6 +12,7 @@ defmodule Flezha.Service.OperativeManager do
   alias Flezha.Runner.FleetManager
   alias Flezha.Convergence.SafeCall
   alias Flezha.Operative.Builder, as: OperativeBuilder
+  alias Flezha.Operative.PartitionGroup
   alias Flezha.Service.Validator
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
 
@@ -315,11 +316,11 @@ defmodule Flezha.Service.OperativeManager do
   @spec stop_operative(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   def stop_operative(namespace, operative_id, opts \\ []) do
     on_hub_member(namespace, operative_id, opts, :stop_operative, fn ->
-      do_stop_operative(namespace, operative_id)
+      do_stop_operative(namespace, operative_id, Keyword.get(opts, :preserve_state, false))
     end)
   end
 
-  defp do_stop_operative(namespace, operative_id) do
+  defp do_stop_operative(namespace, operative_id, preserve_state?) do
     with_operative_pid(namespace, operative_id, fn operative_pid ->
       # Read the entity count before the stop tears the operative down — the
       # operative is gone afterwards and the count is needed to release the
@@ -329,7 +330,10 @@ defmodule Flezha.Service.OperativeManager do
       case GenServer.call(operative_pid, :stop_operative) do
         :ok ->
           _ = Flezha.Service.PluginManager.disable_operative_plugins(namespace, operative_id)
-          _ = delete_operative_state_dir(operative_id)
+          # A stop that is a move — a rescale taking the group down to
+          # redistribute its Entities — keeps the files: they are the state
+          # about to be handed to another member, not garbage.
+          unless preserve_state?, do: delete_operative_state_dir(operative_id)
           _ = Flezha.AuthZ.Quotas.record_deallocation(namespace, :max_operatives, 1)
 
           if seg_count > 0 do
@@ -774,22 +778,42 @@ defmodule Flezha.Service.OperativeManager do
   def namespace_of(operative_id, opts \\ []) when is_binary(operative_id) do
     except = opts |> Keyword.get(:except) |> normalize_namespace()
 
-    HubManager.get_running_namespaces()
-    |> Enum.map(&to_string/1)
-    # Namespaces hosted only on peer nodes: `exist?/2` probes them through the
-    # routed pid lookup, so the answer is cluster-wide.
-    |> Enum.concat(Directory.namespaces())
-    |> Enum.uniq()
+    candidate_namespaces()
     |> Enum.reject(&(&1 == except))
-    |> Enum.find(&exist?(&1, operative_id))
-    |> case do
-      nil -> :error
-      namespace -> {:ok, namespace}
-    end
+    |> first_namespace(&exist?(&1, operative_id))
   end
 
   defp normalize_namespace(nil), do: nil
   defp normalize_namespace(namespace), do: to_string(namespace)
+
+  @doc """
+  The namespace whose registry holds members of the partition group
+  `group_id`, or `:error`.
+
+  A group id names no operative, so `namespace_of/1` cannot find it; this
+  answers the same question for the one that names N.
+  """
+  @spec namespace_of_group(String.t()) :: {:ok, String.t()} | :error
+  def namespace_of_group(group_id) when is_binary(group_id) do
+    first_namespace(candidate_namespaces(), &(PartitionGroup.members(&1, group_id) != []))
+  end
+
+  # Every namespace this cluster might hold the answer in: the ones running
+  # here plus the ones only a peer node hosts. `exist?/2` and the group read
+  # both probe through the routed lookup, so either answer is cluster-wide.
+  defp candidate_namespaces do
+    HubManager.get_running_namespaces()
+    |> Enum.map(&to_string/1)
+    |> Enum.concat(Directory.namespaces())
+    |> Enum.uniq()
+  end
+
+  defp first_namespace(namespaces, holds?) do
+    case Enum.find(namespaces, holds?) do
+      nil -> :error
+      namespace -> {:ok, namespace}
+    end
+  end
 
   @doc """
   Whole-Operative read: every Procedure's Entity state as one JSON blob. The

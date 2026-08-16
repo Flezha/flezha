@@ -204,3 +204,39 @@ and the plugin id, so an operator can observe a saturating cycle without parsing
 - **THEN** the depth SHALL be observable through telemetry so a runaway cycle is visible to an
   operator
 
+### Requirement: Forwarding to a partitioned target SHALL route each message by key hash
+When the configured `target_operative_id` names a partition group (N ≥ 2 members), the provider SHALL resolve the member set and ranges at init, keep one forward worker per target member (the existing `{plugin_id, target}` worker keying), and route each message in `forward/2` to the member whose key-group range contains `fnv1a128(flz.key) mod 256`. Per-partition workers preserve per-member FIFO; a slow member SHALL NOT head-of-line-block deliveries to other members. A target with one member behaves byte-identically to today. A not-yet-started member is tolerated exactly as a not-yet-started target is today (the worker retries).
+
+#### Scenario: Keyed outputs land on the owning partition
+- **WHEN** a keyed stream output with `flz.key: "BTC-USD"` is forwarded to a 2-partition target
+- **THEN** it is enqueued on the worker of exactly the member whose range contains that key's group, and repeated outputs for the same key always take the same member
+
+#### Scenario: Single-member target unchanged
+- **WHEN** the target has one member (or is an ordinary operative)
+- **THEN** forwarding behavior, worker count, and delivery semantics are identical to before this change
+
+#### Scenario: One slow partition does not block the others
+- **WHEN** one target member is unreachable and its worker is retrying
+- **THEN** deliveries to the other members continue unaffected
+
+### Requirement: A message without `flz.key` SHALL be parked, never guessed
+When the target is partitioned, a message whose metadata carries no `flz.key` (an unkeyed stream emit, or any workflow-outbox output — those never carry a key) SHALL be parked via the DLQ store with the error `partitioned target requires keyed emit`, naming the source, target, and contract. The provider SHALL never round-robin or payload-hash an unkeyed message to a partitioned target.
+
+#### Scenario: Unkeyed emit parks with the named error
+- **WHEN** a message without `flz.key` reaches a forward whose target has 2+ members
+- **THEN** it is parked with the `partitioned target requires keyed emit` error and no partition receives it
+
+#### Scenario: Unkeyed messages to single-member targets still flow
+- **WHEN** a message without `flz.key` is forwarded to a single-member target
+- **THEN** it is delivered normally, exactly as today
+
+### Requirement: Fan-out worker lifecycle SHALL be complete
+With N workers per plugin, disabling or terminating the plugin SHALL stop all N workers (no worker may outlive its plugin), and `health/1` SHALL aggregate over all workers with the worst verdict winning.
+
+#### Scenario: Disable stops every worker
+- **WHEN** a forward plugin with 3 target-member workers is disabled
+- **THEN** all 3 workers are stopped and none remains registered
+
+#### Scenario: Health reflects the sickest worker
+- **WHEN** one of the 3 workers is commit-stalled
+- **THEN** `health/1` reports the stalled verdict, not the healthy majority

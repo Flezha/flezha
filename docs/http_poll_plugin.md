@@ -82,6 +82,23 @@ in `init_provider/1`, which is where a `--plugins` spec actually lands: the
 plugin decoder never builds the provider struct, so a check that only guarded
 `build/1` would never run for an operator.
 
+### Per-partition URLs
+
+`url` may carry `{{partition_index}}` and `{{partition_count}}`, substituted
+**exactly once** at `init_provider` from the partition identity a partitioned
+start's plugin fan-out injects:
+
+```
+url: "https://api.example/trades?shard={{partition_index}}&of={{partition_count}}"
+```
+
+Partition 1 of 3 then polls `…?shard=1&of=3`, and the poll worker itself needs
+no partition knowledge at all. URL validation runs on the **rendered** URL, so
+a substitution that lands in the scheme or the host is refused at init rather
+than at request time. A URL carrying a placeholder while the plugin has no
+partition identity is refused, naming the unresolved placeholder. See
+[`partitioned_operatives.md`](partitioned_operatives.md).
+
 A URL carrying credentials (`https://user:pass@host/…`) is refused — put the
 secret in `headers`. The default `plugin_id`, every log line, and every attach
 error use the URL with its userinfo and query stripped, because telemetry labels

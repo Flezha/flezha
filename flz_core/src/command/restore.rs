@@ -226,5 +226,91 @@ pub fn find_entity_slot(runner: &RunnerNode, entity_id: &[u8]) -> Option<Arc<Ent
         }
     }
 
-    None
+    find_dynamic_entity_slot(runner, entity_id)
+}
+
+/// A dynamic Entity has no slot until its first input, so the walk above
+/// cannot find one — but a restore names an Entity the controller HAS durable
+/// state for, and materializing it here is what lets a dynamic key survive a
+/// rebind instead of silently cold-starting on top of its own WAL. It is also
+/// what carries a key across a partition rescale, where the state moved into
+/// another member's tree before that member ever saw the key.
+///
+/// Cold-start-on-recreate stays the rule for an *evicted* Entity: eviction
+/// deletes its files, so no restore is ever shipped for one.
+fn find_dynamic_entity_slot(runner: &RunnerNode, entity_id: &[u8]) -> Option<Arc<EntitySlot>> {
+    let (instance_id, procedure_name, entity_key) = decode_entity_identity(entity_id)?;
+    let instance = runner.get_operatives().get(&instance_id).cloned()?;
+    let procedure_id = *instance
+        .topology
+        .procedure_name_to_id
+        .get(procedure_name.as_str())?;
+
+    instance
+        .dynamic_registries
+        .get(procedure_id as usize)?
+        .as_ref()?
+        .get_or_create(&entity_key)
+        .ok()
+}
+
+/// The inverse of `flusher::encode_entity_identity`:
+/// `[len u8][operative_class][len u8][procedure][len u16 BE][entity_key]`.
+fn decode_entity_identity(bytes: &[u8]) -> Option<(String, String, String)> {
+    let take = |offset: &mut usize, len: usize| -> Option<String> {
+        let end = offset.checked_add(len)?;
+        let slice = bytes.get(*offset..end)?;
+        *offset = end;
+        std::str::from_utf8(slice).ok().map(str::to_owned)
+    };
+
+    let mut offset = 0usize;
+    let class_len = *bytes.first()? as usize;
+    offset += 1;
+    let class = take(&mut offset, class_len)?;
+
+    let procedure_len = *bytes.get(offset)? as usize;
+    offset += 1;
+    let procedure = take(&mut offset, procedure_len)?;
+
+    let key_len = u16::from_be_bytes([*bytes.get(offset)?, *bytes.get(offset + 1)?]) as usize;
+    offset += 2;
+    let key = take(&mut offset, key_len)?;
+
+    if offset == bytes.len() {
+        Some((class, procedure, key))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::decode_entity_identity;
+    use crate::flusher::encode_entity_identity;
+
+    #[test]
+    fn round_trips_the_identity_a_restore_names() {
+        let encoded = encode_entity_identity("ohlc#p1", "candle_procedure", "BTC-USD");
+
+        assert_eq!(
+            decode_entity_identity(&encoded),
+            Some((
+                "ohlc#p1".to_string(),
+                "candle_procedure".to_string(),
+                "BTC-USD".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn refuses_a_truncated_or_over_long_identity() {
+        let encoded = encode_entity_identity("class", "procedure", "key");
+
+        assert_eq!(decode_entity_identity(&encoded[..encoded.len() - 1]), None);
+
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        assert_eq!(decode_entity_identity(&trailing), None);
+    }
 }

@@ -405,6 +405,13 @@ fn deliver_to_consumer(
             let Some(key) = key else {
                 return Ok(());
             };
+            // A key this member does not own means the source and the topology
+            // disagree about what a key is. Refuse on the first frame — before
+            // `get_or_create` mints an Entity — so a misconfigured group parks
+            // its traffic instead of folding half of it into private state.
+            if instance.partition.partitioned() {
+                instance.partition.admit(&key)?;
+            }
             if let Ok(slot) = registry.get_or_create(&key) {
                 enqueue(
                     &slot,
@@ -434,7 +441,22 @@ fn deliver_to_consumer(
             let key_to_idx = instance
                 .entity_key_to_idx
                 .get(consumer_procedure_id as usize);
+            let partition = instance.partition;
             let deliver_idx = |idx: usize| {
+                // A statically keyed class partitions by leaving its
+                // out-of-range declared Entities idle: one filter here covers
+                // the named-key routes and the broadcast alike. Unlike a
+                // dynamic key this is never a park — a declared entity the
+                // member does not own is not a mis-route, it is somebody
+                // else's entity.
+                if partition.partitioned()
+                    && !consumer
+                        .entity_keys
+                        .get(idx)
+                        .is_some_and(|key| partition.owns(key))
+                {
+                    return;
+                }
                 if let Some(slot) = entities.get(idx) {
                     enqueue(
                         slot,

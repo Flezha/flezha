@@ -28,6 +28,8 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
     * `:plugin_id`            — string, defaults to the enabling plugin's id
   """
 
+  alias Flezha.Operative.PartitionGroup
+  alias Flezha.Partition
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, ForwardWorker}
   alias Flezha.Plugin.ProviderBehaviour
@@ -37,6 +39,8 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   use ProviderBehaviour
 
   import ProviderBehaviour, only: [coerce_int: 1, parse_int: 2]
+
+  require Logger
 
   # The one default table. `defstruct`, the `build/1` allow-list, and the worker
   # opts all derive from it, so a new tunable is added in exactly one place.
@@ -48,7 +52,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   ]
 
   # Resolved by the host at prepare time, never settable by config.
-  @injected_opts [:worker_pid, :source_namespace, :source_operative_id]
+  @injected_opts [:worker_pid, :routes, :source_namespace, :source_operative_id]
 
   @enforce_keys [:target_operative_id]
   defstruct @enforce_keys ++ [:plugin_id] ++ @injected_opts ++ @int_opts
@@ -69,45 +73,171 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
 
     with :ok <- validate_target(target, source_namespace, source_operative_id),
          plugin_id = Map.get(opts, :plugin_id) || default_plugin_id(source_operative_id, target),
-         {:ok, worker_pid} <-
-           ForwardSup.ensure_worker(
-             [
-               plugin_id: plugin_id,
-               source_namespace: source_namespace,
-               source_operative_id: source_operative_id,
-               target_operative_id: target
-             ] ++ tunables(opts)
-           ) do
+         {:ok, routes} <-
+           ensure_workers(plugin_id, source_namespace, source_operative_id, target, opts) do
       opts =
         opts
         |> Map.put(:plugin_id, plugin_id)
-        |> Map.put(:worker_pid, worker_pid)
+        |> Map.put(:routes, routes)
+        |> Map.put(:worker_pid, hd(routes).pid)
 
-      {:ok, opts, worker_pid}
+      {:ok, opts, hd(routes).pid}
     end
+  end
+
+  @doc """
+  Stop every worker this plugin owns. The host tracks one `:owned_pid`; a
+  partitioned target has one worker per member, and this is what keeps the
+  other N−1 from outliving the plugin.
+  """
+  @impl true
+  @spec terminate_provider(map()) :: :ok
+  def terminate_provider(opts) do
+    plugin_id = Map.get(opts, :plugin_id)
+
+    for %{id: member_id} <- Map.get(opts, :routes, []), is_binary(plugin_id) do
+      ForwardSup.stop_worker({plugin_id, member_id})
+    end
+
+    :ok
   end
 
   def on_input(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
   def on_output(%Ctx.IO{} = ctx, opts), do: forward(ctx, opts)
 
   defp forward(%Ctx.IO{message: message, metadata: metadata} = ctx, opts) do
-    :ok = ForwardWorker.enqueue(Map.fetch!(opts, :worker_pid), message, metadata)
+    case route(Map.fetch!(opts, :routes), metadata) do
+      {:ok, %{pid: pid}} ->
+        :ok = ForwardWorker.enqueue(pid, message, metadata)
+
+      {:error, reason} ->
+        park_unroutable(opts, message, metadata, reason)
+    end
+
     {:ok, ctx}
   end
 
+  # One member: everything goes there, keyed or not — today's behaviour.
+  defp route([route], _metadata), do: {:ok, route}
+
+  # A partitioned target: the key decides, and only the key. Round-robin or a
+  # payload hash would scatter one key across partitions and detonate
+  # downstream, where the cause is invisible.
+  defp route(routes, metadata) do
+    case Map.get(metadata || %{}, "flz.key") do
+      key when is_binary(key) and key != "" ->
+        case Partition.owner_of(routes, key) do
+          nil ->
+            {:error,
+             "key #{inspect(key)} hashes to group #{Partition.group_of(key)}, " <>
+               "owned by no member"}
+
+          route ->
+            {:ok, route}
+        end
+
+      _ ->
+        {:error, "partitioned target requires keyed emit"}
+    end
+  end
+
+  # Never guessed, never dropped: an unroutable message is parked under the
+  # source's DLQ identity with the contract it violated.
+  defp park_unroutable(opts, message, metadata, reason) do
+    source = Map.get(opts, :source_operative_id)
+    target = Map.get(opts, :target_operative_id)
+
+    Logger.warning(
+      "[Plugin.Provider.OperativeForward] parking undeliverable payload " <>
+        "source=#{inspect(source)} target=#{inspect(target)}: #{reason}"
+    )
+
+    _ =
+      Flezha.Dlq.Store.append(%{
+        operative_class: source,
+        procedure_id: "operative_forward",
+        entity_key: target,
+        channel: Map.get(metadata || %{}, "channel", "operative_forward"),
+        origin_offset: nil,
+        error:
+          "#{reason} — forwarding from #{source} to partitioned target #{target}; " <>
+            "emit with a key (`ctx.emit_keyed`) so the owning partition can be resolved",
+        attempts: 1,
+        payload: message
+      })
+
+    :ok
+  end
+
   @doc """
-  Health verdict: the worker being alive. Delivery failure is not unhealthiness
-  — an unreachable peer is retried, and convergence is already healing it.
+  Health verdict: every worker alive. Delivery failure is not unhealthiness —
+  an unreachable peer is retried, and convergence is already healing it — but a
+  worker that is gone is, and with a fan-out the worst verdict is the one that
+  matters.
   """
   @impl true
   @spec health(map()) :: ProviderBehaviour.health_verdict()
   def health(opts) do
+    case Map.get(opts, :routes) do
+      routes when is_list(routes) and length(routes) > 1 ->
+        routes
+        |> Enum.map(&worker_verdict(Map.put(opts, :worker_pid, &1.pid)))
+        |> Enum.find(:healthy, &(&1 != :healthy))
+
+      _ ->
+        worker_verdict(opts)
+    end
+  end
+
+  defp worker_verdict(opts) do
     ProviderBehaviour.worker_health(
       opts,
       [pid: [:worker_pid, :owned_pid], absent: :no_worker, dead: :worker_dead],
       fn _pid -> :healthy end
     )
   end
+
+  # One worker per target member — the existing `{plugin_id, target}` keying
+  # already distinguishes them. Per-member workers rather than one router
+  # because a worker is one queue with one in-flight slot: a shared one would
+  # head-of-line-block every partition behind the slowest, and per-key ordering
+  # only needs per-member FIFO.
+  defp ensure_workers(plugin_id, source_namespace, source_operative_id, target, opts) do
+    target
+    |> target_members(source_namespace)
+    |> Enum.reduce_while({:ok, []}, fn {member_id, range}, {:ok, acc} ->
+      case ForwardSup.ensure_worker(
+             [
+               plugin_id: plugin_id,
+               source_namespace: source_namespace,
+               source_operative_id: source_operative_id,
+               target_operative_id: member_id
+             ] ++ tunables(opts)
+           ) do
+        {:ok, pid} -> {:cont, {:ok, [%{id: member_id, range: range, pid: pid} | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, routes} -> {:ok, Enum.reverse(routes)}
+      err -> err
+    end
+  end
+
+  # `{member_id, range}` per target member. An ordinary operative — including a
+  # target that is not started yet — is one member owning the whole space, which
+  # is what keeps a single-member target byte-identical to before partitioning.
+  defp target_members(target, namespace) do
+    case group_members(namespace, target) do
+      [] -> [{target, {0, Partition.key_groups() - 1}}]
+      members -> Enum.map(members, &{&1.id, &1.partition.range})
+    end
+  end
+
+  defp group_members(namespace, target) when is_binary(namespace),
+    do: PartitionGroup.members(namespace, target)
+
+  defp group_members(_namespace, _target), do: []
 
   # ---------- enable-time refusals ----------
 

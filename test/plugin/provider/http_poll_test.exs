@@ -677,6 +677,60 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       "Connection: close\r\n\r\n" <> config.body
   end
 
+  describe "partition placeholders" do
+    test "are rendered once at init, so the poll worker needs no partition knowledge" do
+      assert {:ok, opts} =
+               HttpPoll.init_provider(%{
+                 url:
+                   "https://api.example/trades?shard={{partition_index}}&of={{partition_count}}",
+                 channel: @channel,
+                 partition_index: 1,
+                 partition_count: 3,
+                 key_group_from: 85,
+                 key_group_to: 169
+               })
+
+      assert opts.url == "https://api.example/trades?shard=1&of=3"
+    end
+
+    test "a placeholder with no partition identity is refused, naming it" do
+      assert {:error, message} =
+               HttpPoll.init_provider(%{
+                 url: "https://api.example/trades?shard={{partition_index}}",
+                 channel: @channel
+               })
+
+      assert message =~ "{{partition_index}}"
+      assert message =~ "no partition identity"
+    end
+
+    test "validation sees the rendered url, not the template" do
+      # The substitution lands in the scheme, so only a check that runs AFTER
+      # rendering can catch it — at init, not at request time.
+      assert {:error, message} =
+               HttpPoll.init_provider(%{
+                 url: "{{partition_index}}://api.example/x",
+                 channel: @channel,
+                 partition_index: 1,
+                 partition_count: 3
+               })
+
+      assert message =~ "http or https"
+    end
+
+    test "a url without placeholders is untouched by a partitioned plugin" do
+      assert {:ok, opts} =
+               HttpPoll.init_provider(%{
+                 url: "https://api.example/trades",
+                 channel: @channel,
+                 partition_index: 2,
+                 partition_count: 3
+               })
+
+      assert opts.url == "https://api.example/trades"
+    end
+  end
+
   defp reason_phrase(200), do: "OK"
   defp reason_phrase(302), do: "Found"
   defp reason_phrase(503), do: "Service Unavailable"

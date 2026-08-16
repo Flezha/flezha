@@ -11,9 +11,69 @@ use crate::entity::EntitySlot;
 use crate::operative::topology::{EntityMode, OperativeTopology};
 use crate::persistence::resolve_persistence_enabled;
 
+/// The key-group range one partition member owns, straight off its
+/// `AddOperative`.
+///
+/// A partitioned operative runs as N ordinary instances, each owning a
+/// contiguous slice of the 256 key groups. The range is shipped explicitly
+/// rather than derived from `(index, count)` so a rescale's recomputed ranges
+/// need no format change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyGroupRange {
+    pub index: u32,
+    pub count: u32,
+    pub from: u32,
+    pub to: u32,
+}
+
+impl KeyGroupRange {
+    /// The whole key space, guard inert — every operative that predates
+    /// partitioning, and every `--partitions 1` start.
+    pub const UNPARTITIONED: Self = Self {
+        index: 0,
+        count: 0,
+        from: 0,
+        to: crate::util::KEY_GROUPS - 1,
+    };
+
+    /// Whether the dispatch guard applies at all. One comparison; an
+    /// unpartitioned operative pays exactly this and nothing else.
+    #[inline]
+    pub fn partitioned(&self) -> bool {
+        self.count >= 2
+    }
+
+    /// `Err` naming the violated contract when `key` belongs to another
+    /// member. A mis-routed key means the source and the topology disagree
+    /// about what a key is, so the message states the rule rather than the
+    /// symptom.
+    pub fn admit(&self, key: &str) -> Result<(), String> {
+        let group = crate::util::key_group(key);
+        if group >= self.from && group <= self.to {
+            return Ok(());
+        }
+        Err(format!(
+            "key '{}' hashes to key group {}, which partition {} of {} does not own \
+             (it owns groups {}..{}) — the routing item / flz.key must equal the key_by result",
+            key, group, self.index, self.count, self.from, self.to
+        ))
+    }
+
+    /// Whether `key` belongs here — the filtering form for a statically keyed
+    /// procedure, whose out-of-range declared Entities stay idle rather than
+    /// parking every broadcast.
+    #[inline]
+    pub fn owns(&self, key: &str) -> bool {
+        !self.partitioned() || self.admit(key).is_ok()
+    }
+}
+
 pub struct StreamInstance {
     pub topology: Arc<OperativeTopology>,
     pub instance_id: Arc<str>,
+    /// This instance's partition identity, from `AddOperative`. Immutable
+    /// start-time truth; a rebind re-ships it.
+    pub partition: KeyGroupRange,
     /// Indexed by `ProcedureId`. Each entry is a Vec of entities for that
     /// Procedure. Single-mode procedures have one entry; static-mode procedures have
     /// `entity_keys().len()` entries; dynamic-mode procedures have none (their
@@ -44,19 +104,20 @@ pub struct StreamInstance {
 
 impl StreamInstance {
     /// Construct a fresh `StreamInstance` with no runner persistence
-    /// override. Equivalent to
-    /// `StreamInstance::with_persistence_override(.., None)`.
+    /// override and no partitioning. Equivalent to
+    /// `StreamInstance::with_options(.., None, KeyGroupRange::UNPARTITIONED)`.
     pub fn new(topology: Arc<OperativeTopology>, instance_id: Arc<str>) -> Arc<Self> {
-        Self::with_persistence_override(topology, instance_id, None)
+        Self::with_options(topology, instance_id, None, KeyGroupRange::UNPARTITIONED)
     }
 
     /// Construct a fresh `StreamInstance` with an explicit runner
-    /// override for `operative_persistence.<OperativeClass>`. The runner
-    /// override (when `Some`) wins over the class const.
-    pub fn with_persistence_override(
+    /// override for `operative_persistence.<OperativeClass>` (when `Some`, it
+    /// wins over the class const) and an explicit partition range.
+    pub fn with_options(
         topology: Arc<OperativeTopology>,
         instance_id: Arc<str>,
         operator_override: Option<bool>,
+        partition: KeyGroupRange,
     ) -> Arc<Self> {
         let persistence_enabled =
             resolve_persistence_enabled(topology.persistence_enabled_const, operator_override);
@@ -139,6 +200,7 @@ impl StreamInstance {
                 host_prepare: Mutex::new(crate::host::HostPrepareState::default()),
                 topology,
                 instance_id,
+                partition,
                 entities,
                 entity_key_to_idx,
                 dynamic_registries,

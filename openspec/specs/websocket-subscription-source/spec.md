@@ -180,3 +180,29 @@ metadata.
 - **GIVEN** a poll that fails with a network error
 - **WHEN** an operator inspects the plugin
 - **THEN** the last error SHALL name the failure
+
+### Requirement: The desired item set SHALL be filtered to the partition's key groups
+When a websocket plugin's opts carry `partition_index`/`partition_count` (with a key-group range), the desired set derived from a subscription poll SHALL be filtered — between decode and reconcile — to items whose `fnv1a128(item) mod 256` falls in the partition's owned range. Everything downstream (applied set, delta frames, durable `applied_subscriptions`, connect-time re-assert) derives from the filtered desired set. Without partition opts, behavior is unchanged.
+
+#### Scenario: Each partition subscribes only to its share
+- **WHEN** the items endpoint publishes 9 items and a member of a 3-partition group polls it
+- **THEN** the member's desired set contains only the items hashing into its range, its subscribe deltas name only those items, and its durable applied set never contains another member's item
+
+#### Scenario: Item churn stays partition-correct
+- **WHEN** a new item appears in the polled list
+- **THEN** exactly the member owning that item's key group subscribes to it, and no other member does
+
+#### Scenario: Unpartitioned plugins are unchanged
+- **WHEN** a plugin has no partition opts
+- **THEN** the desired set is the full decoded item list, exactly as before
+
+### Requirement: A static `subscription_items` opt SHALL provide the item list without a poll
+The provider SHALL accept `subscription_items` — a literal item list feeding the same desired/reconcile machinery as a poll result — mutually exclusive with `subscription_url` (declaring both SHALL be refused at build/init). The static list SHALL pass through the same partition filter. `post_connect` remains an opaque boot frame and is never filtered.
+
+#### Scenario: Static list drives reconcile
+- **WHEN** a plugin declares `subscription_items` and connects
+- **THEN** subscribe deltas for (the partition-filtered subset of) those items are sent and ack-gated exactly as for a polled list
+
+#### Scenario: Both sources declared is refused
+- **WHEN** opts declare both `subscription_url` and `subscription_items`
+- **THEN** the plugin is refused at init with an error naming the conflict

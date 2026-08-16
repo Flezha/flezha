@@ -387,6 +387,10 @@ defmodule Flezha.Plugin.Extension.Table do
   """
   @spec teardown_all(t()) :: t()
   def teardown_all(%__MODULE__{} = table) do
+    Enum.each(table.plugins, fn {plugin_id, plugin} ->
+      terminate_provider(table, plugin_id, plugin)
+    end)
+
     Enum.each(table.owned_pids, fn {_plugin_id, {pid, ref}} ->
       safe_demonitor(ref)
       safe_kill(pid)
@@ -756,7 +760,9 @@ defmodule Flezha.Plugin.Extension.Table do
 
   ## Private — unsubscribe
 
-  defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{subscriptions: subs}) do
+  defp do_unsubscribe(%__MODULE__{} = table, plugin_id, %Plugin{subscriptions: subs} = plugin) do
+    terminate_provider(table, plugin_id, plugin)
+
     table =
       Enum.reduce(subs, table, fn {name, _sub_opts}, acc ->
         remove_subscription(acc, name, plugin_id)
@@ -792,6 +798,32 @@ defmodule Flezha.Plugin.Extension.Table do
         retries: Map.delete(table.retries, plugin_id),
         started_at: Map.delete(table.started_at, plugin_id)
     }
+  end
+
+  # Let a provider release what the host cannot see. `:owned_pid` is the one
+  # process the table tracks; a provider that fans out (one worker per target
+  # partition) owns more, and this is where they are stopped.
+  defp terminate_provider(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
+    if function_exported?(provider, :terminate_provider, 1) do
+      try do
+        provider.terminate_provider(with_owned_pid(table, plugin_id, opts))
+      catch
+        kind, reason ->
+          Logger.warning(
+            "[Extension.Table] terminate_provider raised for plugin_id=#{plugin_id}: " <>
+              "#{inspect(kind)} #{inspect(reason)}"
+          )
+      end
+    end
+
+    :ok
+  end
+
+  defp with_owned_pid(table, plugin_id, opts) do
+    case Map.get(table.owned_pids, plugin_id) do
+      {pid, _ref} -> Map.put(opts, :owned_pid, pid)
+      nil -> opts
+    end
   end
 
   defp remove_subscription(table, name, plugin_id) do

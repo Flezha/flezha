@@ -16,7 +16,14 @@ impl CommandAction for MigrationDeserialization {
         _message: &str,
         errors: &mut Vec<String>,
     ) -> (String, Vec<u8>) {
-        match runner.start_operative(self.factory_id.clone(), self.operative_id.clone()) {
+        // A hot-swap handover carries no partition identity: the destination's
+        // `AddOperative` ran first and already registered the instance with
+        // its range, so this call resolves to that instance.
+        match runner.start_operative(
+            self.factory_id.clone(),
+            self.operative_id.clone(),
+            crate::operative::instance::KeyGroupRange::UNPARTITIONED,
+        ) {
             Some(instance) => {
                 if !self.serialized_state.is_empty() {
                     let json_str = match std::str::from_utf8(&self.serialized_state) {

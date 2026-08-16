@@ -48,6 +48,37 @@ defmodule Flezha.Plugin do
   end
 
   @doc """
+  Point this plugin at one member of a partition group.
+
+  The one definition of what a fanned-out plugin instance is: the member's
+  operative id, the member's `#pK` appended to the plugin id (which is also
+  what keeps this node's plugin ids unique when two members land on it), and
+  the member's partition opts merged in as integers. `plugin_id` is
+  deliberately not injected — providers that key workers by it default to a
+  per-member-unique value, and an injected shared one would collide.
+
+  Re-applying it to an already-fanned-out plugin re-points it: the suffix is
+  replaced, never stacked, which is what lets a rescale mint member `k` of the
+  new set from member `0` of the old one.
+  """
+  @spec for_partition(t(), binary(), map()) :: t()
+  def for_partition(%__MODULE__{} = plugin, member_id, identity) do
+    %__MODULE__{
+      plugin
+      | id: base_id(plugin.id) <> Flezha.Partition.member_suffix(identity.index),
+        operative_id: member_id,
+        opts: Map.merge(plugin.opts, Flezha.Partition.provider_opts(identity))
+    }
+  end
+
+  defp base_id(plugin_id) do
+    case Flezha.Partition.split_member_suffix(plugin_id) do
+      {base, _index} -> base
+      :error -> plugin_id
+    end
+  end
+
+  @doc """
   Strip transient fields that cannot be persisted across a BEAM
   restart, returning a value safe to embed in any persistence layer
   (HotSwap handover state, ProcessHub child-spec, cluster snapshots,

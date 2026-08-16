@@ -13,6 +13,7 @@ pub fn handle_operative_command(args: &[String]) {
 
     match args[0].as_str() {
         "start" => handle_start(args),
+        "scale" => handle_scale(args),
         "stop" => handle_stop(args),
         "state" => handle_state(args),
         "list" => handle_list(args),
@@ -24,7 +25,7 @@ pub fn handle_operative_command(args: &[String]) {
         "help" | "--help" | "-h" => print_operative_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'start', 'stop', 'state', 'list', 'info', 'io_listen', 'send', 'rewind', 'replay', or 'help'.",
+                "Error: Invalid argument '{}'. Use 'start', 'scale', 'stop', 'state', 'list', 'info', 'io_listen', 'send', 'rewind', 'replay', or 'help'.",
                 args[0]
             );
             exit(1);
@@ -33,7 +34,7 @@ pub fn handle_operative_command(args: &[String]) {
 }
 
 fn handle_start(args: &[String]) {
-    let example_usage = "Usage: flz operative start <operative_id> <factory_id> [--kind <stream|workflow>] [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>]";
+    let example_usage = "Usage: flz operative start <operative_id> <factory_id> [--kind <stream|workflow>] [--namespace <namespace> | -n <namespace>] [--init_values <json> | -iv <json>] [--plugins <json-array>] [--partitions <N>]";
 
     if args.len() < 3 {
         eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
@@ -61,6 +62,10 @@ fn handle_start(args: &[String]) {
         opts.insert("snapshot_interval".to_string(), spt);
     }
 
+    if let Some(partitions) = extract_param(&args[3..], "--partitions", "--partitions") {
+        opts.insert("partitions".to_string(), partitions);
+    }
+
     let opts_json = serde_json::to_string(&opts).unwrap();
     let command = get_flezha_command();
     let namespace = get_namespace(&args[3..]);
@@ -83,6 +88,47 @@ fn handle_start(args: &[String]) {
     println!("Starting operative...");
 
     let status = Command::new(command)
+        .arg("rpc")
+        .arg(rpc_command)
+        .status()
+        .expect("Failed to execute command");
+
+    if !status.success() {
+        eprintln!("Error: Command execution failed.");
+        exit(1);
+    }
+}
+
+/// `flz operative scale <group> <partitions>` — rescale a partition group.
+/// The group is quiesced, every Entity whose key group changes owner is moved,
+/// and the new member set is started; a refusal changes nothing.
+fn handle_scale(args: &[String]) {
+    let example_usage = "Usage: flz operative scale <group> <partitions> [--namespace <namespace> | -n <namespace>] [--timeout <ms>]";
+
+    if args.len() < 3 {
+        eprintln!("Error: Invalid number of arguments.\n {}", example_usage);
+        exit(1);
+    }
+
+    let group_id = &args[1];
+    let partitions = &args[2];
+
+    let mut opts: HashMap<String, String> = HashMap::new();
+    if let Some(timeout) = extract_param(&args[3..], "--timeout", "-t") {
+        opts.insert("timeout_ms".to_string(), timeout);
+    }
+
+    let rpc_command = format!(
+        "Flezha.Service.CliManager.operative_scale(\"{}\", \"{}\", \"{}\", \"{}\")",
+        get_namespace(&args[3..]),
+        group_id,
+        partitions,
+        escape_rpc_arg(&serde_json::to_string(&opts).unwrap()),
+    );
+
+    println!("Scaling operative group {} to {}...", group_id, partitions);
+
+    let status = Command::new(get_flezha_command())
         .arg("rpc")
         .arg(rpc_command)
         .status()
@@ -474,6 +520,7 @@ fn print_operative_help() {
     println!();
     println!("COMMANDS:");
     println!("    start       Start an operative");
+    println!("    scale       Rescale a partition group to N partitions");
     println!("    stop        Stop an operative");
     println!("    state       Get operative state");
     println!("    list        List operatives");
@@ -485,6 +532,8 @@ fn print_operative_help() {
     println!("    help        Show this help message");
     println!();
     println!("EXAMPLES:");
+    println!("    flz operative start ohlc candles --partitions 3");
+    println!("    flz operative scale ohlc 5");
     println!("    flz operative send orchestrator --text '{{\"task\":\"refactor\"}}'");
     println!("    flz operative rewind chat-1 --to-iteration 3");
     println!("    flz operative replay candles/aggregate/BTC --from 1720000000000");

@@ -288,6 +288,8 @@ defmodule Flezha.Runner.ControlUnit do
       proc_journal: Keyword.get(operative.opts, :proc_journal)
     }
 
+    command = with_partition_identity(command, operative.opts)
+
     case ControlChannel.send_control(state.runner_id, {:add_operative, command}) do
       {:ok, ref} ->
         {:noreply, store_ref(state, ref, from)}
@@ -392,6 +394,25 @@ defmodule Flezha.Runner.ControlUnit do
   # outstanding reply — the backlog that grows silently on a dead transport.
   # `want_metadata` decides whether the reply also carries the reply frame's
   # metadata map.
+  # A partition member's owned key-group range, which arms the SDK's
+  # mis-route guard. Left untouched for an ordinary operative, so its
+  # `AddOperative` stays byte-identical: proto3 omits zero-valued scalars.
+  defp with_partition_identity(command, opts) do
+    case Flezha.Partition.identity(opts) do
+      %{index: index, count: count, range: {from, to}} when count >= 2 ->
+        %{
+          command
+          | partition_index: index,
+            partition_count: count,
+            key_group_from: from,
+            key_group_to: to
+        }
+
+      _ ->
+        command
+    end
+  end
+
   defp store_ref(state, ref, from, want_metadata \\ false) do
     entry = {:reply, from, System.monotonic_time(:millisecond), want_metadata}
     Map.put(state, :response_refs, Map.put(state.response_refs, ref, entry))

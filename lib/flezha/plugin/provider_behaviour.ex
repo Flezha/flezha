@@ -53,7 +53,18 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   """
   @callback inspect_state(opts :: map()) :: map() | nil
 
-  @optional_callbacks health: 1, inspect_state: 1
+  @doc """
+  Optional teardown for a provider that owns more processes than the single
+  `:owned_pid` the host tracks — the one hook a fan-out provider has to release
+  what the host cannot see.
+
+  Called by `Flezha.Plugin.Extension.Table` on both exits: a plugin disable
+  (`do_unsubscribe`) and an operative teardown (`teardown_all`). It must be
+  idempotent, since a disable followed by a stop calls it twice.
+  """
+  @callback terminate_provider(opts :: map()) :: :ok
+
+  @optional_callbacks health: 1, inspect_state: 1, terminate_provider: 1
 
   @doc """
   Shared `convert_value/2` result helpers: CLI plugin opts arrive as

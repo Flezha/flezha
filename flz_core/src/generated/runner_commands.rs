@@ -134,6 +134,21 @@ pub struct AddOperative {
     /// stream operative) — the driver then keeps the re-run-from-top behaviour.
     #[prost(message, optional, tag = "6")]
     pub proc_journal: ::core::option::Option<ProcJournalState>,
+    /// Partitioned operatives: this member's identity within its group. A
+    /// `partition_count` below 2 means unpartitioned — the whole key space is
+    /// this instance's, which is every operative that predates partitioning.
+    #[prost(uint32, tag = "7")]
+    pub partition_index: u32,
+    #[prost(uint32, tag = "8")]
+    pub partition_count: u32,
+    /// The inclusive key-group range (0..255) this member owns. Shipped
+    /// explicitly rather than derived from (index, count) so a rescale's
+    /// recomputed ranges — and a later weighted assignment — need no format
+    /// change. The SDK refuses a key hashing outside this range.
+    #[prost(uint32, tag = "9")]
+    pub key_group_from: u32,
+    #[prost(uint32, tag = "10")]
+    pub key_group_to: u32,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of AddOperative.
 /// Carries the operative class's SDK-side declarations (operative metadata)

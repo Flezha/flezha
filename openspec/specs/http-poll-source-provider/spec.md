@@ -66,3 +66,17 @@ Injection SHALL use the operative's confirming ingest, and the recorded hash SHA
 - **WHEN** the target entry channel carries `String` payloads (the Rust SDK seals entry types to `String`) and a response body is not valid UTF-8
 - **THEN** no frame SHALL be injected and the failure SHALL name the encoding, counting toward the health threshold
 
+### Requirement: The URL SHALL support partition placeholders rendered once at init
+The provider SHALL substitute `{{partition_index}}` and `{{partition_count}}` in the `url` opt exactly once, at `init_provider`, from the plugin's partition opts. URL validation SHALL run on the rendered URL. A URL containing these placeholders while the plugin has no partition opts SHALL be refused at init; all other URLs behave exactly as before.
+
+#### Scenario: Per-partition URL
+- **WHEN** a member of a 3-partition group declares `url: "https://api.example/trades?shard={{partition_index}}&of={{partition_count}}"`
+- **THEN** partition 1 polls `...?shard=1&of=3` and the poll worker itself needs no partition knowledge
+
+#### Scenario: Placeholder without partition opts is refused
+- **WHEN** an unpartitioned plugin's URL contains `{{partition_index}}`
+- **THEN** init refuses with an error naming the unresolved placeholder
+
+#### Scenario: Validation sees the rendered URL
+- **WHEN** the rendered URL is invalid (for example the substitution lands in the host position)
+- **THEN** init refuses via the existing URL validation, not at request time

@@ -112,23 +112,30 @@ defmodule Flezha.State.WalTransfer do
   @doc """
   Pull every file of `entity_id` from `source_node` into this node's state
   tree. `{:ok, 0}` means the source held nothing — a cold start is correct.
+
+  `:as` writes the files under a different Entity id — the same procedure and
+  key under another Operative class, which is what a partition rescale's
+  cross-controller move is. The entity key is unchanged, so every basename
+  resolves in the destination's layout.
   """
   @spec pull_entity(node(), entity_id(), keyword()) ::
           {:ok, non_neg_integer()} | {:error, term()}
   def pull_entity(source_node, entity_id, opts \\ [])
 
-  def pull_entity(source_node, _entity_id, _opts) when source_node == node(),
-    do: {:ok, 0}
+  def pull_entity(source_node, entity_id, opts) when source_node == node() do
+    if Keyword.get(opts, :as, entity_id) == entity_id, do: {:ok, 0}, else: {:error, :same_node}
+  end
 
   def pull_entity(source_node, {_, _, _} = entity_id, opts) do
     timeout = Keyword.get(opts, :timeout, @call_timeout_ms)
+    destination = Keyword.get(opts, :as, entity_id)
 
     case call(source_node, :manifest, [entity_id], timeout) do
       {:ok, []} ->
         {:ok, 0}
 
       {:ok, entries} ->
-        pull_all(source_node, entity_id, entries, timeout)
+        pull_all(source_node, entity_id, entries, timeout, destination)
 
       {:error, _} = err ->
         emit(:wal_pull_failed, %{entity_id: entity_id, reason: elem(err, 1)})
@@ -136,9 +143,65 @@ defmodule Flezha.State.WalTransfer do
     end
   end
 
-  defp pull_all(source_node, entity_id, names, timeout) do
+  @doc """
+  Move one Entity's whole durable file set to `destination`, wherever it
+  currently lives.
+
+  Same node: an atomic rename per file. Another node: the destination-pulled
+  chunked copy, and the source's copy is removed only after every file has
+  landed. Idempotent — a source that holds nothing is already moved, which is
+  what lets a crashed rescale be re-run.
+  """
+  @spec move_entity(node() | nil, entity_id(), entity_id()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def move_entity(source_node, source, destination)
+
+  def move_entity(_source_node, source, source), do: {:ok, 0}
+
+  def move_entity(source_node, source, destination)
+      when source_node in [nil] or source_node == node() do
+    files = Enum.filter(Registry.entity_files(source), &File.exists?/1)
+
+    if files == [] do
+      {:ok, 0}
+    else
+      File.mkdir_p!(Registry.state_dir(destination))
+
+      moved =
+        Enum.count(files, fn path ->
+          case Registry.entity_file_path(destination, Path.basename(path)) do
+            nil -> false
+            dest -> File.rename(path, dest) == :ok
+          end
+        end)
+
+      emit(:wal_moved, %{entity_id: source, destination: destination, files: moved})
+      {:ok, moved}
+    end
+  end
+
+  def move_entity(source_node, source, destination) do
+    case pull_entity(source_node, source, as: destination) do
+      {:ok, 0} ->
+        {:ok, 0}
+
+      {:ok, files} ->
+        # Only now: the destination copy is on disk and fsynced, so dropping
+        # the source can no longer lose the Entity.
+        _ = :erpc.call(source_node, Registry, :delete_files, [source], @call_timeout_ms)
+        emit(:wal_moved, %{entity_id: source, destination: destination, files: files})
+        {:ok, files}
+
+      err ->
+        err
+    end
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp pull_all(source_node, entity_id, names, timeout, destination) do
     Enum.reduce_while(names, {:ok, 0}, fn name, {:ok, done} ->
-      case pull_file(source_node, entity_id, name, timeout) do
+      case pull_file(source_node, entity_id, name, timeout, destination) do
         :ok ->
           {:cont, {:ok, done + 1}}
 
@@ -159,12 +222,14 @@ defmodule Flezha.State.WalTransfer do
 
   # `Registry.atomic_install/2` owns the `.transferring` → fsync → rename dance;
   # this only fills the handle it is given.
-  defp pull_file(source_node, {_, _, _} = entity_id, name, timeout) do
-    case Registry.entity_file_path(entity_id, name) do
+  defp pull_file(source_node, {_, _, _} = entity_id, name, timeout, destination) do
+    case Registry.entity_file_path(destination, name) do
       nil ->
         {:error, {:unknown_file, name}}
 
       dest ->
+        File.mkdir_p!(Registry.state_dir(destination))
+
         Registry.atomic_install(
           dest,
           &copy_chunks(source_node, entity_id, name, &1, 0, timeout)

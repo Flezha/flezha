@@ -123,12 +123,28 @@ defmodule Flezha.Operative.Replay do
     # so the WAL lives under `state/{operative_id}/...`. Enumerate by the same key.
     operative_class = Keyword.get(operative_opts, :operative_class, state.id)
     overwatch = self()
+    source_node = foreign_state_source(operative_opts)
 
     spawn(fn ->
+      # A partition rescale gathers the group's Entities on the node that ran
+      # it, so a member placed elsewhere pulls its class tree first. The
+      # restore below is the same one every bind runs, and it is what covers
+      # the case where the state is already local.
+      if source_node, do: Flezha.State.WalTransfer.pull_operative(source_node, operative_class)
       replay_persisted_entities(state.builder.kind, operative_class, runner_id, overwatch)
     end)
 
     :ok
+  end
+
+  # `:state_source_node` names the node an operative's durable state was last
+  # assembled on. Only a foreign one means anything — a local value is already
+  # where the ordinary restore looks.
+  defp foreign_state_source(operative_opts) do
+    case Keyword.get(operative_opts, :state_source_node) do
+      source when is_atom(source) and not is_nil(source) and source != node() -> source
+      _ -> nil
+    end
   end
 
   # Bind-time restore is capability-gated on `persistent_state?` (kind+class):

@@ -152,7 +152,8 @@ could not be read" is the whole point of treating a failure as no information.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `subscription_url` | — | the desired-set endpoint; unset means the static `post_connect` provider, unchanged |
+| `subscription_url` | — | the desired-set endpoint; unset (and no `subscription_items`) means the static `post_connect` provider, unchanged |
+| `subscription_items` | — | a literal item list feeding the same desired/reconcile machinery, for a set that needs no endpoint; mutually exclusive with `subscription_url` |
 | `subscription_interval_ms` | `30000` | poll cadence; minimum `1000` |
 | `subscription_headers` | `{}` | static request headers (JSON object via CLI) — the place for a bearer token |
 | `subscribe_template` | — | required with `subscription_url`; must contain `{{items}}` |
@@ -172,7 +173,33 @@ Each of these fails the enable and opens no connection:
 - a template with no `{{items}}` placeholder
 - malformed `subscription_headers`
 - an unrecognised `subscription_ack_mode`
+- declaring both `subscription_url` and `subscription_items` — a source is
+  either polled or literal
+- a `subscription_items` value that is not a list of non-empty strings
 - any unrecognised option
+
+## A partitioned member subscribes to its share only
+
+When the plugin's opts carry a partition identity — injected by a partitioned
+start's plugin fan-out, never written by hand — the desired set is filtered,
+between decode and reconcile, to items whose key group falls in the member's
+range:
+
+```
+group(item) = fnv1a128(item) mod 256
+```
+
+Everything downstream derives from the filtered set: the applied set, the delta
+frames, the durable `applied_subscriptions`, the connect-time re-assert. So
+each member asks upstream for only its own items — **no data is received and
+discarded**, and total bandwidth equals today's single connection, split. A
+literal `subscription_items` list passes through the same filter;
+`post_connect` remains an opaque boot frame and is never filtered.
+
+The item string must equal what the operative's `key_by` extracts. That is the
+one convention partitioning rests on, and the SDK turns a violation into a
+first-frame park naming it — see
+[`partitioned_operatives.md`](partitioned_operatives.md).
 
 ## Observability
 

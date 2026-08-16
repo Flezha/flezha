@@ -71,7 +71,18 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
   # Declaring `@known_opts` is what makes this provider strict: `use
   # ProviderBehaviour` generates both the `build/1` refusal and `validate_opts/1`.
-  @known_opts [:url, :channel, :plugin_id, :headers | Keyword.keys(@int_opts)]
+  @known_opts [
+                :url,
+                :channel,
+                :plugin_id,
+                :headers,
+                # Injected by a partition group's plugin fan-out, not written
+                # by hand. Only the two rendered into the URL are read here.
+                :partition_index,
+                :partition_count,
+                :key_group_from,
+                :key_group_to
+              ] ++ Keyword.keys(@int_opts)
 
   @impl true
   def plugin_type(), do: :io_binding
@@ -88,7 +99,8 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   """
   def init_provider(opts) do
     with :ok <- validate_opts(opts),
-         {:ok, url} <- HttpFetch.validate_url(Map.get(opts, :url), "http_poll"),
+         {:ok, raw_url} <- render_partition_placeholders(Map.get(opts, :url), opts),
+         {:ok, url} <- HttpFetch.validate_url(raw_url, "http_poll"),
          {:ok, channel} <- validate_channel(Map.get(opts, :channel)),
          {:ok, headers} <- HttpFetch.validate_headers(Map.get(opts, :headers), "http_poll"),
          {:ok, tunables} <- validate_tunables(opts),
@@ -176,6 +188,40 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   defdelegate redact(url), to: HttpFetch
 
   # ---------- attach-time refusals ----------
+
+  @partition_placeholders %{
+    "{{partition_index}}" => :partition_index,
+    "{{partition_count}}" => :partition_count
+  }
+
+  # Substitute the partition placeholders exactly once, here, so the poll
+  # worker needs no partition knowledge at all and validation sees the URL that
+  # will actually be requested — a substitution landing in the host position
+  # must not slip past it.
+  defp render_partition_placeholders(url, opts) when is_binary(url) do
+    rendered =
+      Enum.reduce(@partition_placeholders, url, fn {placeholder, key}, acc ->
+        case Map.get(opts, key) do
+          value when is_integer(value) ->
+            String.replace(acc, placeholder, Integer.to_string(value))
+
+          _ ->
+            acc
+        end
+      end)
+
+    case Enum.find(Map.keys(@partition_placeholders), &String.contains?(rendered, &1)) do
+      nil ->
+        {:ok, rendered}
+
+      unresolved ->
+        {:error,
+         "http_poll url carries #{unresolved} but this plugin has no partition identity — " <>
+           "the placeholder is filled by a partitioned start's plugin fan-out"}
+    end
+  end
+
+  defp render_partition_placeholders(url, _opts), do: {:ok, url}
 
   defp validate_channel(channel) when is_binary(channel) and channel != "", do: {:ok, channel}
 

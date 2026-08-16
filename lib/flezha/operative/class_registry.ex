@@ -111,6 +111,7 @@ defmodule Flezha.Operative.ClassRegistry do
   """
   @type declarations :: %{
           effectively_once: boolean(),
+          keyless: boolean(),
           checkpoint_ack: boolean(),
           compensable_procs: [non_neg_integer()] | nil,
           leaf_procs: [non_neg_integer()] | nil,
@@ -132,6 +133,9 @@ defmodule Flezha.Operative.ClassRegistry do
 
     %{
       effectively_once: Map.get(metadata, "effectively_once") == "true",
+      # The SDK declares `keyed` only when it is false — a class with no keyed
+      # entry-fed procedure, which cannot be partitioned.
+      keyless: Map.get(metadata, "keyed") == "false",
       checkpoint_ack: Map.get(metadata, "ack_granularity") == "checkpoint",
       compensable_procs: parse_ops(Map.get(metadata, "compensable_procs")),
       leaf_procs: parse_ops(Map.get(metadata, "leaf_procs")),
@@ -189,6 +193,33 @@ defmodule Flezha.Operative.ClassRegistry do
     put_compact_after_bytes(operative_class, declarations.compact_after_bytes)
     put_sync_durability(operative_class, declarations.sync_durability)
   end
+
+  @doc """
+  Record whether `factory_id`'s topology has no keyed entry-fed procedure.
+
+  The one declaration keyed by FACTORY rather than operative class:
+  partitionability is a property of the class's code, and every instance of a
+  factory answers identically. In-memory only — a restarted controller simply
+  learns again at the next bind, which is the same path a never-bound class
+  takes, and the SDK's own refusal is the authority either way.
+  """
+  @spec put_keyless(binary(), boolean()) :: :ok
+  def put_keyless(factory_id, keyless?) when is_binary(factory_id) and is_boolean(keyless?) do
+    ensure_table()
+    :ets.insert(@table, {{factory_id, :keyless}, keyless?})
+    :ok
+  end
+
+  @doc """
+  Whether `factory_id` is known to have no keyed entry-fed procedure. `false`
+  for a class that has never bound — the bind itself then refuses.
+  """
+  @spec keyless?(binary()) :: boolean()
+  def keyless?(factory_id) when is_binary(factory_id) do
+    ets_lookup({factory_id, :keyless}) == {:ok, true}
+  end
+
+  def keyless?(_factory_id), do: false
 
   @doc """
   Record whether `operative_class` requires its commit barriers to be remotely
