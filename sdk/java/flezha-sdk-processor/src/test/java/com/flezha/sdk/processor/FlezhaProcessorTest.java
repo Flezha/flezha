@@ -178,6 +178,26 @@ class FlezhaProcessorTest {
         assertThat(generated("t.Keyed", "t.KeyedProcedure", keyed)).contains("ctx.emitKeyed(t.Keyed.k(out), out);");
     }
 
+    @Test
+    void flatDequeFieldsGetSlidingWindowMutators() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.State;
+                import java.util.ArrayDeque;
+                import java.util.Deque;
+                @State
+                public class WindowState {
+                    public Deque<Double> ticks = new ArrayDeque<>();
+                }
+                """;
+        String change = generated("t.WindowState", "t.WindowStateChange", code);
+        assertThat(change).contains("pushBackTicks");
+        assertThat(change).contains("popFrontTicks");
+        assertThat(change).contains(".addLast(c.value)");
+        assertThat(change).contains("pollFirst()");
+    }
+
     /** Runs the processor over a well-formed source and returns the generated procedure's text. */
     private String generated(String fqn, String generatedFqn, String code) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();

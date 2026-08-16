@@ -201,6 +201,39 @@ public final class FlezhaProcessor extends AbstractProcessor {
                         .append(".add(c.value); return; }\n");
                 handleMethods.append(handleMutator(changeSimple, "push" + pascal, etype));
             }
+
+            // PushBack<Field>(E) + PopFront<Field>(int) for Deque<E> — the same
+            // deltas MAP_DEQUE records, for a window whose entity key already is
+            // what the map would have keyed by. Without them a per-entity window
+            // could only journal whole-collection sets.
+            TypeMirror dequeElem = dequeElement(f.asType());
+            if (dequeElem != null) {
+                String etype = dequeElem.toString();
+                String pushVar = "PushBack" + pascal;
+                variantClasses.add(pushVar);
+                b.append(factory(changeSimple, "pushBack" + pascal, etype, pushVar));
+                b.append(variant(changeSimple, pushVar, etype));
+                applyBody
+                        .append("        if (change instanceof ")
+                        .append(pushVar)
+                        .append(" c) { state.")
+                        .append(fname)
+                        .append(".addLast(c.value); return; }\n");
+                handleMethods.append(handleMutator(changeSimple, "pushBack" + pascal, etype));
+
+                String popVar = "PopFront" + pascal;
+                variantClasses.add(popVar);
+                b.append(countProcFactory(changeSimple, "popFront" + pascal, popVar));
+                b.append(countProcVariant(changeSimple, popVar));
+                applyBody
+                        .append("        if (change instanceof ")
+                        .append(popVar)
+                        .append(" c) { var __d = state.")
+                        .append(fname)
+                        .append("; int __n = Math.min(c.n, __d.size()); for (int __i = 0; __i < __n; __i++) { "
+                                + "__d.pollFirst(); } return; }\n");
+                handleMethods.append(countProcHandleMutator(changeSimple, "popFront" + pascal));
+            }
         }
 
         b.append("    /** Fold a change into the state. */\n");
@@ -450,6 +483,27 @@ public final class FlezhaProcessor extends AbstractProcessor {
     private static String intProcHandleMutator(String changeSimple, String method, String keyType) {
         return "    public void " + method + "(" + keyType + " key, int n) { h.apply(" + changeSimple + "." + method
                 + "(key, n)); }\n";
+    }
+
+    /** One-arg `(int n)` factory for a count-based flat-collection proc (pop). */
+    private static String countProcFactory(String changeSimple, String method, String variant) {
+        return "    public static " + changeSimple + " " + method + "(int n) { return new " + variant + "(n); }\n";
+    }
+
+    /** Single-field `(int n)` variant with structural equality. */
+    private static String countProcVariant(String changeSimple, String name) {
+        return "    public static final class " + name + " extends " + changeSimple + " {\n"
+                + "        public final int n;\n"
+                + "        public " + name + "(int n) { this.n = n; }\n"
+                + "        @Override public boolean equals(Object o) { return o instanceof " + name
+                + " c && n == c.n; }\n"
+                + "        @Override public int hashCode() { return Objects.hash(n); }\n"
+                + "        @Override public String toString() { return \"" + name + "(\" + n + \")\"; }\n"
+                + "    }\n\n";
+    }
+
+    private static String countProcHandleMutator(String changeSimple, String method) {
+        return "    public void " + method + "(int n) { h.apply(" + changeSimple + "." + method + "(n)); }\n";
     }
 
     private TypeMirror[] mapKV(TypeMirror ty) {

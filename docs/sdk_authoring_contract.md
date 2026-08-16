@@ -110,6 +110,22 @@ parallel map fields, or use `map_set` to record the whole per-key value.
 Flat fields and `#[journal(...)]` map fields on the same struct compose into a
 single generated `Change` enum and a single `apply_change`.
 
+**Flat collection fields.** Once a procedure is keyed by the thing a map would
+have keyed by, its per-entity collections stop being maps — the Entity *is* the
+key. A flat field therefore gets delta mutators too, with no annotation and no
+map layer:
+
+| Field type      | Generated mutators (Rust / Java)                                        | Change variants                          |
+| --------------- | ----------------------------------------------------------------------- | ---------------------------------------- |
+| any `T`         | `set_<field>(T)` / `set<Field>(T)`                                       | `Set<Field>(T)`                          |
+| `Vec<U>` / `List<U>`      | additionally `push_<field>(U)` / `push<Field>(U)`             | `Push<Field>(U)`                         |
+| `VecDeque<U>` / `Deque<U>` | additionally `push_back_<field>(U)`, `pop_front_<field>(n)` / `pushBack<Field>(U)`, `popFront<Field>(int n)` | `PushBack<Field>(U)`, `PopFront<Field>(usize)` |
+
+`pop_front` is saturating: popping more than the collection holds empties it
+rather than failing, so a delta recorded against a longer window replays safely.
+Reach for `set_<field>` on a growing collection only when the whole value
+genuinely changes — otherwise every WAL record grows to the collection's size.
+
 ### 3.2 Emit-or-skip output return
 
 A logic function returning an optional output — `Option<O>` (Rust) /
