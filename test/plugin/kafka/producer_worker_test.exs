@@ -202,6 +202,29 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       assert record.key == "user-key"
       assert record.headers == []
     end
+
+    test "a keyed channel outside the tier still partitions by its natural key" do
+      {pid, _} = start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
+
+      # What an ordinary `.keyed()` hybrid channel stamps: entity + seq + key,
+      # but no `flz.epoch` — only the effectively-once tier stamps that. A nil
+      # key here scatters one entity's records across partitions, losing the
+      # ordering `.keyed()` was declared for.
+      assert :ok =
+               ProducerWorker.enqueue(pid, "candle", %{
+                 "channel" => "ohlc_out",
+                 "flz.entity" => "MarketOperative/ohlc/BTC-USD",
+                 "flz.seq" => "42.0",
+                 "flz.key" => "BTC/USD"
+               })
+
+      assert_receive {:send_called, request, _}
+      [%{data: [%{record_set: rb}]}] = request.topic_data
+      [record] = rb.records
+
+      assert record.key == "BTC/USD"
+      assert record.headers == [], "no durable identity outside the tier, so no dedup header"
+    end
   end
 
   test "InitProducerId result is cached and used in subsequent batches" do

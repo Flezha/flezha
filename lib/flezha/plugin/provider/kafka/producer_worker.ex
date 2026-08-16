@@ -1055,11 +1055,15 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     {Map.get(metadata, "flz.key"), "#{entity}/#{outbox_seq}/#{epoch}"}
   end
 
-  # At-least-once records: caller-supplied key behaviour unchanged, no
-  # identity header.
+  # At-least-once records: no identity header, but a `.keyed()` channel's
+  # natural key still partitions. Only the effectively-once tier stamps
+  # `flz.epoch`, so requiring it here would ship every ordinary keyed emit
+  # with a nil key — and a nil key scatters one entity's records across
+  # partitions, losing exactly the ordering `.keyed()` was declared for.
   defp record_identity(metadata) do
     key =
-      Map.get(metadata, "flezha.dedup_key") ||
+      Map.get(metadata, "flz.key") ||
+        Map.get(metadata, "flezha.dedup_key") ||
         Map.get(metadata, "kafka_msg_key", nil)
 
     {key, nil}
