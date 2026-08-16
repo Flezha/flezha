@@ -19,6 +19,8 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Partition
+  alias Flezha.Plugin
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
@@ -183,6 +185,36 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
       assert Enum.all?(started, &(Keyword.get(&1.opts, :state_source_node) == node()))
       assert Enum.all?(started, &(Keyword.get(&1.opts, :partitions) == 2))
       assert Enum.all?(started, &(&1.factory_id == @factory))
+    end
+
+    test "members are re-minted from plugins attached after the start, not just --plugins" do
+      # The shape every start script here produces: `flz operative start` with no
+      # --plugins, then `flz plugin enable <group>`. Those plugins never reach
+      # builder.opts, so reading only there rescales into members with no plugins
+      # at all — healthy, fully covering the key space, producing nothing.
+      plugin = %Plugin{
+        id: "ohlc_kraken_ws#p0",
+        provider: :operative_websocket,
+        operative_id: "ohlc#p0",
+        opts: %{uri: "wss://example/v2"}
+      }
+
+      table = %{Table.new(%{}) | plugins: %{plugin.id => plugin}}
+      FakeStartRegistry.put_live_extensions(@group <> "#p0", table)
+
+      assert {:ok, _} = PartitionGroup.rescale(@namespace, @group, 2)
+
+      started = FakeStartRegistry.started() |> Enum.sort_by(& &1.id)
+
+      assert Enum.map(started, fn m ->
+               m.opts |> Keyword.fetch!(:plugins) |> Enum.map(& &1.id)
+             end) == [["ohlc_kraken_ws#p0"], ["ohlc_kraken_ws#p1"]]
+
+      # The member's own partition identity rides along in each plugin's opts.
+      assert Enum.all?(started, fn m ->
+               [plugin] = Keyword.fetch!(m.opts, :plugins)
+               plugin.operative_id == m.id and is_integer(plugin.opts.key_group_from)
+             end)
     end
 
     test "a re-run after a crash mid-move completes the remainder and moves nothing twice" do

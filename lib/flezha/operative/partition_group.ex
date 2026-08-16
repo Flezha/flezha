@@ -22,6 +22,7 @@ defmodule Flezha.Operative.PartitionGroup do
   alias Flezha.Partition
   alias Flezha.Plugin
   alias Flezha.Plugin.Provider.OperativeForward
+  alias Flezha.Plugin.Extension.Table
   alias Flezha.Plugin.SpecDecoder
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.HubManager
@@ -320,7 +321,7 @@ defmodule Flezha.Operative.PartitionGroup do
   # the init values, or the plugin set the group was started with.
   defp rescale_template(namespace, group_id, [%{id: member_id} | _]) do
     case OperativeManager.get_overwatch_state(namespace, member_id) do
-      {:ok, %{builder: builder}} ->
+      {:ok, %{builder: builder} = state} ->
         template = %{
           builder
           | id: group_id,
@@ -333,12 +334,34 @@ defmodule Flezha.Operative.PartitionGroup do
               |> Keyword.put(:state_source_node, node())
         }
 
-        {:ok, template, restamp_plugins(Keyword.get(builder.opts, :plugins, []))}
+        {:ok, template, restamp_plugins(member_plugins(state, builder))}
 
       {:error, reason} ->
         {:error, "cannot read #{member_id} to rescale from: #{inspect(reason)}"}
     end
   end
+
+  # The plugin set to mint the new members from. `builder.opts[:plugins]` holds
+  # only what a `--plugins` group start supplied, so a group whose plugins were
+  # attached afterwards (`flz plugin enable <group>`, the form a start script
+  # must use when it may not pass `--plugins`) would rescale into members with
+  # no plugins at all — healthy, fully covering the key space, and producing
+  # nothing. The live extension table is the authority; the builder is the
+  # fallback for a member whose table has not populated yet.
+  defp member_plugins(state, builder) do
+    case live_plugins(Map.get(state, :extensions)) do
+      [] -> Keyword.get(builder.opts, :plugins, [])
+      live -> live
+    end
+  end
+
+  defp live_plugins(%Table{} = extensions) do
+    extensions
+    |> Table.serializable_plugins()
+    |> Enum.map(fn {_plugin_id, plugin} -> plugin end)
+  end
+
+  defp live_plugins(_), do: []
 
   # Re-point one member's plugin set at another member. Same rule the group
   # start's JSON fan-out applies, from decoded structs instead.

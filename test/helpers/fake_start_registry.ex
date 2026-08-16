@@ -48,7 +48,15 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     def handle_call(:registry_runner_set, _from, state), do: {:reply, {:ok, "runner-1"}, state}
 
     def handle_call(:get_overwatch_state, _from, state),
-      do: {:reply, %{builder: state.builder, id: state.builder.id}, state}
+      do:
+        {:reply,
+         %{
+           builder: state.builder,
+           id: state.builder.id,
+           # Plugins attached after the start live here, not in builder.opts —
+           # the shape a rescale must read to re-point them.
+           extensions: :persistent_term.get({:fake_live_extensions, state.builder.id}, nil)
+         }, state}
 
     def handle_call(:ingested, _from, state), do: {:reply, Enum.reverse(state.ingested), state}
 
@@ -78,6 +86,17 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     * `:seed` — builders to pre-register as already-running operatives
   """
   @spec install(keyword()) :: :ets.tid()
+  @doc """
+  Give one member a live extension table — the plugins a `flz plugin enable`
+  attached after the start, which never reach `builder.opts[:plugins]`.
+  """
+  def put_live_extensions(member_id, table) do
+    :persistent_term.put({:fake_live_extensions, member_id}, table)
+    ExUnit.Callbacks.on_exit(fn ->
+      :persistent_term.erase({:fake_live_extensions, member_id})
+    end)
+  end
+
   def install(opts \\ []) do
     registry = :ets.new(:fake_start_registry, [:public, :set])
     owner = self()
