@@ -8,9 +8,7 @@ members' own rows, never a stored record. Every mis-routing failure mode is
 loud and named — a key a member does not own parks on its first frame, a
 keyless class is refused, and coverage gaps surface as warnings rather than as
 quietly missing data.
-
 ## Requirements
-
 ### Requirement: A partitioned start SHALL materialize N ordinary operative instances
 `flz operative start <id> --partitions N` (N ≥ 2, stream kind only) SHALL start N ordinary operative instances named `<id>#p0` … `<id>#p{N-1}`, each a full operative — own Overwatch, own ProcessHub child and registry row, own runner binding, own input log, own state tree, own plugins, own DLQ identity. Each member's durable cspec opts SHALL carry `group` (the base id), `partition`, `partitions`, and its owned key-group range. There SHALL be no stored group record: every group-level view SHALL be derived from member rows at read time. `partitions: 1` (the default) SHALL be byte-identical to an unpartitioned start.
 
@@ -102,19 +100,28 @@ A `--plugins` config given at group start SHALL be decoded once per member with 
 - **THEN** each member's plugin instance receives its own `partition_index` (0, 1, 2) and `partition_count: 3` in opts, persisted in that member's cspec
 
 ### Requirement: Runtime plugin enable and disable SHALL fan out over the group
-`flz plugin enable <group> ...` against a partition group SHALL run the existing per-operative enable once per member, injecting that member's partition opts and suffixing the supplied plugin id with the member's `#pK` (preserving node-global plugin-id uniqueness). `flz plugin disable <group> <plugin_id>` SHALL disable the corresponding suffixed instance on every member. Enable/disable against a single member id keeps today's behavior unchanged.
+
+`flz plugin enable <group> ...` against a partition group SHALL run the existing per-operative enable once per member, injecting that member's partition opts and suffixing the supplied plugin id with the member's `#pK` (preserving node-global plugin-id uniqueness). A member whose suffixed instance is already registered against that same member SHALL count as success, not failure, and the command SHALL report enabled and already-enabled member counts distinctly; a group whose members are all already enabled SHALL exit 0 as a no-op. `flz plugin disable <group> <plugin_id>` SHALL disable the corresponding suffixed instance on every member. Enable/disable against a single member id keeps today's behavior unchanged (including the single-plugin idempotent-enable verdict).
 
 #### Scenario: Group enable reaches every member with its partition
+
 - **WHEN** `flz plugin enable ohlc --provider operative_websocket --plugin-id ohlc_ws ...` targets a 3-member group
 - **THEN** members `ohlc#p0..#p2` each get an enabled instance (`ohlc_ws#p0..#p2`) whose opts carry that member's partition fields, each persisted cspec-first via the existing enable path
 
 #### Scenario: Group disable is symmetric
+
 - **WHEN** `flz plugin disable ohlc ohlc_ws` is issued
 - **THEN** all three suffixed instances are disabled and their workers stopped
 
 #### Scenario: A partial group enable is loud
-- **WHEN** enabling on member k of N fails
+
+- **WHEN** enabling on member k of N genuinely fails (any reason other than already-enabled on the same member)
 - **THEN** the command reports which members succeeded and which failed by name — never a silent partial enable
+
+#### Scenario: Re-running a group enable after a partial recovery is a heal
+
+- **WHEN** two of three members already carry the plugin and the same group enable is re-run
+- **THEN** the missing member's instance is enabled, the two existing instances are untouched, and the command exits 0 reporting one enabled and two already enabled
 
 ### Requirement: The CLI SHALL present the group as one logical operative
 `flz operative list` SHALL aggregate members (by the `group` opt) into one row showing partition count, health, and per-member placement. `flz operative info <group>` SHALL show per-member detail and SHALL validate coverage (every key group owned exactly once), rendering gaps or overlaps as loud warnings. `flz operative stop <group>` SHALL stop all members. `flz state get <group>/<procedure>/<key>` SHALL resolve the owning member by key hash and answer through the existing state-get path; procedure-level and selector-less reads SHALL fan out over members and merge.
@@ -137,3 +144,42 @@ A partition, being one ordinary operative instance, SHALL keep its whole durable
 #### Scenario: Partition placement moves state atomically per member
 - **WHEN** ProcessHub migrates a member to another controller node
 - **THEN** the member's entire state tree moves with it via the existing per-operative migration paths, exactly as for any operative today
+
+### Requirement: A partitioned start over an existing group SHALL converge to N by starting only the missing members
+
+When `flz operative start <id> --partitions N` targets an id whose group already has live members, the start SHALL converge instead of refusing: it SHALL start only the members whose indices are absent, iff every surviving member's cspec-declared identity matches the request — declared `partitions` equals N AND the stored range equals the recomputed `Partition.ranges(N)` slice for that member's index. On any mismatch the command SHALL refuse before starting anything, naming the mismatching member, its declared partition count, and `flz operative scale` as the remedy — converge SHALL never change N, because changing N moves Entity state and start never does. A newly-started missing member SHALL receive the fan-out of the supplied `--plugins` config exactly as a fresh group start would; surviving members and their live plugin sets SHALL NOT be touched. A missing member racing into existence mid-run (concurrent converge, reconcile, or Convergence bind) SHALL be treated as already present, not as a failure. The command SHALL report started and already-running member ids distinctly; a fully-present group SHALL degenerate to the single-start no-op (exit 0, nothing started). Quota SHALL be preflighted on the missing count only. A fresh start (no live members) SHALL behave byte-identically to before this change, including the all-or-nothing rollback — which in every mode stops only members the current run started.
+
+#### Scenario: An under-membered group is healed by re-running the start
+
+- **WHEN** a 3-member group has live members `demo#p0` and `demo#p1` (declared `partitions: 3`) and `flz operative start demo --partitions 3` is re-run
+- **THEN** only `demo#p2` is started, it restores its Entity state from its on-disk WAL at bind, the two survivors observe no stop or rebind, and the command exits 0 reporting one started and two already-running members
+
+#### Scenario: A fully-present group re-run is a quiet no-op
+
+- **WHEN** all N members are live and the same start is re-run
+- **THEN** the command exits 0, nothing is started or stopped, and the output states the group is already running at N
+
+#### Scenario: An N mismatch refuses toward scale
+
+- **WHEN** `--partitions 4` targets a group whose survivors declare `partitions: 3`
+- **THEN** the command refuses before starting any member, naming the declared count and `flz operative scale`
+
+#### Scenario: A real member failure during converge rolls back only this run's starts
+
+- **WHEN** converge starts two missing members and the second fails for a non-duplicate reason
+- **THEN** the first (started by this run) is stopped, the pre-existing survivors are untouched, and the error names the failed member and its reason
+
+### Requirement: Group-base and singleton id collisions SHALL be refused in both directions
+
+A plain (unpartitioned) start of an id that names an existing group's base SHALL be refused, naming the group's member count and `--partitions N` as the way to address it — the base id itself is unclaimed (only member ids are), so without the guard a rogue singleton starts beside the group. Symmetrically, a partitioned start of an id currently held by a live unpartitioned operative SHALL be refused before any member starts. The plain-start guard SHALL live in the single start-authority seam so every starter path (CLI, schedules, procedure-requested spawns, routed starts) is covered.
+
+#### Scenario: A plain start of a group base is refused
+
+- **WHEN** group `demo` has live members and `flz operative start demo` is issued without `--partitions`
+- **THEN** the start is refused naming the existing group and `--partitions`, and no singleton is started
+
+#### Scenario: A partitioned start over a live singleton is refused
+
+- **WHEN** a live unpartitioned operative holds `demo` and `flz operative start demo --partitions 3` is issued
+- **THEN** the start is refused before any member starts
+

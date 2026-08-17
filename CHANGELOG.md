@@ -70,6 +70,24 @@
 
 ### Changed
 
+- **Operator start and enable verbs are idempotent**
+  (`idempotent-start-and-enable`). `flz operative start` against a live
+  instance now exits 0 as an explicit no-op (it previously exited non-zero
+  with "operative id already in use"); a claim refused with no live winner —
+  a stale registry row — still errors. `flz operative start --partitions N`
+  over an existing group converges: only the missing members start, iff N
+  matches the identity every survivor declares (else it refuses naming
+  `flz operative scale`); a fresh group start and its all-or-nothing rollback
+  are unchanged. `flz plugin enable` on a plugin id already registered for the
+  same operative exits 0 untouched — no cspec write, no re-subscribe; the same
+  id held by a different target still errors, and a group enable counts
+  already-enabled members as success. Two id collisions previously accepted
+  are now refused: a plain start of a live group's base id (it minted a rogue
+  singleton beside the group) and a partitioned start over a live
+  unpartitioned operative. Together these make re-running a cold-start script
+  the supported heal after a warm restart. Scripts keying on the old non-zero
+  "already exists" exit must use `flz operative info` instead.
+
 - **The control plane has one actor, and every failure signal has one consumer**
   (`close-control-plane-silent-wedges`). Three silent-wedge classes closed
   subtractively, under one rule: sensors sense, exactly one actor acts,

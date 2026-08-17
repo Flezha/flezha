@@ -186,6 +186,40 @@ group — never a quietly short list.
 `flz state get <group>/<procedure>/<key>` hashes the key and reads from the
 owning member; a procedure-level read fans out and merges.
 
+## Re-running the start: converge
+
+`flz operative start <id> --partitions N` against a group that already has
+live members **converges** instead of refusing: it starts only the members
+whose indices are missing and leaves every survivor untouched. A restarted
+member restores its Entity state from its on-disk WAL at bind, so the same
+command that cold-starts a group is also the heal for an under-membered one —
+a re-run after a node roll, or the retry loop of a `set -e` start script.
+
+```
+$ flz operative start ohlc --partitions 3 ...
+Operative ohlc converged: started 1 missing member(s), 2 already running:
+  started ohlc#p2
+  already running ohlc#p0
+  already running ohlc#p1
+```
+
+A fully-present group exits 0 with nothing started. Converge is a presence
+check, not config convergence: survivors' factory, init values, opts and
+plugin sets are not compared or touched, and the `--plugins` config fans out
+only to the members this run starts.
+
+Converge never changes N. The requested count must equal the `partitions`
+every survivor declares in its cspec, and each survivor's stored range must
+equal the recomputed slice — on any mismatch the command refuses before
+starting anything and names `flz operative scale`, because changing N moves
+Entity state, which a start never does.
+
+Two id collisions are refused rather than silently honoured: a plain
+(unpartitioned) start of a live group's base id — the base id itself is never
+claimed, only member ids are, so without the guard a rogue singleton would
+start beside the group — and a `--partitions` start of an id held by a live
+unpartitioned operative.
+
 ## Rescale
 
 ```bash

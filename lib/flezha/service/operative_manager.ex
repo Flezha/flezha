@@ -174,6 +174,7 @@ defmodule Flezha.Service.OperativeManager do
   defp do_start_operative(namespace, operative) do
     with :ok <- check_not_shutting_down(),
          :ok <- OperativeBuilder.validate_operative(namespace, operative),
+         :ok <- refuse_group_base_claim(namespace, operative),
          :ok <- validate_factory(namespace, operative.factory_id),
          :ok <- check_operative_quota(namespace),
          :ok <- check_entity_quota(namespace, operative) do
@@ -211,6 +212,29 @@ defmodule Flezha.Service.OperativeManager do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # A group's base id is never claimed — only member ids are — so without this
+  # a plain start of the base mints a singleton beside the group. Member starts
+  # carry partition identity in their opts and skip the registry walk.
+  defp refuse_group_base_claim(namespace, operative) do
+    case Flezha.Partition.identity(operative.opts) do
+      nil -> refuse_live_group(namespace, operative.id)
+      _member_identity -> :ok
+    end
+  end
+
+  defp refuse_live_group(namespace, operative_id) do
+    case PartitionGroup.members(namespace, operative_id) do
+      [] ->
+        :ok
+
+      members ->
+        {:error,
+         "#{operative_id} names a partition group of #{length(members)} live member(s); " <>
+           "re-run with --partitions #{hd(members).partition.count} to converge it, or stop " <>
+           "the group first"}
     end
   end
 

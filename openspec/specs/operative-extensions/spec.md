@@ -378,3 +378,17 @@ before reuse, and reap a dead/parked worker so a fresh one is started.
 - **THEN** it SHALL reap the stale entry and start a fresh, healthy producer worker
 - **AND** the recovered operative SHALL produce rather than re-attach to the dead worker
 
+### Requirement: Plugin enable SHALL be idempotent for an id already registered against the same target
+
+Enabling a plugin id that is already registered for the **same** `{namespace, operative_id}` SHALL succeed as an explicit no-op: the CLI exits 0 stating the plugin is already enabled and the existing instance was left untouched, the live subscriber and its workers observe no restart, and no cspec write occurs. Opts SHALL NOT be compared — a re-run is a presence check, not config convergence. The manager SHALL answer a verdict distinguishable from a fresh enable (`{:ok, :already_enabled}`) so callers can render it. Enabling a plugin id registered against a **different** target SHALL remain an error naming the conflict — a no-op there would silently not enable what the caller asked for.
+
+#### Scenario: Re-running an enable is quiet
+
+- **WHEN** `flz plugin enable` is re-run with a plugin id already registered for the same operative in the same namespace
+- **THEN** the command exits 0 stating already-enabled, and the running plugin instance and its workers are untouched
+
+#### Scenario: A cross-target id conflict still fails
+
+- **WHEN** the plugin id is registered against a different operative or namespace
+- **THEN** the enable fails with an error naming the existing registration, unchanged from today
+

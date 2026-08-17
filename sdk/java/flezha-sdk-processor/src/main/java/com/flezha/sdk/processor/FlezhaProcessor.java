@@ -790,9 +790,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
         String call = stateful ? "impl.run(input, " + handleArg + ")" : "impl.run(input)";
         // `key = "m"` routes the emit through emitKeyed — the only form a
         // `.keyed()` channel accepts — keeping keyed sinks reachable from the sugar.
-        String emitPresent = emitKey.isEmpty()
-                ? "ctx.emit(%s);"
-                : "ctx.emitKeyed(" + userFqn + "." + emitKey + "(%s), %s);";
+        String emitPresent =
+                emitKey.isEmpty() ? "ctx.emit(%s);" : "ctx.emitKeyed(" + userFqn + "." + emitKey + "(%s), %s);";
         if (!emits) {
             b.append("        ").append(call).append(";\n");
         } else if (optional) {

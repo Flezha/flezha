@@ -131,6 +131,19 @@ Two rules worth stating, both learned the hard way:
   and outlives the disable; a `:transient` one stays down. `ForwardWorker` is
   `:transient` because "disabled" must mean "stopped delivering".
 
+## Re-enabling is a no-op, not an error
+
+`flz plugin enable` with a plugin id already registered for the **same**
+operative in the same namespace exits 0 and touches nothing — no cspec write,
+no re-subscribe, the live worker keeps running. It is a presence check, not
+config convergence: options are not compared, so changing a plugin's opts
+means disable + enable. The same id registered against a *different* target
+stays an error naming the holder. Against a partition group, already-enabled
+members count as success and the summary reports enabled vs already-enabled
+counts; a genuine member failure is still a loud error. This is what lets a
+cold-start script re-run its `flz plugin enable` lines unconditionally — the
+missing plugins are attached, the present ones are left alone.
+
 ## Teardown
 
 `Flezha.Plugin.Extension.Table.teardown_all/1` handles both phases

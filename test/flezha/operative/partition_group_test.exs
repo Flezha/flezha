@@ -20,6 +20,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
   alias Flezha.Partition
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.State.Registry, as: StateRegistry
   alias FlezhaTest.Helper.FakeStartRegistry
 
   @namespace "partition-start-test"
@@ -145,6 +146,135 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
 
       # p0 started and was rolled back; p2 was never attempted.
       assert Enum.map(started_members(), & &1.id) == ["ohlc#p0"]
+    end
+  end
+
+  describe "a converge start over an existing group" do
+    test "starts only the missing member and leaves the survivors untouched", %{
+      registry: registry
+    } do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
+      _ = started_members()
+
+      {:ok, p0_pid} = FakeStartRegistry.pid_of(registry, "ohlc#p0")
+      :ets.delete(registry, "ohlc#p2")
+
+      assert {:ok, result} = PartitionGroup.start(@namespace, builder(), 3)
+      assert result.members == ["ohlc#p2"]
+      assert result.already_running == ["ohlc#p0", "ohlc#p1"]
+
+      assert [member] = started_members()
+      assert member.id == "ohlc#p2"
+      assert Keyword.get(member.opts, :partition) == 2
+      assert Keyword.get(member.opts, :partitions) == 3
+
+      assert {Keyword.get(member.opts, :key_group_from), Keyword.get(member.opts, :key_group_to)} ==
+               Enum.at(Partition.ranges(3), 2)
+
+      # The survivor keeps its pid: converge never stops or rebinds it.
+      assert {:ok, ^p0_pid} = FakeStartRegistry.pid_of(registry, "ohlc#p0")
+    end
+
+    test "a fully-present group re-run starts nothing and reports every member" do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
+      _ = started_members()
+
+      assert {:ok, result} = PartitionGroup.start(@namespace, builder(), 3)
+      assert result.members == []
+      assert result.already_running == ["ohlc#p0", "ohlc#p1", "ohlc#p2"]
+      assert started_members() == []
+    end
+
+    test "an N mismatch refuses toward scale before starting anything", %{registry: registry} do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
+      _ = started_members()
+      :ets.delete(registry, "ohlc#p2")
+
+      assert {:error, message} = PartitionGroup.start(@namespace, builder(), 4)
+      assert message =~ "cannot converge group ohlc to 4"
+      assert message =~ "declares 3"
+      assert message =~ "flz operative scale"
+      assert started_members() == []
+    end
+
+    test "a member racing into existence mid-run is skipped, not failed", %{registry: registry} do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
+      _ = started_members()
+      :ets.delete(registry, "ohlc#p2")
+
+      # A concurrent starter wins the id claim between the member read and the
+      # start; by id-shape the winner is a member of this same group.
+      FakeStartRegistry.insert(registry, self(), builder("ohlc#p2"))
+
+      assert {:ok, result} = PartitionGroup.start(@namespace, builder(), 3)
+      assert result.members == []
+      assert result.already_running == ["ohlc#p0", "ohlc#p1", "ohlc#p2"]
+    end
+
+    test "a mid-converge real failure rolls back only this run's starts", %{registry: registry} do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
+      _ = started_members()
+
+      {:ok, p0_pid} = FakeStartRegistry.pid_of(registry, "ohlc#p0")
+      :ets.delete(registry, "ohlc#p1")
+      :ets.delete(registry, "ohlc#p2")
+
+      # Converge preflights the missing count, then each member start prices
+      # its own unit — the queue arms p1 to pass and p2 to fail.
+      expect(Quotas, :check_allocation, fn _ns, :max_operatives, 2 -> :ok end)
+      expect(Quotas, :check_allocation, fn _ns, :max_operatives, 1 -> :ok end)
+
+      expect(Quotas, :check_allocation, fn _ns, :max_operatives, 1 ->
+        {:error, {:quota_exceeded, :max_operatives, 1}}
+      end)
+
+      assert {:error, message} = PartitionGroup.start(@namespace, builder(), 3)
+      assert message =~ "ohlc#p2"
+      assert message =~ "1 already-started member(s) were stopped"
+
+      # p1 was started by this run and rolled back; the survivor is untouched.
+      assert Enum.map(started_members(), & &1.id) == ["ohlc#p1"]
+      assert {:error, _} = FakeStartRegistry.pid_of(registry, "ohlc#p1")
+      assert {:ok, ^p0_pid} = FakeStartRegistry.pid_of(registry, "ohlc#p0")
+    end
+
+    test "converge leaves the missing member's durable state untouched", %{registry: registry} do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
+      _ = started_members()
+      :ets.delete(registry, "ohlc#p2")
+
+      wal = Path.join([StateRegistry.state_root(), "ohlc#p2", "proc", "key.wal"])
+      File.mkdir_p!(Path.dirname(wal))
+      File.write!(wal, "durable-bytes")
+      on_exit(fn -> File.rm_rf(Path.join(StateRegistry.state_root(), "ohlc#p2")) end)
+
+      assert {:ok, %{members: ["ohlc#p2"]}} = PartitionGroup.start(@namespace, builder(), 3)
+
+      # The restart restores from this WAL at bind; converge must not touch it.
+      assert File.read!(wal) == "durable-bytes"
+    end
+  end
+
+  describe "the base-id / singleton collision guards" do
+    test "a plain start of a live group's base id is refused naming the remedy" do
+      assert {:ok, _} = PartitionGroup.start(@namespace, builder(), 3)
+      _ = started_members()
+
+      assert {:error, %{reason: reason}} =
+               OperativeManager.start_operative(@namespace, builder("ohlc"))
+
+      assert reason =~ "partition group of 3 live member(s)"
+      assert reason =~ "--partitions 3"
+      assert started_members() == []
+    end
+
+    test "a partitioned start over a live unpartitioned operative is refused" do
+      assert {:ok, _} = OperativeManager.start_operative(@namespace, builder("solo"))
+      _ = started_members()
+
+      assert {:error, message} = PartitionGroup.start(@namespace, builder("solo"), 2)
+      assert message =~ "already running as an unpartitioned operative"
+      assert started_members() == []
     end
   end
 

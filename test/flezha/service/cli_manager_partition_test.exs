@@ -121,6 +121,89 @@ defmodule Flezha.Service.CliManagerPartitionTest do
     end
   end
 
+  describe "operative start rendering" do
+    test "a live duplicate start reports a no-op instead of erroring" do
+      stub(OperativeManager, :start_operative, fn _ns, _op -> :duplicate end)
+
+      out =
+        capture_io(fn -> CliManager.operative_start("default", "demo", "candles", "{}", "{}") end)
+
+      assert out =~ "Operative demo is already running"
+      assert out =~ "left untouched"
+      assert out =~ "options were not compared"
+    end
+
+    test "a stale-row refusal still exits as an error" do
+      stub(OperativeManager, :start_operative, fn _ns, _op ->
+        {:error, %{operative_id: "demo", node: node(), reason: "operative id already in use"}}
+      end)
+
+      out =
+        capture_io(fn ->
+          assert catch_exit(CliManager.operative_start("default", "demo", "candles", "{}", "{}")) ==
+                   :cli_error
+        end)
+
+      assert out =~ "Error starting operative"
+      assert out =~ "operative id already in use"
+    end
+
+    test "a converge reports started and already-running members distinctly" do
+      stub(PartitionGroup, :start, fn _ns, _op, 3, _json ->
+        {:ok,
+         %{
+           group: "ohlc",
+           members: ["ohlc#p2"],
+           already_running: ["ohlc#p0", "ohlc#p1"],
+           warnings: []
+         }}
+      end)
+
+      out =
+        capture_io(fn ->
+          CliManager.operative_start("default", "ohlc", "candles", "{}", ~s({"partitions": 3}))
+        end)
+
+      assert out =~ "converged: started 1 missing member(s), 2 already running"
+      assert out =~ "started ohlc#p2"
+      assert out =~ "already running ohlc#p0"
+    end
+
+    test "a fully-present group re-run reports the no-op" do
+      stub(PartitionGroup, :start, fn _ns, _op, 3, _json ->
+        {:ok,
+         %{
+           group: "ohlc",
+           members: [],
+           already_running: ["ohlc#p0", "ohlc#p1", "ohlc#p2"],
+           warnings: []
+         }}
+      end)
+
+      out =
+        capture_io(fn ->
+          CliManager.operative_start("default", "ohlc", "candles", "{}", ~s({"partitions": 3}))
+        end)
+
+      assert out =~ "already running with 3 partitions"
+      assert out =~ "left untouched"
+    end
+
+    test "a fresh group start keeps its message" do
+      stub(PartitionGroup, :start, fn _ns, _op, 3, _json ->
+        {:ok, %{group: "ohlc", members: ["ohlc#p0", "ohlc#p1", "ohlc#p2"], warnings: []}}
+      end)
+
+      out =
+        capture_io(fn ->
+          CliManager.operative_start("default", "ohlc", "candles", "{}", ~s({"partitions": 3}))
+        end)
+
+      assert out =~ "Operative ohlc started with 3 partitions:"
+      assert out =~ "  ohlc#p0"
+    end
+  end
+
   describe "operative stop" do
     test "a group id stops every member" do
       members = for index <- 0..2, do: member_row("ohlc", index, 3)

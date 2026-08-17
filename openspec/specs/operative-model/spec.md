@@ -6,6 +6,7 @@ The operative-model capability is the canonical vocabulary and kind model for Fl
 ## Requirements
 
 <!-- kind-naming-record:begin -->
+
 ### Requirement: Canonical operative vocabulary
 
 The system SHALL use exactly these terms for compute workloads, and code, modules, protobuf, wire payload-ids, CLI, config keys, env vars, documentation, and on-disk path components SHALL NOT introduce or retain the synonyms `relay`, `shard`, `partition`, `task`, `continuous`, or — as the name of an operative kind — `bounded` or `unbounded`:
@@ -31,6 +32,7 @@ The prohibition on `bounded` and `unbounded` applies to the **kind sense only**.
 <!-- kind-naming-record:end -->
 
 <!-- kind-naming-record:begin -->
+
 ### Requirement: An operative declares a kind
 
 Every Operative SHALL carry a `kind` atom. The kind SHALL be set when the operative is started and SHALL be frozen for its lifetime — it cannot change without a stop + start cycle. When a kind is not specified at start, it SHALL default to `:stream`. The recognized kinds are `:stream` and `:workflow`; starting an operative with any other kind SHALL fail with a clear error naming the unknown kind, and no operative process SHALL be created. On the wire, the accepted set of `kind` string literals SHALL be exactly `""` (empty ⇒ the `:stream` default), `"stream"`, and `"workflow"`; the SDK SHALL reject any other literal with an error naming the unknown kind. The former literals `"unbounded"` and `"bounded"` SHALL NOT be accepted.
@@ -131,6 +133,7 @@ A request for an operative's per-Entity state SHALL succeed only when the operat
 - **THEN** the query SHALL be rejected as unsupported, while a current-state query SHALL still succeed
 
 <!-- kind-naming-record:begin -->
+
 ### Requirement: Unified `flz operative` CLI verb
 
 The CLI SHALL expose a single `flz operative` verb tree for lifecycle management of every operative kind: `flz operative start --kind <stream|workflow>`, `flz operative stop`, `flz operative list`, and `flz operative info`. `--kind` SHALL default to `stream`. There SHALL be no `flz relay` verb, and `--kind unbounded` / `--kind bounded` SHALL NOT be accepted.
@@ -227,3 +230,18 @@ Each controller node SHALL advertise into a cluster-replicated directory which n
 
 - **WHEN** a request is routed to a node whose last capable runner disconnected after the directory was read
 - **THEN** the executing node SHALL refuse with its local verdict and no further forwarding SHALL occur
+
+### Requirement: A duplicate start against a live winner SHALL be a successful no-op
+
+`flz operative start` (and the manager call it wraps) losing the duplicate-id claim to a **live** instance SHALL report success: exit code 0, with output stating the operative is already running and that the existing instance was left untouched — no comparison of factory, init values, or opts is performed and none SHALL be implied. A claim refused with **no live winner** behind it (a stale registry row) SHALL remain a non-zero error naming the id, so a wedged id is never silently accepted. This is the CLI-facing rendering of the concession semantics `convergence-self-healing` already requires of every starter; the underlying `:duplicate` verdict and its live-winner verification are unchanged.
+
+#### Scenario: Re-running a cold-start script is quiet
+
+- **WHEN** `flz operative start demo --factory f` is issued while a live instance already holds `demo`
+- **THEN** the command exits 0, prints that `demo` is already running and was left untouched, and the running instance observes no stop, restart, or rebind
+
+#### Scenario: A stale registry row still fails loudly
+
+- **WHEN** the id claim is refused but no live instance holds `demo`
+- **THEN** the command exits non-zero with the id-in-use error, unchanged from today
+

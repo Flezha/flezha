@@ -13,7 +13,6 @@ defmodule Flezha.Service.CliManager do
   alias Flezha.Service.Payloader
   alias Flezha.Service.PluginManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.Service.Validator
 
   @doc "Starts a operative."
   def operative_start(
@@ -104,14 +103,35 @@ defmodule Flezha.Service.CliManager do
            partitions,
            plugins_json
          ) do
-      {:ok, %{members: members, warnings: warnings}} ->
+      {:ok, %{members: members, warnings: warnings} = result} ->
         Enum.each(warnings, &IO.puts("WARNING: #{&1}"))
-        IO.puts("Operative #{operative_id} started with #{length(members)} partitions:")
-        Enum.each(members, &IO.puts("  #{&1}"))
+        report_group_start(operative_id, members, Map.get(result, :already_running, []))
 
       {:error, reason} ->
         cli_error!("Error starting operative: #{format_reason(reason)}")
     end
+  end
+
+  defp report_group_start(operative_id, members, []) do
+    IO.puts("Operative #{operative_id} started with #{length(members)} partitions:")
+    Enum.each(members, &IO.puts("  #{&1}"))
+  end
+
+  defp report_group_start(operative_id, [], already) do
+    IO.puts(
+      "Operative #{operative_id} is already running with #{length(already)} partitions; " <>
+        "the existing members were left untouched."
+    )
+  end
+
+  defp report_group_start(operative_id, members, already) do
+    IO.puts(
+      "Operative #{operative_id} converged: started #{length(members)} missing member(s), " <>
+        "#{length(already)} already running:"
+    )
+
+    Enum.each(members, &IO.puts("  started #{&1}"))
+    Enum.each(already, &IO.puts("  already running #{&1}"))
   end
 
   defp format_reason(reason) when is_binary(reason), do: reason
@@ -130,9 +150,13 @@ defmodule Flezha.Service.CliManager do
       {:ok, _} ->
         IO.puts("Operative has been started")
 
-      # The id was claimed by a live instance, which this start left running.
+      # A live instance holds the id: the re-run is a no-op, not a failure.
+      # A claim refused with no live winner stays in the error clause below.
       :duplicate ->
-        cli_error!("Error starting operative: #{Validator.id_in_use()}")
+        IO.puts(
+          "Operative #{operative.id} is already running; the existing instance was left " <>
+            "untouched (options were not compared — see `flz operative info #{operative.id}`)."
+        )
 
       {:error, reason} ->
         cli_error!("Error starting operative: #{inspect(reason)}")
@@ -413,8 +437,17 @@ defmodule Flezha.Service.CliManager do
       }
 
       case PluginManager.enable_plugin(plugin_id, plugin) do
-        {:ok, _msg} -> IO.puts("Plugin #{plugin_id} enabled successfully.")
-        {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")
+        {:ok, :already_enabled} ->
+          IO.puts(
+            "Plugin #{plugin_id} is already enabled; the existing instance was left " <>
+              "untouched (options were not compared)."
+          )
+
+        {:ok, _msg} ->
+          IO.puts("Plugin #{plugin_id} enabled successfully.")
+
+        {:error, reason} ->
+          cli_error!("Error enabling plugin: #{inspect(reason)}.")
       end
     else
       {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")

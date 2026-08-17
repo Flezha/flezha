@@ -110,6 +110,15 @@ call into the hub coordinator. The claim itself is
 A start that loses the claim answers `:duplicate` after verifying the winner is
 live, and does **nothing** to the winner — never stops, restarts, or rebinds it.
 
+The CLI renders that concession as success: `flz operative start` against a
+live instance exits 0 as an explicit no-op, a `--partitions N` re-run over an
+existing group starts only the missing members (converge), and
+`flz plugin enable` on an already-attached plugin exits 0 untouched. Together
+they make re-running a cold-start script the supported heal after a warm
+restart — the script attaches whatever is missing and leaves the rest alone. A
+claim refused with **no** live winner behind it (a stale registry row) stays a
+loud error.
+
 **Cooperation, not a hold.** ProcessHub's `reconcile_round` hook fires at round
 *completion*, so an in-flight hold is not buildable from it — and the window
 where contention concentrates, boot, is already held (the Loop blocks on

@@ -64,12 +64,29 @@ defmodule Flezha.Service.PluginManager do
 
     case Enum.reject(results, &match?({_id, {:ok, _}}, &1)) do
       [] ->
-        {:ok, "plugin enabled on #{length(results)} partitions"}
+        {:ok, group_enable_summary(results)}
 
       failed ->
         {:error,
          "enabled on #{length(results) - length(failed)} of #{length(results)} partitions; " <>
            Enum.map_join(failed, "; ", fn {id, err} -> "#{id}: #{inspect(err)}" end)}
+    end
+  end
+
+  # An already-enabled member is success, reported distinctly; a group whose
+  # members all already carry the plugin degenerates to the single-plugin
+  # no-op verdict.
+  defp group_enable_summary(results) do
+    case Enum.split_with(results, &match?({_id, {:ok, :already_enabled}}, &1)) do
+      {[], enabled} ->
+        "plugin enabled on #{length(enabled)} partitions"
+
+      {_already, []} ->
+        :already_enabled
+
+      {already, enabled} ->
+        "plugin enabled on #{length(enabled)} partition(s) " <>
+          "(#{length(already)} already enabled)"
     end
   end
 
@@ -153,15 +170,25 @@ defmodule Flezha.Service.PluginManager do
   @impl true
   def handle_call({:enable_plugin, plugin_id, %Plugin{} = plugin}, _from, state) do
     {reply, new_state} =
-      with :ok <- plugin_id_unique(state, plugin_id),
-           :ok <- check_operative_target(plugin),
-           :ok <- write_enable_to_cspec(plugin, plugin_id),
-           {:ok, pid} <- resolve_operative(plugin),
-           :ok <- forward_subscribe(pid, plugin_id, plugin) do
-        {{:ok, "plugin enabled"},
-         Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id})}
-      else
-        err -> {err, state}
+      case Map.get(state, plugin_id) do
+        # Idempotent re-enable: a presence check, not config convergence — the
+        # live instance, its workers and its cspec row are all left untouched.
+        {ns, rid} when ns == plugin.namespace and rid == plugin.operative_id ->
+          {{:ok, :already_enabled}, state}
+
+        {ns, rid} ->
+          {{:error, "plugin id #{plugin_id} is already registered for #{ns}/#{rid}"}, state}
+
+        nil ->
+          with :ok <- check_operative_target(plugin),
+               :ok <- write_enable_to_cspec(plugin, plugin_id),
+               {:ok, pid} <- resolve_operative(plugin),
+               :ok <- forward_subscribe(pid, plugin_id, plugin) do
+            {{:ok, "plugin enabled"},
+             Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id})}
+          else
+            err -> {err, state}
+          end
       end
 
     {:reply, reply, new_state}
@@ -267,13 +294,6 @@ defmodule Flezha.Service.PluginManager do
   # `id` is `base` with a partition suffix — `ohlc_ws#p2` for base `ohlc_ws`.
   defp fanned_out_from?(id, base),
     do: match?({^base, _index}, Flezha.Partition.split_member_suffix(id))
-
-  defp plugin_id_unique(plugins, plugin_id) do
-    case Map.get(plugins, plugin_id, nil) do
-      nil -> :ok
-      _ -> {:error, "plugin already registered"}
-    end
-  end
 
   defp check_operative_target(%Plugin{namespace: ns, operative_id: rid})
        when is_binary(ns) and is_binary(rid),

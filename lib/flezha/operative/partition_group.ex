@@ -46,12 +46,19 @@ defmodule Flezha.Operative.PartitionGroup do
   already-started members are stopped and the error names the member that
   failed and why.
 
+  A start over a group that already has live members CONVERGES instead of
+  refusing: only the missing members are started, and only when `partitions`
+  matches the identity the survivors declare — converge never changes N,
+  because changing N moves Entity state and a start never does (that is
+  `rescale/4`).
+
   `plugins_json` is decoded once per member with that member's id and partition
   opts (`SpecDecoder.decode/4`), so each member's source knows
   which share of the stream is its own.
 
   Returns `{:ok, %{group:, members:, warnings:}}`; `warnings` carries advice
-  the start proceeded despite (fewer runners than partitions).
+  the start proceeded despite (fewer runners than partitions). A converge
+  additionally carries `already_running:` — the member ids it left untouched.
   """
   @spec start(String.t(), Flezha.Operative.Builder.t(), pos_integer(), binary()) ::
           {:ok, map()} | {:error, term()}
@@ -60,8 +67,14 @@ defmodule Flezha.Operative.PartitionGroup do
       SpecDecoder.decode(plugins_json, namespace, member_id, partition_opts)
     end
 
-    with :ok <- check_partitionable(namespace, operative, partitions, 0) do
-      start_members(namespace, operative, Partition.ranges(partitions), plugins)
+    case members(namespace, operative.id) do
+      [] ->
+        with :ok <- check_partitionable(namespace, operative, partitions, 0) do
+          start_members(namespace, operative, Partition.ranges(partitions), plugins)
+        end
+
+      members ->
+        converge(namespace, operative, partitions, members, plugins)
     end
   end
 
@@ -93,6 +106,13 @@ defmodule Flezha.Operative.PartitionGroup do
         {:error,
          "partitions apply to stream operatives only; #{operative.id} is a " <>
            "#{operative.kind} operative"}
+
+      # The base id is never claimed by a group — only member ids are — so a
+      # live claim on it means an unpartitioned operative already runs there.
+      Validator.operative_unique(namespace, operative.id) != :ok ->
+        {:error,
+         "#{operative.id} is already running as an unpartitioned operative; a partitioned " <>
+           "start cannot converge it — stop it first or choose another group id"}
 
       byte_size(Partition.member_id(operative.id, partitions - 1)) > Validator.id_byte_limit() ->
         {:error, id_budget_refusal(operative.id, partitions)}
@@ -130,31 +150,102 @@ defmodule Flezha.Operative.PartitionGroup do
     end
   end
 
-  defp start_members(namespace, operative, ranges, plugins_fun) do
-    count = length(ranges)
+  # Only the missing members start, after two preflights: the survivors must
+  # declare exactly the identity the request recomputes, and the group-level
+  # checks price quota on the missing count alone (the rescale's own seam).
+  defp converge(namespace, operative, partitions, members, plugins_fun) do
+    present = MapSet.new(members, & &1.partition.index)
 
-    ranges
-    |> Enum.with_index()
-    |> Enum.reduce_while({:ok, []}, fn {range, index}, {:ok, started} ->
+    missing =
+      Partition.ranges(partitions)
+      |> Enum.with_index()
+      |> Enum.reject(fn {_range, index} -> index in present end)
+
+    with :ok <- check_converge_identity(members, partitions, operative.id),
+         :ok <- check_partitionable(namespace, operative, partitions, length(members)),
+         {:ok, started, skipped} <-
+           run_member_starts(namespace, operative, missing, partitions, plugins_fun, :skip) do
+      {:ok,
+       %{
+         group: operative.id,
+         members: started,
+         already_running: in_partition_order(skipped ++ Enum.map(members, & &1.id)),
+         warnings: runner_count_warnings(namespace, partitions)
+       }}
+    end
+  end
+
+  defp in_partition_order(member_ids),
+    do: Enum.sort_by(member_ids, &Partition.split_member_suffix/1)
+
+  defp check_converge_identity(members, partitions, group_id) do
+    ranges = Partition.ranges(partitions)
+
+    members
+    |> Enum.find(fn %{partition: p} ->
+      p.count != partitions or p.range != Enum.at(ranges, p.index)
+    end)
+    |> case do
+      nil ->
+        :ok
+
+      %{id: id, partition: p} ->
+        {:error,
+         "cannot converge group #{group_id} to #{partitions} partitions: live member #{id} " <>
+           "declares #{p.count} (range #{inspect(p.range)}); changing a group's partition " <>
+           "count moves Entity state, which a start never does — use `flz operative scale`"}
+    end
+  end
+
+  defp start_members(namespace, operative, ranges, plugins_fun) do
+    with {:ok, started, _skipped} <-
+           run_member_starts(
+             namespace,
+             operative,
+             Enum.with_index(ranges),
+             length(ranges),
+             plugins_fun,
+             :refuse
+           ) do
+      {:ok,
+       %{
+         group: operative.id,
+         members: started,
+         warnings: runner_count_warnings(namespace, length(ranges))
+       }}
+    end
+  end
+
+  # The one member-start loop. `:refuse` is the fresh-group policy — a taken
+  # id is a failure that rolls back this run's starts; `:skip` is converge's —
+  # a member racing into existence is by id-shape a member of this same group.
+  defp run_member_starts(namespace, operative, indexed_ranges, count, plugins_fun, on_duplicate) do
+    indexed_ranges
+    |> Enum.reduce_while({[], []}, fn {range, index}, {started, skipped} ->
       case start_member(namespace, operative, index, count, range, plugins_fun) do
         {:ok, member_id} ->
-          {:cont, {:ok, [member_id | started]}}
+          {:cont, {[member_id | started], skipped}}
+
+        {:duplicate, member_id} when on_duplicate == :skip ->
+          {:cont, {started, [member_id | skipped]}}
+
+        {:duplicate, member_id} ->
+          {:halt,
+           rollback_group(
+             namespace,
+             started,
+             operative.id,
+             index,
+             "#{member_id}: #{Validator.id_in_use()}"
+           )}
 
         {:error, reason} ->
           {:halt, rollback_group(namespace, started, operative.id, index, reason)}
       end
     end)
     |> case do
-      {:ok, started} ->
-        {:ok,
-         %{
-           group: operative.id,
-           members: Enum.reverse(started),
-           warnings: runner_count_warnings(namespace, count)
-         }}
-
-      err ->
-        err
+      {:error, _} = err -> err
+      {started, skipped} -> {:ok, Enum.reverse(started), Enum.reverse(skipped)}
     end
   end
 
@@ -171,7 +262,7 @@ defmodule Flezha.Operative.PartitionGroup do
 
       case OperativeManager.start_operative(namespace, member) do
         {:ok, _} -> {:ok, member_id}
-        :duplicate -> {:error, "#{member_id}: #{Validator.id_in_use()}"}
+        :duplicate -> {:duplicate, member_id}
         {:error, reason} -> {:error, "#{member_id}: #{inspect(reason)}"}
       end
     end
@@ -370,7 +461,11 @@ defmodule Flezha.Operative.PartitionGroup do
   # `init_provider`, which is the only thing that can produce them for it.
   defp declared_opts_only(%Plugin{provider: provider} = plugin) when is_atom(provider) do
     if Code.ensure_loaded?(provider) and function_exported?(provider, :validate_opts, 1) do
-      kept = Map.filter(plugin.opts, fn {key, value} -> provider.validate_opts(%{key => value}) == :ok end)
+      kept =
+        Map.filter(plugin.opts, fn {key, value} ->
+          provider.validate_opts(%{key => value}) == :ok
+        end)
+
       %Plugin{plugin | opts: kept}
     else
       plugin

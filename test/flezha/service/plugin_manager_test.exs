@@ -119,6 +119,35 @@ defmodule Flezha.Service.PluginManagerTest do
 
       assert ids == ["plug_a", "plug_b"]
     end
+
+    test "re-enabling for the same target is a no-op that touches nothing", %{store: store} do
+      plugin = build_plugin("idem_a", topic: "a")
+
+      assert {:ok, "plugin enabled"} = PluginManager.enable_plugin("idem_a", plugin)
+      cspec_before = read_plugins(store)
+      parent = self()
+
+      ProcessRegistry
+      |> Mimic.stub(:update, fn _hub_id, _operative_id, _fun, _opts ->
+        send(parent, :cspec_write)
+        :ok
+      end)
+
+      assert {:ok, :already_enabled} = PluginManager.enable_plugin("idem_a", plugin)
+
+      # Neither the cspec nor the live subscription may be touched.
+      refute_received :cspec_write
+      assert read_plugins(store) == cspec_before
+    end
+
+    test "the same plugin id for a different target is refused naming the holder" do
+      plugin = build_plugin("dup_x", topic: "a")
+      assert {:ok, _} = PluginManager.enable_plugin("dup_x", plugin)
+
+      other = %{build_plugin("dup_x", topic: "a") | operative_id: "someone_else"}
+      assert {:error, message} = PluginManager.enable_plugin("dup_x", other)
+      assert message =~ "already registered for #{@namespace}/#{@operative_id}"
+    end
   end
 
   describe "disable_plugin/1 cspec persistence" do
@@ -232,6 +261,43 @@ defmodule Flezha.Service.PluginManagerTest do
       store = Agent.get(cspecs, & &1)
       assert Enum.all?(Map.values(store), &(plugins_of(&1) == []))
       assert Map.keys(PluginManager.get_plugins()) == []
+    end
+
+    test "a fully-already-enabled group re-run is a no-op" do
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operative_id: @group}
+
+      assert {:ok, _} = PluginManager.enable_plugin("ohlc_ws", plugin)
+      assert {:ok, :already_enabled} = PluginManager.enable_plugin("ohlc_ws", plugin)
+    end
+
+    test "a group re-run heals the member missing its instance" do
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operative_id: @group}
+      assert {:ok, _} = PluginManager.enable_plugin("ohlc_ws", plugin)
+
+      PluginManager.unregister_plugin("ohlc_ws" <> Flezha.Partition.member_suffix(1))
+
+      assert {:ok, message} = PluginManager.enable_plugin("ohlc_ws", plugin)
+      assert message =~ "enabled on 1 partition(s) (2 already enabled)"
+    end
+
+    test "an already-enabled member does not mask a genuine failure elsewhere", %{
+      members: members,
+      overwatch: overwatch
+    } do
+      plugin = %{build_plugin("ohlc_ws", url: "wss://x") | operative_id: @group}
+      assert {:ok, _} = PluginManager.enable_plugin("ohlc_ws", plugin)
+
+      failing = Enum.at(members, 1).id
+      PluginManager.unregister_plugin("ohlc_ws" <> Flezha.Partition.member_suffix(1))
+
+      OperativeManager
+      |> Mimic.stub(:get_operative_pid, fn _ns, id ->
+        if id == failing, do: {:error, "operative not found"}, else: {:ok, overwatch}
+      end)
+
+      assert {:error, message} = PluginManager.enable_plugin("ohlc_ws", plugin)
+      assert message =~ "enabled on 2 of 3 partitions"
+      assert message =~ failing
     end
 
     test "a partial enable names who succeeded and who did not", %{
