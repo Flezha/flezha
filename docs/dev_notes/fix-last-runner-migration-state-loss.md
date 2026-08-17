@@ -6,7 +6,8 @@
 - **GOTCHA — runner ownership is NODE-LOCAL.** `ControlUnit` and the
   `StreamChannel` registry live in the per-node `Identificator` Registry and
   `FleetManager` is a per-node GenServer, so an Overwatch can only bind to a
-  runner connected to ITS OWN node. `Convergence.Heal.rebind_operative/3`
+  runner connected to ITS OWN node. `Convergence.Heal.rebind_operative/2`
+  (private, behind the `:rebind_operative` primitive)
   handing a local target to a remote Overwatch fails by construction
   (`{:ping_failed, :no_control_unit}`).
 - **GOTCHA — `runner_migrate` used to commit the binding BEFORE the ping.** A
@@ -57,7 +58,7 @@
   setup stops every OTHER running hub — including the suite-shared `default`,
   whose absence surfaces as the misleading "no runners in namespace default"
   (`Validator.valid_namespace/1` reports a dead HUB with that string).
-- **Pinned by** `test/flezha_test.exs:700` ("runner disconnect migrate hub") on
+- **Pinned by** `test/flezha_test.exs:713` ("runner disconnect migrate hub") on
   its ORIGINAL assertion, `test/flezha/state/wal_transfer_test.exs` (incl. a
   real two-BEAM-node pull with distinct state roots, `:multi_node`), and the
   two new cases in `test/operative/overwatch_async_migrate_test.exs`.

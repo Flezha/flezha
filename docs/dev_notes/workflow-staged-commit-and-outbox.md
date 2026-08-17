@@ -10,8 +10,10 @@
   `run`-sugar keeps the direct path (no barrier to stage against).
 - **Transport**: extends the SAME `ProcCommit` handshake — `outbox`
   (`ProcOutboxItem{entity_id, seq_in_proc, channel, payload}`, tag 6) +
-  `compensating` (tag 7). No second protocol. `ship_proc_commit/3` is shared
-  by the forward barrier and the undo record; the undo wait ignores the
+  `compensating` (tag 7). No second protocol. The shared journal-then-await
+  helper is now `ship_and_await` (`flz_core/src/workflow/driver.rs` — it
+  also carries `IterCommit`), used by the forward barrier and the undo
+  record; the undo wait ignores the
   cancel token (rollback IS the response to that cancel).
 - **Journal**: `proc_committed` carries entities+handoff+outbox in ONE record;
   `outbox_flushed` (type 2, payload `[for_type u8]` — forward vs undo are
@@ -20,8 +22,8 @@
   effect-record format-id, so no collision), 0 until rewind bumps it.
 - **Flush**: `ProcJournal.flush_pending/2` is the ONE path — post-ack
   (`ControlChannel`, retry timer on `:no_overwatch`) and restore re-drive
-  (`Overwatch.replay_persisted_entities`, gated `kind == :workflow`, passes
-  its own pid). Journal state (not memory) decides what is owed →
+  (`Flezha.Operative.Replay.replay_persisted_entities/4`, gated
+  `kind == :workflow`, passes its own pid). Journal state (not memory) decides what is owed →
   idempotent by construction. Delivery = `GenServer.cast(overwatch,
   {:io_out, payload, stamps})`, same fan-out as `WalWriter`'s eff-once
   outbox. Stamps: `flz.entity`, `flz.seq` = `<proc_idx>.<seq_in_proc>`

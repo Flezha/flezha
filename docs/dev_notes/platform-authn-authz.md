@@ -9,8 +9,9 @@
   `lib/flezha/authn/cert.ex` (`principal_from_peer/1` +
   `namespace_from_peer/1`, RFC 4514 normalised DN / SPIFFE URI SAN).
 - **Supervision tree**: `Flezha.AuthZ.Supervisor` is inserted in
-  `Flezha.Application.start/2` AFTER `Flezha.Observability.Supervisor`
-  and BEFORE `Flezha.Shutdown.Coordinator`. Children, in order
+  `Flezha.Application.start/2` AFTER `Flezha.Observability.Supervisor`,
+  right after `Flezha.Cluster.Orchestrator` (so after
+  `Flezha.Shutdown.Coordinator`). Children, in order
   (`:rest_for_one`): `AuthState` → `RoleStore` → `NamespaceStore`
   → `TokenStore` → `QuotaCounters` → `SourceRegistration` (one-shot
   `:platform_authz` source registration) → `Bootstrap.OnBoot`
@@ -45,8 +46,10 @@
   async. `OperativeManager.start_operative/2` enforces `max_operatives` /
   `max_entities_per_operative` at allocation time and records on
   success; `stop_operative/2` decrements on stop. Mailbox / disk /
-  runner enforcement points land in the namespace-state
-  follow-up.
+  runner enforcement landed with `finish-platform-authn-authz`:
+  `max_runners` in `FleetManager.admit_runner`, `max_state_bytes` at
+  `start_operative` plus a latched Watchdog breach alarm,
+  `max_mailbox_bytes_total` via `PersistenceResolver`.
 - **Bootstrap**: on first boot when no `admin@_system` binding
   exists AND `:enabled` is `true`, `Bootstrap.OnBoot` writes
   `app_data/auth/bootstrap.token` (mode `0600`) after verifying the
@@ -57,7 +60,8 @@
   freshly-minted admin token), binds `admin@_system`, flips
   `AuthState.enabled` durably, unlinks the token file, emits
   `:bootstrap_completed`.
-- **CLI surface (Elixir-side wrappers ready; Rust verbs deferred)**:
+- **CLI surface** (Rust verbs shipped with `finish-platform-authn-authz`:
+  `flz auth` / `flz token` / `flz role` / `flz namespace`):
   `Flezha.Service.CliManager.authz_{bootstrap,issue,revoke,list,whoami}`,
   `namespace_{create,delete,list,show,set_quota}`,
   `role_{bind,unbind,list}`. Each wraps in `AuthZ.authorize/3` and
@@ -68,16 +72,18 @@
   `"_system"` when absent on pre-upgrade rows); `caller.principal`
   is the verified principal when `:enabled` is `true`, else the
   caller-source atom (preserving pre-change behaviour).
-- **Compatibility mode**: `:authn_authz, :enabled` defaults `false`
-  in `config/runtime.exs` and `config/test.exs`. While `false`,
+- **Enforcement posture** (reshaped by `finish-platform-authn-authz` —
+  see its notes): `:authn_authz, :enabled` defaults to
+  `config_env() == :prod`, so prod ENFORCES by default; dev/test
+  default `false`. The posture is three-way
+  (`Flezha.AuthZ.enforcement_posture/0`). While disabled,
   `AuthZ.authorize/3` returns `:ok` unconditionally and
-  `require_bound_principal/1` is a no-op — every existing service
-  caller continues to work without producing a verified principal.
-  Flips to `true` durably on `Bootstrap.claim/2` success;
+  `require_bound_principal/1` is a no-op.
+  `Bootstrap.claim/2` success still flips `:enabled` durably;
   `FLEZHA_AUTHZ_ENABLED=false` is an explicit opt-out that emits a
   `warn` on every boot.
 - **Runtime config knobs**: `:authn_authz` map —
-  `:enabled` (default `false`, env `FLEZHA_AUTHZ_ENABLED`),
+  `:enabled` (default `config_env() == :prod`, env `FLEZHA_AUTHZ_ENABLED`),
   `:auth_dir` (default `app_data/auth`, env `FLEZHA_AUTHZ_DIR`),
   `:bootstrap_token_path` (default `<auth_dir>/bootstrap.token`,
   env `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH`),
@@ -85,11 +91,14 @@
   `:sdk_token_ttl_seconds` (`2_592_000`),
   `:namespaces` (map of per-namespace quota overrides),
   `:application_managed` (default `true`; tests set `false`).
-- **Deferred to follow-ups**: transport-layer cert wiring + CLI
-  socket handshake + Rust CLI verbs
-  (`platform-authn-authz-transport`); namespace prefix through
-  State subsystem + ProcessHub registry + remaining service-module
-  refactors + remaining quota points
-  (`platform-authn-authz-namespace-state`); operator guide and
-  multi-tenant integration suite
-  (`platform-authn-authz-docs-and-e2e`).
+- **Follow-ups — LANDED via `finish-platform-authn-authz`** (see
+  `docs/dev_notes/finish-platform-authn-authz.md`): transport cert
+  wiring (`flz_transport/src/transport/tls.rs`,
+  `transport_auth_required`); CLI identity as a verified
+  `--token`/`FLEZHA_TOKEN` context (NOT a socket handshake); the Rust
+  CLI verbs; namespace-prefixed state at the `Registry.class_dir/1`
+  seam; the remaining quota points; operator guide
+  (`docs/operations/authn_authz.md`) + multi-tenant e2e
+  (`test/system/multi_tenant_e2e_test.exs`). Not re-verified: the
+  ProcessHub-registry namespace prefix and the remaining service-module
+  refactors from the original deferral list.

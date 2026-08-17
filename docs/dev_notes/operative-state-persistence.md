@@ -2,18 +2,20 @@
 
 - **Modules**: `lib/flezha/state/` — `Registry`, `Wire`, `Metrics`,
   `Outbox`, `PersistenceResolver`, `Supervisor`, `WalWriter`,
-  `FsyncBatcher`, `Snapshot`, `Retention`, `Restore`, `TimeTravel`,
-  `TestHelpers`.
-- **On-disk layout**: `app_data/state/{operative_class}/{procedure_id}/{entity_key}.{wal,snap.{seq},outbox.dedup}` (flat — `runner_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
+  `FsyncBatcher`, `Snapshot`, `Retention`, `Restore`, `TimeTravel`
+  (`Flezha.State.TestHelpers` moved to `test/helpers/`).
+- **On-disk layout**: `app_data/state/{namespace}/{operative_class}/{procedure_id}/{entity_key}.{wal,snap.{seq},outbox.dedup}` (the `namespace` segment came with `finish-platform-authn-authz` via `Registry.class_dir/1`; `runner_id` was dropped by `auto-restore-on-boot`; `Flezha.Boot.StatePathMigrator` handles upgrade migration).
 - **Wire payload-ids**: `entity_state_change`, `entity_state_snapshot`,
   `delete_entity_state` (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
   `CompactEntity`, `CompactEntityResponse`, `EntityMailboxStatus`
   (control channel). See `docs/sdk_protocol_spec.md` "Per-Entity
   State Persistence".
-- **Dynamic entity mode**: SDK-side
-  `sdk/rust/src/entity/dynamic.rs` (`DynamicEntityRegistry` +
-  `Reaper`). Dynamic-mode Procedures (`entity_key()` overridden, empty
-  `entity_keys()`) create Entities lazily per key. Eviction is OFF by
+- **Dynamic entity mode**: `flz_core/src/dynamic.rs`
+  (`DynamicEntityRegistry` + reaper; re-exported as
+  `flezha_runner::entity::dynamic`). Dynamic mode = empty `entity_keys()`
+  PLUS a consumer edge declaring `.key_by(...)` — `entity_key()` was
+  deleted by `stream-dsl-keyby-and-transforms`. Entities are created
+  lazily per key. Eviction is OFF by
   default (`entity_idle_ttl() -> None`); when a TTL is opted in, the
   per-Procedure reaper evicts idle Entities **destructively** — it ships
   `delete_entity_state` (SDK→controller) and the recreate cold-starts
@@ -43,14 +45,17 @@
   (per-Operative `:credit_window_bytes`, default `wal_high_watermark_bytes`;
   kill switch `FLEZHA_CREDIT_FLOW_CONTROL`), debits each frame's wire size,
   and mints one batched `CreditGrant` per fsync-drain below
-  `:credit_low_watermark_bytes` (default `window / 2`). SDK windows:
-  `sdk/rust/src/entity/credit.rs`, `sdk/java .../state/CreditWindow.java`
-  (park in the flusher under the buffer lock; `credit_parked` in
+  `:credit_low_watermark_bytes` (default `window / 2`). ONE shared SDK
+  window in `flz_core/src/credit.rs` since the poll-core rehost (the old
+  per-SDK `entity/credit.rs` and `CreditWindow.java` are gone;
+  park in the flusher under the buffer lock; `credit_parked` in
   `data_heartbeat` metadata). Credit sessions get no `EntityMailboxStatus`;
   shed/overrun on one emits `[:flezha, :state, :credit_anomaly]`. Soak:
   `test/load/credit_soak_test.exs` (`MIX_RUN_CREDIT_SOAK=1`). The
-  source-ingestion credit loop is deferred until `effectively-once-output`
-  lands (input-log + min-watermark do not exist yet).
+  source-ingestion credit loop is BUILT now: `InputLog` debits a
+  per-operative `source:` `CreditLedger`, parks the ingest caller at zero
+  credit and unparks on `:watermark_advance`
+  (`:source_credit_window_bytes`).
 - **CLI**: `flz state list <operative>`, `flz state at <operative/procedure/key> <seq|ts>`,
   `flz state rotate <operative/procedure/key>`, `flz state retention <operative> <hours>`,
   `flz state delete <operative/procedure/key>`. Implemented in `cli/src/state.rs`;

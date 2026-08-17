@@ -1,8 +1,9 @@
 # OTP backend sources (`platform-observability-otp-backend`)
 
 - **Modules**: `lib/flezha/observability/otp_backend/` —
-  `Supervisor`, `BeamVmSource`, `HostSource`, `ProcParser`,
-  `ProcessHubSource`, `TransportSource`, `BoundedMailboxSource`.
+  `Supervisor`, `Source` (the shared `use` macro), `BeamVmSource`,
+  `HostSource`, `ProcParser`, `ProcessHubSource`, `TransportSource`,
+  `BoundedMailboxSource`.
 - **Supervision tree**: `Flezha.Observability.OtpBackend.Supervisor`
   is inserted in `Flezha.Observability.Supervisor` AFTER
   `DefaultSinks` and BEFORE `Export.Supervisor`. `:one_for_one` so a
@@ -12,7 +13,8 @@
   CPU / FD / loadavg, 5s default; one-shot `:host_source_degraded`
   event on non-Linux), `:processhub` (per-hub registered processes +
   pending recoveries, 1s), `:flezha_transport` (per-transport
-  pending-stream count via `Flezha.Transport.Server.get_stats/1`,
+  pending-stream + driver-loop/queue/write-buffer metrics and global
+  channel/credit aggregates via `Flezha.Transport.Server.get_stats/1`,
   1s), `:flezha_bounded_mailbox` (registered, one-shot
   `:bounded_mailbox_unavailable` event until the Rust→Elixir mailbox
   surface lands).

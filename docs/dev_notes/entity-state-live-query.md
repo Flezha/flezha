@@ -15,7 +15,9 @@
   SDK-produced readable answer that already existed.
 - **The seq rides the FRAME METADATA (`flz.change_seq`), not the JSON body** —
   the body's shape is specified and already has a caller. Plumbing: a default
-  `CommandAction::reply` (Rust) / `CommandHandler.reply` (Java) returning
+  `CommandAction::reply` (core-side, `flz_core/src/command/` — the Java
+  `CommandHandler` is gone; Java handles activations, not control commands)
+  returning
   `(payload, metadata)` and forwarding to `handle` with no metadata, so ONE
   handler overrides it and the other ~19 are untouched; `ControlChannel` now
   passes the frame metadata to `ControlUnit`, and `send_control_await` takes
@@ -24,23 +26,28 @@
   it does NOT drain pending changes, so the value can be ahead of the WAL (that
   is the point, and why the seq is stamped). Compaction must drain because its
   `snapshot_seq` becomes a truncation point. Pinned by
-  `a_read_leaves_the_entity_undrained_and_its_seq_unchanged` (Rust) and its Java
-  twin, both of which drop the flusher registration so "unflushed" is a fact of
+  `a_read_leaves_the_entity_undrained_and_its_seq_unchanged` (Rust — the Java
+  twin went with the kernel mirror; nearest Java coverage is
+  `ActivationDispatcherTest.restoreSnapshotAndLiveRead`), which drops the
+  flusher registration so "unflushed" is a fact of
   the test rather than a race against the 5 ms linger.
-- **GOTCHA — Java's dynamic keyset is `entityKeyToIdx`, NOT the slot list.**
-  `reapIdleDynamicEntities` removes the KEY and leaves the slot in the
-  `CopyOnWriteArrayList`, so iterating slots reports Entities the reaper already
-  evicted. Rust's registry removes the whole entry, so only Java had the trap.
-- **`Keyset` (Rust enum / Java record) is the one place "what Entities does this
+- **The old Java keyset trap is GONE with the kernel mirror**: Java once kept
+  `entityKeyToIdx` beside a slot list the reaper did not prune; today ONE
+  shared `flz_core::DynamicEntityRegistry` serves both SDKs and `reap_sweep`
+  removes the whole entry, so there is no stale-slot walk to fall into.
+- **`Keyset` (one Rust enum in `flz_core/src/command/entity_state.rs`, serving
+  both SDKs) is the one place "what Entities does this
   Procedure have right now" is answered** — declared keys for static, the live
   registry/key-index for dynamic — and it answers BOTH a single-key lookup and a
   walk-all. That is load-bearing, not tidiness: materializing the keyset to find
   one Entity would make a narrowed read cost a whole walk, which is the entire
-  point of the selector. Java's `deserialize` runs on the same seam.
+  point of the selector. The host/Java restore path (`apply_state_locked`)
+  runs on the same seam.
 - **Eviction is a distinct diagnosis, so it needs a trace.** Dynamic eviction is
   destructive and leaves nothing on disk, so "idle-evicted" vs "never existed"
-  cannot be told apart after the fact — both SDKs keep a bounded (1024) FIFO of
-  evicted keys purely to answer that refusal. Beyond the cap it degrades to
+  cannot be told apart after the fact — the shared core keeps ONE capped
+  (1024) FIFO of evicted keys (`EVICTED_TRACE_CAP`, `flz_core/src/dynamic.rs`)
+  purely to answer that refusal. Beyond the cap it degrades to
   `entity_not_found`, the safe direction.
 - **Refusal tokens lead the error string** (`entity_key_without_procedure`,
   `procedure_not_found`, `entity_not_found`, `entity_evicted`) so the controller
@@ -53,9 +60,8 @@
   second, now-wrong way to ask the same question.
 - **Tests**: `sdk/rust/tests/state_serialize.rs` (selector narrowing, dynamic
   coverage, refusals, unflushed-change seq, no-side-effects, the proto
-  byte-identity pin, and the cross-language JSON fixture),
-  `StreamOperativeStateSerializerTest` (same set + the identical fixture
-  literal — both encoders sort object keys),
+  byte-identity pin, and the cross-language JSON fixture — the Java
+  `StreamOperativeStateSerializerTest` went with the kernel mirror),
   `test/flezha/service/cli_manager_state_get_test.exs` (every verdict as the
   operator sees it), e2e `dynamic_entity_e2e_test.exs` "a live dynamic Entity is
   readable by name, narrowed to one key" on BOTH runtimes. GOTCHA: those two e2e

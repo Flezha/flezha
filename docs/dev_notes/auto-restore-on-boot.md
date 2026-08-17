@@ -52,14 +52,15 @@
   counts. Using bare `dump/1` there resurrects an operative the
   operator stopped.
 - **GOTCHA — two loops now start operatives.** The reconcile starts
-  orphans AND `Convergence.Health` binds/rebinds on its own 5 s tick;
+  orphans AND `Convergence.Loop` binds/rebinds on its own 5 s tick;
   neither is gated on the other. `reconcile_duplicate` telemetry is the
   tripwire for whether they actually contend in prod.
-- **Recovery tracker**:
-  `Flezha.Service.HubManager.RecoveryTracker` is a per-supervisor
-  GenServer subscribed to `[:process_hub, :recovery, _]` telemetry.
+- **Recovery state**: there is no `RecoveryTracker` GenServer any
+  more — per-hub recovery state lives in `Flezha.Convergence.Snapshot`'s
+  ETS table behind `Flezha.Convergence.RecoveryGate` (no GenServer of
+  its own); hooks are forwarded by `Flezha.Boot.RecoveryHooks.register/1`.
   `HubManager.recovery_state/1` and `await_recovery_complete/1,2`
-  expose the per-hub state machine; `Flezha.BootLoader.await_namespace_hubs/0`
+  delegate there; `Flezha.BootLoader.await_namespace_hubs/0`
   and `Flezha.Runner.FleetManager.init/1` gate registry reads on it.
 - **Boot CLI**: `flz boot status`, `flz boot await`,
   `flz boot import-legacy-snapshot` — implemented in `cli/src/boot.rs`
@@ -86,8 +87,9 @@
 - **Removed by `consume-recovery-mode-and-self-heal`**:
   `Flezha.Boot.WalTransfer`; `:pre_replay_fleet_wait_ms` config key;
   `Flezha.Reconciler.{Loop, Actions, Health, Probe, Activity, Leader}`
-  (replaced by `Flezha.Convergence.Health`); `Flezha.State.Outbox`;
+  (replaced by what is now `Flezha.Convergence.Loop`);
   `Flezha.Reconciler.Supervisor` (top-level); `FLEZHA_RECONCILER_ENABLED`,
   `FLEZHA_LEADERSHIP_ENABLED`, `FLEZHA_RECONCILE_*` env vars.
+  (`Flezha.State.Outbox` was NOT removed — it still exists and is live.)
 - **Detailed notes**: `docs/resilience/auto_restore_on_boot.md`.
 

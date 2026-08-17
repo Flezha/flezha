@@ -11,14 +11,17 @@
   last so subscriptions go live only after the Writer is ready to
   accept records.
 - **Default allow-list**: `:observability_service`, `:flezha_shutdown`,
-  `:flezha_plugin_installer`, `:audit_log` (audit-of-audit). Extend
+  `:flezha_plugin_installer`, `:audit_log` (audit-of-audit),
+  `{:platform_authz, :any}`, `{:flezha_dlq, :operator_drop}`,
+  `{:flezha_dlq, :operator_replay}`. Extend
   via `:audit_log, :extra_subscriptions`.
 - **On-disk layout**: `app_data/audit/INDEX` (binary catalog),
   `app_data/audit/audit-current.jsonl` (active file),
   `app_data/audit/audit-YYYYMMDDTHHMMSSZ-N.jsonl[.gz]` (rotated).
   `INDEX` is rebuildable on boot if missing or corrupt.
 - **JSON Lines record**: stable field order `ts_us, ts_iso, source,
-  name, measurements, metadata, caller`; `caller` is denormalised
+  name, measurements, metadata, caller, namespace` (`namespace`
+  defaults `"_system"`); `caller` is denormalised
   from `metadata.caller_source / :principal / :request_id`.
 - **Fsync**: `:per_record` (default, ~1-10 ms/record on local SSD)
   or `:batched` (every `:fsync_interval_ms`, bounded loss window).
@@ -41,8 +44,8 @@
   implemented in `cli/src/audit.rs` and
   `Flezha.Service.CliManager.audit_log_render_*`.
 - **Shutdown integration**: `Flezha.Shutdown.Coordinator.do_finalise`
-  calls `Writer.close/0` BEFORE the `FsyncBatcher` flush, workflow
-  by a 5 s timeout. Post-close signals are dropped with a per-sink
+  calls `Writer.close/1` BEFORE the `FsyncBatcher` flush, capped
+  at 5 s. Post-close signals are dropped with a per-sink
   counter increment.
 - **Runtime config knobs**: `:audit_log` map (see
   `docs/audit_log.md` for the full list). Env-var overrides:

@@ -5,11 +5,11 @@
   channel's `retry_max` (default 3 total attempts, exponential backoff +
   jitter capped 5 s); `.retry_max(n)` / `.retry_backoff_ms(b)` on the
   channel builders, `ProcedureError::NonRetryable` /
-  `ProcedureException.NonRetryable` parks immediately. Rust:
-  `sdk/rust/src/operative/dispatcher.rs` retry loop +
-  `sdk/rust/src/entity/park.rs` (blocking wire park, ack registry);
-  Java: `ProcedureDispatcher.runOnce` + `runtime/state/DlqPark.java`
-  (hand-rolled postcard encoder, fixture-pinned cross-language).
+  `ProcedureException.NonRetryable` parks immediately. Since the
+  poll-core rehost ONE shared ladder in `flz_core` drives both languages:
+  `poll_core.rs` + `retry.rs` (counting, backoff, re-hand) + `park.rs`
+  (blocking wire park, ack registry); the old per-SDK `dispatcher.rs`
+  retry loop, `ProcedureDispatcher.runOnce` and `DlqPark.java` are gone.
 - **Protocol**: data-stream payload-id `park_payload` (postcard
   `ParkBody`, same outer frame as `entity_state_change`, zero header)
   acked by control command `ParkPayloadAck` (proto tag 27) AFTER the
@@ -39,7 +39,8 @@
   `dlq_usage` metrics bridge to the bus (source `:flezha_dlq`).
 - **Workflow profile**: out of scope — AbortAll + saga compensation is the
   equivalent escape; nothing is written to the DLQ store.
-- **Tests**: `sdk/rust/tests/dlq_retry.rs`, Java `DlqRetryTest`,
+- **Tests**: `sdk/rust/tests/dlq_retry.rs` (the Java `DlqRetryTest` was
+  removed with the poll-core rehost — Java is covered by the e2e),
   `test/flezha/dlq/store_test.exs`, WalWriter park cases in
   `wal_writer_outbox_test.exs`, CLI `cli_manager_dlq_test.exs`, e2e
   `test/system/dlq_e2e_test.exs` (Rust + Java + tier watermark;

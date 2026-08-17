@@ -16,7 +16,8 @@
   process-global class registries are overwrite-on-insert + `unregister_class`
   — duplicate detection lives in the runner's declared set. `define*`/`remove*`
   are legal pre- AND post-start: post-start changes ship `UpdateFactories`
-  (proto tag 33, full set, fire-and-forget, NO ack) via ControlChannel →
+  (proto tag 33, full set, fire-and-forget, NO ack — RUST ONLY since the
+  poll-core rehost, see below) via ControlChannel →
   `FleetManager.handle_cast({:sync_factories,..})` (remove_ce_factories +
   store_factories composed); the reconnect init frame — serialized from the
   same per-runner set at send time — stays the resync of record.
@@ -24,10 +25,13 @@
   `RunnerMessage::RemoveFactory` handled on the coordinator loop (serialized
   with `AddOperative`; seam = `RunnerNode::remove_factory`, unit-tested in
   `fast.rs`); `WorkflowInstance` carries `factory_id` for the scan. Java (no
-  single coordinator thread): `FlezhaImpl.removeType` = unregister-first →
-  scan live instances → re-register + throw `OperativeTypeInUseException`
-  (extends ISE) on a live hit — the transient window is benign (a failing
-  `AddOperative` is re-placed by convergence). Live instances of the factory ⇒
+  single coordinator thread): `FlezhaImpl.removeType` now checks live
+  instances FIRST (`ActivationDispatcher.hasInstanceOf`) → throws
+  `OperativeTypeInUseException` (extends ISE) on a live hit → only then
+  unregisters, so there is NO transient unregistered window (the
+  unregister-first + re-register dance predates the poll-core rehost; a
+  stale javadoc on `internal/RunnerHandle` still describes it).
+  Live instances of the factory ⇒
   `FlezhaError::OperativeTypeInUse` / that exception; undefined ⇒
   `NotDefined` / IAE naming the id.
 - **Rust: ONE public error.** `FlezhaError` (thiserror; `InvalidNamespace,
@@ -49,9 +53,11 @@
   `AtomicReference<RunnerHandle>` (`internal/RunnerHandle` = the runtime SPI:
   runnerId/operatives/awaitTermination/close/removeType/syncFactories).
   `FlezhaImpl.start(String, Supplier<List<String>>, Runnable)` — the supplier
-  feeds the initial handshake AND reconnect re-handshakes. `FactorySync`
-  (runtime) ships `UpdateFactories` via the GracefulShutdown frame-write
-  pattern; the processor aggregator generates `defineAll(FlezhaRunner)`.
+  feeds the initial handshake AND reconnect re-handshakes. `FactorySync` is
+  GONE since the poll-core rehost: Java post-start defines become
+  `FlzCore.declareClass` calls and a post-start REMOVE has no ABI surface
+  (logged no-op) — only Rust ships `UpdateFactories`. The processor
+  aggregator generates `defineAll(FlezhaRunner)`.
 - **GOTCHA — a chained `start()` temporary Drops at statement end** (Rust):
   always `let runner = ...start()?;`. `run()` is immune.
 - **GOTCHA — the e2e harness kills runners by closing stdin.** `Port.close/1`

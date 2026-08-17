@@ -3,9 +3,9 @@
 - **Modules**: `lib/flezha/observability/export/` — `Supervisor`,
   `PrometheusRegistry`, `PrometheusSink`, `PrometheusHttp`,
   `OtlpCodec`, `OtlpClient`, `OtlpSink`.
-- **Supervision tree**: `Flezha.Observability.Export.Supervisor` is
-  the last child of `Flezha.Observability.Supervisor`, started AFTER
-  the OTP backend. Registers the declarative
+- **Supervision tree**: `Flezha.Observability.Export.Supervisor` starts
+  AFTER the OTP backend in `Flezha.Observability.Supervisor`
+  (`AuditLog.Supervisor` is the last child). Registers the declarative
   `:observability_export` source on init so the exporters'
   operational events participate in bus fan-out.
 - **Prometheus**: hand-rolled `:gen_tcp` HTTP/1.1 listener (~250

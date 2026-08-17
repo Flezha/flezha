@@ -1,14 +1,15 @@
 # Workflow entity retry (`workflow-entity-retry`)
 
-- **Ladder (SDK, Rust)**: `run_entity_retrying` in `workflow/driver.rs` wraps the
-  pool task — only the FAILING entity re-runs its batch (siblings stay buffered
-  at the barrier), fresh sink per attempt (a failed attempt's staged output is
-  dropped, never double-emitted). Backoff REUSES `dispatcher::retry_backoff`
-  (the stream DLQ ladder's helper: `base × 2^(n-1)` ±50% jitter, capped
-  `RETRY_BACKOFF_MAX_MS` = 5 s) and the wait is cancellation-aware
-  (`sleep_cancellable`, ≤200 ms poll → a stop/`max_duration` ends it at once).
-  Retries count into `entity::park::RETRIES_TOTAL` (same `data_heartbeat`
-  metric as stream).
+- **Ladder (now in `flz_core`)**: the per-entity retry ladder is step-barrier
+  state — `workflow/step.rs` `fail_or_retry` / `nearest_due` /
+  `abandon_backoffs` — only the FAILING entity re-runs its batch (siblings
+  stay buffered at the barrier), fresh sink per attempt (a failed attempt's
+  staged output is dropped, never double-emitted). Backoff REUSES the shared
+  `flz_core::retry::note_failed_attempt` (the stream DLQ ladder's helper:
+  `base × 2^(n-1)` ±50% jitter, capped 5 s); a pending backoff is a due-time
+  the step loop waits on, and a cooperative stop cuts it short via
+  `abandon_backoffs`. Retries count into `flz_core::park::RETRIES_TOTAL`
+  (same `data_heartbeat` metric as stream).
 - **Policy**: `WorkflowOperative::retry_attempts()` (default 3 TOTAL attempts) +
   `retry_backoff()` (default 500 ms base) → resolved onto the SHARED
   `channel::RetryPolicy` in `WorkflowSpec.retry`; `0` collapses to one attempt
@@ -23,7 +24,7 @@
   retried); a crash mid-ladder resumes as a normal uncommitted-proc re-run
   (attempt counter resets). `run`-sugar has no entities → terminal on first Err.
   A stage error while the cancel token is set now reports `cancelled` (was
-  `error`) — `run_stage_parallel`'s caller folds it through `abnormal_status`.
+  `error`) — `drive_chain`/`run_iteration` fold it through `abnormal_status`.
 - **Tests**: `workflow_driver_scenarios` (recover / exhaust+compensate /
   non-retryable / attempts=0 / stop-interrupts-backoff / run-sugar counted
   once), `retry_policy_is_resolved_and_validated`, e2e "entity retry (rust/uds)"

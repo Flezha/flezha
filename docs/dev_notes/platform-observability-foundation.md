@@ -11,7 +11,8 @@
   order: `Registry` → `Phoenix.PubSub` (server name
   `Flezha.Observability.PubSub`) → `SinkSupervisor` → `SourceSupervisor`
   → `LoggerHandler` → `TelemetryBridge` → `DefaultSinks` (one-shot
-  worker that registers `:ring_buffer` and `:pubsub` sinks).
+  worker that registers `:ring_buffer` and `:pubsub` sinks) →
+  `OtpBackend.Supervisor` → `Export.Supervisor` → `AuditLog.Supervisor`.
 - **Signal envelope**: one struct, four kinds — `:metric`, `:event`,
   `:log`, `:trace_span`. Constructor `Flezha.Observability.Signal.new/1`
   validates kind / atoms / map shapes and auto-fills monotonic `ts`.

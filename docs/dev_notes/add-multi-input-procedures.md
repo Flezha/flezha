@@ -7,29 +7,32 @@
   takes inter-proc only — see below). Single-input `.into` is unchanged.
 - **The whole feature is ONE field on the consumer edge.**
   `ChannelDescriptor.consumers` went from `Vec<ProcedureId>` to
-  `Vec<ConsumerEdge>` (`procedure` + `Option<MergeMapFn>`); `consumer_ids()` /
+  `Vec<ConsumerEdge>` (today `procedure` + a composed `transform` + optional
+  `key` closure, since `stream-dsl-keyby-and-transforms`); `consumer_ids()` /
   `consumerIds()` is the id-only view the graph walks and the workflow DAG use.
   No wire change, no controller change, no journal-format change.
 - **GOTCHA — map at the ROUTING seam, not the delivery seam.** The mapping is
-  applied in `dispatcher::route_to_consumers` (Rust) /
-  `ProcedureDispatcher.routeToConsumers` (Java — the wire reader and
-  `fanoutInterProcedure` both go through it), which is the one path both live
+  applied in `flz_core::routing::route_to_consumers` (both languages; Java
+  evaluates `ConsumerEdge.transformValue` producer-side in
+  `ActivationDispatcher`), which is the one path both live
   delivery and the controller's re-forwarded replay slice travel. That is why
   replay determinism cost zero code: frames are still journaled per source
   channel, and the slice re-maps identically. Mapping later (inside dispatch)
   would have forked live and replay.
-- **`entities_for` / `entity_key` see the MAPPED value** — they run after the
-  edge map, so per-source entity mode is encoded in the enum, not per edge.
-- **Workflow works over INTER-PROC channels only**: `ChainCtx::edge_map` +
+- **`entities_for` / the edge `.key_by` see the MAPPED value** — they run
+  after the edge map (`entity_key()` no longer exists), so per-source entity
+  mode is encoded in the enum, not per edge.
+- **Workflow works over INTER-PROC channels only**: `ChainCtx::edge` +
   `extend_mapped` apply the edge map where the driver accumulates a producer's
-  batch into its child AND where `resumed_start` re-seeds from the journaled
-  handoff. Java mirrors both in `WorkflowOperativeRunner`. Without this a merge
+  batch into its child AND where the resume path re-seeds from the journaled
+  handoff. The chain is the shared core's, so Java runs the SAME driver over
+  JNI — nothing is mirrored. Without this a merge
   in a workflow chain would downcast-panic.
 - **GOTCHA — a merge mapping is the ONE author closure on a workflow chain that
   runs on the DRIVER thread**, not inside an entity invocation, so it is the one
-  the existing `catch_unwind`s miss. `extend_mapped` contains it (Rust) /
-  `WorkflowOperativeRunner.extendMapped` rethrows as `WorkflowOperativeException`
-  (Java) into the chain's existing abort-and-compensate path; without that an
+  the existing `catch_unwind`s miss. The core's `extend_mapped` contains it
+  (one site, both languages) into the chain's existing abort-and-compensate
+  path; without that an
   unwind skips `emit_workflow_completed` and the instance is stranded with no
   terminal frame. No retry — a mapping is pure by contract, so a re-run panics
   identically. Stream is already covered on the inter-proc side (the producer's
@@ -41,28 +44,20 @@
   blew up out of `completed` AND off disk (no intent markers), so it is never
   compensated and a crash mid-abort cannot recover it either. Java had it
   release-first and leaked exactly that (comp log `[undo-a]` instead of
-  `[undo-b, undo-a]`); it now mirrors Rust's `run_iteration`. The abort scope is
+  `[undo-b, undo-a]`); today both languages run the core's single
+  `run_iteration`. The abort scope is
   "stages recorded as completed" — a Rust sibling still in flight in the same
   level is NOT undone, which is the pre-existing mid-level abort shape (a failed
   `commit` at the same spot behaves identically), not a merge-specific hole.
-- **The two workflow mapping sites do NOT share an undo scope.** Forward
-  accumulate: parity, the producer whose edge blew up is always unwound on both
-  SDKs (measured). Crash-resume re-seed: Rust's `drive_chain` seeds the resumed
-  iteration's `completed` from `journaled_stages`' in-flight stages
-  (`driver.rs` `resumed_stages` → `completed`), so the journaled producer IS
-  unwound; Java's `runIteration` starts `completed` empty and `continue`s past
-  journaled procs without recording them, so NOTHING is unwound. Do not write
-  "both SDKs unwind the same set" without saying which site.
-- **KNOWN LIMITATION (verified against HEAD, documented, NOT fixed) — a resumed
-  Java workflow chain compensates only what re-ran.** `runIteration` never seeds
-  `completed` from the proc-journal, so any abnormal exit from a resumed chain
-  leaves the journaled-committed procedures un-undone; Rust unwinds them.
-  Pre-existing and NOT merge-specific (it applies to a resumed Java chain
-  failing anywhere forward) — a merge mapping throwing at the re-seed site is
-  one way to reach it. Symptom: a Java workflow instance that crashed mid-chain,
-  resumed, then failed reports `error` having compensated fewer procedures than
-  its Rust twin. Closing it is a workflow-resume semantics change, out of scope
-  here. Written up in `docs/multi_input_procedures.md` "Known limitation".
+- **The former Java resume-compensation limitation is CLOSED by construction.**
+  The two mapping sites (forward accumulate, crash-resume re-seed) used to have
+  split undo scopes: Rust seeded the resumed iteration's `completed` from the
+  journal while Java's mirrored `runIteration` started empty, so a resumed Java
+  chain compensated only what re-ran. Since the poll-core rehost both SDKs go
+  through the core's single seeding path (`driver.rs` `journaled_stages` →
+  `completed`), so the journaled-committed procedures are unwound identically.
+  (Separately, a Java diamond-workflow resume e2e regression is open as of
+  2026-08-17 — a different defect, proven by a jar swap.)
 - **GOTCHA — a workflow merge over an ENTRY channel is refused, not supported.**
   The workflow seed (`driver.rs seed_bytes`, fed by the spawn args and by
   `PerInput` inbox items) is a bare payload naming no channel, so no mapping
@@ -97,13 +92,15 @@
 - **Tests**: `sdk/rust/tests/merged_input.rs` (its own `[[test]]` entry,
   `required-features = ["bench-internals"]`; the three entry-merge cases share
   one static observer and serialize on `tuned_test_guard()`),
-  `MergedInputTest.java`, `E09_MergedInputTest.java`. The workflow halves are the
+  `E09_MergedInputTest.java` (`MergedInputTest.java`, `WorkflowKindTest` and
+  the Java workflow fixtures went with the kernel mirror — only the Rust
+  halves survive). The workflow half is the
   diamond fan-in re-authored as a merge — `MergeWorkflow` in
-  `workflow_driver_scenarios` and `MergeWorkflowOperative` in `WorkflowKindTest` —
-  each run forward AND resumed from a journal, which is what covers the
+  `workflow_driver_scenarios` —
+  run forward AND resumed from a journal, which is what covers the
   accumulate and re-seed mapping sites; the entry-source refusal is pinned in
-  `dag_topology_is_validated` and `WorkflowKindTest`. `PanickingMergeWorkflow` /
-  `ThrowingMergeWorkflowOperative` pin the containment — both were confirmed to
+  `dag_topology_is_validated`. `PanickingMergeWorkflow` /
+  `ThrowingMergeWorkflowOperative` pinned the containment — both were confirmed to
   FAIL (driver thread gone, `drain` times out / the completion latch never
   counts down) with the guard removed, and both assert the EXACT undo list on the
   FORWARD site (`undo-b` then `undo-a` — Rust's literals carry the output too,
@@ -113,8 +110,9 @@
   containment and the terminal report; Rust additionally asserts the journaled
   stages were undone in reverse, read off the compensation-DONE markers (the
   comp log is empty there — `diamond_op!` logs per completed output and a
-  journal-rebuilt `EntityRun` has none, a trap worth remembering). Java asserts
-  no undo list on that path — see the known limitation above.
+  journal-rebuilt `EntityRun` has none, a trap worth remembering). The Java
+  arm of that assertion went with the kernel mirror; the limitation it pinned
+  is closed (see above).
 - **`sdk/rust/public-api.txt` is part of "done" for any SDK-surface change**
   (`sdk/rust/README.md` "Public API workflow"). It is human-curated commentary,
   not `cargo public-api` output, so it is hand-edited — and a CHANGED signature

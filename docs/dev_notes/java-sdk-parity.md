@@ -6,19 +6,29 @@
   loop + suspension, entity retry, loop rewind, branching), dynamic entity mode,
   and the determinism contract — is available in Java. The e2e matrix no longer
   branches per runtime; there is ONE contract.
+- **SUPERSEDED IN PART by `rehost-java-sdk-on-poll-core`**: the Java kernel
+  mirror was later deleted onto `flz_core` (JNI), so Java-side classes named
+  below — `Declarations`, `AckRegistry`, `EntitySlot`/`EffectRecordCapture`,
+  `WireWriter`, `planCompensation`, `commitProcBoundary`/`StageRecord`/
+  `resumeIter`, `WorkflowKindTest` — no longer exist; their responsibilities
+  live in `flz_core` and are exercised by Rust tests. The parity FACTS and
+  the wire behaviour below still describe what landed.
 - **The unblocker was `AddOperativeHandler` returning `new byte[0]`.**
   `AddOperativeResponse.metadata` is the ONE seam `ClassRegistry.decode_declarations/1`
   reads. With it empty the controller could not be TOLD a Java class is
   `effectively_once` / has a `correction_window` / an `ack_granularity` /
   `compensable_procs` / `leaf_procs` — so every declaration-gated capability was
-  blocked, including ones not yet written. `Declarations.java` builds it now. A
+  blocked, including ones not yet written. Today Java declares a
+  `HostClassDecl` JSON to `flz_core`, which builds the metadata
+  (`command/operative_start.rs`). A
   class declaring nothing still encodes to **zero bytes** (= "declared nothing"),
   which is what keeps existing classes byte-identical.
 - **Two codecs coexist by design.** `EffectRecordBody` is postcard (the controller
   decodes it) but its `changes` elements are the SDK's own bytes — **Kryo** in
   Java, postcard in Rust — because the controller stores them opaquely and
-  re-ships them on restore. `format_id` discriminates the FRAME kind (2 = effect
-  record), not the change codec.
+  re-ships them on restore. `format_id` now discriminates BOTH: 2 = effect
+  record, and on plain change frames the codec itself (1 = postcard,
+  4 = Kryo, declared via `change_format_id`).
 - **`Postcard.java`** is the ONE postcard implementation (extracted from
   `DlqPark`'s private encoder). **`AckRegistry.java`** is the ONE ack rendezvous
   (`RunnerShutdownAck`, `ParkPayloadAck`, `ProcCommitResponse`,

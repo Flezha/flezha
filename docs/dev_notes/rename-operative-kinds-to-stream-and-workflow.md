@@ -46,7 +46,8 @@
   one-sentence rationale, so the question is settled rather than reopened.
 - **GOTCHA — the archive keeps the old ids.** `openspec/changes/archive/**` is a
   historical record and is out of scope, so the change directories are still
-  `bounded-loop-rewind`, `bounded-proc-journal`, `bounded-entity-retry`, … even
+  date-prefixed `bounded-loop-rewind`, `bounded-op-journal`,
+  `bounded-segment-retry`, … even
   though the section headings here and the live `openspec/specs/` capabilities
   now say `workflow-*`. Grep the archive with the old name.
 - **UPGRADE — `flz controller stop && flz reset --yes` is mandatory.** The kind

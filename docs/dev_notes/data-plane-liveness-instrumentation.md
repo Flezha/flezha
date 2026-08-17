@@ -1,8 +1,8 @@
 # Data-plane liveness instrumentation (`data-plane-liveness-instrumentation`)
 
 - **Purpose**: localize a silent `io_in`/output stall to one layer.
-  PURE instrumentation — zero data-plane behaviour change, no
-  remediation. Closes the 22:14 candle incident's "which layer
+  Landed as pure instrumentation; the classifier verdict has SINCE been
+  wired into remediation (see below). Closes the 22:14 candle incident's "which layer
   wedged?" gap (BEAM channel vs NIF driver thread vs runner).
 - **NIF driver self-report**: `flz_nif/src/driver_stats.rs` —
   `DriverStats{loop_iterations, last_loop_ms, cmd_queue_depth:
@@ -15,7 +15,10 @@
 - **BEAM counters**: `lib/flezha/transport/liveness_counters.ex` —
   always-on `:counters`/`:atomics` + public ETS registry (mirrors
   `Observability.Counters`). `StreamChannel` bumps `io_in_received /
-  send_frame_calls / nil_drops / flz_data_received / last_send_ms`;
+  send_frame_calls / nil_drops / flz_data_received / last_send_ms`,
+  plus heartbeat/credit slots (`hb_count`, `hb_dispatches`,
+  `hb_credit_parked`, `credit_active`, `credit_ledger_level`,
+  `credit_overrun_total`, `stale_writer_refused`);
   `Operative.Overwatch` bumps `io_in_received / forwarded / filtered_nil`.
   Dead-owner entries pruned on `snapshot_all/0`.
 - **Metric emission**: `Transport.Server.get_stats/1` merges
@@ -26,13 +29,16 @@
 - **Stall classifier**: `lib/flezha/convergence/stall_classifier.ex`
   — pure `classify(current, prev, opts)` returning one of
   `driver_loop_frozen | nif_queue_backing_up | socket_write_blocked |
-  runner_not_consuming | channel_not_sending | operative_not_forwarding
-  | :ok` (deepest-wedged-layer-wins; each verdict has an "is it being
-  fed?" advancing-delta precondition). `Convergence.Loop` builds the
-  snapshot per tick and emits `[:flezha, :data_plane,
-  :stall_localized]` (with `%{layer: …}`) on verdict change —
-  detection only, feeds NO heal; bridged to the bus via
-  `TelemetryBridge`.
+  runner_not_consuming | runner_pool_wedged | channel_not_sending |
+  operative_not_forwarding | :ok` (deepest-wedged-layer-wins; each
+  verdict has an "is it being fed?" advancing-delta precondition).
+  `Convergence.Loop` builds the snapshot per tick and emits
+  `[:flezha, :data_plane, :stall_localized]` (with `%{layer: …}`) on
+  verdict change. The verdict now ALSO feeds remediation: the
+  convergence Diff/Planner mint wedge ops from it
+  (`diff.ex resolve_wedge/3` → `planner.ex wedge_ops/1`) and
+  `/healthz` reports a `:fabric` verdict as 503. Bridged to the bus
+  via `TelemetryBridge`.
 - **Runtime config knob**: `:observability, :data_plane_liveness`
   (default `true`, env `FLEZHA_DATA_PLANE_LIVENESS`) gates the ~1 Hz
   poll + classifier; counters stay always-on.

@@ -6,8 +6,9 @@
   for over a year with ZERO production callers. This change adds the plugin
   that exposes it as configuration plus a confirming entry point a retry loop
   can read. No new control message, no proto change, no new dedup store.
-- **`Overwatch` `handle_call({:ingest, msg, md})`** — three clauses (suspended
-  / `init_error` / normal) reusing `ingest/3` + `ingest_suspended/3` AS-IS.
+- **`Overwatch` `handle_call({:ingest, msg, md})`** — now TWO clauses
+  (`init_error` / normal); the suspended case moved into the shared
+  `Ingest.confirming_ingest/3`, which the blocking `:io_in` path also uses.
   Verdicts: `:ok | {:ok, :absorbed} | {:ok, :suspended} | {:error, :not_ready
   | :not_found | :refused}`. `{:error, :not_found}` is minted by
   `OperativeManager.send_io_confirming/5`, not by the Overwatch.
@@ -42,8 +43,9 @@
 - **One payload in flight at a time** — order-preserving; a retryable verdict
   re-arms the same queue head. `:transient` restart so `Table.do_unsubscribe`'s
   `safe_kill(owned_pid)` (exit `:shutdown`) STOPS the worker instead of having
-  the DynamicSupervisor restart it. (Postgres/Kafka are `:permanent` and do
-  restart — a known asymmetry, not fixed here.)
+  the DynamicSupervisor restart it. (The Postgres sink worker is still
+  `:permanent` and does restart; Kafka's producer worker has since moved
+  to `:transient` too, so the asymmetry is Postgres-only.)
 - **Source identity reaches `init_provider/1` via ONE generic seam**:
   `Table.with_host_identity/2` merges `%{source_namespace:,
   source_operative_id:}` LAST (same anti-spoof rule as `bulk_activate`'s

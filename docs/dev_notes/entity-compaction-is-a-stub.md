@@ -8,11 +8,14 @@
   green" claims did NOT hold for this path on EITHER SDK until this change.
 - **SDK emit** = the producing half. Rust adds `ProcedureDispatcher::snapshot_frame`
   (the type-erased MIRROR of `restore_state`, NOT a third `build_state_fns` fn
-  pointer — reuses the same postcard machinery restore decodes); Java's
-  `CompactEntityHandler` shares the `EntityLocator.findStream` scan with
-  `RestoreInitStateHandler` (cx-refine extraction) + Kryo. Both
-  DRAIN pending changes first (`flush_one` / new `EntityFlusher.flushEntity/1`)
-  so state == shipped WAL, then serialize under the state lock and ship
+  pointer — reuses the same postcard machinery restore decodes). Since the
+  poll-core rehost the Java handler classes (`CompactEntityHandler`,
+  `EntityLocator`, `EntityFlusher`) are GONE: `flz_core`
+  (`command/compact.rs`) answers `CompactEntity` for both languages and
+  crosses into the Java host only to serialize the state
+  (`host.rs snapshot_frame_crossing`, Kryo). The core
+  DRAINs pending changes first (one shared `flusher.rs flush_one`)
+  so state == shipped WAL, then serializes under the state lock and ships
   `entity_state_snapshot` (new payload-id const in both sinks) stamped with
   `change_seq - 1` = the highest seq the snapshot folds. **GOTCHA — the codec
   is the trap**: postcard (Rust) / Kryo (Java), NOT the JSON migration
@@ -52,9 +55,10 @@
 - **e2e on both arms**: `test/system/compaction_e2e_test.exs` (Rust) +
   `test/java_sdk/compaction_e2e_test.exs` assert a snapshot FILE appears and the
   WAL strictly shrinks against a real runner — the `assert_receive
-  compaction_completed` is what fails against a stub. Round-trip unit tests:
-  Rust `snapshot_frame_round_trips_through_restore`, Java
-  `compactEntityShipsASnapshotThatRoundTripsThroughRestore`. Controller units:
+  compaction_completed` is what fails against a stub. Round-trip unit test:
+  Rust `snapshot_frame_round_trips_through_restore` (the Java twin was
+  removed with the poll-core rehost — the Java arm is covered by the e2e
+  only). Controller units:
   `watchdog_test` (backoff/give-up), `persistence_resolver_test`,
   `class_registry_test`, `add_operative_response_test`.
 - **NOTE**: `snapshot-baseline-durability`'s baseline-seed pull (a cold

@@ -5,8 +5,9 @@
   substrate under reserved identity `Registry.journal_id/1`
   (`{inst, inst, "_proc_journal"}`); entry codec
   `[type u8][proc_idx u16][iter u32][payload]` inside normal WAL framing,
-  type 1 = `proc_committed` (entities-ran + channel-tagged handoff blobs),
-  2–5 reserved (tolerated on decode). Size bound =
+  type 1 = `proc_committed` (entities-ran + channel-tagged handoff blobs);
+  types 2–6 (`outbox_flushed`, `iter_committed`, `parked`, `compensated`,
+  `rewound`) are all ACTIVE now. Size bound =
   `:wal_high_watermark_bytes` → `{:error, {:oversized_handoff, ..}}`. The
   journal writer skips the outbox dedup side-file so it never registers a
   phantom Entity.
@@ -16,8 +17,8 @@
   (journal-then-ack); driver blocks ≤30 s (`workflow/driver.rs
   commit_proc_boundary`), failure/timeout → terminal error + compensation.
   Telemetry `[:flezha, :state, :proc_commit]`.
-- **Resume**: journal state rides `RestoreInitState.proc_journal`
-  (`ProcJournalState`); `drive_chain` skips committed procs and seeds the next
+- **Resume**: journal state rides `AddOperative.proc_journal` (field 6,
+  `ProcJournalState`) on the bind; `drive_chain` skips committed procs and seeds the next
   batch from the journaled handoff via the channel codec. Compensation
   precedence: a comp-**done** marker wins (intents alone don't — they also
   accumulate during forward progress). Skipped procs still roll back on a

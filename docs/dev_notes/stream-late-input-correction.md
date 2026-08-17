@@ -1,7 +1,7 @@
 # Stream late-input correction (`stream-late-input-correction`)
 
 - **THERE IS NO SPLICE.** `Ingest.journal_input/2` appends to the input log
-  BEFORE forwarding (`overwatch.ex:634`); the SDK extracts event time later, in
+  BEFORE forwarding (`lib/flezha/operative/ingest.ex`); the SDK extracts event time later, in
   `dispatch`. So a late input is already durable in the log at its arrival offset
   by the time anything knows it is late. The slice is an offset range and already
   contains it. The correction = the EXISTING tier restore-and-replay path with
@@ -27,9 +27,11 @@
 - **`flz.replay_end` is a BROADCAST, not a mark on the last input.** An input routes
   to ONE entity by key, so a marker riding the last one strands the slice every
   OTHER entity buffered. It is a payload-less frame intercepted in `fast.rs` before
-  channel lookup → `dispatcher::end_replay_slice`.
+  channel lookup → `host::deferred_end_replay_slice` →
+  `routing::end_replay_slice` (in `flz_core`).
 - **Drain ordering gotcha**: a closed slice must flush BEFORE any live input popped
-  behind it (`maybe_dispatch_replay_slice` runs both mid-pop-loop and after it) —
+  behind it (`poll_core.rs flush_closed_slice` runs both mid-pop-loop and
+  after it, guarded by `closed_slice_pending`) —
   otherwise the live input jumps ahead of the very inputs being re-ordered. Caught by
   `a_replayed_slice_dispatches_in_event_time_order`.
 - **`do_sweep` gates on the FLOOR, not the watermark** — under a hold window the

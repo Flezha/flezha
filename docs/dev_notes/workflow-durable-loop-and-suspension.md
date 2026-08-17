@@ -16,7 +16,8 @@
   + inbox truncate (post-ack cleanup — a failure there costs work, not
   correctness). Every `proc_committed` is stamped with its enclosing `iter`.
 - **KeepProgress is real**: `plan_compensation`'s `committed` is rebuilt
-  from journaled `committed_procs` grouped by iter (`journaled_iterations`).
+  from journaled `committed_procs` grouped by iter (`journaled_stages` +
+  `stages_by_iter` in the core driver).
   Planner UNCHANGED. A journal-rebuilt iteration's `EntityRun.outputs` is
   empty (the at-least-once undo-handle-in-State contract) — the tests key
   on that (`undo-loop:1` in-flight vs `undo-loop:0` journaled).

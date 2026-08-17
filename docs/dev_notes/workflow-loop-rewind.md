@@ -43,13 +43,17 @@
   tier). The guard asks `ProcJournal.staged_channels_above/2` — the journal owns
   its fold, Overwatch owns the policy (`live_entries/1` is private).
 - **`ClassRegistry.decode_declarations/1`** is the ONE place the `AddOperative`
-  response is decoded → `%{effectively_once:, compensable_procs:}`. A new
-  SDK-declared capability is added there and nowhere else. (`compensable_procs`
-  `nil` = the class declared nothing — Java/stream/run-sugar — vs `[]` = a
-  chain with nothing compensable; a rewind treats those differently.)
+  response is decoded — the map now carries eight keys (`effectively_once`,
+  `keyless`, `checkpoint_ack`, `compensable_procs`, `leaf_procs`,
+  `correction_window_ms`, `compact_after_bytes`, `sync_durability`); a new
+  SDK-declared capability is added there AND in `put_declarations/2`.
+  (`compensable_procs` `nil` = the class declared nothing — stream/run-sugar
+  only, now that a structured Java workflow declares it exactly like Rust —
+  vs `[]` = a chain with nothing compensable; a rewind treats those
+  differently.)
 - **GOTCHA — a rewind does NOT replay inputs.** `ControlChannel` truncates the
   inbox to the consumed offset at every iteration commit
-  (`control_channel.ex:629`), so a committed turn's input is GONE. Moving
+  (`control_channel.ex:692`), so a committed turn's input is GONE. Moving
   `consumed_offset` back cannot resurrect it. Rewind is **undo-and-continue**:
   the loop resumes waiting and the NEXT message becomes iteration N+1. (The e2e
   caught this — an earlier draft asserted re-delivery and failed.)

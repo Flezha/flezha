@@ -38,11 +38,15 @@
   since" as a dead feed — a lie for a checkpoint class, whose silence is its steady
   state. Rides `AddOperativeResponse.metadata` (`ack_granularity=checkpoint`) →
   `decode_declarations/1` → `ClassRegistry.put_checkpoint_ack/2` (ETS + sidecar,
-  same shape as the tier; `put_flag/4`+`flag?/3` now share that shape).
+  same shape as the tier; the shared helpers are now
+  `put_declaration/4` / `declaration/4`).
   `sweep_output_staleness` needs NO gate — it fires only when changes are still
   arriving but persistence froze, which is a genuine wedge in checkpoint mode too.
-  `StallClassifier.watermark_frozen?` would misfire, but it is currently
-  unreachable (`progress_markers/0` never populates the tier cursors).
+  `StallClassifier.watermark_frozen?` would misfire for a checkpoint
+  class — and it is REACHABLE now (`Convergence.Loop.progress_markers/0`
+  populates the tier cursors) with no `checkpoint_ack?` gate on it (the
+  only checkpoint gate is in the Watchdog). Potential live misfire —
+  OPEN, not resolved.
 - **Tests**: `operative_dispatch.rs` (interval holds / park closes / restore
   discards), `builder.rs` (`checkpoint_ack_without_the_tier_is_refused`),
   `wal_writer_outbox_test.exs` (nil-offset record flushes outputs, holds the

@@ -35,18 +35,19 @@
   `Unavailable` (no control plane) — documented asymmetry.
 - **`shutdown::AckResult` is now `Result<String, String>`** (was
   `Result<(), String>`): the Ok payload carries the reply's outcome, empty for
-  bare acks. Java's `AckRegistry` future is `CompletableFuture<String>` with
-  `complete/2` + `fail/2`. One rendezvous, no second registry.
+  bare acks. Java's `CompletableFuture<String>` is `CoreSpawnRequester`'s
+  wrapper over the blocking `FlzCore.spawnWorkflow` ABI (the old Java
+  `AckRegistry` is gone). One rendezvous, no second registry.
 - **`runner::coordinator_try_send`** reports whether the message reached a
   coordinator; `coordinator_send` delegates to it. A stale trigger (closed
   runner) now resolves a spawn as `Unavailable` instead of waiting out 30 s.
 - **Replay issues nothing** — `ProcedureCtx::during_replay` (Rust, set from
-  `EntityPayload.replay`) / `ProcedureCtx.replaying()` (Java, threaded through
-  `InputEnvelope`) ⇒ `SkippedOnReplay`.
+  `EntityPayload.replay`) / `ProcedureCtx.replaying()` (Java, served from the
+  core's `WorkItem.Input.replay`) ⇒ `SkippedOnReplay`.
 - **Tests**: `test/flezha/service/operative_manager_spawn_test.exs` (ETS
   `insert_new` stands in for the registry's atomic claim, so the concurrent
   burst exercises the real race), `control_channel_spawn_workflow_test.exs`,
-  Rust `procedure::tests::spawn`, Java `SpawnHandleTest` + `SpawnRequesterTest`.
+  Rust `procedure::tests::spawn`, Java `SpawnHandleTest` + `CoreSpawnRequesterTest`.
   GOTCHA: the Rust coordinator trigger is process-global — every test that
   installs one takes `runner::env_test_guard()`.
 - **Docs**: `docs/procedure_requested_spawn.md`, `docs/sdk_protocol_spec.md`,

@@ -14,9 +14,12 @@
   boundary. The Rust test asserts it by COUNTING traversals (3 inputs → 3
   predicate calls), not by inspecting the topology.
 - **GOTCHA — same seam as the merge mapping, and that is the whole design.**
-  Closures are evaluated in `route_to_consumers` / `routeToConsumers`, the ONE
+  Closures are evaluated in `flz_core::routing::route_to_consumers`, the ONE
   path live delivery and the controller's re-forwarded replay slice both
-  travel, so replay determinism cost zero code — exactly as
+  travel (Java has no `routeToConsumers` any more — it evaluates edges
+  producer-side in `ActivationDispatcher.collectEdgeOutputs` and re-runs
+  symmetrically at delivery in `valuesForEntity`, because only bytes cross
+  the core), so replay determinism cost zero code — exactly as
   `add-multi-input-procedures` found. A merge mapping is now literally one link
   of an edge transform chain (`erase_merge_map` builds an `EdgeYield::One`).
 - **`EdgeTransformFn` takes `&Arc<dyn Any + Send + Sync>`, not `&dyn Any`** —
@@ -37,16 +40,19 @@
   (`TransformAfterKeyBy`).** The key runs on the FINAL post-transform value
   (design D4), so a later transform would hand it a type it was never written
   against — a downcast panic at routing time instead of a build error.
-- **`deliver_edge` / `deliverEdge` is the ONE place edge closures become
-  mailbox pushes** — live routing AND the retry ladder's re-attempt both call
-  it, so a re-attempt cannot deliver differently from the attempt it retries.
+- **`deliver_edge` (`flz_core/src/routing.rs`) is the ONE place edge closures
+  become mailbox pushes** — live routing AND the retry ladder's re-attempt both
+  call it, so a re-attempt cannot deliver differently from the attempt it
+  retries (the old Java `deliverEdge` is gone; the host push seam is the
+  core's `deliver_host_output`).
   A transform-free edge takes its `None` / `null` arm and allocates nothing
   (`transform_value` returns `Option`, `transformValue` returns `@Nullable`) —
   that is what keeps the "costs nothing when unused" promise true.
 - **Containment: `ConsumerEdge::transform_value` / `key_of` catch_unwind ONCE**,
   and both seams read that one result. Stream → `spawn_edge_ladder` →
-  `run_retry_park_ladder` (extracted from `run_entry_parse_ladder`; Java:
-  `DlqPark.retryThenPark`, extracted from `PrimaryStreamReader`) → retry per the
+  `run_retry_park_ladder` (extracted from `run_entry_parse_ladder`; now the
+  core's ONE shared ladder in `flz_core/src/routing.rs` — the old Java
+  `DlqPark.retryThenPark` / `PrimaryStreamReader` are gone) → retry per the
   channel budget → DLQ park. Workflow → `extend_mapped` → terminal chain error the
   saga compensates. Both verified to FAIL with the guard removed.
 - **An edge KEY never reaches the workflow driver** — a keyed edge makes its
@@ -71,18 +77,24 @@
 - **Retired**: `inputs_dropped_no_key_total`, `TopologyIssue::StaticAndDynamic`
   (now `KeyByOnUnkeyableTarget`), Java's `@EntityKey` code generation (the
   annotation survives ONLY so declaring it errors with `.keyBy(f)` named).
-- **FIXED IN PASSING (pre-existing Java bug the e2e needed):**
+- **FIXED IN PASSING (pre-existing Java bug the e2e needed):** the then-Java
   `StreamOperativeStateSerializer` branched on `entityKeys().isEmpty()`, so a
-  dynamic operative's `EntityState` reported only `entities.get(0)`. It branches
-  on `dynamic()` now and emits the per-key map. **STILL OPEN (documented, not
-  fixed):** Java never registers a lazily-created Entity with its flusher, so a
-  dynamic Entity's state never reaches disk there — which is why the Java e2e
-  arm asserts live state, not a WAL file.
+  dynamic operative's `EntityState` reported only `entities.get(0)`. That class
+  is gone — the per-key map now comes from the shared core
+  (`flz_core/src/command/entity_state.rs`). **The once-open flusher gap is
+  CLOSED by the poll-core rehost:** a lazily-created Java Entity registers with
+  the shared `EntityFlusher` exactly like a static one, so its state DOES reach
+  disk — the Java e2e arm's live-state-only assertion in
+  `dynamic_entity_e2e_test.exs` is now merely untightened.
 - **Tests**: `sdk/rust/tests/stream_transforms.rs` (own `[[test]]` entry,
   `bench-internals`; two cases share `ChainOperative`'s statics and serialize on
-  `CHAIN_LOCK`), `StreamTransformsTest.java`, workflow `PanickingTransformWorkflow`
-  / the existing `PanickingMergeWorkflow` (message now `edge transform panicked`
-  / `edge transform threw`), `tests/ui/procedure_entity_key_removed.rs` +
+  `CHAIN_LOCK`; the Java `StreamTransformsTest` went with the kernel mirror —
+  Java transform coverage lives in `StreamOperativeTopologyBuilderTest` /
+  `ActivationDispatcherTest`), workflow `PanickingTransformWorkflow`
+  / the existing `PanickingMergeWorkflow` (Rust message `edge transform
+  panicked`; the Java `edge transform threw` wrapper is gone — a throw now
+  surfaces as the caller's park-ladder failure),
+  `tests/ui/procedure_entity_key_removed.rs` +
   `entry_stream_has_no_plugin_sink.rs`, e2e
   `test/system/dynamic_entity_e2e_test.exs` on BOTH runtimes.
 - **Docs/examples**: `docs/stream_transforms.md` (the proposal named
