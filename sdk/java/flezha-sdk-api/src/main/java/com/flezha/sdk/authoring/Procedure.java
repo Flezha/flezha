@@ -18,6 +18,9 @@ import java.lang.annotation.Target;
  *   <li>{@code Output run(Input input, StateHandle<State, Change> state)} —
  *       stateful; {@code State}/{@code Change} are read from the handle's type
  *       arguments.</li>
+ *   <li>A trailing {@code ProcedureCtx ctx} parameter with a {@code void}
+ *       return — the body performs any number of emits itself and
+ *       {@link #emits()} declares the output type.</li>
  *   <li>A {@code void} return declares no output channel.</li>
  * </ul>
  *
@@ -42,6 +45,15 @@ public @interface Procedure {
      * non-void return type.
      */
     String key() default "";
+
+    /**
+     * Output type of a {@code run} that takes a trailing {@code ProcedureCtx}.
+     * That shape returns {@code void} — the body emits — so the return type has
+     * no output left to declare and this does it instead. {@code void.class}
+     * (the default) means the procedure declares no output channel; setting it
+     * without a context parameter is an error.
+     */
+    Class<?> emits() default void.class;
 
     /** Static-mode entity keys. Requires a {@link EntitiesFor} method. */
     String[] keys() default {};

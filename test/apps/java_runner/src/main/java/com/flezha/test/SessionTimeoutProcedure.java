@@ -28,31 +28,6 @@ public final class SessionTimeoutProcedure
     }
 
     @Override
-    public Class<String> inputType() {
-        return String.class;
-    }
-
-    @Override
-    public Class<byte[]> outputType() {
-        return byte[].class;
-    }
-
-    @Override
-    public Class<SessionTimeoutChange> changeType() {
-        return SessionTimeoutChange.class;
-    }
-
-    @Override
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    public Class<Void> configType() {
-        return Void.class;
-    }
-
-    @Override
     public List<Class<?>> kryoTypes() {
         return List.of(SessionTimeoutChange.class, SessionTimeoutState.class);
     }

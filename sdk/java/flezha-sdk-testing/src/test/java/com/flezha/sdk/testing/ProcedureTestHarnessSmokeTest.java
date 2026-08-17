@@ -25,26 +25,6 @@ class ProcedureTestHarnessSmokeTest {
     /** Everything three fixtures share; each declares only its name, its output and its run. */
     abstract static class Base<O> implements Procedure<Long, CounterState, O, CounterChange, WallClock, Void> {
         @Override
-        public Class<Long> inputType() {
-            return Long.class;
-        }
-
-        @Override
-        public Class<CounterChange> changeType() {
-            return CounterChange.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public CounterState initState(Optional<String> entityKey, Optional<RestoreInitPayload> payload) {
             return new CounterState();
         }
@@ -68,11 +48,6 @@ class ProcedureTestHarnessSmokeTest {
         }
 
         @Override
-        public Class<Void> outputType() {
-            return Void.class;
-        }
-
-        @Override
         public void run(Long input, StateHandle<CounterState, CounterChange> state, ProcedureCtx ctx) {
             state.apply(new CounterChange(input));
         }
@@ -92,11 +67,6 @@ class ProcedureTestHarnessSmokeTest {
         }
 
         @Override
-        public Class<Void> outputType() {
-            return Void.class;
-        }
-
-        @Override
         public void applyChange(CounterState state, CounterChange change) {
             state.value += GLOBAL.incrementAndGet();
         }
@@ -113,11 +83,6 @@ class ProcedureTestHarnessSmokeTest {
         @Override
         public String name() {
             return "key_less_emit";
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
         }
 
         @Override

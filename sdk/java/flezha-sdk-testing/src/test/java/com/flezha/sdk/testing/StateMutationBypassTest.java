@@ -69,31 +69,6 @@ class StateMutationBypassTest {
 
     abstract static class Base implements Procedure<String, Counter, String, Bump, WallClock, Void> {
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Bump> changeType() {
-            return Bump.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public List<Class<?>> kryoTypes() {
             return List.of(Bump.class, Counter.class);
         }

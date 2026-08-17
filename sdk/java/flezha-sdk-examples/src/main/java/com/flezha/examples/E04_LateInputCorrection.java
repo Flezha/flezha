@@ -62,32 +62,7 @@ public final class E04_LateInputCorrection {
             return "candle";
         }
 
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Tick> changeType() {
-            return Tick.class;
-        }
-
         /** Time comes from the INPUT, not the wall clock — that is what "late" means. */
-        @Override
-        public Class<EventTimeFrom> clockType() {
-            return EventTimeFrom.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
         @Override
         public List<Class<?>> kryoTypes() {
             return List.of(Tick.class, Candle.class);

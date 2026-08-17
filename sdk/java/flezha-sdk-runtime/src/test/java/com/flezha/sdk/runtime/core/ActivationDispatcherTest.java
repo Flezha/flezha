@@ -615,31 +615,6 @@ class ActivationDispatcherTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<CountChange> changeType() {
-            return CountChange.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public List<Class<?>> kryoTypes() {
             return List.of(CountChange.class, CounterState.class);
         }
@@ -685,16 +660,6 @@ class ActivationDispatcherTest {
         @Override
         public String name() {
             return "keyed_proc";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
         }
 
         @Override
@@ -757,16 +722,6 @@ class ActivationDispatcherTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             this.key = entityKey.orElse("");
             return new Object();
@@ -798,16 +753,6 @@ class ActivationDispatcherTest {
         @Override
         public String name() {
             return "static_proc";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
         }
 
         @Override
@@ -872,16 +817,6 @@ class ActivationDispatcherTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -908,16 +843,6 @@ class ActivationDispatcherTest {
         @Override
         public String name() {
             return "poison_proc";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
         }
 
         @Override
@@ -953,31 +878,6 @@ class ActivationDispatcherTest {
         @Override
         public String name() {
             return "timer_proc";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
-        }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<EventTimeFrom> clockType() {
-            return EventTimeFrom.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
         }
 
         @Override
@@ -1030,16 +930,6 @@ class ActivationDispatcherTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -1074,16 +964,6 @@ class ActivationDispatcherTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -1113,16 +993,6 @@ class ActivationDispatcherTest {
         @Override
         public String name() {
             return "replay_probe_proc";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
         }
 
         @Override
@@ -1189,16 +1059,6 @@ class ActivationDispatcherTest {
         @Override
         public String name() {
             return "undoable_proc";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
         }
 
         @Override

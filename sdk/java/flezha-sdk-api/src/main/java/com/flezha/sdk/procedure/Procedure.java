@@ -18,12 +18,15 @@ import javax.annotation.Nonnull;
  * <p>Implementations MUST provide a public no-arg constructor — the runtime
  * instantiates one Procedure per Entity at operative-instance startup.
  *
- * <p>Java's type erasure means the type parameters are not reflectively
- * inspectable from {@code Class<? extends Procedure<…>>}. Implementations MUST
- * therefore override {@link #inputType()}, {@link #outputType()},
- * {@link #changeType()}, {@link #clockType()}, and {@link #configType()} to
- * expose the runtime {@link Class} handles the topology builder, the Kryo
- * codec, and the per-Entity flusher need.
+ * <p>The topology builder, the Kryo codec and the per-Entity flusher need
+ * runtime {@link Class} handles for the type parameters. {@link #inputType()},
+ * {@link #outputType()}, {@link #changeType()}, {@link #clockType()} and
+ * {@link #configType()} recover them by default from the implementing class's
+ * generic supertype chain — a direct {@code implements Procedure<…>} with
+ * concrete arguments, or a concrete subclass of a generic intermediate class.
+ * An argument still generic at the concrete class is never guessed: the
+ * implementation overrides that one method, or registration fails naming the
+ * class and the parameter. An explicit override always wins.
  *
  * @param <Input>  per-entity input value
  * @param <State>  per-entity mutable state (Kryo-serializable)
@@ -43,23 +46,38 @@ public interface Procedure<
 
     /** Compile-time typed Input class. Used at registerUnbounded time for wiring checks. */
     @Nonnull
-    Class<Input> inputType();
+    @SuppressWarnings("unchecked")
+    default Class<Input> inputType() {
+        return (Class<Input>) TypeTokens.require(getClass(), TypeTokens.Token.INPUT);
+    }
 
     /** Compile-time typed Output class. Used at registerUnbounded time for wiring checks. */
     @Nonnull
-    Class<Output> outputType();
+    @SuppressWarnings("unchecked")
+    default Class<Output> outputType() {
+        return (Class<Output>) TypeTokens.require(getClass(), TypeTokens.Token.OUTPUT);
+    }
 
     /** Compile-time typed Change class. Drives flusher registration and Kryo dispatch. */
     @Nonnull
-    Class<ChangeT> changeType();
+    @SuppressWarnings("unchecked")
+    default Class<ChangeT> changeType() {
+        return (Class<ChangeT>) TypeTokens.require(getClass(), TypeTokens.Token.CHANGE);
+    }
 
     /** Compile-time typed Clock class. Drives v1 StreamOperativeConfigurationException for non-WallClock. */
     @Nonnull
-    Class<ClockT> clockType();
+    @SuppressWarnings("unchecked")
+    default Class<ClockT> clockType() {
+        return (Class<ClockT>) TypeTokens.require(getClass(), TypeTokens.Token.CLOCK);
+    }
 
     /** Compile-time typed Config class. {@code Void.class} for Procedures without typed config. */
     @Nonnull
-    Class<ConfigT> configType();
+    @SuppressWarnings("unchecked")
+    default Class<ConfigT> configType() {
+        return (Class<ConfigT>) TypeTokens.require(getClass(), TypeTokens.Token.CONFIG);
+    }
 
     /**
      * Initialize state for a new Entity. Called once per Entity at StreamOperative
@@ -154,14 +172,24 @@ public interface Procedure<
     }
 
     /**
-     * Stable Kryo type IDs for user types. Default: empty. Ordering of returned
-     * classes determines their stable IDs (id N = list[N]). Append-only: adding
-     * a new variant appends a new class to the END of the list, preserving
-     * prior IDs across SDK versions.
+     * Stable Kryo type IDs for user types. Ordering of returned classes
+     * determines their stable IDs (id N = list[N]). Append-only: adding a new
+     * variant appends a new class to the END of the list, preserving prior IDs
+     * across SDK versions.
+     *
+     * <p>Defaults to the resolved Change and State classes — the two types the
+     * per-Entity codec always needs. A {@link NoChange} Procedure persists
+     * nothing and defaults to the empty list, as does one whose Change or State
+     * argument is unresolvable.
      */
     @Nonnull
     default List<Class<?>> kryoTypes() {
-        return List.of();
+        Class<?> change = TypeTokens.find(getClass(), TypeTokens.Token.CHANGE);
+        Class<?> state = TypeTokens.find(getClass(), TypeTokens.Token.STATE);
+        if (change == null || change == NoChange.class || state == null) {
+            return List.of();
+        }
+        return List.of(change, state);
     }
 
     /**

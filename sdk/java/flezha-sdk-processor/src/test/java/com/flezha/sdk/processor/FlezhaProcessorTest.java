@@ -179,6 +179,91 @@ class FlezhaProcessorTest {
     }
 
     @Test
+    void contextParameterRunEmitsThroughTheBody() {
+        String stateless =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                import com.flezha.sdk.procedure.ProcedureCtx;
+                @Procedure(id = "fanout", emits = String.class)
+                public class Fanout {
+                    public void run(String in, ProcedureCtx ctx) { ctx.emit(in); ctx.emit(in); }
+                }
+                """;
+        String generated = generated("t.Fanout", "t.FanoutProcedure", stateless);
+        // The body owns every emit: the wrapper passes the context and adds none.
+        assertThat(generated).contains("impl.run(input, ctx);");
+        assertThat(generated).doesNotContain("ctx.emit(out)");
+        // `emits` lands as the Output type argument, which is where the runtime
+        // reads it from — the tokens are not restated.
+        assertThat(generated)
+                .contains("implements Procedure<java.lang.String, com.flezha.sdk.state.Stateless,"
+                        + " java.lang.String, com.flezha.sdk.state.NoChange, WallClock, Void>");
+        assertThat(generated).doesNotContain("outputType()");
+
+        String stateful =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                import com.flezha.sdk.procedure.ProcedureCtx;
+                import com.flezha.sdk.state.NoChange;
+                import com.flezha.sdk.state.StateHandle;
+                @Procedure(id = "fanout2", emits = String.class)
+                public class Fanout2 {
+                    public void run(String in, StateHandle<String, NoChange> state, ProcedureCtx ctx) {
+                        ctx.emit(in);
+                    }
+                }
+                """;
+        assertThat(generated("t.Fanout2", "t.Fanout2Procedure", stateful)).contains("impl.run(input, state, ctx);");
+    }
+
+    @Test
+    void rejectsKeyWithAContextParameter() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                import com.flezha.sdk.procedure.ProcedureCtx;
+                @Procedure(id = "bad_ctx_key", key = "k", emits = String.class)
+                public class BadCtxKey {
+                    public static String k(String out) { return out; }
+                    public void run(String in, ProcedureCtx ctx) { ctx.emit(in); }
+                }
+                """;
+        assertThat(diagnose("t.BadCtxKey", code)).anyMatch(m -> m.contains("conflicts with a `ProcedureCtx`"));
+    }
+
+    @Test
+    void rejectsAValueReturnWithAContextParameter() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                import com.flezha.sdk.procedure.ProcedureCtx;
+                @Procedure(id = "bad_ctx_return")
+                public class BadCtxReturn {
+                    public String run(String in, ProcedureCtx ctx) { return in; }
+                }
+                """;
+        assertThat(diagnose("t.BadCtxReturn", code)).anyMatch(m -> m.contains("it must return void"));
+    }
+
+    @Test
+    void rejectsEmitsWithoutAContextParameter() {
+        String code =
+                """
+                package t;
+                import com.flezha.sdk.authoring.Procedure;
+                @Procedure(id = "bad_emits", emits = String.class)
+                public class BadEmits {
+                    public String run(String in) { return in; }
+                }
+                """;
+        assertThat(diagnose("t.BadEmits", code)).anyMatch(m -> m.contains("the return type declares it"));
+    }
+
+    @Test
     void flatDequeFieldsGetSlidingWindowMutators() {
         String code =
                 """

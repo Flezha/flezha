@@ -226,3 +226,58 @@ The contract is written once and implemented per language, but the languages do 
 
 - **WHEN** a new SDK is added to the contract
 - **THEN** it SHALL declare its state-mutation enforcement level rather than inheriting the strongest one by default
+
+### Requirement: Sugared run may declare a context parameter for multi-emit
+
+The authoring sugar (`#[procedure]` in Rust, `@Procedure` in Java) SHALL accept a `run` signature with a trailing procedure-context parameter and a unit/void return: `fn run(input: I, state: …, ctx: &mut ProcedureCtx)` / `void run(I input, StateHandle<S, C> state, ProcedureCtx ctx)` (the state parameter remains optional, driving stateful inference exactly as today; a `Result<(), _>` return is a unit return for this purpose). The generated implementation SHALL pass the invocation's context through, so the body performs any number of `emit` / `emit_keyed` calls itself. Inference of Input, State, and Change from the remaining signature SHALL be unchanged, and the expansion SHALL remain the same code a hand-written implementation would contain.
+
+Because the body owns every emit, the return type no longer declares the output type, and an `emits = Type` (Rust) / `emits = Type.class` (Java) attribute SHALL declare it instead; absent, the procedure declares no output channel. Three conflicts SHALL each be rejected with an error naming them: `key = …` together with a context parameter (the body keys its own emits), a non-unit return together with a context parameter (one procedure, one emit path), and `emits` without a context parameter (there the return type already answers).
+
+#### Scenario: Multi-emit under sugar
+
+- **WHEN** a sugared procedure declares `run(input, state, ctx)` returning unit and its body calls `ctx.emit_keyed` three times for one input
+- **THEN** three keyed values SHALL be emitted for that invocation, identically to a hand-written implementation with the same body
+
+#### Scenario: key attribute is rejected on the context shape
+
+- **WHEN** a sugared procedure declares both a context parameter and a `key = …` attribute
+- **THEN** macro expansion / annotation processing SHALL fail with an error naming the conflict
+
+#### Scenario: the output type of a context-parameter run
+
+- **WHEN** a sugared procedure declares a context parameter and `emits = Candle`
+- **THEN** the generated implementation SHALL declare `Output = Candle`, so the wiring types that procedure's output channel exactly as a return-typed one would
+
+#### Scenario: emits without a context parameter is rejected
+
+- **WHEN** a sugared procedure declares `emits` but no context parameter
+- **THEN** macro expansion / annotation processing SHALL fail with an error naming the conflict, since the return type already declares the output type
+
+### Requirement: Hand-written implementations receive inferable defaults
+
+Hand-written procedure implementations SHALL NOT be charged ceremony for information the declaration already states, in each SDK's idiom:
+
+- **Java**: the five type-token methods (`inputType`, `outputType`, `changeType`, `clockType`, `configType`) SHALL have default implementations resolving the type arguments from the implementing class's generic supertype chain (direct `implements Procedure<…>` with concrete arguments, or a concrete subclass of a generic intermediate class). When a token cannot be resolved, registration SHALL fail with an error naming the class and the unresolved type parameter — never guess. `kryoTypes()` SHALL default to the resolved change and state classes when both are resolvable and the change type is not `NoChange` — a `NoChange` procedure persists nothing, so it keeps the empty-list default, which is also what keeps every existing declaration's meaning unchanged. An explicit override SHALL always win.
+- **Rust**: a `SimpleProcedure` trait SHALL declare only `Input`, `Output`, `State` plus `name`, `init_state`, and `run`; a blanket implementation SHALL lift every `SimpleProcedure` to `Procedure` with `Clock = WallClock`, `Config = ()`, and the `State` type's derived change type. Implementing `Procedure` directly SHALL remain fully supported, and a type SHALL NOT implement both.
+
+The mandatory authoring surface for the common hand-written case therefore reduces to name, state initialization, and `run` in both SDKs.
+
+#### Scenario: Java tokens resolved from the implements clause
+
+- **WHEN** a class declares `implements Procedure<Trade, EntityState, Candle, EntityStateChange, WallClock, Void>` and overrides none of the token methods
+- **THEN** registration SHALL succeed with the six types resolved exactly as written in the clause
+
+#### Scenario: Unresolvable token fails registration by name
+
+- **WHEN** a class implements `Procedure` with a type argument still generic at the concrete class and does not override the corresponding token method
+- **THEN** registration SHALL fail with an error naming the class and the unresolved type parameter, and nothing SHALL be registered
+
+#### Scenario: Rust simplified tier defaults the tail types
+
+- **WHEN** a type implements `SimpleProcedure` with `Input = Trade`, `Output = Candle`, `State = EntityState`
+- **THEN** it SHALL be registrable wherever a `Procedure` is accepted, with `Clock = WallClock`, `Config = ()`, and the derived change type of `EntityState`
+
+#### Scenario: Explicit override wins
+
+- **WHEN** a Java implementation overrides `clockType()` (or a Rust implementation implements `Procedure` directly with a non-default `Clock`)
+- **THEN** the explicit declaration SHALL be used, defaults notwithstanding

@@ -89,31 +89,6 @@ public final class E06_DurableChatLoop {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Turn> changeType() {
-            return Turn.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public List<Class<?>> kryoTypes() {
             return List.of(Turn.class, Conversation.class, ArrayList.class);
         }

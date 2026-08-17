@@ -64,31 +64,6 @@ public final class E02_StatefulCounter {
             return "count";
         }
 
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Increment> changeType() {
-            return Increment.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
         /** Stable Kryo ids, positional. Append only. */
         @Override
         public List<Class<?>> kryoTypes() {

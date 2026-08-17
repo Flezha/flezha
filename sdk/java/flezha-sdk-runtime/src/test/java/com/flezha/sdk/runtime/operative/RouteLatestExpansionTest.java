@@ -50,11 +50,6 @@ class RouteLatestExpansionTest {
         }
 
         @Override
-        public Class<Void> outputType() {
-            return Void.class;
-        }
-
-        @Override
         protected String initState(Optional<String> entityKey) {
             return "";
         }

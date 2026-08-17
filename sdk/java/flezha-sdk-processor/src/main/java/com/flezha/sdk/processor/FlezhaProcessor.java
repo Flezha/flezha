@@ -26,6 +26,7 @@ import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.DeclaredType;
+import javax.lang.model.type.MirroredTypeException;
 import javax.lang.model.type.TypeKind;
 import javax.lang.model.type.TypeMirror;
 import javax.lang.model.util.Elements;
@@ -53,6 +54,7 @@ import javax.tools.Diagnostic;
 public final class FlezhaProcessor extends AbstractProcessor {
 
     private static final String STATE_HANDLE = "com.flezha.sdk.state.StateHandle";
+    private static final String PROCEDURE_CTX = "com.flezha.sdk.procedure.ProcedureCtx";
 
     private Elements elements;
     private Types types;
@@ -576,10 +578,18 @@ public final class FlezhaProcessor extends AbstractProcessor {
             return;
         }
         List<? extends VariableElement> params = run.getParameters();
-        if (params.isEmpty() || params.size() > 2) {
+        // A trailing `ProcedureCtx` is the multi-emit shape: the body owns every
+        // emit. It sits beside the value parameters, which are counted as before.
+        boolean ctxParam = !params.isEmpty()
+                && types.erasure(params.get(params.size() - 1).asType())
+                        .toString()
+                        .equals(PROCEDURE_CTX);
+        int valueParams = params.size() - (ctxParam ? 1 : 0);
+        if (valueParams < 1 || valueParams > 2) {
             error(
                     run,
-                    "@Procedure `run` must be `Output run(Input)` or `Output run(Input, StateHandle<State, Change>)`");
+                    "@Procedure `run` must be `Output run(Input)` or `Output run(Input, StateHandle<State, Change>)`,"
+                            + " each optionally followed by a `ProcedureCtx ctx` parameter");
             return;
         }
 
@@ -606,7 +616,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
             outputType = returnType.toString();
         }
 
-        boolean stateful = params.size() == 2;
+        boolean stateful = valueParams == 2;
         String stateType;
         String changeType;
         // What the generated procedure passes to the user's run as the state arg.
@@ -681,6 +691,34 @@ public final class FlezhaProcessor extends AbstractProcessor {
         int capacity = ann.capacity();
         String onFull = ann.onFull();
         String emitKey = ann.key();
+        String emitsType = declaredEmits(ann);
+        if (ctxParam) {
+            if (emits) {
+                error(
+                        run,
+                        "@Procedure `run` with a `ProcedureCtx` parameter makes the body responsible for every"
+                                + " emit; it must return void, and `emits = Type.class` declares the output type");
+                return;
+            }
+            if (!emitKey.isEmpty()) {
+                error(
+                        procedure,
+                        "@Procedure(key = ...) conflicts with a `ProcedureCtx` parameter; the body keys its own"
+                                + " emits with ctx.emitKeyed(..)");
+                return;
+            }
+            if (emitsType != null) {
+                outputType = emitsType;
+            }
+        } else if (emitsType != null) {
+            error(
+                    procedure,
+                    "@Procedure(emits = ...) declares the output type of a `ProcedureCtx` `run`; without that"
+                            + " parameter the return type declares it");
+            return;
+        }
+        // An output channel exists when either spelling declares one.
+        boolean hasOutput = emits || emitsType != null;
         if (!emitKey.isEmpty() && !emits) {
             error(procedure, "@Procedure(key = ...) requires a non-void return type; there is no emit to key");
             return;
@@ -719,26 +757,12 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(userFqn)
                 .append("();\n\n");
 
+        // The five type tokens are not generated: the `implements Procedure<…>`
+        // clause above states them concretely, and the interface defaults read
+        // them off it — the same path a hand-written procedure takes.
         b.append("    @Override public String name() { return \"")
                 .append(snake(procedure.getSimpleName().toString()))
                 .append("\"; }\n");
-        b.append("    @Override public Class<")
-                .append(inputType)
-                .append("> inputType() { return ")
-                .append(classLit(inputType))
-                .append("; }\n");
-        b.append("    @Override public Class<")
-                .append(outputType)
-                .append("> outputType() { return ")
-                .append(classLit(outputType))
-                .append("; }\n");
-        b.append("    @Override public Class<")
-                .append(changeType)
-                .append("> changeType() { return ")
-                .append(classLit(changeType))
-                .append("; }\n");
-        b.append("    @Override public Class<WallClock> clockType() { return WallClock.class; }\n");
-        b.append("    @Override public Class<Void> configType() { return Void.class; }\n");
 
         String initBody =
                 initState != null ? "impl." + initState.getSimpleName() + "(entityKey)" : "new " + stateType + "()";
@@ -787,7 +811,8 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(", ")
                 .append(changeType)
                 .append("> state, ProcedureCtx ctx) throws ProcedureException {\n");
-        String call = stateful ? "impl.run(input, " + handleArg + ")" : "impl.run(input)";
+        String ctxArg = ctxParam ? ", ctx" : "";
+        String call = stateful ? "impl.run(input, " + handleArg + ctxArg + ")" : "impl.run(input" + ctxArg + ")";
         // `key = "m"` routes the emit through emitKeyed — the only form a
         // `.keyed()` channel accepts — keeping keyed sinks reachable from the sugar.
         String emitPresent =
@@ -820,8 +845,11 @@ public final class FlezhaProcessor extends AbstractProcessor {
 
         // Single-procedure auto-wire operative.
         if (!sink.isEmpty()) {
-            if (!emits) {
-                error(procedure, "@Procedure(sink = ...) requires a non-void return type to feed the plugin");
+            if (!hasOutput) {
+                error(
+                        procedure,
+                        "@Procedure(sink = ...) requires an output type to feed the plugin — a non-void return,"
+                                + " or `emits = Type.class` on the context-parameter shape");
                 return;
             }
             generateSingleProcedureStreamOperative(
@@ -889,6 +917,22 @@ public final class FlezhaProcessor extends AbstractProcessor {
     }
 
     // ---- helpers ----------------------------------------------------------
+
+    /**
+     * The {@code emits = Type.class} output declaration, or {@code null} when
+     * unset. Reading a {@code Class} member during annotation processing throws
+     * {@link MirroredTypeException} — the mirror it carries is the answer.
+     */
+    private String declaredEmits(Procedure ann) {
+        TypeMirror mirror;
+        try {
+            Class<?> declared = ann.emits();
+            return declared == void.class ? null : declared.getCanonicalName();
+        } catch (MirroredTypeException e) {
+            mirror = e.getTypeMirror();
+        }
+        return mirror.getKind() == TypeKind.VOID ? null : mirror.toString();
+    }
 
     private ExecutableElement findRun(TypeElement procedure) {
         ExecutableElement found = null;

@@ -101,16 +101,6 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Integer> outputType() {
-            return Integer.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -123,16 +113,6 @@ class BoundedMailboxTopologyTest {
         @Override
         public String name() {
             return "b";
-        }
-
-        @Override
-        public Class<Integer> inputType() {
-            return Integer.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
         }
 
         @Override
@@ -191,16 +171,6 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Integer> outputType() {
-            return Integer.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -238,16 +208,6 @@ class BoundedMailboxTopologyTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Integer> outputType() {
-            return Integer.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -282,16 +242,6 @@ class BoundedMailboxTopologyTest {
         @Override
         public String name() {
             return "huge_capacity_procedure";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Integer> outputType() {
-            return Integer.class;
         }
 
         @Override

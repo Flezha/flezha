@@ -112,37 +112,6 @@ public final class LatestDocumentRouter
         return NODE_NAME;
     }
 
-    @Override
-    @Nonnull
-    public Class<Input> inputType() {
-        return Input.class;
-    }
-
-    @Override
-    @Nonnull
-    @SuppressWarnings("unchecked")
-    public Class<RoutedDocument<Object>> outputType() {
-        return (Class<RoutedDocument<Object>>) (Class<?>) RoutedDocument.class;
-    }
-
-    @Override
-    @Nonnull
-    public Class<RouterChange> changeType() {
-        return RouterChange.class;
-    }
-
-    @Override
-    @Nonnull
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    @Nonnull
-    public Class<Void> configType() {
-        return Void.class;
-    }
-
     /**
      * The block's own types. The <b>document</b> type is not here — only the
      * wiring knows it — and is appended to this node's registration list by

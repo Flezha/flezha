@@ -18,31 +18,6 @@ public final class CompareFilterProcedure
     }
 
     @Override
-    public Class<String> inputType() {
-        return String.class;
-    }
-
-    @Override
-    public Class<String> outputType() {
-        return String.class;
-    }
-
-    @Override
-    public Class<NoChange> changeType() {
-        return NoChange.class;
-    }
-
-    @Override
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    public Class<Void> configType() {
-        return Void.class;
-    }
-
-    @Override
     public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
         return new State("default", false);
     }

@@ -26,31 +26,6 @@ public final class DynamicEntityProcedure
     }
 
     @Override
-    public Class<String> inputType() {
-        return String.class;
-    }
-
-    @Override
-    public Class<String> outputType() {
-        return String.class;
-    }
-
-    @Override
-    public Class<StoreInputChange> changeType() {
-        return StoreInputChange.class;
-    }
-
-    @Override
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    public Class<Void> configType() {
-        return Void.class;
-    }
-
-    @Override
     public Optional<java.time.Duration> entityIdleTtl() {
         String ms = System.getenv("DYN_TEST_TTL_MS");
         return ms == null || ms.isBlank()

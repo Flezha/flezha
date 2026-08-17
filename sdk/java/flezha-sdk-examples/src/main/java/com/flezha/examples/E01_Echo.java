@@ -42,32 +42,10 @@ public final class E01_Echo {
             return "echo";
         }
 
-        // Java erases generics, so the runtime needs these Class handles to wire
-        // and validate the topology. Every Procedure declares all five.
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
+        // The runtime needs Class handles for the six type arguments to wire and
+        // validate the topology. It reads them off the implements clause above;
+        // override inputType() / outputType() / changeType() / clockType() /
+        // configType() only where a type argument is not concrete there.
 
         @Override
         public Empty initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {

@@ -125,31 +125,6 @@ public final class E11_LiveStateRead {
         }
 
         @Override
-        public Class<Trade> inputType() {
-            return Trade.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Traded> changeType() {
-            return Traded.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public List<Class<?>> kryoTypes() {
             return List.of(Candle.class, Traded.class);
         }

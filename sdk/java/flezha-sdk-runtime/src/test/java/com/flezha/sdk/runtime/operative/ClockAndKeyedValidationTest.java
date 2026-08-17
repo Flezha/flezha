@@ -149,21 +149,6 @@ class ClockAndKeyedValidationTest {
     abstract static class Base<C extends Change, K extends com.flezha.sdk.state.Clock>
             implements Procedure<String, Unit, String, C, K, Void> {
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public Unit initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Unit();
         }
@@ -178,32 +163,12 @@ class ClockAndKeyedValidationTest {
         public String name() {
             return "no_extractor";
         }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<EventTimeFrom> clockType() {
-            return EventTimeFrom.class;
-        }
     }
 
     public static final class ExtractorProc extends Base<NoChange, EventTimeFrom> {
         @Override
         public String name() {
             return "with_extractor";
-        }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<EventTimeFrom> clockType() {
-            return EventTimeFrom.class;
         }
 
         @Override
@@ -223,32 +188,12 @@ class ClockAndKeyedValidationTest {
         public String name() {
             return "unservable";
         }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<LogicalClock> clockType() {
-            return LogicalClock.class;
-        }
     }
 
     public static class PlainProc extends Base<NoChange, WallClock> {
         @Override
         public String name() {
             return "plain_op";
-        }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
         }
     }
 

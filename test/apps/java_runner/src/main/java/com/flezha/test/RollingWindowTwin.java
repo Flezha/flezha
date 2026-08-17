@@ -40,31 +40,6 @@ public final class RollingWindowTwin
     }
 
     @Override
-    public Class<WindowInput> inputType() {
-        return WindowInput.class;
-    }
-
-    @Override
-    public Class<Double> outputType() {
-        return Double.class;
-    }
-
-    @Override
-    public Class<WindowChange> changeType() {
-        return WindowChange.class;
-    }
-
-    @Override
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    public Class<Void> configType() {
-        return Void.class;
-    }
-
-    @Override
     public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
         return new State();
     }

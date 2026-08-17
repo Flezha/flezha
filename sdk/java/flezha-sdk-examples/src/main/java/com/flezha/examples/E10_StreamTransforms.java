@@ -119,31 +119,6 @@ public final class E10_StreamTransforms {
         }
 
         @Override
-        public Class<Slot> inputType() {
-            return Slot.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Tick> changeType() {
-            return Tick.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public Candle initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Candle();
         }

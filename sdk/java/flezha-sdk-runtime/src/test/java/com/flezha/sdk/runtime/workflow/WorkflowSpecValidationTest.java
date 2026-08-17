@@ -102,16 +102,6 @@ class WorkflowSpecValidationTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -127,16 +117,6 @@ class WorkflowSpecValidationTest {
         @Override
         public String name() {
             return "sink";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
         }
 
         @Override

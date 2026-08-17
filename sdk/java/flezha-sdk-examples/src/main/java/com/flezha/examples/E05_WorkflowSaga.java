@@ -84,31 +84,6 @@ public final class E05_WorkflowSaga {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public Handle initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new Handle();
         }

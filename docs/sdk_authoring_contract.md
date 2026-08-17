@@ -39,6 +39,7 @@ mutable-state parameter.
 | return type `O` (or `Result<O, _>`)           | `type Output = O` (always emit) |
 | return type `Option<O>` / `Optional<O>`       | `type Output = O`, emit on present |
 | return type unit (`()` / `void`)              | no output channel              |
+| a trailing procedure-context param + unit return | the body emits; `emits = T` sets `type Output = T` |
 | a mutable-state param of type `S`             | `type State = S` (stateful)    |
 | no mutable-state param                        | `type State = ()`, `Change = NoChange` |
 | `State` opts into change derivation           | `type Change = <derived enum>` |
@@ -49,6 +50,66 @@ mutable-state parameter.
 A mutable-state parameter is **the single signal** that a procedure is stateful.
 Its presence sets `State` and (unless overridden) selects the change type;
 its absence means `State = ()` and `Change = NoChange`.
+
+### 2.1 Multi-emit: the context parameter
+
+A `run` that must emit more than once per input declares a trailing context
+parameter and returns unit:
+
+```rust
+#[flezha::procedure(id = "ohlc", emits = Candle)]
+fn ohlc(trade: Trade, s: &mut Candles, ctx: &mut ProcedureCtx) -> Result<(), ProcedureError> {
+    ctx.emit_keyed(closed.symbol.clone(), closed)?;   // the candle that just closed
+    ctx.emit_keyed(opened.symbol.clone(), opened)     // and the one that opened
+}
+```
+
+```java
+@Procedure(id = "ohlc", emits = Candle.class)
+public void run(Trade trade, CandlesHandle s, ProcedureCtx ctx) { ctx.emitKeyed(…); ctx.emitKeyed(…); }
+```
+
+The generated implementation passes the invocation's context straight through,
+so the expansion is the same code a hand-written implementation would contain —
+§1 unchanged. Everything else about the declaration infers as above.
+
+Because the body owns every emit, the return type has no output left to declare
+and `emits` declares it instead (absent = no output channel). Two rules follow,
+both enforced with a named error rather than silently:
+
+- a value return alongside a context parameter is refused — one procedure, one
+  emit path;
+- `key = …` alongside a context parameter is refused — the body keys its own
+  emits — and `emits` without a context parameter is refused, since there the
+  return type already answers.
+
+### 2.2 Three tiers, each a superset of the one above
+
+Sugar is the top tier. Below it, a hand-written implementation is charged only
+for what its declaration does not already state:
+
+- **Java** — `inputType()`, `outputType()`, `changeType()`, `clockType()` and
+  `configType()` default to the type arguments read off the implementing
+  class's generic supertype chain: a direct `implements Procedure<…>` with
+  concrete arguments, or a concrete subclass of a generic intermediate class
+  (type variables are substituted at every hop). `kryoTypes()` defaults to the
+  resolved Change and State classes, and to the empty list for a `NoChange`
+  procedure, which persists nothing. When an argument is still generic at the
+  concrete class it is **never guessed**: `defineStream` / `defineWorkflow`
+  fails naming the class and the parameter, and nothing is registered. That is
+  a startup error, not a dispatch error.
+- **Rust** — `SimpleProcedure` declares `Input`, `Output`, `State`, `name`,
+  `init_state` and `run`; a blanket impl lifts it to `Procedure` with
+  `Clock = WallClock`, `Config = ()` and the `State` type's derived change
+  type. `type State = ()` is the stateless spelling. Stable Rust has no
+  associated-type defaults, hence a tier rather than defaults on the trait
+  itself.
+
+**Explicit always wins.** A Java override is authoritative over the default it
+replaces; a Rust type implements `Procedure` directly to declare a non-default
+clock, a typed config or a hand-written change — and a type cannot sit in both
+Rust tiers at once, because the blanket impl and a direct impl overlap and the
+compiler refuses it.
 
 ## 3. State → Change derivation, and the manual boundary
 

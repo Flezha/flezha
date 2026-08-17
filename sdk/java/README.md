@@ -28,12 +28,10 @@ public final class EchoProcedure
 
     @Override public String name() { return "echo"; }
 
-    // Erasure means the runtime needs these Class handles to wire the topology.
-    @Override public Class<String>   inputType()  { return String.class; }
-    @Override public Class<String>   outputType() { return String.class; }
-    @Override public Class<NoChange> changeType() { return NoChange.class; }
-    @Override public Class<WallClock> clockType() { return WallClock.class; }
-    @Override public Class<Void>     configType() { return Void.class; }
+    // The runtime reads the six Class handles it needs off the implements
+    // clause above. Override inputType()/outputType()/changeType()/clockType()/
+    // configType() only for a type argument that is not concrete there —
+    // registration fails naming the class and parameter rather than guessing.
 
     @Override public Empty initState(Optional<String> key, Optional<RestoreInitPayload> p) {
         return new Empty();
@@ -223,14 +221,13 @@ public record SmaConfig(int window) {}
 public final class Sma implements Procedure<Double, SmaState, Double, NoChange, WallClock, SmaConfig> {
     private int window;
 
-    @Override public Class<SmaConfig> configType() { return SmaConfig.class; }
-
     @Override public Sma fromConfig(SmaConfig cfg) {
         Sma proc = new Sma();
         proc.window = cfg.window();
         return proc;
     }
-    // ... name()/inputType()/outputType()/initState()/run() as usual
+    // ... name()/initState()/run() as usual; configType() resolves to
+    // SmaConfig from the implements clause.
 }
 ```
 

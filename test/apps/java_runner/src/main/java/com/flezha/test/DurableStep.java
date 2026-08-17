@@ -20,31 +20,6 @@ import java.util.Optional;
 public abstract class DurableStep
         implements Procedure<String, SeenState, String, Insert, WallClock, Void> {
 
-    @Override
-    public Class<String> inputType() {
-        return String.class;
-    }
-
-    @Override
-    public Class<String> outputType() {
-        return String.class;
-    }
-
-    @Override
-    public Class<Insert> changeType() {
-        return Insert.class;
-    }
-
-    @Override
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    public Class<Void> configType() {
-        return Void.class;
-    }
-
     // A durable operative must register its Change type for the Kryo codec.
     @Override
     public List<Class<?>> kryoTypes() {

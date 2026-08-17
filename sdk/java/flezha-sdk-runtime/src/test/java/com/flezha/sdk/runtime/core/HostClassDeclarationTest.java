@@ -167,16 +167,6 @@ class HostClassDeclarationTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }

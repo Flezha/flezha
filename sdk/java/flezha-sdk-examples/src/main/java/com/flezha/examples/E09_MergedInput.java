@@ -88,31 +88,6 @@ public final class E09_MergedInput {
         }
 
         @Override
-        public Class<DetectorInput> inputType() {
-            return DetectorInput.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<DetectorChange> changeType() {
-            return DetectorChange.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public DetectorState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new DetectorState();
         }

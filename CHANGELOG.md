@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Added — tiered procedure authoring: defaults you can always override but never must (`add-tiered-procedure-authoring`)
+
+Procedure authoring had two tiers with a gap between them. The sugar
+(`#[flezha::procedure]` / `@Procedure`) inferred everything from the `run`
+signature but could not express multi-emit, so the most common real procedures —
+an OHLC aggregator closing one candle and opening the next, an SMA emitting per
+window — fell off the sugar cliff straight into full ceremony. Three changes
+close it, each tier a strict superset of the one above and explicit always
+winning:
+
+**Sugar covers multi-emit.** A sugared `run` may take a trailing procedure
+context and return unit; the body then performs any number of emits, and
+`emits = Type` (Rust) / `emits = Type.class` (Java) declares the output type the
+return value no longer can. The expansion stays exactly the code a hand-written
+implementation would contain. A value return alongside the context parameter, a
+`key = …` alongside it (the body keys its own emits), and an `emits` without it
+are each refused by name rather than silently accepted.
+
+**Java stops charging for erasure.** `inputType()`, `outputType()`,
+`changeType()`, `clockType()` and `configType()` now default to the type
+arguments read off the implementing class's generic supertype chain — a direct
+`implements Procedure<…>`, or a concrete subclass of a generic intermediate
+class. `kryoTypes()` defaults to the resolved Change and State. That is ~24
+lines of pure type-erasure tax removed from every hand-written Java procedure.
+An argument still generic at the concrete class is **never guessed**:
+`defineStream` / `defineWorkflow` fails naming the class and the parameter, and
+nothing is registered — a startup error, not a dispatch error far from its cause.
+
+**Rust gets a simplified tier.** `SimpleProcedure` declares only `Input`,
+`Output`, `State` plus `name` / `init_state` / `run`; a blanket impl lifts it to
+`Procedure` with `Clock = WallClock`, `Config = ()` and the state's derived
+change type. Implementing `Procedure` directly stays fully supported and is the
+way to declare anything non-default; a type cannot sit in both tiers, because
+the impls overlap and the compiler refuses it.
+
+Authoring surface only — no runtime behaviour, wire format or journaling change,
+and every existing declaration keeps its exact meaning.
+
 ### Added — `route_latest`, the latest-document router building block (`add-route-latest-building-block`)
 
 `c.route_latest(documents, traffic, key_fn)` (Rust) /

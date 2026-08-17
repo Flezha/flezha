@@ -27,11 +27,6 @@ public final class CounterProcedure
     public static final class State { public long value; }
 
     @Override public String name() { return "counter_procedure"; }
-    @Override public Class<Long> inputType() { return Long.class; }
-    @Override public Class<Void> outputType() { return Void.class; }
-    @Override public Class<CounterChange> changeType() { return CounterChange.class; }
-    @Override public Class<WallClock> clockType() { return WallClock.class; }
-    @Override public Class<Void> configType() { return Void.class; }
     @Override public List<Class<?>> kryoTypes() { return List.of(State.class, CounterChange.class); }
 
     @Override public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> payload) {
@@ -49,9 +44,13 @@ public final class CounterProcedure
 ```
 
 Six type parameters are required because Java type erasure does not preserve
-associated-type bounds. The `Class<…>` reflection methods (`changeType()`,
-`clockType()`, `configType()`) recover the erased types at runtime for Kryo
-registration and flusher dispatch.
+associated-type bounds. The runtime needs them as `Class<…>` handles for Kryo
+registration and flusher dispatch, and `changeType()` / `clockType()` /
+`configType()` (and the input/output pair) default to reading them off the
+`implements` clause above — an implementation declares them explicitly only for
+a type argument still generic at its own class. `kryoTypes()` is declared here
+because its order fixes the stable Kryo ids; its default is
+`[changeType, State]`.
 
 ### StateHandle
 

@@ -26,31 +26,6 @@ public final class IntInputAdapterProcedure
     }
 
     @Override
-    public Class<String> inputType() {
-        return String.class;
-    }
-
-    @Override
-    public Class<Void> outputType() {
-        return Void.class;
-    }
-
-    @Override
-    public Class<CounterChange> changeType() {
-        return CounterChange.class;
-    }
-
-    @Override
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    public Class<Void> configType() {
-        return Void.class;
-    }
-
-    @Override
     public CounterProcedure.State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
         return new CounterProcedure.State();
     }

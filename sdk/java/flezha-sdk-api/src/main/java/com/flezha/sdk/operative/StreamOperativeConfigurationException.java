@@ -41,6 +41,20 @@ public class StreamOperativeConfigurationException extends RuntimeException {
     }
 
     /**
+     * Raised when a Procedure's type argument cannot be recovered from its
+     * generic supertype chain and the corresponding type-token method is not
+     * overridden — the argument is still generic at the concrete class. Naming
+     * the class and the parameter is the whole contract: a guess would surface
+     * later as a type mismatch far from its cause.
+     */
+    public static StreamOperativeConfigurationException unresolvedTypeToken(
+            String className, String parameter, String method) {
+        return new StreamOperativeConfigurationException("procedure class `" + className + "` leaves the `"
+                + parameter + "` type argument of Procedure<…> unresolved; declare it concretely on the "
+                + "implements/extends clause, or override `" + method + "()`");
+    }
+
+    /**
      * Raised when a Procedure declares {@code EventTimeFrom} but does not
      * override {@code eventTime(Input)}. Rust enforces the extractor with a
      * compile-time {@code TimeExtractor<Input>} bound; Java's erasure precludes

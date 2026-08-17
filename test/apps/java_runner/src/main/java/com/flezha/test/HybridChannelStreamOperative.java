@@ -43,31 +43,6 @@ public final class HybridChannelStreamOperative implements StreamOperative {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Long> outputType() {
-            return Long.class;
-        }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
-        }
-
-        @Override
         public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
             return new State();
         }
@@ -97,31 +72,6 @@ public final class HybridChannelStreamOperative implements StreamOperative {
         @Override
         public String name() {
             return "hybrid_consumer_procedure";
-        }
-
-        @Override
-        public Class<Long> inputType() {
-            return Long.class;
-        }
-
-        @Override
-        public Class<Void> outputType() {
-            return Void.class;
-        }
-
-        @Override
-        public Class<NoChange> changeType() {
-            return NoChange.class;
-        }
-
-        @Override
-        public Class<WallClock> clockType() {
-            return WallClock.class;
-        }
-
-        @Override
-        public Class<Void> configType() {
-            return Void.class;
         }
 
         @Override

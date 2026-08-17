@@ -28,31 +28,6 @@ public final class CounterProcedure
     }
 
     @Override
-    public Class<Long> inputType() {
-        return Long.class;
-    }
-
-    @Override
-    public Class<Void> outputType() {
-        return Void.class;
-    }
-
-    @Override
-    public Class<CounterChange> changeType() {
-        return CounterChange.class;
-    }
-
-    @Override
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    public Class<Void> configType() {
-        return Void.class;
-    }
-
-    @Override
     public State initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
         return new State();
     }

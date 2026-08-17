@@ -7,6 +7,7 @@ import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.ChannelKind;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
+import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
 import com.flezha.sdk.runtime.operative.builder.StreamOperativeTopologyBuilder;
@@ -75,6 +76,18 @@ class StreamOperativeTopologyBuilderTest {
         }
 
         @Test
+        @DisplayName("a type argument still generic at the procedure class is refused at definition time")
+        void unresolvedTypeTokenRejected() {
+            // The defaults read the implements clause; what they cannot read
+            // they refuse by name here, rather than guessing and failing at
+            // dispatch with a type mismatch far from this declaration.
+            assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(new UnresolvedTokenStreamOperative()))
+                    .isInstanceOf(StreamOperativeConfigurationException.class)
+                    .hasMessageContaining(UnresolvedInputProcedure.class.getName())
+                    .hasMessageContaining("Input");
+        }
+
+        @Test
         @DisplayName("a keyed edge builds a dynamic-mode consumer (Entities are created per key at dispatch)")
         void dynamicModeOnlyBuilds() {
             // The keying is on the WIRING: the procedure declares nothing, and
@@ -90,20 +103,43 @@ class StreamOperativeTopologyBuilderTest {
 
     // ---- Test operatives / procedures -----------------------------------------------
 
+    /** A concrete procedure class that leaves its own Input open. */
+    public static final class UnresolvedInputProcedure<I> extends StatelessTestProcedure<I, Object, String> {
+        @Override
+        public String name() {
+            return "unresolved_input";
+        }
+
+        @Override
+        protected Object initState(Optional<String> entityKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(I input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) {}
+    }
+
+    public static final class UnresolvedTokenStreamOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "unresolved_token";
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public void channels(ChannelBuilder c) {
+            // A generic procedure class has a raw class literal, so wiring it
+            // takes a cast — which is the author's first hint that the runtime
+            // will have nothing concrete to read either.
+            c.input(String.class, "in").into((Class<? extends Procedure<String, ?, String, ?, ?, ?>>)
+                    (Class<?>) UnresolvedInputProcedure.class);
+        }
+    }
+
     public static final class SingleProcedure extends StatelessTestProcedure<String, Object, String> {
         @Override
         public String name() {
             return "single_procedure";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
         }
 
         @Override
@@ -131,16 +167,6 @@ class StreamOperativeTopologyBuilderTest {
         @Override
         public String name() {
             return "static_procedure";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
         }
 
         @Override
@@ -198,16 +224,6 @@ class StreamOperativeTopologyBuilderTest {
         }
 
         @Override
-        public Class<Trade> inputType() {
-            return Trade.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -223,16 +239,6 @@ class StreamOperativeTopologyBuilderTest {
         }
 
         @Override
-        public Class<Candle> inputType() {
-            return Candle.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -245,16 +251,6 @@ class StreamOperativeTopologyBuilderTest {
         @Override
         public String name() {
             return "trade_producer";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<Trade> outputType() {
-            return Trade.class;
         }
 
         @Override
@@ -296,16 +292,6 @@ class StreamOperativeTopologyBuilderTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -335,16 +321,6 @@ class StreamOperativeTopologyBuilderTest {
         @Override
         public String name() {
             return "dynamic_only_procedure";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
         }
 
         @Override
@@ -575,16 +551,6 @@ class StreamOperativeTopologyBuilderTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -600,16 +566,6 @@ class StreamOperativeTopologyBuilderTest {
         }
 
         @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
-        }
-
-        @Override
         protected Object initState(Optional<String> entityKey) {
             return new Object();
         }
@@ -622,16 +578,6 @@ class StreamOperativeTopologyBuilderTest {
         @Override
         public String name() {
             return "graph_merge";
-        }
-
-        @Override
-        public Class<String> inputType() {
-            return String.class;
-        }
-
-        @Override
-        public Class<String> outputType() {
-            return String.class;
         }
 
         @Override

@@ -7,27 +7,14 @@ import com.flezha.sdk.state.WallClock;
 import java.util.Optional;
 
 /**
- * Test-only base providing the persistence-related accessors with default
+ * Test-only base pinning the persistence-related type arguments to their
  * stateless values ({@link NoChange}, {@link WallClock}, {@link Void}) so the
- * runtime-module test fixtures stay terse.
+ * runtime-module test fixtures declare only what varies. A subclass that pins
+ * {@code Input} / {@code State} / {@code Output} concretely needs no type-token
+ * override at all — the interface defaults read all six off this clause.
  */
 public abstract class StatelessTestProcedure<Input, State, Output>
         implements Procedure<Input, State, Output, NoChange, WallClock, Void> {
-
-    @Override
-    public Class<NoChange> changeType() {
-        return NoChange.class;
-    }
-
-    @Override
-    public Class<WallClock> clockType() {
-        return WallClock.class;
-    }
-
-    @Override
-    public Class<Void> configType() {
-        return Void.class;
-    }
 
     /**
      * Default fresh-start initializer that ignores the restore payload — most
