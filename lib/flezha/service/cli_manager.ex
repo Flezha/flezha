@@ -180,13 +180,21 @@ defmodule Flezha.Service.CliManager do
   ## shared with the schedule firing path.
 
   @doc "Stops a operative (cooperatively for a workflow operative, hard otherwise)."
-  def operative_stop(namespace, operative_id) do
+  def operative_stop(namespace, operative_id, opts \\ []) do
     namespace_display = normalize_namespace(namespace)
 
-    case PartitionGroup.members(namespace_display, operative_id) do
-      [] -> stop_one(namespace_display, operative_id)
-      members -> stop_group(namespace_display, operative_id, members)
-    end
+    with_cli_authorization(
+      opts,
+      :"operative.stop",
+      namespace_display,
+      %{operative_id: operative_id},
+      fn ->
+        case PartitionGroup.members(namespace_display, operative_id) do
+          [] -> stop_one(namespace_display, operative_id)
+          members -> stop_group(namespace_display, operative_id, members)
+        end
+      end
+    )
   end
 
   defp stop_group(namespace, group_id, members) do
@@ -427,28 +435,36 @@ defmodule Flezha.Service.CliManager do
       namespace = Map.get(opts, "namespace", "default")
       operative_id = Map.get(plugin_flags, "operative_id") || Map.get(opts, "operative_id")
 
-      plugin = %Plugin{
-        id: plugin_id,
-        provider: provider_mod,
-        namespace: namespace,
-        operative_id: operative_id,
-        opts: provider_opts(plugin_flags),
-        subscriptions: subscriptions
-      }
+      with_cli_authorization(
+        json_token_opts(opts_json),
+        :"plugin.enable",
+        namespace,
+        %{plugin_id: plugin_id, provider: provider_id},
+        fn ->
+          plugin = %Plugin{
+            id: plugin_id,
+            provider: provider_mod,
+            namespace: namespace,
+            operative_id: operative_id,
+            opts: provider_opts(plugin_flags),
+            subscriptions: subscriptions
+          }
 
-      case PluginManager.enable_plugin(plugin_id, plugin) do
-        {:ok, :already_enabled} ->
-          IO.puts(
-            "Plugin #{plugin_id} is already enabled; the existing instance was left " <>
-              "untouched (options were not compared)."
-          )
+          case PluginManager.enable_plugin(plugin_id, plugin) do
+            {:ok, :already_enabled} ->
+              IO.puts(
+                "Plugin #{plugin_id} is already enabled; the existing instance was left " <>
+                  "untouched (options were not compared)."
+              )
 
-        {:ok, _msg} ->
-          IO.puts("Plugin #{plugin_id} enabled successfully.")
+            {:ok, _msg} ->
+              IO.puts("Plugin #{plugin_id} enabled successfully.")
 
-        {:error, reason} ->
-          cli_error!("Error enabling plugin: #{inspect(reason)}.")
-      end
+            {:error, reason} ->
+              cli_error!("Error enabling plugin: #{inspect(reason)}.")
+          end
+        end
+      )
     else
       {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")
     end
@@ -617,8 +633,12 @@ defmodule Flezha.Service.CliManager do
   operatives (whose only placement is a dead node) and is multi-node-safe — it no
   longer crashes on a operative registered across nodes.
   """
-  def list_operatives(namespace, output_format \\ "text") do
+  def list_operatives(namespace, output_format \\ "text", opts \\ []) do
     namespace_display = normalize_namespace(namespace)
+
+    # Listings are namespace-scoped: a principal bound to another namespace is
+    # refused here (namespace_mismatch), so no verb leaks another tenant's rows.
+    _ = authorize_cli!(opts, :"operative.list", namespace_display)
 
     rows =
       namespace_display
@@ -1035,29 +1055,22 @@ defmodule Flezha.Service.CliManager do
   # retention window, keyed by the operative_class dir (== operative_id).
   defp finished_operatives(namespace, live_ids) do
     now = System.system_time(:second)
-    root = Flezha.State.Registry.state_root()
 
-    case File.ls(root) do
-      {:ok, class_dirs} ->
-        class_dirs
-        |> Enum.reject(&(&1 in live_ids))
-        |> Enum.flat_map(fn operative_id ->
-          case Flezha.State.Completion.read(operative_id) do
-            {:ok, %{namespace: ns, finished_at: fa} = rec}
-            when ns == namespace and is_integer(fa) ->
-              window =
-                Flezha.State.PersistenceResolver.workflow_completed_retention_hours(operative_id)
+    Flezha.State.Registry.operative_classes()
+    |> Enum.reject(&(&1 in live_ids))
+    |> Enum.flat_map(fn operative_id ->
+      case Flezha.State.Completion.read(operative_id) do
+        {:ok, %{namespace: ns, finished_at: fa} = rec}
+        when ns == namespace and is_integer(fa) ->
+          window =
+            Flezha.State.PersistenceResolver.workflow_completed_retention_hours(operative_id)
 
-              if fa + window * 3600 >= now, do: [{operative_id, rec}], else: []
+          if fa + window * 3600 >= now, do: [{operative_id, rec}], else: []
 
-            _ ->
-              []
-          end
-        end)
-
-      {:error, _} ->
-        []
-    end
+        _ ->
+          []
+      end
+    end)
   end
 
   defp finished_operative_json(operative_id, rec) do
@@ -1194,61 +1207,129 @@ defmodule Flezha.Service.CliManager do
   Disables a plugin — or, when the id was fanned out over a partition group,
   every `#pK` instance of it.
   """
-  def disable_plugin(plugin_id) do
-    case PluginManager.disable_plugin_group(plugin_id) do
-      {:ok, msg} -> IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
-      {:error, reason} -> cli_error!("Error disabling plugin: #{inspect(reason)}.")
+  def disable_plugin(plugin_id, opts \\ []) do
+    with_cli_authorization(
+      opts,
+      :"plugin.disable",
+      plugin_target_namespace(plugin_id),
+      %{plugin_id: plugin_id},
+      fn ->
+        case PluginManager.disable_plugin_group(plugin_id) do
+          {:ok, msg} -> IO.puts("Plugin #{plugin_id} disabled successfully (#{msg}).")
+          {:error, reason} -> cli_error!("Error disabling plugin: #{inspect(reason)}.")
+        end
+      end
+    )
+  end
+
+  # A running plugin's namespace comes from its own registration; an unknown
+  # id authorizes against `_system` (and then fails on its own terms).
+  defp plugin_target_namespace(plugin_id) do
+    case Map.get(PluginManager.get_plugins(), plugin_id) do
+      {namespace, _operative_id} when is_binary(namespace) -> namespace
+      _ -> "_system"
     end
   end
 
   ## Installable-plugin subsystem bridges -------------------------------------
 
-  @doc "Install a plugin from a `.fpz` archive."
-  def install_plugin(path, _opts_json) do
-    case Flezha.Plugin.Installer.install(path) do
-      {:ok, installed} ->
-        IO.puts(
-          "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
-        )
-
-      {:error, reason} ->
-        cli_error!("Error installing plugin: #{inspect(reason)}.")
+  # The installer surface is node-level (a `.fpz` lands on the controller's
+  # disk for every namespace), so every installer verb authorizes on `_system`.
+  defp json_token_opts(opts_json) when is_binary(opts_json) do
+    case Jason.decode(opts_json) do
+      {:ok, %{"token" => token}} when is_binary(token) -> [token: token]
+      _ -> []
     end
+  end
+
+  defp json_token_opts(_), do: []
+
+  @doc "Install a plugin from a `.fpz` archive."
+  def install_plugin(path, opts_json) do
+    with_cli_authorization(
+      json_token_opts(opts_json),
+      :"plugin.install",
+      "_system",
+      %{path: path},
+      fn ->
+        case Flezha.Plugin.Installer.install(path) do
+          {:ok, installed} ->
+            IO.puts(
+              "Installed plugin #{installed.id}@#{installed.version} (status: #{installed.status})"
+            )
+
+          {:error, reason} ->
+            cli_error!("Error installing plugin: #{inspect(reason)}.")
+        end
+      end
+    )
   end
 
   @doc "Upgrade an installed plugin to a new version in `path`."
-  def upgrade_plugin(plugin_id, path, _opts_json) do
-    case Flezha.Plugin.Installer.upgrade(plugin_id, path) do
-      {:ok, installed} ->
-        IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
+  def upgrade_plugin(plugin_id, path, opts_json) do
+    with_cli_authorization(
+      json_token_opts(opts_json),
+      :"plugin.upgrade",
+      "_system",
+      %{plugin_id: plugin_id},
+      fn ->
+        case Flezha.Plugin.Installer.upgrade(plugin_id, path) do
+          {:ok, installed} ->
+            IO.puts("Upgraded plugin #{installed.id} to #{installed.version}")
 
-      {:error, reason} ->
-        cli_error!("Error upgrading plugin: #{inspect(reason)}.")
-    end
+          {:error, reason} ->
+            cli_error!("Error upgrading plugin: #{inspect(reason)}.")
+        end
+      end
+    )
   end
 
   @doc "Uninstall an installed plugin by id."
-  def uninstall_plugin(plugin_id, _opts_json) do
-    case Flezha.Plugin.Installer.uninstall(plugin_id) do
-      :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
-      {:error, reason} -> cli_error!("Error uninstalling plugin: #{inspect(reason)}.")
-    end
+  def uninstall_plugin(plugin_id, opts_json) do
+    with_cli_authorization(
+      json_token_opts(opts_json),
+      :"plugin.uninstall",
+      "_system",
+      %{plugin_id: plugin_id},
+      fn ->
+        case Flezha.Plugin.Installer.uninstall(plugin_id) do
+          :ok -> IO.puts("Uninstalled plugin #{plugin_id}.")
+          {:error, reason} -> cli_error!("Error uninstalling plugin: #{inspect(reason)}.")
+        end
+      end
+    )
   end
 
   @doc "Enable an installed plugin (routes through the Installer)."
-  def installer_enable_plugin(plugin_id, _opts_json) do
-    case Flezha.Plugin.Installer.enable(plugin_id) do
-      :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
-      {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")
-    end
+  def installer_enable_plugin(plugin_id, opts_json) do
+    with_cli_authorization(
+      json_token_opts(opts_json),
+      :"plugin.enable",
+      "_system",
+      %{plugin_id: plugin_id},
+      fn ->
+        case Flezha.Plugin.Installer.enable(plugin_id) do
+          :ok -> IO.puts("Plugin #{plugin_id} enabled successfully.")
+          {:error, reason} -> cli_error!("Error enabling plugin: #{inspect(reason)}.")
+        end
+      end
+    )
   end
 
   @doc "Disable an installed plugin (routes through the Installer)."
-  def installer_disable_plugin(plugin_id, _opts_json) do
-    case Flezha.Plugin.Installer.disable(plugin_id) do
-      :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
-      {:error, reason} -> cli_error!("Error disabling plugin: #{inspect(reason)}.")
-    end
+  def installer_disable_plugin(plugin_id, opts_json) do
+    with_cli_authorization(
+      json_token_opts(opts_json),
+      :"plugin.disable",
+      "_system",
+      %{plugin_id: plugin_id},
+      fn ->
+        case Flezha.Plugin.Installer.disable(plugin_id) do
+          :ok -> IO.puts("Plugin #{plugin_id} disabled successfully.")
+          {:error, reason} -> cli_error!("Error disabling plugin: #{inspect(reason)}.")
+        end
+      end
+    )
   end
 
   @doc """
@@ -1720,13 +1801,19 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
+  defp render_state_get_error({:forbidden, reason}), do: render_forbidden(reason)
   defp render_state_get_error(reason), do: inspect(reason)
 
   @doc """
   `flz state list <operative_class>` — print one row per Entity under
   `<operative_class>` with `wal_seq`, `snapshot_seq`, `wal_bytes`.
   """
-  def state_list(operative_class, output_format \\ "text") do
+  def state_list(operative_class, output_format \\ "text", opts \\ []) do
+    _ = authorize_cli!(opts, :"state.list", state_target_namespace(operative_class))
+    do_state_list(operative_class, output_format)
+  end
+
+  defp do_state_list(operative_class, output_format) do
     rows =
       for {{rc, sh, pk} = pid, counters} <- Flezha.State.Metrics.snapshot_all(),
           rc == operative_class do
@@ -1820,25 +1907,43 @@ defmodule Flezha.Service.CliManager do
   `flz state rotate <operative/procedure/entity>` — force a compaction by
   dispatching a `CompactEntity` to the SDK.
   """
-  def state_rotate(path_string) do
+  def state_rotate(path_string, opts \\ []) do
     case parse_state_path(path_string) do
       {:ok, {rc, sh, pk}} ->
-        case lookup_runner_for_entity(rc, sh, pk) do
-          {:ok, runner_id} ->
-            case Flezha.State.Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
-              {:ok, _ref} ->
-                IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
+        with_cli_authorization(
+          opts,
+          :"state.rotate",
+          state_target_namespace(rc),
+          %{entity: path_string},
+          fn ->
+            case lookup_runner_for_entity(rc, sh, pk) do
+              {:ok, runner_id} ->
+                case Flezha.State.Commands.dispatch_compact_entity(runner_id, {rc, sh, pk}) do
+                  {:ok, _ref} ->
+                    IO.puts("compaction queued for #{rc}/#{sh}/#{pk}")
+
+                  {:error, reason} ->
+                    cli_error!("state rotate: #{inspect(reason)}", :stderr)
+                end
 
               {:error, reason} ->
-                cli_error!("state rotate: #{inspect(reason)}", :stderr)
+                cli_error!("state rotate: #{reason}", :stderr)
             end
-
-          {:error, reason} ->
-            cli_error!("state rotate: #{reason}", :stderr)
-        end
+          end
+        )
 
       {:error, reason} ->
         cli_error!("state rotate: #{reason}", :stderr)
+    end
+  end
+
+  # The namespace a state verb is authorized against: the registry's answer
+  # for a live Operative, else the on-disk claim (`Flezha.State.Registry`),
+  # so a stopped Operative's durable state is still owned by its namespace.
+  defp state_target_namespace(operative_class) do
+    case OperativeManager.namespace_of(operative_class) do
+      {:ok, namespace} -> namespace
+      :error -> Flezha.State.Registry.namespace_of_class(operative_class)
     end
   end
 
@@ -1853,11 +1958,19 @@ defmodule Flezha.Service.CliManager do
   operator-driven, confirmation-returning counterpart to the SDK reaper's
   fire-and-forget `delete_entity_state` send (Decision 8).
   """
-  def state_delete(path_string) do
+  def state_delete(path_string, opts \\ []) do
     case String.split(path_string, "/", parts: 3) do
       [rc, sh, pk] ->
-        {:ok, _} = Flezha.State.Supervisor.delete_entity({rc, sh, pk})
-        IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
+        with_cli_authorization(
+          opts,
+          :"state.delete",
+          state_target_namespace(rc),
+          %{entity: path_string},
+          fn ->
+            {:ok, _} = Flezha.State.Supervisor.delete_entity({rc, sh, pk})
+            IO.puts("deleted persisted state for #{rc}/#{sh}/#{pk}")
+          end
+        )
 
       _ ->
         cli_error!(
@@ -1872,7 +1985,7 @@ defmodule Flezha.Service.CliManager do
   status for one Entity: durable seq, flush cursor, epoch, undispatched
   lag, and the operative's input-log min-watermark.
   """
-  def state_outbox(path_string) do
+  def state_outbox(path_string, _opts \\ []) do
     case parse_state_path(path_string) do
       {:ok, {rc, sh, pk} = entity_id} ->
         status =
@@ -1961,7 +2074,7 @@ defmodule Flezha.Service.CliManager do
   proc-journal entries (`workflow-proc-journal`) in append order: seq, type,
   proc index, iteration, the entities that ran, and the handoff batch size.
   """
-  def state_journal(instance_id, output_format \\ "text") do
+  def state_journal(instance_id, output_format \\ "text", _opts \\ []) do
     {:ok, entries} = Flezha.State.ProcJournal.read(instance_id)
 
     rows = Enum.map(entries, &journal_row/1)
@@ -2135,7 +2248,7 @@ defmodule Flezha.Service.CliManager do
   which are still undelivered (above the consumed offset the last committed
   iteration recorded).
   """
-  def state_inbox(instance_id, output_format \\ "text") do
+  def state_inbox(instance_id, output_format \\ "text", _opts \\ []) do
     entries = Flezha.State.ProcInbox.read(instance_id)
     consumed = Flezha.State.ProcJournal.consumed_offset(instance_id)
 
@@ -2256,6 +2369,16 @@ defmodule Flezha.Service.CliManager do
   def controller_stop(opts \\ []) do
     opts_map = normalize_controller_stop_opts(opts)
 
+    with_cli_authorization(
+      [token: Map.get(opts_map, :token)],
+      :"controller.stop",
+      "_system",
+      %{},
+      fn -> do_controller_stop(opts_map) end
+    )
+  end
+
+  defp do_controller_stop(opts_map) do
     timeout_ms = Map.get(opts_map, :timeout_ms)
     no_wait = Map.get(opts_map, :no_wait, false)
     force = Map.get(opts_map, :force, false)
@@ -2921,18 +3044,78 @@ defmodule Flezha.Service.CliManager do
         id when is_binary(id) -> Map.put(base, :request_id, id)
       end
 
-    # AuthN-bound fields from the CLI socket handshake. When the
-    # handshake hasn't run (auth disabled or pre-Section 10 path)
-    # they remain absent; downstream `Flezha.AuthZ` returns `:ok`
-    # while `:enabled` is `false`.
-    base
-    |> maybe_put_field(:principal, Keyword.get(opts, :principal))
-    |> maybe_put_field(:namespace, Keyword.get(opts, :namespace))
-    |> maybe_put_field(:role, Keyword.get(opts, :role))
+    # Identity comes ONLY from a verified token (`flz --token` /
+    # `FLEZHA_TOKEN`, threaded through as `opts[:token]`). A caller-supplied
+    # principal/namespace/role is never trusted — without a resolvable token
+    # the context stays unbound and gated verbs refuse naming the credential.
+    case Keyword.get(opts, :token) do
+      token when is_binary(token) and token != "" -> bind_token_identity(base, token)
+      _ -> base
+    end
   end
 
-  defp maybe_put_field(map, _key, nil), do: map
-  defp maybe_put_field(map, key, value), do: Map.put(map, key, value)
+  defp bind_token_identity(base, token) do
+    case Flezha.AuthZ.TokenStore.verify(token) do
+      {:ok, %{principal: principal, namespace: namespace, role: role}} ->
+        base
+        |> Map.put(:principal, principal)
+        |> Map.put(:namespace, namespace)
+        |> Map.put(:role, role)
+
+      {:error, _reason} ->
+        base
+    end
+  catch
+    # The token store is not running while auth is disabled; an unbound
+    # context is the correct degraded shape either way.
+    _, _ -> base
+  end
+
+  # The ONE authorize-or-halt seam for CLI verbs: authorize against the verb's
+  # RESOLVED target namespace, rendering a refusal as the CLI's non-zero exit.
+  # Returns the caller context so gated writers can audit the actor. The
+  # denial itself is audited by `AuthZ.authorize/3`.
+  defp authorize_cli!(opts, action, namespace) do
+    ctx = cli_context(opts)
+
+    case Flezha.AuthZ.authorize(ctx, action, Flezha.AuthZ.Scope.build(namespace)) do
+      :ok ->
+        ctx
+
+      {:error, {:forbidden, reason}} ->
+        cli_error!("#{action}: #{render_forbidden(reason)}", :stderr)
+    end
+  end
+
+  # Destructive-verb shape on top of `authorize_cli!/3`: run the body, then
+  # audit actor + target on success.
+  defp with_cli_authorization(opts, action, namespace, audit_target, fun) do
+    ctx = authorize_cli!(opts, action, namespace)
+    result = fun.()
+
+    emit_cli_audit(
+      action,
+      Map.get(ctx, :principal),
+      Map.merge(audit_target, %{namespace: namespace})
+    )
+
+    result
+  end
+
+  defp render_forbidden(:bootstrap_pending) do
+    "refused: authorization is enforced but the bootstrap has not been claimed — " <>
+      "run `flz auth bootstrap <token>` (token path is logged at controller boot)"
+  end
+
+  defp render_forbidden(:principal_not_bound) do
+    "refused: no verifiable identity — supply `--token <token>` or set FLEZHA_TOKEN"
+  end
+
+  defp render_forbidden(:no_role_binding) do
+    "refused: the presented identity has no role binding — ask an admin for `flz role bind`"
+  end
+
+  defp render_forbidden(reason), do: "refused: #{reason}"
 
   # ============================================================================
   # AuthN / AuthZ service wrappers
@@ -3156,6 +3339,206 @@ defmodule Flezha.Service.CliManager do
       {:ok, RoleStore.list()}
     end
   end
+
+  # ----- CLI renderers for the `flz auth|token|role|namespace` verbs -----
+  #
+  # Thin printing shells over the wrappers above — the wrappers own
+  # authorization and auditing; these own string parsing and output.
+
+  @doc "CLI entry: `flz auth bootstrap <token>`."
+  def authz_render_bootstrap(token, opts \\ []) do
+    case authz_bootstrap(token, opts) do
+      {:ok, %{principal: principal, minted_token: nil}} ->
+        IO.puts("bootstrap claimed; admin@_system bound to #{principal}")
+
+      {:ok, %{principal: principal, minted_token: minted}} ->
+        IO.puts("bootstrap claimed; admin@_system bound to #{principal}")
+        IO.puts("admin token (shown once, store it now): #{minted}")
+
+      {:error, reason} ->
+        cli_error!("auth bootstrap: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz auth whoami`."
+  def authz_render_whoami(opts \\ []) do
+    {:ok, identity} = authz_whoami(opts)
+    IO.puts("principal: #{identity.principal || "(unbound — supply --token / FLEZHA_TOKEN)"}")
+    IO.puts("namespace: #{identity.namespace || "-"}")
+    IO.puts("role:      #{identity.role || "-"}")
+  end
+
+  @doc "CLI entry: `flz token issue <principal> <namespace> <role> [--ttl <seconds>]`."
+  def authz_render_token_issue(principal, namespace, role_string, ttl_seconds, opts \\ []) do
+    with {:ok, role} <- parse_role(role_string),
+         {:ok, raw, entry} <- authz_issue(principal, namespace, role, ttl_seconds, opts) do
+      IO.puts("token issued for #{principal} (#{role}@#{namespace})")
+      IO.puts("id:    #{String.slice(entry.token_hash, 0, 12)}")
+      IO.puts("token (shown once, store it now): #{raw}")
+    else
+      {:error, reason} -> cli_error!("token issue: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz token revoke <id>`."
+  def authz_render_token_revoke(token_id, opts \\ []) do
+    case authz_revoke(token_id, opts) do
+      {:ok, entry} -> IO.puts("revoked token #{String.slice(entry.token_hash, 0, 12)}")
+      {:error, reason} -> cli_error!("token revoke: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz token list`."
+  def authz_render_token_list(opts \\ []) do
+    case authz_list(opts) do
+      {:ok, []} ->
+        IO.puts("no tokens")
+
+      {:ok, entries} ->
+        Enum.each(entries, fn entry ->
+          status =
+            cond do
+              is_integer(entry.revoked_at) ->
+                "revoked"
+
+              entry.expires_at != :never and entry.expires_at <= System.system_time(:second) ->
+                "expired"
+
+              true ->
+                "active"
+            end
+
+          IO.puts(
+            "#{String.slice(entry.token_hash, 0, 12)}  #{entry.principal}  " <>
+              "#{entry.role}@#{entry.namespace}  #{status}#{token_label_suffix(entry)}"
+          )
+        end)
+
+      {:error, reason} ->
+        cli_error!("token list: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  defp token_label_suffix(%{label: label}) when is_binary(label) and label != "",
+    do: "  (#{label})"
+
+  defp token_label_suffix(_), do: ""
+
+  @doc "CLI entry: `flz role bind <principal> <role> <namespace>`."
+  def authz_render_role_bind(principal, role_string, namespace, opts \\ []) do
+    with {:ok, role} <- parse_role(role_string),
+         :ok <- role_bind(principal, namespace, role, opts) do
+      IO.puts("bound #{principal} as #{role}@#{namespace}")
+    else
+      {:error, reason} -> cli_error!("role bind: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz role unbind <principal>`."
+  def authz_render_role_unbind(principal, opts \\ []) do
+    case role_unbind(principal, opts) do
+      :ok -> IO.puts("unbound #{principal}")
+      {:error, reason} -> cli_error!("role unbind: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz role list`."
+  def authz_render_role_list(opts \\ []) do
+    case role_list(opts) do
+      {:ok, []} ->
+        IO.puts("no role bindings")
+
+      {:ok, bindings} ->
+        Enum.each(bindings, fn binding ->
+          IO.puts("#{binding.principal}  #{binding.role}@#{binding.namespace}")
+        end)
+
+      {:error, reason} ->
+        cli_error!("role list: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz namespace create <name> [--Xquota=value ...]`."
+  def authz_render_namespace_create(name, quotas_json, opts \\ []) do
+    with {:ok, quotas} <- parse_quota_overrides(quotas_json),
+         {:ok, entry} <- namespace_create(name, quotas, opts) do
+      IO.puts("namespace #{name} created")
+      print_namespace_entry(entry)
+    else
+      {:error, reason} -> cli_error!("namespace create: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz namespace delete <name>`."
+  def authz_render_namespace_delete(name, opts \\ []) do
+    case namespace_delete(name, opts) do
+      :ok -> IO.puts("namespace #{name} deleted")
+      {:error, reason} -> cli_error!("namespace delete: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz namespace show <name>`."
+  def authz_render_namespace_show(name, opts \\ []) do
+    case namespace_show(name, opts) do
+      {:ok, entry} -> print_namespace_entry(entry)
+      {:error, reason} -> cli_error!("namespace show: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  @doc "CLI entry: `flz namespace set-quota <name> --X<quota>=<value> ...`."
+  def authz_render_namespace_set_quota(name, quotas_json, opts \\ []) do
+    with {:ok, overrides} <- parse_quota_overrides(quotas_json),
+         {:ok, entry} <- namespace_set_quota(name, overrides, opts) do
+      IO.puts("namespace #{name} quotas updated")
+      print_namespace_entry(entry)
+    else
+      {:error, reason} ->
+        cli_error!("namespace set-quota: #{render_authz_verdict(reason)}", :stderr)
+    end
+  end
+
+  defp print_namespace_entry(entry) do
+    IO.puts("namespace: #{entry.name}")
+    IO.puts("quotas:")
+
+    entry.quotas
+    |> Enum.sort()
+    |> Enum.each(fn {k, v} -> IO.puts("  #{k}: #{v}") end)
+  end
+
+  defp parse_role(role_string) when is_binary(role_string) do
+    case role_string do
+      "viewer" -> {:ok, :viewer}
+      "operator" -> {:ok, :operator}
+      "admin" -> {:ok, :admin}
+      "runner" -> {:ok, :runner}
+      other -> {:error, {:unknown_role, other}}
+    end
+  end
+
+  defp parse_role(role) when is_atom(role), do: {:ok, role}
+
+  # Quota overrides arrive as the CLI's `--X` JSON object; keys must name
+  # documented quota fields, values must be non-negative integers (validated
+  # again by `Namespace.build_quotas/1`).
+  defp parse_quota_overrides(quotas_json) when is_binary(quotas_json) do
+    with {:ok, decoded} <- Jason.decode(quotas_json) do
+      {:ok,
+       Map.new(decoded, fn {k, v} ->
+         {String.to_existing_atom(k), parse_quota_value(v)}
+       end)}
+    end
+  rescue
+    ArgumentError -> {:error, :unknown_quota_field}
+  end
+
+  defp parse_quota_overrides(%{} = quotas), do: {:ok, quotas}
+
+  defp parse_quota_value(v) when is_integer(v), do: v
+  defp parse_quota_value(v) when is_binary(v), do: String.to_integer(v)
+
+  defp render_authz_verdict({:forbidden, reason}), do: render_forbidden(reason)
+  defp render_authz_verdict(reason), do: inspect(reason)
 
   # ----- private helpers for the authz wrappers -----
 
@@ -3504,22 +3887,30 @@ defmodule Flezha.Service.CliManager do
   tier-on invocation records fresh WAL seqs — downstream sinks see new
   `flz.seq` under the current epoch.
   """
-  def dlq_replay(entry_ref) do
+  def dlq_replay(entry_ref, opts \\ []) do
     with {:ok, entry, payload} <- Flezha.Dlq.Store.get(entry_ref),
          :ok <- replayable(payload),
          {:ok, overwatch} <- resolve_overwatch(entry["operative_class"]) do
-      generation_before = entry["generation"] || 1
-      :ok = Flezha.Dlq.Store.mark_replaying(entry_ref)
+      with_cli_authorization(
+        opts,
+        :"dlq.replay",
+        state_target_namespace(entry["operative_class"]),
+        %{entry: entry_ref},
+        fn ->
+          generation_before = entry["generation"] || 1
+          :ok = Flezha.Dlq.Store.mark_replaying(entry_ref)
 
-      :telemetry.execute([:flezha, :dlq, :operator_replay], %{count: 1}, %{
-        entry: entry_ref,
-        channel: entry["channel"],
-        generation: generation_before,
-        caller_source: :cli
-      })
+          :telemetry.execute([:flezha, :dlq, :operator_replay], %{count: 1}, %{
+            entry: entry_ref,
+            channel: entry["channel"],
+            generation: generation_before,
+            caller_source: :cli
+          })
 
-      GenServer.cast(overwatch, {:io_in, payload, %{"channel" => entry["channel"]}})
-      await_replay_outcome(entry_ref, generation_before, dlq_replay_grace_ms())
+          GenServer.cast(overwatch, {:io_in, payload, %{"channel" => entry["channel"]}})
+          await_replay_outcome(entry_ref, generation_before, dlq_replay_grace_ms())
+        end
+      )
     else
       {:error, reason} -> render_dlq_error(reason)
     end
@@ -3529,20 +3920,28 @@ defmodule Flezha.Service.CliManager do
   `flz dlq drop <operative/procedure/id>` — discard a parked entry and its
   payload. Audited: the drop is deliberate data loss.
   """
-  def dlq_drop(entry_ref) do
+  def dlq_drop(entry_ref, opts \\ []) do
     case Flezha.Dlq.Store.get(entry_ref) do
       {:ok, entry, _payload} ->
-        :ok = Flezha.Dlq.Store.drop(entry_ref)
+        with_cli_authorization(
+          opts,
+          :"dlq.drop",
+          state_target_namespace(entry["operative_class"]),
+          %{entry: entry_ref},
+          fn ->
+            :ok = Flezha.Dlq.Store.drop(entry_ref)
 
-        :telemetry.execute([:flezha, :dlq, :operator_drop], %{count: 1}, %{
-          entry: entry_ref,
-          channel: entry["channel"],
-          entity_key: entry["entity_key"],
-          error: entry["error"],
-          caller_source: :cli
-        })
+            :telemetry.execute([:flezha, :dlq, :operator_drop], %{count: 1}, %{
+              entry: entry_ref,
+              channel: entry["channel"],
+              entity_key: entry["entity_key"],
+              error: entry["error"],
+              caller_source: :cli
+            })
 
-        IO.puts("dropped #{entry_ref}")
+            IO.puts("dropped #{entry_ref}")
+          end
+        )
 
       {:error, reason} ->
         render_dlq_error(reason)

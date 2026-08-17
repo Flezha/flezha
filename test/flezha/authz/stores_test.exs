@@ -11,27 +11,14 @@ defmodule Flezha.AuthZ.StoresTest do
   alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, TokenStore}
 
   setup do
-    tmp =
-      Path.join(
-        System.tmp_dir!(),
-        "flz_authz_stores_#{System.unique_integer([:positive])}"
+    %{auth_dir: auth_dir} =
+      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+        prefix: "flz_authz_stores",
+        stores: [],
+        enabled: :unchanged
       )
 
-    File.mkdir_p!(tmp)
-    File.chmod!(tmp, 0o700)
-
-    prev = Application.get_env(:flezha, :authn_authz, [])
-    Application.put_env(:flezha, :authn_authz, Keyword.put(prev, :auth_dir, tmp))
-
-    stop_if_running([AuthState, RoleStore, NamespaceStore, TokenStore])
-
-    on_exit(fn ->
-      stop_if_running([AuthState, RoleStore, NamespaceStore, TokenStore])
-      Application.put_env(:flezha, :authn_authz, prev)
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, tmp: tmp}
+    {:ok, tmp: auth_dir}
   end
 
   describe "AuthState" do
@@ -178,26 +165,6 @@ defmodule Flezha.AuthZ.StoresTest do
       assert length(rotated_files) == 1
       # The fresh file should be a real DETS now; issuing a token should succeed.
       assert {:ok, _raw, _entry} = TokenStore.issue("alice", "_system", :operator, 3600)
-    end
-  end
-
-  # ----- helpers -----
-
-  defp stop_if_running(modules) when is_list(modules) do
-    Enum.each(modules, &stop_if_running/1)
-  end
-
-  defp stop_if_running(mod) do
-    case Process.whereis(mod) do
-      nil ->
-        :ok
-
-      pid ->
-        try do
-          GenServer.stop(pid, :normal, 5_000)
-        catch
-          :exit, _ -> :ok
-        end
     end
   end
 end

@@ -33,7 +33,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     inst = instance_id()
 
     assert Registry.journal_path(inst) ==
-             Path.join([Registry.state_root(), inst, inst, "proc.journal"])
+             Path.join([Registry.state_root(), "_system", inst, inst, "proc.journal"])
 
     assert Registry.wal_path(Registry.journal_id(inst)) == Registry.journal_path(inst)
   end

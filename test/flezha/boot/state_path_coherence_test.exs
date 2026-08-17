@@ -1,12 +1,13 @@
 defmodule Flezha.Boot.StatePathCoherenceTest do
   @moduledoc """
-  State-path coherence (self-healing-control-plane, Phase 9 / D8).
+  State-path coherence (self-healing-control-plane, Phase 9 / D8;
+  finish-platform-authn-authz §5 moved the layout under a namespace level).
 
   The boot migrator and the reader must agree on one on-disk layout so a
-  controller restart never orphans WAL/snapshot files. After dropping the dead
-  `_system/` namespace migration, `migrate/0` must leave flat-layout state in
-  place, and `FLEZHA_STATE_DIR` must be the single source for both the resolver
-  and the migrator.
+  controller restart never orphans WAL/snapshot files: paths the writer
+  resolves before a restart must be exactly the paths the reader resolves
+  after `migrate/0`, and `FLEZHA_STATE_DIR` must be the single source for
+  both the resolver and the migrator.
   """
   use ExUnit.Case, async: false
 
@@ -23,10 +24,12 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
     :ok
   end
 
-  test "migrate/0 leaves flat-layout WAL in place and the reader finds it" do
+  test "migrate/0 leaves resolver-written WAL in place and the reader finds it" do
     root = TestHelpers.tmp_app_data_dir()
     pid = TestHelpers.sample_entity_id()
 
+    # Written through the resolver — which places it under the `_system`
+    # namespace level for an unclaimed class.
     wal = Registry.wal_path(pid)
     File.mkdir_p!(Path.dirname(wal))
     File.write!(wal, TestHelpers.build_wal_record(1, "change"))
@@ -35,11 +38,7 @@ defmodule Flezha.Boot.StatePathCoherenceTest do
     _ = StatePathMigrator.migrate()
 
     assert Registry.state_root() == root
-    assert File.exists?(wal), "migrate/0 orphaned the flat-layout WAL"
-
-    refute File.exists?(Path.join(root, "_system")),
-           "migrate/0 produced a _system/ layout the reader does not read"
-
+    assert File.exists?(wal), "migrate/0 orphaned the resolver-written WAL"
     assert pid in Registry.all_entities()
   end
 

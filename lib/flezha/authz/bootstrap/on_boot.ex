@@ -48,7 +48,10 @@ defmodule Flezha.AuthZ.Bootstrap.OnBoot do
         # Auth subsystem is disabled by config; nothing to write.
         :ignore
 
-      RoleStore.admin_system_exists?() ->
+      # Break-glass first: a REBOOTSTRAP marker invalidates the claimed
+      # state, so the admin_system_exists? check below sees the recovered
+      # (unclaimed) truth and a fresh bootstrap token is written.
+      consume_marker_then_admin_exists?() ->
         :ignore
 
       true ->
@@ -69,5 +72,13 @@ defmodule Flezha.AuthZ.Bootstrap.OnBoot do
             {:stop, reason}
         end
     end
+  end
+
+  # Consumes the break-glass marker (side-effecting exactly once per boot),
+  # then answers whether a claimed admin still exists. After a recovery the
+  # bindings are gone, so the caller's `true ->` branch writes a fresh token.
+  defp consume_marker_then_admin_exists?() do
+    _ = Bootstrap.consume_recovery_marker()
+    RoleStore.admin_system_exists?()
   end
 end

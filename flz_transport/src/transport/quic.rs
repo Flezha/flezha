@@ -117,6 +117,31 @@ impl Read for ChannelReader {
 // QuicClient — public API
 // ---------------------------------------------------------------------------
 
+/// Load the client identity for mutual TLS. `Ok(None)` when the pair is not
+/// on disk (the caller falls back to no client auth and the server's posture
+/// decides); a present-but-unreadable pair is an error, not a silent
+/// downgrade.
+fn load_client_identity(
+    cert_path: &str,
+    key_path: &str,
+) -> io::Result<
+    Option<(
+        Vec<rustls::pki_types::CertificateDer<'static>>,
+        rustls::pki_types::PrivateKeyDer<'static>,
+    )>,
+> {
+    if !std::path::Path::new(cert_path).exists() || !std::path::Path::new(key_path).exists() {
+        return Ok(None);
+    }
+
+    let chain = super::tls::load_certs(cert_path)?;
+    if chain.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some((chain, super::tls::load_private_key(key_path)?)))
+}
+
 /// Holds a QUIC connection driven by a background I/O thread using quinn-proto.
 pub struct QuicClient {
     cmd_tx: channel::Sender<DriverCommand>,
@@ -125,23 +150,23 @@ pub struct QuicClient {
 }
 
 impl QuicClient {
-    /// Connect to a QUIC server at the given address using the CA cert for verification.
+    /// Connect to a QUIC server at the given address using the CA cert for
+    /// verification. When the configured client cert/key pair exists on disk
+    /// it is presented for mutual TLS — the server requires it by default.
     pub fn connect(address: &str, ca_cert_path: &str) -> io::Result<QuicClient> {
         // --- TLS config ---
-        let ca_cert_pem = std::fs::read(ca_cert_path)?;
-        let mut reader = std::io::BufReader::new(&ca_cert_pem[..]);
+        let root_store = super::tls::load_root_store(ca_cert_path)?;
+        let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
 
-        let mut root_store = rustls::RootCertStore::empty();
-        for cert in rustls_pemfile::certs(&mut reader) {
-            let cert = cert.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            root_store
-                .add(cert)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        }
+        let client_cert_path = super::config::quic_client_cert_path();
+        let client_key_path = super::config::quic_client_key_path();
 
-        let mut crypto = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
+        let mut crypto = match load_client_identity(&client_cert_path, &client_key_path)? {
+            Some((chain, key)) => builder
+                .with_client_auth_cert(chain, key)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+            None => builder.with_no_client_auth(),
+        };
         crypto.alpn_protocols = vec![b"flezha".to_vec()];
 
         let mut client_config = ClientConfig::new(Arc::new(

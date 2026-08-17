@@ -6,66 +6,26 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
   related identity field.
 
   The foundation `:ring_buffer` sink is already registered in the
-  test config, so we subscribe by querying it directly after each
-  emit. The `:platform_authz` source is registered explicitly here
-  because the `Flezha.AuthZ.Supervisor` (which normally registers
-  it via `SourceRegistration`) is gated off in tests by
-  `application_managed: false`.
+  test config; the shared auth harness registers the `:platform_authz`
+  source and owns the ring-buffer polling.
   """
 
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}
-  alias Flezha.Observability.{Registry, RingBufferSink}
   alias Flezha.Service.CliManager
 
   @source :platform_authz
 
   setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_authz_audit_#{System.unique_integer([:positive])}")
-    auth_dir = Path.join(tmp, "auth")
-    File.mkdir_p!(auth_dir)
-    File.chmod!(tmp, 0o700)
-    File.chmod!(auth_dir, 0o700)
+    ctx =
+      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+        prefix: "flz_authz_audit",
+        stores: [AuthState, RoleStore, NamespaceStore, TokenStore],
+        register_source: true
+      )
 
-    prev = Application.get_env(:flezha, :authn_authz, [])
-
-    Application.put_env(
-      :flezha,
-      :authn_authz,
-      prev
-      |> Keyword.put(:auth_dir, auth_dir)
-      |> Keyword.put(:bootstrap_token_path, Path.join(auth_dir, "bootstrap.token"))
-      |> Keyword.put(:enabled, true)
-    )
-
-    stop_if_running([AuthState, RoleStore, NamespaceStore, TokenStore])
-    {:ok, _} = AuthState.start_link([])
-    {:ok, _} = RoleStore.start_link([])
-    {:ok, _} = NamespaceStore.start_link([])
-    {:ok, _} = TokenStore.start_link([])
-
-    # Register :platform_authz so the RingBufferSink creates a
-    # dedicated table for it and we can query by source.
-    _ =
-      Registry.register_source(%{
-        name: @source,
-        kinds: [:event, :metric],
-        flavour: :declarative,
-        cardinality_budget: 256
-      })
-
-    # Give the RingBufferSink a tick to observe the registration.
-    Process.sleep(50)
-
-    on_exit(fn ->
-      stop_if_running([AuthState, RoleStore, NamespaceStore, TokenStore])
-      _ = Registry.unregister_source(@source)
-      Application.put_env(:flezha, :authn_authz, prev)
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, auth_dir: auth_dir}
+    {:ok, Map.to_list(ctx)}
   end
 
   test "TokenStore.issue/5 emits exactly one :token_issued event" do
@@ -108,16 +68,16 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
   end
 
   test "CliManager.namespace_create/3 emits exactly one :namespace_created event" do
+    # Enforced posture: the wrapper authorizes for real, so the caller needs a
+    # claimed auth state, a binding, and a verified token — a caller-supplied
+    # principal would be ignored (§3.2).
+    :ok = AuthState.set_enabled()
     :ok = RoleStore.bind("alice", "_system", :admin)
+    {:ok, raw, _entry} = TokenStore.issue("alice", "_system", :admin, 60)
 
     boundary = now_us()
 
-    {:ok, _entry} =
-      CliManager.namespace_create("tenant-a", %{},
-        principal: "alice",
-        namespace: "_system",
-        role: :admin
-      )
+    {:ok, _entry} = CliManager.namespace_create("tenant-a", %{}, token: raw)
 
     [signal] = wait_for_events(:namespace_created, boundary, 1)
     assert signal.source == @source
@@ -129,41 +89,12 @@ defmodule Flezha.AuthZ.AuditEmissionTest do
 
   defp now_us(), do: System.monotonic_time(:microsecond)
 
-  defp wait_for_events(name, since_us, expected_count, attempts \\ 20) do
-    Enum.reduce_while(1..attempts, [], fn _i, _acc ->
-      matches =
-        RingBufferSink.query(@source, since_us)
-        |> Enum.filter(&(&1.name == name))
+  defp wait_for_events(name, since_us, expected_count) do
+    matches = FlezhaTest.Helper.AuthTestHelper.await_platform_authz_events(name, since_us)
 
-      if length(matches) >= expected_count do
-        {:halt, matches}
-      else
-        Process.sleep(25)
-        {:cont, matches}
-      end
-    end)
-    |> case do
-      matches when is_list(matches) ->
-        assert length(matches) == expected_count,
-               "expected exactly #{expected_count} #{inspect(name)} event(s), got #{length(matches)}"
+    assert length(matches) == expected_count,
+           "expected exactly #{expected_count} #{inspect(name)} event(s), got #{length(matches)}"
 
-        matches
-    end
-  end
-
-  defp stop_if_running(mods) when is_list(mods), do: Enum.each(mods, &stop_if_running/1)
-
-  defp stop_if_running(mod) do
-    case Process.whereis(mod) do
-      nil ->
-        :ok
-
-      pid ->
-        try do
-          GenServer.stop(pid, :normal, 5_000)
-        catch
-          :exit, _ -> :ok
-        end
-    end
+    matches
   end
 end

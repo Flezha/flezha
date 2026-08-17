@@ -200,6 +200,25 @@ defmodule Flezha.Operative.Overwatch do
 
   @impl true
   def handle_continue({:bind_runner, stale_runner_id, operative}, %__MODULE__{} = state) do
+    # Claim the class's durable-state namespace BEFORE any path below
+    # (journal probe, restore, WAL open) resolves: writes must land under
+    # this operative's namespace, and a class owned by another namespace
+    # must never be silently read or overwritten.
+    case Flezha.State.Registry.claim_namespace(state.id, state.namespace) do
+      :ok ->
+        continue_bind(stale_runner_id, operative, state)
+
+      {:error, {:namespace_conflict, _class, owner}} ->
+        Logger.error(
+          "[overwatch] refusing to bind #{state.id} in namespace #{state.namespace}: " <>
+            "its durable state belongs to namespace #{owner}"
+        )
+
+        {:stop, {:shutdown, {:namespace_conflict, state.id, owner}}, state}
+    end
+  end
+
+  defp continue_bind(stale_runner_id, operative, %__MODULE__{} = state) do
     state = %__MODULE__{state | durable_workflow: Lifecycle.durable_workflow?(state, operative)}
 
     # Suspended instances are rediscovered from durable state alone (journal +

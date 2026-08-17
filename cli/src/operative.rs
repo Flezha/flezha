@@ -203,8 +203,10 @@ fn handle_stop(args: &[String]) {
     let namespace = get_namespace(&args[2..]);
 
     let rpc_command = format!(
-        "Flezha.Service.CliManager.operative_stop(\"{}\", \"{}\")",
-        namespace, operative_id,
+        "Flezha.Service.CliManager.operative_stop(\"{}\", \"{}\", {})",
+        namespace,
+        operative_id,
+        crate::utils::token_opts_fragment(&args[2..]),
     );
 
     let command = get_flezha_command();

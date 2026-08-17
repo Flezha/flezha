@@ -46,7 +46,10 @@ defmodule Flezha.AuthZ.AuthState do
     GenServer.call(__MODULE__, :set_enabled)
   end
 
-  @doc "Force the flag back to `false`. Test-support only."
+  @doc """
+  Force the flag back to `false`. Used by the break-glass rebootstrap
+  recovery (`Flezha.AuthZ.Bootstrap.consume_recovery_marker/0`) and by tests.
+  """
   @spec reset() :: :ok
   def reset() do
     GenServer.call(__MODULE__, :reset)

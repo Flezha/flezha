@@ -60,7 +60,7 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
   end
 
   test "a garbage sidecar resolves to the default", %{class: class} do
-    File.mkdir_p!(Path.join(Registry.state_root(), class))
+    File.mkdir_p!(Registry.class_dir(class))
     File.write!(sidecar(class), "definitely_not_a_kind")
 
     assert ClassRegistry.get(class) == :stream
@@ -226,15 +226,15 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     end
   end
 
-  defp sidecar(class), do: Path.join([Registry.state_root(), class, "kind"])
-  defp tier_sidecar(class), do: Path.join([Registry.state_root(), class, "effectively_once"])
+  defp sidecar(class), do: Path.join(Registry.class_dir(class), "kind")
+  defp tier_sidecar(class), do: Path.join(Registry.class_dir(class), "effectively_once")
 
   defp checkpoint_sidecar(class),
-    do: Path.join([Registry.state_root(), class, "checkpoint_ack"])
+    do: Path.join(Registry.class_dir(class), "checkpoint_ack")
 
   defp sync_durability_sidecar(class),
-    do: Path.join([Registry.state_root(), class, "sync_durability"])
+    do: Path.join(Registry.class_dir(class), "sync_durability")
 
   defp correction_sidecar(class),
-    do: Path.join([Registry.state_root(), class, "correction_window_ms"])
+    do: Path.join(Registry.class_dir(class), "correction_window_ms")
 end

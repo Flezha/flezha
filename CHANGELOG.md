@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### Changed — authentication and authorization finished end to end, enforced by default (`finish-platform-authn-authz`)
+
+**BREAKING for operators.** The trusting-LAN default is gone; every transport
+surface authenticates its peer and the policy point enforces by default.
+
+- **Transport authentication.** The QUIC server verifies a client certificate
+  against a configured trust anchor (`FLEZHA_QUIC_CLIENT_CA`, default the
+  generated `app_data/certs/ca.pem`; the cert generator now also mints a
+  `client.pem`/`client.key` identity so single-host deployments work out of
+  the box). The UDS control socket and its directory are owner-only. The
+  release no longer ships a constant `RELEASE_COOKIE` — a node without a
+  provisioned cookie refuses to start distribution — and TLS distribution is
+  supported via `FLEZHA_DIST_TLS_OPTFILE`. `FLEZHA_TRANSPORT_AUTH=off` is the
+  explicit wide-open opt-out, warned on every boot.
+- **Enforcement by default.** `authorize/3` has three postures: `:open` (the
+  explicit `FLEZHA_AUTHZ_ENABLED=false` opt-out, warned every boot),
+  `:bootstrap_pending` (configured on, unclaimed — operator verbs refuse
+  naming `flz auth bootstrap` while dataflow and runner reconnects continue),
+  and `:enforced`. Destructive verbs (`state delete/rotate`, `dlq
+  replay/drop`, `operative stop`, `controller stop`) and every plugin
+  mutation are gated and audited.
+- **Principals from the transport only.** CLI identity is a verified token
+  (`flz --token` / `FLEZHA_TOKEN` → `caller_context.principal`); runner
+  identity is `runner@<namespace>` minted from the connect handshake;
+  caller-supplied principals are ignored.
+- **Namespace isolation through the State subsystem.** Durable state lives
+  under `app_data/state/<namespace>/…`, resolved via a class→namespace claim
+  recorded at bind (conflicts refused; `_system`-migrated classes adopted).
+  `Flezha.Boot.StatePathMigrator` lifts the flat layout under `_system/` once,
+  stamped by a `.layout` marker. Listings and state verbs authorize against
+  the resolved target namespace.
+- **Remaining quota points.** `max_runners` enforced at runner connect
+  (refusal observable), `max_state_bytes` (renamed from
+  `max_disk_bytes_total`) accounted from the state tree, rebuilt on boot,
+  enforced at operative allocation, with a latched Watchdog alarm — never a
+  write-path kill — on breach of a running namespace; per-namespace
+  `max_mailbox_bytes_total` caps the credit window.
+- **CLI.** New `flz auth` (`bootstrap`, `whoami`, `rebootstrap`), `flz token`
+  (`issue`, `revoke`, `list`), `flz role` (`bind`, `unbind`, `list`) families;
+  `flz namespace` gains `create`, `delete`, `show`, `set-quota`. Break-glass:
+  offline `flz auth rebootstrap` invalidates a lost `admin@_system` and
+  re-enters the bootstrap flow on the next boot, audited.
+- **Credential hygiene.** Kafka SASL credentials ride a closure into the
+  client start (Postgres pattern): the returned/persisted opts are redacted,
+  `sasl_password_env` resolves the secret from the environment at client
+  start.
+
+Operator runbook (cookie, certs, k8s manifests, break-glass):
+`docs/operations/authn_authz.md`. Migration: provision the cookie + certs,
+boot, claim the bootstrap, issue tokens; rollback is
+`FLEZHA_AUTHZ_ENABLED=false` + the previous release.
+
 ### Added — tiered procedure authoring: defaults you can always override but never must (`add-tiered-procedure-authoring`)
 
 Procedure authoring had two tiers with a gap between them. The sugar

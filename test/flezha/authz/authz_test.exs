@@ -13,31 +13,14 @@ defmodule Flezha.AuthZTest do
   alias Flezha.AuthZ.{AuthState, NamespaceStore, RoleStore, Scope}
 
   setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_authz_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(tmp)
-    File.chmod!(tmp, 0o700)
+    ctx =
+      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+        prefix: "flz_authz",
+        stores: [AuthState, RoleStore, NamespaceStore],
+        claim: true
+      )
 
-    prev = Application.get_env(:flezha, :authn_authz, [])
-
-    Application.put_env(
-      :flezha,
-      :authn_authz,
-      prev |> Keyword.put(:auth_dir, tmp) |> Keyword.put(:enabled, true)
-    )
-
-    stop_if_running([AuthState, RoleStore, NamespaceStore])
-    {:ok, _} = AuthState.start_link([])
-    {:ok, _} = RoleStore.start_link([])
-    {:ok, _} = NamespaceStore.start_link([])
-    :ok = AuthState.set_enabled()
-
-    on_exit(fn ->
-      stop_if_running([AuthState, RoleStore, NamespaceStore])
-      Application.put_env(:flezha, :authn_authz, prev)
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, tmp: tmp}
+    {:ok, Map.to_list(ctx)}
   end
 
   test "internal-source callers are pre-authorized" do
@@ -140,31 +123,35 @@ defmodule Flezha.AuthZTest do
     assert :ok = AuthZ.authorize(ctx, :"operative.start", Scope.build("_system"))
   end
 
-  test "while :enabled is false, every call is :ok" do
+  test "unclaimed enforcement is :bootstrap_pending; only the config opt-out is open" do
     :ok = AuthState.reset()
     refute AuthZ.enabled?()
 
-    assert :ok =
+    # Configured on but unclaimed refuses gated verbs (enforced-by-default).
+    assert AuthZ.enforcement_posture() == :bootstrap_pending
+
+    assert {:error, {:forbidden, :bootstrap_pending}} =
              AuthZ.authorize(
                %{source: :cli, principal: nil},
                :"operative.start",
                Scope.build("anything")
              )
-  end
 
-  defp stop_if_running(mods) when is_list(mods), do: Enum.each(mods, &stop_if_running/1)
+    # The explicit configuration opt-out is the only open posture.
+    prev = Application.get_env(:flezha, :authn_authz, [])
+    Application.put_env(:flezha, :authn_authz, Keyword.put(prev, :enabled, false))
 
-  defp stop_if_running(mod) do
-    case Process.whereis(mod) do
-      nil ->
-        :ok
+    try do
+      assert AuthZ.enforcement_posture() == :open
 
-      pid ->
-        try do
-          GenServer.stop(pid, :normal, 5_000)
-        catch
-          :exit, _ -> :ok
-        end
+      assert :ok =
+               AuthZ.authorize(
+                 %{source: :cli, principal: nil},
+                 :"operative.start",
+                 Scope.build("anything")
+               )
+    after
+      Application.put_env(:flezha, :authn_authz, prev)
     end
   end
 end

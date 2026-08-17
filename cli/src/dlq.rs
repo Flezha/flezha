@@ -66,16 +66,18 @@ fn handle_show(args: &[String]) {
 fn handle_replay(args: &[String]) {
     let entry_ref = entry_ref_arg(args, "flz dlq replay <operative/procedure/entry-id>");
     rpc(format!(
-        "Flezha.Service.CliManager.dlq_replay(\"{}\")",
-        entry_ref
+        "Flezha.Service.CliManager.dlq_replay(\"{}\", {})",
+        entry_ref,
+        crate::utils::token_opts_fragment(args)
     ));
 }
 
 fn handle_drop(args: &[String]) {
     let entry_ref = entry_ref_arg(args, "flz dlq drop <operative/procedure/entry-id>");
     rpc(format!(
-        "Flezha.Service.CliManager.dlq_drop(\"{}\")",
-        entry_ref
+        "Flezha.Service.CliManager.dlq_drop(\"{}\", {})",
+        entry_ref,
+        crate::utils::token_opts_fragment(args)
     ));
 }
 

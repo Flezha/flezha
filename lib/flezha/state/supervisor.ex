@@ -28,6 +28,10 @@ defmodule Flezha.State.Supervisor do
 
   @impl true
   def init(_) do
+    # The class→namespace claims table lives with the state subsystem; path
+    # resolution degrades to the on-disk layout when it is absent (unit tests
+    # that use `Flezha.State.Registry` without this supervisor).
+    Flezha.State.Registry.ensure_claims_table()
     DynamicSupervisor.init(strategy: :one_for_one)
   end
 

@@ -104,14 +104,13 @@ defmodule Flezha.State.Retention do
   # the whole class dir is safe to remove wholesale.
   defp sweep_completed() do
     now = System.system_time(:second)
-    root = Registry.state_root()
 
     Enum.each(Registry.operative_classes(), fn operative_class ->
       with {:ok, %{finished_at: finished_at}} when is_integer(finished_at) <-
              Completion.read(operative_class),
            window = PersistenceResolver.workflow_completed_retention_hours(operative_class),
            true <- finished_at + window * 3600 < now do
-        _ = File.rm_rf(Path.join(root, operative_class))
+        _ = File.rm_rf(Registry.class_dir(operative_class))
       else
         _ -> :ok
       end

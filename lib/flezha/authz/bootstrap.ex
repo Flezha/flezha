@@ -30,6 +30,59 @@ defmodule Flezha.AuthZ.Bootstrap do
 
   @source :platform_authz
   @token_bytes 32
+  @recovery_marker "REBOOTSTRAP"
+
+  @doc """
+  Break-glass recovery (`flz auth rebootstrap`): with the controller
+  STOPPED, an operator with filesystem access to `<auth_dir>` writes the
+  `REBOOTSTRAP` marker; this consumes it on the next boot — every
+  `admin@_system` binding is unbound, every `_system` admin token revoked,
+  the durable claimed flag reset — so `check_and_write/0` re-enters the
+  ordinary bootstrap flow with a fresh token. Emits an auditable
+  `:rebootstrap_recovery` event naming what was invalidated.
+
+  Filesystem access already equals node ownership in this model, so the
+  marker adds no new attack surface; a boot without the marker is a no-op.
+  """
+  @spec consume_recovery_marker() :: :ok | :recovered
+  def consume_recovery_marker() do
+    path = recovery_marker_path()
+
+    if File.exists?(path) do
+      unbound =
+        for %{principal: principal, namespace: ns, role: :admin} <- RoleStore.list(),
+            Namespace.system?(ns) do
+          :ok = RoleStore.unbind(principal)
+          principal
+        end
+
+      revoked =
+        for %{token_hash: hash, namespace: ns, role: :admin, revoked_at: nil} <-
+              TokenStore.list(:all),
+            Namespace.system?(ns) do
+          _ = TokenStore.revoke(String.slice(hash, 0, 12), revoked_by_principal: "rebootstrap")
+          hash
+        end
+
+      :ok = AuthState.reset()
+      _ = File.rm(path)
+
+      Logger.warning(
+        "[authz.bootstrap] REBOOTSTRAP marker consumed: unbound #{length(unbound)} " <>
+          "admin@_system binding(s), revoked #{length(revoked)} _system admin token(s); " <>
+          "re-entering bootstrap"
+      )
+
+      emit_recovery(unbound, length(revoked))
+      :recovered
+    else
+      :ok
+    end
+  end
+
+  @doc "Path of the break-glass recovery marker inside the auth dir."
+  @spec recovery_marker_path() :: String.t()
+  def recovery_marker_path(), do: Path.join(Config.auth_dir(), @recovery_marker)
 
   @doc """
   Detect missing-bootstrap state and emit a one-time token to disk.
@@ -197,6 +250,21 @@ defmodule Flezha.AuthZ.Bootstrap do
   defp synthesise_admin_principal() do
     suffix = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
     "admin-" <> suffix
+  end
+
+  defp emit_recovery(unbound_principals, revoked_count) do
+    Bus.emit(
+      Signal.new(%{
+        kind: :event,
+        source: @source,
+        name: :rebootstrap_recovery,
+        metadata: %{unbound_principals: unbound_principals, revoked_tokens: revoked_count}
+      })
+    )
+
+    :ok
+  rescue
+    _ -> :ok
   end
 
   defp emit_bootstrap_completed(principal) do

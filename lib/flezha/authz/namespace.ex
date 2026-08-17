@@ -25,7 +25,8 @@ defmodule Flezha.AuthZ.Namespace do
     max_entities_per_operative: 1_024,
     max_mailbox_bytes_total: 268_435_456,
     max_message_rate_per_second: 100_000,
-    max_disk_bytes_total: 107_374_182_400
+    max_state_bytes: 107_374_182_400,
+    max_runners: 32
   }
 
   @type name :: binary()
@@ -34,7 +35,8 @@ defmodule Flezha.AuthZ.Namespace do
           required(:max_entities_per_operative) => non_neg_integer(),
           required(:max_mailbox_bytes_total) => non_neg_integer(),
           required(:max_message_rate_per_second) => non_neg_integer(),
-          required(:max_disk_bytes_total) => non_neg_integer()
+          required(:max_state_bytes) => non_neg_integer(),
+          required(:max_runners) => non_neg_integer()
         }
 
   @doc "The system namespace name (`_system`)."

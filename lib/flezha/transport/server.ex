@@ -134,8 +134,32 @@ defmodule Flezha.Transport.Server do
   end
 
   @impl true
-  def init(:uds), do: init_uds()
-  def init(:quic), do: init_quic()
+  def init(:uds) do
+    warn_if_transport_auth_disabled()
+    init_uds()
+  end
+
+  def init(:quic) do
+    warn_if_transport_auth_disabled()
+    init_quic()
+  end
+
+  # Secure default posture: peer authentication is required unless the
+  # operator opted out explicitly, and the opt-out is warned on every boot
+  # for as long as it remains set.
+  @doc false
+  def warn_if_transport_auth_disabled do
+    unless transport_auth_required?() do
+      Logger.warning(
+        "[Transport.Server] FLEZHA_TRANSPORT_AUTH=off — peer authentication is DISABLED; " <>
+          "any client that can reach the endpoint is accepted. Unset to restore the secure default."
+      )
+    end
+  end
+
+  defp transport_auth_required? do
+    Application.get_env(:flezha, :transport_auth_required, true)
+  end
 
   defp init_uds do
     socket_path = SocketSupport.control_socket_path()
@@ -159,11 +183,19 @@ defmodule Flezha.Transport.Server do
     cert_path = Application.get_env(:flezha, :server_cert_path, "app_data/certs/server.pem")
     key_path = Application.get_env(:flezha, :server_key_path, "app_data/certs/server.key")
 
+    client_ca_path =
+      if transport_auth_required?() do
+        Application.get_env(:flezha, :quic_client_ca_path, "app_data/certs/ca.pem")
+      else
+        ""
+      end
+
     Logger.info(
-      "[Transport.Server] Starting QUIC server: bind=#{bind_address}, cert=#{cert_path}, key=#{key_path}"
+      "[Transport.Server] Starting QUIC server: bind=#{bind_address}, cert=#{cert_path}, " <>
+        "key=#{key_path}, client_auth=#{if client_ca_path == "", do: "off", else: client_ca_path}"
     )
 
-    case Native.start_quic_server(bind_address, cert_path, key_path, self()) do
+    case Native.start_quic_server(bind_address, cert_path, key_path, client_ca_path, self()) do
       {:ok, server_ref} ->
         Logger.info("NIF transport server (QUIC) started on #{bind_address}")
 

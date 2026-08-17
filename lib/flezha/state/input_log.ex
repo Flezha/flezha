@@ -252,15 +252,7 @@ defmodule Flezha.State.InputLog do
   @doc "Every operative_class with an input-log on disk (for the retention sweep)."
   @spec all_classes() :: [binary()]
   def all_classes() do
-    root = Registry.state_root()
-
-    case File.ls(root) do
-      {:ok, names} ->
-        Enum.filter(names, &File.regular?(Path.join([root, &1, "input.log"])))
-
-      {:error, _} ->
-        []
-    end
+    Enum.filter(Registry.operative_classes(), &File.regular?(Registry.input_log_path(&1)))
   end
 
   # ---------- GenServer ----------

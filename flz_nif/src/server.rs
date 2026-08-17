@@ -58,6 +58,10 @@ fn start_uds_server(env: Env, socket_path: String, acceptor_pid: LocalPid) -> Ni
 /// Start a QUIC server listening on `bind_address`.
 /// Returns `{:ok, server_ref}` or `{:error, reason}`.
 ///
+/// A non-empty `client_ca_path` requires every peer to present a client
+/// certificate chaining to that trust anchor; `""` disables client auth
+/// (the explicit opt-out the caller warns about).
+///
 /// The acceptor_pid receives `{:flz_connection, stream_ref}` for each new QUIC stream.
 #[rustler::nif]
 fn start_quic_server(
@@ -65,13 +69,14 @@ fn start_quic_server(
     bind_address: String,
     cert_path: String,
     key_path: String,
+    client_ca_path: String,
     acceptor_pid: LocalPid,
 ) -> NifResult<Term> {
     let addr: std::net::SocketAddr = bind_address
         .parse()
         .map_err(|e| rustler::Error::Term(Box::new(format!("invalid address: {}", e))))?;
 
-    let server_config = quic_driver::build_quic_server_config(&cert_path, &key_path)
+    let server_config = quic_driver::build_quic_server_config(&cert_path, &key_path, &client_ca_path)
         .map_err(|e| rustler::Error::Term(Box::new(format!("TLS config error: {}", e))))?;
 
     let (cmd_tx, cmd_rx) = channel::unbounded::<ServerCommand>();

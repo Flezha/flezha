@@ -546,16 +546,18 @@ defmodule Flezha.Convergence.Loop do
     )
   end
 
-  # First-level state-root listing, re-read only when the root dir's mtime
-  # changes (adding/removing an operative dir touches it; deeper writes do
-  # not). A cache entry younger than 2 s is never trusted — POSIX mtime has
-  # 1 s granularity, so a same-second add+remove would otherwise pin a stale
-  # listing forever.
+  # Operative-class listing under the namespaced `<root>/<ns>/<class>` tree,
+  # re-read only when the newest relevant mtime changes — the root's (a
+  # namespace added/removed) or any namespace dir's (a class added/removed);
+  # deeper writes touch neither. A cache entry younger than 2 s is never
+  # trusted — POSIX mtime has 1 s granularity, so a same-second add+remove
+  # would otherwise pin a stale listing forever.
   defp state_root_dirs(cache) do
     root = Flezha.State.Registry.state_root()
 
     case File.stat(root, time: :posix) do
-      {:ok, %File.Stat{mtime: mtime}} ->
+      {:ok, %File.Stat{mtime: root_mtime}} ->
+        mtime = Enum.max([root_mtime | namespace_dir_mtimes(root)])
         now_s = System.os_time(:second)
 
         case cache do
@@ -563,18 +565,20 @@ defmodule Flezha.Convergence.Loop do
             {dirs, cache}
 
           _ ->
-            dirs =
-              case File.ls(root) do
-                {:ok, entries} -> Enum.filter(entries, &File.dir?(Path.join(root, &1)))
-                _ -> []
-              end
-
+            dirs = Flezha.State.Registry.operative_classes()
             {dirs, {mtime, dirs}}
         end
 
       _ ->
         {[], nil}
     end
+  end
+
+  defp namespace_dir_mtimes(root) do
+    for namespace <- Flezha.State.Registry.namespaces(),
+        {:ok, %File.Stat{mtime: mtime}} <-
+          [File.stat(Path.join(root, namespace), time: :posix)],
+        do: mtime
   end
 
   defp tick_failed_telemetry() do

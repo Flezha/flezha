@@ -34,13 +34,13 @@ defmodule Flezha.AuthZ.NamespaceTest do
     test "returns defaults when overrides are empty" do
       {:ok, q} = Namespace.build_quotas(%{})
       assert q.max_operatives == 100
-      assert q.max_disk_bytes_total == 107_374_182_400
+      assert q.max_state_bytes == 107_374_182_400
     end
 
     test "applies user overrides over defaults" do
       {:ok, q} = Namespace.build_quotas(%{max_operatives: 5})
       assert q.max_operatives == 5
-      assert q.max_disk_bytes_total == 107_374_182_400
+      assert q.max_state_bytes == 107_374_182_400
     end
 
     test "rejects unknown fields and negative values" do

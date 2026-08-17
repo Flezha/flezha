@@ -2,40 +2,49 @@
 
 The authn/authz foundation gives every operator-facing service surface
 a verified principal, a fixed role enumeration, a namespace-scoped
-policy point, and per-namespace resource quotas. It is **off by
-default** — flipping it on is a deliberate, durable operator action.
+policy point, and per-namespace resource quotas. Since
+`finish-platform-authn-authz`, enforcement is **on by default in
+production** — running open requires the explicit
+`FLEZHA_AUTHZ_ENABLED=false` opt-out, warned on every boot.
 
-This guide walks through the operator-facing flow: enabling the
-subsystem, claiming the bootstrap admin, issuing and revoking
+This guide walks through the operator-facing flow: the enforcement
+posture, claiming the bootstrap admin, issuing and revoking
 scoped tokens, creating and inspecting namespaces, binding roles,
-and recovering from a corrupt auth store. The full module map and
-internal contracts live in `CLAUDE.md` under
+and recovering from a corrupt auth store. Provisioning (cookie, TLS,
+certs, k8s manifests) and break-glass recovery live in
+[`operations/authn_authz.md`](operations/authn_authz.md). The full
+module map and internal contracts live in `CLAUDE.md` under
 "Platform authn/authz foundation"; audit-log emission semantics
 live in [`audit_log.md`](audit_log.md).
 
-## 1. Enabling the subsystem
+## 1. Enforcement posture
 
-The master flag is `:authn_authz, :enabled`. While `false`,
-`Flezha.AuthZ.authorize/3` returns `:ok` unconditionally and every
-service surface behaves exactly as it did before the capability
-landed — this is the upgrade-safe default. When `true`, every
-public service call requires a bound principal.
+`Flezha.AuthZ.enforcement_posture/0` answers one of three states:
 
-You almost never set `:enabled: true` in static config: the durable
-on-disk flag is flipped automatically by a successful
-`flz auth bootstrap` claim. The only times you flip it in config
-are:
+  * **`:open`** — the explicit configuration opt-out
+    (`FLEZHA_AUTHZ_ENABLED=false`, or the dev/test config default).
+    `authorize/3` returns `:ok` unconditionally and a `warn` line is
+    emitted on every boot for as long as it remains set.
+  * **`:bootstrap_pending`** — enforcement is configured on but no
+    `admin@_system` has been claimed yet. Gated operator verbs are
+    REFUSED naming `flz auth bootstrap`, while dataflow — running
+    operatives, internal machinery, and runner connections over the
+    authenticated transport — continues. An un-bootstrapped upgrade
+    degrades to "operator verbs refused", never to an outage and never
+    to open.
+  * **`:enforced`** — the bootstrap was claimed (the durable flag in
+    `<auth_dir>/state.dets` flipped); every call is policy-checked.
 
-  * `FLEZHA_AUTHZ_ENABLED=true` — force-enable for ephemeral or
-    test environments where the bootstrap dance is undesirable.
-  * `FLEZHA_AUTHZ_ENABLED=false` — explicit kill-switch for a
-    production rollback. Logs a `warn` line on every boot so the
-    state is visible.
+Identity reaches the policy point ONLY from the authenticated
+transport: a verified token (`flz --token` / `FLEZHA_TOKEN`) for CLI
+callers, and the connection's namespace handshake for runners
+(`runner@<namespace>`, `runner` role, bound by construction). A
+caller-supplied principal is never trusted.
 
 ```elixir
-# config/runtime.exs
+# config/runtime.exs — the prod default
 config :flezha, :authn_authz,
-  enabled: false,                                 # flipped on bootstrap
+  enabled: true,                                  # config_env() == :prod
   auth_dir: "app_data/auth",
   bootstrap_token_path: "app_data/auth/bootstrap.token",
   token_ttl_default_seconds: 86_400,              # CLI tokens, 1 day
@@ -141,18 +150,22 @@ $ flz ns delete tenant-a
 
 Enforced quota kinds and their defaults:
 
-| Key                            | Default        | Enforced at                       |
-| ------------------------------ | -------------- | --------------------------------- |
+| Key                            | Default        | Enforced at                          |
+| ------------------------------ | -------------- | ------------------------------------ |
 | `max_operatives`               | `100`          | `OperativeManager.start_operative/2` |
 | `max_entities_per_operative`   | `1_024`        | `OperativeManager.start_operative/2` |
-| `max_mailbox_bytes_total`      | `256 MiB`      | follow-up (`-namespace-state`)    |
-| `max_message_rate_per_second`  | `100_000`      | follow-up (`-namespace-state`)    |
-| `max_disk_bytes_total`         | `100 GiB`      | follow-up (`-namespace-state`)    |
+| `max_mailbox_bytes_total`      | `256 MiB`      | caps the per-Operative credit window (`PersistenceResolver.credit_window_bytes/2`) |
+| `max_message_rate_per_second`  | `100_000`      | deferred (data-plane rate limiting is a performance feature) |
+| `max_state_bytes`              | `100 GiB`      | `start_operative` refuses NEW allocation while over; the `State.Watchdog` raises a latched `[:flezha, :state, :disk_quota_breach]` alarm for a running namespace — durable writes are never interrupted |
+| `max_runners`                  | `32`           | `FleetManager.connect_handler/4` (refusal observable via `[:flezha, :runner, :quota_refused]`) |
 
 A quota rejection surfaces as
 `{:error, {:quota_exceeded, kind, %{current, limit}}}` to the
-caller. Disk-footprint is recomputed from `app_data/state/<ns>/`
-on a 30 s TTL.
+caller. Disk-footprint is recomputed from the state tree
+(`app_data/state/<ns>/`) on a 30 s TTL, and rebuilt from the on-disk
+truth on every boot, so accounting drift is bounded by one uptime.
+The `:runners` counter is derived from the live session map on every
+session mutation rather than incremented at each removal seam.
 
 ## 5. Bind roles
 

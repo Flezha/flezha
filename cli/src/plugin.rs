@@ -40,8 +40,9 @@ fn handle_install(args: &[String]) {
     let path = &args[1];
     let command = get_flezha_command();
     let rpc_command = format!(
-        "Flezha.Service.CliManager.install_plugin(\"{}\", \"{{}}\")",
-        path.replace('"', "\\\"")
+        "Flezha.Service.CliManager.install_plugin(\"{}\", {})",
+        path.replace('"', "\\\""),
+        crate::utils::token_opts_json_literal(&args[2..])
     );
 
     let status = Command::new(command)
@@ -92,8 +93,9 @@ fn handle_uninstall(args: &[String]) {
     let plugin_id = &args[1];
     let command = get_flezha_command();
     let rpc_command = format!(
-        "Flezha.Service.CliManager.uninstall_plugin(\"{}\", \"{{}}\")",
-        plugin_id
+        "Flezha.Service.CliManager.uninstall_plugin(\"{}\", {})",
+        plugin_id,
+        crate::utils::token_opts_json_literal(&args[2..])
     );
 
     let status = Command::new(command)
@@ -171,8 +173,9 @@ fn handle_enable(args: &[String]) {
     if is_installed_plugin(plugin_id) {
         let command = get_flezha_command();
         let rpc_command = format!(
-            "Flezha.Service.CliManager.installer_enable_plugin(\"{}\", \"{{}}\")",
-            plugin_id
+            "Flezha.Service.CliManager.installer_enable_plugin(\"{}\", {})",
+            plugin_id,
+            crate::utils::token_opts_json_literal(&args[2..])
         );
 
         println!("Enabling installed plugin {}...", plugin_id);
@@ -259,13 +262,15 @@ fn handle_disable(args: &[String]) {
     // plugins keep their existing code path.
     let rpc_command = if is_installed_plugin(plugin_id) {
         format!(
-            "Flezha.Service.CliManager.installer_disable_plugin(\"{}\", \"{{}}\")",
-            plugin_id
+            "Flezha.Service.CliManager.installer_disable_plugin(\"{}\", {})",
+            plugin_id,
+            crate::utils::token_opts_json_literal(&args[2..])
         )
     } else {
         format!(
-            "Flezha.Service.CliManager.disable_plugin(\"{}\")",
-            plugin_id
+            "Flezha.Service.CliManager.disable_plugin(\"{}\", {})",
+            plugin_id,
+            crate::utils::token_opts_fragment(&args[2..])
         )
     };
 

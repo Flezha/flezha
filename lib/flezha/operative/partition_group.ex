@@ -666,7 +666,7 @@ defmodule Flezha.Operative.PartitionGroup do
     |> Enum.reject(&(&1 in new_member_ids))
     |> Enum.filter(&vacated?/1)
     |> Enum.map(fn class ->
-      _ = File.rm_rf(Path.join(StateRegistry.state_root(), class))
+      _ = File.rm_rf(StateRegistry.class_dir(class))
       class
     end)
   end

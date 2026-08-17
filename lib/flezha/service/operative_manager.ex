@@ -177,7 +177,9 @@ defmodule Flezha.Service.OperativeManager do
          :ok <- refuse_group_base_claim(namespace, operative),
          :ok <- validate_factory(namespace, operative.factory_id),
          :ok <- check_operative_quota(namespace),
-         :ok <- check_entity_quota(namespace, operative) do
+         :ok <- check_entity_quota(namespace, operative),
+         :ok <- check_disk_quota(namespace),
+         :ok <- Flezha.State.Registry.claim_namespace(operative.id, namespace) do
       case init_operative(namespace, operative) do
         {:ok, _} = ok ->
           _ = Flezha.AuthZ.Quotas.record_allocation(namespace, :max_operatives, 1)
@@ -258,24 +260,36 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp check_operative_quota(namespace) do
-    case Flezha.AuthZ.Quotas.check_allocation(namespace, :max_operatives, 1) do
-      :ok -> :ok
-      {:error, :namespace_unknown} -> :ok
-      {:error, _} = err -> err
+    check_quota(namespace, :max_operatives, 1)
+  end
+
+  # A namespace over its disk quota refuses NEW allocation — running
+  # operatives and their in-flight durable writes are never interrupted
+  # (the Watchdog raises the alarm for those).
+  defp check_disk_quota(namespace) do
+    if Flezha.AuthZ.enabled?() do
+      _ = Flezha.AuthZ.Quotas.refresh_disk_bytes(namespace)
+      check_quota(namespace, :max_state_bytes, 0)
+    else
+      :ok
     end
   end
 
   defp check_entity_quota(namespace, operative) do
-    requested = entity_count(operative)
+    case entity_count(operative) do
+      0 -> :ok
+      requested -> check_quota(namespace, :max_entities_per_operative, requested)
+    end
+  end
 
-    if requested > 0 do
-      case Flezha.AuthZ.Quotas.check_allocation(namespace, :max_entities_per_operative, requested) do
-        :ok -> :ok
-        {:error, :namespace_unknown} -> :ok
-        {:error, _} = err -> err
-      end
-    else
-      :ok
+  # An unregistered namespace streams: quotas gate registered tenants, and
+  # refusing every legacy/implicit namespace here would brick starts the
+  # moment enforcement flips on.
+  defp check_quota(namespace, kind, requested) do
+    case Flezha.AuthZ.Quotas.check_allocation(namespace, kind, requested) do
+      :ok -> :ok
+      {:error, :namespace_unknown} -> :ok
+      {:error, _} = err -> err
     end
   end
 
@@ -439,8 +453,7 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp do_delete_operative_state_dir(operative_id) do
-    root = Flezha.State.Registry.state_root()
-    class_dir = Path.join(root, operative_id)
+    class_dir = Flezha.State.Registry.class_dir(operative_id)
 
     case File.ls(class_dir) do
       {:ok, procedure_names} ->

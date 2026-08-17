@@ -21,7 +21,7 @@ const CLEARABLE_ROOTS: &[(&str, ClearMode)] = &[
     ("sockets", ClearMode::OptIn("--include-sockets")),
 ];
 
-const DEFAULT_PROBE_TIMEOUT_MS: u64 = 1_000;
+pub(crate) const DEFAULT_PROBE_TIMEOUT_MS: u64 = 1_000;
 
 #[cfg_attr(test, derive(Debug))]
 struct Flags {
@@ -428,7 +428,10 @@ fn clear_root(path: &Path, app_data_root: &Path) -> io::Result<()> {
 // `FLEZHA_RESET_PROBE_OVERRIDE` (test-only knob) short-circuits the probe:
 //   "up"   → return true
 //   "down" → return false
-fn controller_is_up(probe_timeout_ms: u64) -> bool {
+// Shared live-node probe (also `flz auth rebootstrap`'s guard): a successful
+// controller_status RPC within the timeout means the node is up. The
+// FLEZHA_RESET_PROBE_OVERRIDE env hook serves every caller's tests.
+pub(crate) fn controller_is_up(probe_timeout_ms: u64) -> bool {
     if let Ok(v) = env::var("FLEZHA_RESET_PROBE_OVERRIDE") {
         match v.as_str() {
             "up" => return true,

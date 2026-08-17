@@ -1,4 +1,5 @@
 mod audit;
+mod auth;
 mod boot;
 mod cluster;
 mod controller;
@@ -8,9 +9,11 @@ mod observe;
 mod operative;
 mod plugin;
 mod reset;
+mod role;
 mod runner;
 mod schedule;
 mod state;
+mod token;
 mod utils;
 
 use std::env;
@@ -38,6 +41,9 @@ fn main() {
         "audit" => audit::handle_audit_command(&args[2..]),
         "dlq" => dlq::handle_dlq_command(&args[2..]),
         "schedule" => schedule::handle_schedule_command(&args[2..]),
+        "auth" => auth::handle_auth_command(&args[2..]),
+        "token" => token::handle_token_command(&args[2..]),
+        "role" => role::handle_role_command(&args[2..]),
         "help" | "--help" | "-h" => print_help(),
         _ => {
             eprintln!("Error: Unknown command '{}'", args[1]);
@@ -69,6 +75,9 @@ fn print_help() {
     println!(
         "    schedule       Cron-scheduled workflow operative spawns (add, list, remove, run)"
     );
+    println!("    auth           Bootstrap claim, identity (whoami), offline break-glass recovery");
+    println!("    token          Scoped-token management (issue, revoke, list)");
+    println!("    role           Principal → role bindings (bind, unbind, list)");
     println!("    help           Show this help message");
     println!();
     println!("Use 'flz <COMMAND> help' for more information on a specific command.");

@@ -132,6 +132,12 @@ fn handle_stop(args: &[String]) {
     if force {
         opts.push("force: true".to_string());
     }
+    if let Some(token) = crate::utils::auth_token(&args[1..]) {
+        opts.push(format!(
+            "token: \"{}\"",
+            crate::utils::escape_rpc_arg(&token)
+        ));
+    }
 
     let opts_kw = if opts.is_empty() {
         "[]".to_string()

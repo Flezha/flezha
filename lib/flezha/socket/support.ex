@@ -3,7 +3,10 @@ defmodule Flezha.Socket.Support do
     base_path = sockets_base_path()
 
     File.rm_rf(base_path)
-    File.mkdir_p(base_path)
+    result = File.mkdir_p(base_path)
+    # Owner-only: directory traversal is the UDS authentication boundary.
+    _ = File.chmod(base_path, 0o700)
+    result
   end
 
   @spec set_active(port() | {:"$inet", atom(), any()}) :: :ok | {:error, atom()}

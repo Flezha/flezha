@@ -85,11 +85,20 @@ defmodule Flezha.Plugin.Provider.Kafka do
       partition = coerce_int(Map.get(opts, :partition, 0))
       plugin_id = Map.get(opts, :plugin_id, "default-#{System.unique_integer([:positive])}")
 
+      # SASL credentials ride a closure into the client start (mirroring the
+      # Postgres provider): they never land in worker state, child args, or
+      # the persisted/returned opts. `auth_key` is what lets two plugins with
+      # the same credentials share one broker client without the registry
+      # ever seeing the secret. Prefer `:sasl_password_env` — an inline
+      # password cannot survive a restart from the redacted persisted opts.
+      resolved_auth = resolve_auth(opts)
+
       identity = %{
         hosts: hosts,
         ssl_options: Map.get(opts, :ssl_options),
         use_ssl: Map.get(opts, :use_ssl),
-        auth: Map.get(opts, :auth),
+        auth_fun: fn -> resolve_auth(opts) end,
+        auth_key: resolved_auth && :erlang.phash2(resolved_auth),
         metadata_update_interval: Map.get(opts, :metadata_update_interval)
       }
 
@@ -104,12 +113,75 @@ defmodule Flezha.Plugin.Provider.Kafka do
             |> Map.put(:partition, partition)
             |> Map.put(:producer_pid, producer_pid)
             |> Map.put(:plugin_id, plugin_id)
+            |> redact_sasl()
 
           {:ok, opts, producer_pid}
 
         {:error, reason} ->
           {:error, reason}
       end
+    end
+
+    @redacted "**redacted**"
+
+    # Resolve the SASL config presented by the plugin opts into a
+    # `KafkaEx.Auth.Config`. `:sasl_password_env` (env-var name) overrides an
+    # inline password, so credentials can stay out of the persisted opts
+    # entirely. Called at every client (re)start, so a rotated env var takes
+    # effect on the next reconnect.
+    defp resolve_auth(opts) do
+      case Map.get(opts, :auth) do
+        nil ->
+          nil
+
+        %KafkaEx.Auth.Config{} = config ->
+          maybe_override_password(config, opts)
+
+        %{} = map ->
+          map
+          |> Map.new(fn {k, v} -> {auth_key_atom(k), v} end)
+          |> Map.update(:mechanism, :plain, &auth_mechanism/1)
+          |> KafkaEx.Auth.Config.new()
+          |> maybe_override_password(opts)
+      end
+    end
+
+    defp maybe_override_password(%KafkaEx.Auth.Config{} = config, opts) do
+      case Map.get(opts, :sasl_password_env) do
+        env when is_binary(env) and env != "" ->
+          %{config | password: System.get_env(env)}
+
+        _ ->
+          config
+      end
+    end
+
+    defp auth_key_atom(k) when is_atom(k), do: k
+    defp auth_key_atom(k) when is_binary(k), do: String.to_existing_atom(k)
+
+    defp auth_mechanism(m) when is_atom(m), do: m
+    defp auth_mechanism(m) when is_binary(m), do: String.to_existing_atom(m)
+
+    defp redact_sasl(opts) do
+      case Map.get(opts, :auth) do
+        %KafkaEx.Auth.Config{password: p} = config when is_binary(p) and p != "" ->
+          Map.put(opts, :auth, %{config | password: @redacted})
+
+        %{} = map ->
+          Map.put(opts, :auth, redact_map_password(map))
+
+        _ ->
+          opts
+      end
+    end
+
+    defp redact_map_password(map) do
+      Enum.reduce(["password", :password], map, fn key, acc ->
+        case Map.get(acc, key) do
+          p when is_binary(p) and p != "" -> Map.put(acc, key, @redacted)
+          _ -> acc
+        end
+      end)
     end
 
     def on_input(%Ctx.IO{} = ctx, opts), do: produce(ctx, opts)

@@ -9,10 +9,12 @@ defmodule Flezha.AuthZ.Quotas do
 
   Enforcement points:
 
-    * `OperativeManager.start_operative/2`           → `:operatives`, `:entities`
-    * `State.Supervisor.open_entity/N`    → `:disk_bytes`
-    * `FleetManager.connect_handler/4`       → `:runners`
+    * `OperativeManager.start_operative/2`   → `:operatives`, `:entities`,
+      `:disk_bytes` (refuse new allocation while over `max_state_bytes`)
+    * `FleetManager.connect_handler/4`       → `:runners` (`max_runners`)
     * Bounded-mailbox capacity provisioning  → `:mailbox_bytes`
+    * `Flezha.State.Watchdog`                → disk-quota breach ALARM for a
+      running namespace (never a write-path kill)
 
   Allocation order: caller asks `check_allocation/3` BEFORE touching
   the resource; on success the caller increments the counter via
@@ -33,7 +35,8 @@ defmodule Flezha.AuthZ.Quotas do
           | :max_entities_per_operative
           | :max_mailbox_bytes_total
           | :max_message_rate_per_second
-          | :max_disk_bytes_total
+          | :max_state_bytes
+          | :max_runners
 
   @type quota_error ::
           {:error,
@@ -107,29 +110,36 @@ defmodule Flezha.AuthZ.Quotas do
   end
 
   @doc """
+  Rebuild the disk-bytes counter for `namespace` from the on-disk truth,
+  bypassing the cache — the boot-time recovery shape (drift is bounded by
+  one uptime).
+  """
+  @spec rebuild_disk_bytes(binary()) :: non_neg_integer()
+  def rebuild_disk_bytes(namespace) when is_binary(namespace) do
+    bytes = compute_disk_bytes(namespace)
+    :ok = QuotaCounters.set(namespace, :disk_bytes, bytes)
+    :persistent_term.put({namespace, :disk_bytes_cached_at}, System.monotonic_time(:second))
+    bytes
+  end
+
+  @doc """
   Snapshot the disk-bytes counter for `namespace` from the on-disk
   state tree. Cached internally for 30s — calls within the cache
   window read the stored value rather than re-walking.
   """
   @spec refresh_disk_bytes(binary()) :: non_neg_integer()
   def refresh_disk_bytes(namespace) when is_binary(namespace) do
-    key = {namespace, :disk_bytes_cached_at}
-
     now = System.monotonic_time(:second)
 
-    cached_at =
-      case :persistent_term.get(key, nil) do
-        nil -> 0
-        ts -> ts
-      end
+    # Monotonic time has an arbitrary (typically negative) offset, so "never
+    # cached" must be the nil sentinel — a 0 default made every first read
+    # look freshly cached and serve the empty counter instead of the disk.
+    case :persistent_term.get({namespace, :disk_bytes_cached_at}, nil) do
+      cached_at when is_integer(cached_at) and now - cached_at < 30 ->
+        QuotaCounters.get(namespace, :disk_bytes)
 
-    if now - cached_at < 30 do
-      QuotaCounters.get(namespace, :disk_bytes)
-    else
-      bytes = compute_disk_bytes(namespace)
-      :ok = QuotaCounters.set(namespace, :disk_bytes, bytes)
-      :persistent_term.put(key, now)
-      bytes
+      _ ->
+        rebuild_disk_bytes(namespace)
     end
   end
 
@@ -142,11 +152,12 @@ defmodule Flezha.AuthZ.Quotas do
   defp counter_for(:max_entities_per_operative), do: :entities
   defp counter_for(:max_mailbox_bytes_total), do: :mailbox_bytes
   defp counter_for(:max_message_rate_per_second), do: :messages
-  defp counter_for(:max_disk_bytes_total), do: :disk_bytes
+  defp counter_for(:max_state_bytes), do: :disk_bytes
+  defp counter_for(:max_runners), do: :runners
   defp counter_for(other), do: other
 
   defp compute_disk_bytes(namespace) do
-    base = Path.join(["app_data", "state", namespace])
+    base = Path.join(Flezha.State.Registry.state_root(), namespace)
 
     if File.exists?(base) do
       walk_size(base)

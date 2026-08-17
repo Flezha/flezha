@@ -4,40 +4,13 @@ defmodule Flezha.AuthZ.BootstrapTest do
   alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}
 
   setup do
-    # We deliberately nest auth_dir one level inside the test tmp so
-    # the parent-mode check in Bootstrap sees a 0700 parent (the
-    # test tmp itself), not /tmp (which is 1777 on Linux and would
-    # always abort the bootstrap write).
-    tmp = Path.join(System.tmp_dir!(), "flz_authz_boot_#{System.unique_integer([:positive])}")
-    auth_dir = Path.join(tmp, "auth")
-    File.mkdir_p!(auth_dir)
-    File.chmod!(tmp, 0o700)
-    File.chmod!(auth_dir, 0o700)
+    ctx =
+      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+        prefix: "flz_authz_boot",
+        stores: [AuthState, RoleStore, NamespaceStore, TokenStore]
+      )
 
-    prev = Application.get_env(:flezha, :authn_authz, [])
-
-    Application.put_env(
-      :flezha,
-      :authn_authz,
-      prev
-      |> Keyword.put(:auth_dir, auth_dir)
-      |> Keyword.put(:bootstrap_token_path, Path.join(auth_dir, "bootstrap.token"))
-      |> Keyword.put(:enabled, true)
-    )
-
-    stop_if_running([AuthState, RoleStore, NamespaceStore, TokenStore])
-    {:ok, _} = AuthState.start_link([])
-    {:ok, _} = RoleStore.start_link([])
-    {:ok, _} = NamespaceStore.start_link([])
-    {:ok, _} = TokenStore.start_link([])
-
-    on_exit(fn ->
-      stop_if_running([AuthState, RoleStore, NamespaceStore, TokenStore])
-      Application.put_env(:flezha, :authn_authz, prev)
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, tmp: tmp}
+    {:ok, Map.to_list(ctx)}
   end
 
   test "first boot writes a bootstrap token (mode 0600)" do
@@ -139,21 +112,5 @@ defmodule Flezha.AuthZ.BootstrapTest do
       end)
 
     assert log =~ "permissive mode"
-  end
-
-  defp stop_if_running(mods) when is_list(mods), do: Enum.each(mods, &stop_if_running/1)
-
-  defp stop_if_running(mod) do
-    case Process.whereis(mod) do
-      nil ->
-        :ok
-
-      pid ->
-        try do
-          GenServer.stop(pid, :normal, 5_000)
-        catch
-          :exit, _ -> :ok
-        end
-    end
   end
 end

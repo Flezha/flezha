@@ -893,7 +893,7 @@ defmodule Flezha.ConvergenceTest do
     end
 
     defp seed_entity(root, operative, procedure, key) do
-      dir = Path.join([root, operative, procedure])
+      dir = Path.join([root, "_system", operative, procedure])
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "#{key}.wal"), <<1, 2, 3>>)
     end

@@ -18,17 +18,39 @@ defmodule Flezha.Transport.CertGenerator do
 
     server_key_path = Application.get_env(:flezha, :server_key_path, "app_data/certs/server.key")
 
-    if File.exists?(ca_cert_path) and File.exists?(server_cert_path) and
-         File.exists?(server_key_path) do
+    client_cert_path =
+      Application.get_env(:flezha, :client_cert_path, "app_data/certs/client.pem")
+
+    client_key_path = Application.get_env(:flezha, :client_key_path, "app_data/certs/client.key")
+
+    paths = [ca_cert_path, server_cert_path, server_key_path, client_cert_path, client_key_path]
+
+    if Enum.all?(paths, &File.exists?/1) do
       Logger.info("QUIC certificates already exist, skipping generation.")
       :ok
     else
+      # The CA private key is never persisted, so a set missing any member
+      # (typically the client pair, on an upgrade from a server-only layout)
+      # is regenerated whole — a partial set cannot be extended.
       Logger.info("Generating self-signed certificates for QUIC transport...")
-      generate_certs(ca_cert_path, server_cert_path, server_key_path)
+
+      generate_certs(
+        ca_cert_path,
+        server_cert_path,
+        server_key_path,
+        client_cert_path,
+        client_key_path
+      )
     end
   end
 
-  defp generate_certs(ca_cert_path, server_cert_path, server_key_path) do
+  defp generate_certs(
+         ca_cert_path,
+         server_cert_path,
+         server_key_path,
+         client_cert_path,
+         client_key_path
+       ) do
     # Ensure directory exists
     cert_dir = Path.dirname(ca_cert_path)
     File.mkdir_p!(cert_dir)
@@ -43,12 +65,19 @@ defmodule Flezha.Transport.CertGenerator do
     server_key = :public_key.generate_key({:rsa, 2048, 65537})
 
     server_cert =
-      create_signed_cert(server_key, ca_key, ca_cert, "localhost")
+      create_signed_cert(server_key, ca_key, ca_cert, "localhost", :server)
+
+    # Client identity presented by local runners for mutual TLS.
+    client_key = :public_key.generate_key({:rsa, 2048, 65537})
+    client_cert = create_signed_cert(client_key, ca_key, ca_cert, "flezha-runner", :client)
 
     # Write files
     File.write!(ca_cert_path, pem_encode_cert(ca_cert))
     File.write!(server_cert_path, pem_encode_cert(server_cert))
     File.write!(server_key_path, pem_encode_key(server_key))
+    File.write!(client_cert_path, pem_encode_cert(client_cert))
+    File.write!(client_key_path, pem_encode_key(client_key))
+    Enum.each([server_key_path, client_key_path], &File.chmod!(&1, 0o600))
 
     Logger.info("QUIC certificates generated at #{cert_dir}/")
     :ok
@@ -84,8 +113,9 @@ defmodule Flezha.Transport.CertGenerator do
     sign_certificate(tbs, key)
   end
 
-  defp create_signed_cert(server_key, ca_key, ca_cert, hostname) do
-    public_key = extract_public_key(server_key)
+  defp create_signed_cert(leaf_key, ca_key, ca_cert, hostname, role)
+       when role in [:server, :client] do
+    public_key = extract_public_key(leaf_key)
 
     serial = :crypto.strong_rand_bytes(8) |> :binary.decode_unsigned()
 
@@ -95,13 +125,17 @@ defmodule Flezha.Transport.CertGenerator do
     issuer = elem(ca_tbs, 6)
     subject = {:rdnSequence, [[attribute_record(:commonName, hostname)]]}
 
-    san_extension = san_extension(hostname)
+    role_extensions =
+      case role do
+        :server -> [san_extension(hostname), extended_key_usage_extension(:server)]
+        :client -> [extended_key_usage_extension(:client)]
+      end
 
-    extensions = [
-      basic_constraints_extension(false),
-      key_usage_extension([:digitalSignature, :keyEncipherment]),
-      san_extension
-    ]
+    extensions =
+      [
+        basic_constraints_extension(false),
+        key_usage_extension([:digitalSignature, :keyEncipherment])
+      ] ++ role_extensions
 
     tbs =
       {:TBSCertificate, :v3, serial, signature_algorithm(), issuer, validity, subject,
@@ -191,6 +225,19 @@ defmodule Flezha.Transport.CertGenerator do
 
   defp key_usage_extension(usages) do
     {:Extension, {2, 5, 29, 15}, true, :public_key.der_encode(:KeyUsage, usages)}
+  end
+
+  # webpki rejects a leaf presented for a role its EKU does not name, so the
+  # server/client split is explicit rather than left absent.
+  defp extended_key_usage_extension(role) do
+    oid =
+      case role do
+        # id-kp-serverAuth / id-kp-clientAuth
+        :server -> {1, 3, 6, 1, 5, 5, 7, 3, 1}
+        :client -> {1, 3, 6, 1, 5, 5, 7, 3, 2}
+      end
+
+    {:Extension, {2, 5, 29, 37}, false, :public_key.der_encode(:ExtKeyUsageSyntax, [oid])}
   end
 
   defp san_extension(hostname) do

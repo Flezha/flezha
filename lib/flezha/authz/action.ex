@@ -57,7 +57,11 @@ defmodule Flezha.AuthZ.Action do
     :"state.list",
     :"state.at",
     :"state.rotate",
-    :"state.retention"
+    :"state.retention",
+    :"state.delete",
+    # Dead-letter-queue operator verbs.
+    :"dlq.replay",
+    :"dlq.drop"
   ]
 
   @doc """

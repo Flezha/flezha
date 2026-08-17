@@ -27,8 +27,13 @@ defmodule Flezha.Transport.Native do
   @doc "Start a UDS server listening on `socket_path`. Returns `{:ok, server_ref}`."
   def start_uds_server(_socket_path, _acceptor_pid), do: :erlang.nif_error(:not_loaded)
 
-  @doc "Start a QUIC server listening on `bind_address`. Returns `{:ok, server_ref}`."
-  def start_quic_server(_bind_address, _cert_path, _key_path, _acceptor_pid),
+  @doc """
+  Start a QUIC server listening on `bind_address`. Returns `{:ok, server_ref}`.
+
+  A non-empty `client_ca_path` requires every peer to present a client cert
+  chaining to that trust anchor; `""` disables client auth (explicit opt-out).
+  """
+  def start_quic_server(_bind_address, _cert_path, _key_path, _client_ca_path, _acceptor_pid),
     do: :erlang.nif_error(:not_loaded)
 
   @doc "Stop a running transport server."

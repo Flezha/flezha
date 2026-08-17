@@ -124,8 +124,21 @@ When `FLEZHA_TRANSPORT=quic`, the SDK connects to the controller via a single QU
 | CA certificate | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` |
 | Server certificate | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/server.pem` |
 | Server key | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/server.key` |
+| Client trust anchor (server side) | `FLEZHA_QUIC_CLIENT_CA` | `app_data/certs/ca.pem` |
+| Client certificate (SDK side) | `FLEZHA_QUIC_CLIENT_CERT` | `app_data/certs/client.pem` |
+| Client key (SDK side) | `FLEZHA_QUIC_CLIENT_KEY` | `app_data/certs/client.key` |
 
-TLS certificates are auto-generated on first startup if absent.
+TLS certificates are auto-generated on first startup if absent (CA +
+server pair + a client identity carrying the `clientAuth` EKU).
+
+**Peer authentication is required by default**: the server verifies the
+client certificate against `FLEZHA_QUIC_CLIENT_CA` and refuses the
+handshake otherwise — no frame of an unauthenticated peer is ever
+processed. `FLEZHA_TRANSPORT_AUTH=off` is the explicit opt-out, warned on
+every controller boot. The framing and every payload are unchanged: the
+runner principal (`runner@<namespace>`, role `runner`) is minted
+controller-side from the `connect_control_channel` namespace, never
+carried on the wire.
 
 #### QUIC Stream Mapping
 

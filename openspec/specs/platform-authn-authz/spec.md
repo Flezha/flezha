@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `operator`, `admin`, `runner`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/entity enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, the web UI, transport-layer cert wiring, the CLI socket handshake, and deeper namespacing of the State subsystem are explicitly out of scope.
+The platform-authn-authz capability provides the Flezha Controller's authentication, authorization, namespace, and per-namespace quota foundation. It defines a verified-principal model, a single policy point (`Flezha.AuthZ.authorize/3`) consulted by the operator-action service functions it wires, a fixed role set (`viewer`, `operator`, `admin`, `runner`) bound to principals on namespaces, a namespace catalog (`_system` as the singleton compatibility namespace, additional namespaces created by `admin@_system`), per-namespace quotas enforceable at allocation time (with the operative/entity enforcement point shipping in this change), a local-managed token registry with instant revocation, a one-time on-disk bootstrap-token flow that replaces today's open-auth model without bricking upgrades, and mTLS cert principal/namespace extraction primitives (`Flezha.AuthN.Cert`) that downstream changes can wire into the live transport. Since `finish-platform-authn-authz`, authorization is enforced by default, principals derive from the authenticated transport (see the `transport-authentication` capability), namespace isolation extends through the State subsystem, and the Rust CLI verb families are shipped. Federated identity providers, encryption-at-rest, custom roles, per-message authorization inside user code, and the web UI remain out of scope.
 
 ## Requirements
 
@@ -84,7 +84,7 @@ The system SHALL define a Namespace as a hard partition for authorization scope.
 
 ### Requirement: Per-namespace quotas at allocation
 
-The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_operatives`, `max_entities_per_operative`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_disk_bytes_total`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.OperativeManager.start_operative/2` SHALL call `check_allocation/3` for `max_operatives` and `max_entities_per_operative`; `stop_operative/2` SHALL record the dealloc. Adoption at the remaining allocation sites (`State.Supervisor`, `FleetManager.connect_handler/4`, bounded-mailbox provisioning) is left for the modules' owners — one-line integration.
+The system SHALL store per-namespace quotas in `app_data/auth/namespaces.dets`. Quota fields SHALL include `max_operatives`, `max_entities_per_operative`, `max_mailbox_bytes_total`, `max_message_rate_per_second`, `max_state_bytes`, `max_runners`. `Flezha.AuthZ.Quotas.check_allocation/3` SHALL be a hot-path check (one ETS lookup against `NamespaceStore` plus one against `QuotaCounters`). `Flezha.Service.OperativeManager.start_operative/2` SHALL call `check_allocation/3` for `max_operatives` and `max_entities_per_operative`; `stop_operative/2` SHALL record the dealloc. `FleetManager.connect_handler/4` SHALL check `max_runners`; disk accounting and the per-namespace mailbox watermark are specified by the "Runner and disk quota points" requirement.
 
 #### Scenario: Max-operatives denial on allocation
 - **WHEN** namespace `team-orders` has `max_operatives: 5`, 5 operatives already exist, and an operator invokes `Flezha.Service.OperativeManager.start_operative/2` with a 6th
@@ -114,21 +114,9 @@ On Controller start, the system SHALL detect whether `app_data/auth/roles.dets` 
 - **WHEN** `Bootstrap.check_and_write/0` runs and the parent directory of `bootstrap.token` has group- or other-write bits set
 - **THEN** the function SHALL return `{:error, {:permissive_auth_parent, parent}}` AND `bootstrap.token` SHALL NOT be created
 
-### Requirement: Compatibility mode default-off-then-flipped-on
-
-The system SHALL ship the `:authn_authz, :enabled` runtime config flag with default `false`. While `false`, `Flezha.AuthZ.authorize/3` SHALL return `:ok` unconditionally, the audit log SHALL record `caller_context.source` in the principal column, and no quota check SHALL execute. The flag SHALL flip to `true` durably (written to `app_data/auth/state.dets`) on successful bootstrap claim; once `true`, the flag SHALL remain `true` across restarts. The env-var override `FLEZHA_AUTHZ_ENABLED=false` SHALL be honoured and SHALL emit a `warn` on every boot.
-
-#### Scenario: Default-off preserves existing behaviour
-- **WHEN** a Controller boots for the first time with this release and no `admin@_system` binding exists
-- **THEN** every `Flezha.Service.*` call SHALL succeed without authorization rejection AND no `caller_context.principal` SHALL be required
-
-#### Scenario: Successful bootstrap flips flag durably
-- **WHEN** `Bootstrap.claim/2` succeeds
-- **THEN** `app_data/auth/state.dets` SHALL contain `enabled: true` AND a subsequent Controller restart SHALL load the flag as `true` even without re-running bootstrap
-
 ### Requirement: State-path namespace prefix and migration
 
-The system SHALL move any pre-namespace top-level subtree under `app_data/state/` into `app_data/state/_system/` via a one-shot migration pass added to `Flezha.Boot.StatePathMigrator`. The migration SHALL be atomic per top-level tree (single `rename(2)` per operative-class), safe to interrupt, and idempotent. Deeper plumbing of the namespace through `Flezha.State.PersistenceResolver` / `Wire` / `WalWriter` / `Snapshot` / `Restore` (so writes go to `app_data/state/<namespace>/...` rather than the migrated `_system` prefix) is out of scope for this change.
+The system SHALL move any pre-namespace top-level subtree under `app_data/state/` into `app_data/state/_system/` via a one-shot migration pass added to `Flezha.Boot.StatePathMigrator`. The migration SHALL be atomic per top-level tree (single `rename(2)` per operative-class), safe to interrupt, and idempotent. The namespace SHALL be plumbed through `Flezha.State.PersistenceResolver` / `Wire` / `WalWriter` / `Snapshot` / `Restore` so writes land under `app_data/state/<namespace>/...` rather than the migrated `_system` prefix.
 
 #### Scenario: Migration moves legacy state under _system
 - **WHEN** the Controller boots with `app_data/state/orders/` existing and no `_system/` subdirectory
@@ -137,6 +125,12 @@ The system SHALL move any pre-namespace top-level subtree under `app_data/state/
 #### Scenario: Migration is idempotent
 - **WHEN** the migrator runs twice in succession on an already-migrated tree
 - **THEN** the second run SHALL leave the layout unchanged
+
+#### Scenario: Namespaced operative writes under its namespace
+
+- **WHEN** an operative in namespace `team-orders` persists entity state
+- **THEN** the WAL and snapshot files land under `app_data/state/team-orders/...`
+  and restore resolves the same path
 
 ### Requirement: Auth-state mutations emit auditable signals
 
@@ -156,7 +150,7 @@ Token issuance, token revocation, namespace creation, namespace deletion, role b
 
 ### Requirement: Elixir-side CLI wrappers
 
-The system SHALL expose `Flezha.Service.CliManager.authz_*`, `namespace_*`, and `role_*` wrapper functions covering the documented verb set (`bootstrap`, `issue`, `revoke`, `list`, `whoami`; `create`, `delete`, `list`, `show`, `set_quota`; `bind`, `unbind`, `list`). Each wrapper SHALL build a `caller_context` with `source: :cli`, route through `Flezha.AuthZ.authorize/3` (where the verb maps to a documented action), call the corresponding `Flezha.AuthZ.*` primitive, and emit a `:platform_authz` audit event on mutating verbs. These wrappers form the contract a future Rust CLI consumes; building the Rust CLI binaries themselves is out of scope.
+The system SHALL expose `Flezha.Service.CliManager.authz_*`, `namespace_*`, and `role_*` wrapper functions covering the documented verb set (`bootstrap`, `issue`, `revoke`, `list`, `whoami`; `create`, `delete`, `list`, `show`, `set_quota`; `bind`, `unbind`, `list`). Each wrapper SHALL build a `caller_context` with `source: :cli`, route through `Flezha.AuthZ.authorize/3` (where the verb maps to a documented action), call the corresponding `Flezha.AuthZ.*` primitive, and emit a `:platform_authz` audit event on mutating verbs. The Rust `flz` binary SHALL expose these wrappers as verb families (`flz auth`, `flz role`, `flz token`, and the extended `flz namespace`), each rendering the wrapper's verdicts for the operator.
 
 #### Scenario: namespace_create routes through AuthZ.authorize
 - **WHEN** `CliManager.namespace_create/3` is invoked
@@ -165,6 +159,12 @@ The system SHALL expose `Flezha.Service.CliManager.authz_*`, `namespace_*`, and 
 #### Scenario: role_unbind looks up the bound namespace before authorizing
 - **WHEN** `CliManager.role_unbind/2` is invoked for a principal currently bound to `team-orders`
 - **THEN** `Flezha.AuthZ.authorize/3` SHALL be called with `scope.namespace = "team-orders"` (not the caller's namespace)
+
+#### Scenario: Rust verbs reach the wrappers
+- **WHEN** `flz role bind <principal> <role> <namespace>` is invoked with a valid
+  admin token
+- **THEN** `CliManager.role_bind` runs, the binding is created, and the CLI renders
+  the wrapper's success verdict
 
 ### Requirement: Durable token-store and role-store crash recovery
 
@@ -176,7 +176,7 @@ The system SHALL expose `Flezha.Service.CliManager.authz_*`, `namespace_*`, and 
 
 ### Requirement: Runtime configuration surface
 
-The system SHALL expose runtime configuration under the `:authn_authz` key with at minimum: `:enabled` (boolean, default `false`), `:auth_dir` (default `app_data/auth`), `:bootstrap_token_path` (default `<auth_dir>/bootstrap.token`), `:token_ttl_default_seconds` (default `86_400`), `:sdk_token_ttl_seconds` (default `2_592_000`), `:namespaces` (per-namespace quota overrides), `:application_managed` (boolean, default `true`; tests flip to `false`). Env-var overrides `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` SHALL be honoured with `env > app config > default` precedence.
+The system SHALL expose runtime configuration under the `:authn_authz` key with at minimum: `:enabled` (boolean, default `true` in production; dev/test carry the explicit opt-out), `:auth_dir` (default `app_data/auth`), `:bootstrap_token_path` (default `<auth_dir>/bootstrap.token`), `:token_ttl_default_seconds` (default `86_400`), `:sdk_token_ttl_seconds` (default `2_592_000`), `:namespaces` (per-namespace quota overrides), `:application_managed` (boolean, default `true`; tests flip to `false`). Env-var overrides `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_AUTHZ_DIR`, `FLEZHA_AUTHZ_BOOTSTRAP_TOKEN_PATH` SHALL be honoured with `env > app config > default` precedence.
 
 #### Scenario: Env var overrides config
 - **WHEN** the Controller boots with `FLEZHA_AUTHZ_DIR=/srv/flezha/auth` set
@@ -184,4 +184,145 @@ The system SHALL expose runtime configuration under the `:authn_authz` key with 
 
 #### Scenario: Default-namespace quotas applied when not overridden
 - **WHEN** namespace `team-orders` is created without quota overrides
-- **THEN** the namespace catalog entry SHALL store the documented default quotas (`max_operatives: 100`, `max_entities_per_operative: 1_024`, `max_mailbox_bytes_total: 268_435_456`, `max_message_rate_per_second: 100_000`, `max_disk_bytes_total: 107_374_182_400`)
+- **THEN** the namespace catalog entry SHALL store the documented default quotas (`max_operatives: 100`, `max_entities_per_operative: 1_024`, `max_mailbox_bytes_total: 268_435_456`, `max_message_rate_per_second: 100_000`, `max_state_bytes: 107_374_182_400`, `max_runners: 32`)
+
+### Requirement: Authorization is enforced by default
+
+The default posture SHALL enforce authorization. On a boot where no `admin@_system`
+binding exists (bootstrap not yet claimed), gated verbs SHALL be refused with a
+message naming the bootstrap procedure, while already-running dataflow (operative
+execution, runner reconnects over the authenticated transport) SHALL continue.
+Disabling enforcement SHALL require the explicit `FLEZHA_AUTHZ_ENABLED=false`
+opt-out, which SHALL emit a `warn` on every boot for as long as it is set.
+
+#### Scenario: Bootstrap-pending refuses gated verbs without stopping dataflow
+
+- **WHEN** a controller boots with default configuration and no `admin@_system`
+  binding exists
+- **THEN** a destructive verb is refused naming the bootstrap procedure, AND
+  running operatives continue to process input
+
+#### Scenario: Open mode is explicit and warned
+
+- **WHEN** an operator sets `FLEZHA_AUTHZ_ENABLED=false`
+- **THEN** `AuthZ.authorize/3` returns `:ok` unconditionally and a warning is
+  emitted on every boot while the opt-out remains set
+
+### Requirement: Destructive and mutating service verbs require authorization
+
+Every destructive or mutating service operation SHALL be gated by
+`AuthZ.authorize/3` before it takes effect. This includes at least `state_delete`,
+`state_rotate`, `dlq_drop`, `dlq_replay`, `operative_stop`, `controller_stop`, and
+the plugin mutations (install, enable, disable). An unauthorized caller SHALL be
+refused and the refusal SHALL be audited.
+
+#### Scenario: Unauthorized destructive verb is refused
+
+- **WHEN** a caller without the required role invokes `state_delete` (or any
+  destructive verb) while authorization is enforced
+- **THEN** the operation does not take effect and a denial is audited
+
+#### Scenario: Authorized caller succeeds and is audited
+
+- **WHEN** a caller with the required role invokes a destructive verb
+- **THEN** the operation proceeds and an audit event records the actor and target
+
+#### Scenario: Plugin enable is gated
+
+- **WHEN** a `viewer`-role caller invokes plugin enable while authorization is
+  enforced
+- **THEN** the plugin is not enabled and a denial is audited
+
+### Requirement: Principals derive from the authenticated transport
+
+While authorization is enforced, `caller_context.principal` SHALL derive from the
+authenticated connection — the verified peer certificate (via
+`Flezha.AuthN.Cert`) or a namespace-bound handshake for runner connections, and a
+verified token for CLI callers — never from an unverified caller-supplied value.
+The `:internal` caller source SHALL remain valid only for calls originating inside
+the controller's own BEAM.
+
+#### Scenario: Runner principal is bound to its authenticated connection
+
+- **WHEN** a runner connects over an authenticated transport for namespace
+  `team-orders`
+- **THEN** service calls attributed to that connection carry a `runner`-role
+  principal bound to `team-orders` and cannot act on another namespace
+
+#### Scenario: Caller-supplied principal is ignored
+
+- **WHEN** a CLI invocation supplies a `caller_context` naming a principal without
+  a verifying token
+- **THEN** the supplied principal is not trusted and gated verbs are refused
+
+### Requirement: Namespace isolation through the State subsystem and registry
+
+Namespace-scoped reads and mutations SHALL resolve the target namespace from the
+caller's bound principal, and registry or state listings SHALL be filtered to the
+namespaces the principal may read. A principal bound to one namespace SHALL NOT be
+able to read, list, or mutate another namespace's operatives or durable state
+through any service verb.
+
+#### Scenario: Cross-namespace state read is refused
+
+- **WHEN** `operator@team-a` invokes a state read naming an operative in `team-b`
+- **THEN** the call is refused with a forbidden error and the denial is audited
+
+#### Scenario: Listings are namespace-filtered
+
+- **WHEN** `viewer@team-a` lists operatives
+- **THEN** the result contains only `team-a` rows, with no indication of other
+  namespaces' contents
+
+### Requirement: Runner and disk quota points
+
+Per-namespace quotas SHALL be enforceable for runner connections (`max_runners`,
+checked when a runner connects) and disk footprint (`max_state_bytes`, accounted
+from the State registry's per-namespace byte totals and enforced at operative
+allocation). Exceeding the disk quota with already-running operatives SHALL raise
+a loud, observable alarm rather than interrupting durable writes. Quota counters
+SHALL be rebuilt from a State registry scan on boot.
+
+#### Scenario: Runner connection over quota is refused
+
+- **WHEN** a namespace is at its `max_runners` quota and another runner connects
+  for it
+- **THEN** the connection is refused and the refusal is observable
+
+#### Scenario: Disk quota breach on a running namespace alarms without data loss
+
+- **WHEN** a namespace's accounted state bytes exceed `max_state_bytes` while its
+  operatives are running
+- **THEN** an alarm event is emitted, new operative allocation in that namespace is
+  refused, and in-flight durable writes are not interrupted
+
+### Requirement: Break-glass recovery for a lost admin
+
+The system SHALL provide a documented offline recovery path for a lost
+`admin@_system` credential: with the controller stopped, an operator with
+filesystem access to `app_data/auth/` SHALL be able to clear the claimed state so
+the next boot re-enters the existing bootstrap flow. The recovery SHALL be
+impossible without filesystem access and SHALL emit an auditable event on the boot
+that re-entered bootstrap.
+
+#### Scenario: Recovery re-enters bootstrap
+
+- **WHEN** the operator runs the recovery procedure with the controller stopped and
+  boots the controller
+- **THEN** a fresh `bootstrap.token` is written, the previous admin binding no
+  longer authorizes, and an auditable event records that recovery occurred
+
+### Requirement: Plugin credentials are not persisted in cleartext
+
+Plugin provider credentials (at least Kafka SASL) SHALL NOT be persisted or logged
+in cleartext: credential material SHALL ride a closure into the client
+configuration, `init_provider/1` SHALL return opts with the secret redacted, and
+failure logs SHALL carry endpoint identity only — mirroring the shipped Postgres
+provider pattern.
+
+#### Scenario: SASL secret is redacted at rest
+
+- **WHEN** a Kafka plugin with SASL credentials is enabled and its persisted opts
+  are read back
+- **THEN** the stored and returned opts carry a redacted placeholder, not the
+  secret, while the live client authenticates successfully

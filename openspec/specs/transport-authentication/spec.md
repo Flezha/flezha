@@ -1,0 +1,80 @@
+# transport-authentication Specification
+
+## Purpose
+
+The transport-authentication capability makes every peer-facing surface of the
+Flezha Controller authenticate its peer by default: the runner transport (QUIC
+client-certificate verification against a configured trust anchor; owner-only
+UDS socket and directory), the Erlang distribution (operator-provisioned
+cookie, optional TLS distribution), and the CLI (verifiable token identity
+threaded into the service wrappers). Running without authentication requires an
+explicit opt-out that is warned on every boot.
+
+## Requirements
+
+### Requirement: Runner transport authenticates its peer
+
+The runner transport (QUIC and UDS) SHALL authenticate the connecting peer before
+accepting any control or data frame. The QUIC server SHALL verify a client
+certificate against a configured trust anchor; the UDS control socket SHALL be
+created with owner-only permissions on a directory not world-writable. A connection
+that fails authentication SHALL be refused and the refusal SHALL be observable.
+
+#### Scenario: Unauthenticated QUIC peer is refused
+
+- **WHEN** a peer opens a QUIC session presenting no client certificate or one not
+  signed by the configured trust anchor
+- **THEN** the handshake is rejected, no operative-control frame is processed, and a
+  refusal is recorded
+
+#### Scenario: UDS socket is not world-accessible
+
+- **WHEN** the controller creates the runner control socket
+- **THEN** the socket and its parent directory permit access only to the owning user
+
+### Requirement: Erlang distribution is not trust-by-constant-cookie
+
+The release SHALL NOT ship a hard-coded default distribution cookie, and the cluster
+SHALL support TLS distribution. A deployment that has not provisioned a cookie
+(and, where enabled, distribution TLS) SHALL refuse to form a cluster rather than
+fall back to a well-known constant.
+
+#### Scenario: Missing cookie refuses to cluster
+
+- **WHEN** a controller boots without a provisioned `RELEASE_COOKIE`
+- **THEN** it does not fall back to a source-committed constant and does not accept
+  distribution connections under a default cookie
+
+### Requirement: CLI callers present a verifiable identity
+
+The `flz` CLI SHALL accept a token (`--token` flag or `FLEZHA_TOKEN` environment
+variable) and pass it through to the service wrappers, which SHALL resolve it via
+the token registry into the `caller_context` principal. While authorization is
+enforced, a gated verb invoked without a resolvable principal SHALL be refused with
+a message naming the token requirement; `flz auth bootstrap` SHALL remain callable
+without a prior token.
+
+#### Scenario: Token resolves to the CLI principal
+
+- **WHEN** `FLEZHA_TOKEN` carries a valid token bound to `operator@team-orders` and
+  a gated verb targeting `team-orders` is invoked
+- **THEN** the service call runs with `caller_context.principal =
+  operator@team-orders` and is authorized against that principal
+
+#### Scenario: Gated verb without a token is refused
+
+- **WHEN** authorization is enforced and a destructive verb is invoked with no
+  token supplied
+- **THEN** the verb is refused naming the missing credential, and the denial is
+  audited
+
+### Requirement: Secure default posture
+
+The runner transport SHALL default to requiring peer authentication. Running without
+authentication SHALL require an explicit opt-out that logs a warning on every boot.
+
+#### Scenario: Wide-open start is explicit and loud
+
+- **WHEN** an operator disables transport authentication
+- **THEN** the disable requires an explicit setting and a warning is emitted on each
+  boot for as long as it remains disabled

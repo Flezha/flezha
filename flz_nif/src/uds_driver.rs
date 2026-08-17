@@ -114,14 +114,31 @@ fn init_and_run(
         let _ = std::fs::remove_file(&socket_path);
     }
 
-    // Ensure parent directory exists
+    // Ensure parent directory exists, owner-only: directory traversal is the
+    // UDS authentication boundary — a local same-uid peer IS the node owner.
+    // Best-effort on the parent (a socket placed in a shared dir like /tmp is
+    // not ours to chmod); the socket file itself is hardened unconditionally
+    // below, and the controller's own socket dir is created 0700 here and by
+    // `Flezha.Socket.Support.prepare_socket_dir/0`.
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
     }
 
     let poll = Poll::new()?;
 
     let mut listener = UnixListener::bind(&socket_path)?;
+
+    // Owner-only socket; the 0o700 parent already gates the pre-chmod window.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
+    }
     poll.registry()
         .register(&mut listener, LISTENER_TOKEN, Interest::READABLE)?;
 

@@ -589,7 +589,7 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   defp sidecar_path(operative_class, filename \\ @sidecar),
-    do: Path.join([Registry.state_root(), operative_class, filename])
+    do: Path.join(Registry.class_dir(operative_class), filename)
 
   defp write_sidecar(operative_class, kind),
     do: write_sidecar_file(operative_class, @sidecar, Atom.to_string(kind))

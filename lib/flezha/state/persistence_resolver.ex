@@ -195,6 +195,32 @@ defmodule Flezha.State.PersistenceResolver do
       valid: &(is_integer(&1) and &1 > 0),
       default: &wal_high_watermark_bytes/0
     )
+    |> cap_to_namespace_mailbox_quota(operative_class)
+  end
+
+  # Per-namespace mailbox-byte quota, folded into the same cascade every
+  # buffered-byte window resolves through: while authz is enforced, no single
+  # Operative's credit window may exceed its namespace's
+  # `max_mailbox_bytes_total` (finish-platform-authn-authz §6.3).
+  defp cap_to_namespace_mailbox_quota(window, operative_class) do
+    if Flezha.AuthZ.enabled?() do
+      namespace = Flezha.State.Registry.namespace_of_class(operative_class)
+
+      case Flezha.AuthZ.NamespaceStore.get(namespace) do
+        {:ok, %{quotas: %{max_mailbox_bytes_total: limit}}}
+        when is_integer(limit) and limit > 0 ->
+          min(window, limit)
+
+        _ ->
+          window
+      end
+    else
+      window
+    end
+  rescue
+    _ -> window
+  catch
+    _, _ -> window
   end
 
   @spec compaction_timeout_ms() :: non_neg_integer()

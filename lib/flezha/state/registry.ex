@@ -93,9 +93,149 @@ defmodule Flezha.State.Registry do
     end
   end
 
+  # ----- namespace resolution (finish-platform-authn-authz) -----
+  #
+  # Durable state lives under `<state_root>/<namespace>/<operative_class>/`.
+  # The wire's entity_id stays the 3-tuple: the namespace is resolved HERE,
+  # from the class→namespace claim an Operative records when it binds, else
+  # from the on-disk layout, else `_system`. One seam — every path in this
+  # module (and every consumer of `class_dir/1`) inherits it.
+
+  @claims_table :flezha_state_namespaces
+
+  @doc """
+  Create the class→namespace claims table. Called once by
+  `Flezha.State.Supervisor` so the table lives with the state subsystem;
+  every resolver below degrades to the on-disk layout when it is absent.
+  """
+  @spec ensure_claims_table() :: :ok
+  def ensure_claims_table() do
+    if :ets.whereis(@claims_table) == :undefined do
+      :ets.new(@claims_table, [:named_table, :public, :set, read_concurrency: true])
+    end
+
+    :ok
+  rescue
+    # Lost the creation race — the table exists, which is all we need.
+    ArgumentError -> :ok
+  end
+
+  @doc """
+  Record that `operative_class`'s durable state belongs to `namespace`.
+
+  A class already owned by ANOTHER namespace — live claim or durable files
+  on disk — is refused: without this, starting a same-named Operative in a
+  second namespace would silently write into (or read out of) the first
+  one's state. The compatibility namespace `_system` is the exception: a
+  class migrated there by `Flezha.Boot.StatePathMigrator` is ADOPTED by the
+  first real namespace that claims it (one atomic rename), which is what
+  keeps a pre-namespace deployment's operatives restarting seamlessly.
+  """
+  @spec claim_namespace(binary(), binary()) ::
+          :ok | {:error, {:namespace_conflict, binary(), binary()}}
+  def claim_namespace(operative_class, namespace)
+      when is_binary(operative_class) and is_binary(namespace) do
+    case current_owner(operative_class) do
+      nil ->
+        put_claim(operative_class, namespace)
+
+      ^namespace ->
+        put_claim(operative_class, namespace)
+
+      "_system" ->
+        adopt_from_system(operative_class, namespace)
+
+      other ->
+        {:error, {:namespace_conflict, operative_class, other}}
+    end
+  end
+
+  @doc """
+  The namespace owning `operative_class`'s durable state: the live claim,
+  else the on-disk layout, else `_system`.
+  """
+  @spec namespace_of_class(binary()) :: binary()
+  def namespace_of_class(operative_class) when is_binary(operative_class) do
+    claimed_namespace(operative_class) || disk_namespace(operative_class) || "_system"
+  end
+
+  @doc "Directory holding every durable file of one Operative class."
+  @spec class_dir(binary()) :: binary()
+  def class_dir(operative_class) when is_binary(operative_class) do
+    Path.join([state_root(), namespace_of_class(operative_class), operative_class])
+  end
+
+  # Claims are keyed by {state_root, class}: a claim is a fact about ONE
+  # on-disk tree, and tests (as well as `FLEZHA_STATE_DIR` changes) repoint
+  # the root — a stale claim from another tree must not leak into this one.
+  defp claimed_namespace(operative_class) do
+    case :ets.whereis(@claims_table) do
+      :undefined ->
+        nil
+
+      _tid ->
+        case :ets.lookup(@claims_table, {state_root(), operative_class}) do
+          [{_, namespace}] -> namespace
+          [] -> nil
+        end
+    end
+  end
+
+  defp put_claim(operative_class, namespace) do
+    if :ets.whereis(@claims_table) != :undefined do
+      :ets.insert(@claims_table, {{state_root(), operative_class}, namespace})
+    end
+
+    :ok
+  end
+
+  defp current_owner(operative_class) do
+    claimed_namespace(operative_class) || disk_namespace(operative_class)
+  end
+
+  # The disk knows: the layout is `<root>/<namespace>/<class>/`, so the
+  # namespace directory containing the class dir IS the owner.
+  defp disk_namespace(operative_class) do
+    root = state_root()
+
+    root
+    |> list_dir()
+    |> Enum.find(fn name ->
+      File.dir?(Path.join(root, name)) and File.dir?(Path.join([root, name, operative_class]))
+    end)
+  end
+
+  defp adopt_from_system(operative_class, namespace) do
+    from = Path.join([state_root(), "_system", operative_class])
+    to = Path.join([state_root(), namespace, operative_class])
+
+    cond do
+      not File.dir?(from) ->
+        put_claim(operative_class, namespace)
+
+      File.exists?(to) ->
+        {:error, {:namespace_conflict, operative_class, "_system"}}
+
+      true ->
+        File.mkdir_p!(Path.dirname(to))
+
+        case File.rename(from, to) do
+          :ok ->
+            put_claim(operative_class, namespace)
+
+          {:error, _} ->
+            # Lost an adoption race; re-resolve against the winner.
+            case current_owner(operative_class) do
+              ^namespace -> put_claim(operative_class, namespace)
+              owner -> {:error, {:namespace_conflict, operative_class, owner || "_system"}}
+            end
+        end
+    end
+  end
+
   @spec state_dir(entity_id()) :: binary()
   def state_dir({operative_class, procedure_id, _entity_key}) do
-    Path.join([state_root(), operative_class, procedure_id])
+    Path.join(class_dir(operative_class), procedure_id)
   end
 
   @spec wal_path(entity_id()) :: binary()
@@ -143,7 +283,7 @@ defmodule Flezha.State.Registry do
   """
   @spec input_log_path(binary()) :: binary()
   def input_log_path(operative_class) when is_binary(operative_class) do
-    Path.join([state_root(), operative_class, "input.log"])
+    Path.join(class_dir(operative_class), "input.log")
   end
 
   @doc """
@@ -237,7 +377,7 @@ defmodule Flezha.State.Registry do
   """
   @spec entities_of(binary()) :: [entity_id()]
   def entities_of(operative_class) when is_binary(operative_class) do
-    for procedure_id <- list_dir(Path.join(state_root(), operative_class)),
+    for procedure_id <- list_dir(class_dir(operative_class)),
         entity_key <- entity_keys_under({operative_class, procedure_id, ""}),
         uniq: true,
         do: {operative_class, procedure_id, entity_key}
@@ -258,7 +398,14 @@ defmodule Flezha.State.Registry do
     # evidence of prior intent (intent-mismatch detection); rmdir fails
     # harmlessly while a sibling Entity or Procedure still holds files.
     _ = File.rmdir(state_dir(pid))
-    _ = File.rmdir(Path.join(state_root(), operative_class))
+    class_dir = class_dir(operative_class)
+    _ = File.rmdir(class_dir)
+
+    # A fully-reclaimed class releases its namespace claim, so the name can
+    # be reused elsewhere without tripping the conflict refusal on a ghost.
+    if not File.dir?(class_dir) and :ets.whereis(@claims_table) != :undefined do
+      :ets.delete(@claims_table, {state_root(), operative_class})
+    end
 
     :ok
   end
@@ -332,18 +479,35 @@ defmodule Flezha.State.Registry do
   end
 
   @doc """
+  Namespace directories under `state_root/` — the on-disk answer to "which
+  namespaces hold durable state on this node", shared by the Watchdog's
+  disk-quota sweep, the boot-time counter rebuild, and `operative_classes/0`.
+  """
+  @spec namespaces() :: [binary()]
+  def namespaces() do
+    root = state_root()
+    root |> list_dir() |> Enum.filter(&File.dir?(Path.join(root, &1)))
+  end
+
+  @doc """
   Operative classes holding durable state on this node — the on-disk answer to
   "which operatives are here at all", shared by the retention sweep, the remote
   durability tier's backstop, and `all_entities/0`.
 
-  Class-level sidecars (`kind`, `input.log`, the declaration files) are regular
+  The tree is `<root>/<namespace>/<class>/`, so classes are the second level;
+  class-level sidecars (`kind`, `input.log`, the declaration files) are regular
   files, so the directory filter is what separates a class from its own
   metadata.
   """
   @spec operative_classes() :: [binary()]
   def operative_classes() do
     root = state_root()
-    root |> list_dir() |> Enum.filter(&File.dir?(Path.join(root, &1)))
+
+    for namespace <- namespaces(),
+        class <- list_dir(Path.join(root, namespace)),
+        File.dir?(Path.join([root, namespace, class])),
+        uniq: true,
+        do: class
   end
 
   @doc """

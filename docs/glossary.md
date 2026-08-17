@@ -311,6 +311,37 @@ contains Entities.**
   checkpoint flag) plus a verdict (`ok | retryable_error |
   non_retryable_error`) that drives the core's retry→park ladder.
 
+## Authentication and authorization vocabulary
+
+- **Enforcement posture** — the three-way state of
+  `Flezha.AuthZ.enforcement_posture/0`: `:open` (the explicit
+  `FLEZHA_AUTHZ_ENABLED=false` opt-out, warned every boot),
+  `:bootstrap_pending` (configured on, `admin@_system` not yet claimed:
+  operator verbs refuse naming `flz auth bootstrap` while dataflow
+  continues), `:enforced` (claimed; full policy checks). Enforcement is
+  the production default.
+
+- **Transport-bound principal** — an identity minted from the
+  authenticated connection rather than any caller-supplied value: a
+  verified token for CLI callers (`flz --token` / `FLEZHA_TOKEN`),
+  `runner@<namespace>` (role `runner`) from the connect handshake for
+  runner connections. `source: :internal` is reachable only from inside
+  the controller BEAM (gated by the provisioned distribution cookie).
+
+- **Namespace claim** — the `Flezha.State.Registry` record that one
+  Operative class's durable state belongs to one namespace
+  (`<state_root>/<namespace>/<class>/`). Recorded at bind, derivable
+  from the disk layout, refused on conflict; a class under the `_system`
+  compatibility namespace is adopted by the first real namespace that
+  claims it.
+
+- **Break-glass (rebootstrap)** — the offline recovery for a lost
+  `admin@_system`: with the controller stopped, `flz auth rebootstrap`
+  writes an `app_data/auth/REBOOTSTRAP` marker; the next boot unbinds
+  the stale admin, revokes its `_system` admin tokens, and re-enters the
+  ordinary bootstrap flow, emitting an auditable `:rebootstrap_recovery`
+  event. See `docs/operations/authn_authz.md`.
+
 ## Disambiguating "Operator"
 
 The word "Operator" used to mean "the SDK process" in older Flezha code and

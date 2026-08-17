@@ -2,38 +2,14 @@ defmodule Flezha.AuthZ.QuotasTest do
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ
-  alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, Quotas, RoleStore, TokenStore}
+  alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, Quotas}
 
   setup do
-    tmp = Path.join(System.tmp_dir!(), "flz_authz_quotas_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(tmp)
-    File.chmod!(tmp, 0o700)
+    ctx =
+      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(prefix: "flz_authz_quotas", claim: true)
 
-    prev = Application.get_env(:flezha, :authn_authz, [])
-
-    Application.put_env(
-      :flezha,
-      :authn_authz,
-      prev |> Keyword.put(:auth_dir, tmp) |> Keyword.put(:enabled, true)
-    )
-
-    stop_if_running([AuthState, RoleStore, NamespaceStore, TokenStore, QuotaCounters])
-    {:ok, _} = AuthState.start_link([])
-    {:ok, _} = RoleStore.start_link([])
-    {:ok, _} = NamespaceStore.start_link([])
-    {:ok, _} = TokenStore.start_link([])
-    {:ok, _} = QuotaCounters.start_link([])
-
-    :ok = AuthState.set_enabled()
     assert AuthZ.enabled?()
-
-    on_exit(fn ->
-      stop_if_running([AuthState, RoleStore, NamespaceStore, TokenStore, QuotaCounters])
-      Application.put_env(:flezha, :authn_authz, prev)
-      File.rm_rf!(tmp)
-    end)
-
-    {:ok, tmp: tmp}
+    {:ok, Map.to_list(ctx)}
   end
 
   test "unknown namespace surfaces :namespace_unknown" do
@@ -42,7 +18,7 @@ defmodule Flezha.AuthZ.QuotasTest do
 
   test "system namespace allows allocations within default quotas" do
     assert :ok = Quotas.check_allocation("_system", :max_operatives, 1)
-    assert :ok = Quotas.check_allocation("_system", :max_disk_bytes_total, 1024)
+    assert :ok = Quotas.check_allocation("_system", :max_state_bytes, 1024)
   end
 
   test "exceeding max_operatives surfaces structured error" do
@@ -104,21 +80,5 @@ defmodule Flezha.AuthZ.QuotasTest do
     # generous ceiling because CI VMs are noisy; the goal is to catch
     # a regression like "we accidentally added a GenServer hop".
     assert per_call_us < 200, "average #{per_call_us}µs / call exceeded 200µs ceiling"
-  end
-
-  defp stop_if_running(mods) when is_list(mods), do: Enum.each(mods, &stop_if_running/1)
-
-  defp stop_if_running(mod) do
-    case Process.whereis(mod) do
-      nil ->
-        :ok
-
-      pid ->
-        try do
-          GenServer.stop(pid, :normal, 5_000)
-        catch
-          :exit, _ -> :ok
-        end
-    end
   end
 end

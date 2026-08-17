@@ -138,6 +138,20 @@ config :flezha,
   ca_cert_path: System.get_env("FLEZHA_CA_CERT_PATH", "app_data/certs/ca.pem"),
   server_cert_path: System.get_env("FLEZHA_SERVER_CERT_PATH", "app_data/certs/server.pem"),
   server_key_path: System.get_env("FLEZHA_SERVER_KEY_PATH", "app_data/certs/server.key"),
+  client_cert_path: System.get_env("FLEZHA_CLIENT_CERT_PATH", "app_data/certs/client.pem"),
+  client_key_path: System.get_env("FLEZHA_CLIENT_KEY_PATH", "app_data/certs/client.key"),
+
+  # Peer authentication posture (finish-platform-authn-authz): required by
+  # default; FLEZHA_TRANSPORT_AUTH=off is the explicit wide-open opt-out and
+  # is warned on every boot while set.
+  transport_auth_required:
+    (case System.get_env("FLEZHA_TRANSPORT_AUTH") do
+       nil -> true
+       val -> String.downcase(val) not in ["off", "false", "0", "no"]
+     end),
+
+  # Trust anchor for QUIC client-certificate verification.
+  quic_client_ca_path: System.get_env("FLEZHA_QUIC_CLIENT_CA", "app_data/certs/ca.pem"),
 
   # ------------------------------------------------------------------------------------------------
   # Socket configurations.
@@ -396,18 +410,19 @@ config :flezha,
     retention_check_interval_ms: 3_600_000
   ],
   # ------------------------------------------------------------------------------------------------
-  # Authentication and authorization (platform-authn-authz).
+  # Authentication and authorization (finish-platform-authn-authz).
   #
-  # `enabled` defaults `false` so upgrades do not brick existing
-  # deployments. The flag flips durably to `true` on successful
-  # `flz auth bootstrap`; once flipped it remains `true` across
-  # restarts. The env-var `FLEZHA_AUTHZ_ENABLED=false` is an
-  # explicit opt-out and emits a `warn` on every boot.
+  # Enforcement is the DEFAULT posture in prod. Until `flz auth bootstrap`
+  # is claimed, gated verbs refuse (naming the bootstrap procedure) while
+  # dataflow continues — an un-bootstrapped upgrade degrades to "operator
+  # verbs refused", never to open. `FLEZHA_AUTHZ_ENABLED=false` is the
+  # explicit opt-out and emits a `warn` on every boot; dev/test carry the
+  # opt-out in their config for ergonomics, equally warned.
   # See `docs/platform_authn_authz.md`.
   authn_authz: [
     enabled:
       case System.get_env("FLEZHA_AUTHZ_ENABLED") do
-        nil -> false
+        nil -> config_env() == :prod
         val -> String.downcase(val) in ["1", "true", "yes", "on"]
       end,
     auth_dir: System.get_env("FLEZHA_AUTHZ_DIR", "app_data/auth"),

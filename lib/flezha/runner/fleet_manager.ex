@@ -39,10 +39,8 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   def connect_handler(stream_ref, namespace, init_payload, transport) do
-    if ShutdownCoordinator.shutting_down?() do
-      Logger.info("[shutdown] rejecting runner connect attempt for namespace=#{namespace}")
-      {:error, :shutting_down}
-    else
+    with :ok <- check_not_shutting_down(namespace),
+         :ok <- admit_runner(namespace, transport) do
       factories = parse_factories(init_payload)
       stable_id = parse_stable_id(init_payload)
 
@@ -59,6 +57,71 @@ defmodule Flezha.Runner.FleetManager do
           {:ok, session_token}
       end
     end
+  end
+
+  defp check_not_shutting_down(namespace) do
+    if ShutdownCoordinator.shutting_down?() do
+      Logger.info("[shutdown] rejecting runner connect attempt for namespace=#{namespace}")
+      {:error, :shutting_down}
+    else
+      :ok
+    end
+  end
+
+  # The runner principal is minted from the authenticated connection's own
+  # namespace handshake (the transport authenticated the peer; the namespace
+  # is what the connection is FOR), never from anything the payload claims.
+  # Cross-namespace action is impossible by construction: the bound namespace
+  # IS the handshake namespace. Also the per-namespace `max_runners` quota
+  # point — both refusals are observable through the authz denial event /
+  # the quota telemetry below.
+  defp admit_runner(namespace, transport) do
+    runner_ctx = runner_caller_context(namespace)
+
+    with :ok <-
+           Flezha.AuthZ.authorize(
+             runner_ctx,
+             :"runner.connect",
+             Flezha.AuthZ.Scope.build(namespace)
+           ),
+         :ok <- Flezha.AuthZ.Quotas.check_allocation(namespace, :max_runners) do
+      :ok
+    else
+      {:error, {:quota_exceeded, _kind, %{current: current, limit: limit}} = reason} ->
+        Logger.warning(
+          "[FleetManager] runner connect refused for namespace=#{namespace}: " <>
+            "max_runners quota reached (#{current}/#{limit})"
+        )
+
+        :telemetry.execute(
+          [:flezha, :runner, :quota_refused],
+          %{count: 1},
+          %{namespace: namespace, transport: transport, current: current, limit: limit}
+        )
+
+        {:error, reason}
+
+      {:error, reason} ->
+        Logger.warning(
+          "[FleetManager] runner connect refused for namespace=#{namespace}: #{inspect(reason)}"
+        )
+
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  The caller context service calls attributed to a runner connection carry:
+  a `runner`-role principal bound to the connection's handshake namespace.
+  """
+  @spec runner_caller_context(binary()) :: Flezha.AuthZ.caller_context()
+  def runner_caller_context(namespace) do
+    %{
+      source: :sdk,
+      principal: "runner@" <> namespace,
+      namespace: namespace,
+      role: :runner
+    }
   end
 
   # Pollers pass a short timeout so a FleetManager busy inside `runner_connect/3`
@@ -847,11 +910,31 @@ defmodule Flezha.Runner.FleetManager do
   # joined while ANY runner on this node still backs it, and a crashed
   # FleetManager's memberships are cleaned by `:pg`'s monitors.
   defp sync_directory(state) do
+    sync_runner_counters(state)
+
     %{
       state
       | directory_groups:
           Directory.sync_membership(desired_directory_groups(state), state.directory_groups)
     }
+  end
+
+  # Every session mutation ends in `sync_directory/1`, so the per-namespace
+  # `:runners` quota counter is DERIVED from the live session map here rather
+  # than incremented/decremented at each of the several removal seams — the
+  # counter cannot drift from the truth it is quota-checked against. A
+  # briefly-down counter store costs one sync, never the FleetManager.
+  defp sync_runner_counters(state) do
+    if Flezha.AuthZ.enabled?() do
+      Enum.each(state.runner_namespaces, fn {namespace, runners} ->
+        active = Enum.count(runners, fn {_id, {status, _ts}} -> status == :active end)
+        Flezha.AuthZ.QuotaCounters.set(namespace, :runners, active)
+      end)
+    end
+
+    :ok
+  catch
+    _, _ -> :ok
   end
 
   defp desired_directory_groups(state) do

@@ -73,6 +73,7 @@ defmodule Flezha.State.Watchdog do
   defstruct compactions: %{},
             catastrophic: %{},
             rpo_breached: MapSet.new(),
+            disk_breaches: MapSet.new(),
             backoff: Backoff.new()
 
   # ---------- Public API ----------
@@ -128,6 +129,10 @@ defmodule Flezha.State.Watchdog do
 
   @impl true
   def init(_opts) do
+    # Per-namespace disk counters are rebuilt from the on-disk truth on every
+    # boot, so accounting drift is bounded by one uptime
+    # (finish-platform-authn-authz §6.2).
+    rebuild_disk_counters()
     schedule_sweep()
     {:ok, %__MODULE__{}}
   end
@@ -206,11 +211,73 @@ defmodule Flezha.State.Watchdog do
       |> sweep_compaction_triggers(now)
       |> sweep_compactions(now)
       |> sweep_rpo()
+      |> sweep_disk_quotas()
 
     # Stamped AFTER the last sweep, so the mark means "a full pass completed",
     # not "a pass started". A Watchdog wedged mid-sweep therefore goes stale.
     Snapshot.observe_sensor(:watchdog, now, sweep_interval_ms())
     swept
+  end
+
+  # ---------- Disk-quota breach (finish-platform-authn-authz §6.2) ----------
+  #
+  # A running namespace over `max_state_bytes` gets a loud, latched alarm and
+  # stops admitting NEW operative allocations (checked at start_operative) —
+  # in-flight durable writes are never interrupted: killing durability
+  # mid-write loses data, which is worse than a quota breach.
+
+  defp sweep_disk_quotas(state) do
+    if Flezha.AuthZ.enabled?() do
+      breached =
+        Enum.reduce(Registry.namespaces(), MapSet.new(), fn namespace, acc ->
+          bytes = Flezha.AuthZ.Quotas.refresh_disk_bytes(namespace)
+
+          case namespace_disk_limit(namespace) do
+            limit when is_integer(limit) and bytes > limit ->
+              unless MapSet.member?(state.disk_breaches, namespace) do
+                :telemetry.execute(
+                  [:flezha, :state, :disk_quota_breach],
+                  %{bytes: bytes, limit: limit},
+                  %{namespace: namespace}
+                )
+
+                Logger.error(
+                  "[watchdog] namespace #{namespace} exceeds max_state_bytes " <>
+                    "(#{bytes} > #{limit}); new operative allocation is refused, " <>
+                    "durable writes continue"
+                )
+              end
+
+              MapSet.put(acc, namespace)
+
+            _ ->
+              acc
+          end
+        end)
+
+      %{state | disk_breaches: breached}
+    else
+      state
+    end
+  end
+
+  defp namespace_disk_limit(namespace) do
+    case Flezha.AuthZ.NamespaceStore.get(namespace) do
+      {:ok, %{quotas: quotas}} -> Map.get(quotas, :max_state_bytes)
+      :error -> nil
+    end
+  end
+
+  defp rebuild_disk_counters() do
+    if Flezha.AuthZ.enabled?() do
+      Enum.each(Registry.namespaces(), &Flezha.AuthZ.Quotas.rebuild_disk_bytes/1)
+    end
+
+    :ok
+  rescue
+    # The auth stores may not be running (opt-out mode / isolated tests);
+    # the counters are then unused anyway.
+    _ -> :ok
   end
 
   # A remote-durability reference whose local progress has been unshipped past

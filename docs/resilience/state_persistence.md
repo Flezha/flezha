@@ -18,28 +18,39 @@ with `lib/flezha/state/`.
 ```
 app_data/
   state/
-    {operative_class}/
-      input.log                        # durable input log (effectively-once tier)
-      effectively_once                 # declaration sidecars, written once at bind
-      checkpoint_ack
-      {procedure_id}/
-        {entity_key}.wal
-        {entity_key}.snap.{seq}
-        {entity_key}.outbox.dedup
-    {instance_id}/
+    .layout                            # namespaced-layout marker (migration discriminator)
+    {namespace}/                       # `_system` for pre-namespace state
+      {operative_class}/
+        input.log                      # durable input log (effectively-once tier)
+        effectively_once               # declaration sidecars, written once at bind
+        checkpoint_ack
+        {procedure_id}/
+          {entity_key}.wal
+          {entity_key}.snap.{seq}
+          {entity_key}.outbox.dedup
       {instance_id}/
+        {instance_id}/
         proc.journal                     # workflow step progress
         inbox.wal                      # workflow durable inbox
 ```
 
 The path triple `(operative_class, procedure_id, entity_key)` uniquely
-identifies an Entity's state. Persistence does not include the
-`runner_id` — that is an addressing concern at the SDK boundary. When
-a runner pod restarts and rotates its `runner_id`, state under the
-flat layout is preserved and shipped to the new runner on Entity
-attach via `RestoreInitState`. The one-time
-`Flezha.Boot.StatePathMigrator` runs at `Application.start/2` to migrate
-an older runner-keyed layout into the flat one.
+identifies an Entity's state — the namespace level is resolved by
+`Flezha.State.Registry` (never carried on the wire) from the
+class→namespace claim an Operative records when it binds, else from
+the on-disk layout, else `_system`. A class owned by another
+namespace refuses the claim, which is what makes cross-namespace
+state hijack impossible at the path seam; a class migrated under
+`_system` is adopted (one atomic rename) by the first real namespace
+that claims it. Persistence does not include the `runner_id` — that
+is an addressing concern at the SDK boundary. When a runner pod
+restarts and rotates its `runner_id`, state under this layout is
+preserved and shipped to the new runner on Entity attach via
+`RestoreInitState`. The one-time `Flezha.Boot.StatePathMigrator` runs
+at `Application.start/2` to migrate an older runner-keyed layout into
+the flat one and the flat one under `_system/`; the `.layout` marker
+is what makes re-runs no-ops (the legacy and namespaced trees are
+structurally indistinguishable).
 
 `entity_key` is URL-safe-base64-encoded with a leading `_` when it
 contains characters outside `[A-Za-z0-9_.-]`. Round-trippable via

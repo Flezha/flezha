@@ -29,7 +29,7 @@ defmodule Flezha.State.Completion do
 
   @spec path(binary()) :: binary()
   def path(operative_class),
-    do: Path.join([Registry.state_root(), operative_class, @filename])
+    do: Path.join(Registry.class_dir(operative_class), @filename)
 
   @spec exists?(binary()) :: boolean()
   def exists?(operative_class), do: File.exists?(path(operative_class))
@@ -41,7 +41,7 @@ defmodule Flezha.State.Completion do
   """
   @spec write(binary(), t()) :: :ok
   def write(operative_class, %{} = record) when is_binary(operative_class) do
-    dir = Path.join(Registry.state_root(), operative_class)
+    dir = Registry.class_dir(operative_class)
     final = Path.join(dir, @filename)
     tmp = final <> ".tmp"
 

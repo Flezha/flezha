@@ -517,8 +517,11 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
       |> Enum.map(fn {h, p} -> {to_string(h), p} end)
       |> Enum.sort()
 
-    {hosts, :erlang.phash2(Map.get(identity, :ssl_options)),
-     :erlang.phash2(Map.get(identity, :auth))}
+    # `auth_key` is the provider-computed fingerprint of the resolved SASL
+    # config — the registry groups on it without ever holding the secret.
+    auth_key = Map.get(identity, :auth_key) || :erlang.phash2(Map.get(identity, :auth))
+
+    {hosts, :erlang.phash2(Map.get(identity, :ssl_options)), auth_key}
   end
 
   defp default_start(identity) do
@@ -526,10 +529,20 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
       [uris: Map.fetch!(identity, :hosts)]
       |> maybe_put(:ssl_options, Map.get(identity, :ssl_options))
       |> maybe_put(:use_ssl, Map.get(identity, :use_ssl))
-      |> maybe_put(:auth, Map.get(identity, :auth))
+      |> maybe_put(:auth, resolve_identity_auth(identity))
       |> maybe_put(:metadata_update_interval, Map.get(identity, :metadata_update_interval))
 
     KafkaEx.start_link_worker(:no_name, worker_opts)
+  end
+
+  # Credentials ride `auth_fun` (a closure the provider built) and are
+  # resolved only here, at client start — never stored in registry state
+  # beyond the closure itself.
+  defp resolve_identity_auth(identity) do
+    case Map.get(identity, :auth_fun) do
+      fun when is_function(fun, 0) -> fun.()
+      _ -> Map.get(identity, :auth)
+    end
   end
 
   defp default_stop(pid) when is_pid(pid) do

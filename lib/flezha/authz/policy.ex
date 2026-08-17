@@ -43,10 +43,13 @@ defmodule Flezha.AuthZ.Policy do
     :"audit.rotate",
     :"observability.enable_source",
     :"observability.disable_source",
-    :"state.rotate"
+    :"state.rotate",
+    :"dlq.replay",
+    :"dlq.drop"
   ]
 
-  # Admin adds everything that touches auth state, plus reset / shutdown.
+  # Admin adds everything that touches auth state, plus reset / shutdown
+  # and irreversible state destruction.
   @admin_extra [
     :"plugin.install",
     :"plugin.uninstall",
@@ -55,6 +58,7 @@ defmodule Flezha.AuthZ.Policy do
     :"controller.stop",
     :"boot.import_legacy_snapshot",
     :"state.retention",
+    :"state.delete",
     :"authz.bootstrap",
     :"authz.token_issue",
     :"authz.token_revoke",

@@ -1,6 +1,6 @@
 use std::process::exit;
 
-use crate::utils::{get_output_format, run_rpc};
+use crate::utils::{get_output_format, run_rpc, token_opts_fragment};
 
 pub fn handle_state_command(args: &[String]) {
     if args.is_empty() {
@@ -62,16 +62,19 @@ fn handle_retention(args: &[String]) {
 
 /// The Entity-scoped write verbs — `rotate`, `delete`, `outbox` — take one
 /// Entity path and no output format; they differ only in the CliManager
-/// function they call.
+/// function they call. The identity token (`--token` / FLEZHA_TOKEN) rides
+/// the trailing opts.
 fn handle_entity_verb(args: &[String], verb: &str, rpc_fun: &str) {
     if args.len() < 2 {
-        eprintln!("Usage: flz state {verb} <operative/procedure/entity_key>");
+        eprintln!("Usage: flz state {verb} <operative/procedure/entity_key> [--token <token>]");
         exit(1);
     }
 
     run_rpc(format!(
-        "Flezha.Service.CliManager.{}(\"{}\")",
-        rpc_fun, &args[1],
+        "Flezha.Service.CliManager.{}(\"{}\", {})",
+        rpc_fun,
+        &args[1],
+        token_opts_fragment(&args[2..]),
     ));
 }
 
@@ -80,15 +83,16 @@ fn handle_entity_verb(args: &[String], verb: &str, rpc_fun: &str) {
 /// function they call.
 fn handle_read(args: &[String], verb: &str, scope: &str, rpc_fun: &str) {
     if args.len() < 2 {
-        eprintln!("Usage: flz state {verb} {scope} [--output text|json]");
+        eprintln!("Usage: flz state {verb} {scope} [--output text|json] [--token <token>]");
         exit(1);
     }
 
     run_rpc(format!(
-        "Flezha.Service.CliManager.{}(\"{}\", \"{}\")",
+        "Flezha.Service.CliManager.{}(\"{}\", \"{}\", {})",
         rpc_fun,
         &args[1],
         get_output_format(&args[2..]),
+        token_opts_fragment(&args[2..]),
     ));
 }
 

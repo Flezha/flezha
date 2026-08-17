@@ -122,4 +122,40 @@ defmodule FlezhaQuicTest do
 
     assert result === "quic_echo"
   end
+
+  # finish-platform-authn-authz §2.1: the server verifies a client cert
+  # against the trust anchor, so a peer presenting none is refused at the
+  # handshake. The connected runners in `setup_all` are the positive control
+  # (same server, same CA, valid client identity) — and they warmed the cargo
+  # target dir, so the refused runner below is past `cargo run`'s freshness
+  # check well inside the negative-assertion window.
+  test "a QUIC peer without a client certificate is refused" do
+    refused_namespace = "quic_refused_namespace"
+    Flezha.Service.EventManager.add_handler(:runner_connected_event)
+
+    {:ok, current_path} = :file.get_cwd()
+
+    command =
+      "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml " <>
+        "--target-dir=./target -- #{refused_namespace}"
+
+    {port, _command} =
+      Flezha.Service.PortPilot.open_port(command,
+        transport: :quic,
+        env: [
+          {"FLEZHA_QUIC_CLIENT_CERT", "/nonexistent/client.pem"},
+          {"FLEZHA_QUIC_CLIENT_KEY", "/nonexistent/client.key"}
+        ]
+      )
+
+    try do
+      refute_receive {:runner_connected_event, {^refused_namespace, _}}, 8_000
+      assert FleetManager.active_runners(refused_namespace) == []
+    after
+      Flezha.Service.EventManager.rem_handler(:runner_connected_event)
+      if port_alive?(port), do: Port.close(port)
+    end
+  end
+
+  defp port_alive?(port), do: Port.info(port) != nil
 end

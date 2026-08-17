@@ -7,18 +7,31 @@ defmodule Flezha.AuthZ do
   effect. The function returns `:ok` or
   `{:error, {:forbidden, reason}}`.
 
-  While `:authn_authz, :enabled` is `false` (the upgrade default
-  until bootstrap is claimed), `authorize/3` returns `:ok`
-  unconditionally — preserving pre-change behaviour without any
-  caller changes. Once enabled, every call is policy-checked against
-  the role binding owned by `Flezha.AuthZ.RoleStore`.
+  Enforcement is the default posture (`enforcement_posture/0`):
+  `authorize/3` returns `:ok` unconditionally only under the explicit
+  configuration opt-out (`FLEZHA_AUTHZ_ENABLED=false`, warned on every
+  boot). On a boot where the bootstrap has not been claimed yet, gated
+  verbs refuse with `:bootstrap_pending` while dataflow continues;
+  once claimed, every call is policy-checked against the role binding
+  owned by `Flezha.AuthZ.RoleStore`.
 
   Every denial emits a `:event` signal `:authorization_denied` on the
   `:platform_authz` source so downstream audit / observability tooling
   can record refused attempts.
+
+  ## The `:internal` caller source
+
+  `source: :internal` is pre-authorized and reserved for calls
+  originating inside the controller's own BEAM. No wire- or CLI-facing
+  code path constructs it: `CliManager` stamps `:cli` (identity from a
+  verified token only) and the runner connect seam stamps `:sdk`
+  (identity from the authenticated connection's namespace handshake).
+  The only way to present `:internal` from outside is arbitrary BEAM
+  eval over distribution, which the provisioned release cookie gates —
+  the same trust boundary as node ownership.
   """
 
-  alias Flezha.AuthZ.{Namespace, Policy, Principal, RoleStore, Scope}
+  alias Flezha.AuthZ.{AuthState, Config, Namespace, Policy, Principal, RoleStore, Scope}
   alias Flezha.Observability.{Bus, Signal}
 
   @source :platform_authz
@@ -41,6 +54,7 @@ defmodule Flezha.AuthZ do
           | :namespace_mismatch
           | :cross_namespace_admin_denied
           | :invalid_scope
+          | :bootstrap_pending
 
   @doc """
   Authorize an action against a caller context and a scope.
@@ -53,10 +67,51 @@ defmodule Flezha.AuthZ do
   @spec authorize(caller_context(), action(), Scope.t()) ::
           :ok | {:error, {:forbidden, forbid_reason()}}
   def authorize(caller_context, action, scope) do
-    if enabled?() do
-      do_authorize(caller_context, action, scope)
-    else
-      :ok
+    case enforcement_posture() do
+      :open ->
+        :ok
+
+      :enforced ->
+        do_authorize(caller_context, action, scope)
+
+      :bootstrap_pending ->
+        authorize_bootstrap_pending(caller_context, action, scope)
+    end
+  end
+
+  @doc """
+  The effective enforcement posture:
+
+    * `:open` — the explicit configuration opt-out; every call is allowed.
+    * `:bootstrap_pending` — enforcement is configured on but no
+      `admin@_system` claim exists yet: gated verbs refuse (naming the
+      bootstrap procedure) while dataflow — internal machinery and
+      runner connections over the authenticated transport — continues.
+    * `:enforced` — the bootstrap was claimed; full policy checks apply.
+  """
+  @spec enforcement_posture() :: :open | :bootstrap_pending | :enforced
+  def enforcement_posture() do
+    cond do
+      not Config.config_enabled?() -> :open
+      AuthState.enabled?() -> :enforced
+      true -> :bootstrap_pending
+    end
+  end
+
+  # An un-bootstrapped upgrade must not take down pipelines, but must not be
+  # open either: only the controller's own machinery and transport-bound
+  # runner identities pass; every operator verb refuses naming the way in.
+  defp authorize_bootstrap_pending(caller_context, action, scope) do
+    case caller_context do
+      %{source: :internal} ->
+        :ok
+
+      %{source: :sdk, role: :runner} ->
+        do_authorize(caller_context, action, scope)
+
+      ctx ->
+        emit_denial(Map.get(ctx, :principal), :bootstrap_pending, action, scope)
+        {:error, {:forbidden, :bootstrap_pending}}
     end
   end
 
@@ -97,12 +152,7 @@ defmodule Flezha.AuthZ do
   """
   @spec enabled?() :: boolean()
   def enabled?() do
-    runtime_enabled = Flezha.AuthZ.AuthState.enabled?()
-
-    config_enabled =
-      Application.get_env(:flezha, :authn_authz, []) |> Keyword.get(:enabled, false)
-
-    config_enabled and runtime_enabled
+    Config.config_enabled?() and AuthState.enabled?()
   end
 
   # ---------- Internal ----------

@@ -126,6 +126,40 @@ pub fn escape_rpc_arg(value: &str) -> String {
     value.replace('"', "\\\"")
 }
 
+/// The caller's identity token: `--token <t>` flag, else the FLEZHA_TOKEN
+/// environment variable. The CLI process resolves it (the controller's own
+/// env is NOT the caller's) and threads it into every gated verb's opts.
+pub fn auth_token(args: &[String]) -> Option<String> {
+    if let Some(t) = extract_param(args, "--token", "--token") {
+        if !t.is_empty() {
+            return Some(t);
+        }
+    }
+
+    env::var("FLEZHA_TOKEN").ok().filter(|v| !v.is_empty())
+}
+
+/// Elixir keyword-list fragment carrying the identity token for a CliManager
+/// wrapper's `opts` parameter: `[token: "…"]`, or `[]` when unauthenticated.
+pub fn token_opts_fragment(args: &[String]) -> String {
+    match auth_token(args) {
+        Some(t) => format!("[token: \"{}\"]", escape_rpc_arg(&t)),
+        None => "[]".to_string(),
+    }
+}
+
+/// JSON opts object (as an Elixir string literal) for wrappers taking an
+/// `opts_json` argument: `"{\"token\": \"…\"}"`, or `"{}"`.
+pub fn token_opts_json_literal(args: &[String]) -> String {
+    match auth_token(args) {
+        Some(t) => {
+            let json = serde_json::json!({ "token": t }).to_string();
+            serde_json::Value::String(json).to_string()
+        }
+        None => "\"{}\"".to_string(),
+    }
+}
+
 pub fn get_json(slice: &[String], long_key: &str, short_key: &str) -> String {
     let mut json = String::from("");
 
@@ -552,6 +586,23 @@ mod tests {
         let args = v(&["--app-data-root=/srv/flezha"]);
         let got = resolve_app_data_root(&args, None);
         assert_eq!(got, PathBuf::from("/srv/flezha"));
+    }
+
+    /// A token with a quote must not break out of the Elixir keyword literal.
+    #[test]
+    fn token_opts_fragment_uses_the_flag_and_escapes() {
+        let args = v(&["--token", "abc\"def"]);
+        assert_eq!(token_opts_fragment(&args), "[token: \"abc\\\"def\"]");
+    }
+
+    #[test]
+    fn token_opts_json_literal_is_a_decodable_elixir_string() {
+        let args = v(&["--token", "flzt_abc"]);
+        let literal = token_opts_json_literal(&args);
+        // The literal itself is a JSON string whose content is a JSON object.
+        let inner: String = serde_json::from_str(&literal).expect("outer string");
+        let parsed: serde_json::Value = serde_json::from_str(&inner).expect("inner object");
+        assert_eq!(parsed["token"], "flzt_abc");
     }
 
     #[test]

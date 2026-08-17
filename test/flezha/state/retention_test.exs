@@ -131,7 +131,7 @@ defmodule Flezha.State.RetentionTest do
 
       assert Completion.exists?("bnd_live")
       refute Completion.exists?("bnd_old")
-      refute File.dir?(Path.join(root, "bnd_old"))
+      refute File.dir?(Path.join([root, "_system", "bnd_old"]))
     end
   end
 

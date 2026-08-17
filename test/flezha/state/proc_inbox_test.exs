@@ -30,7 +30,7 @@ defmodule FlezhaTest.State.ProcInboxTest do
     inst = instance_id()
 
     assert Registry.inbox_path(inst) ==
-             Path.join([Registry.state_root(), inst, inst, "inbox.wal"])
+             Path.join([Registry.state_root(), "_system", inst, inst, "inbox.wal"])
 
     assert Registry.wal_path(Registry.inbox_id(inst)) == Registry.inbox_path(inst)
   end
