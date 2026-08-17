@@ -3,7 +3,6 @@
 ## Purpose
 TBD - created by archiving change sdk-graph-authoring-api. Update Purpose after archive.
 ## Requirements
-
 ### Requirement: Producer-first stream-handle graph builder
 Both SDKs SHALL author operative topologies through a producer-first fluent builder in which `.into(<procedure>)` wires a consumer onto the current stream and returns the **consumed procedure's own output stream handle**. `input(<type>, "name").into(A)` SHALL wire the entry consumer and return A's output stream; `stream.into(B)` SHALL add B as a consumer of `stream`'s channel and return B's output stream, so a linear pipeline is a single chained expression. The handle SHALL be a lightweight, copyable reference into the operative's topology builder (Java: an object; Rust: a `Copy` value), and per-channel configuration (`codec()`, `keyed()`, `onFull(...)`, `retryMax(...)`, `retryBackoffMs(...)`, `named(...)`) SHALL remain available on the handle, chainable in any order relative to consumer wiring. Handles SHALL be invalidated when the topology freezes at registration; using one afterwards SHALL fail with an error naming the operative.
 
@@ -175,3 +174,33 @@ The graph builder's semantics — handle model, branching, node identity, DAG ru
 
 - **WHEN** the shared e2e branching fixture topology is authored in both SDKs with the new builder
 - **THEN** both runtimes SHALL produce the same sink outputs, journal shapes, and compensation order for the same scenario script
+
+### Requirement: Latest-document router building block
+
+The graph builder SHALL offer `route_latest(document_stream, traffic_stream, key_fn)` (Rust) / `routeLatest(documentStream, trafficStream, keyFn)` (Java), expanding to a single-entity SDK-packaged procedure that turns an operative-wide document stream into per-key keyed deliveries. Its journaled state SHALL be `{latest document, version, delivered: key → last delivered version}`. A received document byte-identical to the retained one SHALL be inert; a differing document SHALL replace it and increment the version. On each traffic item, the procedure SHALL emit the retained document keyed under `key_fn(item)` if and only if that key's delivered version is behind the current version, then record the delivery — so each key receives each distinct document version exactly once, always on that key's own traffic, and keys never observed in traffic receive nothing. The expansion SHALL use only existing primitives (merge, single-entity procedure, journaled state, keyed emit): no new runtime semantics, wire format, or replay path. State mutations SHALL ride the standard change journal and satisfy the replay-determinism harness.
+
+#### Scenario: Changed document reaches each key on its own next traffic
+
+- **WHEN** a new document arrives and traffic items for keys `A` and `B` follow
+- **THEN** the document SHALL be emitted exactly once keyed `A` (on `A`'s first subsequent item) and exactly once keyed `B` (on `B`'s first subsequent item)
+
+#### Scenario: Repeated identical document is inert
+
+- **WHEN** the same document arrives again (e.g. a re-poll after reconnect) and traffic continues
+- **THEN** no delivery SHALL be emitted for any key that already received it
+
+#### Scenario: A first-seen key receives the current document once
+
+- **WHEN** traffic introduces a key never seen before while a document is retained
+- **THEN** the retained document SHALL be emitted keyed under the new key on that first item, and not again on the following items
+
+#### Scenario: Only keys proven by traffic are emitted
+
+- **WHEN** a document changes while some key produces no further traffic
+- **THEN** no emission SHALL be made for that key — there is no remembered-set fan-out
+
+#### Scenario: Router state replays deterministically
+
+- **WHEN** the packaged procedure's journal is replayed over its inputs by the replay-determinism harness
+- **THEN** the rebuilt `{document, version, delivered}` state SHALL equal the live run's state
+

@@ -151,7 +151,10 @@ public final class ActivationDispatcher {
                 for (ProcedureDescriptor desc : topology.procedures()) {
                     Procedure<?, ?, ?, ?, ?, ?> instance = instantiate(desc);
                     routing.add(instance);
-                    codecs.add(new KryoCodec(instance.kryoTypes()));
+                    // The descriptor's list, not the instance's: it starts as a
+                    // copy of `kryoTypes()` and is where the wiring adds a type
+                    // only the wiring knows (a `routeLatest` document class).
+                    codecs.add(new KryoCodec(desc.kryoTypes()));
                     timerPolicies.add(TimerPolicy.of(instance.maxTimersPerEntity(), desc.name(), desc.clockType()));
                 }
             }

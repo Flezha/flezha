@@ -57,6 +57,87 @@ public interface ChannelBuilder {
     <I> Merge<I> merge(@Nonnull Class<I> type);
 
     /**
+     * Turn an operative-wide document stream into per-key deliveries: every key
+     * seen on {@code traffic} receives each distinct document exactly once, on
+     * that key's own next traffic item, as a {@link RoutedDocument} the consumer
+     * keys by.
+     *
+     * <pre>{@code
+     * EntryChannel<Thresholds> thresholds = c.input(Thresholds.class, "thresholds");
+     * EntryChannel<Trade> trades = c.input(Trade.class, "trades");
+     * Stream<RoutedDocument<Thresholds>> routed =
+     *         c.routeLatest(Thresholds.class, thresholds, trades, Trade::symbol);
+     *
+     * c.merge(DetectorInput.class)
+     *     .from(trades, DetectorInput::ofTrade)
+     *     .from(routed, DetectorInput::ofThresholds)
+     *     .keyBy(DetectorInput::key)
+     *     .into(Detector.class);
+     * }</pre>
+     *
+     * <p>Why this shape rather than a broadcast: a dynamically-keyed procedure
+     * cannot receive one — every key function is total, and inside a partitioned
+     * member a computed key is admitted against that member's key-group range.
+     * Delivering by fanning out over a <i>remembered</i> key set would emit keys
+     * this member may no longer own (a rescale moved them, or one out-of-range
+     * item was seen during a reconcile window), and every such delivery parks
+     * against the partition guard. Delivering on the key's own traffic makes
+     * over-delivery impossible by construction: the only keys emitted are keys
+     * whose traffic just proved this member owns them.
+     *
+     * <p>Contract:
+     *
+     * <ul>
+     *   <li>a document {@link Object#equals equal} to the retained one is
+     *       <b>inert</b> — a re-poll after a reconnect re-delivers the same
+     *       document and nothing downstream sees it;
+     *   <li>a differing document replaces it and bumps the version, so every key
+     *       is owed one delivery again;
+     *   <li>a key never seen in traffic receives <b>nothing</b>;
+     *   <li><b>latency is one tick per key</b>: a key learns of a new document
+     *       on its next traffic item, not when the document arrives. That is the
+     *       price of the ownership-safety construction above.
+     * </ul>
+     *
+     * <p>The document is kept <b>opaque</b> — retained and compared, never
+     * parsed — so parsing (and its failure mode) stays with the consumer exactly
+     * as when the consumer read the document stream directly. Declare
+     * {@code equals} on it accordingly: a document type without value equality
+     * makes every arrival a new version.
+     *
+     * <p>The block expands to a merge into ONE SDK-packaged single-entity
+     * procedure whose {@code {document, version, delivered}} state rides the
+     * standard change journal: authoring sugar over existing primitives, not a
+     * runtime feature. The node is named {@code route_latest} like any procedure
+     * node, so a second router in one operative needs
+     * {@link #routeLatest(Class, EdgeStream, EdgeStream, Function, String)} to
+     * name it.
+     *
+     * @param documentType the document's runtime type — the routed payload's
+     *     {@code Class} token, and the registration the retained document's
+     *     journaled state needs
+     */
+    @Nonnull
+    <D, T> Stream<RoutedDocument<D>> routeLatest(
+            @Nonnull Class<D> documentType,
+            @Nonnull EdgeStream<D> documents,
+            @Nonnull EdgeStream<T> traffic,
+            @Nonnull Function<T, String> keyFn);
+
+    /**
+     * {@link #routeLatest(Class, EdgeStream, EdgeStream, Function)} with an
+     * explicit node identity, so one operative may carry several routers (the
+     * node-identity rule makes unnamed mentions of one class one node).
+     */
+    @Nonnull
+    <D, T> Stream<RoutedDocument<D>> routeLatest(
+            @Nonnull Class<D> documentType,
+            @Nonnull EdgeStream<D> documents,
+            @Nonnull EdgeStream<T> traffic,
+            @Nonnull Function<T, String> keyFn,
+            @Nonnull String nodeName);
+
+    /**
      * Opt this Operative into the <b>effectively-once output tier</b>: each
      * invocation's state changes, plugin outputs and consumed input offset ship
      * as ONE {@code entity_effect_record}, which the controller persists as one

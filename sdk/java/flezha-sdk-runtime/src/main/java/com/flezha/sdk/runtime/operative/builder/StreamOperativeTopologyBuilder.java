@@ -8,6 +8,7 @@ import com.flezha.sdk.channel.EdgeStream;
 import com.flezha.sdk.channel.EntryChannel;
 import com.flezha.sdk.channel.Merge;
 import com.flezha.sdk.channel.OverflowPolicy;
+import com.flezha.sdk.channel.RoutedDocument;
 import com.flezha.sdk.channel.Stream;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.operative.StreamOperativeConfigurationException;
@@ -142,6 +143,64 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     public <I> Merge<I> merge(@Nonnull Class<I> type) {
         checkMutable();
         return new MergeImpl<>(type);
+    }
+
+    @Override
+    @Nonnull
+    public <D, T> Stream<RoutedDocument<D>> routeLatest(
+            @Nonnull Class<D> documentType,
+            @Nonnull EdgeStream<D> documents,
+            @Nonnull EdgeStream<T> traffic,
+            @Nonnull Function<T, String> keyFn) {
+        return wireRouteLatest(documentType, documents, traffic, keyFn, null);
+    }
+
+    @Override
+    @Nonnull
+    public <D, T> Stream<RoutedDocument<D>> routeLatest(
+            @Nonnull Class<D> documentType,
+            @Nonnull EdgeStream<D> documents,
+            @Nonnull EdgeStream<T> traffic,
+            @Nonnull Function<T, String> keyFn,
+            @Nonnull String nodeName) {
+        return wireRouteLatest(documentType, documents, traffic, keyFn, nodeName);
+    }
+
+    /**
+     * The expansion both {@code routeLatest} spellings share: the key function
+     * is an edge transform on the traffic stream (so the traffic payload is
+     * replaced by its key and never reaches the router), and the two streams are
+     * one merge into the packaged procedure.
+     */
+    @SuppressWarnings("unchecked")
+    private <D, T> Stream<RoutedDocument<D>> wireRouteLatest(
+            Class<D> documentType,
+            EdgeStream<D> documents,
+            EdgeStream<T> traffic,
+            Function<T, String> keyFn,
+            String nodeName) {
+        checkMutable();
+        // Resolve the node before wiring — `registerNode` is by identity, so the
+        // merge below returns this same node — and register the document's own
+        // class with its state codec: the router retains the document in
+        // journaled state but is generic over its type, so only the wiring can
+        // name it. That is what the `documentType` token is for.
+        registerRouterDocumentType(registerNode(LatestDocumentRouter.class, nodeName), documentType);
+        EdgeStream<String> keys = traffic.map(String.class, keyFn);
+        MergeImpl<LatestDocumentRouter.Input> merge = new MergeImpl<>(LatestDocumentRouter.Input.class);
+        merge.from(documents, LatestDocumentRouter.Input::ofDocument);
+        merge.from(keys, LatestDocumentRouter.Input::ofTrafficKey);
+        return (Stream<RoutedDocument<D>>) (Stream<?>) merge.wire(LatestDocumentRouter.class, nodeName);
+    }
+
+    private void registerRouterDocumentType(int node, Class<?> documentType) {
+        ProcedureEntry entry = procedures.get(node);
+        if (entry.kryoTypes.contains(documentType)) {
+            return;
+        }
+        List<Class<?>> types = new ArrayList<>(entry.kryoTypes);
+        types.add(documentType);
+        entry.kryoTypes = List.copyOf(types);
     }
 
     @Override
@@ -1094,6 +1153,12 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
             return wire(procedure, nodeName);
         }
 
+        /**
+         * Close the merge on its consumer, named or not — the one body behind
+         * both {@code into} spellings, and the seam a packaged building block
+         * ({@code routeLatest}) closes its own merge with instead of re-deriving
+         * the named/unnamed dispatch.
+         */
         private <O> Stream<O> wire(Class<? extends Procedure<I, ?, O, ?, ?, ?>> procedureClass, String nodeName) {
             checkMutable();
             // Register the consumer before its sources — as Rust's `Merge::wire`

@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Added — `route_latest`, the latest-document router building block (`add-route-latest-building-block`)
+
+`c.route_latest(documents, traffic, key_fn)` (Rust) /
+`c.routeLatest(Doc.class, documents, traffic, keyFn)` (Java) turns an
+operative-wide document stream into per-key deliveries: every key seen on the
+traffic stream receives each distinct document exactly once, on that key's own
+next traffic item. Rust returns a stream of `(key, document)` pairs, Java a
+stream of `RoutedDocument<D>`; the consumer keys by that key.
+
+It exists because a keyed procedure cannot receive a broadcast — every keying
+declaration is total, and inside a partitioned member the computed key is
+admitted against that member's key-group range — so this shape was being
+re-derived by every application that hit the wall. The subtle part is the one
+now encoded in the SDK: the router delivers on the key's **own traffic**, never
+by fanning out over a remembered key set, because a remembered set outlives
+key-group ownership (a rescale, or one out-of-range item seen during a reconcile
+window, would make later deliveries park against the partition guard).
+Deliver-on-own-traffic makes over-delivery impossible by construction.
+
+The price, documented and deliberate: **one tick of latency per key** — a key
+learns of a new document on its next traffic item, and a key whose traffic has
+stopped is never delivered to. A full broadcast primitive (retained documents,
+delivery to late-born Entities, rescale-time replay) was considered and
+rejected: it would add machinery to exactly the recovery paths with the worst
+incident history, and the deliver-on-own-traffic construction covers those cases
+without it.
+
+Sugar, not a runtime feature: the block expands to a merge into one packaged
+single-entity procedure whose `{document, version, delivered}` state rides the
+standard change journal and passes the replay-determinism harness. No new
+runtime semantics, no wire change, no new replay path. A document equal to the
+retained one is inert (so a document source's re-poll after a reconnect is
+silent downstream); a differing one bumps the version and every key is owed one
+delivery again. The document is never parsed — parsing stays with the consumer.
+
+Java-side notes: the document `Class` token is required because the router
+retains the document in journaled state and only the wiring knows its type; the
+Kryo state codec is now built from the procedure *descriptor*'s type list (which
+starts as a copy of `kryoTypes()`, so nothing else changes) rather than from a
+freshly instantiated Procedure, which is what lets the wiring register that
+type.
+
 ### BREAKING — one plugin-sink method: `sink` + `sealed` (`unify-plugin-sink-api`)
 
 `also_output(name)` / `also_output_with(name, f)` and the terminal

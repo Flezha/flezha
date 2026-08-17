@@ -232,6 +232,66 @@ requires a state parameter — declaring it on a stateless procedure is a compil
 error. The restore payload stays runtime-applied after `init_state` returns, so
 the `init` function never sees it.
 
+### 4.1 Reaching every keyed Entity: the `route_latest` building block
+
+A keyed procedure cannot receive a broadcast. Both keying declarations are
+total — `entities_for` names the Entities an input belongs to, `.key_by(f)`
+names exactly one — and inside a partitioned member the computed key is
+admitted against that member's key-group range. So "one operative-wide
+document that every keyed Entity must eventually see" (a threshold table, a
+feature flag, a config document) has no direct spelling, and every application
+that hits the wall invents the same bridge.
+
+The bridge is packaged as one builder method:
+
+```rust
+let routed = c.route_latest(thresholds, trades, |t: &Trade| t.symbol.clone());
+```
+
+```java
+Stream<RoutedDocument<Thresholds>> routed =
+        c.routeLatest(Thresholds.class, thresholds, trades, Trade::symbol);
+```
+
+It expands to a merge into ONE SDK-packaged single-entity procedure (node
+identity `route_latest`) whose journaled state is
+`{document, version, delivered: key → version}`, and it returns that node's
+output stream: a `(key, document)` pair in Rust, a `RoutedDocument<D>` record in
+Java (no tuples, and the runtime needs a `Class` token for the routed payload).
+The consumer keys by that key, which is what makes each delivery reach one
+Entity. Pure expansion, per §1: merge, single-entity procedure, journaled state
+— no new runtime semantics, no wire change, no new replay path.
+
+**Deliver on the key's own traffic — never a remembered-set fan-out.** This is
+the load-bearing rule, and the reason the block exists rather than a
+documentation note. A router that remembered the keys it had seen and fanned a
+new document out over them would emit keys the member may no longer own: a
+rescale moves keys away, and a single out-of-range item seen during a reconcile
+window would poison the set permanently. Every such delivery then parks against
+the partition guard. Delivering only on a key's own next traffic item makes
+over-delivery impossible *by construction* — the only keys emitted are keys
+whose traffic just proved this member owns them.
+
+**Latency is one tick per key**, and that is the price of the construction: a
+key learns of a new document on its next traffic item, not when the document
+arrives. A key whose traffic has stopped is never delivered to — the same
+property stated from the other side, and the reason there is no push to idle
+keys, no retained broadcast to late-born Entities and no rescale-time replay to
+specify.
+
+**The document is opaque.** It is retained and compared (`Eq` / `equals`) and
+never parsed, so parsing and its failure mode stay with the consumer exactly as
+when the consumer read the document stream directly. A document equal to the
+retained one is inert, which is what absorbs the re-poll a document source
+performs after every reconnect; a differing one bumps the version, so every key
+is owed one delivery again. A document type without value equality therefore
+makes every arrival a new version.
+
+Two routers in one operative need the node-named spelling
+(`route_latest_named(.., "primary")` / `routeLatest(.., "primary")`) — by §10 of
+`sdk_naming_conventions.md` two unnamed mentions of one class are one node, and
+here that means one retained document shared between them.
+
 ## 5. Single-procedure auto-wiring and registration
 
 Exactly **one** topology may be auto-wired: a single procedure from a controller
