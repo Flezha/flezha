@@ -1,12 +1,13 @@
 # operative-kind-naming Specification
 
+<!-- kind-naming-record:begin -->
+
 ## Purpose
 
 The naming contract for the two operative kinds. They are `stream` and `workflow`; the words `bounded` and `unbounded` are retired as kind names because they describe a property of the *data* while the distinction here is the *execution model* — and `bounded` was outright false for a durable `PerInput` operative, whose input is unbounded and whose iteration is the only bounded thing. This capability owns the identifier convention across SDK types, kind atoms, wire messages, CLI arguments, env vars and file paths; the rule separating the kind sense from the surviving capacity and plain-English senses; the machine-readable allowlist of preserved occurrences; and the CI gate that fails a reintroduction.
 
 ## Requirements
 
-<!-- kind-naming-record:begin -->
 ### Requirement: The kind sense of `bounded` / `unbounded` is separated from the capacity and plain-English senses
 
 The words "bounded" and "unbounded" carry three distinct senses in this repository, and the rename SHALL apply to exactly one of them.

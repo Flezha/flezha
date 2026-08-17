@@ -122,3 +122,18 @@ diagnostics. Two unnamed mentions of one class are the same node (which is how
 fan-in is spelled); node identities are unique per operative. Channel names
 auto-derive from the producer node's identity, so renaming a language class
 never changes an on-disk or on-wire name — identity strings are hand-written.
+
+### 11. A new diagnostic target ships with a `DEFAULT_DIRECTIVES` entry in the same change
+
+The Rust SDK's diagnostic-target inventory is public API:
+`flezha_runner::diag::DEFAULT_DIRECTIVES` is the `EnvFilter` directive list
+applications filter with instead of enumerating SDK internals. Emitting on a
+tracing target the constant does not pass — a new `flezha::*` family, or a
+new crate whose module path untargeted events inherit — silently discards
+those events in every application using the exported defaults. So a change
+introducing a diagnostic target extends `DEFAULT_DIRECTIVES` in the same
+change; the directive-coverage tests in `sdk/rust/tests/diag.rs` enforce it
+by sweeping the SDK crates' emit sites and failing on any target the
+directives discard at `warn`. (The Java SDK is exempt: SLF4J logger names
+inherit the root level, so there is no enumerate-or-discard filter to keep
+in sync.)

@@ -20,8 +20,8 @@ import subprocess
 import sys
 
 ALLOWLIST = "scripts/kind-naming-allowlist.txt"
-# The gate's own two files carry the retired names as data.
-SELF = {ALLOWLIST, "scripts/check-kind-naming.sh"}
+# The gate's own files carry the retired names as data.
+SELF = {ALLOWLIST, "scripts/check-kind-naming.sh", ".github/workflows/naming.yml"}
 BINARY_EXT = {
     ".jar", ".so", ".dll", ".dylib", ".png", ".jpg", ".gif", ".ico", ".pdf",
     ".class", ".zip", ".gz", ".fpz", ".dets", ".wal", ".bin",

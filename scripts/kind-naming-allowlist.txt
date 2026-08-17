@@ -72,3 +72,4 @@ sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.jav
 *:(grow(s|ing)?|count is) unbounded
 openspec/specs/runner-controller-connection-healing/spec.md:bounded `:start_operative` retry
 
+docs/remote_durability_tier.md:visible, bounded
