@@ -2,6 +2,7 @@ package com.flezha.sdk.procedure;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 import javax.annotation.Nonnull;
 
 /**
@@ -105,6 +106,17 @@ public interface ProcedureCtx {
     }
 
     /**
+     * The key this Entity was routed by — the one {@code initState} was handed
+     * — or empty for a single-entity Procedure. It is part of the invocation's
+     * identity, so reading it is replay-stable; a keyed-channel emit that
+     * supplies no key of its own is emitted under it.
+     */
+    @Nonnull
+    default Optional<String> entityKey() {
+        return Optional.empty();
+    }
+
+    /**
      * Register an <b>event-time</b> timer at an absolute timestamp, returning
      * that timestamp. It fires when this Entity's event-time high-water reaches
      * it — so an Entity that stops receiving input never fires one, however much
@@ -155,10 +167,12 @@ public interface ProcedureCtx {
 
     /**
      * Emit on a channel declared {@code .keyed()}, supplying the output's
-     * natural key. The runtime stamps {@code flz.key} (alongside
-     * {@code flz.entity} and {@code flz.seq}) on the plugin frame, which is
-     * what lets a keyed sink absorb a replayed emit as an idempotent upsert
-     * rather than a duplicate row.
+     * natural key — for the output whose key differs from the key its Entity
+     * was routed by, since {@link #emit} already carries that one. The runtime
+     * stamps {@code flz.key} (alongside {@code flz.entity} and
+     * {@code flz.seq}) on the plugin frame, which is what lets a keyed sink
+     * absorb a replayed emit as an idempotent upsert rather than a duplicate
+     * row.
      *
      * <p>The key must itself be replay-stable by the determinism contract —
      * derived from the input, the state, or {@code ctx}, never from an ambient
@@ -184,6 +198,12 @@ public interface ProcedureCtx {
      * <p>Plugin-bound channels: the value is serialized synchronously via the
      * channel's serializer and queued for the wire with
      * {@code metadata = {"channel": "<name>"}}.
+     *
+     * <p>Channels declared {@code .keyed()}: the emit carries this Entity's own
+     * key ({@link #entityKey}) — equal to the routing key by construction, so
+     * it cannot drift from it. A single-entity Procedure has no such key and
+     * throws {@link ProcedureException.KeyRequiredOnKeyedChannel}; an output
+     * whose natural key differs from the Entity's uses {@link #emitKeyed}.
      */
     <C> void emit(@Nonnull C value) throws ProcedureException;
 

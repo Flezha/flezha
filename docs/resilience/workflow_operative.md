@@ -49,8 +49,8 @@ fn procedures(c: &ChannelBuilder) {
         .named("records")
         .codec();
     // One channel, two consumers: Enrich and Archive are independent branches.
-    records.into::<Enrich>().named("out").output("sink");
-    records.into::<Archive>().named("cold").output("glacier");
+    records.into::<Enrich>().named("out").sink("sink");
+    records.into::<Archive>().named("cold").sink("glacier");
 }
 ```
 

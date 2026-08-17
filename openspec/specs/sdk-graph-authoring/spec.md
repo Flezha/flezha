@@ -13,12 +13,12 @@ The payload type of every non-entry channel SHALL be taken from the producing pr
 
 #### Scenario: Linear chain is one expression
 
-- **WHEN** an operative declares `c.input(OrderEvent.class, "orders").into(Validate.class).into(Alert.class).output("alerts")` (Java) or the equivalent `c.input::<OrderEvent>("orders").into::<Validate>().into::<Alert>().output("alerts")` (Rust)
+- **WHEN** an operative declares `c.input(OrderEvent.class, "orders").into(Validate.class).into(Alert.class).sink("alerts")` (Java) or the equivalent `c.input::<OrderEvent>("orders").into::<Validate>().into::<Alert>().sink("alerts")` (Rust)
 - **THEN** registration SHALL succeed with the topology entry→Validate→Alert→sink, and the channel between Validate and Alert SHALL carry Validate's declared `Output` type with no type token in the declaration
 
 #### Scenario: Transforms sit between consumers without adding nodes
 
-- **WHEN** an operative declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).keyBy(Trade::symbol).into(Candle.class).output("sink")`
+- **WHEN** an operative declares `c.input(Trade.class, "trades").filter(t -> t.qty() > 1.0).keyBy(Trade::symbol).into(Candle.class).sink("candles")`
 - **THEN** registration SHALL succeed with a topology containing exactly one Procedure node, and the entry→Candle edge SHALL carry the predicate and the key function
 
 #### Scenario: Type-mismatched consumer is refused
@@ -59,7 +59,7 @@ A channel created by wiring out of a node SHALL be named by that node's identity
 
 #### Scenario: Derived name ships on the wire
 
-- **WHEN** procedure `Validate` (whose `name()` returns `"validate"`) is wired via `.alsoOutput("audit_sink")` with no `.named(...)` override
+- **WHEN** procedure `Validate` (whose `name()` returns `"validate"`) is wired via `.sink("audit_sink")` with no `.named(...)` override
 - **THEN** frames delivered to the `audit_sink` plugin SHALL carry `channel = "validate"` in their metadata
 
 #### Scenario: named() overrides the derived name
@@ -131,18 +131,34 @@ The shared graph-shape rule for both SDKs SHALL be: one **or more** entry channe
 - **WHEN** an operative declares a `String` or `byte[]` entry channel
 - **THEN** delivery behavior (passthrough / UTF-8 decode, invalid-UTF-8 drop-and-log) SHALL be unchanged from the pre-change contract
 
-### Requirement: Destination-neutral `output` / `alsoOutput` vocabulary
-The plugin-bound terminal SHALL be `output(name[, serializer])` (Rust: `output`) and the hybrid tap SHALL be `alsoOutput(name[, serializer])` (Rust: `also_output` / `also_output_with`). `alsoOutput(name)` without a serializer SHALL use the same default serialization rules as `output` (passthrough for bytes, UTF-8 for strings, JSON otherwise). The former `toPlugin` / `to_plugin` / `alsoToPluginWith` / `also_to_plugin_with` method names SHALL NOT exist. The rename SHALL be scoped to user-called builder methods: wire frames, descriptor fields, plugin bindings, controller configuration, and error identifiers keep their existing names.
+### Requirement: Single `sink` egress with optional `sealed` terminator
 
-#### Scenario: output replaces toPlugin
+Plugin egress SHALL be declared by exactly one builder method: `sink(name)` / `sink(name, serializer)` in Java and `sink(name)` / `sink_with(name, serializer)` in Rust. `sink` SHALL bind the channel to the named plugin sink and SHALL return the stream handle, so inter-procedure consumers MAY be wired after it — a channel is terminal by having no further wiring, not by method choice. `sink(name)` without a serializer SHALL apply the same default serialization rules as the removed `output` (passthrough for bytes, UTF-8 for strings, default JSON otherwise). The name SHALL be destination-neutral: it identifies the attachment point the controller routes to by channel-name metadata; several channels MAY name the same plugin sink. A separate optional `.sealed()` terminator SHALL return a non-chainable handle and add no topology or runtime difference — it is a compile-time statement that no consumer follows. The former `output` / `alsoOutput` / `also_output` / `also_output_with` spellings SHALL NOT exist in either SDK; there SHALL be no coexistence period. The rename SHALL be scoped to user-called builder methods: wire frames, descriptor fields, plugin bindings, controller configuration, and error identifiers keep their existing names.
 
-- **WHEN** a stream declares `.output("pager_sink")`
-- **THEN** the channel SHALL be plugin-bound to `pager_sink` with behavior identical to the former `toPlugin("pager_sink")`, and no `toPlugin`/`to_plugin` method SHALL exist on any builder type
+#### Scenario: sink is hybrid by default
 
-#### Scenario: alsoOutput without a serializer uses defaults
+- **WHEN** a stream declares `.sink("indicators", serializer)` and a consumer is wired from the same handle afterwards
+- **THEN** each emitted value SHALL reach the typed consumer and, serialized once, the `indicators` plugin — identical to the former `alsoOutput` behavior
 
-- **WHEN** a stream of a JSON-serializable type declares `.alsoOutput("audit_sink")` with no serializer
-- **THEN** the tap SHALL publish the default-JSON bytes of each emitted value to `audit_sink`, and inter-procedure consumers SHALL receive the typed values unchanged
+#### Scenario: Terminal by construction
+
+- **WHEN** a stream declares `.sink("pager_sink")` and nothing further is wired from the handle
+- **THEN** the resulting topology SHALL be identical to the former `.output("pager_sink")` declaration
+
+#### Scenario: sealed refuses further consumers at compile time
+
+- **WHEN** user code attempts to wire a consumer from the handle returned by `.sink("audit").sealed()`
+- **THEN** the code SHALL fail to compile (Rust) / fail to type-check (Java) — and the sealed declaration's runtime topology SHALL be byte-identical to the same declaration without `.sealed()`
+
+#### Scenario: Old spellings do not exist
+
+- **WHEN** user code calls `.output(...)`, `.alsoOutput(...)`, or `.also_output_with(...)` against the new SDK
+- **THEN** the code SHALL fail to compile; no transitional alias SHALL exist
+
+#### Scenario: Wire metadata is unchanged
+
+- **WHEN** a channel formerly declared with `alsoOutput("indicators", s)` is redeclared with `sink("indicators", s)`
+- **THEN** frames delivered to the plugin SHALL be byte-identical, including the `channel` name metadata and record keying
 
 ### Requirement: The channel-declaration API is replaced with no coexistence
 `ChannelDecl`, `.from(...)`, and the typed-and-named inter-procedure `channel(<type>, "name")` declaration SHALL be removed from both SDKs' public surface in the same change that introduces the graph builder. There SHALL be no transitional period in which both APIs are usable.
@@ -153,7 +169,7 @@ The plugin-bound terminal SHALL be `output(name[, serializer])` (Rust: `output`)
 - **THEN** the code SHALL fail to compile — the methods do not exist
 
 ### Requirement: One contract across SDKs, per-language spelling allowed
-The graph builder's semantics — handle model, branching, node identity, DAG rule, fan-in accumulation, derived names, typed inputs, `output` vocabulary — SHALL be identical in Rust and Java, and the shared e2e matrix SHALL exercise one contract with no per-runtime branching. Per-language surface differences SHALL be limited to spelling (`Proc.class` vs turbofish, lambdas vs closures, `into(Proc.class, "name")` vs `into_named::<Proc>("name")`). Where Rust enforces a rule at compile time, Java SHALL enforce the same rule at registration with an error carrying the same diagnostic content.
+The graph builder's semantics — handle model, branching, node identity, DAG rule, fan-in accumulation, derived names, typed inputs, `sink` vocabulary — SHALL be identical in Rust and Java, and the shared e2e matrix SHALL exercise one contract with no per-runtime branching. Per-language surface differences SHALL be limited to spelling (`Proc.class` vs turbofish, lambdas vs closures, `into(Proc.class, "name")` vs `into_named::<Proc>("name")`). Where Rust enforces a rule at compile time, Java SHALL enforce the same rule at registration with an error carrying the same diagnostic content.
 
 #### Scenario: Same graph, both SDKs, same behavior
 

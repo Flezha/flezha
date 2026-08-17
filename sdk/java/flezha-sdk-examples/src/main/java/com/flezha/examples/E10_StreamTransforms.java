@@ -27,7 +27,7 @@ import java.util.Optional;
  *         .flatMap(Slot.class, E10::explode)              // one trade → four slots
  *         .keyBy(slot -> slot.symbol() + "@" + slot.tf()) // one Entity per slot
  *         .into(CandleProcedure.class)
- *         .output("candles");
+ *         .sink("candles");
  * }</pre>
  *
  * <p>The whole topology contains exactly ONE Procedure node. The transforms add
@@ -87,7 +87,7 @@ public final class E10_StreamTransforms {
                     .keyBy(slot -> slot.symbol() + "@" + slot.tf())
                     .into(CandleProcedure.class)
                     .keyed()
-                    .output("candles");
+                    .sink("candles");
         }
     }
 
@@ -164,10 +164,10 @@ public final class E10_StreamTransforms {
         public void run(Slot input, StateHandle<Candle, Tick> state, ProcedureCtx ctx) throws ProcedureException {
             state.apply(new Tick(input.price()));
             Candle candle = state.get();
-            // The Entity IS the candle, so the emit key is the Entity's key.
-            ctx.emitKeyed(
-                    input.symbol() + "@" + input.tf(),
-                    input.symbol() + " " + input.tf() + " h=" + candle.high + " l=" + candle.low);
+            // The Entity IS the candle, so the plain emit already carries the
+            // Entity's own key — `keyBy`'s value — and cannot drift from it.
+            // `emitKeyed` is for the output whose key is a different one.
+            ctx.emit(input.symbol() + " " + input.tf() + " h=" + candle.high + " l=" + candle.low);
         }
     }
 }

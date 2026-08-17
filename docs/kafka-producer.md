@@ -54,7 +54,7 @@ durable outbox identity stamps (`flz.entity`, `flz.seq` = the outbox seq
 `<record WAL seq>.<emit ordinal>`, `flz.epoch`). For those records the
 plugin:
 
-* uses **`flz.key`** (the `emit_keyed` natural key) as the Kafka message
+* uses **`flz.key`** (the emitting Entity's key, or `emit_keyed`'s) as the Kafka message
   key — stable partitioning across replays, latest-value-per-key semantics
   on compacted topics;
 * writes the full identity as the record header

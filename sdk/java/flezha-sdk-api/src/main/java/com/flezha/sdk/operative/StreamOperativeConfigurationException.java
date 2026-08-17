@@ -113,13 +113,12 @@ public class StreamOperativeConfigurationException extends RuntimeException {
 
     /**
      * Factory raised at {@code registerStream} time when a channel is declared
-     * with {@code alsoOutput(...)} more than once. Only one plugin sink
+     * with {@code sink(...)} more than once. Only one plugin sink
      * per channel is allowed; the first call registers it, the second fails.
      */
     public static StreamOperativeConfigurationException duplicatePluginSink(String channel) {
-        return new StreamOperativeConfigurationException(
-                "channel `" + channel + "` was declared with `alsoOutput(...)` "
-                        + "more than once; only one plugin sink per channel is allowed");
+        return new StreamOperativeConfigurationException("channel `" + channel + "` was declared with `sink(...)` "
+                + "more than once; only one plugin sink per channel is allowed");
     }
 
     /**

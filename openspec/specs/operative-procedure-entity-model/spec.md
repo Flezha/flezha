@@ -436,21 +436,21 @@ When a Channel connects two Procedures inside the same Operative, the SDK SHALL 
 - **THEN** the IndicatorProcedure's `run(...)` SHALL receive the same `Arc<Candle>` instance OhlcProcedure emitted (or an `Arc` to byte-identical content with no intermediate serialization step)
 
 ### Requirement: Plugin emission semantics
-Channels declared with `.output("name")` (pure-plugin) and channels declared with `.also_output_with("name", serializer)` / `.also_output("name")` (hybrid) — in **either** the Rust SDK or the Java SDK (`.output(...)` / `.alsoOutput(...)`) — SHALL both route a value through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1. A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
+Channels declared with `.sink("name")` / `.sink_with("name", serializer)` — in **either** the Rust SDK or the Java SDK (`.sink(...)`) — SHALL route a value, whether or not the channel also has inter-procedure consumers, through the agent's plugin layer using the channel name as the wire identifier. The numeric `plugin_group: u8` metadata field is removed from the wire format. The replacement metadata field SHALL be `channel: String` — the literal channel name as a string in v1. A per-channel integer fast-path (sending an interned `u32` instead of the string) MAY be added by a future change as an opt-in alternative, but SHALL NOT be in v1.
 
-For pure-plugin channels, the wire bytes are produced by the channel's `pluginSerializer`/`plugin_serializer` (set by `output(...)`). For hybrid channels, the wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_sink.serializer` (set by `alsoOutput(...)` / `also_output_with(...)`). In both cases the byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name. **Furthermore, the agent's plugin layer SHALL NOT distinguish between Rust-SDK and Java-SDK frames** — hybrid frames produced by either SDK are byte-indistinguishable for the same plugin name and serializer-output bytes.
+The wire bytes are produced by the channel's `pluginSink.serializer` / `plugin_sink.serializer` (set by `sink(...)` / `sink_with(...)`), the one representation of plugin egress for both shapes. The byte buffer SHALL be sent through the same wire framing path (`channel: String` metadata + payload bytes) so the agent's plugin layer SHALL NOT distinguish between pure and hybrid channels at the wire — both arrive identically and route by channel name. **Furthermore, the agent's plugin layer SHALL NOT distinguish between Rust-SDK and Java-SDK frames** — hybrid frames produced by either SDK are byte-indistinguishable for the same plugin name and serializer-output bytes.
 
 #### Scenario: Pure-plugin emit reaches the agent's plugin layer
-- **WHEN** a Procedure publishes to a channel declared with `.output("ohlc_kafka")`
+- **WHEN** a Procedure publishes to a channel declared with `.sink("ohlc_kafka")` and no consumers
 - **THEN** the agent's `ohlc_kafka` plugin SHALL receive the bytes with `channel = <channel name>` in the metadata
 
 #### Scenario: Hybrid emit reaches the agent's plugin layer with identical framing
-- **WHEN** a Procedure publishes via `.also_output_with("indicators", sma_to_pb_bytes)` on a channel that also has inter-procedure consumers
+- **WHEN** a Procedure publishes via `.sink_with("indicators", sma_to_pb_bytes)` on a channel that also has inter-procedure consumers
 - **THEN** the agent's `indicators` plugin SHALL receive the serializer-output bytes with `channel = <channel name>` in the metadata
 - **AND** the wire frame SHALL be byte-indistinguishable from a pure-plugin channel's frame for the same plugin name and bytes
 
 #### Scenario: Two channels sharing a plugin name fan in at the agent
-- **WHEN** a Operative declares two hybrid channels (e.g. an `sma_out` stream with `also_output_with("indicators", sma_serde)` and an `ema_out` stream with `also_output_with("indicators", ema_serde)`)
+- **WHEN** a Operative declares two hybrid channels (e.g. an `sma_out` stream with `sink_with("indicators", sma_serde)` and an `ema_out` stream with `sink_with("indicators", ema_serde)`)
 - **THEN** the agent's `indicators` plugin SHALL receive frames from both channels, distinguishable only by the `channel: String` metadata key
 - **AND** the SDK's topology builder SHALL NOT reject this declaration, because each channel still has exactly one producer Procedure
 
@@ -459,7 +459,7 @@ For pure-plugin channels, the wire bytes are produced by the channel's `pluginSe
 - **THEN** that plugin SHALL receive every message whose channel name matches `"ohlc_kafka"`, regardless of which Procedure produced it
 
 #### Scenario: Hybrid emit reaches the agent's plugin layer with identical framing across SDKs
-- **WHEN** a Rust Procedure publishes via `.also_output_with("indicators", sma_to_pb_bytes)` and a Java Procedure publishes via `.alsoOutput("indicators", SmaCodec::toBytes)` with identical serializer output for an identical input value
+- **WHEN** a Rust Procedure publishes via `.sink_with("indicators", sma_to_pb_bytes)` and a Java Procedure publishes via `.sink("indicators", SmaCodec::toBytes)` with identical serializer output for an identical input value
 - **THEN** the agent's `indicators` plugin SHALL receive byte-equal wire frames from both SDKs (the only on-wire difference being TCP/UDS interleaving — the framed payload bytes are identical)
 - **AND** the SDK's topology builder on either side SHALL NOT reject either declaration, because each channel still has exactly one producer Procedure within its own SDK
 
@@ -491,31 +491,31 @@ When `emit_with_meta` is used on a plugin-bound channel, the supplied `HashMap<S
 - **THEN** the call SHALL return `Err(ProcedureError::MetadataNotAllowedOnInterProcedureChannel { channel })`, and the value `p` SHALL NOT be propagated to the downstream Procedure
 
 ### Requirement: Hybrid channel builder method
-The Rust SDK SHALL expose `also_output_with<F>(plugin_name: &'static str, serializer: F)` where `F: Fn(&T) -> Vec<u8> + Send + Sync + 'static`, and `also_output(plugin_name: &'static str)` (default serialization: passthrough for `Vec<u8>`, UTF-8 for `String`, the SDK's default JSON codec otherwise), on the graph builder's stream handle. Calling either SHALL leave the channel's `kind = ChannelKind::InterProcedure` and SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `PluginSerializeFn`) alongside the channel's existing consumer fan-out. After the call, further `.into::<S>()` consumer wiring SHALL chain naturally — the method returns the same stream handle.
+The Rust SDK SHALL expose `sink_with<F>(plugin_name: &'static str, serializer: F)` where `F: Fn(&T) -> Vec<u8> + Send + Sync + 'static`, and `sink(plugin_name: &'static str)` (default serialization: passthrough for `Vec<u8>`, UTF-8 for `String`, the SDK's default JSON codec otherwise), on the graph builder's stream handle. Calling either SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `PluginSerializeFn`) alongside the channel's existing consumer fan-out. After the call, further `.into::<S>()` consumer wiring SHALL chain naturally — the method returns the same stream handle.
 
 The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Option<PluginSink>` field where `PluginSink { name: &'static str, serializer: PluginSerializeFn }`. Pure-`PluginBound` channels (produced by `output(...)`) SHALL continue to populate the existing `plugin_name` and `plugin_serializer` fields and SHALL NOT populate `plugin_sink`. Hybrid channels SHALL populate `plugin_sink` and SHALL NOT populate `plugin_name`/`plugin_serializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
 
 #### Scenario: Hybrid wiring is accepted at registration
-- **WHEN** a Operative declares an `SmaProcedure` output stream with `.also_output_with("indicators", sma_to_pb_bytes).into::<BollingerProcedure>()`
+- **WHEN** a Operative declares an `SmaProcedure` output stream with `.sink_with("indicators", sma_to_pb_bytes).into::<BollingerProcedure>()`
 - **THEN** registration SHALL succeed
 - **AND** the resulting `ChannelDescriptor` SHALL have `kind = InterProcedure`, exactly one entry in `consumers` (the `BollingerProcedure` procedure id), and `plugin_sink = Some(PluginSink { name: "indicators", serializer: <fn-ptr> })`
 
-#### Scenario: also_output_with chains in either order with into::<S>()
-- **WHEN** a Operative declares `.into::<MacdProcedure>().also_output_with("indicators", ema_to_pb_bytes)` on an `EmaProcedure` output stream
+#### Scenario: sink_with chains in either order with into::<S>()
+- **WHEN** a Operative declares `.into::<MacdProcedure>().sink_with("indicators", ema_to_pb_bytes)` on an `EmaProcedure` output stream
 - **THEN** registration SHALL succeed
 - **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped
 
-#### Scenario: also_output without a serializer uses the default codec
-- **WHEN** a Operative declares `.also_output("indicators")` on a stream of a serde-serializable type
+#### Scenario: sink without a serializer uses the default codec
+- **WHEN** a Operative declares `.sink("indicators")` on a stream of a serde-serializable type
 - **THEN** the plugin sink SHALL serialize each value with the SDK's default JSON codec, identically to what `output("indicators")` would produce for the same value
 
-#### Scenario: Calling also_output_with twice on the same channel is a topology error
-- **WHEN** a Operative chains `.also_output_with("p1", f1).also_output_with("p2", f2)` on one stream
+#### Scenario: Calling sink_with twice on the same channel is a topology error
+- **WHEN** a Operative chains `.sink_with("p1", f1).sink_with("p2", f2)` on one stream
 - **THEN** registration SHALL fail with `BuildTopologyError::DuplicatePluginSink { channel }` naming the channel
 
-#### Scenario: also_output is unreachable after output
-- **WHEN** a Operative attempts `.output("p").also_output_with(...)`
-- **THEN** the code SHALL fail to compile because `output` returns a finalized handle with no further methods
+#### Scenario: nothing chains after sealed
+- **WHEN** a Operative attempts `.sink("p").sealed().into::<S>()`
+- **THEN** the code SHALL fail to compile because `sealed` returns a finalized handle with no further methods
 - **AND** a trybuild test under `sdk/rust/tests/build_failures/` SHALL pin this as a stable compile error
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call
@@ -594,27 +594,27 @@ The producing Procedure's `Procedure::run` SHALL receive the error via the norma
 - **AND** the inter-procedure consumer fan-out SHALL have already completed before the panic was caught
 
 ### Requirement: Hybrid channel builder method (Java SDK)
-The Java SDK SHALL expose `alsoOutput(String pluginName, Function<T, byte[]> serializer)` and `alsoOutput(String pluginName)` (default serialization: passthrough for `byte[]`, UTF-8 for `String`, Jackson JSON otherwise) on the graph builder's stream handle. Calling either SHALL leave the channel's `kind = ChannelKind.INTER_PROCEDURE` and SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `Function<Object, byte[]>`) alongside the channel's existing consumer fan-out. After the call, further `.into(...)` consumer wiring SHALL chain naturally — the method returns the same stream handle.
+The Java SDK SHALL expose `sink(String pluginName, Function<T, byte[]> serializer)` and `sink(String pluginName)` (default serialization: passthrough for `byte[]`, UTF-8 for `String`, Jackson JSON otherwise) on the graph builder's stream handle. Calling either SHALL attach a plugin sink (the named plugin and the serializer, type-erased to `Function<Object, byte[]>`) alongside the channel's existing consumer fan-out. After the call, further `.into(...)` consumer wiring SHALL chain naturally — the method returns the same stream handle.
 
 The plugin sink SHALL be stored on the channel descriptor as `Optional<PluginSink> pluginSink` where `PluginSink` is a public record `(String name, Function<Object, byte[]> serializer)`. Pure-`PLUGIN_BOUND` channels (produced by `output(...)`) SHALL continue to populate the existing `pluginName` and `pluginSerializer` fields and SHALL NOT populate `pluginSink`. Hybrid channels SHALL populate `pluginSink` and SHALL NOT populate `pluginName`/`pluginSerializer`. The two paths SHALL stay textually distinct so existing pattern matches over `ChannelKind` continue to compile unchanged.
 
 #### Scenario: Hybrid wiring is accepted at registration (Java)
-- **WHEN** a Operative declares an `SmaProcedure` output stream with `.alsoOutput("indicators", SmaCodec::toBytes).into(BollingerProcedure.class)`
+- **WHEN** a Operative declares an `SmaProcedure` output stream with `.sink("indicators", SmaCodec::toBytes).into(BollingerProcedure.class)`
 - **THEN** registration SHALL succeed
 - **AND** the resulting `ChannelDescriptor` SHALL have `kind() == INTER_PROCEDURE`, exactly one entry in `consumers()` (the `BollingerProcedure` procedure id), and `pluginSink() == Optional.of(new PluginSink("indicators", <fn>))`
 
-#### Scenario: alsoOutput chains in either order with into(...) (Java)
-- **WHEN** a Operative declares `.into(MacdProcedure.class).alsoOutput("indicators", EmaCodec::toBytes)` on an `EmaProcedure` output stream
+#### Scenario: sink chains in either order with into(...) (Java)
+- **WHEN** a Operative declares `.into(MacdProcedure.class).sink("indicators", EmaCodec::toBytes)` on an `EmaProcedure` output stream
 - **THEN** registration SHALL succeed
 - **AND** the resulting descriptor SHALL be identical to the same declaration with the calls swapped
 
-#### Scenario: alsoOutput without a serializer uses the default codec (Java)
-- **WHEN** a Operative declares `.alsoOutput("indicators")` on a stream of a Jackson-serializable type
+#### Scenario: sink without a serializer uses the default codec (Java)
+- **WHEN** a Operative declares `.sink("indicators")` on a stream of a Jackson-serializable type
 - **THEN** the plugin sink SHALL serialize each value with Jackson JSON, identically to what `output("indicators")` would produce for the same value
 
-#### Scenario: alsoOutput is unreachable after output (Java)
-- **WHEN** a Operative attempts `.output("p").alsoOutput(...)`
-- **THEN** the code SHALL fail to compile because `output` returns a finalized `Channel<T>` handle that exposes no further methods
+#### Scenario: nothing chains after sealed (Java)
+- **WHEN** a Operative attempts `.sink("p").sealed().into(S.class)`
+- **THEN** the code SHALL fail to type-check because `sealed` returns a finalized `Channel<T>` handle that exposes no further methods
 
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call (Java SDK)
 When a Procedure's `Procedure.run` calls `ctx.emit(value)` on a hybrid channel (`kind == INTER_PROCEDURE`, `pluginSink.isPresent()`), the dispatcher SHALL execute the following sequence on the producer thread:

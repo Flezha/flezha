@@ -658,12 +658,17 @@ mod tests {
 pub struct SlotParts {
     pub entity_identity: Arc<Vec<u8>>,
     pub entity_label: Arc<str>,
+    /// The routing key itself, `None` in single-entity mode. The one rendering
+    /// a Procedure reads back (`ctx.entity_key()`, and the default key of a
+    /// keyed-channel emit).
+    pub entity_key: Option<Arc<str>>,
     pub change_seq: Arc<AtomicU64>,
     pub event_time_high_water: Arc<AtomicI64>,
 }
 
-/// Derive the per-Entity identity cells. The WAL identity is keyed by the
-/// operative INSTANCE id, not the factory id: two operatives of the same
+/// Derive the per-Entity identity cells — every rendering of "which Entity is
+/// this" comes from here, so they cannot disagree. The WAL identity is keyed by
+/// the operative INSTANCE id, not the factory id: two operatives of the same
 /// factory must not share one Entity WAL.
 pub fn slot_parts(instance_id: &str, procedure_name: &str, entity_key: Option<&str>) -> SlotParts {
     SlotParts {
@@ -678,6 +683,7 @@ pub fn slot_parts(instance_id: &str, procedure_name: &str, entity_key: Option<&s
             procedure_name,
             entity_key.unwrap_or("")
         )),
+        entity_key: entity_key.map(Arc::from),
         change_seq: Arc::new(AtomicU64::new(0)),
         event_time_high_water: Arc::new(AtomicI64::new(-1)),
     }
@@ -699,7 +705,7 @@ pub fn assemble_slot(
         mailbox: Arc::new(Mailbox::with_capacity(mailbox_capacity)),
         dispatcher,
         procedure_id: args.procedure_id,
-        entity_key: args.entity_key.map(Arc::from),
+        entity_key: parts.entity_key,
         instance: args.instance,
         topology: args.topology,
         block_parker: BlockParker::new(),

@@ -139,7 +139,7 @@ class HostClassDeclarationTest {
             c.input(String.class, "in")
                     .into(DeclProc.class)
                     .keyed()
-                    .output("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 

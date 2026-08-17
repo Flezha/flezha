@@ -89,7 +89,7 @@ public final class E01_Echo {
         @Override
         public void channels(ChannelBuilder c) {
             var sEchoProcedure = c.input(String.class, "in").into(EchoProcedure.class);
-            sEchoProcedure.named("out").output("my_sink");
+            sEchoProcedure.named("out").sink("my_sink");
         }
     }
 

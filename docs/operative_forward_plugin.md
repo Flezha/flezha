@@ -78,8 +78,9 @@ one in-flight slot, so a shared one would head-of-line-block every partition
 behind the slowest, while per-key ordering only requires per-member FIFO. One
 unreachable member's worker retries without touching its siblings.
 
-A message with **no `flz.key`** — an unkeyed emit, or any workflow-outbox
-output, which never carries a key — is parked via the DLQ store with
+A message with **no `flz.key`** — an emit on a channel not declared `.keyed()`,
+or any workflow-outbox output, which never carries a key — is parked via the
+DLQ store with
 `partitioned target requires keyed emit`, naming the source, the target and the
 contract. It is never round-robined and never payload-hashed: both scatter one
 key across partitions and detonate downstream, where the cause is invisible.

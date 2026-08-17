@@ -31,7 +31,8 @@ The Java SDK SHALL expose a generic `Procedure<Input, State, Output, Change, Clo
 The `ProcedureCtx` parameter SHALL provide:
 
 - `emit(value)` for inter-procedure or plugin-bound outputs, `emit(channel, value)` for explicit channel selection, and `emitWithMeta(value, meta)` / `emitWithMeta(channel, value, meta)` for plugin-bound outputs with user-attached metadata. `emitWithMeta` on inter-procedure channels SHALL throw `ProcedureException.MetadataNotAllowedOnInterProcedureChannel` naming the channel.
-- `emitKeyed(key, value)` and `emitKeyedWithMeta(key, value, meta)` for channels declared `.keyed()`. Emitting **without** a key on a `.keyed()` channel SHALL throw `ProcedureException.KeyRequiredOnKeyedChannel`; emitting **with** a key on a channel not declared `.keyed()` SHALL throw `ProcedureException.KeyNotAllowedOnNonKeyedChannel`. Both name the channel.
+- `emitKeyed(key, value)` and `emitKeyedWithMeta(key, value, meta)` for channels declared `.keyed()`, supplying an output key that differs from the Entity's own. Emitting **without** a key on a `.keyed()` channel SHALL carry the invoking Entity's key when it has one, and SHALL throw `ProcedureException.KeyRequiredOnKeyedChannel` when it does not (a single-entity Procedure); emitting **with** a key on a channel not declared `.keyed()` SHALL throw `ProcedureException.KeyNotAllowedOnNonKeyedChannel`. Both name the channel.
+- `Optional<String> entityKey()` — the key this Entity was routed by, empty for a single-entity Procedure. It is part of the invocation's identity, so it is replay-stable.
 - `long now()` — the invocation's time value, computed **once** by the runtime from the Procedure's declared `Clock` before `run` executes, and returning that same value for every call within the invocation. This is the determinism-contract replacement for `System.currentTimeMillis()`.
 - `StableId stableId()` — a deterministic, replay-stable 128-bit identifier derived from the Entity identity, the invocation's durable change seq, and a per-invocation call ordinal. Repeated calls within one invocation differ; the n-th call of a replayed invocation SHALL equal the n-th call of the original. This is the determinism-contract replacement for `UUID.randomUUID()`.
 - `void checkpoint()` — see the checkpoint ack-granularity requirement.
@@ -97,6 +98,15 @@ The runtime SHALL stamp `flz.entity`, `flz.seq`, and (on keyed emits) `flz.key` 
 #### Scenario: Keyed emit stamps flz.key on the wire
 - **WHEN** a Procedure calls `ctx.emitKeyed("BTC", candle)` on a channel declared `.keyed()`
 - **THEN** the plugin frame's metadata SHALL carry `flz.key -> "BTC"`, `flz.entity -> "<instance>/<procedure>/<entityKey>"`, and `flz.seq -> "<changeSeq>.<emitOrdinal>"`
+
+
+#### Scenario: A key-less emit in a keyed Entity carries that Entity's key
+- **WHEN** the Entity routed by `"BTC/USD"` calls `ctx.emit(candle)` on a channel declared `.keyed()`
+- **THEN** the plugin frame SHALL carry `flz.key -> "BTC/USD"`, identically to `ctx.emitKeyed("BTC/USD", candle)`
+
+#### Scenario: A key-less emit on a keyed channel is refused where the Entity has no key
+- **WHEN** a single-entity Procedure calls `ctx.emit(candle)` on a channel declared `.keyed()`
+- **THEN** the SDK SHALL throw `ProcedureException.KeyRequiredOnKeyedChannel` naming the channel, and nothing SHALL be emitted
 
 ### Requirement: Sticky Per-Entity Ordering Under ThreadPool Dispatch
 

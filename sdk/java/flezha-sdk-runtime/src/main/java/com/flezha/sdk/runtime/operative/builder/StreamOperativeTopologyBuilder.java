@@ -273,9 +273,8 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
                                 "an `EventTimeFrom` clock on at least one procedure")
                         .getMessage());
             }
-            boolean allKeyed = channels.stream()
-                    .filter(c -> c.pluginName != null || c.pluginSinkName != null)
-                    .allMatch(c -> c.keyed);
+            boolean allKeyed =
+                    channels.stream().filter(c -> c.pluginSinkName != null).allMatch(c -> c.keyed);
             if (!allKeyed) {
                 errors.add(StreamOperativeConfigurationException.correctionWindowRequires(
                                 "every plugin-bound channel to be `.keyed()`")
@@ -289,7 +288,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         }
 
         for (ChannelEntry entry : channels) {
-            boolean pluginWired = entry.pluginName != null || entry.pluginSinkName != null;
+            boolean pluginWired = entry.pluginSinkName != null;
             // A key rides as a `flz.key` stamp on a plugin frame; a pure
             // inter-procedure channel has nowhere to carry it.
             if (entry.keyed && !pluginWired) {
@@ -314,16 +313,21 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
             Optional<PluginSink> pluginSink = entry.pluginSinkName == null
                     ? Optional.empty()
                     : Optional.of(new PluginSink(entry.pluginSinkName, entry.pluginSinkSerializer));
+            // Terminality is derived from the wiring, not from which method the
+            // author called: a sink with nothing consuming behind it IS the
+            // plugin-bound terminal. Deriving it here is what keeps
+            // `sink(...)` one method and makes a sink declared alongside
+            // consumers hybrid by construction rather than by ordering.
+            ChannelKind kind =
+                    entry.pluginSinkName != null && entry.consumers.isEmpty() ? ChannelKind.PLUGIN_BOUND : entry.kind;
             channelDescriptors.add(new ChannelDescriptor(
                     entry.name,
-                    entry.kind,
+                    kind,
                     entry.producer == null ? OptionalInt.empty() : OptionalInt.of(entry.producer),
                     List.copyOf(entry.consumers),
-                    Optional.ofNullable(entry.pluginName),
                     entry.payloadType,
                     Optional.ofNullable(entry.entryParser),
                     entry.entryParsed,
-                    Optional.ofNullable(entry.pluginSerializer),
                     pluginSink,
                     entry.overflowPolicy,
                     new com.flezha.sdk.channel.RetryPolicy(entry.retryMaxAttempts, entry.retryBackoffBaseMs),
@@ -594,7 +598,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
             Function<Object, EdgeYield> link,
             Function<Object, String> key) {
         ChannelEntry entry = channels.get(channel);
-        if (entry.pluginSinkName != null || entry.kind == ChannelKind.PLUGIN_BOUND) {
+        if (entry.pluginSinkName != null) {
             errors.add(StreamOperativeConfigurationException.transformAfterTerminal(entry.name)
                     .getMessage());
         }
@@ -764,8 +768,6 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         Class<?> payloadType;
         Integer producer;
         final List<ConsumerEdge> consumers = new ArrayList<>();
-        String pluginName;
-        Function<Object, byte[]> pluginSerializer;
         String pluginSinkName;
         Function<Object, byte[]> pluginSinkSerializer;
         OverflowPolicy overflowPolicy;
@@ -1269,7 +1271,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public Stream<T> alsoOutput(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
+        public Stream<T> sink(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
             checkMutable();
             ChannelEntry entry = channels.get(channelId());
             if (entry.pluginSinkName != null) {
@@ -1284,26 +1286,15 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
 
         @Override
         @Nonnull
-        public Stream<T> alsoOutput(@Nonnull String pluginName) {
-            return alsoOutput(pluginName, defaultSerializer(payloadType()));
+        public Stream<T> sink(@Nonnull String pluginName) {
+            return sink(pluginName, defaultSerializer(payloadType()));
         }
 
         @Override
         @Nonnull
-        public Channel<T> output(@Nonnull String pluginName) {
-            return output(pluginName, defaultSerializer(payloadType()));
-        }
-
-        @Override
-        @Nonnull
-        public Channel<T> output(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer) {
+        public Channel<T> sealed() {
             checkMutable();
-            int cid = channelId();
-            ChannelEntry entry = channels.get(cid);
-            entry.kind = ChannelKind.PLUGIN_BOUND;
-            entry.pluginName = pluginName;
-            entry.pluginSerializer = value -> serializer.apply(cast(value));
-            return new Channel<>(cid, payloadType());
+            return new Channel<>();
         }
 
         /** The producer node's declared output type: this stream's payload type. */
@@ -1359,10 +1350,9 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     }
 
     /**
-     * Default plugin-bound serializer, shared by {@code output(...)} and
-     * {@code alsoOutput(...)} so the two produce identical bytes for the same
-     * value. {@code byte[]} is passthrough; {@code String} is UTF-8 encoded;
-     * everything else goes through Jackson JSON.
+     * Default plugin serializer — what {@code sink(...)} applies when the
+     * author supplies none. {@code byte[]} is passthrough; {@code String} is
+     * UTF-8 encoded; everything else goes through Jackson JSON.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static <T> Function<T, byte[]> defaultSerializer(Class<T> payloadType) {

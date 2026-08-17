@@ -19,11 +19,9 @@ public final class ChannelDescriptor {
     private final ChannelKind kind;
     private final OptionalInt producer;
     private final List<ConsumerEdge> consumers;
-    private final Optional<String> pluginName;
     private final Class<?> payloadType;
     private final Optional<Function<byte[], Object>> entryParser;
     private final boolean entryParsed;
-    private final Optional<Function<Object, byte[]>> pluginSerializer;
     private final Optional<PluginSink> pluginSink;
     private final OverflowPolicy overflowPolicy;
     private final RetryPolicy retry;
@@ -35,11 +33,9 @@ public final class ChannelDescriptor {
             @Nonnull ChannelKind kind,
             @Nonnull OptionalInt producer,
             @Nonnull List<ConsumerEdge> consumers,
-            @Nonnull Optional<String> pluginName,
             @Nonnull Class<?> payloadType,
             @Nonnull Optional<Function<byte[], Object>> entryParser,
             boolean entryParsed,
-            @Nonnull Optional<Function<Object, byte[]>> pluginSerializer,
             @Nonnull Optional<PluginSink> pluginSink,
             @Nonnull OverflowPolicy overflowPolicy,
             @Nonnull RetryPolicy retry,
@@ -50,11 +46,9 @@ public final class ChannelDescriptor {
         this.kind = kind;
         this.producer = producer;
         this.consumers = List.copyOf(consumers);
-        this.pluginName = pluginName;
         this.payloadType = payloadType;
         this.entryParser = entryParser;
         this.entryParsed = entryParsed;
-        this.pluginSerializer = pluginSerializer;
         this.pluginSink = pluginSink;
         this.overflowPolicy = overflowPolicy;
         this.retry = retry;
@@ -116,11 +110,6 @@ public final class ChannelDescriptor {
     }
 
     @Nonnull
-    public Optional<String> pluginName() {
-        return pluginName;
-    }
-
-    @Nonnull
     public Class<?> payloadType() {
         return payloadType;
     }
@@ -145,16 +134,11 @@ public final class ChannelDescriptor {
         return entryParsed;
     }
 
-    @Nonnull
-    public Optional<Function<Object, byte[]>> pluginSerializer() {
-        return pluginSerializer;
-    }
-
     /**
-     * The parallel plugin sink, if this channel was declared with
-     * {@code alsoOutput(...)}. Pure {@link ChannelKind#PLUGIN_BOUND}
-     * channels (the closed-form {@code output(...)} path) leave this
-     * empty and use {@link #pluginName()} / {@link #pluginSerializer()} instead.
+     * The channel's plugin egress, declared with {@code sink(...)}. The one
+     * representation for both shapes — which of the two a channel is, is read
+     * off {@link #consumers()}: with consumers it is hybrid, without them it
+     * is the {@link ChannelKind#PLUGIN_BOUND} terminal.
      */
     @Nonnull
     public Optional<PluginSink> pluginSink() {

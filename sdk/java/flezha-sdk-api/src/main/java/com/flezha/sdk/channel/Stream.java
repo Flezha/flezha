@@ -22,7 +22,7 @@ import javax.annotation.Nonnull;
  *       producers' contributions.
  *   <li>Per-channel configuration ({@link #named}, {@link #keyed},
  *       {@link #codec}, {@link #onFull}, {@link #retryMax},
- *       {@link #retryBackoffMs}, {@link #alsoOutput}) chains in any order
+ *       {@link #retryBackoffMs}, {@link #sink}) chains in any order
  *       relative to consumer wiring.
  * </ul>
  *
@@ -54,8 +54,8 @@ public abstract class Stream<T> implements EdgeStream<T> {
     /**
      * Declare that emits on this channel carry a natural key, supplied via
      * {@code ctx.emitKeyed(key, value)}. The runtime stamps {@code flz.key}
-     * on the plugin frame. Requires a plugin wire ({@link #output} or
-     * {@link #alsoOutput}); a keyed channel without one fails registration.
+     * on the plugin frame. Requires a plugin wire ({@link #sink}); a keyed
+     * channel without one fails registration.
      */
     @Nonnull
     public abstract Stream<T> keyed();
@@ -95,36 +95,39 @@ public abstract class Stream<T> implements EdgeStream<T> {
     public abstract Stream<T> retryBackoffMs(long baseMs);
 
     /**
-     * Attach a plugin sink alongside inter-procedure fan-out: typed values
-     * still reach {@code .into(...)} consumers, and a serialized copy is
-     * published to the named plugin. The serializer is invoked once per emit
-     * regardless of consumer count. Declaring a second sink on the same
-     * channel fails registration.
+     * Attach this channel to the named plugin sink: every value emitted on it
+     * is serialized once and delivered to the controller's output layer
+     * stamped with the channel name, where the plugins attached to that name
+     * consume it. Several channels may name one sink.
+     *
+     * <p>The handle is returned, so {@code .into(...)} consumer wiring chains
+     * after it and the value then reaches both the consumer mailboxes (typed)
+     * and the sink (as bytes). A channel with no consumers is the plugin-bound
+     * terminal — terminality is the absence of further wiring, not a different
+     * method. {@link #sealed()} states that in the type.
+     *
+     * <p>The serializer runs once per emit regardless of consumer count.
+     * Declaring a second sink on one channel fails registration.
      */
     @Nonnull
-    public abstract Stream<T> alsoOutput(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer);
+    public abstract Stream<T> sink(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer);
 
     /**
-     * {@link #alsoOutput(String, Function)} with the default serialization
-     * rules of {@link #output(String)}: passthrough for {@code byte[]},
-     * UTF-8 for {@code String}, Jackson JSON otherwise.
+     * {@link #sink(String, Function)} with the default serialization rules:
+     * passthrough for {@code byte[]}, UTF-8 for {@code String}, Jackson JSON
+     * otherwise.
      */
     @Nonnull
-    public abstract Stream<T> alsoOutput(@Nonnull String pluginName);
+    public abstract Stream<T> sink(@Nonnull String pluginName);
 
     /**
-     * Close this stream plugin-bound: the operative declares a named exit and
-     * the controller's plugin layer receives the values, serialized with the
-     * default rules — passthrough for {@code byte[]}, UTF-8 for
-     * {@code String}, Jackson JSON otherwise. Terminal: the returned
-     * {@link Channel} exposes no further builder methods.
+     * State that nothing follows this channel: the returned {@link Channel}
+     * exposes no builder methods, so a later consumer or transform does not
+     * type-check. Purely type-level — the topology is identical with or
+     * without it.
      */
     @Nonnull
-    public abstract Channel<T> output(@Nonnull String pluginName);
-
-    /** {@link #output(String)} with an explicit serializer override. */
-    @Nonnull
-    public abstract Channel<T> output(@Nonnull String pluginName, @Nonnull Function<T, byte[]> serializer);
+    public abstract Channel<T> sealed();
 
     /**
      * Branching sugar: each arm receives <b>this</b> handle, so

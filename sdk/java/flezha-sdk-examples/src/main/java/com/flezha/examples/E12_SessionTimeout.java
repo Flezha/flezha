@@ -186,7 +186,7 @@ public final class E12_SessionTimeout {
                     .keyBy(click -> click.split(":")[0])
                     .into(SessionWindow.class)
                     .named("closed_sessions")
-                    .output("kafka");
+                    .sink("kafka");
         }
     }
 }

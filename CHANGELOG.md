@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### BREAKING — one plugin-sink method: `sink` + `sealed` (`unify-plugin-sink-api`)
+
+`also_output(name)` / `also_output_with(name, f)` and the terminal
+`output(name)` collapse into ONE method: `sink(name)` / `sink_with(name, f)`,
+always returning the stream handle. A channel is the plugin-bound terminal by
+having no consumers wired after it, not by which method declared it — the
+runtime derives that from the wiring, which is what the two spellings were
+encoding by hand. `.sealed()` is the optional terminator, returning the
+non-chainable `Channel<T>` the old `output` returned; it is purely a
+compile-time statement that nothing follows and changes no topology.
+
+No shim, no coexistence. Migration is mechanical: `also_output_with` →
+`sink_with`, `also_output` → `sink`, `output(name)` → `sink(name)` (append
+`.sealed()` where the non-chainable return type was relied on). Wire frames,
+descriptor field names, plugin bindings and error identifiers are unchanged; a
+terminal declaration's frames are byte-identical to what `output` wrote, and a
+unit fixture holds both shapes against those literals.
+
+Consequences worth knowing: `ChannelDescriptor` lost `plugin_name` (dead) and
+`plugin_serializer` — `plugin_sink` is now the one representation for both
+shapes. A sink declared on a channel that a *later* statement also wires a
+consumer into is now correctly hybrid; before, the terminal `output` had
+already frozen the kind and those consumers silently received nothing.
+`.on_full(...)` after `sink(...)` compiles now (it did not after `output`) and
+is still never consulted on a channel with no mailbox — `.sealed()` refuses it
+as before.
+
 ### Fixed
 
 - **The remote durability tier is now correct with more than one controller**
@@ -124,6 +151,25 @@
   lever only. No behaviour change.
 
 ### Changed
+
+- **A keyed channel's plain emit carries the Entity's own key**
+  (`default-emit-to-entity-key`). In a keyed Entity — the OHLC entity for
+  `BTC/USD`, the SMA entity for `BTC/USD` — the natural key of essentially
+  every output *is* the key the input routed by, and the SDK already holds
+  it. `ctx.emit(value)` / `emit_with_meta` on a `.keyed()` channel (Java:
+  `emit` / `emitWithMeta`) now stamp `flz.key` with that key instead of
+  failing with `KeyRequiredOnKeyedChannel`, so the stamped key equals the
+  routing key by construction and cannot drift from it. A drifted key was
+  never a local error: it ships as the record key and, inside a partitioned
+  group, hashes into an arbitrary key-group and parks at the downstream
+  partition guard. `emit_keyed(key, value)` is unchanged and remains the way
+  to emit under a key that differs from the Entity's; both spellings share
+  one stamping path. Both SDKs also expose the key directly
+  (`ctx.entity_key()` / `ctx.entityKey()`). Unchanged refusals: a
+  single-entity Procedure's key-less emit on a keyed channel (there is no
+  Entity key to default to) and `emit_keyed` on a channel not declared
+  `.keyed()`. Backwards compatible — every currently-legal call keeps its
+  behaviour; one error case became the safe default.
 
 - **Operator start and enable verbs are idempotent**
   (`idempotent-start-and-enable`). `flz operative start` against a live

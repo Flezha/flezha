@@ -1,28 +1,13 @@
 package com.flezha.sdk.channel;
 
-import javax.annotation.Nonnull;
-
 /**
- * Phantom-typed channel handle. The {@code id} is the index into the StreamOperative's
- * channel list; the {@code T} parameter exists only for compile-time wiring
- * checks via the builder methods.
+ * The finalized channel handle returned by {@link Stream#sealed()}: a
+ * phantom-typed marker exposing no builder methods, so a consumer or a
+ * transform declared after it does not type-check.
+ *
+ * <p>It carries no state, which is what makes "sealing changes no topology"
+ * true by construction rather than by convention — the handle cannot reach the
+ * builder to record anything, not even the output channel a leaf node
+ * deliberately does not have.
  */
-public final class Channel<T> {
-
-    private final int id;
-    private final Class<T> payloadType;
-
-    public Channel(int id, @Nonnull Class<T> payloadType) {
-        this.id = id;
-        this.payloadType = payloadType;
-    }
-
-    public int id() {
-        return id;
-    }
-
-    @Nonnull
-    public Class<T> payloadType() {
-        return payloadType;
-    }
-}
+public final class Channel<T> {}

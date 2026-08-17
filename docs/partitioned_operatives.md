@@ -73,6 +73,11 @@ whole slices instead.
 > For a partitioned operative, the routing item — the source's subscription
 > string, an emitter's `flz.key` — must equal the value `key_by` extracts.
 
+A procedure's plain `emit` on a keyed channel holds it by construction: the
+stamped key IS the Entity's own, which is what `key_by` returned. What is left
+to get wrong is the source's subscription string and an explicit `emit_keyed`
+under a key of the author's own choosing.
+
 Nothing upstream can enforce that, so the SDK does, at the moment and place it
 is violated. When `partition_count ≥ 2`, dispatch checks that each computed
 entity key hashes into the member's own range, and a miss takes the park path
@@ -147,8 +152,8 @@ queue with one in-flight slot, so a shared router would head-of-line-block
 every partition behind the slowest, and per-key ordering only needs per-member
 FIFO. Each message routes by `group(flz.key)` to the owning member's worker.
 
-A message with **no `flz.key`** — an unkeyed emit, or any workflow-outbox
-output, which never carries one — is parked with
+A message with **no `flz.key`** — an emit on a channel not declared `.keyed()`,
+or any workflow-outbox output, which never carries one — is parked with
 `partitioned target requires keyed emit`, naming the source, the target and the
 contract. It is never round-robined and never payload-hashed: both scatter one
 key across partitions and detonate downstream, where the cause is invisible.
@@ -310,13 +315,13 @@ c.input::<Trade>("trades")
     .into::<PartialCandleProcedure>()
     .named("partials")
     .keyed()
-    .output("partial_candles");
+    .sink("partial_candles");
 
 // Stage 2 — a single-partition merger, fed by forward: one Entity per symbol.
 c.input::<PartialCandle>("partial_candles")
     .key_by(|p: &PartialCandle| p.symbol.clone())
     .into::<CandleProcedure>()
-    .output("candles");
+    .sink("candles");
 ```
 
 Stage 1 runs as `partials --partitions 8`; stage 2 runs unpartitioned (or with

@@ -1,5 +1,6 @@
 package com.flezha.sdk.testing;
 
+import com.flezha.sdk.procedure.EmitKeys;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * Test harness for {@link Procedure} authors. Drives a Procedure through a sequence of
@@ -43,6 +45,16 @@ public final class ProcedureTestHarness<Input, State, Output, ChangeT extends Ch
 
     /** Injected clock values, one per successive invocation; empty = ambient wall clock. */
     private final List<Long> clockScript = new ArrayList<>();
+
+    /** Treat the output channel as {@code .keyed()}, so the keyed-emit contract applies. */
+    private boolean keyed;
+
+    /**
+     * The key the Entity under test was routed by, served to {@code ctx} exactly as the
+     * runtime serves a keyed Entity's own key. Empty stands for a single-entity
+     * Procedure, where a keyed channel still refuses a key-less emit.
+     */
+    private Optional<String> entityKey = Optional.empty();
 
     private int invocation;
 
@@ -89,6 +101,29 @@ public final class ProcedureTestHarness<Input, State, Output, ChangeT extends Ch
     public ProcedureTestHarness<Input, State, Output, ChangeT> withPayload(
             @Nonnull Optional<String> entityKey, @Nonnull RestoreInitPayload payload) {
         captureInitial(procedure.initState(entityKey, Optional.of(payload)));
+        this.entityKey = entityKey;
+        return this;
+    }
+
+    /**
+     * Treat the output channel as declared {@code .keyed()}: the keyed-emit contract
+     * applies, so {@code emitKeyed} is accepted and a key-less {@code emit} falls back
+     * to {@link #withEntityKey} — or is refused where there is no Entity key.
+     */
+    @Nonnull
+    public ProcedureTestHarness<Input, State, Output, ChangeT> withKeyedChannel() {
+        this.keyed = true;
+        return this;
+    }
+
+    /**
+     * Stand in for the Entity routed by {@code key}: {@code ctx.entityKey()} serves it,
+     * and a keyed-channel emit that supplies no key of its own is recorded under it.
+     * Without this the harness is a single-entity Procedure, where that emit is refused.
+     */
+    @Nonnull
+    public ProcedureTestHarness<Input, State, Output, ChangeT> withEntityKey(@Nonnull String key) {
+        this.entityKey = Optional.of(key);
         return this;
     }
 
@@ -97,7 +132,8 @@ public final class ProcedureTestHarness<Input, State, Output, ChangeT extends Ch
     public ProcedureTestHarness<Input, State, Output, ChangeT> applyInputs(@Nonnull Iterable<Input> inputs) {
         for (Input input : inputs) {
             StateHandle<State, ChangeT> handle = StateHandle.create(state, recordedChanges, procedure::applyChange);
-            TestProcedureCtx ctx = new TestProcedureCtx(recordedEmits, emitRecords, clockAt(invocation));
+            TestProcedureCtx ctx =
+                    new TestProcedureCtx(recordedEmits, emitRecords, clockAt(invocation), keyed, entityKey);
             invocation++;
             try {
                 procedure.run(input, handle, ctx);
@@ -267,7 +303,7 @@ public final class ProcedureTestHarness<Input, State, Output, ChangeT extends Ch
         int n = 0;
         for (Input input : inputs) {
             StateHandle<State, ChangeT> handle = StateHandle.create(fresh, replayChanges, procedure::applyChange);
-            TestProcedureCtx ctx = new TestProcedureCtx(replayEmits, replayRecords, clockAt(n++));
+            TestProcedureCtx ctx = new TestProcedureCtx(replayEmits, replayRecords, clockAt(n++), keyed, entityKey);
             try {
                 procedure.run(input, handle, ctx);
             } catch (ProcedureException e) {
@@ -299,17 +335,36 @@ public final class ProcedureTestHarness<Input, State, Output, ChangeT extends Ch
         private final List<Object> recorded;
         private final List<EmitRecord> records;
         private final long now;
+        private final boolean keyed;
+        private final Optional<String> entityKey;
         private int stableIdOrdinal;
 
-        TestProcedureCtx(List<Object> recorded, List<EmitRecord> records, long now) {
+        TestProcedureCtx(
+                List<Object> recorded, List<EmitRecord> records, long now, boolean keyed, Optional<String> entityKey) {
             this.recorded = recorded;
             this.records = records;
             this.now = now;
+            this.keyed = keyed;
+            this.entityKey = entityKey;
         }
 
-        private void record(String channel, String key, Object value, Map<String, String> meta) {
+        /**
+         * The single record funnel: {@link EmitKeys} resolves the key the runtime would
+         * carry — the shared definition is what keeps a harness-green test honest — before
+         * anything is recorded. {@code key} is {@code null} for "none supplied";
+         * {@link EmitRecord} keeps the empty string for "none carried".
+         */
+        private void record(String channel, @Nullable String key, Object value, Map<String, String> meta)
+                throws ProcedureException {
+            key = EmitKeys.resolve(channelName(channel), keyed, key, entityKey);
+            rejectReserved(meta);
             recorded.add(value);
-            records.add(new EmitRecord(channel, key, value, meta == null ? Map.of() : Map.copyOf(meta)));
+            records.add(new EmitRecord(channel, key == null ? "" : key, value, Map.copyOf(meta)));
+        }
+
+        /** The harness's default channel has no declared name; refusals still have to name one. */
+        private static String channelName(String channel) {
+            return channel.isEmpty() ? "<default>" : channel;
         }
 
         @Override
@@ -328,37 +383,40 @@ public final class ProcedureTestHarness<Input, State, Output, ChangeT extends Ch
         }
 
         @Override
-        public <C> void emit(@Nonnull C value) {
-            record("", "", value, Map.of());
+        @Nonnull
+        public Optional<String> entityKey() {
+            return entityKey;
         }
 
         @Override
-        public <C> void emit(@Nonnull String channel, @Nonnull C value) {
-            record(channel, "", value, Map.of());
+        public <C> void emit(@Nonnull C value) throws ProcedureException {
+            record("", null, value, Map.of());
+        }
+
+        @Override
+        public <C> void emit(@Nonnull String channel, @Nonnull C value) throws ProcedureException {
+            record(channel, null, value, Map.of());
         }
 
         @Override
         public <C> void emitWithMeta(@Nonnull C value, @Nonnull Map<String, String> meta) throws ProcedureException {
-            rejectReserved(meta);
-            record("", "", value, meta);
+            record("", null, value, meta);
         }
 
         @Override
         public <C> void emitWithMeta(@Nonnull String channel, @Nonnull C value, @Nonnull Map<String, String> meta)
                 throws ProcedureException {
-            rejectReserved(meta);
-            record(channel, "", value, meta);
+            record(channel, null, value, meta);
         }
 
         @Override
-        public <C> void emitKeyed(@Nonnull String key, @Nonnull C value) {
+        public <C> void emitKeyed(@Nonnull String key, @Nonnull C value) throws ProcedureException {
             record("", key, value, Map.of());
         }
 
         @Override
         public <C> void emitKeyedWithMeta(@Nonnull String key, @Nonnull C value, @Nonnull Map<String, String> meta)
                 throws ProcedureException {
-            rejectReserved(meta);
             record("", key, value, meta);
         }
 

@@ -82,8 +82,9 @@ stream as it is produced; nothing at the controller remembers what was
 delivered, so a crash-replay can re-emit. Channels declared `.keyed()` in
 the Rust SDK stamp every plugin-bound frame with reserved metadata —
 `flz.entity` (emitting Entity), `flz.seq` (`<change_seq>.<emit_ordinal>`,
-derived from the durable WAL seq), and `flz.key` (the natural key supplied
-via `ctx.emit_keyed(key, value)`). Because the stamps derive only from
+derived from the durable WAL seq), and `flz.key` — the emitting Entity's
+own key, or the natural key an emit supplied via
+`ctx.emit_keyed(key, value)`. Because the stamps derive only from
 replay-stable inputs, a crash-restore replay re-emits frames with
 **identical** stamps, so a downstream consumer that upserts on `flz.key`
 (candles, indicators — any changelog-shaped stream) absorbs duplicates
@@ -338,8 +339,8 @@ option, because what a sender gets follows from what it already declares:
 
 **A partitioned target adds a routing precondition.** Forwarding into a
 partition group routes each message by `hash(flz.key)` to the owning member —
-and a message *without* `flz.key` (an unkeyed emit, or any workflow-outbox
-output) is **parked to the source's DLQ** with
+and a message *without* `flz.key` (an emit on a channel not declared
+`.keyed()`, or any workflow-outbox output) is **parked to the source's DLQ** with
 `partitioned target requires keyed emit` rather than delivered anywhere.
 Round-robin or payload-hash fallback would scatter one key across partitions
 and detonate downstream where the cause is invisible. Single-partition targets

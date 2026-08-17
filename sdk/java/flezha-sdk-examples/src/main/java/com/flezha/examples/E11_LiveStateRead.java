@@ -80,7 +80,7 @@ import java.util.Optional;
  * <p>One caveat worth knowing before you wire a reader to it: each read is a
  * control round-trip plus one state-lock acquisition, so it is a <b>point read
  * for operators and low-rate readers</b>, not a serving API. A high-rate path is
- * still a sink — {@code .output(...)} costs the Entity nothing per reader.
+ * still a sink — {@code .sink(...)} costs the Entity nothing per reader.
  */
 public final class E11_LiveStateRead {
 

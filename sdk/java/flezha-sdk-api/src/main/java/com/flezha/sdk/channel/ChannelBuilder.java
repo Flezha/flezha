@@ -8,7 +8,7 @@ import javax.annotation.Nonnull;
  * {@link com.flezha.sdk.operative.StreamOperative#channels(ChannelBuilder)}
  * (and by workflow {@code procedures(...)} authoring).
  *
- * <p>{@code c.input(T.class, "name").into(A.class).into(B.class).output("sink")}
+ * <p>{@code c.input(T.class, "name").into(A.class).into(B.class).sink("plugin")}
  * — {@code .into} wires a consumer and returns that procedure's <b>output
  * stream handle</b> ({@link Stream}), so a linear pipeline is one chained
  * expression. Branching is handle reuse (hold the handle in a variable and

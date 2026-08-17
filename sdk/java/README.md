@@ -51,7 +51,7 @@ public final class EchoOperative implements StreamOperative {
     @Override public void channels(ChannelBuilder c) {
         // Producer-first: `.into` wires a consumer and returns THAT
         // procedure's output stream; `output` closes it plugin-bound.
-        c.input(String.class, "in").into(EchoProcedure.class).named("out").output("my_sink");
+        c.input(String.class, "in").into(EchoProcedure.class).named("out").sink("my_sink");
     }
 }
 
@@ -90,7 +90,7 @@ the channel's retry→DLQ ladder:
 c.input(OrderEvent.class, "orders")      // JSON-decoded at the entry edge
         .into(Validate.class)
         .into(Alert.class)
-        .output("alerts");               // plugin-bound terminal
+        .sink("alerts");               // plugin egress; terminal — nothing wired after it
 ```
 
 Branching is handle reuse — hold the stream in a variable and wire it twice —
@@ -130,7 +130,9 @@ is refused at registration.
 
 Graphs must be acyclic; per-channel config (`codec`, `keyed`, `onFull`,
 `retryMax`, `retryBackoffMs`) chains on the handle; the hybrid tap is
-`alsoOutput(name[, serializer])`.
+the SAME method — `sink(name[, serializer])` returns the handle, so a consumer
+wires after it. A channel is terminal by having none; `.sealed()` states that
+in the type.
 
 ### A fuller graph: named nodes, a hybrid tap, a keyed sink
 
@@ -152,7 +154,7 @@ public final class RiskOperative implements StreamOperative {
                 .retryBackoffMs(20)
                 .into(Validate.class)
                 .named("orders.validated")   // overrides the derived name
-                .alsoOutput("audit");        // tap: default JSON to `audit`
+                .sink("audit");        // tap: default JSON to `audit`
 
         // One class, two nodes: each keeps its own per-entity state under
         // its node identity (state dirs, journals, diagnostics). Both arms
@@ -164,7 +166,7 @@ public final class RiskOperative implements StreamOperative {
         // The join's output closes plugin-bound and keyed: every emit calls
         // ctx.emitKeyed(key, value) and frames carry flz.* identity stamps,
         // so a changelog sink upserts instead of appending.
-        verdicts.named("risk.verdicts").keyed().output("verdict_sink");
+        verdicts.named("risk.verdicts").keyed().sink("verdict_sink");
     }
 }
 ```
@@ -201,7 +203,7 @@ public final class SettleWorkflow implements WorkflowOperative {
                 .codec()
                 .into(Reconcile.class)
                 .named("reconciled")
-                .output("settlement_sink");
+                .sink("settlement_sink");
     }
 }
 ```

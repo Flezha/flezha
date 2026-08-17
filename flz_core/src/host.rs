@@ -560,10 +560,11 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
                     key: None,
                 })
                 .collect(),
-            plugin_name: (channel_decl.kind == HostChannelKind::Plugin).then(|| Arc::from(name)),
             wrap_input,
             entry_parsed: false,
-            plugin_serializer: None,
+            // A host class serializes on its own side and ships bytes, so the
+            // descriptor carries no serializer — the kind is the whole record
+            // of its plugin egress.
             plugin_sink: None,
             keyed: channel_decl.keyed,
             overflow_policy,

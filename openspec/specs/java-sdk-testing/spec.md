@@ -309,12 +309,22 @@ The `ProcedureTestHarness` SHALL support driving the Procedure's declared `Clock
 
 ### Requirement: ProcedureTestHarness asserts keyed emits and identity stamps
 
-The harness's `EmitRecord` SHALL expose the emit's key (empty for a non-keyed emit) and its metadata, so tests can assert `emitKeyed` behaviour and the runtime's `flz.entity` / `flz.seq` / `flz.key` identity stamps without invoking the wire path. The harness SHALL support declaring a channel keyed, so that the keyed-channel refusals (`KeyRequiredOnKeyedChannel`, `KeyNotAllowedOnNonKeyedChannel`) are assertable in a unit test.
+The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carrying none) and its user metadata, so tests can assert keyed-emit behaviour without invoking the wire path. The harness SHALL support declaring a channel keyed (`withKeyedChannel()`) and standing in for the Entity a key routed to (`withEntityKey(key)`), so that the keyed-channel contract — the Entity-key default and the refusals (`KeyRequiredOnKeyedChannel`, `KeyNotAllowedOnNonKeyedChannel`) — is exercisable in a unit test. The `flz.*` identity stamps themselves are minted by the runtime's frame writer and are NOT reproduced by the harness; assert them against the dispatcher.
 
 #### Scenario: A keyed emit records its key
 
 - **WHEN** a Procedure calls `ctx.emitKeyed("BTC", candle)` on a channel the harness declared keyed
-- **THEN** `harness.recordedEmits()` SHALL contain one record whose key is `"BTC"` and whose metadata carries the `flz.key` stamp
+- **THEN** `harness.emitRecords()` SHALL contain one record whose key is `"BTC"`
+
+#### Scenario: A key-less emit in a keyed Entity records that Entity's key
+
+- **WHEN** a harness declared keyed and standing in for the Entity `"BTC/USD"` drives a Procedure that calls `ctx.emit(candle)`
+- **THEN** `harness.emitRecords()` SHALL contain one record whose key is `"BTC/USD"`, and `ctx.entityKey()` SHALL have served `"BTC/USD"`
+
+#### Scenario: A key-less emit on a keyed channel is refused without an Entity key
+
+- **WHEN** a harness declared keyed with no Entity key drives a Procedure that calls `ctx.emit(candle)`
+- **THEN** the harness ctx SHALL throw `ProcedureException.KeyRequiredOnKeyedChannel` and SHALL record nothing
 
 #### Scenario: A reserved metadata key is rejected in the harness too
 

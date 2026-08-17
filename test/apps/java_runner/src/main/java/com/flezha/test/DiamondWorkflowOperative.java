@@ -39,22 +39,22 @@ public final class DiamondWorkflowOperative implements WorkflowOperative {
                 .into(DiamA.class)
                 .named("dfan")
                 .codec()
-                .alsoOutput("diamond_sink", s -> ("a:" + s).getBytes(StandardCharsets.UTF_8));
+                .sink("diamond_sink", s -> ("a:" + s).getBytes(StandardCharsets.UTF_8));
         fan.into(DiamB1.class)
                 .named("db1")
                 .codec()
                 .into(DiamB2.class)
                 .named("db2")
                 .codec()
-                .alsoOutput("diamond_sink", s -> s.getBytes(StandardCharsets.UTF_8))
+                .sink("diamond_sink", s -> s.getBytes(StandardCharsets.UTF_8))
                 .into(DiamJoin.class);
         fan.into(DiamC.class)
                 .named("dc")
                 .codec()
-                .alsoOutput("diamond_sink", s -> s.getBytes(StandardCharsets.UTF_8))
+                .sink("diamond_sink", s -> s.getBytes(StandardCharsets.UTF_8))
                 .into(DiamJoin.class)
                 .named("j_out")
-                .output("diamond_sink");
+                .sink("diamond_sink");
     }
 
     /** The shared root: commits durable state and fans out unchanged. */

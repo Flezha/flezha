@@ -16,6 +16,6 @@ public final class SessionTimeoutStreamOperative implements StreamOperative {
         c.input(String.class, "input")
                 .into(SessionTimeoutProcedure.class)
                 .named("kafka")
-                .output("test_kafka");
+                .sink("test_kafka");
     }
 }

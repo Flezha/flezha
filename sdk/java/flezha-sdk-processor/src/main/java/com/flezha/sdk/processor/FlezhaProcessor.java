@@ -864,7 +864,7 @@ public final class FlezhaProcessor extends AbstractProcessor {
                 .append(procedureSimple)
                 .append(".class).named(\"")
                 .append(sink)
-                .append("\").output(\"")
+                .append("\").sink(\"")
                 .append(sink)
                 .append("\");\n");
         b.append("    }\n}\n");

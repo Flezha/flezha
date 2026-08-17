@@ -151,7 +151,7 @@ public final class E04_LateInputCorrection {
             c.correctionWindow(5 * 60_000L);
             c.beyondWindowPolicy(BeyondWindowPolicy.PROCESS_AS_ARRIVAL);
             var sCandleProcedure = c.input(String.class, "trades").into(CandleProcedure.class);
-            sCandleProcedure.named("candles").keyed().output("postgres_sink");
+            sCandleProcedure.named("candles").keyed().sink("postgres_sink");
         }
     }
 

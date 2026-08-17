@@ -19,6 +19,6 @@ public final class DoNothingStreamOperative implements StreamOperative {
     @Override
     public void channels(ChannelBuilder c) {
         var sDoNothingProcedure = c.input(String.class, "input").into(DoNothingProcedure.class);
-        sDoNothingProcedure.named("echo").output("do_nothing_echo");
+        sDoNothingProcedure.named("echo").sink("do_nothing_echo");
     }
 }

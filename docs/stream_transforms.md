@@ -20,7 +20,7 @@ c.input::<Trade>("trades")
     .flat_map(|t: Trade| TIMEFRAMES.iter().map(move |tf| Slot::new(&t, tf)))
     .key_by(|s: &Slot| format!("{}@{}", s.symbol, s.timeframe))
     .into::<CandleProcedure>()
-    .output("candles");
+    .sink("candles");
 ```
 
 ```java
@@ -29,7 +29,7 @@ c.input(Trade.class, "trades")
         .flatMap(Slot.class, t -> TIMEFRAMES.stream().map(tf -> new Slot(t, tf)).toList())
         .keyBy(s -> s.symbol() + "@" + s.tf())
         .into(CandleProcedure.class)
-        .output("candles");
+        .sink("candles");
 ```
 
 One `Trade` becomes four `Slot`s in four Entities, and the topology contains
@@ -155,8 +155,8 @@ transform, keying and consumer-side configuration methods, defined once:
 Rust unifies the two handles into one `Stream<'b, T, K>` parameterized by a
 target marker (`EntryStream<'b, T>` is a type alias for it); Java declares the
 shared surface as `EdgeStream<T>`, which `EntryChannel` extends and `Stream`
-implements. Producer-side methods (`named`, `codec`, `keyed`, `also_output`,
-`output`, `branch`) stay on `Stream` alone — an entry channel has no producer.
+implements. Producer-side methods (`named`, `codec`, `keyed`, `sink`,
+`sealed`, `branch`) stay on `Stream` alone — an entry channel has no producer.
 
 ## See also
 

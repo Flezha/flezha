@@ -155,7 +155,7 @@ public final class E03_EffectivelyOnce {
             c.effectivelyOnce();
             c.checkpointAck();
             var sRollupProcedure = c.input(String.class, "ticks").into(RollupProcedure.class);
-            sRollupProcedure.named("rollups").keyed().output("postgres_sink");
+            sRollupProcedure.named("rollups").keyed().sink("postgres_sink");
         }
     }
 

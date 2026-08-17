@@ -175,10 +175,10 @@ impl Default for RetryPolicy {
     }
 }
 
-/// Hybrid plugin sink: the runtime form of `also_output_with(...)`.
-/// Lives alongside an `InterProcedure` channel's consumer fan-out so a
-/// single emit reaches both consumer mailboxes (typed) and the named
-/// plugin (serialized to bytes).
+/// The runtime form of `sink(...)`: the channel's plugin egress. On a
+/// channel that also has consumers a single emit reaches both the consumer
+/// mailboxes (typed) and the named plugin (serialized to bytes); on one with
+/// no consumers the channel is the plugin-bound terminal.
 pub struct PluginSink {
     pub name: Arc<str>,
     pub serializer: PluginSerializeFn,
@@ -190,7 +190,6 @@ pub struct ChannelDescriptor {
     pub producer: Option<ProcedureId>,
     /// Consumer subscriptions, each carrying its optional transform and key.
     pub consumers: Vec<ConsumerEdge>,
-    pub plugin_name: Option<Arc<str>>,
     /// For entry channels: convert wire bytes into the typed payload
     /// (`Arc<S::Input>`). For inter-procedure channels: `None` — payloads
     /// arrive already typed via `ctx.emit`. For plugin-bound channels:
@@ -200,13 +199,9 @@ pub struct ChannelDescriptor {
     /// custom `input_with` parser): a failing decode rides this channel's
     /// retry→DLQ ladder instead of the passthrough drop-and-log path.
     pub entry_parsed: bool,
-    /// For pure `PluginBound` channels: serialize the typed payload to
-    /// wire bytes. For other kinds: `None`. Hybrid channels populate
-    /// `plugin_sink` instead.
-    pub plugin_serializer: Option<PluginSerializeFn>,
-    /// For hybrid `InterProcedure` channels declared with
-    /// `also_output_with(...)` / `also_output(...)`: the named plugin sink. Mutually
-    /// exclusive with `plugin_serializer` / `plugin_name`.
+    /// The channel's plugin egress, declared with `sink(...)`. The one
+    /// representation for both the hybrid and terminal shapes — which of the
+    /// two a channel is, is read off `consumers`.
     pub plugin_sink: Option<PluginSink>,
     /// Output-identity opt-in (`.keyed()`): plugin emits require a natural
     /// key and carry `flz.*` identity stamps. Always paired with a plugin

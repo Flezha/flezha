@@ -151,6 +151,44 @@ class ActivationDispatcherTest {
                 .containsEntry("user", "meta");
     }
 
+    @Test
+    @DisplayName("a key-less emit in a keyed Entity carries that Entity's own key, stamped like emitKeyed")
+    void keyLessEmitInAKeyedEntityCarriesTheEntityKey() {
+        StreamOperativeClassRegistry.registerClass(KeyedEmitOperative.class);
+        ItemEffect effect = soleEffect(work("keyed_op", 0, Optional.of("BTC/USD"), 5, input(0, "plain:v", 1_000)));
+
+        assertThat(effect.verdict()).isInstanceOf(Verdict.Ok.class);
+        assertThat(effect.outputs()).hasSize(1);
+        Output output = effect.outputs().get(0);
+        assertThat(output.key()).contains("BTC/USD");
+        assertThat(metaMap(output))
+                .containsEntry("flz.entity", OP + "/keyed_proc/BTC/USD")
+                .containsEntry("flz.seq", "5.0")
+                .containsEntry("flz.key", "BTC/USD");
+    }
+
+    @Test
+    @DisplayName("a key-less emit on a keyed channel is refused where the Entity has no key")
+    void keyLessEmitOnAKeyedChannelIsRefusedWithoutAnEntityKey() {
+        StreamOperativeClassRegistry.registerClass(KeyedEmitOperative.class);
+        ItemEffect effect = soleEffect(work("keyed_op", 0, Optional.empty(), 5, input(0, "plain:v", 1_000)));
+
+        assertThat(effect.verdict()).isInstanceOf(Verdict.RetryableError.class);
+        assertThat(((Verdict.RetryableError) effect.verdict()).message()).contains("single-entity");
+        assertThat(effect.outputs()).as("nothing may be emitted").isEmpty();
+    }
+
+    @Test
+    @DisplayName("emitKeyed on a non-keyed channel is refused, entity key or not")
+    void keyedEmitOnANonKeyedChannelIsRefused() {
+        StreamOperativeClassRegistry.registerClass(CounterOperative.class);
+        ItemEffect effect = soleEffect(work("counter_op", 0, Optional.of("BTC/USD"), 7, input(0, "key:x", 1_000)));
+
+        assertThat(effect.verdict()).isInstanceOf(Verdict.RetryableError.class);
+        assertThat(((Verdict.RetryableError) effect.verdict()).message()).contains("not declared keyed");
+        assertThat(effect.outputs()).as("nothing may be emitted").isEmpty();
+    }
+
     // ------------------------------------------------------------------
     // transforms + dynamic entities
     // ------------------------------------------------------------------
@@ -564,7 +602,7 @@ class ActivationDispatcherTest {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "in").into(CountProc.class).named("out").output("out", s -> ("seen:" + s)
+            c.input(String.class, "in").into(CountProc.class).named("out").sink("out", s -> ("seen:" + s)
                     .getBytes(StandardCharsets.UTF_8));
         }
     }
@@ -620,7 +658,11 @@ class ActivationDispatcherTest {
         public void run(String input, StateHandle<CounterState, CountChange> state, ProcedureCtx ctx)
                 throws ProcedureException {
             state.apply(new CountChange(1));
-            ctx.emit(input);
+            if (input.startsWith("key:")) {
+                ctx.emitKeyed("k", input);
+            } else {
+                ctx.emit(input);
+            }
         }
     }
 
@@ -635,7 +677,7 @@ class ActivationDispatcherTest {
             c.input(String.class, "in")
                     .into(KeyedProc.class)
                     .keyed()
-                    .output("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -662,6 +704,11 @@ class ActivationDispatcherTest {
 
         @Override
         public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
+            // The plain spelling: on a keyed channel it carries the Entity's own key.
+            if (input.startsWith("plain:")) {
+                ctx.emit(input);
+                return;
+            }
             ctx.emitKeyedWithMeta("k-" + input, input, Map.of("user", "meta"));
         }
     }
@@ -1016,7 +1063,7 @@ class ActivationDispatcherTest {
             c.input(String.class, "in")
                     .into(CkptProc.class)
                     .keyed()
-                    .output("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
         }
     }
 

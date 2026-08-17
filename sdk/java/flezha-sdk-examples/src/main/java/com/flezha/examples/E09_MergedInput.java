@@ -156,7 +156,7 @@ public final class E09_MergedInput {
                     .from(c.input(Threshold.class, "config"), DetectorInput::ofThreshold)
                     .into(DetectorProcedure.class)
                     .named("alerts")
-                    .output("alerts_sink");
+                    .sink("alerts_sink");
         }
     }
 

@@ -71,7 +71,7 @@ public final class E05_WorkflowSaga {
             var sReserve = c.input(String.class, "order").into(Reserve.class);
             var sCharge = sReserve.named("reserved").codec().into(Charge.class);
             var sShip = sCharge.named("charged").codec().into(Ship.class);
-            sShip.named("shipped").output("orders_sink");
+            sShip.named("shipped").sink("orders_sink");
         }
     }
 

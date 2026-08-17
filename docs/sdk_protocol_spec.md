@@ -218,7 +218,7 @@ For each (key, value) pair:
 | `channel` | SDK → Controller | Set by `ProcedureCtx::emit` on plugin-bound and hybrid channels. Plugin providers (e.g. `Flezha.Plugin.Provider.Kafka.Producer`) match on this key via their `:channel` opt to gate which channel's outputs they consume. |
 | `flz.entity` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the emitting Entity as `<operative_instance_id>/<procedure_name>/<entity_key>` (empty key for single-mode). Replay-stable. |
 | `flz.seq` | SDK → Controller | Output-identity stamp on `.keyed()` channels: `<change_seq>.<emit_ordinal>` — the Entity's durable change seq after the flush-before-emit drain, plus the emit's ordinal within the invocation. See "Output identity stamps" below for the exactness boundary. |
-| `flz.key` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the caller's natural key from `ProcedureCtx::emit_keyed(key, value)`. Replay-stable by the determinism contract. |
+| `flz.key` | SDK → Controller | Output-identity stamp on `.keyed()` channels: the emitting Entity's own key, or the caller's natural key when the emit supplied one via `ProcedureCtx::emit_keyed(key, value)`. Replay-stable by the determinism contract. |
 | `flz.offset` | Controller → SDK | Effectively-once tier: the durable input-log offset assigned to this forwarded input. The SDK threads it through dispatch (including inter-procedure emits) so the invocation's effect record carries it back as its consumed-offset. Absent outside the tier. |
 | `flz.epoch` | Controller → plugins | Effectively-once tier: the Entity's WAL realign epoch, stamped (with `flz.entity` and the durable `flz.seq` = `outbox_seq`) on every output the fsync-gated outbox flush dispatches. Its presence marks a tier output; `(flz.entity, flz.seq, flz.epoch)` is the exact dedup identity. |
 
@@ -238,7 +238,7 @@ stamps can never be spoofed or clobbered. Stamps are appended after user
 metadata. Channels not declared `.keyed()` carry no stamps and their wire
 frames are byte-identical to the pre-identity layout.
 
-Hybrid channels (declared with `also_output_with(...)` / `alsoOutput(...)` — see `docs/operative_architecture.md` "Hybrid channels: inter-procedure fan-out + plugin sink") reuse this exact framing. The plugin-bytes wire frame is byte-indistinguishable from a pure-`output(...)` frame for the same plugin name and bytes; no new wire payload-id, no new metadata key.
+Every plugin frame is declared the same way — `sink(...)` / `sink_with(...)`, see `docs/operative_architecture.md` "Plugin egress: `sink`, hybrid and terminal". A channel that also fans out to inter-procedure consumers produces a frame byte-indistinguishable from one that does not, for the same plugin name and bytes; no wire payload-id or metadata key depends on the difference.
 
 #### Per-Entity mailbox is bounded; on full, the channel's `OverflowPolicy` applies
 
@@ -1285,7 +1285,7 @@ TimerOp {
 }
 OutputRecord {
     channel:  String,
-    key:      String,                    -- emit_keyed natural key
+    key:      String,                    -- the Entity's own key, or emit_keyed's
     metadata: Vec<(String, String)>,     -- user metadata, key-sorted
     payload:  Vec<u8>,
 }
@@ -1930,7 +1930,7 @@ by a restore.
 ### Plugin metadata: output identity stamps (`flz.*`)
 
 Channels declared `.keyed()` (valid on `output` and
-`also_output` / `also_output_with` wires only — a keyed channel without a
+`sink` / `sink_with` wires only — a keyed channel without a
 plugin wire is a build error) stamp every plugin-bound emit with three
 reserved metadata keys, appended after user metadata:
 
@@ -1938,13 +1938,17 @@ reserved metadata keys, appended after user metadata:
 |---|---|---|
 | `flz.entity` | `<operative_instance_id>/<procedure_name>/<entity_key>` | replay-stable |
 | `flz.seq` | `<change_seq>.<emit_ordinal>` — durable change seq at emit time (post flush-before-emit drain) + emit ordinal within the invocation | replay-stable while state advances |
-| `flz.key` | caller's natural key from `ProcedureCtx::emit_keyed(key, value)` | replay-stable by the determinism contract |
+| `flz.key` | the emitting Entity's own key, or the caller's natural key from `ProcedureCtx::emit_keyed(key, value)` | replay-stable by the determinism contract |
 
-On a keyed channel, plain `emit` / `emit_with_meta` fail with
-`KeyRequiredOnKeyedChannel`; on a non-keyed channel `emit_keyed` fails
-with `KeyNotAllowedOnNonKeyedChannel` — the channel declaration is the
-single source of truth for whether output identity exists. The controller
-passes the stamps through the `:on_output` plugin chain unchanged.
+On a keyed channel, plain `emit` / `emit_with_meta` carry the emitting
+Entity's own key — equal to the key its input routed by, so the stamp
+cannot drift from it — and `emit_keyed` is for the output whose natural
+key differs. A single-entity Procedure has no such key and its plain emit
+fails with `KeyRequiredOnKeyedChannel`; on a non-keyed channel `emit_keyed`
+fails with `KeyNotAllowedOnNonKeyedChannel` — the channel declaration is
+the single source of truth for whether output identity exists. The
+controller passes the stamps through the `:on_output` plugin chain
+unchanged.
 
 **`flz.seq` exactness boundary**: `flz.seq` suffices for changelog-style
 consumers that upsert on `flz.key` (candles, indicators). It is NOT a

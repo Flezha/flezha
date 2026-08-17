@@ -328,7 +328,7 @@ impl StreamOperative for MarketOperative {
             .named("trade.parsed")
             .into::<OhlcProc>()           // returns OhlcProc's output stream handle
             .named("ohlc.candles")
-            .output("ohlc_kafka");      // plugin-bound terminal
+            .sink("ohlc_kafka");      // plugin-bound terminal
     }
 }
 
@@ -407,7 +407,7 @@ public final class MarketOperative implements StreamOperative {
                 .named("trade.parsed")
                 .into(OhlcProc.class)      // returns OhlcProc's output stream handle
                 .named("ohlc.candles")
-                .output("ohlc_kafka");   // plugin-bound terminal
+                .sink("ohlc_kafka");   // plugin-bound terminal
     }
 }
 
@@ -641,11 +641,12 @@ c.input::<Vec<u8>>("trade.raw")
   `drops_oldest_total` counter increments by 1. Best-effort under MPMC
   contention.
 
-The plugin-bound terminal `output(...)` returns a finalized `Channel`
-with no further builder methods, so nothing — `.on_full(...)` included —
-can chain after it. There is no SDK-side mailbox between a plugin-bound
-emit and the wire, so a policy declared earlier on a stream that ends
-plugin-bound is never consulted.
+A channel that ends plugin-bound — a `sink(...)` with no consumer wired
+after it — has no SDK-side mailbox between the emit and the wire, so a
+policy declared on it is never consulted. `.sealed()` returns a finalized
+`Channel` with no further builder methods, which is how an author states
+that in the type system; nothing — `.on_full(...)` included — chains after
+it.
 
 ### Default policy by channel kind
 
@@ -733,29 +734,32 @@ metadata appended after the reserved `channel` key. It returns
 inter-procedure channel that does not also have a plugin sink (see the
 hybrid-channel section below).
 
-## Hybrid channels: inter-procedure fan-out + plugin sink
+## Plugin egress: `sink`, hybrid and terminal
 
 A hybrid channel publishes a single typed value to both inter-procedure
 consumers (typed, zero-copy) and a named plugin (serialized to bytes)
 without forcing the producer Procedure to declare two output channels. The
-builder method is `also_output_with(plugin_name, serializer)` on the
-producer's output stream handle (`Stream<T>`); `also_output(plugin_name)`
-is the same with the default serialization rules of `output(...)`:
+builder method is `sink_with(plugin_name, serializer)` on the producer's
+output stream handle (`Stream<T>`); `sink(plugin_name)` is the same with
+the default serialization rules (passthrough for bytes, UTF-8 for strings,
+JSON otherwise). It is the SAME method that declares a plugin-bound
+terminal — a channel is hybrid by having consumers wired after the sink,
+terminal by having none:
 
 ```rust
 sma_stream                       // SmaProc's output handle, from `.into::<SmaProc>()`
     .named("sma_out")
-    .also_output_with("indicators", sma_to_pb_bytes)
+    .sink_with("indicators", sma_to_pb_bytes)
     .into::<BollingerProc>();
 ```
 
-Java equivalent (same shape via the `alsoOutput` overloads on
+Java equivalent (same shape via the `sink` overloads on
 `Stream<T>`):
 
 ```java
 smaStream                        // SmaProc's output handle, from `.into(SmaProc.class)`
     .named("sma_out")
-    .alsoOutput("indicators", SmaCodec::toBytes)
+    .sink("indicators", SmaCodec::toBytes)
     .into(BollingerProc.class);
 ```
 
@@ -767,14 +771,15 @@ surfaces as `ProcedureException.PluginSerializerFailure` (Java's structured-thro
 analog of Rust's `ProcedureError::PluginSerializerPanic`). Wire frames produced
 by either SDK are byte-indistinguishable at the agent's plugin layer.
 
-The channel's `kind` stays `InterProcedure`. The plugin sink lives on a
-parallel `plugin_sink: Option<PluginSink>` field. Order of
-`also_output_with` and `.into::<S>()` is irrelevant — the
-descriptor accumulates both regardless. Calling `also_output_with` (or
-`also_output`) twice on the same channel is rejected at registration with
-`TopologyIssue::DuplicatePluginSink`. The type system already
-forbids `also_output_with` after `output` (the latter returns a
-finalized `Channel<T>`); a trybuild test pins this.
+The plugin sink lives on the channel's `plugin_sink: Option<PluginSink>`
+field, the one representation of plugin egress; `kind` is DERIVED at build
+time from the wiring, staying `InterProcedure` here and becoming
+`PluginBound` when nothing consumes the channel. Order of `sink_with` and
+`.into::<S>()` is irrelevant — the descriptor accumulates both regardless.
+Calling `sink_with` (or `sink`) twice on the same channel is rejected at
+registration with `TopologyIssue::DuplicatePluginSink`. Declaring
+`.sealed()` and then wiring a consumer is a compile error; a trybuild test
+pins this.
 
 ### Per-emit semantics
 
@@ -805,9 +810,10 @@ user-supplied `channel` entry is dropped.
 
 ### Wire format and agent fan-in
 
-Hybrid frames are byte-indistinguishable from `output(...)` frames
-for the same plugin name and bytes. Two channels sharing a
-`plugin_name` (typically `also_output_with("indicators", ...)`
+A hybrid channel's frames are byte-indistinguishable from a terminal
+channel's for the same plugin name and bytes — one method produces one wire
+shape, and a unit fixture holds both against it. Two channels sharing a
+`plugin_name` (typically `sink_with("indicators", ...)`
 across several Procedures) fan in cleanly at the agent's plugin layer; the
 plugin distinguishes them by the `channel: String` metadata key. No
 new wire payload-id, no new agent code.

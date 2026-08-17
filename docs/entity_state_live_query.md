@@ -187,7 +187,7 @@ Each read is one control round-trip plus one state-lock acquisition on the
 Entity — the same lock wait compaction already takes, bounded by one
 invocation. So a read cannot wedge an Entity that is making progress, but it is
 a **point read for operators and low-rate readers**, not a serving API. A
-high-rate path is still a sink: `.output(...)` into Kafka or Postgres, which is
+high-rate path is still a sink: `.sink(...)` into Kafka or Postgres, which is
 built for fan-out and costs the Entity nothing per reader. Rate limiting
 belongs to the future HTTP surface, not here.
 

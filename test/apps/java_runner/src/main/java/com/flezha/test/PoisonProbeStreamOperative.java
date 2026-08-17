@@ -17,6 +17,6 @@ public final class PoisonProbeStreamOperative implements StreamOperative {
     @Override
     public void channels(ChannelBuilder c) {
         var sPoisonProbeProcedure = c.input(String.class, "input").retryBackoffMs(25).into(PoisonProbeProcedure.class);
-        sPoisonProbeProcedure.named("out").output("probe_sink");
+        sPoisonProbeProcedure.named("out").sink("probe_sink");
     }
 }

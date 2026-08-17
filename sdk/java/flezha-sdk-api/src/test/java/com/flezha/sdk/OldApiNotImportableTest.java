@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.List;
 import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
@@ -12,6 +13,7 @@ import javax.tools.SimpleJavaFileObject;
 import javax.tools.ToolProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Mirror of the Rust SDK's {@code OldApiNotImportable} test (per
@@ -21,61 +23,39 @@ import org.junit.jupiter.api.Test;
  */
 class OldApiNotImportableTest {
 
+    /** Class output for the sources that do compile; JUnit removes it. */
+    @TempDir
+    static Path classOutput;
+
     @Test
     @DisplayName("user code importing StreamOperativeHandler fails to compile")
     void importingStreamOperativeHandlerFails() {
-        String src =
+        Compilation result = compile(
                 """
                 package nowhere;
                 import com.flezha.sdk.StreamOperativeHandler;
                 public final class UsesLegacyApi {
                     void foo(StreamOperativeHandler<?, ?, ?> h) { }
                 }
-                """;
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        ByteArrayOutputStream err = new ByteArrayOutputStream();
+                """);
 
-        boolean ok = compiler.getTask(
-                        new PrintWriter(err),
-                        null,
-                        null,
-                        List.of("-proc:none"),
-                        null,
-                        List.of(new SourceFile("UsesLegacyApi.java", src)))
-                .call();
-
-        assertThat(ok)
+        assertThat(result.ok())
                 .as("import com.flezha.sdk.StreamOperativeHandler should not resolve after operative-mvp-java")
                 .isFalse();
-        assertThat(err.toString()).contains("com.flezha.sdk.StreamOperativeHandler");
+        assertThat(result.diagnostics()).contains("com.flezha.sdk.StreamOperativeHandler");
     }
 
     @Test
     @DisplayName("user code importing FactoryRegistry fails to compile")
     void importingFactoryRegistryFails() {
-        String src =
+        assertDoesNotCompile(
                 """
                 package nowhere;
                 import com.flezha.sdk.FactoryRegistry;
                 public final class UsesLegacyApi {
                     void foo() { FactoryRegistry.factoryIds(); }
                 }
-                """;
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        ByteArrayOutputStream err = new ByteArrayOutputStream();
-
-        boolean ok = compiler.getTask(
-                        new PrintWriter(err),
-                        null,
-                        null,
-                        List.of("-proc:none"),
-                        null,
-                        List.of(new SourceFile("UsesLegacyApi.java", src)))
-                .call();
-
-        assertThat(ok)
-                .as("import com.flezha.sdk.FactoryRegistry should not resolve after operative-mvp-java")
-                .isFalse();
+                """);
     }
 
     @Test
@@ -125,18 +105,79 @@ class OldApiNotImportableTest {
                 """);
     }
 
+    @Test
+    @DisplayName("user code calling the removed output / alsoOutput egress fails to compile")
+    void callingRemovedEgressMethodsFails() {
+        // Control first: without it a classpath that resolved nothing would
+        // make every refusal below vacuously true.
+        assertThat(compiles(usesStream("s.sink(\"x\");")))
+                .as("the replacement spelling must compile — otherwise the refusals prove nothing")
+                .isTrue();
+
+        assertDoesNotCompile(usesStream("s.output(\"x\");"));
+        assertDoesNotCompile(usesStream("s.output(\"x\", v -> v.getBytes());"));
+        assertDoesNotCompile(usesStream("s.alsoOutput(\"x\");"));
+        assertDoesNotCompile(usesStream("s.alsoOutput(\"x\", v -> v.getBytes());"));
+    }
+
+    @Test
+    @DisplayName("a sealed channel accepts no further declaration")
+    void sealedRefusesFurtherDeclaration() {
+        assertThat(compiles(usesStream("s.sink(\"x\").sealed();")))
+                .as("sealing a sink is the supported terminator")
+                .isTrue();
+
+        assertDoesNotCompile(usesStream("s.sink(\"x\").sealed().named(\"y\");"));
+        assertDoesNotCompile(usesStream("s.sink(\"x\").sealed().keyed();"));
+    }
+
+    /** One `Stream<String>` in scope, `body` the only thing under test. */
+    private static String usesStream(String body) {
+        return """
+                package nowhere;
+                import com.flezha.sdk.channel.Stream;
+                public final class UsesLegacyApi {
+                    void foo(Stream<String> s) { %s }
+                }
+                """
+                .formatted(body);
+    }
+
     private static void assertDoesNotCompile(String src) {
+        assertThat(compiles(src))
+                .as("deleted API must not resolve; source:\n" + src)
+                .isFalse();
+    }
+
+    private static boolean compiles(String src) {
+        return compile(src).ok();
+    }
+
+    /** Outcome of one in-process compile: whether it succeeded, and what javac said. */
+    private record Compilation(boolean ok, String diagnostics) {}
+
+    /**
+     * Compile one source in-process against this module's own classpath, so a
+     * reference to a live SDK type resolves and only the tested spelling
+     * decides the outcome. The one compiler invocation in this file.
+     */
+    private static Compilation compile(String src) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         boolean ok = compiler.getTask(
                         new PrintWriter(err),
                         null,
                         null,
-                        List.of("-proc:none"),
+                        List.of(
+                                "-proc:none",
+                                "-classpath",
+                                System.getProperty("java.class.path"),
+                                "-d",
+                                classOutput.toString()),
                         null,
                         List.of(new SourceFile("UsesLegacyApi.java", src)))
                 .call();
-        assertThat(ok).as("deleted API must not resolve; source:\n" + src).isFalse();
+        return new Compilation(ok, err.toString());
     }
 
     private static final class SourceFile extends SimpleJavaFileObject {

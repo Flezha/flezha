@@ -505,6 +505,58 @@ class StreamOperativeTopologyBuilderTest {
                     .hasMessageContaining("g12");
         }
 
+        @Test
+        @DisplayName("a sink with no consumers is the terminal; sealed() changes nothing")
+        void sinkTerminalityIsDerivedFromTheWiring() {
+            var terminal = StreamOperativeTopologyBuilder.build("g13", c -> c.input(String.class, "in")
+                    .into(SingleProcedure.class)
+                    .named("egress")
+                    .sink("plugin_u"));
+            var sealed = StreamOperativeTopologyBuilder.build("g14", c -> c.input(String.class, "in")
+                    .into(SingleProcedure.class)
+                    .named("egress")
+                    .sink("plugin_u")
+                    .sealed());
+            var hybrid = StreamOperativeTopologyBuilder.build("g15", c -> c.input(String.class, "in")
+                    .into(SingleProcedure.class)
+                    .named("egress")
+                    .sink("plugin_u")
+                    .into(GraphStage1.class));
+
+            assertThat(shape(sealed))
+                    .as("`.sealed()` must add no topology difference")
+                    .isEqualTo(shape(terminal));
+            assertThat(sinkShape(terminal)).isEqualTo(List.of(ChannelKind.PLUGIN_BOUND.name(), "0", "plugin_u"));
+            assertThat(sinkShape(hybrid)).isEqualTo(List.of(ChannelKind.INTER_PROCEDURE.name(), "1", "plugin_u"));
+        }
+
+        @Test
+        @DisplayName("sealing a leaf declares no channel")
+        void sealingALeafDeclaresNoChannel() {
+            // A leaf's output channel is created lazily, so this is the case
+            // where "sealing changes no topology" is falsifiable: a sealed()
+            // that reached the builder would conjure one.
+            var sealed = StreamOperativeTopologyBuilder.build(
+                    "g16",
+                    c -> c.input(String.class, "in").into(SingleProcedure.class).sealed());
+            var bare = StreamOperativeTopologyBuilder.build(
+                    "g17", c -> c.input(String.class, "in").into(SingleProcedure.class));
+
+            assertThat(shape(sealed)).isEqualTo(shape(bare));
+        }
+
+        /** Everything about the `egress` channel the sink declaration decides. */
+        private java.util.List<String> sinkShape(StreamOperativeTopology t) {
+            var channel = t.channels().stream()
+                    .filter(ch -> ch.name().equals("egress"))
+                    .findFirst()
+                    .orElseThrow();
+            return List.of(
+                    channel.kind().name(),
+                    String.valueOf(channel.consumerIds().size()),
+                    channel.pluginSink().map(PluginSink::name).orElse("<none>"));
+        }
+
         private java.util.List<String> shape(StreamOperativeTopology t) {
             var channels = t.channels().stream()
                     .map(ch -> ch.name() + "|" + ch.kind() + "|" + ch.producer() + "|" + ch.consumerIds())

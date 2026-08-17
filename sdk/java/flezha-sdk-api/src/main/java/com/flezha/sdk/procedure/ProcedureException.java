@@ -36,14 +36,17 @@ public class ProcedureException extends Exception {
 
     /**
      * Thrown when a plain {@code emit} is called on a channel declared
-     * {@code .keyed()}. The declaration is the single source of truth for
-     * whether a key is required — use {@code ctx.emitKeyed(...)}.
+     * {@code .keyed()} by a single-entity Procedure — one with no Entity key
+     * to emit under. A keyed Entity's plain emit carries its own key instead;
+     * an output whose key differs uses {@code ctx.emitKeyed(...)}.
      */
     public static final class KeyRequiredOnKeyedChannel extends ProcedureException {
         private final String channel;
 
         public KeyRequiredOnKeyedChannel(String channel) {
-            super("channel `" + channel + "` is declared keyed; use emitKeyed(key, value)");
+            super("channel `" + channel
+                    + "` is declared keyed and this procedure is single-entity, so there is no Entity key to emit"
+                    + " under; use emitKeyed(key, value)");
             this.channel = channel;
         }
 

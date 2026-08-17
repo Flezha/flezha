@@ -66,7 +66,7 @@ class ReplayEmitsEqualTest {
     @DisplayName("a keyed emit records its key")
     void keyedEmitRecordsItsKey() {
         ProcedureTestHarness<String, Unit, String, NoChange> harness =
-                ProcedureTestHarness.of(new KeyedProc()).withWallClock(1L);
+                ProcedureTestHarness.of(new KeyedProc()).withKeyedChannel().withWallClock(1L);
 
         harness.applyInputs(List.of("BTC"));
 

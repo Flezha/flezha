@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.flezha.sdk.channel.ChannelKind;
+import com.flezha.sdk.procedure.EmitKeys;
 import com.flezha.sdk.procedure.Procedure;
 import com.flezha.sdk.procedure.ProcedureCtx;
 import com.flezha.sdk.procedure.ProcedureException;
@@ -666,6 +667,14 @@ public final class ActivationDispatcher {
             return replay;
         }
 
+        @Override
+        @Nonnull
+        public Optional<String> entityKey() {
+            // The cell stores a single-entity Procedure's absent key as "";
+            // that is not a key to emit under.
+            return cell.entityKey.isEmpty() ? Optional.empty() : Optional.of(cell.entityKey);
+        }
+
         private TimerSession session() throws ProcedureException {
             if (timers == null) {
                 throw new ProcedureException.TimersUnavailable();
@@ -743,52 +752,39 @@ public final class ActivationDispatcher {
 
         /**
          * The single emit funnel: keyed-channel contract, reserved-metadata
-         * refusal, then producer-side routing into schema outputs.
+         * refusal, then producer-side routing into schema outputs. Supplying no
+         * key on a keyed channel resolves to this Entity's own key here, so the
+         * defaulted emit and an explicit {@code emitKeyed} are one path from
+         * this point on and their stamping cannot diverge.
          */
-        @SuppressWarnings({"unchecked", "rawtypes"})
         private void doEmit(int channelId, Object value, @Nullable Map<String, String> meta, @Nullable String key)
                 throws ProcedureException {
             ChannelDescriptor descriptor = instance.topology.channel(channelId);
             if (descriptor == null) {
                 throw new ProcedureException.UnknownChannel("<channel " + channelId + ">");
             }
-            if (descriptor.keyed() && key == null) {
-                throw new ProcedureException.KeyRequiredOnKeyedChannel(descriptor.name());
+            if (descriptor.kind() == ChannelKind.ENTRY) {
+                throw new ProcedureException(
+                        "cannot emit on entry channel `" + descriptor.name() + "` from a procedure");
             }
-            if (!descriptor.keyed() && key != null) {
-                throw new ProcedureException.KeyNotAllowedOnNonKeyedChannel(descriptor.name());
-            }
+            key = EmitKeys.resolve(descriptor.name(), descriptor.keyed(), key, entityKey());
             if (meta != null) {
                 for (String k : meta.keySet()) {
                     if (k.startsWith(ProcedureCtx.RESERVED_METADATA_PREFIX)) {
                         throw new ProcedureException.ReservedMetadataKey(k);
                     }
                 }
+                if (descriptor.pluginSink().isEmpty()) {
+                    throw new ProcedureException.MetadataNotAllowedOnInterProcedureChannel(descriptor.name());
+                }
             }
-            switch (descriptor.kind()) {
-                case INTER_PROCEDURE -> {
-                    if (meta != null && descriptor.pluginSink().isEmpty()) {
-                        throw new ProcedureException.MetadataNotAllowedOnInterProcedureChannel(descriptor.name());
-                    }
-                    collectEdgeOutputs(channelId, descriptor, value);
-                    if (descriptor.pluginSink().isPresent()) {
-                        byte[] bytes =
-                                serializeOrThrow(descriptor.pluginSink().get().serializer(), value, descriptor.name());
-                        collectPluginOutput(descriptor, bytes, meta, key);
-                    }
-                }
-                case PLUGIN_BOUND -> {
-                    Function<Object, byte[]> serializer =
-                            (Function) descriptor.pluginSerializer().orElse(null);
-                    if (serializer == null) {
-                        throw new ProcedureException(
-                                "plugin channel `" + descriptor.name() + "` is missing a serializer");
-                    }
-                    byte[] bytes = serializeOrThrow(serializer, value, descriptor.name());
-                    collectPluginOutput(descriptor, bytes, meta, key);
-                }
-                case ENTRY -> throw new ProcedureException(
-                        "cannot emit on entry channel `" + descriptor.name() + "` from a procedure");
+            // Fan out to the consumer edges, then to the plugin sink if the
+            // channel has one. The plugin-bound terminal is the same path with
+            // no consumer edges, which is why there is no second arm for it.
+            collectEdgeOutputs(channelId, descriptor, value);
+            if (descriptor.pluginSink().isPresent()) {
+                byte[] bytes = serializeOrThrow(descriptor.pluginSink().get().serializer(), value, descriptor.name());
+                collectPluginOutput(descriptor, bytes, meta, key);
             }
         }
 

@@ -129,7 +129,7 @@ public final class E02_StatefulCounter {
         @Override
         public void channels(ChannelBuilder c) {
             var sCountProcedure = c.input(String.class, "in").into(CountProcedure.class);
-            sCountProcedure.named("out").output("my_sink");
+            sCountProcedure.named("out").sink("my_sink");
         }
     }
 

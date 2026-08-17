@@ -6,14 +6,14 @@ Replay-stable identity on emitted outputs: per-channel `.keyed()` opt-in, `emit_
 ### Requirement: Keyed channel declaration
 
 The channel builder SHALL support a `.keyed()` declaration on plugin-bound
-(`output`) and hybrid (`also_output` / `also_output_with`) channels, recorded on
+(a `sink` with no consumers) and hybrid (a `sink` with consumers) channels, recorded on
 the channel entry. Declaring `.keyed()` on a pure inter-procedure channel (no
 plugin wire) SHALL be a build error. The channel declaration is the single
 source of truth for whether output identity exists on that channel.
 
 #### Scenario: Keyed plugin channel accepted
 
-- **WHEN** a topology declares `.also_output_with("kafka", ser).keyed()` on an
+- **WHEN** a topology declares `.sink_with("kafka", ser).keyed()` on an
   `OhlcProc` output stream
 - **THEN** the operative builds and the channel entry is marked keyed
 
@@ -26,9 +26,15 @@ source of truth for whether output identity exists on that channel.
 
 `ProcedureCtx::emit_keyed(key, value)` SHALL emit on the invocation's channel with
 the caller-supplied natural key. On a keyed channel, plain `emit` /
-`emit_with_meta` (no key) SHALL fail with a typed error; on a non-keyed channel,
-`emit_keyed` SHALL fail with a typed error. The key SHALL be replay-stable by the
-determinism contract (derived from input/state/ctx, never from ambient sources).
+`emit_with_meta` (no key) SHALL default to the invoking entity's own key whenever
+the entity has one — a dynamically keyed entity or one of a declared static
+keyset — so the stamped key SHALL equal the routing key by construction; it SHALL
+fail with a typed error in a single-entity procedure, which has no entity key to
+default to. On a non-keyed channel,
+`emit_keyed` SHALL fail with a typed error. Explicitly supplied keys SHALL be
+replay-stable by the determinism contract (derived from input/state/ctx, never
+from ambient sources); the entity-key default is replay-stable inherently, the
+entity key being part of the invocation's identity.
 
 #### Scenario: Keyed emit on keyed channel
 
@@ -36,9 +42,17 @@ determinism contract (derived from input/state/ctx, never from ambient sources).
   channel
 - **THEN** the output is emitted and carries the supplied key
 
-#### Scenario: Un-keyed emit on keyed channel rejected
+#### Scenario: Un-keyed emit in a keyed entity defaults to the entity key
 
-- **WHEN** `run` calls `ctx.emit(candle)` on a keyed channel
+- **WHEN** the entity keyed `"BTC/USD"` calls `ctx.emit(candle)` on a keyed
+  channel
+- **THEN** the output is emitted carrying the key `"BTC/USD"`, byte-identical
+  (including `flz.key` stamping and record keying) to
+  `ctx.emit_keyed("BTC/USD", candle)`
+
+#### Scenario: Un-keyed emit in a single-entity procedure rejected
+
+- **WHEN** a single-entity procedure calls `ctx.emit(value)` on a keyed channel
 - **THEN** the call returns a typed `ProcedureError` and nothing is emitted
 
 #### Scenario: Keyed emit on non-keyed channel rejected

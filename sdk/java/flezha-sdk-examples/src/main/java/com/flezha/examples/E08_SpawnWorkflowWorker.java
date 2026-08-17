@@ -52,7 +52,7 @@ public final class E08_SpawnWorkflowWorker {
 
         @Override
         public void channels(ChannelBuilder c) {
-            c.input(String.class, "events").into(Detect.class).named("alerts").output("alerts_sink");
+            c.input(String.class, "events").into(Detect.class).named("alerts").sink("alerts_sink");
         }
     }
 

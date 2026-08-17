@@ -82,28 +82,33 @@ inventing one: `create` (Beam `Pipeline.create`), `start`/`awaitTermination`
 (gRPC `Server`, Spark `StreamingQuery`), `close` (Kafka Streams). A novel name
 is only justified when the concept itself is novel.
 
-### 9. Graph authoring is producer-first: `input` → `into` → `output`
+### 9. Graph authoring is producer-first: `input` → `into` → `sink`
 
 Topology declaration reads in flow order on a **stream handle**
 (`sdk-graph-authoring`): `input` declares an entry channel (its name is
 explicit — an external address of the operative; an operative may declare
 several, one per external source, and the controller routes each inbound frame
 to its entry by `metadata["channel"]`), `.into(Proc)` wires a
-consumer and returns *that procedure's* output stream, and the plugin-bound
-terminal is `output(name)` — destination-neutral (the operative declares a
-named exit; the controller decides what happens there). The hybrid tap is
-`alsoOutput(name[, serializer])` (Rust: `also_output` / `also_output_with`),
-using the same default serialization rules as `output` (passthrough for bytes,
-UTF-8 for strings, JSON otherwise). Rename mapping from the retired
-channel-centric surface:
+consumer and returns *that procedure's* output stream, and plugin egress is
+`sink(name[, serializer])` (Rust: `sink(name)` / `sink_with(name, f)`) —
+destination-neutral (the operative declares a named attachment point; the
+controller routes to it by channel-name metadata, and several channels may
+name one sink). Without a serializer the defaults are passthrough for bytes,
+UTF-8 for strings, JSON otherwise.
+
+**There is exactly one egress method.** `sink` always returns the stream
+handle, so consumers wire after it; a channel is the plugin-bound terminal by
+having no further wiring, not by a second method. `.sealed()` is the optional
+terminator: it returns a non-chainable handle so a later consumer or transform
+does not compile, and changes nothing about the topology. Rename mapping:
 
 | retired                              | current                              |
 | ------------------------------------ | ------------------------------------ |
 | `channel(T.class, "name")` / `channel::<T>("name")` | *(gone — the producer's `Output` types the stream; `.named("name")` overrides the derived name)* |
 | `.from(Proc)` / `.from::<Proc>()`        | *(gone — the stream handle already knows its producer)* |
-| `toPlugin(name)` / `to_plugin(name)` | `output(name)`                       |
-| `alsoToPluginWith(name, f)` / `also_to_plugin_with(name, f)` | `alsoOutput(name, f)` / `also_output_with(name, f)` |
-| —                                    | `alsoOutput(name)` / `also_output(name)` (default serializer) |
+| `toPlugin(name)` / `to_plugin(name)`, then `output(name)` | `sink(name)` (append `.sealed()` where the non-chainable return type was relied on) |
+| `alsoToPluginWith(name, f)` / `also_to_plugin_with(name, f)`, then `alsoOutput(name, f)` / `also_output_with(name, f)` | `sink(name, f)` / `sink_with(name, f)` |
+| `alsoOutput(name)` / `also_output(name)` | `sink(name)` (default serializer) |
 
 Channel config (`codec`, `keyed`, `onFull`, `retryMax`, `retryBackoffMs`,
 `named`) chains on the handle in any order relative to consumer wiring.

@@ -140,7 +140,7 @@ class ClockAndKeyedValidationTest {
         @Override
         public void channels(ChannelBuilder c) {
             var sPlainProc = c.input(String.class, "in").into(PlainProc.class);
-            sPlainProc.named("out").keyed().output("sink");
+            sPlainProc.named("out").keyed().sink("sink");
         }
     }
 
