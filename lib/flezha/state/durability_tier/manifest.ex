@@ -32,12 +32,16 @@ defmodule Flezha.State.DurabilityTier.Manifest do
 
   # What makes two entries the same shipped cut. Everything the manifest asserts
   # about the Entity, and nothing about when it was asserted.
-  @cut_keys [:epoch, :snapshots, :ranges, :file, :source_offsets, :markers]
+  #
+  # `owner`/`claim` are here, not merely alongside: a takeover changes no data,
+  # so without them `same_cut?/2` would report "nothing to write" and the new
+  # owner's claim would never land.
+  @cut_keys [:epoch, :snapshots, :ranges, :file, :source_offsets, :markers, :owner, :claim]
 
   @type ref ::
           {:entity, Registry.entity_id()}
           | {:input_log, binary()}
-          | {:cspec, binary()}
+          | {:cspec, {binary(), binary()}}
 
   @type range :: %{
           from: non_neg_integer(),
@@ -57,6 +61,8 @@ defmodule Flezha.State.DurabilityTier.Manifest do
           file: nil | %{blob: binary(), size: non_neg_integer(), sha: binary()},
           source_offsets: %{optional(atom()) => integer()},
           markers: markers(),
+          owner: nil | binary(),
+          claim: non_neg_integer(),
           shipped_at_ms: integer()
         }
 
@@ -68,6 +74,8 @@ defmodule Flezha.State.DurabilityTier.Manifest do
             file: nil,
             source_offsets: %{},
             markers: %{intent: false, done: false},
+            owner: nil,
+            claim: 0,
             shipped_at_ms: 0
 
   @spec new(ref()) :: t()
@@ -180,6 +188,32 @@ defmodule Flezha.State.DurabilityTier.Manifest do
     Map.take(a, @cut_keys) == Map.take(b, @cut_keys)
   end
 
+  @doc """
+  The conditional-write guard `writer` must present to update this entry.
+
+  The owner extends its own lineage at the claim it already holds; anyone else
+  bids one above it. The bid is a strict compare at the backend, which is what
+  makes it a compare-and-set: two nodes bidding the same number cannot both
+  win, and "whoever wrote last" — the way the cspec used to behave — stops
+  being reachable.
+
+  This replaces the WAL epoch as the guard. The epoch is copied with the state
+  it protects (`WalTransfer` carries the dedup file, `Hydrator` restores it
+  verbatim), so it can order one writer's own writes but can never tell two
+  writers apart. It stays in the entry as the supersession fact `prune_above/2`
+  reads; it is no longer the gate.
+  """
+  @spec guard_for(t(), binary()) :: {:extend, non_neg_integer()} | {:claim, non_neg_integer()}
+  def guard_for(%__MODULE__{owner: owner, claim: claim}, writer) when owner == writer,
+    do: {:extend, claim}
+
+  def guard_for(%__MODULE__{claim: claim}, _writer), do: {:claim, claim + 1}
+
+  @doc "Stamp `writer`'s ownership onto the entry at the claim it is writing under."
+  @spec claimed_by(t(), binary(), {:extend | :claim, non_neg_integer()}) :: t()
+  def claimed_by(%__MODULE__{} = manifest, writer, {_mode, claim}),
+    do: %{manifest | owner: writer, claim: claim}
+
   @doc "Every blob key this entry references — the GC's live set."
   @spec blob_keys(t()) :: [binary()]
   def blob_keys(%__MODULE__{} = manifest) do
@@ -201,6 +235,35 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @spec blob_key(ref(), binary()) :: binary()
   def blob_key(ref, name), do: "blob/" <> path_of(ref) <> "/" <> name
 
+  @doc """
+  The reference a blob key belongs to — the declared inverse of `blob_key/2`,
+  and what lets collection ask "is this mine?" without a second naming scheme.
+
+  `:error` for anything this build did not write. A caller treats that as "not
+  mine", which is the safe direction: an unrecognised key is never collected on
+  the scoping rule, only ever on age.
+  """
+  @spec ref_of_blob_key(binary()) :: {:ok, ref()} | :error
+  def ref_of_blob_key("blob/" <> path) do
+    # The blob name is the last segment and no segment can contain "/" —
+    # `Registry.encode_entity_key/1` emits url-base64, which has none.
+    case String.split(path, "/") do
+      ["e", class, procedure, entity_key, _name] ->
+        {:ok, {:entity, {unsegment(class), unsegment(procedure), unsegment(entity_key)}}}
+
+      ["i", class, _name] ->
+        {:ok, {:input_log, unsegment(class)}}
+
+      ["c", hub_id, writer, _name] ->
+        {:ok, {:cspec, {unsegment(hub_id), unsegment(writer)}}}
+
+      _ ->
+        :error
+    end
+  end
+
+  def ref_of_blob_key(_other), do: :error
+
   @doc "Manifest-key prefix covering every Entity of `operative_class`."
   @spec class_prefix(binary()) :: binary()
   def class_prefix(operative_class), do: "manifest/e/" <> segment(operative_class) <> "/"
@@ -213,13 +276,23 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @spec blob_prefix() :: binary()
   def blob_prefix(), do: "blob/"
 
-  @doc "Name of a record-bundle blob covering `(from..to)` written at `epoch`."
-  @spec range_name(non_neg_integer(), non_neg_integer(), non_neg_integer()) :: binary()
-  def range_name(epoch, from, to), do: "r-#{epoch}-#{from}-#{to}"
+  @doc """
+  Name of a record-bundle blob covering `(from..to)` written at `epoch`.
 
-  @doc "Name of a snapshot blob at `seq`."
-  @spec snapshot_name(non_neg_integer()) :: binary()
-  def snapshot_name(seq), do: "s-#{seq}"
+  The content hash is part of the name, and that is load-bearing rather than
+  cosmetic: position alone (`epoch`, `from`, `to`) is derived from the artifact's
+  identity and says nothing about who wrote it, so two controllers holding one
+  reference — which an ordinary migration produces, since the source keeps its
+  copy — would address the same key with different records and silently
+  overwrite each other. Different bytes now mean a different key. Identical
+  bytes still mean the same key, so a re-ship stays idempotent.
+  """
+  @spec range_name(non_neg_integer(), non_neg_integer(), non_neg_integer(), binary()) :: binary()
+  def range_name(epoch, from, to, sha_hex), do: "r-#{epoch}-#{from}-#{to}-#{sha_hex}"
+
+  @doc "Name of a snapshot blob at `seq`, content-addressed for the same reason."
+  @spec snapshot_name(non_neg_integer(), binary()) :: binary()
+  def snapshot_name(seq, sha_hex), do: "s-#{seq}-#{sha_hex}"
 
   @doc "Name of a whole-file blob, content-addressed so a re-ship is idempotent."
   @spec file_name(binary()) :: binary()
@@ -229,10 +302,17 @@ defmodule Flezha.State.DurabilityTier.Manifest do
     do: Enum.map_join(["e", class, procedure, entity_key], "/", &segment/1)
 
   defp path_of({:input_log, class}), do: "i/" <> segment(class)
-  defp path_of({:cspec, hub_id}), do: "c/" <> segment(hub_id)
+  # The writer is part of the key, not guarded by a claim: N controllers each
+  # holding a replica of one gossiped registry are all legitimate writers, so a
+  # claim would make correct nodes fence each other out of shipping it. Separate
+  # keys let every node keep its own lineage and hydration choose between them.
+  defp path_of({:cspec, {hub_id, writer}}),
+    do: "c/" <> segment(hub_id) <> "/" <> segment(writer)
 
   # Reuses the Entity-key filesystem encoding: the same "safe chars or
   # url-base64" rule that keeps a key legal as a filename keeps it legal as a
   # storage key segment, so one identity maps to one name on both sides.
   defp segment(part), do: Registry.encode_entity_key(part)
+
+  defp unsegment(part), do: Registry.decode_entity_key(part)
 end

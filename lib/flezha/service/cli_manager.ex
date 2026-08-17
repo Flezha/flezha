@@ -2405,16 +2405,20 @@ defmodule Flezha.Service.CliManager do
         IO.puts("graceful_shutdown_timeout_ms:  #{status.graceful_shutdown_timeout_ms}")
         IO.puts("durability_backend:            #{status.durability_backend}")
         IO.puts("durability_rpo_breaches:       #{status.durability_rpo_breaches}")
-        IO.puts("durability_fenced:             #{status.durability_fenced}")
+        IO.puts("durability_superseded:         #{status.durability_superseded}")
     end
 
     :ok
   end
 
   # Remote durability tier, as an operator reads it: which backend is
-  # configured, how many references are past their RPO target, and how many
-  # were fenced off by a higher-epoch claimant. A stalled shipper must be
-  # visible here rather than only by inspecting the backend.
+  # configured, how many references are past their RPO target, and how many are
+  # now shipped by another controller. A stalled shipper must be visible here
+  # rather than only by inspecting the backend.
+  #
+  # A superseded count is not an alarm on its own — a handover produces one —
+  # but a count that keeps climbing on a node that should still own its
+  # operatives is how a placement problem shows up here.
   defp durability_status() do
     backend =
       Application.get_env(:flezha, :durability_tier, []) |> Keyword.get(:backend, :none)
@@ -2422,7 +2426,8 @@ defmodule Flezha.Service.CliManager do
     %{
       durability_backend: backend,
       durability_rpo_breaches: length(Flezha.State.DurabilityTier.breaches()),
-      durability_fenced: Enum.count(Flezha.State.DurabilityTier.status(), & &1.fenced)
+      durability_superseded:
+        Enum.count(Flezha.State.DurabilityTier.status(), &(&1.superseded_by != nil))
     }
   end
 

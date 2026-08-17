@@ -27,8 +27,6 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
 
   alias Flezha.Http.Client, as: HttpClient
 
-  alias Flezha.Http.Client, as: HttpClient
-
   @algorithm "AWS4-HMAC-SHA256"
   @service "s3"
   @recv_timeout_ms 30_000
@@ -61,20 +59,31 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
   @impl true
   def list(prefix, opts), do: list_page(prefix, opts, nil, [])
 
-  @impl true
-  def put_if(key, blob, epoch, opts) do
-    case head(key, opts) do
-      {:ok, stored_epoch, _etag} when stored_epoch > epoch ->
-        {:error, {:stale_epoch, stored_epoch}}
+  # `:extend` continues the writer's own lineage; `:claim` is the strict
+  # compare-and-set a takeover must pass.
+  defguardp passes?(guard, stored)
+            when (elem(guard, 0) == :extend and stored <= elem(guard, 1)) or
+                   (elem(guard, 0) == :claim and stored < elem(guard, 1))
 
-      {:ok, _stored_epoch, etag} ->
-        put_object(key, blob, [{"if-match", etag}, {"x-amz-meta-epoch", to_string(epoch)}], opts)
+  @impl true
+  def put_if(key, blob, guard, opts) do
+    claim = elem(guard, 1)
+
+    case head(key, opts) do
+      {:ok, stored, _etag} when not passes?(guard, stored) ->
+        {:error, {:claim_held, stored}}
+
+      # `if-match` on the ETag is the real compare-and-set: two claimants that
+      # both read the same stored counter still resolve to one winner, because
+      # the loser's precondition fails against the object the winner just wrote.
+      {:ok, _stored, etag} ->
+        put_object(key, blob, [{"if-match", etag}, {"x-amz-meta-epoch", to_string(claim)}], opts)
 
       :not_found ->
         put_object(
           key,
           blob,
-          [{"if-none-match", "*"}, {"x-amz-meta-epoch", to_string(epoch)}],
+          [{"if-none-match", "*"}, {"x-amz-meta-epoch", to_string(claim)}],
           opts
         )
 
@@ -144,9 +153,8 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
     path = "/" <> bucket(opts) <> "?" <> canonical_query(query)
 
     case request("GET", path, [], "", opts) do
-      {:ok, 200, _headers, body} ->
-        keys = Enum.map(scan_tags(body, "Key"), &strip_prefix(&1, opts))
-        acc = acc ++ keys
+      {:ok, 200, headers, body} ->
+        acc = acc ++ contents_entries(body, headers, opts)
 
         case {scan_tags(body, "IsTruncated"), scan_tags(body, "NextContinuationToken")} do
           {["true"], [next]} -> list_page(prefix, opts, next, acc)
@@ -158,6 +166,39 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
 
       {:error, _} = err ->
         err
+    end
+  end
+
+  # Parsed per `<Contents>` block rather than by zipping two flat tag scans: a
+  # zip silently pairs the wrong key with the wrong age the moment one entry
+  # omits an element, and mispairing an age is exactly how collection would
+  # delete something young.
+  #
+  # Age is `now - LastModified`. Unlike Postgres, which computes it server-side,
+  # this one spans two clocks — tolerable only because the threshold it feeds is
+  # an hour, so ordinary NTP skew cannot move a decision.
+  defp contents_entries(body, _headers, opts) do
+    now = DateTime.utc_now()
+
+    ~r|<Contents>(.*?)</Contents>|s
+    |> Regex.scan(body)
+    |> Enum.flat_map(fn [_, block] ->
+      case {scan_tags(block, "Key"), scan_tags(block, "LastModified")} do
+        {[key | _], [written | _]} -> [{strip_prefix(key, opts), age_of(now, written)}]
+        {[key | _], []} -> [{strip_prefix(key, opts), 0}]
+        _ -> []
+      end
+    end)
+  end
+
+  # An unparseable timestamp reports age 0, so the artifact reads as young and is
+  # left alone. Collection may leak, never lose — the safe direction for every
+  # unknown here.
+  defp age_of(now, last_modified) do
+    with {:ok, written_at, _offset} <- DateTime.from_iso8601(last_modified) do
+      max(0, DateTime.diff(now, written_at, :millisecond))
+    else
+      _ -> 0
     end
   end
 

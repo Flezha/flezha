@@ -32,8 +32,8 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   @spec hydrate_operative(binary()) :: :ok
   def hydrate_operative(operative_class) when is_binary(operative_class) do
     with {module, opts} <- Backend.resolve(),
-         {:ok, keys} <- module.list(Manifest.class_prefix(operative_class), opts) do
-      Enum.each(keys, &hydrate_key(module, opts, &1))
+         {:ok, entries} <- module.list(Manifest.class_prefix(operative_class), opts) do
+      Enum.each(entries, fn {key, _age} -> hydrate_key(module, opts, key) end)
 
       # The input log is class-level, so it sits outside the per-Entity prefix
       # above and has to be asked for by name. Without it a hydrated Entity
@@ -77,11 +77,34 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   @spec hydrate_cspecs() :: :ok
   def hydrate_cspecs() do
     with {module, opts} <- Backend.resolve(),
-         {:ok, keys} <- module.list(Manifest.cspec_prefix(), opts) do
-      Enum.each(keys, &hydrate_key(module, opts, &1))
+         {:ok, entries} <- module.list(Manifest.cspec_prefix(), opts) do
+      entries
+      |> Enum.flat_map(fn {key, _age} -> read_manifest(module, opts, key) end)
+      |> newest_per_hub()
+      |> Enum.each(&apply_manifest(module, opts, &1))
     end
 
     :ok
+  end
+
+  # Every controller in a namespace ships its own replica of one gossiped
+  # registry, and they all restore to the same local path — so the choice has to
+  # be made here rather than left to listing order. The replicas are equivalent
+  # by design; newest is the tie-break that behaves best when they are not yet
+  # converged.
+  #
+  # `shipped_at_ms` is the writing node's wall clock, so skew could pick a
+  # slightly older replica. That is acceptable and not merely tolerated: the
+  # orphan reconcile heals the difference, and there is no cluster-wide
+  # monotonic source at this layer to do better.
+  defp newest_per_hub(manifests) do
+    manifests
+    |> Enum.group_by(fn %Manifest{ref: {:cspec, {hub_id, _writer}}} -> hub_id end)
+    |> Enum.map(fn {_hub_id, replicas} ->
+      Enum.max_by(replicas, fn %Manifest{ref: {:cspec, {_h, writer}}} = m ->
+        {m.shipped_at_ms, writer}
+      end)
+    end)
   end
 
   @doc """
@@ -103,13 +126,22 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   # ---------- one reference ----------
 
   defp hydrate_key(module, opts, manifest_key) do
+    case read_manifest(module, opts, manifest_key) do
+      [manifest] -> apply_manifest(module, opts, manifest)
+      [] -> :ok
+    end
+  end
+
+  # A list rather than an option so callers can `flat_map` a whole prefix and
+  # drop what they cannot read without a second unwrapping step.
+  defp read_manifest(module, opts, manifest_key) do
     with {:ok, blob} <- module.get(manifest_key, opts),
          {:ok, manifest} <- Manifest.decode(blob) do
-      apply_manifest(module, opts, manifest)
+      [manifest]
     else
       _ ->
         Logger.warning("[durability] unreadable manifest #{manifest_key}; skipped")
-        :ok
+        []
     end
   end
 
@@ -126,6 +158,24 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
           seed_local_facts(manifest)
           emit(:hydrated, ref, manifest)
 
+        # A referenced artifact the store does not hold is a CORRUPT LINEAGE, not
+        # a transport problem, and the two call for opposite operator responses:
+        # one waits for the backend, the other must be acted on while some node
+        # still has a local copy to re-ship from. Degrading it into a silent cold
+        # start is what made this class of damage discoverable only on recovery
+        # day.
+        {:error, {:missing_artifact, artifact}} ->
+          Logger.error(
+            "[durability] #{inspect(ref)} references #{artifact}, which the backend does not " <>
+              "hold. Its remote lineage is incomplete and cannot be recovered from as it stands."
+          )
+
+          :telemetry.execute(
+            [:flezha, :state, :artifact_missing],
+            %{count: 1},
+            %{ref: inspect(ref), artifact: artifact}
+          )
+
         {:error, reason} ->
           Logger.error("[durability] hydration failed for #{inspect(ref)}: #{inspect(reason)}")
 
@@ -139,7 +189,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   end
 
   defp fetch_and_write(module, opts, %Manifest{file: %{blob: blob}} = manifest) do
-    with {:ok, bytes} <- module.get(blob, opts) do
+    with {:ok, bytes} <- fetch_artifact(module, opts, blob) do
       Artifact.write_file(manifest.ref, bytes)
     end
   end
@@ -152,7 +202,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   defp write_snapshots(module, opts, manifest) do
     Enum.reduce_while(manifest.snapshots, :ok, fn %{seq: seq, blob: blob}, :ok ->
-      with {:ok, bytes} <- module.get(blob, opts),
+      with {:ok, bytes} <- fetch_artifact(module, opts, blob),
            :ok <- Artifact.write_snapshot(manifest.ref, seq, bytes) do
         {:cont, :ok}
       else
@@ -168,7 +218,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     manifest.ranges
     |> Enum.sort_by(& &1.from)
     |> Enum.reduce_while({:ok, []}, fn %{blob: blob}, {:ok, acc} ->
-      case module.get(blob, opts) do
+      case fetch_artifact(module, opts, blob) do
         {:ok, bytes} -> {:cont, {:ok, [bytes | acc]}}
         {:error, _} = err -> {:halt, err}
       end
@@ -179,6 +229,17 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
       {:error, _} = err ->
         err
+    end
+  end
+
+  # The manifest is the only thing that names an artifact, so "the store does not
+  # have it" means the entry is wrong — a distinct verdict from every other way a
+  # fetch can fail.
+  defp fetch_artifact(module, opts, blob) do
+    case module.get(blob, opts) do
+      {:ok, bytes} -> {:ok, bytes}
+      {:error, :not_found} -> {:error, {:missing_artifact, blob}}
+      {:error, _} = err -> err
     end
   end
 

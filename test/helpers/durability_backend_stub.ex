@@ -13,6 +13,7 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
 
   @table :flezha_durability_stub
   @control :flezha_durability_stub_control
+  @owner :flezha_durability_stub_owner
 
   # ---------- test control ----------
 
@@ -20,11 +21,16 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   def install() do
     reset()
 
+    # The two collection thresholds keep their real ordering — grace well below
+    # abandoned — so a case reaches either one by saying how much time passed
+    # (`advance_clock/1`) rather than by collapsing them to zero.
     Application.put_env(:flezha, :durability_tier,
       backend: {__MODULE__, []},
       ship_interval_ms: 60_000,
       rpo_target_ms: 60_000,
-      gc_interval_ms: 3_600_000
+      gc_interval_ms: 3_600_000,
+      gc_grace_ms: 60_000,
+      gc_abandoned_after_ms: 3_600_000
     )
 
     :ok
@@ -36,14 +42,36 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   end
 
   def reset() do
-    for table <- [@table, @control] do
-      case :ets.whereis(table) do
-        :undefined -> :ets.new(table, [:set, :public, :named_table])
-        _ -> :ets.delete_all_objects(table)
-      end
-    end
+    owner = ensure_owner()
 
-    :ok
+    Agent.update(owner, fn state ->
+      for table <- [@table, @control] do
+        case :ets.whereis(table) do
+          :undefined -> :ets.new(table, [:set, :public, :named_table])
+          _ -> :ets.delete_all_objects(table)
+        end
+      end
+
+      state
+    end)
+  end
+
+  # The tables are created inside the agent so the AGENT owns them. Created from
+  # a test process instead, they would vanish the moment that process exits —
+  # and a shipper started with `GenServer.start` outlives it, so its next drain
+  # would hit a table that no longer exists rather than a store that is merely
+  # empty.
+  defp ensure_owner() do
+    case Process.whereis(@owner) do
+      nil ->
+        case Agent.start(fn -> :ok end, name: @owner) do
+          {:ok, pid} -> pid
+          {:error, {:already_started, pid}} -> pid
+        end
+
+      pid ->
+        pid
+    end
   end
 
   @doc "Every subsequent operation fails with `{:error, :backend_down}` until re-enabled."
@@ -55,11 +83,21 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   """
   def fail_next_manifest(), do: control(:fail_manifest, true)
 
-  @doc "Answer every `put_if/4` with `{:stale_epoch, epoch}` — a fencing claimant."
-  def fence_at(epoch), do: control(:fence, epoch)
+  @doc """
+  Refuse every `put_if/4` with `{:claim_held, claim}`, whatever is stored — a
+  writer that took the lineage over. Who holds it is read back from the entry,
+  so a case that needs a specific holder should stage a real second writer.
+  """
+  def fence_at(claim), do: control(:fence, claim)
+
+  @doc """
+  Pretend every stored artifact is `ms` older than it is, so a test can reach
+  the collection grace without waiting for it.
+  """
+  def advance_clock(ms), do: control(:clock_skew_ms, ms)
 
   @doc "Keys currently in the store, sorted."
-  def keys(), do: :ets.select(@table, [{{:"$1", :_, :_}, [], [:"$1"]}]) |> Enum.sort()
+  def keys(), do: :ets.select(@table, [{{:"$1", :_, :_, :_}, [], [:"$1"]}]) |> Enum.sort()
 
   @doc "How many `put`/`put_if` calls have landed — the ship's real upload count."
   def writes(), do: control_get(:writes, 0)
@@ -77,6 +115,8 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
 
   defp down?(), do: control_get(:down, false)
 
+  defp now_ms(), do: System.monotonic_time(:millisecond)
+
   # ---------- backend ----------
 
   @impl true
@@ -88,7 +128,7 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
       {:error, :backend_down}
     else
       count_write()
-      :ets.insert(@table, {key, blob, 0})
+      :ets.insert(@table, {key, blob, 0, now_ms()})
       :ok
     end
   end
@@ -99,7 +139,7 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
       {:error, :backend_down}
     else
       case :ets.lookup(@table, key) do
-        [{^key, blob, _epoch}] -> {:ok, blob}
+        [{^key, blob, _epoch, _written_at}] -> {:ok, blob}
         [] -> {:error, :not_found}
       end
     end
@@ -110,12 +150,23 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
     if down?() do
       {:error, :backend_down}
     else
-      {:ok, Enum.filter(keys(), &String.starts_with?(&1, prefix))}
+      skew = control_get(:clock_skew_ms, 0)
+      now = now_ms()
+
+      entries =
+        :ets.select(@table, [{{:"$1", :_, :_, :"$2"}, [], [{{:"$1", :"$2"}}]}])
+        |> Enum.filter(fn {key, _written_at} -> String.starts_with?(key, prefix) end)
+        |> Enum.map(fn {key, written_at} -> {key, now - written_at + skew} end)
+        |> Enum.sort()
+
+      {:ok, entries}
     end
   end
 
   @impl true
-  def put_if(key, blob, epoch, _opts) do
+  def put_if(key, blob, guard, _opts) do
+    claim = elem(guard, 1)
+
     cond do
       down?() ->
         {:error, :backend_down}
@@ -125,19 +176,30 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
         {:error, :manifest_write_lost}
 
       is_integer(control_get(:fence, nil)) ->
-        {:error, {:stale_epoch, control_get(:fence, nil)}}
+        {:error, {:claim_held, control_get(:fence, nil)}}
 
       true ->
         case :ets.lookup(@table, key) do
-          [{^key, _blob, stored}] when stored > epoch ->
-            {:error, {:stale_epoch, stored}}
+          [{^key, _blob, stored, _written_at}] ->
+            if passes?(guard, stored) do
+              write(key, blob, claim)
+            else
+              {:error, {:claim_held, stored}}
+            end
 
-          _ ->
-            count_write()
-            :ets.insert(@table, {key, blob, epoch})
-            :ok
+          [] ->
+            write(key, blob, claim)
         end
     end
+  end
+
+  defp passes?({:extend, claim}, stored), do: stored <= claim
+  defp passes?({:claim, claim}, stored), do: stored < claim
+
+  defp write(key, blob, claim) do
+    count_write()
+    :ets.insert(@table, {key, blob, claim, now_ms()})
+    :ok
   end
 
   @impl true

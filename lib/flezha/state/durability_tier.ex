@@ -23,6 +23,7 @@ defmodule Flezha.State.DurabilityTier do
   See `docs/remote_durability_tier.md`.
   """
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.DurabilityTier.{Artifact, Backend, Hydrator, Shipper}
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Registry
@@ -30,12 +31,62 @@ defmodule Flezha.State.DurabilityTier do
   @default_ship_interval_ms 30_000
   @default_rpo_target_ms 120_000
   @default_gc_interval_ms 3_600_000
+  # Bounded by the slowest plausible ship, not tuned: both backends time out at
+  # 30 s and the retry ladder caps at 30 s, and a failed manifest write
+  # re-uploads its blobs — refreshing their age — so the real gap between an
+  # upload and the entry naming it is minutes at worst. An hour is the headroom.
+  @default_gc_grace_ms 3_600_000
+  @default_gc_abandoned_after_ms 604_800_000
 
   # ---------- configuration ----------
 
   @doc "Whether a remote backend is configured. `false` makes every entry point inert."
   @spec enabled?() :: boolean()
   def enabled?(), do: Backend.resolve() != :none
+
+  @doc """
+  This controller's identity as a writer of remote lineages.
+
+  Must be STABLE across restarts of the same controller — a restarted node is
+  still itself and must extend its own lineages rather than bid against itself —
+  and must NOT survive the loss of its disk, because a node that lost its state
+  genuinely is a new claimant.
+
+  `node()` satisfies both under a StatefulSet or a fixed host. Under a
+  Deployment the pod name changes on every reschedule, which would make a
+  rescheduled controller take over its own references one claim at a time;
+  `FLEZHA_DURABILITY_WRITER_ID` is the override for that, and it is operational
+  configuration rather than a test knob.
+  """
+  @spec writer_id() :: binary()
+  def writer_id() do
+    case System.get_env("FLEZHA_DURABILITY_WRITER_ID") do
+      value when is_binary(value) and value != "" -> value
+      _ -> to_string(node())
+    end
+  end
+
+  @doc """
+  This node now runs `state_key`'s operative, so it may take over that
+  reference's remote lineage.
+
+  Shipping alone must never be enough to claim one: a migration leaves the
+  source node holding a full copy of the state (`WalTransfer.pull_operative/3`
+  copies, and nothing deletes the source), so its backstop sweep would
+  otherwise bid the lineage back and fence the node that actually runs the
+  operative now.
+  """
+  @spec adopt_operative(binary()) :: :ok
+  def adopt_operative(state_key) when is_binary(state_key) do
+    if enabled?() do
+      case GenServer.whereis(Shipper) do
+        nil -> :ok
+        pid -> GenServer.cast(pid, {:adopt, state_key})
+      end
+    end
+
+    :ok
+  end
 
   @doc "Backstop sweep period — the bound on how stale a quiet entity's remote copy gets."
   @spec ship_interval_ms() :: pos_integer()
@@ -48,6 +99,29 @@ defmodule Flezha.State.DurabilityTier do
   @doc "Orphan-blob collection period."
   @spec gc_interval_ms() :: pos_integer()
   def gc_interval_ms(), do: config(:gc_interval_ms, @default_gc_interval_ms)
+
+  @doc """
+  Age below which an unreferenced artifact is never collected, whoever owns it.
+
+  This is the half of collection safety that does not depend on knowing whose
+  artifact it is: an upload still in flight is by definition young, so a peer
+  controller mid-ship is covered without any coordination between the two.
+  """
+  @spec gc_grace_ms() :: pos_integer()
+  def gc_grace_ms(), do: config(:gc_grace_ms, @default_gc_grace_ms)
+
+  @doc """
+  Age at which an unreferenced artifact is collected even though no node holds
+  local state for its reference — a stopped operative, or one whose state moved.
+
+  Without it, scoping collection to what a node owns would leak those forever.
+  Far longer than `gc_grace_ms/0` on purpose: it is the threshold past which no
+  ship can plausibly still be in flight, so it must not be the same number, or
+  the scoping would contribute nothing.
+  """
+  @spec gc_abandoned_after_ms() :: pos_integer()
+  def gc_abandoned_after_ms(),
+    do: config(:gc_abandoned_after_ms, @default_gc_abandoned_after_ms)
 
   defp config(key, default) do
     case Application.get_env(:flezha, :durability_tier, []) |> Keyword.get(key, default) do
@@ -107,8 +181,13 @@ defmodule Flezha.State.DurabilityTier do
   cannot be made to wait on a backend that does not exist.
   """
   @spec sync_class?(binary()) :: boolean()
-  def sync_class?(operative_class) when is_binary(operative_class) do
-    enabled?() and PersistenceResolver.sync_durability?(operative_class)
+  def sync_class?(operative_id) when is_binary(operative_id) do
+    # Callers on the commit path hold an operative ID, while the declaration is
+    # recorded against the resolved CLASS. Where an `:operative_class` override
+    # makes those differ, looking up the id finds nothing and the gate silently
+    # never arms — the class asked for RPO 0 and gets ordinary async shipping.
+    enabled?() and
+      Enum.any?(ClassRegistry.state_keys(operative_id), &PersistenceResolver.sync_durability?/1)
   end
 
   # ---------- triggers ----------
@@ -170,7 +249,7 @@ defmodule Flezha.State.DurabilityTier do
   @spec on_effect_flushed(tuple(), integer() | nil) :: :ok
   def on_effect_flushed({operative_class, _, _} = entity_id, consumed_offset)
       when is_integer(consumed_offset) do
-    if enabled?() and Flezha.Operative.ClassRegistry.checkpoint_ack?(operative_class) do
+    if enabled?() and ClassRegistry.checkpoint_ack?(operative_class) do
       ship({:entity, entity_id})
 
       # The input log rides the same cut. Shipping the state without it would
@@ -191,12 +270,13 @@ defmodule Flezha.State.DurabilityTier do
   remote store for the instance to resume elsewhere.
   """
   @spec on_workflow_commit(binary()) :: :ok
-  def on_workflow_commit(operative_id) when is_binary(operative_id),
-    do: ship_operative(operative_id)
+  def on_workflow_commit(operative_id) when is_binary(operative_id) do
+    Enum.each(ClassRegistry.state_keys(operative_id), &ship_operative/1)
+  end
 
   @doc "The registry cspec changed — what operatives exist, and how they are configured."
   @spec ship_cspec(atom() | binary()) :: :ok
-  def ship_cspec(hub_id), do: ship({:cspec, to_string(hub_id)})
+  def ship_cspec(hub_id), do: ship({:cspec, {to_string(hub_id), writer_id()}})
 
   @doc """
   Ship `operative_id`'s artifacts and wait for the manifest write, for a class
@@ -206,7 +286,17 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec commit_sync(binary()) :: :ok | {:error, term()}
   def commit_sync(operative_id) when is_binary(operative_id) do
-    Enum.reduce_while(refs_of(operative_id), :ok, fn ref, :ok ->
+    # Both key spaces: the journal and inbox sit under the instance id, the
+    # Entity WAL and input log under the resolved class. Shipping only one of
+    # them would let this barrier answer `:ok` having never sent the Entity
+    # state the guarantee is about.
+    refs =
+      operative_id
+      |> ClassRegistry.state_keys()
+      |> Enum.flat_map(&refs_of/1)
+      |> Enum.uniq()
+
+    Enum.reduce_while(refs, :ok, fn ref, :ok ->
       case Shipper.ship_now(ref) do
         :ok -> {:cont, :ok}
         {:error, _} = err -> {:halt, err}
@@ -250,9 +340,9 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Per-reference shipping state: last success, in-flight age, consecutive
-  failures, and whether the reference was fenced off by a higher-epoch
-  claimant. A plain ETS read — no call into the shipper, so `/healthz` and the
-  Watchdog sweep can take it on any process.
+  failures, and which writer superseded this node on the reference, if any. A
+  plain ETS read — no call into the shipper, so `/healthz` and the Watchdog
+  sweep can take it on any process.
   """
   @spec status() :: [map()]
   def status(), do: Shipper.status()

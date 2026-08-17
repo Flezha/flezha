@@ -76,34 +76,49 @@ defmodule Flezha.State.DurabilityTier.Backend.Postgres do
     # `left(key, length($1)) = $1` rather than `LIKE $1 || '%'`: artifact keys
     # carry `_` (the reserved-identity and base64 escape), which LIKE would read
     # as a single-character wildcard.
-    sql = "SELECT key FROM #{table(opts)} WHERE left(key, length($1)) = $1"
+    # The age is computed server-side so collection's grace never depends on the
+    # controller's clock agreeing with the database's.
+    sql = """
+    SELECT key, GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - updated_at)) * 1000))::bigint
+    FROM #{table(opts)} WHERE left(key, length($1)) = $1
+    """
 
     case query(sql, [prefix]) do
-      {:ok, %Postgrex.Result{rows: rows}} -> {:ok, Enum.map(rows, &hd/1)}
+      {:ok, %Postgrex.Result{rows: rows}} -> {:ok, Enum.map(rows, fn [k, age] -> {k, age} end)}
       {:error, _} = err -> err
     end
   end
 
   @impl true
-  def put_if(key, blob, epoch, opts) do
-    # One statement: the row is written when it is absent or its epoch is not
-    # ahead of ours, and the `RETURNING` tells the two apart without a race.
-    # Equal epochs overwrite — a shipping controller updates its own manifest
-    # many times inside one epoch.
+  def put_if(key, blob, guard, opts) do
+    {compare, claim} = guard_sql(guard)
+
+    # One statement: the row is written when it is absent or the stored counter
+    # passes the guard, and the `RETURNING` tells the two apart without a race.
+    #
+    # The column is still named `epoch` because `create_table_sql/1` is
+    # `CREATE TABLE IF NOT EXISTS` and cannot alter a table that already exists
+    # — renaming it would silently break every write against a provisioned
+    # store. It holds the claim counter.
     sql = """
     INSERT INTO #{table(opts)} (key, epoch, blob, updated_at)
     VALUES ($1, $2, $3, now())
     ON CONFLICT (key) DO UPDATE SET blob = EXCLUDED.blob, epoch = EXCLUDED.epoch, updated_at = now()
-    WHERE #{table(opts)}.epoch <= EXCLUDED.epoch
+    WHERE #{table(opts)}.epoch #{compare} EXCLUDED.epoch
     RETURNING epoch
     """
 
-    case query(sql, [key, epoch, blob]) do
-      {:ok, %Postgrex.Result{rows: [[_epoch]]}} -> :ok
-      {:ok, %Postgrex.Result{rows: []}} -> {:error, {:stale_epoch, held_epoch(key, opts)}}
+    case query(sql, [key, claim, blob]) do
+      {:ok, %Postgrex.Result{rows: [[_claim]]}} -> :ok
+      {:ok, %Postgrex.Result{rows: []}} -> {:error, {:claim_held, held_epoch(key, opts)}}
       {:error, _} = err -> err
     end
   end
+
+  # `<=` extends the writer's own lineage; `<` is the compare-and-set that makes
+  # two simultaneous claimants resolve to one winner.
+  defp guard_sql({:extend, claim}), do: {"<=", claim}
+  defp guard_sql({:claim, claim}), do: {"<", claim}
 
   @impl true
   def delete(key, opts) do

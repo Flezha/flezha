@@ -204,9 +204,11 @@ contains Entities.**
   `(last_shipped, cut]`, read from the WAL *at ship time* — never a file byte
   range, because compaction and correction rewrite the live WAL in place). A
   **manifest** is the per-reference entry naming the artifacts that make up one
-  cut, written **last** and epoch-stamped. Recovery reads only the manifest, so
-  a torn upload is invisible; unreferenced blobs are orphans the tier's garbage
-  collection reclaims.
+  cut, written **last**. Artifact names are content-addressed, so two
+  controllers holding one reference address different keys and neither can
+  overwrite the other's bytes. Recovery reads only the manifest, so a torn
+  upload is invisible; unreferenced blobs are orphans the tier's garbage
+  collection reclaims, never sooner than the collection grace.
 
 - **Synchronous durability** — a workflow class declaring `SYNC_DURABILITY` /
   `syncDurability()`: the controller completes the remote ship of a commit
@@ -215,11 +217,22 @@ contains Entities.**
   refused it — they acknowledge at input rates, where a remote round trip per
   ack is not a guarantee anyone can keep.
 
+- **Claim counter** — the monotone per-reference counter, held only in the
+  remote manifest, that decides which controller may write a lineage. The owner
+  extends at the claim it holds; anyone else bids strictly above it, which makes
+  the conditional write a compare-and-set. It exists remotely *because* it must
+  not travel with the state: the WAL epoch does travel — copied by
+  `WalTransfer`, restored by hydration — and therefore cannot separate two
+  writers. Bidding requires an **adoption** (the node actually runs the
+  operative), or the source of a migration would take its lineage straight back.
+
 - **RPO breach** — local durable progress that has gone unshipped past
   `rpo_target_ms`. Alarm-grade (`[:flezha, :state, :rpo_exceeded]`), surfaced in
-  `flz controller status` and `/healthz`. Distinct from a *fence*
-  (`[:flezha, :state, :ship_fenced]`), which is a stale-epoch refusal meaning
-  another controller owns that reference's remote lineage.
+  `flz controller status` and `/healthz`. Distinct from a *supersession*
+  (`[:flezha, :state, :claim_superseded]`), which means another controller took
+  that reference's lineage over — routine, since every migration produces one,
+  and explicitly not a breach: the superseded reference stops being counted as
+  pending, or every handover would latch a permanent alarm.
 
 ## Control-plane liveness vocabulary
 

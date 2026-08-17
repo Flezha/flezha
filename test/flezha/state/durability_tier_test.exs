@@ -14,8 +14,7 @@ defmodule Flezha.State.DurabilityTierTest do
   """
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureLog
-
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Manifest, Shipper}
   alias Flezha.State.{Outbox, Registry, TestHelpers}
@@ -210,7 +209,7 @@ defmodule Flezha.State.DurabilityTierTest do
       ctx
     end
 
-    test "a recovered Entity keeps shipping instead of fencing itself off", ctx do
+    test "a recovered Entity keeps shipping instead of stopping on its own lineage", ctx do
       ref = {:entity, ctx.entity_id}
       assert :ok = Shipper.ship_now(ref)
 
@@ -218,13 +217,12 @@ defmodule Flezha.State.DurabilityTierTest do
       assert :ok = DurabilityTier.hydrate_operative(ctx.class)
 
       # The epoch's only home on disk is the dedup cache, which is not an
-      # artifact. Without it the recovered Entity reads epoch 0, its next
-      # manifest write is refused against the epoch it shipped under, and it
-      # stops being backed up — surviving one disk loss and silently losing
-      # protection against the next.
+      # artifact. It is no longer what gates the manifest write, but it is still
+      # the supersession fact the manifest algebra reads, so a recovered Entity
+      # that came back at epoch 0 would mis-order its own cuts.
       assert Outbox.read(ctx.entity_id).epoch == 2
       assert :ok = Shipper.ship_now(ref)
-      refute Enum.any?(Shipper.status(), &(&1.ref == ref and &1.fenced))
+      refute Enum.any?(Shipper.status(), &(&1.ref == ref and &1.superseded_by != nil))
     end
 
     test "the restored flush cursor lags rather than leads", ctx do
@@ -309,28 +307,73 @@ defmodule Flezha.State.DurabilityTierTest do
       Stub.fail_next_manifest()
       assert {:error, :manifest_write_lost} = Shipper.ship_now({:entity, ctx.entity_id})
 
+      # Past the grace, so the torn upload is genuinely orphaned rather than
+      # possibly still in flight.
+      Stub.advance_clock(120_000)
+
       assert {:ok, collected} = Shipper.gc()
       assert collected > 0
       assert Enum.all?(referenced, &(&1 in Stub.keys()))
     end
 
-    test "a stale-epoch refusal fences the reference and stops shipping it", ctx do
+    test "an orphan younger than the grace is left for a later pass", ctx do
+      assert :ok = Shipper.ship_now({:entity, ctx.entity_id})
+
+      append_records(ctx.entity_id, 4..5)
+      Stub.fail_next_manifest()
+      assert {:error, :manifest_write_lost} = Shipper.ship_now({:entity, ctx.entity_id})
+
+      # Derived from the store rather than constructed, so the case says nothing
+      # about how a blob is named.
+      referenced = Manifest.blob_keys(stored_manifest({:entity, ctx.entity_id}))
+      blobs = Enum.filter(Stub.keys(), &String.starts_with?(&1, "blob/"))
+      assert [orphan] = blobs -- referenced
+
+      # No clock advance: this is exactly what a peer controller's in-flight
+      # upload looks like from here, and the two are indistinguishable.
+      assert {:ok, 0} = Shipper.gc()
+      assert orphan in Stub.keys()
+    end
+
+    test "a claim held elsewhere stops shipping without raising an alarm", ctx do
       ref = {:entity, ctx.entity_id}
-      :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :ship_fenced]])
+      :telemetry_test.attach_event_handlers(self(), [[:flezha, :state, :claim_superseded]])
       append_records(ctx.entity_id, 4..5)
       Stub.fence_at(9)
 
-      # The refusal logs at error level by design — it is an alarm, and the
-      # suite's console is not where an alarm belongs.
-      assert capture_log(fn -> assert {:error, {:stale_epoch, 9}} = Shipper.ship_now(ref) end) =~
-               "fenced off"
+      assert {:error, {:superseded, _holder}} = Shipper.ship_now(ref)
+      assert_receive {[:flezha, :state, :claim_superseded], _, _, _}
+      assert Enum.any?(Shipper.status(), &(&1.ref == ref and &1.superseded_by != nil))
 
-      assert_receive {[:flezha, :state, :ship_fenced], _, _, _}
-      assert Enum.any?(Shipper.status(), &(&1.ref == ref and &1.fenced))
+      # The reference is not retried — overwriting a writer that legitimately
+      # took the lineage over is the one thing worse than not shipping.
+      assert {:error, :superseded} = Shipper.ship_now(ref)
+    end
 
-      # A fenced reference is not retried — overwriting a claimant that
-      # legitimately superseded us is the one thing worse than not shipping.
-      assert {:error, :fenced} = Shipper.ship_now(ref)
+    test "losing a claim does not leave a permanent RPO breach behind", ctx do
+      ref = {:entity, ctx.entity_id}
+
+      Application.put_env(
+        :flezha,
+        :durability_tier,
+        Application.get_env(:flezha, :durability_tier) |> Keyword.put(:rpo_target_ms, 1)
+      )
+
+      # Unshipped local progress, so the reference is genuinely pending...
+      append_records(ctx.entity_id, 4..5)
+      Stub.set_down(true)
+      assert {:error, :backend_down} = Shipper.ship_now(ref)
+      Process.sleep(5)
+      assert [%{ref: ^ref}] = DurabilityTier.breaches()
+
+      # ...and then another controller takes it over. A handover is not a
+      # backend failure: leaving `pending_since_ms` set would report a breach
+      # forever, and `/healthz` would read `degraded` after every migration the
+      # cluster performs.
+      Stub.set_down(false)
+      Stub.fence_at(9)
+      assert {:error, {:superseded, _holder}} = Shipper.ship_now(ref)
+      assert DurabilityTier.breaches() == []
     end
 
     test "a backend outage retries with backoff and reports the reference as pending", ctx do
@@ -386,7 +429,10 @@ defmodule Flezha.State.DurabilityTierTest do
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, "cspec-bytes")
 
-      ref = {:cspec, hub_id}
+      # The writer is part of the identity: every controller in a namespace has
+      # its own replica of one gossiped registry, so they are separate lineages
+      # rather than writers competing for one.
+      ref = {:cspec, {hub_id, DurabilityTier.writer_id()}}
       assert :ok = Shipper.ship_now(ref)
 
       writes = Stub.writes()
@@ -396,6 +442,68 @@ defmodule Flezha.State.DurabilityTierTest do
       File.rm!(path)
       assert :ok = DurabilityTier.hydrate_cspecs()
       assert File.read!(path) == "cspec-bytes"
+    end
+
+    test "two controllers' replicas never collide, and hydration takes the newest", ctx do
+      hub_id = "ns_hub"
+      path = Path.join([ctx.hub_root, hub_id, "registry.dets"])
+      File.mkdir_p!(Path.dirname(path))
+
+      File.write!(path, "peer-registry")
+      peer_ref = {:cspec, {hub_id, "peer-controller"}}
+      assert :ok = Shipper.ship_now(peer_ref)
+
+      File.write!(path, "local-registry")
+      own_ref = {:cspec, {hub_id, DurabilityTier.writer_id()}}
+      assert :ok = Shipper.ship_now(own_ref)
+
+      # Two entries, two blobs. Under one shared key the second ship would have
+      # clobbered the first, at an epoch that could never refuse it.
+      assert Manifest.key(peer_ref) != Manifest.key(own_ref)
+      assert Manifest.key(peer_ref) in Stub.keys()
+      assert Manifest.key(own_ref) in Stub.keys()
+
+      File.rm!(path)
+      assert :ok = DurabilityTier.hydrate_cspecs()
+      assert File.read!(path) == "local-registry"
+    end
+  end
+
+  # ---------- id and class are two key spaces ----------
+
+  describe "an operative whose instance id and class differ" do
+    setup ctx do
+      Stub.install()
+      start_shipper()
+
+      instance = "inst_" <> Integer.to_string(System.unique_integer([:positive]))
+      ClassRegistry.put_state_keys(instance, ctx.class)
+
+      on_exit(fn -> Application.delete_env(:flezha, :sync_durability) end)
+      Map.put(ctx, :instance, instance)
+    end
+
+    test "the synchronous barrier ships both key spaces, not half of them", ctx do
+      # The Entity WAL and the input log live under the resolved CLASS...
+      entity = {ctx.class, "proc", "k1"}
+      write_records(entity, 0..3)
+      # ...while the proc-journal lives under the INSTANCE id.
+      journal = Registry.journal_id(ctx.instance)
+      write_records(journal, 0..1)
+
+      assert :ok = DurabilityTier.commit_sync(ctx.instance)
+
+      assert Manifest.key({:entity, journal}) in Stub.keys()
+
+      assert Manifest.key({:entity, entity}) in Stub.keys(),
+             "RPO 0 must not answer :ok having shipped no Entity state"
+    end
+
+    test "the RPO-0 gate arms on the class an instance resolves to", ctx do
+      Application.put_env(:flezha, :sync_durability, %{ctx.class => true})
+
+      assert DurabilityTier.sync_class?(ctx.instance),
+             "a gate keyed by class must still arm for a caller holding the id"
     end
   end
 

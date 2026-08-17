@@ -2,6 +2,61 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The remote durability tier is now correct with more than one controller**
+  (`fix-durability-gc-multi-writer`). Two controllers sharing one backend is the
+  configuration the tier exists to serve, and four defects made it unsafe there.
+  All were latent — `FLEZHA_DURABILITY_BACKEND` defaults to `none` — but every
+  one becomes a live data-loss path the moment the backend is enabled.
+
+  - **Orphan collection deleted a peer's in-flight upload.** Every node ran its
+    own hourly pass that listed the whole store, and the tier is manifest-last
+    by design, so "uploaded but not yet referenced" — a state every ship passes
+    through — was indistinguishable from an orphan. The victim then wrote a
+    manifest naming a deleted blob, never re-uploaded it (`from =
+    shipped_through + 1`), and at recovery the Entity came back **empty** while
+    hydration returned `:ok`. Collection is now scoped to the references a node
+    holds local state for AND refuses anything younger than `gc_grace_ms`
+    (default 1 h); artifacts of a reference no node holds any more are still
+    reclaimed past `gc_abandoned_after_ms` (default 7 d), so scoping cannot
+    leak. Neither property alone is the safety argument.
+  - **Blob names were position-addressed, so two writers overwrote each other's
+    bytes.** An ordinary migration leaves the source node holding a full copy
+    (`pull_operative/3` copies; only `move_entity/3` deletes), so two nodes
+    legitimately held one reference at the same WAL epoch and wrote
+    `r-<epoch>-<from>-<to>` with different records. Names now carry the content
+    hash, as the registry cspec already did.
+  - **The WAL epoch could never fence two writers.** It lives in the
+    `.outbox.dedup` side-file, which `WalTransfer` copies and `Hydrator`
+    restores verbatim, so both nodes held the same value and equal epochs
+    overwrite. Manifest writes are now conditional on a **claim counter** that
+    exists only in the remote store; bidding for a lineage requires the node to
+    have actually adopted the operative, and losing one is reported as a routine
+    handover rather than a permanent fence — the old latch would have left an
+    RPO breach and a `degraded` `/healthz` after every migration.
+  - **The registry cspec was a cluster-shared key at epoch 0.** `hub_id` is
+    namespace-derived, so every controller shipped its own replica to one key
+    with no fencing and last writer won — a node with a stale registry could
+    erase the record of which operatives exist. The key now carries the writer;
+    hydration picks the newest replica.
+  - **`commit_sync/1` conflated operative id and class**, so a class declaring
+    RPO 0 could have its barrier answer `:ok` having shipped neither the Entity
+    WAL nor the input log, and `sync_class?/1` never armed the gate at all.
+
+  Also: a manifest naming an artifact the backend does not hold is now an
+  alarm-grade `[:flezha, :state, :artifact_missing]` rather than a silent cold
+  start, and the durability telemetry family reaches the observability bus for
+  the first time — including `rpo_exceeded`, which the docs already called
+  alarm-grade.
+
+  **Breaking for an existing store**: blob key layout and the `put_if/4` backend
+  contract both change. Free today because the tier is enabled nowhere; if you
+  had enabled it, wipe the bucket or table — local state is authoritative, so
+  nothing is lost. New knobs: `FLEZHA_DURABILITY_GC_GRACE_MS`,
+  `FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS`, `FLEZHA_DURABILITY_WRITER_ID` (set
+  this under a Deployment, where the pod name changes on every reschedule).
+
 ### Breaking
 
 <!-- kind-naming-record:begin -->

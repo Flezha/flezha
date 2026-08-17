@@ -36,13 +36,26 @@ config :flezha, :durability_tier,
   backend: :postgres,          # :none (default) | :postgres | :s3
   ship_interval_ms: 30_000,    # backstop sweep for entities that hit no boundary
   rpo_target_ms: 120_000,      # unshipped-progress age at which the alarm fires
-  gc_interval_ms: 3_600_000,   # orphan-blob collection
+  gc_interval_ms: 3_600_000,   # orphan-blob collection period
+  gc_grace_ms: 3_600_000,      # nothing younger is ever collected
+  gc_abandoned_after_ms: 604_800_000,  # reclaim outside this node's scope
   backend_opts: [...]
 ```
 
 Environment variables (`config/runtime.exs`): `FLEZHA_DURABILITY_BACKEND`,
 `FLEZHA_DURABILITY_SHIP_INTERVAL_MS`, `FLEZHA_DURABILITY_RPO_TARGET_MS`,
-`FLEZHA_DURABILITY_GC_INTERVAL_MS`, plus the per-backend options below.
+`FLEZHA_DURABILITY_GC_INTERVAL_MS`, `FLEZHA_DURABILITY_GC_GRACE_MS`,
+`FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS`, `FLEZHA_DURABILITY_WRITER_ID`, plus
+the per-backend options below.
+
+**`FLEZHA_DURABILITY_WRITER_ID`** names this controller as a writer of remote
+lineages. It defaults to `node()`, which is correct under a StatefulSet or a
+fixed host. Set it explicitly under a Deployment, where the pod name changes on
+every reschedule: without it a rescheduled controller does not recognise its own
+lineages and takes each one over again, one claim at a time. It must be stable
+across restarts of the same controller and must *not* be carried to a
+replacement that starts with an empty disk — that one genuinely is a new
+claimant.
 
 ### Postgres backend
 
@@ -84,9 +97,23 @@ it is a one-shot operator call, not part of any ship path.
 ### Adding a backend
 
 A backend implements `Flezha.State.DurabilityTier.Backend` — `put/3`, `get/2`,
-`list/2`, `delete/2`, and the epoch-conditional `put_if/4` — and nothing else.
+`list/2`, `delete/2`, and the claim-conditional `put_if/4` — and nothing else.
 Every artifact, manifest, supersession and recovery rule lives in the tier and
 is shared. Select a module directly with `backend: {MyBackend, opts}`.
+
+Two of those carry more than their names suggest:
+
+- **`list/2` returns `{key, age_ms}`**, and the age should come from the store's
+  own clock where it has one (Postgres computes it in the query; S3's is derived
+  from `LastModified`). Collection's grace then never depends on the controller
+  and the store agreeing about the time.
+- **`put_if/4` takes `{:extend, n} | {:claim, n}`** and answers
+  `{:error, {:claim_held, stored}}` when refused. `:extend` applies unless the
+  stored counter is strictly higher; `:claim` applies only if it is strictly
+  lower. Both modes are required: `<=` alone lets simultaneous claimants
+  overwrite each other, `<` alone refuses an owner's ordinary repeat writes. A
+  backend never parses a manifest — it reports the counter, and the tier reads
+  the owner from the entry.
 
 ## What ships, and when
 
@@ -111,12 +138,33 @@ consistent.
 
 ## Manifest-last atomicity
 
-Blobs upload first. The per-reference manifest entry naming them is written
-last, through the backend's epoch-conditional write. Recovery reads **only** the
-manifest, so a crash between the two leaves the previous entry authoritative and
-the new blobs invisible — orphans, collected later by comparing `list/2` against
-the live manifests. Garbage collection never deletes a manifest-referenced key,
-so a GC bug can leak storage but never lose state.
+Blobs upload first, under content-addressed names. The per-reference manifest
+entry naming them is written last, through the backend's claim-conditional write.
+Recovery reads **only** the manifest, so a crash between the two leaves the
+previous entry authoritative and the new blobs invisible — orphans, collected
+later. Garbage collection never deletes a manifest-referenced key, so a GC bug
+can leak storage but never lose state.
+
+**Collection must survive a peer mid-ship.** "Uploaded but not yet referenced" is
+a state every ship passes through, and from another controller it is
+indistinguishable from an orphan. So an artifact must fail two independent tests
+before it is removed:
+
+- **Age.** Nothing younger than `gc_grace_ms` is collected, by anyone, in any
+  scope. This is the safety property, and it needs no knowledge of whose artifact
+  it is: an upload still in flight is young by definition. The default (1 h) is
+  bounded by the slowest plausible ship rather than tuned — both backends time
+  out at 30 s and the retry ladder caps at 30 s, and a failed manifest write
+  re-uploads its blobs, refreshing their age.
+- **Scope.** A node collects the references it holds local state for. This bounds
+  what one node's mistake can reach and makes the ordinary pass far cheaper; it
+  is *not* a safety argument on its own, because a migration, a rescale and
+  hydration all leave two nodes holding one reference.
+
+Scoping alone would strand the artifacts of a reference no node holds any more —
+a stopped operative, or one whose state moved — so those are still reclaimed,
+past the much longer `gc_abandoned_after_ms` (default 7 d). The two thresholds
+must differ: collapsed to one number, the scoping would contribute nothing.
 
 Manifest entries are epoch-stamped and mirror local truth rather than
 accumulating:
@@ -217,30 +265,59 @@ remotely.
 5. The ordinary restore-and-replay runs: sync-mode workflow classes resume with
    zero loss, stream classes from their last shipped cut.
 
-## Fencing
+## Who owns a lineage
 
-Every manifest write carries the writer's WAL-owner epoch and is applied
-conditionally. A write from a stale epoch is refused, and the refused controller
-**stops shipping that reference** and raises an alarm rather than retrying —
-overwriting a claimant that legitimately superseded it is the one outcome worse
-than not shipping. This makes the remote store an external arbiter, and it is
-strictly stronger than the local-only fencing it extends.
+Two or more controllers sharing one backend is the **intended** configuration —
+a fresh node adopting another's operatives is what the tier exists for — so
+every write has to be correct with a peer writing at the same time.
 
-**Know its reach.** The conditional write separates two writers only when their
-epochs *differ*; equal epochs overwrite, because a controller updates its own
-manifest many times within one epoch. The proc-journal, durable inbox, input log
-and registry cspec have no WAL-owner epoch and ship at 0 forever, so for those
-the write is ordered but not fenced. Garbage collection likewise assumes a single
-writer per backend: it is safe against the shipper's own in-flight uploads by
-construction, but a second controller mid-ship on the same backend can have its
-blobs collected between its upload and its manifest write. Both need a
-split-brain — two controllers owning one operative at once, which ProcessHub's
-`Singularity` placement is what normally prevents. **Do not read fencing as a
-substitute for single ownership.**
+Each per-reference manifest entry carries an **owner** and a monotone **claim
+counter**, and every manifest write is conditional on it:
 
-A fenced reference stays fenced until the controller restarts; there is no verb
-to clear it. That is deliberate — the safe direction is to stop — but it means a
-fence is an operator event, not something the tier heals out of.
+- the owner **extends** its own lineage at the claim it already holds, as many
+  times as it ships;
+- anyone else **bids** one above it, and the backend applies that only if the
+  stored counter is strictly lower. That strictness is a compare-and-set: two
+  nodes bidding the same number cannot both win.
+
+**The WAL epoch is not the fencing token, and could never have been.** It lives
+in the `.outbox.dedup` side-file, which `WalTransfer` copies with the rest of the
+state and `Hydrator` restores verbatim — so after a migration both nodes hold the
+same epoch and it cannot tell them apart. It remains in the entry as the
+supersession fact the manifest algebra reads. The claim counter exists only in
+the remote store, which is exactly why it separates writers: nothing local can
+carry it.
+
+**A bid requires an adoption.** Shipping alone must never claim a lineage.
+`WalTransfer.pull_operative/3` copies and nothing deletes the source, so after a
+migration the node that just lost the operative still holds every file; if having
+the state were enough, its next backstop sweep would take the lineage straight
+back. `Lifecycle.complete_init/4` is what says "this node runs it now".
+
+**Losing a claim is ordinary, not an alarm.** Every migration produces a loser.
+The superseded node stops shipping that reference, reports `superseded_by`, and
+clears its pending-progress mark — without that last part every handover would
+leave a permanent RPO breach and a permanently `degraded` `/healthz`. Nothing
+local is touched: the tier never deletes local files, and the superseded node is
+often the only other place the state exists.
+
+**Blob names are content-addressed** (`r-<epoch>-<from>-<to>-<sha256>`,
+`s-<seq>-<sha256>`, `f-<sha256>`). This is the other half, and it is not
+redundant with the claim: blobs go up *before* the manifest write, so a writer
+that has already lost a lineage uploads before it can discover that. Position-
+addressed names would have let it overwrite the winner's records inside the
+winner's own live manifest — corruption strictly worse than a missing blob,
+because absence is at least detectable. Different bytes now mean a different key,
+and identical bytes mean the same key, so a re-ship stays idempotent.
+
+**The registry cspec is keyed per writer** (`c/<hub_id>/<writer>`), not claimed.
+Every controller in a namespace holds its own replica of one gossiped ProcessHub
+registry — N writers is correct there, and a claim would make correct nodes fence
+each other out of shipping it. Hydration picks the newest replica by
+`shipped_at_ms`. That is a per-node wall clock, so skew could pick a slightly
+older replica; the replicas are equivalent by design and the orphan reconcile
+heals the difference, and there is no cluster-wide monotonic source at this layer
+to do better.
 
 ## Failure posture and alarms
 
@@ -254,12 +331,23 @@ What degrades is the *guarantee*, and that is loud:
 - `[:flezha, :state, :rpo_exceeded]` — alarm-grade, raised by
   `Flezha.State.Watchdog` when an entity's local progress has gone unshipped
   past `rpo_target_ms`. Latched per reference and cleared when it catches up.
-- `[:flezha, :state, :ship_fenced]` — a stale-epoch refusal.
+- `[:flezha, :state, :artifact_missing]` — alarm-grade: a manifest references an
+  artifact the backend does not hold, so that lineage is corrupt. Deliberately
+  distinct from `:hydration_failed` (an unreachable backend), because the two
+  call for opposite responses — one waits, the other must be acted on while some
+  node still has a local copy to re-ship from. **Detection only**: the tier does
+  not repair a corrupt lineage, since the next ship computes
+  `from = shipped_through + 1` and never re-uploads what is missing.
+- `[:flezha, :state, :claim_superseded]` — another writer took a lineage over.
+  Routine, and emitted at info: a handover produces one every time.
 - `[:flezha, :state, :ship_failed]` / `:artifact_shipped` / `:hydrated` /
   `:hydration_failed` / `:durability_gc`.
 
+All of these reach the observability bus through `TelemetryBridge` under the
+`:flezha_durability` source.
+
 `flz controller status` reports `durability_backend`, `durability_rpo_breaches`
-and `durability_fenced`; `/healthz` reports `degraded` with reason
+and `durability_superseded`; `/healthz` reports `degraded` with reason
 `durability_rpo_exceeded` on a breach (never `503` — local durability is intact
 and a restart cannot reach a backend that is not answering).
 

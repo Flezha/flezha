@@ -318,6 +318,17 @@ config :flezha,
     # superseded ranges). Never touches a referenced key.
     gc_interval_ms:
       System.get_env("FLEZHA_DURABILITY_GC_INTERVAL_MS", "3600000") |> String.to_integer(),
+    # Never collect an artifact younger than this, whoever owns it — an upload
+    # still in flight on a peer controller is young by definition, so this is
+    # what makes collection safe without coordinating between nodes.
+    gc_grace_ms:
+      System.get_env("FLEZHA_DURABILITY_GC_GRACE_MS", "3600000") |> String.to_integer(),
+    # Collect even outside this node's scope past this age, so a reference no
+    # node holds any more does not leak forever. Deliberately far longer than
+    # the grace.
+    gc_abandoned_after_ms:
+      System.get_env("FLEZHA_DURABILITY_GC_ABANDONED_AFTER_MS", "604800000")
+      |> String.to_integer(),
     backend_opts: [
       # Postgres backend (`postgrex`, already in tree for the Postgres sink).
       hostname: System.get_env("FLEZHA_DURABILITY_PG_HOST", "localhost"),

@@ -14,7 +14,9 @@ defmodule Flezha.State.DurabilityTier.Artifact do
     * `{:input_log, operative_class}` — the effectively-once tier's durable
       input log, which shares the WAL record framing and so shares the
       seq-range reader.
-    * `{:cspec, hub_id}` — the ProcessHub durable registry, a whole file.
+    * `{:cspec, {hub_id, writer}}` — the ProcessHub durable registry, a whole
+      file. Every node in a namespace holds its own replica, so the writer is
+      part of the identity rather than something to arbitrate.
 
   Record bundles are read **at ship time** through `WalWriter.fold_records/3`
   and re-framed with `WalWriter.encode_record/3`, never copied as file byte
@@ -23,6 +25,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   different records today. A seq range does not move.
   """
 
+  alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{Outbox, Registry, Restore, WalWriter, Wire}
 
@@ -48,11 +51,13 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @spec wal_path(ref()) :: binary() | nil
   def wal_path({:entity, entity_id}), do: Registry.wal_path(entity_id)
   def wal_path({:input_log, operative_class}), do: Registry.input_log_path(operative_class)
-  def wal_path({:cspec, _hub_id}), do: nil
+  def wal_path({:cspec, _}), do: nil
 
   @doc "Local whole-file path of `ref`, or `nil` for a seq-addressed reference."
   @spec file_path(ref()) :: binary() | nil
-  def file_path({:cspec, hub_id}), do: Path.join([cspec_root(), hub_id, "registry.dets"])
+  def file_path({:cspec, {hub_id, _writer}}),
+    do: Path.join([cspec_root(), hub_id, "registry.dets"])
+
   def file_path(_ref), do: nil
 
   @doc """
@@ -62,8 +67,12 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @spec cspec_refs() :: [ref()]
   def cspec_refs() do
     case File.ls(cspec_root()) do
-      {:ok, entries} -> entries |> Enum.map(&{:cspec, &1}) |> Enum.filter(&has_local_state?/1)
-      {:error, _} -> []
+      {:ok, entries} ->
+        writer = DurabilityTier.writer_id()
+        entries |> Enum.map(&{:cspec, {&1, writer}}) |> Enum.filter(&has_local_state?/1)
+
+      {:error, _} ->
+        []
     end
   end
 

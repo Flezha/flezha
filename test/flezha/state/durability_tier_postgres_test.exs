@@ -38,8 +38,8 @@ defmodule Flezha.State.DurabilityTier.Backend.PostgresTest do
   end
 
   setup %{opts: opts} do
-    {:ok, keys} = Backend.list("", opts)
-    Enum.each(keys, &Backend.delete(&1, opts))
+    {:ok, entries} = Backend.list("", opts)
+    Enum.each(entries, fn {key, _age} -> Backend.delete(key, opts) end)
     %{opts: opts}
   end
 
@@ -61,30 +61,42 @@ defmodule Flezha.State.DurabilityTier.Backend.PostgresTest do
     assert :ok = Backend.put("manifest/e/cls/proc/xkey", "b", opts)
     assert :ok = Backend.put("manifest/e/other/proc/k", "c", opts)
 
-    assert {:ok, keys} = Backend.list("manifest/e/cls/", opts)
-    assert Enum.sort(keys) == ["manifest/e/cls/proc/_key", "manifest/e/cls/proc/xkey"]
+    assert {:ok, entries} = Backend.list("manifest/e/cls/", opts)
 
-    assert {:ok, exact} = Backend.list("manifest/e/cls/proc/_key", opts)
-    assert exact == ["manifest/e/cls/proc/_key"]
+    assert entries |> Enum.map(&elem(&1, 0)) |> Enum.sort() ==
+             ["manifest/e/cls/proc/_key", "manifest/e/cls/proc/xkey"]
+
+    # The age is computed by the database, so it is a real elapsed value rather
+    # than something this process timed.
+    assert Enum.all?(entries, fn {_key, age} -> is_integer(age) and age >= 0 end)
+
+    assert {:ok, [{"manifest/e/cls/proc/_key", _}]} =
+             Backend.list("manifest/e/cls/proc/_key", opts)
   end
 
-  test "put_if writes at an equal or higher epoch and refuses a stale one", %{opts: opts} do
+  test "put_if extends an owned lineage and refuses a bid that is not ahead", %{opts: opts} do
     key = "manifest/e/cls/proc/k"
 
-    assert :ok = Backend.put_if(key, "epoch-0", 0, opts)
-    assert {:ok, "epoch-0"} = Backend.get(key, opts)
+    assert :ok = Backend.put_if(key, "claim-1", {:claim, 1}, opts)
+    assert {:ok, "claim-1"} = Backend.get(key, opts)
 
-    # Equal epochs overwrite: one controller updates its own manifest many
-    # times inside a single epoch.
-    assert :ok = Backend.put_if(key, "epoch-0-again", 0, opts)
-    assert {:ok, "epoch-0-again"} = Backend.get(key, opts)
+    # An owner extends at the claim it holds, many times over.
+    assert :ok = Backend.put_if(key, "claim-1-again", {:extend, 1}, opts)
+    assert {:ok, "claim-1-again"} = Backend.get(key, opts)
 
-    assert :ok = Backend.put_if(key, "epoch-2", 2, opts)
-    assert {:ok, "epoch-2"} = Backend.get(key, opts)
+    # A bid at the counter already stored is refused. This strictness is the
+    # compare-and-set: without it two claimants reading the same counter would
+    # both write, which is exactly the last-writer-wins this replaced.
+    assert {:error, {:claim_held, 1}} = Backend.put_if(key, "collision", {:claim, 1}, opts)
+    assert {:ok, "claim-1-again"} = Backend.get(key, opts)
 
-    # The fence: a claimant at a lower epoch is refused and told who holds it.
-    assert {:error, {:stale_epoch, 2}} = Backend.put_if(key, "epoch-1", 1, opts)
-    assert {:ok, "epoch-2"} = Backend.get(key, opts)
+    # A genuine takeover bids above it.
+    assert :ok = Backend.put_if(key, "claim-2", {:claim, 2}, opts)
+    assert {:ok, "claim-2"} = Backend.get(key, opts)
+
+    # And the writer it replaced can no longer extend.
+    assert {:error, {:claim_held, 2}} = Backend.put_if(key, "stale", {:extend, 1}, opts)
+    assert {:ok, "claim-2"} = Backend.get(key, opts)
   end
 
   test "a table name that is not a bare identifier is refused, not interpolated" do

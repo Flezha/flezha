@@ -31,6 +31,7 @@ defmodule Flezha.Operative.Lifecycle do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.Payloader
   alias Flezha.State.Commands
+  alias Flezha.State.DurabilityTier
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.ProcInbox
   alias Flezha.State.ProcJournal
@@ -217,6 +218,7 @@ defmodule Flezha.Operative.Lifecycle do
       # then refused before a runner is touched.
       _ = ClassRegistry.put_keyless(operative.factory_id, declarations.keyless)
       _ = ClassRegistry.put_overwatch(operative_class, owner)
+      _ = ClassRegistry.put_state_keys(operative.id, operative_class)
 
       # The declaration is durable now, so the retention floors it needs resolve
       # from it. Announce any it had to raise — a one-line declaration must not
@@ -224,6 +226,13 @@ defmodule Flezha.Operative.Lifecycle do
       if correction_window_ms do
         ClassRegistry.announce_derived_retention(operative_class, correction_window_ms)
       end
+
+      # This node runs the operative now, which is what entitles it to take over
+      # the reference's remote lineage. It has to be said here rather than
+      # inferred from shipping: a migration leaves the source node holding a
+      # full copy of the state, so "has the files" would let the node that just
+      # lost the operative claim it straight back.
+      _ = DurabilityTier.adopt_operative(operative_class)
 
       _ = Replay.restore_on_bind(state, operative)
 

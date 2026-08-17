@@ -222,6 +222,46 @@ defmodule Flezha.Operative.ClassRegistry do
   def keyless?(_factory_id), do: false
 
   @doc """
+  Record that `instance_id` resolves to `operative_class` on disk.
+
+  These are two different key spaces, not two names for one thing. A workflow
+  instance's proc-journal and durable inbox live under its INSTANCE id
+  (`Registry.journal_id/1`), while its Entities and input log live under the
+  resolved CLASS (`:operative_class`, defaulting to the instance id). They
+  coincide unless an operator sets that option — and where they diverge, asking
+  for one and getting the other returns half an operative's artifacts with no
+  error, which is how a synchronous-durability barrier can pass having shipped
+  almost nothing.
+
+  Stored under both members so either answers, and in memory only: the callers
+  are the commit path and hydration, both of which run against a live bind, and
+  the shipping path enumerates directories rather than consulting this at all.
+  """
+  @spec put_state_keys(binary(), binary()) :: :ok
+  def put_state_keys(instance_id, operative_class)
+      when is_binary(instance_id) and is_binary(operative_class) do
+    ensure_table()
+    keys = Enum.uniq([instance_id, operative_class])
+    :ets.insert(@table, {{instance_id, :state_keys}, keys})
+    :ets.insert(@table, {{operative_class, :state_keys}, keys})
+    :ok
+  end
+
+  @doc """
+  Every on-disk state key `key` may hold artifacts under — itself, plus the
+  other member of the id/class pair when they differ. `[key]` for anything not
+  recorded, which is the correct answer for the overwhelmingly common case
+  where the two are the same string.
+  """
+  @spec state_keys(binary()) :: [binary()]
+  def state_keys(key) when is_binary(key) do
+    case ets_lookup({key, :state_keys}) do
+      {:ok, keys} -> keys
+      _ -> [key]
+    end
+  end
+
+  @doc """
   Record whether `operative_class` requires its commit barriers to be remotely
   durable before they are acked (`remote-durability-tier`). Same ETS +
   durable-sidecar shape as the tier: the gate is consulted on the commit path

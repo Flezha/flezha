@@ -630,14 +630,18 @@ opted-in workflow at its barrier: visible, bounded by the existing ack budget,
 and correct, because the class asked for RPO 0. Neither mode loses data
 silently.
 
-**Fencing.** Every manifest write carries the writer's WAL-owner epoch and is
-applied conditionally, which makes the remote store an external arbiter: a stale
-claimant's write is refused, it stops shipping that reference and alarms rather
-than retrying. This extends the existing local epoch fencing outward — it does
-not replace it, and it is not a substitute for single ownership: equal epochs
-overwrite, and the journal, inbox, input log and cspec carry no epoch at all. See
-[`../remote_durability_tier.md`](../remote_durability_tier.md) "Fencing" for the
-reach and for what garbage collection assumes.
+**More than one controller.** Two controllers sharing one backend is the
+intended configuration, not a fault — a fresh node adopting another's operatives
+is the whole point — so every write is correct with a peer writing at the same
+time. Each manifest entry carries an owner and a monotone claim counter, and the
+conditional write is a compare-and-set against it. The WAL epoch is *not* that
+token and could not be: it travels with the state it protects, copied by
+`WalTransfer` and restored by hydration, so after a migration both nodes hold the
+same value. Blob names are content-addressed, so a writer that has already lost a
+lineage cannot overwrite the winner's bytes in the window before it finds out.
+Collection never deletes an artifact younger than the grace, whoever owns it. See
+[`../remote_durability_tier.md`](../remote_durability_tier.md) "Who owns a
+lineage".
 
 **Recovery** hydrates the manifest-referenced artifacts into the local layout
 and then runs the existing restore-and-replay path unchanged. Local state is

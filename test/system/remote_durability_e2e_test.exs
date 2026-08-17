@@ -19,6 +19,12 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
       gone, and the operative resumes from the shipped cut rather than from
       nothing.
 
+    * **two controllers, one backend** — a peer collecting throughout a live
+      shipper's run. This is the configuration the tier exists to serve, and the
+      one where a global, time-blind collection deleted a blob a manifest was
+      about to name. It asserts against a real store that every artifact the
+      live manifest references still exists, and that recovery still works.
+
   Tagged `:system` and `:postgres_integration` — it boots a real runner AND
   needs the compose Postgres. Run with:
 
@@ -38,7 +44,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Completion
-  alias Flezha.State.DurabilityTier.{Backend, Manifest}
+  alias Flezha.State.DurabilityTier.{Backend, Manifest, Shipper}
   alias Flezha.State.{InputLog, ProcJournal, Registry}
 
   @moduletag :system
@@ -259,6 +265,80 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
              120_000
            ),
            "the second recovery lost the work the first one recovered"
+  end
+
+  test "a second controller collecting throughout cannot break the shipper's lineage" do
+    backend_opts = install_durability_tier()
+    namespace = unique("dur_gc")
+    operative_id = unique("checkpoint_store")
+    id_path = unique_id_path()
+
+    on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
+
+    {_port_a, exec_a} = boot_runner(namespace, id_path)
+
+    builder = %Builder{
+      id: operative_id,
+      factory_id: "checkpoint_store",
+      init_values: %{},
+      opts: []
+    }
+
+    assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
+    assert info.runner_id == exec_a
+    assert wait_until(fn -> ClassRegistry.checkpoint_ack?(operative_id) end, 30_000)
+
+    # A second controller sharing this backend, collecting on every round while
+    # the first ships. It runs against the SAME state root on purpose: that puts
+    # the references inside its scope, so the scoping cannot be what saves them
+    # and the grace is left carrying the property alone — the sharper of the two
+    # statements, and the one that has to hold against a real store.
+    {:ok, peer} = GenServer.start(Shipper, [])
+    on_exit(fn -> if Process.alive?(peer), do: GenServer.stop(peer) end)
+
+    for round <- 1..3 do
+      send_inputs(operative_id, namespace, ["k#{round}:v#{round}", "commit:#{round}"])
+      assert wait_until(fn -> InputLog.watermark(operative_id) >= round * 2 - 1 end, 60_000)
+      assert {:ok, _collected} = GenServer.call(peer, :gc, 60_000)
+    end
+
+    assert wait_until(fn -> Registry.entities_of(operative_id) != [] end, 60_000)
+    [entity_id | _] = Registry.entities_of(operative_id)
+    entity_ref = {:entity, entity_id}
+
+    assert wait_until(
+             fn -> shipped_through(backend_opts, entity_ref) >= 0 end,
+             60_000
+           ),
+           "nothing ever reached the backend"
+
+    # Every artifact the live manifest names must still be there. Under a global,
+    # time-blind collection this is exactly where a blob went missing: uploaded,
+    # collected by the peer, then named by a manifest written a moment later.
+    assert {:ok, blob} = fetch(backend_opts, Manifest.key(entity_ref))
+    assert {:ok, manifest} = Manifest.decode(blob)
+
+    for artifact <- Manifest.blob_keys(manifest) do
+      assert {:ok, _} = fetch(backend_opts, artifact),
+             "the manifest names #{artifact}, which the peer's collection removed"
+    end
+
+    # And the only test that matters: it still recovers.
+    destroy_local_state(operative_id)
+    {_port_b, exec_b} = boot_runner(namespace, id_path)
+    assert exec_b != exec_a
+    force_fresh_rebind(namespace, operative_id)
+
+    assert wait_until(
+             fn ->
+               case OperativeManager.get_entity_state(namespace, operative_id) do
+                 {:ok, json} -> json =~ "k1"
+                 _ -> false
+               end
+             end,
+             120_000
+           ),
+           "the operative did not come back after a peer collected throughout its run"
   end
 
   defp fetch(opts, key), do: Backend.Postgres.get(key, opts)

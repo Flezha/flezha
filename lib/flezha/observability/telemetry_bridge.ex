@@ -48,6 +48,17 @@ defmodule Flezha.Observability.TelemetryBridge do
     [:flezha, :state, :baseline_seed] => {:flezha_state, :baseline_seed, :event},
     [:flezha, :state, :wal_realign] => {:flezha_state, :wal_realign, :event},
     [:flezha, :state, :stale_writer_refused] => {:flezha_state, :stale_writer_refused, :event},
+    # Remote durability tier. Every alarm it documents was a Logger line until
+    # these entries existed — including `rpo_exceeded`, which the operator guide
+    # calls alarm-grade and reports through `/healthz`.
+    [:flezha, :state, :rpo_exceeded] => {:flezha_durability, :rpo_exceeded, :event},
+    [:flezha, :state, :ship_fenced] => {:flezha_durability, :ship_fenced, :event},
+    [:flezha, :state, :ship_failed] => {:flezha_durability, :ship_failed, :event},
+    [:flezha, :state, :artifact_shipped] => {:flezha_durability, :artifact_shipped, :metric},
+    [:flezha, :state, :hydrated] => {:flezha_durability, :hydrated, :event},
+    [:flezha, :state, :hydration_failed] => {:flezha_durability, :hydration_failed, :event},
+    [:flezha, :state, :artifact_missing] => {:flezha_durability, :artifact_missing, :event},
+    [:flezha, :state, :durability_gc] => {:flezha_durability, :durability_gc, :metric},
     [:flezha, :leadership, :transition] => {:flezha_leadership, :transition, :event},
     [:flezha, :reconcile, :action] => {:flezha_reconcile, :action, :event},
     [:flezha, :reconcile, :health] => {:flezha_reconcile, :health, :event},

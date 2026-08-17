@@ -42,8 +42,8 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
   end
 
   setup %{opts: opts} do
-    {:ok, keys} = S3.list("", opts)
-    Enum.each(keys, &S3.delete(&1, opts))
+    {:ok, entries} = S3.list("", opts)
+    Enum.each(entries, fn {key, _age} -> S3.delete(key, opts) end)
     %{opts: opts}
   end
 
@@ -62,19 +62,24 @@ defmodule Flezha.State.DurabilityTier.Backend.S3Test do
     assert :ok = S3.put("manifest/e/cls/proc/_key", "a", opts)
     assert :ok = S3.put("manifest/e/other/proc/k", "b", opts)
 
-    assert {:ok, ["manifest/e/cls/proc/_key"]} = S3.list("manifest/e/cls/", opts)
+    # `<LastModified>` rides the same listing response as `<Key>`, so the age
+    # costs no extra request.
+    assert {:ok, [{"manifest/e/cls/proc/_key", age}]} = S3.list("manifest/e/cls/", opts)
+    assert is_integer(age) and age >= 0
   end
 
-  test "put_if writes at an equal or higher epoch and refuses a stale one", %{opts: opts} do
+  test "put_if extends an owned lineage and refuses a bid that is not ahead", %{opts: opts} do
     key = "manifest/e/cls/proc/k"
 
-    assert :ok = S3.put_if(key, "epoch-0", 0, opts)
-    assert :ok = S3.put_if(key, "epoch-0-again", 0, opts)
-    assert {:ok, "epoch-0-again"} = S3.get(key, opts)
+    assert :ok = S3.put_if(key, "claim-1", {:claim, 1}, opts)
+    assert :ok = S3.put_if(key, "claim-1-again", {:extend, 1}, opts)
+    assert {:ok, "claim-1-again"} = S3.get(key, opts)
 
-    assert :ok = S3.put_if(key, "epoch-2", 2, opts)
-    assert {:error, {:stale_epoch, 2}} = S3.put_if(key, "epoch-1", 1, opts)
-    assert {:ok, "epoch-2"} = S3.get(key, opts)
+    assert {:error, {:claim_held, 1}} = S3.put_if(key, "collision", {:claim, 1}, opts)
+
+    assert :ok = S3.put_if(key, "claim-2", {:claim, 2}, opts)
+    assert {:error, {:claim_held, 2}} = S3.put_if(key, "stale", {:extend, 1}, opts)
+    assert {:ok, "claim-2"} = S3.get(key, opts)
   end
 
   test "the whole tier ships and hydrates through this backend", %{opts: opts} do
