@@ -81,6 +81,20 @@ public final class FlzCore {
     public static native String spawnWorkflow(
             long ctx, String instanceId, String factoryId, byte[] payload, String ifRunning);
 
+    /**
+     * The core's monotonic clock in nanoseconds since an arbitrary process
+     * origin — the reading {@link #entryLastDeliveryNanos(String)} is measured
+     * against. Context-free: the core records deliveries process-wide.
+     */
+    public static native long monotonicNanos();
+
+    /**
+     * When the named entry channel last received a frame, on the same
+     * monotonic clock. {@code 0} means no frame ever has — which is also the
+     * answer for a channel no declared operative has.
+     */
+    public static native long entryLastDeliveryNanos(String channel);
+
     /** Wake every blocked poller and stop the runner loop. */
     public static native void shutdown(long ctx);
 

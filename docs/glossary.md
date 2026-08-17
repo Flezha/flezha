@@ -263,6 +263,18 @@ contains Entities.**
   rather than polled from it, so reading it never blocks on the wedged process.
   Never stamped ≠ stale (boot is not a wedge).
 
+- **Idle episode** — one stretch of silence on an entry channel, from the
+  moment the gap since its last delivered frame first exceeds an
+  application-registered threshold until a frame arrives. The SDK reports an
+  episode **once**, not once per tick, and never before the channel's first
+  frame ever (a cold start is not an episode). Distinct from every liveness
+  verdict above by who asks: those are the controller localizing a wedge for an
+  operator; this is the application's own signal, because the SDK owns the IO
+  threads and app code never sees the data stream. The SDK supplies the
+  *signal* (when a frame last arrived), the application supplies the *policy*
+  (what gap is anomalous) — see
+  [`entry_input_observability.md`](entry_input_observability.md).
+
 - **Start authority** — the single id claim every operative start resolves
   through (`Distributor.init_registry_check/3`, reached identically by the
   ProcessHub orphan reconcile and by `OperativeManager.start_operative/3`). The

@@ -262,6 +262,27 @@
 
 ### Added
 
+- **An application can now see that its input went quiet**
+  (`expose-entry-input-idle-signal`). The SDK owns the IO threads, so when a
+  feed goes silent every procedure simply stops being called: output freezes,
+  the process stays alive, and the only component that knows a frame arrived is
+  the SDK. Both SDKs now track, per entry channel, the instant the runner last
+  delivered a frame there — one relaxed atomic store on the delivery path — and
+  expose it plus an idle-observer registration on the runner handle:
+  `last_entry_delivery` / `on_entry_idle(channel, threshold, observer)` (Rust),
+  `lastEntryDelivery` / `onEntryIdle` (Java). The observer fires **once per idle
+  episode**, never before the channel's first frame (a cold start is not an
+  incident), and re-arms on a resume notification; it runs on an SDK background
+  tick, never on the delivery path, and a panic/throw is contained and logged.
+
+  The SDK ships **no default threshold and no default action** — the signal
+  (when a frame last arrived) is SDK knowledge, the policy (what gap is
+  anomalous — a quiet overnight market is not a dead feed) is the
+  application's. The stamp itself lives in the shared core, written on the one
+  entry-delivery seam, so the Java SDK — a poll host over that core — reads the
+  same fact through the C ABI rather than keeping a second copy in step.
+  `docs/entry_input_observability.md`.
+
 - **The authoring sugar can now feed a `.keyed()` channel.** A keyed output
   channel accepts only `emit_keyed`, but `#[flezha::procedure]` / `@Procedure`
   always generated a plain `emit` — so every procedure with a keyed sink had to

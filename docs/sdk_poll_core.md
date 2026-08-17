@@ -191,13 +191,21 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   rules (journaled controller-side, re-forwarded on the next bind).
 - Ownership: whoever allocates frees. Activation buffers the core hands out
   are freed with `flz_core_buf_free`.
+- **Context-free reads**: `flz_core_monotonic_nanos()` and
+  `flz_core_entry_last_delivery_nanos(channel)` take no context — the core
+  records deliveries per entry channel process-wide, and the host derives an
+  idle gap by subtracting one from the other (`0` = no frame ever arrived).
+  This is what lets a non-Rust host observe input liveness without keeping a
+  second stamp in step; see
+  [`entry_input_observability.md`](entry_input_observability.md).
 
 The CI scenario (`flz_core_ffi/tests/abi_scenario.rs`) drives connect,
 AddOperative over the real control path, input activations, a timer firing,
-a restore fold, a live state read, a keyed dynamic route through the
-prepare crossing, an effectively-once floor skip, a workflow run-sugar
-lifecycle, and shutdown entirely through the C ABI — a capability reachable
-in the crate API but not the ABI is a defect, not a backlog item.
+the entry-input idle reads, a restore fold, a live state read, a keyed
+dynamic route through the prepare crossing, an effectively-once floor skip, a
+workflow run-sugar lifecycle, and shutdown entirely through the C ABI — a
+capability reachable in the crate API but not the ABI is a defect, not a
+backlog item.
 
 ### Host classes (full capability)
 

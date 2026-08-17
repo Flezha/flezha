@@ -445,6 +445,31 @@ pub unsafe extern "C" fn flz_core_spawn_workflow(
     }
 }
 
+/// The core's monotonic clock, in nanoseconds since an arbitrary process
+/// origin. The reading [`flz_core_entry_last_delivery_nanos`] is measured
+/// against — a host derives an idle gap by subtracting one from the other.
+#[no_mangle]
+pub extern "C" fn flz_core_monotonic_nanos() -> u64 {
+    flz_core::util::monotonic_nanos()
+}
+
+/// When entry channel `channel` last received a frame, on the clock
+/// [`flz_core_monotonic_nanos`] reads. `0` means no frame has ever been
+/// delivered to it — which is also the answer for a channel no declared
+/// operative has.
+///
+/// # Safety
+/// `channel` must be a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_entry_last_delivery_nanos(channel: *const c_char) -> u64 {
+    let Ok(channel) = CStr::from_ptr(channel).to_str() else {
+        return 0;
+    };
+    flz_core::entry_input::observation_of(channel)
+        .and_then(|cell| cell.last_delivery_nanos())
+        .unwrap_or(0)
+}
+
 /// Free a buffer returned by [`flz_core_poll`].
 ///
 /// # Safety

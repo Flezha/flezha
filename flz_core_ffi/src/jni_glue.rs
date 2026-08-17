@@ -342,6 +342,34 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnWorkflow<'l>(
     }
 }
 
+/// The core's monotonic clock in nanoseconds — the reading
+/// [`Java_com_flezha_sdk_native_1_FlzCore_entryLastDeliveryNanos`] is measured
+/// against.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_monotonicNanos(
+    _env: JNIEnv,
+    _class: JClass,
+) -> jlong {
+    crate::flz_core_monotonic_nanos() as jlong
+}
+
+/// When the named entry channel last received a frame, on the same monotonic
+/// clock; `0` when no frame ever has.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_entryLastDeliveryNanos(
+    mut env: JNIEnv,
+    _class: JClass,
+    channel: JString,
+) -> jlong {
+    let Ok(channel) = env.get_string(&channel) else {
+        return 0;
+    };
+    let Ok(channel) = CString::new(String::from(channel)) else {
+        return 0;
+    };
+    unsafe { crate::flz_core_entry_last_delivery_nanos(channel.as_ptr()) as jlong }
+}
+
 /// Wake every blocked poller and stop the runner loop.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_shutdown(

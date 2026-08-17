@@ -22,6 +22,7 @@ pub mod credit;
 #[doc(hidden)]
 pub mod dynamic;
 pub mod entity;
+pub mod entry_input;
 #[doc(hidden)]
 pub mod fast;
 #[doc(hidden)]

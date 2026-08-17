@@ -137,3 +137,19 @@ by sweeping the SDK crates' emit sites and failing on any target the
 directives discard at `warn`. (The Java SDK is exempt: SLF4J logger names
 inherit the root level, so there is no enumerate-or-discard filter to keep
 in sync.)
+
+### 12. A runtime fact the SDK alone knows is a plain accessor plus an `on<Event>` registration
+
+The SDK owns the IO threads, so some facts are only observable from inside it.
+Each such fact gets two names: the accessor spelling the fact
+(`last_entry_delivery` / `lastEntryDelivery`, rule 5's `Option`/`Optional` for
+"nothing has happened yet") and, where polling it in a loop would be the wrong
+shape, an `on<Event>` registration taking the caller's own threshold and
+callback (`on_entry_idle` / `onEntryIdle`). `on*` is already the SDK's
+callback prefix (`on_full`, `on_timer`), so `addListener` / `subscribe` /
+`watch` synonyms are not used.
+
+The registration never carries a default threshold or a default action. The
+*signal* is SDK knowledge; the *policy* — what value is anomalous, and what to
+do about it — is the application's domain knowledge, and an SDK-side default
+would be a policy the SDK cannot know is right.

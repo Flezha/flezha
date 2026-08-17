@@ -9,9 +9,9 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use dashmap::DashMap;
 use flz_transport::service::payloader;
@@ -31,11 +31,10 @@ const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 const EVICTED_TRACE_CAP: usize = 1024;
 
 /// Monotonic milliseconds since process start. Stamped on every push into a
-/// dynamic Entity's mailbox; read by the reaper. One global anchor keeps
+/// dynamic Entity's mailbox; read by the reaper. The process-wide anchor keeps
 /// `EntitySlot::last_activity_at` a plain `AtomicI64`.
 pub fn now_millis() -> i64 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_millis() as i64
+    crate::util::monotonic_anchor().elapsed().as_millis() as i64
 }
 
 /// Per-Procedure dynamic-entity counters. Monotonic, `Relaxed`.

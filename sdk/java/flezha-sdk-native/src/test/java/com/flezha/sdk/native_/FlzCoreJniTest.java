@@ -39,4 +39,18 @@ class FlzCoreJniTest {
                 .hasMessageContaining("999")
                 .hasMessageContaining(String.valueOf(FlzCore.SCHEMA_VERSION));
     }
+
+    @Test
+    @DisplayName("the monotonic clock advances and never goes backwards")
+    void monotonicClockAdvances() throws InterruptedException {
+        long first = FlzCore.monotonicNanos();
+        Thread.sleep(2);
+        assertThat(FlzCore.monotonicNanos()).isGreaterThan(first);
+    }
+
+    @Test
+    @DisplayName("a channel nothing has delivered to reads as the never-delivered sentinel")
+    void unknownEntryChannelReadsZero() {
+        assertThat(FlzCore.entryLastDeliveryNanos("no_such_entry_channel")).isZero();
+    }
 }

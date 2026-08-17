@@ -6,9 +6,12 @@ import com.flezha.sdk.internal.RuntimeBridge;
 import com.flezha.sdk.operative.Computation;
 import com.flezha.sdk.operative.StreamOperative;
 import com.flezha.sdk.workflow.WorkflowOperative;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -39,6 +42,9 @@ import javax.annotation.Nonnull;
  * the Rust SDK's {@code FlezhaRunner}.
  */
 public final class FlezhaRunner implements AutoCloseable {
+
+    /** The runtime class backing the entry-idle surface, resolved reflectively. */
+    private static final String WATCHER = "com.flezha.sdk.runtime.EntryIdleWatcher";
 
     private final String namespace;
 
@@ -197,6 +203,61 @@ public final class FlezhaRunner implements AutoCloseable {
     }
 
     /**
+     * When the runner last delivered a frame to entry channel {@code channel},
+     * or empty before its first frame (and for a name no declared operative
+     * has — both mean "nothing has arrived here"). Reading never blocks
+     * delivery.
+     *
+     * <p>The instant is the <i>signal</i>; whether the silence since then is
+     * anomalous is the application's call. Register an observer with
+     * {@link #onEntryIdle(String, Duration, IdleObserver)} instead of polling
+     * this in a loop.
+     */
+    @Nonnull
+    @SuppressWarnings("unchecked")
+    public Optional<Instant> lastEntryDelivery(@Nonnull String channel) {
+        return (Optional<Instant>) RuntimeBridge.invoke(
+                WATCHER,
+                "lastEntryDelivery",
+                new Class<?>[] {String.class},
+                "Failed to read the last entry delivery",
+                channel);
+    }
+
+    /**
+     * Observe silence on entry channel {@code channel}: {@code observer} is
+     * notified once per idle episode, when the gap since the last delivered
+     * frame first exceeds {@code threshold}, and once again when a frame
+     * resumes it. Silence before the channel's very first frame is never an
+     * episode.
+     *
+     * <p>Legal before and after {@link #start()}. Evaluation runs on one
+     * background tick — never on the delivery path — so an observer that
+     * blocks or throws costs the data plane nothing. Several observers may
+     * watch one channel; {@link #close()} drops them all.
+     *
+     * <pre>{@code
+     * FlezhaRunner runner = Flezha.createRunner("my_app");
+     * runner.onEntryIdle("trades_in", Duration.ofSeconds(90),
+     *         gap -> LOG.error("trades_in silent for {}", gap));
+     * runner.run();
+     * }</pre>
+     */
+    @Nonnull
+    public FlezhaRunner onEntryIdle(
+            @Nonnull String channel, @Nonnull Duration threshold, @Nonnull IdleObserver observer) {
+        RuntimeBridge.invoke(
+                WATCHER,
+                "onEntryIdle",
+                new Class<?>[] {String.class, Duration.class, IdleObserver.class},
+                "Failed to register the entry-idle observer",
+                channel,
+                threshold,
+                observer);
+        return this;
+    }
+
+    /**
      * Block the calling thread until the runner shuts down — via
      * {@link #close()} from another thread, or SIGTERM-triggered graceful
      * shutdown. Replaces every hand-rolled keep-alive loop; a standalone
@@ -210,8 +271,9 @@ public final class FlezhaRunner implements AutoCloseable {
 
     /**
      * Run the graceful-shutdown sequence (ship-fresh-state-on-sdk-shutdown),
-     * release the JVM-wide runner slot, and wake every thread blocked in
-     * {@link #awaitTermination()}. A no-op on a never-started runner;
+     * release the JVM-wide runner slot, wake every thread blocked in
+     * {@link #awaitTermination()}, and drop this runner's entry-idle
+     * observers. A no-op on a never-started runner that registered none;
      * idempotent across SIGTERM + explicit close.
      */
     @Override
@@ -220,6 +282,10 @@ public final class FlezhaRunner implements AutoCloseable {
         if (h != null) {
             h.close();
         }
+        // Observers are per-runner: a second runner in this JVM must not
+        // inherit the first one's watches (the Rust SDK's watcher dies with
+        // its runner core for the same reason).
+        RuntimeBridge.invokeIfPresent(WATCHER, "reset");
     }
 
     private RunnerHandle started(String what) {

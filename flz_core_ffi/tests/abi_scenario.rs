@@ -257,6 +257,25 @@ fn c_abi_full_scenario() {
     .join()
     .expect("cross-thread complete");
 
+    // ------------------------------------------ entry-input idle signal
+    // The C ABI is the only view a non-Rust host has of the last-delivery
+    // stamp, so the two reads are pinned here; the wire path that writes it
+    // (`fast::dispatch`) is driven by the Rust SDK's `entry_idle` suite.
+    let unknown = CString::new("no_such_entry_channel").unwrap();
+    assert_eq!(
+        unsafe { flz_core_entry_last_delivery_nanos(unknown.as_ptr()) },
+        0,
+        "a channel nothing has delivered to reads as the never-delivered sentinel"
+    );
+    entry.observe_delivery();
+    let name = CString::new("in").unwrap();
+    let stamped = unsafe { flz_core_entry_last_delivery_nanos(name.as_ptr()) };
+    assert!(stamped > 0, "the delivery is visible through the ABI");
+    assert!(
+        stamped <= flz_core_monotonic_nanos(),
+        "the stamp and the clock it is read against are the same clock"
+    );
+
     // ------------------------------------------------------- timer firing
     let deadline = Instant::now() + Duration::from_secs(5);
     let fired = loop {

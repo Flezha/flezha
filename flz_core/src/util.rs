@@ -4,8 +4,25 @@
 
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime};
+
+/// The process's monotonic origin. One anchor for every "how long ago" the
+/// runtime records, so a stamp taken by one subsystem is comparable with a
+/// reading taken by another.
+static MONOTONIC_ANCHOR: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+/// The [`Instant`] every monotonic stamp in this process is measured from.
+/// Turns a stored offset back into an `Instant` for the SDK-facing accessors.
+pub fn monotonic_anchor() -> Instant {
+    *MONOTONIC_ANCHOR
+}
+
+/// Nanoseconds since [`monotonic_anchor`]. `u64` covers 584 years, so the
+/// wrap this narrowing could suffer is not reachable.
+pub fn monotonic_nanos() -> u64 {
+    MONOTONIC_ANCHOR.elapsed().as_nanos() as u64
+}
 
 /// Wake granularity of [`sleep_interruptible`]: how promptly a tripped flag is
 /// observed inside a longer sleep.

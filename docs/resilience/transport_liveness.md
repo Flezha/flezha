@@ -245,6 +245,22 @@ output-stall ladder. See `docs/resilience/convergence_loop.md`
 "Health publishing" for the `/healthz` contract (including the
 `intent_mismatch` reason).
 
+## The application's own signal (entry-input idle)
+
+Everything above answers an **operator's** question: which layer wedged. It says
+nothing to the *application*, which cannot see the data stream at all — the SDK
+owns the IO threads. So the SDK exposes, per entry channel, when a frame last
+arrived, and accepts an idle observer carrying the application's own threshold:
+`runner.on_entry_idle(channel, threshold, observer)` /
+`runner.onEntryIdle(...)`. It fires once per idle episode, never before the
+channel's first frame, and re-arms on resume.
+
+The split is deliberate and is why the SDK ships no default threshold: the
+*signal* (when did a frame last arrive) is SDK knowledge, the *policy* (is this
+silence anomalous) is domain knowledge — a quiet overnight market is not a dead
+feed. Full contract in
+[`../entry_input_observability.md`](../entry_input_observability.md).
+
 ## Configuration
 
 `:observability, :data_plane_liveness` (default `true`, env

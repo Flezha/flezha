@@ -226,6 +226,11 @@ pub struct ChannelDescriptor {
     /// journaled at the proc-commit barrier and re-seeded on crash-resume
     /// (`workflow-proc-journal`). `None` elsewhere.
     pub codec: Option<ChannelCodec>,
+    /// `Entry` channels: the interned cell recording when this channel last
+    /// received a frame, resolved once here so the delivery path never looks
+    /// a name up. `None` on every other kind — an inter-procedure or
+    /// plugin-bound channel is app-visible at both ends and needs no observer.
+    pub entry_observation: Option<Arc<crate::entry_input::EntryObservation>>,
 }
 
 impl ChannelDescriptor {
@@ -234,6 +239,24 @@ impl ChannelDescriptor {
     pub fn consumer_ids(&self) -> impl Iterator<Item = ProcedureId> + '_ {
         self.consumers.iter().map(|e| e.procedure)
     }
+
+    /// Note that a frame reached this channel. A no-op off an entry channel.
+    #[inline]
+    pub fn observe_delivery(&self) {
+        if let Some(observation) = &self.entry_observation {
+            observation.stamp();
+        }
+    }
+}
+
+/// The observation cell an `Entry` channel named `name` stamps, `None` for
+/// every other kind. The one place a descriptor's cell is resolved, so both
+/// construction sites (the Rust builder and the C-ABI host declaration) agree.
+pub fn entry_observation_for(
+    kind: ChannelKind,
+    name: &str,
+) -> Option<Arc<crate::entry_input::EntryObservation>> {
+    (kind == ChannelKind::Entry).then(|| crate::entry_input::observation_for(name))
 }
 
 /// Typed→bytes / bytes→typed codec pair for an inter-procedure channel's

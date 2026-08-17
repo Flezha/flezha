@@ -573,6 +573,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             // can re-seed exactly what the live handoff carried.
             codec: (channel_decl.kind == HostChannelKind::InterProc)
                 .then(|| host_payload_codec(channel_id)),
+            entry_observation: crate::channel::entry_observation_for(kind, name),
         });
         name_to_id.insert(name, channel_id);
     }
@@ -2321,6 +2322,59 @@ pub fn apply_state_locked(slot: &Arc<EntitySlot>, value: &serde_json::Value) -> 
         schema::ActivationOutcome::StateApplied => Ok(()),
         schema::ActivationOutcome::Failed(err) => Err(err.message),
         _ => Err("host answered with a non-apply outcome".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod entry_observation_decl_tests {
+    //! A host-language class reaches the wire through the same `dispatch` the
+    //! typed Rust classes do, so its entry channels must carry the same
+    //! observation cell — that is what makes the input-liveness signal one
+    //! implementation for both SDKs rather than two.
+
+    use crate::channel::ChannelKind;
+
+    #[test]
+    fn a_host_declared_entry_channel_carries_the_observation_its_peers_read() {
+        let id = format!("host_entry_observation_{}", std::process::id());
+        super::register_host_class_json(
+            format!(
+                r#"{{"factory_id":"{id}","persistent":false,
+                     "channels":[{{"name":"host_trades_in","kind":"entry","consumers":[0]}},
+                                 {{"name":"host_out","kind":"plugin","producer":0}}],
+                     "procedures":[{{"name":"p0"}}]}}"#
+            )
+            .as_bytes(),
+        )
+        .expect("the class registers");
+
+        let topology = crate::operative::registry::get_class(&id).expect("class registered");
+        let entry = topology
+            .channels
+            .iter()
+            .find(|c| c.kind == ChannelKind::Entry)
+            .expect("entry channel");
+        let cell = entry
+            .entry_observation
+            .as_ref()
+            .expect("an entry channel is observed");
+        assert!(
+            crate::entry_input::observation_of("host_trades_in")
+                .is_some_and(|shared| std::sync::Arc::ptr_eq(&shared, cell)),
+            "the descriptor caches the cell a reader reaches by name"
+        );
+
+        assert!(
+            topology
+                .channels
+                .iter()
+                .filter(|c| c.kind != ChannelKind::Entry)
+                .all(|c| c.entry_observation.is_none()),
+            "only entry channels are observed"
+        );
+
+        entry.observe_delivery();
+        assert!(crate::entry_input::last_delivery("host_trades_in").is_some());
     }
 }
 

@@ -667,6 +667,11 @@ impl OperativeDispatchHandle {
             None => return,
         };
 
+        // The input-liveness signal, taken before anything can decline the
+        // frame: a payload that fails to parse still proves the feed is alive,
+        // and a host class's staged payload never reaches the lines below.
+        channel.observe_delivery();
+
         // Effectively-once tier: the controller stamps the durable input-log
         // offset on the forwarded frame; thread it to the invocation so the
         // atomic effect record carries the same offset as consumed-offset.
