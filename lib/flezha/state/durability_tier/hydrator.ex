@@ -79,7 +79,12 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
     with {module, opts} <- Backend.resolve(),
          {:ok, entries} <- module.list(Manifest.cspec_prefix(), opts) do
       entries
-      |> Enum.flat_map(fn {key, _age} -> read_manifest(module, opts, key) end)
+      |> Enum.flat_map(fn {key, _age} ->
+        case read_manifest(module, opts, key) do
+          {:ok, manifest} -> [manifest]
+          :error -> []
+        end
+      end)
       |> newest_per_hub()
       |> Enum.each(&apply_manifest(module, opts, &1))
     end
@@ -127,21 +132,19 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   defp hydrate_key(module, opts, manifest_key) do
     case read_manifest(module, opts, manifest_key) do
-      [manifest] -> apply_manifest(module, opts, manifest)
-      [] -> :ok
+      {:ok, manifest} -> apply_manifest(module, opts, manifest)
+      :error -> :ok
     end
   end
 
-  # A list rather than an option so callers can `flat_map` a whole prefix and
-  # drop what they cannot read without a second unwrapping step.
   defp read_manifest(module, opts, manifest_key) do
     with {:ok, blob} <- module.get(manifest_key, opts),
          {:ok, manifest} <- Manifest.decode(blob) do
-      [manifest]
+      {:ok, manifest}
     else
       _ ->
         Logger.warning("[durability] unreadable manifest #{manifest_key}; skipped")
-        []
+        :error
     end
   end
 

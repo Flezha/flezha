@@ -25,7 +25,6 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   different records today. A seq range does not move.
   """
 
-  alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{Outbox, Registry, Restore, WalWriter, Wire}
 
@@ -61,20 +60,32 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def file_path(_ref), do: nil
 
   @doc """
-  Every hub whose registry cspec exists on this node — what operatives exist
-  here, and how they are configured.
+  Every hub whose registry cspec exists on this node, stamped with `writer`.
+
+  The writer is part of the identity rather than something to arbitrate: each
+  controller holds its own replica of one gossiped registry, so they are
+  separate lineages rather than writers competing for one.
   """
-  @spec cspec_refs() :: [ref()]
-  def cspec_refs() do
+  @spec cspec_refs(binary()) :: [ref()]
+  def cspec_refs(writer) when is_binary(writer) do
     case File.ls(cspec_root()) do
       {:ok, entries} ->
-        writer = DurabilityTier.writer_id()
         entries |> Enum.map(&{:cspec, {&1, writer}}) |> Enum.filter(&has_local_state?/1)
 
       {:error, _} ->
         []
     end
   end
+
+  @doc """
+  The on-disk state key `ref` lives under — the directory name that
+  `DurabilityTier.refs_of_state_key/1` enumerates from, and the unit an operative is
+  adopted as.
+  """
+  @spec state_key(ref()) :: binary()
+  def state_key({:entity, {class, _procedure, _entity_key}}), do: class
+  def state_key({:input_log, class}), do: class
+  def state_key({:cspec, {hub_id, _writer}}), do: hub_id
 
   defp cspec_root(),
     do: Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")

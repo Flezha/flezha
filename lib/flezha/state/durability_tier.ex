@@ -200,36 +200,50 @@ defmodule Flezha.State.DurabilityTier do
   @spec ship(Artifact.ref()) :: :ok
   def ship(ref), do: if(enabled?(), do: Shipper.enqueue(ref), else: :ok)
 
-  @doc "Enqueue every shippable artifact of one operative — its Entities, journal, inbox, input log."
-  @spec ship_operative(binary()) :: :ok
-  def ship_operative(operative_class) when is_binary(operative_class) do
-    if enabled?() do
-      Enum.each(refs_of(operative_class), &Shipper.enqueue/1)
-    end
-
-    :ok
-  end
-
   @doc """
-  Every shippable reference of `operative_class`: its Entities plus the
-  reserved proc-journal/inbox identities (`Artifact.entity_refs/1`) and, when
-  the effectively-once tier holds one, its durable input log — the source
-  position a hydrated Entity replays from.
+  Every shippable reference stored under one on-disk STATE KEY: its Entities
+  plus the reserved proc-journal/inbox identities (`Artifact.entity_refs/1`)
+  and, when the effectively-once tier holds one, its durable input log.
+
+  An operative can occupy two state keys — see `refs_of_operative/1`, which is
+  what anything holding an operative id should call.
   """
-  @spec refs_of(binary()) :: [Artifact.ref()]
-  def refs_of(operative_class) do
-    input_log = {:input_log, operative_class}
+  @spec refs_of_state_key(binary()) :: [Artifact.ref()]
+  def refs_of_state_key(state_key) when is_binary(state_key) do
+    input_log = {:input_log, state_key}
     extra = if Artifact.has_local_state?(input_log), do: [input_log], else: []
-    Artifact.entity_refs(operative_class) ++ extra
+    Artifact.entity_refs(state_key) ++ extra
   end
 
   @doc """
-  Every shippable reference this node holds — the backstop sweep's input, and
-  the one place "what is shippable" is answered for the whole node.
+  Every shippable reference this node holds, as `writer` would ship them — the
+  backstop sweep's input, and the one place "what is shippable" is answered for
+  the whole node.
+
+  The writer is a parameter because the cspec's identity includes it: two
+  controllers hold separate replicas of one registry, so "what is shippable
+  here" is only answerable for a named writer.
   """
-  @spec all_refs() :: [Artifact.ref()]
-  def all_refs() do
-    Enum.flat_map(Registry.operative_classes(), &refs_of/1) ++ Artifact.cspec_refs()
+  @spec all_refs(binary()) :: [Artifact.ref()]
+  def all_refs(writer) when is_binary(writer) do
+    Enum.flat_map(Registry.operative_classes(), &refs_of_state_key/1) ++
+      Artifact.cspec_refs(writer)
+  end
+
+  @doc """
+  Every shippable reference of one operative, across BOTH identities it is
+  stored under — its instance id, which keys the proc-journal and durable inbox,
+  and its resolved class, which keys the Entities and input log.
+
+  Anything holding an operative id and wanting its whole durable identity goes
+  through here; `refs_of/1` answers the narrower question about one state key.
+  """
+  @spec refs_of_operative(binary()) :: [Artifact.ref()]
+  def refs_of_operative(operative_id) when is_binary(operative_id) do
+    operative_id
+    |> ClassRegistry.state_keys()
+    |> Enum.flat_map(&refs_of_state_key/1)
+    |> Enum.uniq()
   end
 
   @doc """
@@ -271,7 +285,8 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec on_workflow_commit(binary()) :: :ok
   def on_workflow_commit(operative_id) when is_binary(operative_id) do
-    Enum.each(ClassRegistry.state_keys(operative_id), &ship_operative/1)
+    if enabled?(), do: Enum.each(refs_of_operative(operative_id), &Shipper.enqueue/1)
+    :ok
   end
 
   @doc "The registry cspec changed — what operatives exist, and how they are configured."
@@ -286,17 +301,9 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec commit_sync(binary()) :: :ok | {:error, term()}
   def commit_sync(operative_id) when is_binary(operative_id) do
-    # Both key spaces: the journal and inbox sit under the instance id, the
-    # Entity WAL and input log under the resolved class. Shipping only one of
-    # them would let this barrier answer `:ok` having never sent the Entity
-    # state the guarantee is about.
-    refs =
-      operative_id
-      |> ClassRegistry.state_keys()
-      |> Enum.flat_map(&refs_of/1)
-      |> Enum.uniq()
-
-    Enum.reduce_while(refs, :ok, fn ref, :ok ->
+    # Both key spaces: shipping only one of them would let this barrier answer
+    # `:ok` having never sent the Entity state the guarantee is about.
+    Enum.reduce_while(refs_of_operative(operative_id), :ok, fn ref, :ok ->
       case Shipper.ship_now(ref) do
         :ok -> {:cont, :ok}
         {:error, _} = err -> {:halt, err}

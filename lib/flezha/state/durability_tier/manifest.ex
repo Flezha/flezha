@@ -209,10 +209,19 @@ defmodule Flezha.State.DurabilityTier.Manifest do
 
   def guard_for(%__MODULE__{claim: claim}, _writer), do: {:claim, claim + 1}
 
-  @doc "Stamp `writer`'s ownership onto the entry at the claim it is writing under."
-  @spec claimed_by(t(), binary(), {:extend | :claim, non_neg_integer()}) :: t()
-  def claimed_by(%__MODULE__{} = manifest, writer, {_mode, claim}),
-    do: %{manifest | owner: writer, claim: claim}
+  @doc """
+  Stamp `writer`'s ownership onto the cut being shipped, and report the guard its
+  write must carry.
+
+  One call rather than a `guard_for/2` and a separate stamp: the two must agree
+  about which writer they are for, and taking the writer once is what makes
+  disagreeing impossible.
+  """
+  @spec claim_as(t(), t(), binary()) :: {t(), {:extend | :claim, non_neg_integer()}}
+  def claim_as(%__MODULE__{} = shipped, %__MODULE__{} = previous, writer) do
+    {_mode, claim} = guard = guard_for(previous, writer)
+    {%{shipped | owner: writer, claim: claim}, guard}
+  end
 
   @doc "Every blob key this entry references — the GC's live set."
   @spec blob_keys(t()) :: [binary()]

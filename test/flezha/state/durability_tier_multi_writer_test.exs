@@ -6,7 +6,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   Two `Shipper`s over disjoint state roots and one shared store stand in for two
   nodes. That is the whole fixture: collection reads nothing local except
-  `all_refs/0`, so a second shipper makes exactly the decisions a second node
+  `all_refs/1`, so a second shipper makes exactly the decisions a second node
   would, and a real peer BEAM would add nothing but cost.
 
   The cases pin both halves of the safety argument independently — remove the
@@ -20,7 +20,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
   alias Flezha.State.DurabilityTier
   alias Flezha.State.DurabilityTier.{Artifact, Manifest, Shipper}
-  alias Flezha.State.{Registry, TestHelpers}
+  alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
   @peer_writer "peer-controller"
@@ -99,13 +99,13 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
        ctx do
     ref = {:entity, ctx.entity_id}
 
-    write_records(ctx.entity_id, 0..3)
+    TestHelpers.write_wal(ctx.entity_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
     peer = start_peer_node(ctx.peer_base)
-    append_records(ctx.entity_id, 4..5)
+    TestHelpers.append_wal(ctx.entity_id, 4..5)
 
     # The peer's hourly tick lands between this node's blob upload and its
     # manifest write — the one interleaving where "unreferenced" and "not
@@ -116,7 +116,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     assert :ok = Shipper.ship_now(ref)
 
-    manifest = stored_manifest(ref)
+    manifest = Stub.stored_manifest(ref)
 
     assert [%{from: 0, to: 3}, %{from: 4, to: 5}] =
              Enum.map(manifest.ranges, &Map.take(&1, [:from, :to]))
@@ -124,7 +124,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     assert Enum.all?(Manifest.blob_keys(manifest), &(&1 in Stub.keys())),
            "every artifact the manifest names must still exist"
 
-    wipe_local(ctx.entity_id)
+    TestHelpers.wipe_entity(ctx.entity_id)
     assert :ok = DurabilityTier.hydrate_operative(ctx.class)
     assert Artifact.seq_bounds(ref) == {0, 5}
   end
@@ -134,7 +134,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     {:ok, _} = start_supervised(Shipper)
     peer = start_peer_node(ctx.peer_base)
-    write_records(ctx.entity_id, 0..3)
+    TestHelpers.write_wal(ctx.entity_id, 0..3)
 
     HookedBackend.arm(fn key ->
       if String.starts_with?(key, "blob/") do
@@ -148,10 +148,10 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     assert :ok = Shipper.ship_now(ref)
 
-    assert [blob] = Manifest.blob_keys(stored_manifest(ref))
+    assert [blob] = Manifest.blob_keys(Stub.stored_manifest(ref))
     assert blob in Stub.keys()
 
-    wipe_local(ctx.entity_id)
+    TestHelpers.wipe_entity(ctx.entity_id)
     assert :ok = DurabilityTier.hydrate_operative(ctx.class)
     assert Artifact.seq_bounds(ref) == {0, 3}
   end
@@ -159,12 +159,12 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   test "past the grace, a peer still leaves another node's reference alone", ctx do
     ref = {:entity, ctx.entity_id}
 
-    write_records(ctx.entity_id, 0..3)
+    TestHelpers.write_wal(ctx.entity_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
-    append_records(ctx.entity_id, 4..5)
+    TestHelpers.append_wal(ctx.entity_id, 4..5)
     Stub.fail_next_manifest()
     assert {:error, :manifest_write_lost} = Shipper.ship_now(ref)
 
@@ -186,12 +186,12 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   test "an abandoned reference is still reclaimed, so scoping does not leak", ctx do
     ref = {:entity, ctx.entity_id}
 
-    write_records(ctx.entity_id, 0..3)
+    TestHelpers.write_wal(ctx.entity_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
-    append_records(ctx.entity_id, 4..5)
+    TestHelpers.append_wal(ctx.entity_id, 4..5)
     Stub.fail_next_manifest()
     assert {:error, :manifest_write_lost} = Shipper.ship_now(ref)
     orphan = only_orphan(ref)
@@ -200,7 +200,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
 
     # The operative is stopped and its state deleted, so now NO node holds local
     # state for this reference and scoping alone would strand the orphan.
-    wipe_local(ctx.entity_id)
+    TestHelpers.wipe_entity(ctx.entity_id)
 
     Stub.advance_clock(120_000)
     assert {:ok, 0} = peer_gc(peer, ctx.peer_base), "past the grace, inside the abandoned window"
@@ -214,7 +214,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   test "two nodes holding one reference cannot overwrite each other's bytes", ctx do
     ref = {:entity, ctx.entity_id}
 
-    write_records(ctx.entity_id, 0..3)
+    TestHelpers.write_wal(ctx.entity_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
@@ -225,13 +225,13 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     peer = start_peer_node(ctx.peer_base)
 
     with_root(ctx.peer_base, fn ->
-      write_records(ctx.entity_id, 0..3)
-      File.write!(Registry.wal_path(ctx.entity_id), records(4..5, "peer"), [:append])
+      TestHelpers.write_wal(ctx.entity_id, 0..3)
+      TestHelpers.append_wal(ctx.entity_id, 4..5, "peer")
       GenServer.cast(peer, {:adopt, ctx.class})
       assert :ok = GenServer.call(peer, {:ship_now, ref})
     end)
 
-    peer_blob = only_orphan_or_newest(ref)
+    peer_blob = newest_range_blob(ref)
     assert {:ok, peer_bytes} = Stub.get(peer_blob, [])
 
     # This node's cached entry still says it owns the reference, so it uploads
@@ -239,7 +239,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     # refusal only comes at the manifest write. Under position-addressed names
     # both cuts would be `r-0-4-5` and this upload would silently replace the
     # peer's records with different ones inside the peer's live manifest.
-    File.write!(Registry.wal_path(ctx.entity_id), records(4..5, "owner"), [:append])
+    TestHelpers.append_wal(ctx.entity_id, 4..5, "owner")
     assert {:error, {:superseded, @peer_writer}} = Shipper.ship_now(ref)
 
     assert {:ok, ^peer_bytes} = Stub.get(peer_blob, []),
@@ -250,24 +250,24 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     test "an adopting node takes the lineage over and the loser stops quietly", ctx do
       ref = {:entity, ctx.entity_id}
 
-      write_records(ctx.entity_id, 0..3)
+      TestHelpers.write_wal(ctx.entity_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
       :ok = Shipper.sweep_now()
       assert :ok = Shipper.ship_now(ref)
-      assert stored_manifest(ref).owner == this_writer()
+      assert Stub.stored_manifest(ref).owner == this_writer()
 
       peer = peer_adopts_and_ships(ctx, ref)
 
       # Claim 1 was consumed by the first owner: an unclaimed lineage starts at
       # zero and the first ship bids against it, which is what makes two nodes
       # first-shipping one reference resolve to a winner.
-      assert %{owner: @peer_writer, claim: 2} = stored_manifest(ref)
+      assert %{owner: @peer_writer, claim: 2} = Stub.stored_manifest(ref)
       assert Process.alive?(peer)
 
       # The loser stops, and it is NOT an alarm: a handover produces one of
       # these every time, and `pending_since_ms` must clear with it or the
       # reference reports a permanent RPO breach.
-      append_records(ctx.entity_id, 6..7)
+      TestHelpers.append_wal(ctx.entity_id, 6..7)
       assert {:error, {:superseded, @peer_writer}} = Shipper.ship_now(ref)
       assert %{superseded_by: @peer_writer, pending_since_ms: nil} = status_of(ref)
       assert DurabilityTier.breaches() == []
@@ -276,7 +276,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     test "a node that lost the operative cannot bid its lineage back", ctx do
       ref = {:entity, ctx.entity_id}
 
-      write_records(ctx.entity_id, 0..3)
+      TestHelpers.write_wal(ctx.entity_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
       :ok = Shipper.sweep_now()
       assert :ok = Shipper.ship_now(ref)
@@ -287,50 +287,50 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
       # deletes the source — so "has the state" would let it claim straight
       # back. Only never having adopted stops it.
       :ok = Shipper.sweep_now()
-      assert %{owner: @peer_writer} = stored_manifest(ref)
+      assert %{owner: @peer_writer} = Stub.stored_manifest(ref)
     end
 
     test "a restart extends its own lineage instead of bidding against itself", ctx do
       ref = {:entity, ctx.entity_id}
 
-      write_records(ctx.entity_id, 0..3)
+      TestHelpers.write_wal(ctx.entity_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
       :ok = Shipper.sweep_now()
       assert :ok = Shipper.ship_now(ref)
-      assert %{owner: owner, claim: 1} = stored_manifest(ref)
+      assert %{owner: owner, claim: 1} = Stub.stored_manifest(ref)
 
       # A restart loses the manifest cache but keeps the writer id, so the next
       # ship re-reads the entry and finds itself already the owner.
       :ok = stop_supervised(Shipper)
       {:ok, _} = start_supervised(Shipper)
-      append_records(ctx.entity_id, 4..5)
+      TestHelpers.append_wal(ctx.entity_id, 4..5)
       assert :ok = Shipper.ship_now(ref)
 
-      assert %{owner: ^owner, claim: 1} = stored_manifest(ref),
+      assert %{owner: ^owner, claim: 1} = Stub.stored_manifest(ref),
              "a restarted owner must not consume a claim"
     end
 
     test "each adoption hands the lineage on and consumes exactly one claim", ctx do
       ref = {:entity, ctx.entity_id}
 
-      write_records(ctx.entity_id, 0..3)
+      TestHelpers.write_wal(ctx.entity_id, 0..3)
       {:ok, _} = start_supervised(Shipper)
       peer = start_peer_node(ctx.peer_base)
 
       with_root(ctx.peer_base, fn ->
-        write_records(ctx.entity_id, 0..3)
+        TestHelpers.write_wal(ctx.entity_id, 0..3)
         GenServer.cast(peer, {:adopt, ctx.class})
         assert :ok = GenServer.call(peer, {:ship_now, ref})
       end)
 
-      assert %{owner: @peer_writer, claim: 1} = stored_manifest(ref)
+      assert %{owner: @peer_writer, claim: 1} = Stub.stored_manifest(ref)
 
       # The operative comes back here. Adoption is what entitles this node to
       # take the lineage back — and it costs one claim, so the counter records
       # how many times ownership actually moved.
       GenServer.cast(Shipper, {:adopt, ctx.class})
       assert :ok = Shipper.ship_now(ref)
-      assert %{owner: owner, claim: 2} = stored_manifest(ref)
+      assert %{owner: owner, claim: 2} = Stub.stored_manifest(ref)
       assert owner == this_writer()
     end
 
@@ -353,12 +353,12 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   test "CONTROL: a node's own collection can never race its own ship", ctx do
     ref = {:entity, ctx.entity_id}
 
-    write_records(ctx.entity_id, 0..3)
+    TestHelpers.write_wal(ctx.entity_id, 0..3)
     {:ok, _} = start_supervised(Shipper)
     :ok = Shipper.sweep_now()
     assert :ok = Shipper.ship_now(ref)
 
-    append_records(ctx.entity_id, 4..5)
+    TestHelpers.append_wal(ctx.entity_id, 4..5)
 
     # A collection queues on the shipper's own mailbox, so it is served after
     # the ship it would have raced. Single-node safety is structural, and stays
@@ -366,10 +366,10 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     send(Shipper, :gc_tick)
     assert :ok = Shipper.ship_now(ref)
 
-    manifest = stored_manifest(ref)
+    manifest = Stub.stored_manifest(ref)
     assert Enum.all?(Manifest.blob_keys(manifest), &(&1 in Stub.keys()))
 
-    wipe_local(ctx.entity_id)
+    TestHelpers.wipe_entity(ctx.entity_id)
     capture_log(fn -> assert :ok = DurabilityTier.hydrate_operative(ctx.class) end)
     assert Artifact.seq_bounds(ref) == {0, 5}
   end
@@ -404,7 +404,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     peer = start_peer_node(ctx.peer_base)
 
     with_root(ctx.peer_base, fn ->
-      write_records(ctx.entity_id, 0..5)
+      TestHelpers.write_wal(ctx.entity_id, 0..5)
       GenServer.cast(peer, {:adopt, ctx.class})
       assert :ok = GenServer.call(peer, {:ship_now, ref})
     end)
@@ -412,7 +412,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     peer
   end
 
-  # `all_refs/0` reads `:state_root` when collection runs, and app env is global
+  # `all_refs/1` reads `:state_root` when collection runs, and app env is global
   # to the BEAM — so the peer's scope has to be in place for the duration of its
   # own pass. That is a cost of simulating two nodes in one VM, not a property
   # of the tier.
@@ -426,39 +426,15 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     result
   end
 
-  # The one blob the manifest gained most recently — the peer's cut.
-  defp only_orphan_or_newest(ref) do
-    stored_manifest(ref).ranges |> Enum.max_by(& &1.to) |> Map.fetch!(:blob)
+  # The blob of the highest range the entry names — the cut the peer just shipped.
+  defp newest_range_blob(ref) do
+    Stub.stored_manifest(ref).ranges |> Enum.max_by(& &1.to) |> Map.fetch!(:blob)
   end
 
   defp only_orphan(ref) do
-    referenced = Manifest.blob_keys(stored_manifest(ref))
+    referenced = Manifest.blob_keys(Stub.stored_manifest(ref))
     blobs = Enum.filter(Stub.keys(), &String.starts_with?(&1, "blob/"))
     [orphan] = blobs -- referenced
     orphan
-  end
-
-  defp write_records(entity_id, seqs) do
-    path = Registry.wal_path(entity_id)
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, records(seqs))
-  end
-
-  defp append_records(entity_id, seqs) do
-    File.write!(Registry.wal_path(entity_id), records(seqs), [:append])
-  end
-
-  defp records(seqs, tag \\ "change") do
-    Enum.map_join(seqs, fn seq -> TestHelpers.build_wal_record(seq, "#{tag}-#{seq}") end)
-  end
-
-  defp wipe_local(entity_id) do
-    Enum.each(Registry.entity_files(entity_id), &File.rm/1)
-  end
-
-  defp stored_manifest(ref) do
-    {:ok, blob} = Stub.get(Manifest.key(ref), [])
-    {:ok, manifest} = Manifest.decode(blob)
-    manifest
   end
 end

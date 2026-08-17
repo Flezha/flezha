@@ -97,6 +97,32 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  Write `seqs` as an Entity's WAL, creating the directory. `tag` distinguishes
+  two writers' records for the same seq range, which is what a cross-writer
+  collision case needs.
+  """
+  def write_wal(entity_id, seqs, tag \\ "change") do
+    path = Flezha.State.Registry.wal_path(entity_id)
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, wal_records(seqs, tag))
+  end
+
+  @doc "Append `seqs` to an Entity's existing WAL."
+  def append_wal(entity_id, seqs, tag \\ "change") do
+    File.write!(Flezha.State.Registry.wal_path(entity_id), wal_records(seqs, tag), [:append])
+  end
+
+  @doc "The framed bytes of `seqs`, as they land on disk."
+  def wal_records(seqs, tag \\ "change") do
+    Enum.map_join(seqs, fn seq -> build_wal_record(seq, "#{tag}-#{seq}") end)
+  end
+
+  @doc "Remove every durable file one Entity owns."
+  def wipe_entity(entity_id) do
+    Enum.each(Flezha.State.Registry.entity_files(entity_id), &File.rm/1)
+  end
+
+  @doc """
   Construct a deterministic `entity_id` tuple usable as a fixture.
   """
   @spec sample_entity_id(binary()) :: Registry.entity_id()

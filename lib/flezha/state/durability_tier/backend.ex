@@ -74,6 +74,18 @@ defmodule Flezha.State.DurabilityTier.Backend do
   @callback child_spec(opts()) :: Supervisor.child_spec() | :ignore
 
   @doc """
+  Whether `guard` admits a write against the counter the store already holds.
+
+  One definition, so two backends cannot drift from the contract they both
+  implement — a divergence here is a silent correctness bug, not a failing call.
+  A backend that can express it in its own query language (Postgres) does so
+  instead; this is for the ones that compare in Elixir.
+  """
+  @spec guard_passes?(guard(), claim()) :: boolean()
+  def guard_passes?({:extend, claim}, stored), do: stored <= claim
+  def guard_passes?({:claim, claim}, stored), do: stored < claim
+
+  @doc """
   The configured backend as `{module, opts}`, or `:none` when the tier is off.
 
   Reads `:flezha, :durability_tier`. The shipped names are `:postgres` and

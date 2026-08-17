@@ -8,11 +8,12 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
   Addressing is path-style (`<endpoint>/<bucket>/<key>`), which every
   S3-compatible implementation accepts and MinIO requires.
 
-  `put_if/4` is read-then-conditional-write: the stored epoch rides
+  `put_if/4` is read-then-conditional-write: the stored claim counter rides
   `x-amz-meta-epoch`, and the write carries `If-Match` on the observed ETag (or
-  `If-None-Match: *` when the object is absent). A strictly higher stored epoch
-  is a fence and reports `{:stale_epoch, epoch}`; a lost race on the
-  precondition is an ordinary error the shipper retries.
+  `If-None-Match: *` when the object is absent). A guard the stored counter does
+  not admit reports `{:claim_held, stored}`; a lost race on the precondition is
+  an ordinary error the shipper retries — and it is that precondition, not the
+  counter comparison, that separates two claimants reading the same value.
 
   Options (from `:flezha, :durability_tier, :backend_opts`):
 
@@ -26,6 +27,7 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
   @behaviour Flezha.State.DurabilityTier.Backend
 
   alias Flezha.Http.Client, as: HttpClient
+  alias Flezha.State.DurabilityTier.Backend
 
   @algorithm "AWS4-HMAC-SHA256"
   @service "s3"
@@ -59,25 +61,26 @@ defmodule Flezha.State.DurabilityTier.Backend.S3 do
   @impl true
   def list(prefix, opts), do: list_page(prefix, opts, nil, [])
 
-  # `:extend` continues the writer's own lineage; `:claim` is the strict
-  # compare-and-set a takeover must pass.
-  defguardp passes?(guard, stored)
-            when (elem(guard, 0) == :extend and stored <= elem(guard, 1)) or
-                   (elem(guard, 0) == :claim and stored < elem(guard, 1))
-
   @impl true
   def put_if(key, blob, guard, opts) do
     claim = elem(guard, 1)
 
     case head(key, opts) do
-      {:ok, stored, _etag} when not passes?(guard, stored) ->
-        {:error, {:claim_held, stored}}
-
-      # `if-match` on the ETag is the real compare-and-set: two claimants that
-      # both read the same stored counter still resolve to one winner, because
-      # the loser's precondition fails against the object the winner just wrote.
-      {:ok, _stored, etag} ->
-        put_object(key, blob, [{"if-match", etag}, {"x-amz-meta-epoch", to_string(claim)}], opts)
+      {:ok, stored, etag} ->
+        if Backend.guard_passes?(guard, stored) do
+          # `if-match` on the ETag is the real compare-and-set: two claimants
+          # that both read the same stored counter still resolve to one winner,
+          # because the loser's precondition fails against the object the winner
+          # just wrote.
+          put_object(
+            key,
+            blob,
+            [{"if-match", etag}, {"x-amz-meta-epoch", to_string(claim)}],
+            opts
+          )
+        else
+          {:error, {:claim_held, stored}}
+        end
 
       :not_found ->
         put_object(

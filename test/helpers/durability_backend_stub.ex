@@ -99,6 +99,14 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   @doc "Keys currently in the store, sorted."
   def keys(), do: :ets.select(@table, [{{:"$1", :_, :_, :_}, [], [:"$1"]}]) |> Enum.sort()
 
+  @doc "The manifest entry stored for `ref`, decoded."
+  def stored_manifest(ref) do
+    alias Flezha.State.DurabilityTier.Manifest
+    {:ok, blob} = get(Manifest.key(ref), [])
+    {:ok, manifest} = Manifest.decode(blob)
+    manifest
+  end
+
   @doc "How many `put`/`put_if` calls have landed — the ship's real upload count."
   def writes(), do: control_get(:writes, 0)
 
@@ -181,7 +189,7 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
       true ->
         case :ets.lookup(@table, key) do
           [{^key, _blob, stored, _written_at}] ->
-            if passes?(guard, stored) do
+            if Flezha.State.DurabilityTier.Backend.guard_passes?(guard, stored) do
               write(key, blob, claim)
             else
               {:error, {:claim_held, stored}}
@@ -192,9 +200,6 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
         end
     end
   end
-
-  defp passes?({:extend, claim}, stored), do: stored <= claim
-  defp passes?({:claim, claim}, stored), do: stored < claim
 
   defp write(key, blob, claim) do
     count_write()

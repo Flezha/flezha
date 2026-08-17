@@ -139,7 +139,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # files — every source of a migration, since the copy is never deleted —
   # would bid its way back in on its next sweep and fence the real owner.
   def handle_cast({:adopt, state_key}, state) do
-    refs = DurabilityTier.refs_of(state_key)
+    refs = DurabilityTier.refs_of_state_key(state_key)
     Enum.each(refs, &clear_supersession/1)
 
     {:noreply,
@@ -241,7 +241,8 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # reaches no compaction, checkpoint or commit boundary is still bounded by one
   # sweep period. The cspec rides the same sweep — it changes rarely and a
   # whole-file ship whose content is unchanged costs one hash.
-  defp sweep(state), do: Enum.reduce(DurabilityTier.all_refs(), state, &push(&2, &1))
+  defp sweep(state),
+    do: Enum.reduce(DurabilityTier.all_refs(state.writer), state, &push(&2, &1))
 
   # ---------- ship ----------
 
@@ -252,11 +253,11 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     # conditional write below is what actually decides.
     case entitled?(state, ref) do
       {:no, holder} -> {{:error, {:superseded, holder}}, supersede(state, ref, holder)}
-      :yes -> do_ship_and_record(state, ref)
+      :yes -> ship_and_record(state, ref)
     end
   end
 
-  defp do_ship_and_record(state, ref) do
+  defp ship_and_record(state, ref) do
     case do_ship(state, ref) do
       {:ok, manifest, caught_up?} ->
         record_success(ref, caught_up?)
@@ -290,18 +291,18 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # produces, since the source copy is never deleted. Without the gate its next
   # backstop sweep would bid the lineage back and fence the real owner.
   defp entitled?(state, ref) do
-    case manifest_for(state, ref) do
-      %{owner: nil} -> :yes
-      %{owner: owner} when owner == state.writer -> :yes
-      %{owner: owner} -> if adopted?(state, ref), do: :yes, else: {:no, owner}
+    manifest = manifest_for(state, ref)
+
+    # `guard_for/2` is the one place the owner comparison is made, so the
+    # decision to ship and the guard the write carries can never disagree.
+    case Manifest.guard_for(manifest, state.writer) do
+      {:extend, _} -> :yes
+      {:claim, _} when manifest.owner == nil -> :yes
+      {:claim, _} -> if adopted?(state, ref), do: :yes, else: {:no, manifest.owner}
     end
   end
 
-  defp adopted?(state, ref), do: MapSet.member?(state.adopted, state_key_of(ref))
-
-  defp state_key_of({:entity, {class, _procedure, _entity_key}}), do: class
-  defp state_key_of({:input_log, class}), do: class
-  defp state_key_of({:cspec, {hub_id, _writer}}), do: hub_id
+  defp adopted?(state, ref), do: MapSet.member?(state.adopted, Artifact.state_key(ref))
 
   defp do_ship(state, {:cspec, _} = ref), do: ship_whole_file(state, ref)
   defp do_ship(state, ref), do: ship_seq_addressed(state, ref)
@@ -367,8 +368,7 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     # Ownership is stamped BEFORE the same-cut test, because a takeover changes
     # no data: without this, `same_cut?/2` would report nothing to write and the
     # new owner's claim would never land.
-    guard = Manifest.guard_for(previous, state.writer)
-    shipped = Manifest.claimed_by(shipped, state.writer, guard)
+    {shipped, guard} = Manifest.claim_as(shipped, previous, state.writer)
 
     if Manifest.same_cut?(previous, shipped) do
       {:ok, previous, caught_up?}
@@ -541,17 +541,23 @@ defmodule Flezha.State.DurabilityTier.Shipper do
   # reclaimed — at a far longer threshold, where no ship can plausibly still be
   # in flight. Collection may leak; it must never lose.
   defp collect_orphans(state) do
-    with {:ok, manifest_entries} <- state.backend.list("manifest/", state.opts),
-         {:ok, blob_entries} <- state.backend.list(Manifest.blob_prefix(), state.opts) do
-      live = live_blob_keys(state, manifest_entries)
-      owned = MapSet.new(DurabilityTier.all_refs())
+    with {:ok, blob_entries} <- state.backend.list(Manifest.blob_prefix(), state.opts) do
+      owned = MapSet.new(DurabilityTier.all_refs(state.writer))
+      abandoned = DurabilityTier.gc_abandoned_after_ms()
 
-      {orphans, retained} =
-        blob_entries
-        |> Enum.reject(fn {key, _age} -> MapSet.member?(live, key) end)
-        |> Enum.split_with(fn {key, age} -> collectable?(key, age, owned) end)
+      # The age test comes first and costs nothing, so nothing younger than the
+      # grace is ever fetched for, let alone deleted.
+      {candidates, retained} =
+        Enum.split_with(blob_entries, fn {_key, age} ->
+          age >= DurabilityTier.gc_grace_ms()
+        end)
 
-      Enum.each(orphans, fn {key, _age} -> state.backend.delete(key, state.opts) end)
+      orphans =
+        candidates
+        |> Enum.group_by(fn {key, _age} -> Manifest.ref_of_blob_key(key) end)
+        |> Enum.flat_map(&orphans_of_ref(state, &1, owned, abandoned))
+
+      Enum.each(orphans, &state.backend.delete(&1, state.opts))
 
       if orphans != [] or retained != [] do
         :telemetry.execute(
@@ -565,34 +571,29 @@ defmodule Flezha.State.DurabilityTier.Shipper do
     end
   end
 
-  defp live_blob_keys(state, manifest_entries) do
-    manifest_entries
-    |> Enum.flat_map(fn {key, _age} ->
-      with {:ok, blob} <- state.backend.get(key, state.opts),
-           {:ok, manifest} <- Manifest.decode(blob) do
-        Manifest.blob_keys(manifest)
-      else
-        _ -> []
+  # One manifest answers for one reference's artifacts, and only for those:
+  # `blob_key/2` builds every key under its own reference's prefix, so a blob
+  # under `blob/<path>/` can be named by `manifest/<path>` and by nothing else.
+  # A pass therefore costs one fetch per reference that actually has a candidate,
+  # rather than one per reference in the whole store.
+  #
+  # Always fetched, never read from the ship cache: a cached entry can be behind
+  # what another writer has since committed, and deleting against a stale live
+  # set is the whole failure being closed.
+  defp orphans_of_ref(state, {ref_result, entries}, owned, abandoned) do
+    {live, min_age} =
+      case ref_result do
+        {:ok, ref} ->
+          scope_floor = if MapSet.member?(owned, ref), do: 0, else: abandoned
+          {MapSet.new(Manifest.blob_keys(fetch_manifest(state, ref))), scope_floor}
+
+        # A key this build did not write has no reference to consult, so nothing
+        # can vouch for it and it is only ever reclaimed on the long threshold.
+        :error ->
+          {MapSet.new(), abandoned}
       end
-    end)
-    |> MapSet.new()
-  end
 
-  defp collectable?(key, age, owned) do
-    cond do
-      age < DurabilityTier.gc_grace_ms() -> false
-      in_scope?(key, owned) -> true
-      true -> age >= DurabilityTier.gc_abandoned_after_ms()
-    end
-  end
-
-  # A key this build did not write reads as out of scope, so it is only ever
-  # reclaimed on the long threshold — never on this node's say-so.
-  defp in_scope?(key, owned) do
-    case Manifest.ref_of_blob_key(key) do
-      {:ok, ref} -> MapSet.member?(owned, ref)
-      :error -> false
-    end
+    for {key, age} <- entries, age >= min_age, not MapSet.member?(live, key), do: key
   end
 
   # ---------- status table ----------
