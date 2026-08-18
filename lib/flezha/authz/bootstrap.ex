@@ -6,8 +6,9 @@ defmodule Flezha.AuthZ.Bootstrap do
 
     1. **`check_and_write/0`** — invoked at boot when no
        `admin@_system` binding exists. Ensures `<auth_dir>` exists
-       with mode `0700`, refuses to operate against a permissive
-       parent directory, writes a 256-bit token to
+       with mode `0700`, tightens a umask-inherited group/other-write
+       parent directory in place (refusing one it cannot own, such as
+       a shared sticky dir), writes a 256-bit token to
        `<auth_dir>/bootstrap.token` with mode `0600`, and emits a
        single `warn` line naming the path.
     2. **`claim/2`** — invoked by `flz auth bootstrap <token>`.
@@ -187,21 +188,44 @@ defmodule Flezha.AuthZ.Bootstrap do
   defp check_parent_mode(parent) do
     case File.stat(parent) do
       {:ok, %File.Stat{type: :directory, mode: mode}} ->
-        if Bitwise.band(mode, 0o022) != 0 do
-          Logger.error(
-            "[authz.bootstrap] refusing to create bootstrap.token: parent #{parent} " <>
-              "has permissive mode (#{Integer.to_string(mode, 8)}); " <>
-              "remove group/other-write bits and retry"
-          )
-
-          {:error, {:permissive_auth_parent, parent}}
-        else
-          :ok
+        cond do
+          Bitwise.band(mode, 0o022) == 0 -> :ok
+          # A sticky shared dir (e.g. /tmp) is never ours to tighten.
+          Bitwise.band(mode, 0o1000) != 0 -> refuse_permissive_parent(parent, mode)
+          true -> tighten_parent_mode(parent, mode)
         end
 
       _ ->
         :ok
     end
+  end
+
+  # A umask-inherited 0?75 on the app's own state root would refuse
+  # bootstrap on every fresh install; strip the write bits in place
+  # instead. A parent we cannot chmod is genuinely foreign — refuse.
+  defp tighten_parent_mode(parent, mode) do
+    case File.chmod(parent, Bitwise.band(mode, 0o755)) do
+      :ok ->
+        Logger.warning(
+          "[authz.bootstrap] removed group/other-write bits from #{parent} " <>
+            "(was #{Integer.to_string(mode, 8)})"
+        )
+
+        :ok
+
+      {:error, _} ->
+        refuse_permissive_parent(parent, mode)
+    end
+  end
+
+  defp refuse_permissive_parent(parent, mode) do
+    Logger.error(
+      "[authz.bootstrap] refusing to create bootstrap.token: parent #{parent} " <>
+        "has permissive mode (#{Integer.to_string(mode, 8)}); " <>
+        "remove group/other-write bits and retry"
+    )
+
+    {:error, {:permissive_auth_parent, parent}}
   end
 
   defp read_token_file(path) do

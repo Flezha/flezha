@@ -35,6 +35,14 @@
   `test/quic_test.exs` runs in default `mix test` and now exercises mutual TLS
   end to end; its `setup_all` runners are the refusal case's positive control
   AND the cargo warm-up.
+- **Bootstrap parent-mode guard TIGHTENS, it does not just refuse.** On a
+  umask-0002 host (Ubuntu default) the app's own `File.mkdir_p` creates
+  `app_data` as 0775, and a refuse-only guard bricked every fresh prod boot
+  (found via `scripts/bench.sh`, which runs `MIX_ENV=prod`). `check_parent_mode`
+  now strips group/other-write bits in place on a non-sticky parent; refusal
+  remains for sticky shared dirs (`/tmp` shape) and parents it cannot chmod.
+  GOTCHA: Erlang's `File.chmod/2` MASKS the sticky bit — tests must set 1777
+  via `System.cmd("chmod", ...)`, though `File.stat` does report it.
 - **GOTCHA — pre-existing bug the tests exposed:**
   `Quotas.refresh_disk_bytes` cached on `System.monotonic_time(:second)` with
   a `cached_at` default of `0`; monotonic time is negative-offset, so

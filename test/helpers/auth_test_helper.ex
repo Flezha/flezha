@@ -91,6 +91,22 @@ defmodule FlezhaTest.Helper.AuthTestHelper do
     end)
   end
 
+  @doc """
+  `ExUnit.CaptureLog.capture_log/1` with the primary Logger level lowered
+  to `level` for the capture window — the test env's primary level is
+  `:error`, which filters warnings BEFORE any capture handler sees them.
+  """
+  def capture_log_at(level, fun) do
+    prev = Logger.level()
+    Logger.configure(level: level)
+
+    try do
+      ExUnit.CaptureLog.capture_log(fun)
+    after
+      Logger.configure(level: prev)
+    end
+  end
+
   defp resolve_stores(:all), do: @all_stores
   defp resolve_stores(stores) when is_list(stores), do: stores
 

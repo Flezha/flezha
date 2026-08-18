@@ -2,10 +2,11 @@ defmodule Flezha.AuthZ.BootstrapTest do
   use ExUnit.Case, async: false
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, NamespaceStore, RoleStore, TokenStore}
+  alias FlezhaTest.Helper.AuthTestHelper
 
   setup do
     ctx =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+      AuthTestHelper.setup_auth_stores(
         prefix: "flz_authz_boot",
         stores: [AuthState, RoleStore, NamespaceStore, TokenStore]
       )
@@ -76,19 +77,49 @@ defmodule Flezha.AuthZ.BootstrapTest do
     assert {:error, :bootstrap_token_mismatch} = Bootstrap.claim("not-the-token", principal: "x")
   end
 
-  test "permissive parent directory aborts bootstrap write" do
+  test "sticky shared parent directory aborts bootstrap write" do
     # `check_parent_mode/1` inspects the GRANDPARENT of the token (the
-    # dir holding the auth dir). Build a controlled root and chmod it
-    # group/other-writable so the guard fires deterministically — the
-    # host's `System.tmp_dir!()` mode (umask-dependent) must not decide
-    # the outcome. The guard should refuse and surface
-    # `{:error, {:permissive_auth_parent, _}}`.
+    # dir holding the auth dir). A sticky group/other-writable root
+    # (the /tmp shape) is shared by design and never tightened — the
+    # guard must refuse and surface `{:error, {:permissive_auth_parent, _}}`.
+    permissive_root = permissive_token_root(0o1777)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, {:permissive_auth_parent, _}} = Bootstrap.check_and_write()
+      end)
+
+    assert log =~ "permissive mode"
+    assert {:ok, %File.Stat{mode: mode}} = File.stat(permissive_root)
+    assert Bitwise.band(mode, 0o1777) == 0o1777
+  end
+
+  test "umask-inherited permissive parent is tightened in place" do
+    # A 0775 root (the default-umask File.mkdir_p shape) is the app's
+    # own dir; the guard strips the write bits and proceeds instead of
+    # refusing every fresh install.
+    permissive_root = permissive_token_root(0o775)
+
+    log =
+      AuthTestHelper.capture_log_at(:warning, fn -> assert :ok = Bootstrap.check_and_write() end)
+
+    assert log =~ "removed group/other-write bits"
+    assert {:ok, %File.Stat{mode: mode}} = File.stat(permissive_root)
+    assert Bitwise.band(mode, 0o777) == 0o755
+    assert File.exists?(Application.get_env(:flezha, :authn_authz)[:bootstrap_token_path])
+  end
+
+  # Point the bootstrap token into a fresh root chmodded to `mode`, so
+  # the parent-mode guard fires deterministically — the host's
+  # `System.tmp_dir!()` mode (umask-dependent) must not decide the outcome.
+  defp permissive_token_root(mode) do
     permissive_root =
       Path.join(System.tmp_dir!(), "flz_authz_permissive_#{System.unique_integer([:positive])}")
 
     auth_dir = Path.join(permissive_root, "auth")
     File.mkdir_p!(auth_dir)
-    File.chmod!(permissive_root, 0o777)
+    # File.chmod/2 masks the sticky bit, so shell out to set the mode.
+    {_, 0} = System.cmd("chmod", [Integer.to_string(mode, 8), permissive_root])
 
     File.rm_rf!(Application.get_env(:flezha, :authn_authz)[:bootstrap_token_path])
     :ok = RoleStore.unbind("alice")
@@ -106,11 +137,6 @@ defmodule Flezha.AuthZ.BootstrapTest do
       File.rm_rf!(permissive_root)
     end)
 
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        assert {:error, {:permissive_auth_parent, _}} = Bootstrap.check_and_write()
-      end)
-
-    assert log =~ "permissive mode"
+    permissive_root
   end
 end

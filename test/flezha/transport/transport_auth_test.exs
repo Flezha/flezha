@@ -7,10 +7,9 @@ defmodule Flezha.Transport.TransportAuthTest do
   """
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureLog
-
   alias Flezha.Transport.Native
   alias Flezha.Transport.Server
+  alias FlezhaTest.Helper.AuthTestHelper
 
   @tmp_base "app_data/test_transport_auth"
 
@@ -57,20 +56,20 @@ defmodule Flezha.Transport.TransportAuthTest do
   describe "opt-out warning" do
     test "disabling transport auth warns; the default posture does not" do
       previous = Application.get_env(:flezha, :transport_auth_required, true)
-      # The test env's primary Logger level is :error; the warning must be
-      # let through to be capturable.
-      Logger.configure(level: :warning)
 
       try do
         Application.put_env(:flezha, :transport_auth_required, false)
 
-        assert capture_log(fn -> Server.warn_if_transport_auth_disabled() end) =~
-                 "peer authentication is DISABLED"
+        assert AuthTestHelper.capture_log_at(:warning, fn ->
+                 Server.warn_if_transport_auth_disabled()
+               end) =~ "peer authentication is DISABLED"
 
         Application.put_env(:flezha, :transport_auth_required, true)
-        assert capture_log(fn -> Server.warn_if_transport_auth_disabled() end) == ""
+
+        assert AuthTestHelper.capture_log_at(:warning, fn ->
+                 Server.warn_if_transport_auth_disabled()
+               end) == ""
       after
-        Logger.configure(level: :error)
         Application.put_env(:flezha, :transport_auth_required, previous)
       end
     end

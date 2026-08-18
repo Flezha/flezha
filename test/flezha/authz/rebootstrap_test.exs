@@ -10,10 +10,11 @@ defmodule Flezha.AuthZ.RebootstrapTest do
   import ExUnit.CaptureLog
 
   alias Flezha.AuthZ.{AuthState, Bootstrap, Config, NamespaceStore, RoleStore, TokenStore}
+  alias FlezhaTest.Helper.AuthTestHelper
 
   setup do
     ctx =
-      FlezhaTest.Helper.AuthTestHelper.setup_auth_stores(
+      AuthTestHelper.setup_auth_stores(
         prefix: "flz_rebootstrap",
         stores: [AuthState, RoleStore, NamespaceStore, TokenStore]
       )
@@ -38,15 +39,10 @@ defmodule Flezha.AuthZ.RebootstrapTest do
     # marker — this is what `flz auth rebootstrap` does.
     File.write!(Bootstrap.recovery_marker_path(), "rebootstrap requested\n")
 
-    # The test env's primary Logger level is :error; let the warning through.
-    Logger.configure(level: :warning)
-
     log =
-      try do
-        capture_log(fn -> assert :recovered = Bootstrap.consume_recovery_marker() end)
-      after
-        Logger.configure(level: :error)
-      end
+      AuthTestHelper.capture_log_at(:warning, fn ->
+        assert :recovered = Bootstrap.consume_recovery_marker()
+      end)
 
     assert log =~ "REBOOTSTRAP marker consumed"
 
