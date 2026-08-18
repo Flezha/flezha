@@ -35,6 +35,10 @@ defmodule Mix.Tasks.Bench do
       only honored when `--shape entity`. Each value spawns a fresh
       Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
       reports throughput per-size; the final scaling summary is parsed by CI.
+    * `--warmup` / `-w` - Untimed messages per operative sent (and their
+      responses drained) before the measured phase, so one-time runner
+      cold-start — class loading, JIT, lazy codec init — stays out of the
+      numbers (default: 10, `0` disables).
 
   ## Comparing SDKs
 
@@ -58,18 +62,21 @@ defmodule Mix.Tasks.Bench do
           messages_per_operative: :integer,
           runtime: :string,
           shape: :string,
-          pool_sizes: :string
+          pool_sizes: :string,
+          warmup: :integer
         ],
         aliases: [
           n: :num_operatives,
           m: :messages_per_operative,
-          r: :runtime
+          r: :runtime,
+          w: :warmup
         ]
       )
 
     runtime = parse_runtime(opts[:runtime])
     shape = parse_shape(opts[:shape])
     pool_sizes = parse_pool_sizes(opts[:pool_sizes])
+    warmup = max(opts[:warmup] || 10, 0)
 
     {num_operatives, messages_per_operative} = dimensions_for_shape(shape, opts)
 
@@ -78,6 +85,7 @@ defmodule Mix.Tasks.Bench do
     IO.puts("Shape: #{shape}")
     IO.puts("Operatives: #{num_operatives}")
     IO.puts("Messages per operative: #{messages_per_operative}")
+    IO.puts("Warmup per operative: #{warmup}")
     if shape == :entity, do: IO.puts("Pool sizes: #{Enum.join(pool_sizes, ",")}")
     IO.puts("")
 
@@ -90,13 +98,13 @@ defmodule Mix.Tasks.Bench do
 
     case shape do
       :regression ->
-        run_default_shape(runtime, num_operatives, messages_per_operative, :regression)
+        run_default_shape(runtime, num_operatives, messages_per_operative, :regression, warmup)
 
       :dynamic ->
-        run_default_shape(runtime, num_operatives, messages_per_operative, :dynamic)
+        run_default_shape(runtime, num_operatives, messages_per_operative, :dynamic, warmup)
 
       :entity ->
-        run_entity_shape(num_operatives, messages_per_operative, pool_sizes)
+        run_entity_shape(num_operatives, messages_per_operative, pool_sizes, warmup)
     end
   end
 
@@ -106,7 +114,7 @@ defmodule Mix.Tasks.Bench do
   # `:dynamic` reuses the same harness with the `dynamic_entity`
   # factory and keyed inputs (see `input_for_shape/3`).
 
-  defp run_default_shape(runtime, num_operatives, messages_per_operative, shape) do
+  defp run_default_shape(runtime, num_operatives, messages_per_operative, shape, warmup) do
     namespace =
       cond do
         runtime != :rust ->
@@ -122,7 +130,7 @@ defmodule Mix.Tasks.Bench do
       end
 
     try do
-      run_performance_test(namespace, num_operatives, messages_per_operative, shape)
+      run_performance_test(namespace, num_operatives, messages_per_operative, shape, warmup)
     after
       if namespace == @bench_namespace do
         cleanup_test_environment(namespace)
@@ -132,7 +140,7 @@ defmodule Mix.Tasks.Bench do
 
   # ----- Shape: entity (new — sweeps pool sizes, emits scaling summary) -----
 
-  defp run_entity_shape(num_operatives, messages_per_operative, pool_sizes) do
+  defp run_entity_shape(num_operatives, messages_per_operative, pool_sizes, warmup) do
     results =
       Enum.map(pool_sizes, fn pool ->
         IO.puts("\n=== Entity Stress: pool=#{pool} ===")
@@ -147,7 +155,8 @@ defmodule Mix.Tasks.Bench do
               @bench_namespace,
               num_operatives,
               messages_per_operative,
-              :entity
+              :entity,
+              warmup
             )
 
           {pool, throughput}
@@ -346,7 +355,7 @@ defmodule Mix.Tasks.Bench do
     "java -jar #{jar_path} #{namespace}"
   end
 
-  defp run_performance_test(namespace, num_operatives, test_messages_per_operative, shape) do
+  defp run_performance_test(namespace, num_operatives, test_messages_per_operative, shape, warmup) do
     factory = factory_for_shape(shape)
     IO.puts("Starting flow test with #{num_operatives} operatives (factory=#{factory})...")
 
@@ -409,6 +418,20 @@ defmodule Mix.Tasks.Bench do
       "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(operative_infos)} operatives"
     )
 
+    if warmup > 0 do
+      warmup_total = length(operative_infos) * warmup
+
+      {warmup_time, _} =
+        :timer.tc(fn ->
+          send_inputs(operative_infos, shape, warmup)
+          await_responses(expected_responses(shape, warmup_total), "warmup")
+        end)
+
+      IO.puts(
+        "Warmup: #{warmup_total} messages in #{warmup_time / 1000} ms (excluded from measurements)"
+      )
+    end
+
     total_messages = length(operative_infos) * test_messages_per_operative
 
     IO.puts(
@@ -416,34 +439,14 @@ defmodule Mix.Tasks.Bench do
     )
 
     {message_send_time, _} =
-      :timer.tc(fn ->
-        Enum.each(operative_infos, fn {operative_id, %{pid: operative_pid}} ->
-          for msg_num <- 1..test_messages_per_operative do
-            GenServer.cast(
-              operative_pid,
-              {:io_in, input_for_shape(shape, operative_id, msg_num), %{}}
-            )
-          end
-        end)
-      end)
+      :timer.tc(fn -> send_inputs(operative_infos, shape, test_messages_per_operative) end)
 
     IO.puts("Message sending took: #{message_send_time / 1000} ms")
 
     expected_responses = expected_responses(shape, total_messages)
 
     {message_receive_time, _} =
-      :timer.tc(fn ->
-        for x <- 1..expected_responses do
-          receive do
-            {:message_forward, _msg} ->
-              :ok
-          after
-            10_000 ->
-              IO.puts("Timeout waiting for message #{x}/#{expected_responses}")
-              exit("Timeout waiting for messages")
-          end
-        end
-      end)
+      :timer.tc(fn -> await_responses(expected_responses, "message") end)
 
     IO.puts(
       "Message processing took: #{message_receive_time / 1000} ms for #{expected_responses} messages"
@@ -453,6 +456,11 @@ defmodule Mix.Tasks.Bench do
       operative_creation_time + plugin_setup_time + message_send_time + message_receive_time
 
     throughput_msgs_per_sec = total_messages * 1_000_000 / message_receive_time
+
+    # The send and receive `:timer.tc` blocks run back to back, so their sum
+    # is the wall time from first cast to last response — the honest window,
+    # since responses already stream in while the send loop is still casting.
+    end_to_end_time = message_send_time + message_receive_time
 
     IO.puts("\n=== Performance Summary ===")
     IO.puts("Operatives created: #{length(operative_infos)}")
@@ -464,6 +472,12 @@ defmodule Mix.Tasks.Bench do
     IO.puts("Message processing: #{message_receive_time / 1000} ms")
     IO.puts("Total time: #{total_time / 1000} ms")
     IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
+
+    IO.puts(
+      "End-to-end (first send -> last response): #{end_to_end_time / 1000} ms, " <>
+        "#{Float.round(total_messages * 1_000_000 / end_to_end_time, 2)} messages/second"
+    )
+
     IO.puts("Average time per operative: #{total_time / length(operative_infos) / 1000} ms")
 
     OperativeManager.stop_all_operatives(namespace)
@@ -479,6 +493,30 @@ defmodule Mix.Tasks.Bench do
     IO.puts("\nPerformance test completed successfully!")
 
     throughput_msgs_per_sec
+  end
+
+  defp send_inputs(operative_infos, shape, messages_per_operative) do
+    Enum.each(operative_infos, fn {operative_id, %{pid: operative_pid}} ->
+      for msg_num <- 1..messages_per_operative do
+        GenServer.cast(
+          operative_pid,
+          {:io_in, input_for_shape(shape, operative_id, msg_num), %{}}
+        )
+      end
+    end)
+  end
+
+  defp await_responses(expected, phase) do
+    for x <- 1..expected do
+      receive do
+        {:message_forward, _msg} ->
+          :ok
+      after
+        10_000 ->
+          IO.puts("Timeout waiting for #{phase} #{x}/#{expected}")
+          exit("Timeout waiting for messages")
+      end
+    end
   end
 
   # `do_nothing` echoes once per input (single procedure, single entity,

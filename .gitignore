@@ -72,6 +72,10 @@ sdk/java/**/target/
 /test/load/artifacts/*.json
 /test/load/artifacts/*.log
 
+# Ad-hoc bench outputs from the documented compare workflow
+# (`./scripts/bench.sh ... | tee bench-rust.txt`) — never committed.
+/bench-*.txt
+
 # Claude Code per-project scratch.
 /.claude/scheduled_tasks.lock
 

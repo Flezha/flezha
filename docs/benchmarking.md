@@ -52,6 +52,8 @@ Direct `mix bench …` works identically; the script just sets `FLEZHA_TRANSPORT
 ./scripts/bench.sh -n 100 -m 10000
 ```
 
+Every shape first drains an untimed warmup (`--warmup`, default 10 msg/operative, `0` disables) so one-time runner cold-start — class loading, JIT, lazy codec init — stays out of the measured window; the Java runner otherwise pays ~200 ms of first-dispatch warmup inside `Message processing`. The summary reports two rates: `Throughput:` (responses over the receive window only, the historical gate metric) and `End-to-end` (first send → last response — the honest number, since responses stream in while the send loop is still casting).
+
 ### `entity` (scaling check, informational)
 
 8 operatives × 4 procedures × 8 entities × 20K msg, factory `entity_stress`. Each input fans out 8 plugin responses. Sweeps the values in `--pool-sizes`, prints a `=== Scaling Summary ===` block ending with `ratio (max/min)`.
@@ -96,6 +98,22 @@ Budget ceilings (per call, on the reference host):
 | large, any key, any prealloc | < 500 ns |
 
 CI fails on > 50% regression from the recorded baseline.
+
+### Controller-side microbenches (Elixir, no runner)
+
+```sh
+# Plugin extension hot path (`Extension.run/3` at 0/1/5 subscribers) plus
+# the Kafka chain mailbox-depth regression check (depth must stay ≤ 1).
+mix bench.extension
+
+# Observability bus emit against zero interested sinks (ns per emit).
+mix flezha.bench.observability
+
+# Credit-grant back-pressure soak (long-running, opt-in).
+MIX_RUN_CREDIT_SOAK=1 mix test test/load/credit_soak_test.exs
+```
+
+Each task's `@moduledoc` carries the workload details and pass criteria.
 
 ## Recorded floors
 
