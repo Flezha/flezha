@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
-/// Header size: payload_id (32) + payload_size (4) = 36 bytes.
-const HEADER_SIZE: usize = 36;
+use flz_transport::service::payloader;
+
+/// Frame header width, owned by the wire format's payloader module.
+const HEADER_SIZE: usize = payloader::HEADER_LEN;
 
 /// A completely parsed frame ready to deliver to Elixir.
 #[derive(Debug)]
@@ -11,15 +13,24 @@ pub struct ParsedFrame {
     pub metadata: HashMap<String, String>,
 }
 
+/// A header declared a payload length above the configured maximum. The byte
+/// stream cannot resync past it, so the owner must close the stream.
+#[derive(Debug)]
+pub struct FrameError {
+    pub declared: usize,
+    pub max: usize,
+}
+
 /// Stateful frame parser that accumulates bytes and yields complete frames.
 ///
-/// Port of Elixir `Payloader.parse_frame/3` state machine.
 /// States:
-///   Empty          — waiting for first byte
-///   PartialHeader  — have < 36 bytes of header
+///   Empty          — waiting for the next frame's header
+///   PartialHeader  — have < HEADER_SIZE bytes of header
 ///   PartialPayload — have header, waiting for payload_size bytes
+///   Poisoned       — an over-limit header was seen; feeds keep failing
 pub struct FrameBuffer {
     state: BufferState,
+    max_frame_bytes: usize,
 }
 
 enum BufferState {
@@ -32,130 +43,146 @@ enum BufferState {
         payload_size: usize,
         buf: Vec<u8>,
     },
+    /// An over-limit header was seen; every further feed repeats the error.
+    Poisoned {
+        declared: usize,
+    },
 }
 
 impl FrameBuffer {
     pub fn new() -> Self {
+        Self::with_limit(flz_transport::transport::config::max_frame_bytes())
+    }
+
+    pub fn with_limit(max_frame_bytes: usize) -> Self {
         FrameBuffer {
             state: BufferState::Empty,
+            max_frame_bytes,
         }
     }
 
-    /// Feed incoming bytes into the parser. Returns 0 or more complete frames.
-    pub fn feed(&mut self, data: &[u8]) -> Vec<ParsedFrame> {
+    /// Feed incoming bytes into the parser. Returns 0 or more complete frames,
+    /// or a stream-fatal `FrameError` if a header declares an over-limit
+    /// payload length (checked BEFORE allocating for it).
+    pub fn feed(&mut self, data: &[u8]) -> Result<Vec<ParsedFrame>, FrameError> {
         let mut frames = Vec::new();
         let mut remaining = data;
 
         loop {
-            let consumed;
-            match &mut self.state {
+            if let BufferState::Poisoned { declared } = &self.state {
+                return Err(FrameError {
+                    declared: *declared,
+                    max: self.max_frame_bytes,
+                });
+            }
+            if remaining.is_empty() {
+                break;
+            }
+
+            let next = match std::mem::replace(&mut self.state, BufferState::Empty) {
                 BufferState::Empty => {
-                    if remaining.is_empty() {
-                        break;
-                    }
                     if remaining.len() >= HEADER_SIZE {
-                        // Parse header directly
-                        let (payload_id, payload_size) = parse_header(&remaining[..HEADER_SIZE]);
-                        consumed = HEADER_SIZE;
-                        remaining = &remaining[consumed..];
-                        // Try to complete payload immediately
-                        if remaining.len() >= payload_size {
-                            if let Some(frame) =
-                                parse_payload(&payload_id, &remaining[..payload_size])
-                            {
-                                frames.push(frame);
-                            }
-                            remaining = &remaining[payload_size..];
-                            // Stay in Empty state for next frame
-                        } else {
-                            // Partial payload
-                            let mut buf = Vec::with_capacity(payload_size);
-                            buf.extend_from_slice(remaining);
-                            self.state = BufferState::PartialPayload {
-                                payload_id,
-                                payload_size,
-                                buf,
-                            };
-                            break;
-                        }
+                        // Fast path: header available in-place, no accumulation.
+                        let (header, rest) = remaining.split_at(HEADER_SIZE);
+                        remaining = rest;
+                        self.start_frame(header, &mut remaining, &mut frames)
                     } else {
-                        // Partial header
                         let mut buf = Vec::with_capacity(HEADER_SIZE);
-                        buf.extend_from_slice(remaining);
-                        self.state = BufferState::PartialHeader { buf };
-                        break;
+                        fill(&mut buf, HEADER_SIZE, &mut remaining);
+                        Ok(BufferState::PartialHeader { buf })
                     }
                 }
-                BufferState::PartialHeader { buf } => {
-                    if remaining.is_empty() {
-                        break;
-                    }
-                    let need = HEADER_SIZE - buf.len();
-                    let take = std::cmp::min(need, remaining.len());
-                    buf.extend_from_slice(&remaining[..take]);
-                    remaining = &remaining[take..];
-
-                    if buf.len() >= HEADER_SIZE {
-                        let (payload_id, payload_size) = parse_header(&buf[..HEADER_SIZE]);
-                        // Transition to payload collection
-                        if remaining.len() >= payload_size {
-                            if let Some(frame) =
-                                parse_payload(&payload_id, &remaining[..payload_size])
-                            {
-                                frames.push(frame);
-                            }
-                            remaining = &remaining[payload_size..];
-                            self.state = BufferState::Empty;
-                        } else {
-                            let mut payload_buf = Vec::with_capacity(payload_size);
-                            payload_buf.extend_from_slice(remaining);
-                            self.state = BufferState::PartialPayload {
-                                payload_id,
-                                payload_size,
-                                buf: payload_buf,
-                            };
-                            break;
-                        }
+                BufferState::PartialHeader { mut buf } => {
+                    if fill(&mut buf, HEADER_SIZE, &mut remaining) {
+                        self.start_frame(&buf, &mut remaining, &mut frames)
                     } else {
-                        break;
+                        Ok(BufferState::PartialHeader { buf })
                     }
                 }
                 BufferState::PartialPayload {
                     payload_id,
                     payload_size,
-                    buf,
+                    mut buf,
                 } => {
-                    if remaining.is_empty() {
-                        break;
-                    }
-                    let need = *payload_size - buf.len();
-                    let take = std::cmp::min(need, remaining.len());
-                    buf.extend_from_slice(&remaining[..take]);
-                    remaining = &remaining[take..];
-
-                    if buf.len() >= *payload_size {
-                        let id = payload_id.clone();
-                        let payload_data: Vec<u8> = buf.clone();
-                        if let Some(frame) = parse_payload(&id, &payload_data) {
+                    if fill(&mut buf, payload_size, &mut remaining) {
+                        if let Some(frame) = parse_payload(&payload_id, &buf) {
                             frames.push(frame);
                         }
-                        self.state = BufferState::Empty;
+                        Ok(BufferState::Empty)
                     } else {
-                        break;
+                        Ok(BufferState::PartialPayload {
+                            payload_id,
+                            payload_size,
+                            buf,
+                        })
                     }
+                }
+                BufferState::Poisoned { .. } => unreachable!("poison returns above"),
+            };
+
+            match next {
+                Ok(state) => self.state = state,
+                Err(e) => {
+                    self.state = BufferState::Poisoned {
+                        declared: e.declared,
+                    };
+                    return Err(e);
                 }
             }
         }
 
-        frames
+        Ok(frames)
+    }
+
+    /// A complete 36-byte header: enforce the limit BEFORE any payload
+    /// allocation, then consume as much of the payload as is available.
+    fn start_frame(
+        &self,
+        header: &[u8],
+        remaining: &mut &[u8],
+        frames: &mut Vec<ParsedFrame>,
+    ) -> Result<BufferState, FrameError> {
+        let (payload_id, payload_size) = parse_header(&header[..HEADER_SIZE]);
+        if payload_size > self.max_frame_bytes {
+            return Err(FrameError {
+                declared: payload_size,
+                max: self.max_frame_bytes,
+            });
+        }
+
+        let cur = *remaining;
+        Ok(if cur.len() >= payload_size {
+            if let Some(frame) = parse_payload(&payload_id, &cur[..payload_size]) {
+                frames.push(frame);
+            }
+            *remaining = &cur[payload_size..];
+            BufferState::Empty
+        } else {
+            let mut buf = Vec::with_capacity(payload_size);
+            buf.extend_from_slice(cur);
+            *remaining = &[];
+            BufferState::PartialPayload {
+                payload_id,
+                payload_size,
+                buf,
+            }
+        })
     }
 }
 
-/// Parse the 36-byte header into (payload_id, payload_size).
+/// Append bytes from `remaining` into `buf` until it reaches `want`; advances
+/// `remaining` and reports whether `buf` is complete.
+fn fill(buf: &mut Vec<u8>, want: usize, remaining: &mut &[u8]) -> bool {
+    let cur = *remaining;
+    let take = std::cmp::min(want - buf.len(), cur.len());
+    buf.extend_from_slice(&cur[..take]);
+    *remaining = &cur[take..];
+    buf.len() >= want
+}
+
+/// Parse the fixed-width header into (payload_id, payload_size).
 fn parse_header(header: &[u8]) -> (String, usize) {
-    let payload_id = String::from_utf8_lossy(&header[..32])
-        .trim_end()
-        .to_string();
+    let payload_id = payloader::parse_payload_id(&header[..payloader::PAYLOAD_ID_LEN]);
     let payload_size =
         u32::from_be_bytes([header[32], header[33], header[34], header[35]]) as usize;
     (payload_id, payload_size)
@@ -232,7 +259,7 @@ mod tests {
             payloader::build_from_binary("test_payload", b"hello world", metadata.clone());
 
         let mut fb = FrameBuffer::new();
-        let frames = fb.feed(&frame_bytes);
+        let frames = fb.feed(&frame_bytes).unwrap();
 
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].payload_id, "test_payload");
@@ -247,11 +274,11 @@ mod tests {
         let mut fb = FrameBuffer::new();
 
         // Feed only 20 bytes (partial header)
-        let frames = fb.feed(&frame_bytes[..20]);
+        let frames = fb.feed(&frame_bytes[..20]).unwrap();
         assert_eq!(frames.len(), 0);
 
         // Feed the rest
-        let frames = fb.feed(&frame_bytes[20..]);
+        let frames = fb.feed(&frame_bytes[20..]).unwrap();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].payload_id, "my_id");
         assert_eq!(frames[0].message, b"data");
@@ -265,11 +292,11 @@ mod tests {
         let mut fb = FrameBuffer::new();
 
         // Feed header + partial payload
-        let frames = fb.feed(&frame_bytes[..40]);
+        let frames = fb.feed(&frame_bytes[..40]).unwrap();
         assert_eq!(frames.len(), 0);
 
         // Feed rest
-        let frames = fb.feed(&frame_bytes[40..]);
+        let frames = fb.feed(&frame_bytes[40..]).unwrap();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].payload_id, "pid");
     }
@@ -284,7 +311,7 @@ mod tests {
         combined.extend_from_slice(&f2);
 
         let mut fb = FrameBuffer::new();
-        let frames = fb.feed(&combined);
+        let frames = fb.feed(&combined).unwrap();
 
         assert_eq!(frames.len(), 2);
         assert_eq!(frames[0].payload_id, "id_a");
@@ -294,8 +321,56 @@ mod tests {
     #[test]
     fn test_empty_feed() {
         let mut fb = FrameBuffer::new();
-        let frames = fb.feed(&[]);
+        let frames = fb.feed(&[]).unwrap();
         assert_eq!(frames.len(), 0);
+    }
+
+    fn oversized_header(payload_size: u32) -> Vec<u8> {
+        let mut bytes = vec![b' '; 32];
+        bytes.extend_from_slice(&payload_size.to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn oversized_header_errors_without_allocation() {
+        let mut fb = FrameBuffer::with_limit(1024);
+        let err = fb.feed(&oversized_header(u32::MAX)).unwrap_err();
+        assert_eq!(err.declared, u32::MAX as usize);
+        assert_eq!(err.max, 1024);
+    }
+
+    #[test]
+    fn oversized_header_across_partial_feeds_errors() {
+        let mut fb = FrameBuffer::with_limit(1024);
+        let header = oversized_header(2048);
+
+        // Header arrives split; the limit check fires when it completes.
+        assert_eq!(fb.feed(&header[..20]).unwrap().len(), 0);
+        let err = fb.feed(&header[20..]).unwrap_err();
+        assert_eq!(err.declared, 2048);
+    }
+
+    #[test]
+    fn poisoned_buffer_keeps_erroring() {
+        let mut fb = FrameBuffer::with_limit(1024);
+        assert!(fb.feed(&oversized_header(4096)).is_err());
+
+        // A later feed of otherwise-valid bytes must not resync.
+        let good = payloader::build_from_binary("id", b"data", HashMap::new());
+        let err = fb.feed(&good).unwrap_err();
+        assert_eq!(err.declared, 4096);
+    }
+
+    #[test]
+    fn in_limit_frame_at_exact_limit_still_decodes() {
+        let frame_bytes = payloader::build_from_binary("edge", b"payload", HashMap::new());
+        // payload_size = total - 36-byte header; a limit of exactly that passes.
+        let payload_size = frame_bytes.len() - 36;
+
+        let mut fb = FrameBuffer::with_limit(payload_size);
+        let frames = fb.feed(&frame_bytes).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].message, b"payload");
     }
 
     #[test]
@@ -307,7 +382,7 @@ mod tests {
         let frame_bytes = payloader::build_from_binary("meta_test", b"body", metadata);
 
         let mut fb = FrameBuffer::new();
-        let frames = fb.feed(&frame_bytes);
+        let frames = fb.feed(&frame_bytes).unwrap();
 
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].metadata.get("foo").unwrap(), "bar");

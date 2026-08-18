@@ -14,21 +14,10 @@ use quinn_proto::{
     StreamEvent, StreamId, Transmit,
 };
 
+use super::config::max_write_buffer_bytes;
+
 const UDP_TOKEN: Token = Token(0);
 const WAKER_TOKEN: Token = Token(1);
-
-/// Default per-stream send-buffer cap (8 MiB). Override with
-/// `FLEZHA_MAX_WRITE_BUFFER_BYTES`. Mirrors the UDS driver cap so a slow peer
-/// cannot grow the buffered-write `Vec` without bound.
-const DEFAULT_MAX_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
-
-fn max_write_buffer_bytes() -> usize {
-    std::env::var("FLEZHA_MAX_WRITE_BUFFER_BYTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_MAX_WRITE_BUFFER_BYTES)
-}
 
 /// Whether buffering `incoming` bytes onto a `buffered`-byte send buffer would
 /// exceed `cap`. An empty buffer always accepts; once non-empty it stays at or
@@ -791,11 +780,6 @@ mod tests {
         assert!(!would_overflow_write_buffer(512, 512, cap));
         assert!(would_overflow_write_buffer(512, 513, cap));
         assert!(would_overflow_write_buffer(cap, 1, cap));
-    }
-
-    #[test]
-    fn max_write_buffer_bytes_defaults_when_unset() {
-        assert_eq!(max_write_buffer_bytes(), DEFAULT_MAX_WRITE_BUFFER_BYTES);
     }
 
     #[test]

@@ -673,7 +673,21 @@ fn drain_readable(
             };
 
             if !data_for_framing.is_empty() {
-                let frames = stream_state.frame_buffer.feed(data_for_framing);
+                let frames = match stream_state.frame_buffer.feed(data_for_framing) {
+                    Ok(frames) => frames,
+                    Err(e) => {
+                        eprintln!(
+                            "[flz_nif] QUIC frame too large on nif_id={}: declared {} > max {}",
+                            nif_id, e.declared, e.max
+                        );
+                        let owner = *stream_state.owner.lock().unwrap();
+                        send_closed_msg(owner, nif_id, "frame_too_large");
+                        conn_state.streams.remove(&id);
+                        nif_stream_map.remove(&nif_id);
+                        pending_data_streams.remove(&nif_id);
+                        return;
+                    }
+                };
                 let owner = *stream_state.owner.lock().unwrap();
 
                 if stream_state.active {

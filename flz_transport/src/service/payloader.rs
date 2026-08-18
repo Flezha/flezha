@@ -7,26 +7,46 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 /// Metadata key-value pairs attached to a payload frame.
 pub type PayloadMetadata = HashMap<String, String>;
 
-pub fn extract_payload<R: Read>(
-    mut reader: R,
-) -> io::Result<(String, Vec<u8>, HashMap<String, String>)> {
-    // Read the payload ID (32 bytes)
-    let mut id_buf = [0; 32];
-    reader.read_exact(&mut id_buf)?;
-    let payload_id = String::from_utf8_lossy(&id_buf).trim_end().to_string();
+/// Fixed width of the space-padded payload-id header field.
+pub const PAYLOAD_ID_LEN: usize = 32;
 
-    // Read the payload size (4 bytes)
-    let payload_length = reader.read_u32::<BigEndian>()? as usize;
+/// Frame header width: payload_id + payload_size (4-byte BE).
+pub const HEADER_LEN: usize = PAYLOAD_ID_LEN + 4;
 
-    // Read the entire payload
-    let mut payload_buf = vec![0; payload_length];
-    reader.read_exact(&mut payload_buf)?;
+/// Decode the fixed-width, space-padded payload-id header field.
+pub fn parse_payload_id(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim_end().to_string()
+}
 
-    // Parse the payload: message_size (4) + message + metadata_size (2) + metadata
-    let mut payload_reader = &payload_buf[..];
+/// A declared length prefix an untrusted peer controls exceeded its bound.
+/// Raised BEFORE allocating for the declared length; the stream cannot resync
+/// past it, so callers treat it as stream-fatal.
+fn reject_oversized(what: &str, declared: usize, max: usize) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("frame {what} length {declared} exceeds maximum {max}"),
+    )
+}
 
-    // Read the message size (4 bytes)
+fn check_payload_length(payload_length: usize) -> io::Result<()> {
+    let max = crate::transport::config::max_frame_bytes();
+    if payload_length > max {
+        return Err(reject_oversized("payload", payload_length, max));
+    }
+    Ok(())
+}
+
+/// Parse a payload body: message_size (4) + message + metadata_size (2) + metadata.
+fn parse_payload_body(payload_buf: &[u8]) -> io::Result<(Vec<u8>, PayloadMetadata)> {
+    let mut payload_reader = payload_buf;
+
+    // Read the message size (4 bytes), bounded by the enclosing payload so a
+    // hostile inner prefix cannot force an allocation the payload can't fill.
     let message_length = payload_reader.read_u32::<BigEndian>()? as usize;
+    let max_message = payload_buf.len().saturating_sub(4 + 2);
+    if message_length > max_message {
+        return Err(reject_oversized("message", message_length, max_message));
+    }
 
     // Read the actual message
     let mut message_buf = vec![0; message_length];
@@ -42,6 +62,27 @@ pub fn extract_payload<R: Read>(
     // Deserialize metadata
     let metadata = deserialize_metadata(&metadata_buf)?;
 
+    Ok((message_buf, metadata))
+}
+
+pub fn extract_payload<R: Read>(
+    mut reader: R,
+) -> io::Result<(String, Vec<u8>, HashMap<String, String>)> {
+    // Read the payload ID
+    let mut id_buf = [0; PAYLOAD_ID_LEN];
+    reader.read_exact(&mut id_buf)?;
+    let payload_id = parse_payload_id(&id_buf);
+
+    // Read the payload size (4 bytes)
+    let payload_length = reader.read_u32::<BigEndian>()? as usize;
+    check_payload_length(payload_length)?;
+
+    // Read the entire payload
+    let mut payload_buf = vec![0; payload_length];
+    reader.read_exact(&mut payload_buf)?;
+
+    let (message_buf, metadata) = parse_payload_body(&payload_buf)?;
+
     Ok((payload_id, message_buf, metadata))
 }
 
@@ -50,8 +91,7 @@ pub fn extract_payload<R: Read>(
 pub fn extract_payload_non_blocking<R: Read>(
     mut reader: R,
 ) -> io::Result<Option<(String, Vec<u8>, HashMap<String, String>)>> {
-    // New header format: payload_id (32) + payload_size (4) = 36 bytes
-    let mut header_buf = [0; 36];
+    let mut header_buf = [0; HEADER_LEN];
     match reader.read(&mut header_buf) {
         Ok(0) => {
             // End of stream
@@ -60,7 +100,7 @@ pub fn extract_payload_non_blocking<R: Read>(
                 "Connection closed",
             ));
         }
-        Ok(n) if n < 36 => {
+        Ok(n) if n < HEADER_LEN => {
             // This should not happen with UnixStream, but as a precaution.
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -78,9 +118,9 @@ pub fn extract_payload_non_blocking<R: Read>(
         }
     }
 
-    let id_buf = &header_buf[0..32];
-    let payload_id = String::from_utf8_lossy(id_buf).trim_end().to_string();
-    let payload_length = (&header_buf[32..]).read_u32::<BigEndian>()? as usize;
+    let payload_id = parse_payload_id(&header_buf[..PAYLOAD_ID_LEN]);
+    let payload_length = (&header_buf[PAYLOAD_ID_LEN..]).read_u32::<BigEndian>()? as usize;
+    check_payload_length(payload_length)?;
 
     // Read the entire payload
     let mut payload_buf = vec![0; payload_length];
@@ -100,25 +140,7 @@ pub fn extract_payload_non_blocking<R: Read>(
         }
     }
 
-    // Parse the payload: message_size (4) + message + metadata_size (2) + metadata
-    let mut payload_reader = &payload_buf[..];
-
-    // Read the message size (4 bytes)
-    let message_length = payload_reader.read_u32::<BigEndian>()? as usize;
-
-    // Read the actual message
-    let mut message_buf = vec![0; message_length];
-    payload_reader.read_exact(&mut message_buf)?;
-
-    // Read the metadata size (2 bytes)
-    let metadata_length = payload_reader.read_u16::<BigEndian>()? as usize;
-
-    // Read the metadata
-    let mut metadata_buf = vec![0; metadata_length];
-    payload_reader.read_exact(&mut metadata_buf)?;
-
-    // Deserialize metadata
-    let metadata = deserialize_metadata(&metadata_buf)?;
+    let (message_buf, metadata) = parse_payload_body(&payload_buf)?;
 
     Ok(Some((payload_id, message_buf, metadata)))
 }
@@ -247,6 +269,78 @@ fn serialize_metadata(metadata: &HashMap<String, String>) -> Vec<u8> {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(payload_length: u32) -> Vec<u8> {
+        let mut bytes = vec![b' '; 32];
+        bytes.extend_from_slice(&payload_length.to_be_bytes());
+        bytes
+    }
+
+    // Declared 4 GiB payload on a 36-byte input: without the pre-allocation
+    // check this reads as UnexpectedEof AFTER allocating the declared size.
+    #[test]
+    fn oversized_payload_prefix_rejected_before_allocation() {
+        let bytes = header(u32::MAX);
+        let err = extract_payload(&bytes[..]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("payload"), "{err}");
+
+        let err = extract_payload_non_blocking(&bytes[..]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn inner_message_length_bounded_by_enclosing_payload() {
+        // payload of 10 bytes whose inner message_size claims 100.
+        let mut bytes = header(10);
+        bytes.extend_from_slice(&100u32.to_be_bytes());
+        bytes.extend_from_slice(&[0; 6]);
+
+        let err = extract_payload(&bytes[..]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("message"), "{err}");
+
+        let err = extract_payload_non_blocking(&bytes[..]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn in_limit_frames_decode_unchanged() {
+        let mut metadata = PayloadMetadata::new();
+        metadata.insert("k".to_string(), "v".to_string());
+        let bytes = build_from_binary("round_trip", b"hello", metadata.clone());
+
+        let (id, message, meta) = extract_payload(&bytes[..]).unwrap();
+        assert_eq!(
+            (id.as_str(), message.as_slice()),
+            ("round_trip", &b"hello"[..])
+        );
+        assert_eq!(meta, metadata);
+
+        let (id, message, meta) = extract_payload_non_blocking(&bytes[..]).unwrap().unwrap();
+        assert_eq!(
+            (id.as_str(), message.as_slice()),
+            ("round_trip", &b"hello"[..])
+        );
+        assert_eq!(meta, metadata);
+    }
+
+    // The reject must be stream-fatal through the existing reader error
+    // handling: readers reconnect/exit on anything but Interrupted.
+    #[test]
+    fn oversized_reject_classifies_as_reconnect() {
+        use crate::transport::liveness::{ControlLiveness, ReadAction};
+        let err = reject_oversized("payload", usize::MAX, 1);
+        assert!(matches!(
+            ControlLiveness::new().classify_error(&err),
+            ReadAction::Reconnect
+        ));
+    }
 }
 
 fn deserialize_metadata(metadata_bytes: &[u8]) -> io::Result<HashMap<String, String>> {

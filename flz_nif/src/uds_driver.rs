@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crossbeam::channel::{Receiver, Sender};
+use flz_transport::transport::config::max_write_buffer_bytes;
 use mio::net::UnixListener;
 use mio::{Events, Interest, Poll, Token, Waker};
 use rustler::LocalPid;
@@ -16,18 +17,6 @@ use crate::resources::StreamHandle;
 const LISTENER_TOKEN: Token = Token(0);
 const WAKER_TOKEN: Token = Token(1);
 const STREAM_TOKEN_BASE: usize = 2;
-
-/// Default per-stream send-buffer cap (8 MiB) — a few seconds of peak per-stream
-/// throughput. Override with `FLEZHA_MAX_WRITE_BUFFER_BYTES`.
-const DEFAULT_MAX_WRITE_BUFFER_BYTES: usize = 8 * 1024 * 1024;
-
-fn max_write_buffer_bytes() -> usize {
-    std::env::var("FLEZHA_MAX_WRITE_BUFFER_BYTES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(DEFAULT_MAX_WRITE_BUFFER_BYTES)
-}
 
 /// Commands sent from NIF functions to the driver thread.
 pub enum ServerCommand {
@@ -554,7 +543,18 @@ fn read_stream_data(
                 return true;
             }
             Ok(n) => {
-                let frames = state.frame_buffer.feed(&read_buf[..n]);
+                let frames = match state.frame_buffer.feed(&read_buf[..n]) {
+                    Ok(frames) => frames,
+                    Err(e) => {
+                        eprintln!(
+                            "[flz_nif] UDS frame too large on stream {}: declared {} > max {}",
+                            stream_id, e.declared, e.max
+                        );
+                        let owner = *state.owner.lock().unwrap();
+                        send_closed_msg(owner, stream_id, "frame_too_large");
+                        return true;
+                    }
+                };
                 let owner = *state.owner.lock().unwrap();
                 state.last_read_ms = now;
                 state.frames_read += frames.len() as u64;
@@ -602,11 +602,5 @@ mod tests {
         // Already at the cap: every further frame is dropped — workflow, not 1:1.
         assert!(would_overflow_write_buffer(cap, 1, cap));
         assert!(would_overflow_write_buffer(cap, 4096, cap));
-    }
-
-    #[test]
-    fn max_write_buffer_bytes_defaults_when_unset() {
-        // No env override in the test process → the documented default.
-        assert_eq!(max_write_buffer_bytes(), DEFAULT_MAX_WRITE_BUFFER_BYTES);
     }
 }
