@@ -88,8 +88,8 @@ defmodule Flezha.State.DurabilityTier.Backend do
   @doc """
   The configured backend as `{module, opts}`, or `:none` when the tier is off.
 
-  Reads `:flezha, :durability_tier`. The shipped names are `:postgres` and
-  `:s3`; an explicit `{module, opts}` tuple selects any module implementing
+  Reads `:flezha, :durability_tier`. The shipped names are `:postgres`, `:s3`
+  and `:local_path`; an explicit `{module, opts}` tuple selects any module implementing
   this behaviour, which is the extension point that keeps "adding a backend is
   a module, not a fork" true. Anything else is `:none` — a typo must leave the
   controller running on local durability, never crash it into a boot loop.
@@ -101,6 +101,7 @@ defmodule Flezha.State.DurabilityTier.Backend do
     case Keyword.get(config, :backend, :none) do
       :postgres -> {__MODULE__.Postgres, Keyword.get(config, :backend_opts, [])}
       :s3 -> {__MODULE__.S3, Keyword.get(config, :backend_opts, [])}
+      :local_path -> {__MODULE__.LocalPath, Keyword.get(config, :backend_opts, [])}
       {module, opts} when is_atom(module) and is_list(opts) -> {module, opts}
       _ -> :none
     end

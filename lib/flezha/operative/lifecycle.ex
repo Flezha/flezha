@@ -172,7 +172,7 @@ defmodule Flezha.Operative.Lifecycle do
   #
   # `owner` is the Overwatch process itself. It is passed explicitly because the
   # un-park path runs this inside a task (so the heavy bounded-retry never blocks
-  # `:stop_operative`), and `self()` there is the TASK — registering it as the
+  # the Overwatch), and `self()` there is the TASK — registering it as the
   # operative's Overwatch would point the journal's outbox flush at a process that
   # exits moments later, silently dropping the output.
   @spec complete_init(Overwatch.t(), binary(), map(), pid() | nil) ::
@@ -640,34 +640,18 @@ defmodule Flezha.Operative.Lifecycle do
   end
 
   @doc """
-  The synchronous `:stop_operative` sequence: terminate any in-flight un-park
-  task BEFORE the stop so `flz operative stop` always returns within its normal
-  call window even mid-retry, tell the runner to drop the operative, fire
-  `:on_terminate`, and tear the plugin table down. Answers the state to stop with.
-  """
-  @spec stop(Overwatch.t()) :: Overwatch.t()
-  def stop(%Overwatch{} = state) do
-    state = terminate_migrate_task(state)
-
-    if state.runner_id do
-      Overwatch.with_proc_span(:stop_operative, state.id, fn ->
-        GenServer.call(
-          Identificator.control_unit(state.runner_id),
-          {:stop_operative, state.id}
-        )
-      end)
-    end
-
-    Plugins.fire_on_terminate(state, :stopped)
-    %{state | runner_id: nil, extensions: Table.teardown_all(state.extensions)}
-  end
-
-  @doc """
-  Process teardown. Evicts the in-memory class entry; the durable sidecar stays
-  for the process-less retention sweep over any retained finished-job state.
+  Process teardown — the one teardown seam, deliberate stops included: the hub
+  stop path terminates the Overwatch through its supervisor, so everything a
+  stop owes runs here. Evicts the in-memory class entry; the durable sidecar
+  stays for the process-less retention sweep over any retained finished-job
+  state.
   """
   @spec terminate(Overwatch.t(), term()) :: :ok
   def terminate(%Overwatch{} = state, reason) do
+    # Kill any in-flight un-park task FIRST: left running, it would bind a
+    # runner for an operative that is being torn down.
+    state = terminate_migrate_task(state)
+
     _ = ClassRegistry.delete(Overwatch.operative_class(state))
 
     unless is_nil(state.runner_id) do
@@ -741,7 +725,7 @@ defmodule Flezha.Operative.Lifecycle do
   # terminate / result-application surface is reviewable as a single unit.
   # ---------------------------------------------------------------
 
-  # Terminate any in-flight un-park task so `:stop_operative` is never blocked by
+  # Terminate any in-flight un-park task so teardown is never blocked by
   # the bounded-retry ladder running inside it.
   @spec terminate_migrate_task(Overwatch.t()) :: Overwatch.t()
   defp terminate_migrate_task(%Overwatch{migrate_task: nil} = state), do: state
@@ -754,7 +738,7 @@ defmodule Flezha.Operative.Lifecycle do
 
   @doc """
   Run `complete_init/4` in a task so the heavy bounded-retry path never blocks
-  `:stop_operative`. Returns the task's `{ref, pid}`.
+  the Overwatch. Returns the task's `{ref, pid}`.
   """
   @spec spawn_migrate_task({:unpark, Overwatch.t(), binary()}) :: {reference(), pid()}
   def spawn_migrate_task({:unpark, state, new_runner_id}) do

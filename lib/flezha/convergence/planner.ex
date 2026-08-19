@@ -107,13 +107,14 @@ defmodule Flezha.Convergence.Planner do
     end
   end
 
-  # Prerequisite order: evictions, then (re)binds, then plugin starts.
-  # Each group preserves Delta order within it. The data-plane wedge sits
-  # between them because it is at most one op and may be either kind.
+  # Prerequisite order: evictions, then (re)binds, then re-placements, then
+  # plugin starts. Each group preserves Delta order within it. The data-plane
+  # wedge sits between them because it is at most one op and may be either kind.
   defp ordered_ops(%Diff{} = d) do
     eviction_ops(d) ++
       wedge_ops(d) ++
       bind_ops(d) ++
+      replace_ops(d) ++
       plugin_ops(d)
   end
 
@@ -137,11 +138,21 @@ defmodule Flezha.Convergence.Planner do
 
   defp wedge_args(layer), do: %{reason: @wedge_reason, layer: layer}
 
-  defp eviction_ops(%Diff{misbound_operatives: misbound}) do
+  defp eviction_ops(%Diff{misbound_operatives: misbound, replace_operatives: replace}) do
+    dead_from_replace = for {_ref, dead} <- replace, is_binary(dead), do: dead
+
     misbound
     |> Enum.map(fn {_ref, dead_runner} -> dead_runner end)
+    |> Enum.concat(dead_from_replace)
     |> Enum.uniq()
     |> Enum.map(&op(:evict_runner, nil, &1, %{}))
+  end
+
+  # An operative whose factory only another node's fleet serves: the local
+  # bind is doomed, so the op moves the operative through the existing
+  # stop/start handover with state transfer. Its own backoff key bounds churn.
+  defp replace_ops(%Diff{replace_operatives: replace}) do
+    Enum.map(replace, fn {{ns, rid}, _dead} -> op(:replace_operative, ns, rid, %{}) end)
   end
 
   defp bind_ops(%Diff{} = d) do

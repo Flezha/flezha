@@ -88,14 +88,18 @@ defmodule FlezhaTest.Operative.OverwatchAsyncMigrateTest do
 
     assert_receive :ping_started, 500
 
-    # Now stop the operative. This MUST return within 1 s even though the
-    # migrate task is blocked inside the 5 s sleep.
+    # Now tear the operative down the way the hub stop path does (a
+    # supervisor :shutdown exit). terminate/2 MUST return within 1 s even
+    # though the migrate task is blocked inside the 5 s sleep — it kills the
+    # task instead of waiting on it. Trap: the Overwatch is linked to this
+    # test, and a :shutdown stop propagates over the link.
+    Process.flag(:trap_exit, true)
     started = System.monotonic_time(:millisecond)
-    assert :ok = GenServer.call(overwatch_pid, :stop_operative, 1_500)
+    assert :ok = GenServer.stop(overwatch_pid, :shutdown, 1_500)
     elapsed = System.monotonic_time(:millisecond) - started
 
     assert elapsed < 1_000,
-           "stop_operative returned in #{elapsed} ms; required < 1 s while migrate task is in flight"
+           "teardown returned in #{elapsed} ms; required < 1 s while migrate task is in flight"
   end
 
   test "starting a second parked-unpark migrate while one is in flight returns :busy",

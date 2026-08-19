@@ -11,6 +11,7 @@ Never inline the notes in this file — it must stay small enough to load whole.
 
 ## Per-change notes index
 
+- [Durable operator intent](docs/dev_notes/durable-operator-intent.md) — intent = the hub declared set (pairs with process_hub `declared-children-and-remote-manifest`); every deliberate stop MUST ride `stop_children`; cspec stays `:transient` (upstream loosened); re-place uses `migrate_child`, never stop+start
 - [Wire-frame limits](docs/dev_notes/wire-frame-limits.md) — reject a declared length BEFORE allocating, pre-auth; one `max_frame_bytes()` in flz_transport for both parsers; a bad header poisons the stream, there is no resync
 - [Authn/authz finished end to end](docs/dev_notes/finish-platform-authn-authz.md) — three-way enforcement posture; identity ONLY from the transport; namespace-prefixed state at the `Registry.class_dir/1` seam; the monotonic-time disk-cache bug
 - [Tiered procedure authoring](docs/dev_notes/add-tiered-procedure-authoring.md) — three tiers, explicit wins; `emits` is the ONLY source of the ctx-shape output type; `SimpleProcedure`'s method-level `where Self: Procedure` breaks the supertrait cycle

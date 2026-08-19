@@ -1615,7 +1615,15 @@ defmodule Flezha.Service.CliManager do
       namespace = Map.fetch!(entry, :namespace)
       cspec = Map.fetch!(entry, :cspec)
       hub_id = Flezha.Service.Identificator.hub(namespace)
-      _ = ProcessHub.start_children(hub_id, [cspec], async_wait: false)
+
+      # Declared like any operator start: an imported operative the declared
+      # set never learns about would be invisible to the reconcile — imported
+      # once, restored never.
+      _ =
+        ProcessHub.start_children(hub_id, [cspec],
+          async_wait: false,
+          durable: HubManager.durable_starts?()
+        )
     end)
 
     IO.puts("boot import-legacy-snapshot: imported #{length(operatives)} operatives")

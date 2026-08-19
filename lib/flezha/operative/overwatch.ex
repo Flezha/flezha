@@ -81,8 +81,8 @@ defmodule Flezha.Operative.Overwatch do
     # forwarding to the channel".
     liveness_ref: nil,
     # The `:runner_migrate` retry runs in a `Task.Supervisor.async_nolink/3`
-    # task so it never blocks `:stop_operative`; this field carries the in-flight
-    # task's reference + pid so `:stop_operative` can terminate it cleanly. `nil`
+    # task so it never blocks the Overwatch; this field carries the in-flight
+    # task's reference + pid so `terminate/2` can kill it cleanly. `nil`
     # when no migrate is in flight.
     migrate_task: nil,
     # Effectively-once tier, declared by the SDK in the AddOperative response
@@ -284,13 +284,6 @@ defmodule Flezha.Operative.Overwatch do
 
   def handle_call(:registry_runner_set, _from, %__MODULE__{init_error: reason} = state) do
     {:reply, {:error, reason}, state}
-  end
-
-  @impl true
-  def handle_call(:stop_operative, from, state) do
-    state = Lifecycle.stop(state)
-    GenServer.reply(from, :ok)
-    {:stop, :normal, state}
   end
 
   @impl true
@@ -564,7 +557,7 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, Lifecycle.apply_migrate_result(state, result)}
   end
 
-  # Late delivery: the task was terminated by `:stop_operative`, or a second
+  # Late delivery: the task was terminated by a teardown, or a second
   # migrate already replaced `state.migrate_task`. Drop.
   def handle_info({:migrate_task_result, _task_pid, _result}, state), do: {:noreply, state}
 

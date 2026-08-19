@@ -48,7 +48,7 @@ After all members are stopped, each entity whose key group maps to a different o
 - **THEN** re-running `flz operative scale <group> M` re-derives the remaining moves from what is on disk and completes them, moving no entity twice
 
 ### Requirement: New members SHALL start only after movement completes, and vacated trees SHALL be cleaned up
-The M members SHALL be started with the new ranges only after every owed move has completed; each restores its entities through the ordinary bind path (cold working-set rebuild). Vacated instance trees — holding only a fully-consumed input log after their entities moved out — SHALL be removed, and rows of members beyond M SHALL expire through the existing stopped-row TTL.
+The M members SHALL be started with the new ranges only after every owed move has completed; each restores its entities through the ordinary bind path (cold working-set rebuild). Vacated instance trees — holding only a fully-consumed input log after their entities moved out — SHALL be removed, and the registry rows of members beyond M SHALL be gone as soon as their stop commits: a stop removes the member from the hub's declared set and deletes its row, so a vacated member cannot be resurrected and no expiry window has to elapse first.
 
 #### Scenario: Rescale 3 to 5 preserves every key's history
 - **WHEN** a group is rescaled from 3 to 5 and inputs resume
@@ -56,4 +56,8 @@ The M members SHALL be started with the new ranges only after every owed move ha
 
 #### Scenario: Rescale 3 to 2 removes vacated members
 - **WHEN** a group is rescaled from 3 to 2
-- **THEN** `<group>#p2`'s entities are absorbed by the remaining members, its vacated state tree is removed, and its registry row expires via the stopped-row TTL
+- **THEN** `<group>#p2`'s entities are absorbed by the remaining members, its vacated state tree is removed, and its registry row is deleted with the stop rather than lingering until an expiry sweep
+
+#### Scenario: A vacated member is not resurrected by a returning node
+- **WHEN** a node that was absent for the whole rescale rejoins, however long it was away
+- **THEN** the vacated member is absent from the declared set and is not restarted, because membership — not a timed tombstone — is what records the stop

@@ -63,14 +63,6 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     def handle_call({:ingest, message, _metadata}, _from, state),
       do: {:reply, :ok, %{state | ingested: [message | state.ingested]}}
 
-    # A stop drops the registry row before it replies, so no caller can observe
-    # a stopped operative still holding its id — the ordering a real teardown
-    # gives, and what a restart depends on.
-    def handle_call(:stop_operative, _from, state) do
-      :ets.delete(state.registry, state.builder.id)
-      {:stop, :normal, :ok, state}
-    end
-
     def handle_call(_msg, _from, state), do: {:reply, {:error, :unsupported}, state}
 
     @impl true
@@ -121,7 +113,25 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
       end
     end)
 
-    stub(ProcessHub, :stop_children, fn _hub, _ids, _opts -> :ok end)
+    # The hub stop: drop each row BEFORE terminating its instance — the
+    # remove-before-terminate ordering the real stop path gives — and answer
+    # the StopResult `stop_via_hub` reads.
+    stub(ProcessHub, :stop_children, fn _hub, ids, _opts ->
+      stopped =
+        Enum.map(ids, fn id ->
+          pid = pid_of(registry, id)
+          :ets.delete(registry, id)
+
+          with {:ok, pid} <- pid do
+            GenServer.stop(pid, :normal, 1_000)
+          end
+
+          {id, [node()]}
+        end)
+
+      %ProcessHub.StopResult{status: :ok, stopped: stopped, errors: []}
+    end)
+
     stub(ProcessHub.Future, :await, fn result -> result end)
     stub(FleetManager, :runners_for_factory, fn _ns, _factory -> Enum.take(runners, 1) end)
     stub(FleetManager, :active_runners, fn _ns -> runners end)

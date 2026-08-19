@@ -562,11 +562,19 @@ defmodule FlezhaTest do
     # Trigger the runner disconnect.
     NodeTestHelper.stop_runner(namespace, pipe1_op)
 
-    # Make sure all the operatives are migrated to the other runner.
-    OperativeManager.operative_registry(namespace)
-    |> Enum.each(fn {_operative_id, {_cspec, _cnodes, %{tag: new_runner}}} ->
-      assert new_runner === active_runner
-    end)
+    # Make sure all the operatives are migrated to the other runner. The
+    # reroute rebinds each operative off the disconnect handler and commits
+    # only on a confirmed migrate, so the tags land asynchronously.
+    assert eventually(
+             fn ->
+               OperativeManager.operative_registry(namespace)
+               |> Enum.all?(fn {_operative_id, {_cspec, _cnodes, metadata}} ->
+                 metadata[:tag] === active_runner
+               end)
+             end,
+             10_000
+           ),
+           "operatives did not rebind to #{active_runner} within timeout"
 
     # Make sure the states have been migrated.
     {:ok, json_state_1} = OperativeManager.get_entity_state(namespace, operative_id_1)

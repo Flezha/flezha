@@ -9,6 +9,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Service.EventManager
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
   alias Flezha.Transport.Native
+  alias Flezha.Convergence.Heal
   alias Flezha.Convergence.SafeCall
 
   require Logger
@@ -711,7 +712,7 @@ defmodule Flezha.Runner.FleetManager do
     namespace_runners =
       cond do
         !Enum.empty?(runner_ids) ->
-          runner_reroute(state, namespace, runner_id, runner_ids)
+          runner_reroute(state, namespace, runner_id)
 
         Enum.empty?(runner_ids) && !Enum.empty?(other_nodes) ->
           hub_migrate(state, namespace, runner_id)
@@ -773,40 +774,40 @@ defmodule Flezha.Runner.FleetManager do
     put_in(state.runner_namespaces[namespace], [runner_id], runner)
   end
 
-  defp runner_reroute(state, namespace, old_runner, available_runners) do
-    new_runner = Enum.random(available_runners)
+  defp runner_reroute(state, namespace, old_runner) do
+    # Collected BEFORE the drop, while the tag query still names the dead
+    # runner's operatives. The hub (and its ETS table) can be down or
+    # mid-restart during churn — that must never abort the dead runner's
+    # removal from the active set below; the operatives heal on the next
+    # convergence tick instead.
+    operatives =
+      try do
+        HubManager.runner_operatives(namespace, old_runner)
+      rescue
+        _ -> []
+      catch
+        :exit, _ -> []
+      end
 
-    # Best-effort operative migration. These calls reach into ProcessHub and the
-    # new runner's StreamChannels, which can raise `:noproc` while the hub or
-    # the freshly reconnected peer is mid-restart. A failure here must not abort
-    # the dead runner's removal from the active set below — its operatives heal on
-    # the next convergence tick regardless.
-    try do
-      reroute_operatives(namespace, old_runner, new_runner)
-    rescue
-      error ->
-        Logger.warning(
-          "[FleetManager] runner_reroute side effects failed for " <>
-            "#{old_runner} -> #{new_runner}: #{inspect(error)}; " <>
-            "evicting anyway, operatives heal on next convergence tick"
-        )
-    catch
-      :exit, reason ->
-        Logger.warning(
-          "[FleetManager] runner_reroute side effects exited for " <>
-            "#{old_runner} -> #{new_runner}: #{inspect(reason)}; " <>
-            "evicting anyway, operatives heal on next convergence tick"
-        )
-    end
+    # Off-process: each rebind resolves placement back through this
+    # FleetManager (`assign_runner/3`), which would deadlock inside this
+    # handler. The spawned work's calls queue behind the current one, so they
+    # observe the post-drop active set — the dead runner is no longer a
+    # placement candidate by the time anything is placed.
+    spawn(fn -> reroute_operatives(namespace, old_runner, operatives) end)
 
     drop_runner(state, namespace, old_runner)
   end
 
-  defp reroute_operatives(namespace, old_runner, new_runner) do
-    HubManager.runner_operatives(namespace, old_runner)
-    |> Enum.each(fn {operative_id, node_pids} ->
+  # Per-operative confirmed rebinds through the ONE migrate-commit contract
+  # (`Heal.rebind/2`): factory-filtered HRW placement per operative, registry
+  # flip and stream-channel seeding only after the operative confirms the
+  # migrate, WAL resync into the new binding. An unconfirmed operative keeps
+  # its binding and heals on the next convergence tick.
+  defp reroute_operatives(namespace, old_runner, operatives) do
+    Enum.each(operatives, fn {operative_id, node_pids} ->
       # Multi-node-safe: resolve the live/local pid (dropping dead-node
-      # entries) before calling, so a operative registered on more than one node
+      # entries) first, so a operative registered on more than one node
       # neither crashes this path nor blocks on a dead pid.
       case HubManager.live_pid(node_pids) do
         nil ->
@@ -815,39 +816,30 @@ defmodule Flezha.Runner.FleetManager do
               "it will migrate on its next bind/rebind"
           )
 
-        operative_pid ->
-          # Bounded timeout (< 5s default of the outer Transport.Server /
-          # ControlChannel call into FleetManager) so a operative that is
-          # itself calling back into FleetManager cannot deadlock the
-          # disconnect path. The operative will be migrated on its next
-          # bind/rebind attempt.
-          _ = SafeCall.bounded(operative_pid, {:runner_migrate, new_runner}, 2_000)
+        _operative_pid ->
+          reroute_one(namespace, old_runner, operative_id)
       end
     end)
+  end
 
-    HubManager.runner_switch(namespace, old_runner, new_runner)
+  # Isolated per operative: one raising rebind (ProcessHub or a StreamChannel
+  # mid-restart under churn) must not strand its siblings.
+  defp reroute_one(namespace, old_runner, operative_id) do
+    case Heal.rebind(namespace, operative_id) do
+      :ok -> :ok
+      :error -> log_reroute_miss(operative_id, old_runner, "did not confirm")
+    end
+  rescue
+    error -> log_reroute_miss(operative_id, old_runner, "raised #{inspect(error)}")
+  catch
+    :exit, reason -> log_reroute_miss(operative_id, old_runner, "exited #{inspect(reason)}")
+  end
 
-    HubManager.unregister_handler(namespace, old_runner)
-    HubManager.register_handler(namespace, new_runner)
-
-    overwatchers =
-      HubManager.runner_operatives(namespace, new_runner)
-      |> Enum.map(fn {operative_id, node_pids} ->
-        {operative_id, Enum.map(node_pids, &elem(&1, 1))}
-      end)
-
-    stream_channels =
-      Supervisor.which_children(Identificator.stream_sup_primary(new_runner)) ++
-        Supervisor.which_children(Identificator.stream_sup_secondary(new_runner))
-
-    # Defensive: a slow StreamChannel must not crash the caller.
-    Enum.each(stream_channels, fn
-      {_, pid, _, _} when is_pid(pid) ->
-        _ = SafeCall.bounded(pid, {:operative_bulk_insert, overwatchers}, 1_000)
-
-      _ ->
-        :ok
-    end)
+  defp log_reroute_miss(operative_id, old_runner, what) do
+    Logger.warning(
+      "[FleetManager] reroute of #{operative_id} off #{old_runner} #{what}; " <>
+        "binding left unchanged, heals on next convergence tick"
+    )
   end
 
   # runner_connect/3 may block inside Orchestrator.await_cluster_ready/0

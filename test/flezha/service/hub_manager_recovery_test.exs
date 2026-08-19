@@ -29,6 +29,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.HubRegistryTestHelper
+  alias FlezhaTest.Helper.NodeTestHelper
   alias ProcessHub.Service.ProcessRegistry
 
   @namespace "recovery_test_ns"
@@ -197,7 +198,7 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        restart_hub(hub_id)
+        restart_hub(hub_id, drop_declared: true)
 
         assert await_bound_node(hub_id, good, 10_000) == node(),
                "#{good} kept its dead pid — the malformed sibling killed the whole start request"
@@ -298,8 +299,116 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     refute log =~ "CaseClauseError"
   end
 
-  # Registry rows left by a previous boot (dead pids), then a marker-absent hub
-  # restart — the warm-restart sequence, with no wall-clock dependency.
+  describe "declared intent" do
+    # fails when: losing the runtime registry loses intent — the declared set
+    # must survive row loss and the reconcile must restore from it.
+    test "a cold start restores the declared set after registry-row loss" do
+      on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
+      hub_id = Identificator.hub(@namespace)
+      operative_id = "declared_cold_start_op"
+
+      {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
+      assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
+
+      start_durable_stub(hub_id, operative_id)
+      assert operative_id in declared_ids()
+
+      stop_hub_keeping_registry(hub_id)
+      drop_registry_rows()
+
+      {:ok, _} = HubManager.start_hub(@namespace)
+      assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
+
+      assert operative_id in declared_ids()
+
+      assert await_bound_node(hub_id, operative_id, 10_000) == node(),
+             "the declared set survived row loss but the reconcile did not restore from it"
+    end
+
+    # fails when: a stop is only remembered for a window — the entry must be
+    # absent from the declared set and stay absent across any later boot,
+    # however long the gap (there is no TTL left to expire).
+    test "a deliberate stop removes the declared entry and no later boot resurrects it" do
+      on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
+      hub_id = Identificator.hub(@namespace)
+      operative_id = "declared_stop_op"
+
+      {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
+      assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
+
+      start_durable_stub(hub_id, operative_id)
+      assert operative_id in declared_ids()
+
+      # The flezha stop seam: declared removal rides the hub stop path
+      # (remove-before-terminate), and the registry row goes with it.
+      assert :ok = OperativeManager.stop_operative(@namespace, operative_id)
+      refute operative_id in declared_ids()
+      refute Map.has_key?(ProcessRegistry.dump(hub_id), operative_id)
+
+      restart_hub(hub_id)
+
+      refute operative_id in declared_ids()
+      refute Map.has_key?(ProcessRegistry.dump(hub_id), operative_id)
+    end
+
+    # fails when: the declared set has no off-cluster copy — losing every
+    # cluster disk must still restore intent through the durability tier.
+    test "total disk loss restores the declared set from the durability tier" do
+      on_exit(TestHelpers.override_env(:hub_runner_assign_wait_ms, 0))
+
+      tier_dir =
+        Path.join([System.tmp_dir!(), "flezha_tier_#{System.unique_integer([:positive])}"])
+
+      File.mkdir_p!(tier_dir)
+      previous_tier = Application.get_env(:flezha, :durability_tier)
+
+      Application.put_env(:flezha, :durability_tier,
+        backend: :local_path,
+        backend_opts: [path: tier_dir]
+      )
+
+      on_exit(fn ->
+        File.rm_rf(tier_dir)
+
+        if previous_tier,
+          do: Application.put_env(:flezha, :durability_tier, previous_tier),
+          else: Application.delete_env(:flezha, :durability_tier)
+      end)
+
+      hub_id = Identificator.hub(@namespace)
+      operative_id = "declared_disk_loss_op"
+
+      {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
+      assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
+
+      start_durable_stub(hub_id, operative_id)
+      assert operative_id in declared_ids()
+
+      # The remote ship is asynchronous — wait for the tier to hold a copy
+      # that already declares the operative.
+      assert NodeTestHelper.wait_until(
+               fn -> operative_id in remote_declared_ids(hub_id) end,
+               10_000
+             ),
+             "the declared list never reached the durability tier"
+
+      stop_hub_keeping_registry(hub_id)
+      drop_all_registry_files()
+
+      {:ok, _} = HubManager.start_hub(@namespace)
+      assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
+
+      assert operative_id in declared_ids(),
+             "the boot did not adopt the declared set from the remote manifest"
+
+      assert await_bound_node(hub_id, operative_id, 10_000) == node()
+    end
+  end
+
+  # Registry rows left by a previous boot (dead pids) and NO declared list —
+  # the on-disk shape of a deployment upgrading from before the
+  # declared-children model. The restart's first-enablement seed mints the
+  # declared list from these rows, and the same boot's reconcile replays them.
   defp replay_hub(hub_id, operatives) do
     {:ok, _} = HubRegistryTestHelper.ensure_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 5_000)
@@ -313,19 +422,85 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
       })
     end)
 
-    restart_hub(hub_id)
+    restart_hub(hub_id, drop_declared: true)
   end
 
   # The warm restart itself: keep the registry, come back up. Every boot
   # reconciles now, so nothing has to be armed between the two. Returns the
   # milliseconds it took, for the tests that assert on placement latency.
-  defp restart_hub(hub_id) do
+  # `drop_declared: true` removes the declared list and its seeded marker
+  # between the stop and the start, so the boot re-seeds from registry rows —
+  # the pre-declared-list upgrade shape injected rows rely on.
+  defp restart_hub(hub_id, opts \\ []) do
     stop_hub_keeping_registry(hub_id)
+
+    if Keyword.get(opts, :drop_declared, false), do: drop_declared_list()
 
     started_at = System.monotonic_time(:millisecond)
     {:ok, _} = HubManager.start_hub(@namespace)
     assert :ok = HubManager.await_recovery_complete([hub_id], 10_000)
     System.monotonic_time(:millisecond) - started_at
+  end
+
+  # Must run only while the hub is down: the declared store holds the file
+  # open and would recreate it on close.
+  defp drop_declared_list do
+    Application.get_env(:flezha, :process_hub_registry_root)
+    |> Path.join("**/*.declared.dets*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm/1)
+  end
+
+  # Registry rows lost, declared list kept — the divergence the declared set
+  # exists to survive. Hub must be down (same reason as `drop_declared_list/0`).
+  defp drop_registry_rows do
+    Application.get_env(:flezha, :process_hub_registry_root)
+    |> Path.join("**")
+    |> Path.wildcard()
+    |> Enum.reject(&(File.dir?(&1) or String.contains?(&1, ".declared.dets")))
+    |> Enum.each(&File.rm/1)
+  end
+
+  # Everything on "the cluster's disks": rows AND the local declared list.
+  defp drop_all_registry_files do
+    Application.get_env(:flezha, :process_hub_registry_root)
+    |> Path.join("**")
+    |> Path.wildcard()
+    |> Enum.reject(&File.dir?/1)
+    |> Enum.each(&File.rm/1)
+  end
+
+  # A durable start of the inert stub child, through the same declared-set
+  # precommit every real start rides. The recorded runner keeps the alter hook
+  # on its log-and-continue path.
+  defp start_durable_stub(hub_id, operative_id) do
+    spec = %{
+      id: operative_id,
+      start:
+        {HubRegistryTestHelper.StubChild, :start_link,
+         [{@namespace, @recorded_runner, %{id: operative_id, factory_id: "market"}}]},
+      restart: :transient
+    }
+
+    assert %ProcessHub.StartResult{status: :ok} =
+             hub_id
+             |> ProcessHub.start_child(spec, awaitable: true, durable: true, timeout: 5_000)
+             |> ProcessHub.Future.await()
+  end
+
+  # Through flezha's own declared reader — the seam Convergence.Intent uses.
+  defp declared_ids do
+    HubManager.declared_operatives(@namespace) |> Enum.map(& &1.id)
+  end
+
+  defp remote_declared_ids(hub_id) do
+    with {:ok, {_version, blob}} <-
+           Flezha.State.DurabilityTier.DeclaredManifest.fetch(hub_id, []),
+         {:ok, %{entries: entries}} <- ProcessHub.Storage.RemoteManifest.decode(blob) do
+      Map.keys(entries)
+    else
+      _ -> []
+    end
   end
 
   # The owning runner recorded on a registry row (`metadata.tag`).
@@ -347,38 +522,8 @@ defmodule Flezha.Service.HubManagerRecoveryTest do
     Supervisor.delete_child(HubManager, hub_id)
   end
 
-  defp seed_runner(runner_id, factory_id) do
-    :sys.replace_state(FleetManager, fn state ->
-      state
-      |> put_in(
-        [:runner_namespaces, @namespace],
-        %{runner_id => {:active, System.system_time(:millisecond)}}
-      )
-      |> put_in(
-        [:namespace_factories, @namespace],
-        %{factory_id => %{description: nil, ce_ids: MapSet.new([runner_id])}}
-      )
-    end)
-
-    register_control_unit(runner_id)
-  end
-
-  # `runner_registered?/1` gates on the CU registration, so a synthetic runner
-  # needs one before the hook will hand out its id.
-  defp register_control_unit(runner_id) do
-    test = self()
-
-    # Unlinked: on_exit kills it, and a kill must not propagate into ExUnit.
-    {:ok, cu} =
-      Task.start(fn ->
-        {:ok, _} = Registry.register(Identificator, "#{runner_id}_cu", nil)
-        send(test, :cu_registered)
-        Process.sleep(:infinity)
-      end)
-
-    assert_receive :cu_registered, 1_000
-    on_exit(fn -> Process.exit(cu, :kill) end)
-  end
+  defp seed_runner(runner_id, factory_id),
+    do: HubRegistryTestHelper.seed_runner(@namespace, runner_id, factory_id)
 
   defp await_bound_node(hub_id, operative_id, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms

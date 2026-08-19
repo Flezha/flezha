@@ -253,7 +253,10 @@ flz operative scale ohlc 5
    through the ordinary bind path — a cold working-set rebuild, the same cost
    class as crash-resume.
 6. **Clean up.** A vacated instance tree, now holding only a fully-consumed
-   input log, is removed; rows past M expire through the stopped-row TTL.
+   input log, is removed. The members past M are already gone from the hub's
+   declared set and the registry — their stop removed both — so a node that
+   was absent for the whole rescale can never resurrect a vacated partition,
+   with no expiry window to wait out.
 
 Crash mid-rescale is recoverable by construction: before step 4 nothing durable
 has moved, and each move is atomic per Entity, so re-running `flz operative

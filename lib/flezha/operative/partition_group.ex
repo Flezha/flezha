@@ -659,7 +659,8 @@ defmodule Flezha.Operative.PartitionGroup do
   # An old member past the new count keeps only a fully-consumed input log once
   # its Entities have moved out. Removing it is what stops a stale class tree
   # from reading as durable evidence of an operative that no longer exists; its
-  # registry row expires through the stopped-row TTL on its own.
+  # stop already removed it from the hub's declared set and deleted its
+  # registry row, so a returning node can never resurrect it.
   defp cleanup_vacated(old_members, new_member_ids) do
     old_members
     |> Enum.map(& &1.id)

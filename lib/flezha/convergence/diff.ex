@@ -37,6 +37,7 @@ defmodule Flezha.Convergence.Diff do
   @type t :: %__MODULE__{
           unbound_operatives: [operative_ref()],
           misbound_operatives: [{operative_ref(), binary()}],
+          replace_operatives: [{operative_ref(), binary() | nil}],
           stalled_operatives: [operative_ref()],
           missing_plugins: [{operative_ref(), binary(), map()}],
           extra_plugins: [{operative_ref(), binary(), pid()}],
@@ -47,6 +48,7 @@ defmodule Flezha.Convergence.Diff do
 
   defstruct unbound_operatives: [],
             misbound_operatives: [],
+            replace_operatives: [],
             stalled_operatives: [],
             missing_plugins: [],
             extra_plugins: [],
@@ -60,30 +62,55 @@ defmodule Flezha.Convergence.Diff do
   def compute(%Flezha.Convergence.Intent{operatives: declared}, reality, signals) do
     active = Map.get(reality, :active_runners, %{})
     observed = Map.get(reality, :operatives, %{})
+    placement = Map.get(reality, :placement, %{})
     verdict = Map.get(signals, :verdict, :ok)
 
-    {unbound, misbound} =
-      Enum.reduce(declared, {[], []}, fn %{namespace: ns, operative_id: rid}, {unb, mis} ->
+    {unbound, misbound, replace} =
+      Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operative_id: rid},
+                                             {unb, mis, repl} ->
         ref = {ns, rid}
-        observed_operative = Map.get(observed, ref, %{})
-        bound = Map.get(observed_operative, :bound_runner)
+        observed_operative = Map.get(observed, ref)
         live = Map.get(active, ns, MapSet.new())
+        bound = observed_operative && Map.get(observed_operative, :bound_runner)
 
         cond do
+          # Declared but not observed running at all: starting it is the hub
+          # reconcile's job through the idempotent start authority — a heal op
+          # can only act on a live Overwatch.
+          observed_operative == nil ->
+            {unb, mis, repl}
+
           # `:unknown` = an observation failed this tick — either the operative's
           # own state read (`bound`) or the namespace's live-runner read
           # (`live`, Probe could not reach FleetManager). With no authoritative
           # signal we must NOT classify it: acting on an empty/failed read
           # mass-migrates healthy operatives on a transient read race.
-          bound == :unknown -> {unb, mis}
+          bound == :unknown ->
+            {unb, mis, repl}
+
           # Suspended at a committed iteration boundary: unbound BY DESIGN
           # (`workflow-durable-suspension`). Rebinding it would undo the very
           # eviction it asked for; its own wake sources bring it back.
-          Map.get(observed_operative, :suspended?, false) -> {unb, mis}
-          is_nil(bound) -> {[ref | unb], mis}
-          live == :unknown -> {unb, mis}
-          not MapSet.member?(live, bound) -> {unb, [{ref, bound} | mis]}
-          true -> {unb, mis}
+          Map.get(observed_operative, :suspended?, false) ->
+            {unb, mis, repl}
+
+          is_nil(bound) ->
+            case classify_bindable(ref, nil, observed_operative, placement) do
+              {:replace, entry} -> {unb, mis, [entry | repl]}
+              {:unbound, ref} -> {[ref | unb], mis, repl}
+            end
+
+          live == :unknown ->
+            {unb, mis, repl}
+
+          not MapSet.member?(live, bound) ->
+            case classify_bindable(ref, bound, observed_operative, placement) do
+              {:replace, entry} -> {unb, mis, [entry | repl]}
+              {:misbound, entry} -> {unb, [entry | mis], repl}
+            end
+
+          true ->
+            {unb, mis, repl}
         end
       end)
 
@@ -92,6 +119,7 @@ defmodule Flezha.Convergence.Diff do
     %__MODULE__{
       unbound_operatives: Enum.reverse(unbound),
       misbound_operatives: Enum.reverse(misbound),
+      replace_operatives: Enum.reverse(replace),
       stalled_operatives: stalled_refs(declared, Map.get(signals, :stalled, [])),
       missing_plugins: missing,
       extra_plugins: extra,
@@ -99,6 +127,21 @@ defmodule Flezha.Convergence.Diff do
       data_plane_wedge: resolve_wedge(verdict, active, observed),
       data_plane_layer: StallClassifier.layer(verdict)
     }
+  end
+
+  # An operative needing a binding whose factory no LOCAL runner advertises
+  # while another node's fleet does is a re-place, not a rebind — a local bind
+  # is doomed, the operative must move. The local read must be a definite `[]`
+  # (`:unknown` classifies as an ordinary rebind, which the heal then skips or
+  # fails safely) and the factory must be known.
+  defp classify_bindable({ns, _rid} = ref, dead_runner, observed_operative, placement) do
+    factory = Map.get(observed_operative, :factory_id)
+
+    case is_binary(factory) && Map.get(placement, {ns, factory}) do
+      %{local: [], remote_nodes: [_ | _]} -> {:replace, {ref, dead_runner}}
+      _ when is_nil(dead_runner) -> {:unbound, ref}
+      _ -> {:misbound, {ref, dead_runner}}
+    end
   end
 
   # I3: declared to produce, observed not producing. The Watchdog names the
@@ -235,6 +278,7 @@ defmodule Flezha.Convergence.Diff do
   @spec empty?(t()) :: boolean()
   def empty?(%__MODULE__{} = d) do
     d.unbound_operatives == [] and d.misbound_operatives == [] and
+      d.replace_operatives == [] and
       d.stalled_operatives == [] and d.missing_plugins == [] and d.extra_plugins == [] and
       d.unhealthy_plugins == [] and d.data_plane_wedge == nil
   end

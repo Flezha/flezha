@@ -33,7 +33,7 @@ mode below.
 
 ```elixir
 config :flezha, :durability_tier,
-  backend: :postgres,          # :none (default) | :postgres | :s3
+  backend: :postgres,          # :none (default) | :postgres | :s3 | :local_path
   ship_interval_ms: 30_000,    # backstop sweep for entities that hit no boundary
   rpo_target_ms: 120_000,      # unshipped-progress age at which the alarm fires
   gc_interval_ms: 3_600_000,   # orphan-blob collection period
@@ -93,6 +93,35 @@ four verbs.
 
 `Flezha.State.DurabilityTier.Backend.S3.create_bucket/1` provisions the bucket;
 it is a one-shot operator call, not part of any ship path.
+
+### LocalPath backend
+
+Dependency-free filesystem storage: one file per artifact key under the
+configured root, written atomically (fsynced temp file + rename), the claim
+counter in a `.claim` sidecar.
+
+| Option | Env | Default |
+| --- | --- | --- |
+| `:path` | `FLEZHA_DURABILITY_PATH` | — |
+
+**The path must outlive the cluster.** The tier exists so a controller that
+dies WITH its disk is recoverable — a root on a cluster node's own disk shares
+that disk's fate. Point it at an NFS mount or an externally provisioned
+volume. A plain filesystem also offers no compare-and-swap, so the fencing
+write (`put_if/4`) is read-then-write: correct under the tier's normal
+one-writer-per-lineage operation, but a deployment that needs hard multi-writer
+fencing should prefer the Postgres or S3 backend.
+
+### The declared list rides the tier too
+
+With any backend configured, each namespace hub's **declared list** (the
+declared-operator-intent record — what should be running) ships through the
+same backend via `Flezha.State.DurabilityTier.DeclaredManifest`, under the key
+`declared/<hub_id>`, outside the orphan collector's `blob/` scope. Nothing to
+configure: `HubManager` wires the hub's `remote_manifest` automatically
+whenever the tier is on, and boot adopts whichever copy — local or remote —
+carries the higher version. See
+`docs/resilience/process_hub_recovery_model.md`.
 
 ### Adding a backend
 

@@ -359,13 +359,13 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   defp do_stop_operative(namespace, operative_id, preserve_state?) do
-    with_operative_pid(namespace, operative_id, fn operative_pid ->
+    with_operative_pid(namespace, operative_id, fn _operative_pid ->
       # Read the entity count before the stop tears the operative down — the
       # operative is gone afterwards and the count is needed to release the
       # `:max_entities_per_operative` quota symmetrically with start.
       seg_count = operative_entity_count(namespace, operative_id)
 
-      case GenServer.call(operative_pid, :stop_operative) do
+      case stop_via_hub(namespace, operative_id) do
         :ok ->
           _ = Flezha.Service.PluginManager.disable_operative_plugins(namespace, operative_id)
           # A stop that is a move — a rescale taking the group down to
@@ -391,6 +391,46 @@ defmodule Flezha.Service.OperativeManager do
     end)
   end
 
+  defp stop_via_hub(namespace, operative_id) do
+    case hub_stop_children(namespace, [operative_id], 15_000) do
+      :ok ->
+        :ok
+
+      {:error, errors} when is_list(errors) ->
+        case List.keyfind(errors, operative_id, 0) do
+          {_cid, reason} -> {:error, reason}
+          nil -> {:error, :stop_failed}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # The ONE seam flezha stops children through: the hub's precommit removes
+  # each declared-set entry BEFORE anything terminates (remove-before-terminate),
+  # so a stop is remembered as list absence and the reconcile can never
+  # resurrect it. The Overwatch's teardown — telling the runner to drop the
+  # operative, plugin `:on_terminate`, table teardown — runs in its
+  # `terminate/2` under the supervisor's shutdown. Best-effort callers discard
+  # the verdict; a dead or mid-restart hub maps to an error, never a raise.
+  defp hub_stop_children(namespace, operative_ids, timeout) do
+    result =
+      try do
+        Identificator.hub(namespace)
+        |> ProcessHub.stop_children(operative_ids, awaitable: true, timeout: timeout)
+        |> ProcessHub.Future.await()
+      catch
+        kind, reason -> {:error, {kind, reason}}
+      end
+
+    case result do
+      %ProcessHub.StopResult{status: :ok} -> :ok
+      %ProcessHub.StopResult{errors: errors} -> {:error, errors || []}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp operative_entity_count(namespace, operative_id) do
     case get_overwatch_state(namespace, operative_id) do
       {:ok, %{builder: builder}} -> entity_count(builder)
@@ -407,7 +447,6 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   def stop_all_operatives(namespace) do
-    hub_id = Identificator.hub(namespace)
     operatives = HubManager.get_all_operatives(namespace)
     operative_ids = Enum.map(operatives, fn {id, _pid} -> id end)
 
@@ -416,13 +455,7 @@ defmodule Flezha.Service.OperativeManager do
     end)
 
     if operative_ids != [] do
-      try do
-        hub_id
-        |> ProcessHub.stop_children(operative_ids, awaitable: true, timeout: 15_000)
-        |> ProcessHub.Future.await()
-      catch
-        :exit, _ -> :ok
-      end
+      _ = hub_stop_children(namespace, operative_ids, 15_000)
 
       Enum.each(operative_ids, &delete_operative_state_dir/1)
     end
@@ -664,7 +697,13 @@ defmodule Flezha.Service.OperativeManager do
         awaitable: true,
         # We will get the errors from the start result.
         disable_logging: true,
-        timeout: 15_000
+        timeout: 15_000,
+        # Declared intent: the start records the child in the hub's declared
+        # set BEFORE anything runs, so a whole-cluster cold start restores it
+        # and a deliberate stop (hub stop path) removes it for good. Off in
+        # lockstep with auto-recovery — a hub without the reconcile refuses
+        # durable starts.
+        durable: HubManager.durable_starts?()
       )
       |> ProcessHub.Future.await()
 
@@ -789,13 +828,8 @@ defmodule Flezha.Service.OperativeManager do
   defp claim_loss?(_reason), do: false
 
   defp stop_child_quietly(namespace, operative_id) do
-    try do
-      Identificator.hub(namespace)
-      |> ProcessHub.stop_children([operative_id], awaitable: true, timeout: 5_000)
-      |> ProcessHub.Future.await()
-    catch
-      _, _ -> :ok
-    end
+    _ = hub_stop_children(namespace, [operative_id], 5_000)
+    :ok
   end
 
   def exist?(namespace, operative_id) do

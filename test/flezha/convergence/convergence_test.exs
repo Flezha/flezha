@@ -97,6 +97,85 @@ defmodule Flezha.ConvergenceTest do
       assert Diff.empty?(Diff.compute(intent, reality))
     end
 
+    test "a declared operative with no observation is the reconcile's to start, not a heal's" do
+      intent = %Intent{
+        operatives: [
+          %{namespace: :ns, operative_id: "declared_only", factory_id: nil, plugins: []}
+        ]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e_live"])},
+        operatives: %{},
+        stalled_operatives: MapSet.new()
+      }
+
+      assert Diff.empty?(Diff.compute(intent, reality))
+    end
+
+    test "re-places instead of rebinding when the factory is only served elsewhere" do
+      intent = %Intent{
+        operatives: [
+          %{namespace: :ns, operative_id: "movable", factory_id: "f", plugins: []},
+          %{namespace: :ns, operative_id: "stale_movable", factory_id: "f", plugins: []}
+        ]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e_other"])},
+        operatives: %{
+          {:ns, "movable"} => %{bound_runner: nil, factory_id: "f"},
+          {:ns, "stale_movable"} => %{bound_runner: "e_dead", factory_id: "f"}
+        },
+        placement: %{{:ns, "f"} => %{local: [], remote_nodes: [:peer@host]}},
+        stalled_operatives: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+
+      assert delta.unbound_operatives == []
+      assert delta.misbound_operatives == []
+
+      assert delta.replace_operatives == [
+               {{:ns, "movable"}, nil},
+               {{:ns, "stale_movable"}, "e_dead"}
+             ]
+    end
+
+    test "an unknown local placement read falls back to an ordinary rebind" do
+      intent = %Intent{
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: "f", plugins: []}]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new()},
+        operatives: %{{:ns, "r"} => %{bound_runner: nil, factory_id: "f"}},
+        placement: %{{:ns, "f"} => %{local: :unknown, remote_nodes: [:peer@host]}},
+        stalled_operatives: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+      assert delta.unbound_operatives == [{:ns, "r"}]
+      assert delta.replace_operatives == []
+    end
+
+    test "no eligible fleet anywhere stays an ordinary rebind — degraded, no re-place churn" do
+      intent = %Intent{
+        operatives: [%{namespace: :ns, operative_id: "r", factory_id: "f", plugins: []}]
+      }
+
+      reality = %{
+        active_runners: %{ns: MapSet.new()},
+        operatives: %{{:ns, "r"} => %{bound_runner: nil, factory_id: "f"}},
+        placement: %{{:ns, "f"} => %{local: [], remote_nodes: []}},
+        stalled_operatives: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+      assert delta.unbound_operatives == [{:ns, "r"}]
+      assert delta.replace_operatives == []
+    end
+
     test "I2: classifies missing and extra plugins on a live operative" do
       p = plugin("declared")
 
@@ -313,6 +392,24 @@ defmodule Flezha.ConvergenceTest do
       delta = %Diff{unbound_operatives: [{:ns, "parked"}]}
 
       assert [%{primitive: :rebind_operative, namespace: :ns, target: "parked"}] =
+               Planner.plan(delta, Backoff.new())
+    end
+
+    test "a re-place evicts its dead runner first and keys its own backoff" do
+      delta = %Diff{replace_operatives: [{{:ns, "r"}, "e_dead"}]}
+
+      assert [
+               %{primitive: :evict_runner, target: "e_dead"},
+               %{primitive: :replace_operative, namespace: :ns, target: "r"} = replace
+             ] = Planner.plan(delta, Backoff.new())
+
+      assert Planner.key(replace) == {:replace_operative, "r"}
+    end
+
+    test "an unbound re-place plans no eviction" do
+      delta = %Diff{replace_operatives: [{{:ns, "r"}, nil}]}
+
+      assert [%{primitive: :replace_operative, namespace: :ns, target: "r"}] =
                Planner.plan(delta, Backoff.new())
     end
 
@@ -535,16 +632,28 @@ defmodule Flezha.ConvergenceTest do
   end
 
   describe "Heal" do
-    test "the heal surface is exactly the six reachable primitives" do
+    test "the heal surface is exactly the seven reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
                Enum.sort([
                  :rebind_operative,
+                 :replace_operative,
                  :resync_runner,
                  :start_plugin,
                  :stop_plugin,
                  :restart_plugin,
                  :evict_runner
                ])
+    end
+
+    test "replace_operative against an unknown operative is a failed heal, not a crash" do
+      op = %{
+        primitive: :replace_operative,
+        namespace: "ghost_ns",
+        target: "ghost_operative",
+        args: %{}
+      }
+
+      assert Heal.execute(op) == :error
     end
 
     test "resync_runner against an unknown operative is a failed heal, not a crash" do

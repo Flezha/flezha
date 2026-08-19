@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Changed — declared intent lives in the hub's declared set (`durable-operator-intent`)
+
+- **Every operative start is declared, every stop is remembered for good.**
+  Starts pass `durable: true` into ProcessHub's declared-children set; stops
+  and workflow completions ride the hub stop path, which removes the entry
+  before the process terminates. A whole-cluster cold start restores the
+  declared set (spawned workflow instances included), and a deliberately
+  stopped operative can no longer be resurrected by a node returning after an
+  arbitrary absence.
+- **Removed operator knob:** `FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS` (and
+  `:process_hub_stopped_row_ttl_ms`). Stop knowledge is declared-set absence
+  and never expires, so there is no 30-day tombstone window left to outwait.
+  A deployment still setting the variable keeps booting; the value is
+  simply no longer read.
+- **Off-cluster intent copy.** With the durability tier enabled, the declared
+  set ships through it (`remote_manifest` over `Flezha.State.DurabilityTier`),
+  so intent survives the loss of every cluster disk. New tier backend
+  `:local_path` (file storage, e.g. an NFS mount) joins `:postgres` and
+  `:s3`; any `{module, opts}` implementing the backend behaviour remains the
+  extension point.
+- **Reroute is placement-consistent and atomic.** A disconnected runner's
+  operatives are rerouted per-operative through the factory-filtered HRW
+  placement, and the registry binding switches only on a confirmed migrate —
+  never to a random runner, never on a discarded result.
+- **Cross-node re-placement.** An operative on a node with no runner
+  advertising its factory is moved — state intact, consent-gated — onto a
+  node whose fleet has one, instead of retrying a doomed local rebind forever.
+
 ### Changed — authentication and authorization finished end to end, enforced by default (`finish-platform-authn-authz`)
 
 **BREAKING for operators.** The trusting-LAN default is gone; every transport

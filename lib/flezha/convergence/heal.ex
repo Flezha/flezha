@@ -1,10 +1,10 @@
 defmodule Flezha.Convergence.Heal do
   @moduledoc """
-  The entire heal surface: six idempotent, bounded primitives. Every
+  The entire heal surface: seven idempotent, bounded primitives. Every
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive.
 
-      rebind_operative  resync_runner
+      rebind_operative  replace_operative  resync_runner
       start_plugin  stop_plugin  restart_plugin
       evict_runner
 
@@ -14,6 +14,12 @@ defmodule Flezha.Convergence.Heal do
     * `rebind_operative` — migrate a operative tagged to a dead/wrong runner (or
       not yet bound) onto an available one: flip the registry tag, fan its
       pid into the new runner's stream channels, replay the WAL.
+    * `replace_operative` — move an operative whose factory no LOCAL runner
+      advertises onto a node whose fleet has one, through the hub's per-child
+      handover (`Migration.migrate_child/3`): state rides the HotSwap
+      handover or is adopted from the source's WAL, the declared entry is
+      untouched, and the drain's consent gate decides whether the operative
+      may move now.
     * `resync_runner` — re-run the `RestoreInitState` handshake for a
       operative against the runner it is already bound to. The rung below
       `rebind_operative`: no placement decision, no migration, no handover —
@@ -29,10 +35,13 @@ defmodule Flezha.Convergence.Heal do
       case that guard would otherwise protect forever.
   """
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Convergence.{Planner, SafeCall}
+  alias Flezha.Operative.Overwatch
   alias Flezha.Runner.FleetManager
-  alias Flezha.Service.{HubManager, OperativeManager}
+  alias Flezha.Service.{HubManager, Identificator, OperativeManager}
   alias Flezha.State.Recovery
+  alias ProcessHub.Service.Migration
 
   require Logger
 
@@ -40,7 +49,7 @@ defmodule Flezha.Convergence.Heal do
   @migrate_timeout_ms 2_000
   @plugin_call_timeout_ms 2_000
 
-  @primitives ~w(rebind_operative resync_runner start_plugin stop_plugin restart_plugin evict_runner)a
+  @primitives ~w(rebind_operative replace_operative resync_runner start_plugin stop_plugin restart_plugin evict_runner)a
 
   @spec primitives() :: [atom()]
   def primitives(), do: @primitives
@@ -61,8 +70,46 @@ defmodule Flezha.Convergence.Heal do
     :error
   end
 
-  defp apply_primitive(:rebind_operative, %{namespace: namespace, target: operative_id} = op) do
+  @doc """
+  One confirmed rebind, outside a planned op — the runner-disconnect reroute's
+  entry into the exact contract the `rebind_operative` primitive enforces:
+  factory-filtered placement via `assign_runner/3`, and a registry flip only
+  after the operative confirms the migrate.
+  """
+  @spec rebind(atom() | binary(), binary()) :: :ok | :error
+  def rebind(namespace, operative_id) do
+    do_rebind(%{namespace: namespace, target: operative_id, args: %{}})
+  end
+
+  defp do_rebind(%{namespace: namespace, target: operative_id} = op) do
     on_operative(namespace, operative_id, &rebind_operative(op, &1))
+  end
+
+  defp apply_primitive(:rebind_operative, op), do: do_rebind(op)
+
+  # Move the operative to a node whose fleet can actually host it. Runs only
+  # on the node hosting the Overwatch (every controller's Loop plans the same
+  # op; the others fail it under Backoff) so the consent read inspects the
+  # right disk. The declared entry never changes — a crash mid-move heals
+  # through the hub reconcile rather than losing the operative.
+  defp apply_primitive(:replace_operative, %{namespace: namespace, target: operative_id}) do
+    on_operative(namespace, operative_id, fn pid ->
+      with true <- node(pid) == node(),
+           %Overwatch{} = ow <- overwatch_snapshot(pid),
+           :ready <- Overwatch.migration_consent(ow),
+           target_node when target_node != nil <-
+             replacement_node(namespace, ow.factory_id, operative_id),
+           :ok <- Migration.migrate_child(Identificator.hub(namespace), operative_id, target_node) do
+        Logger.info(
+          "[convergence] re-placed operative #{operative_id} (#{namespace}) onto " <>
+            "#{target_node} — no local runner advertises factory #{inspect(ow.factory_id)}"
+        )
+
+        :ok
+      else
+        _ -> :error
+      end
+    end)
   end
 
   # Re-issue `RestoreInitState` for every persisted Entity of a operative against
@@ -113,7 +160,14 @@ defmodule Flezha.Convergence.Heal do
   # Malformed op (no live target) — never produced by the Planner, but a
   # crash here would take down the whole tick. Treat as a failed heal.
   defp apply_primitive(prim, _op)
-       when prim in [:evict_runner, :resync_runner, :start_plugin, :stop_plugin, :restart_plugin],
+       when prim in [
+              :evict_runner,
+              :resync_runner,
+              :replace_operative,
+              :start_plugin,
+              :stop_plugin,
+              :restart_plugin
+            ],
        do: :error
 
   # Migrate a operative bound to a dead/wrong runner onto an available one.
@@ -183,11 +237,25 @@ defmodule Flezha.Convergence.Heal do
     end)
   end
 
+  # The reply is always the full `%Overwatch{}` struct — callers hand it to
+  # `Overwatch`'s own functions (the consent gate) or read its fields.
   defp overwatch_snapshot(pid) do
     case SafeCall.bounded(pid, :get_overwatch_state, @operative_call_timeout_ms) do
-      {:ok, ow} when is_map(ow) -> ow
+      {:ok, %Overwatch{} = ow} -> ow
       _ -> nil
     end
+  end
+
+  # The OTHER nodes advertising the factory, picked through the same HRW the
+  # start path uses — so repeated ticks and concurrent loops converge on one
+  # destination.
+  defp replacement_node(_namespace, nil, _operative_id), do: nil
+
+  defp replacement_node(namespace, factory_id, operative_id) do
+    namespace
+    |> Directory.factory_nodes(factory_id)
+    |> List.delete(node())
+    |> OperativeManager.pick_runner(operative_id)
   end
 
   defp emit_reconnected(namespace, operative_id, prev, target) do

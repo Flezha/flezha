@@ -32,7 +32,7 @@
 - **HubManager wiring**: `Flezha.Service.HubManager.process_hub/1`
   passes `registry_backend: {:durable_ets, [path: ...]}` and
   `auto_recovery: [reconcile_grace_ms:, reconcile_interval_ms:,
-  stopped_row_ttl_ms:]` (from `auto_recovery_config/0`) to every
+  remote_manifest:]` (from `auto_recovery_config/0`) to every
   `ProcessHub.child_spec/1`. After each `start_hub/1` it calls
   `Flezha.Boot.RecoveryHooks.register/1`, which forwards four hooks to
   telemetry: `pre_recovery_replay`, `post_recovery_replay`,
@@ -42,15 +42,13 @@
   `hub_manager_test`'s `auto_recovery_config/0` case round-trips the
   config through the real `Recovery.parse_config/1` for exactly that
   reason — it catches both an unread key and an out-of-range value.
-- **GOTCHA — `ProcessRegistry.dump/1` INCLUDES stopped rows.** A
-  deliberate stop now marks the row `:stopped` (surviving the stopping
-  node's absence) instead of deleting it, and the row lives
-  `stopped_row_ttl_ms` = **30 days**. Every reader meaning "what should
-  be running" goes through `HubManager.live_registry_dump/1`
-  (`dump_all(include_unbound: false, include_stopped: false)`) — `flz
-  operative list`, convergence's intent-mismatch check, the durable
-  counts. Using bare `dump/1` there resurrects an operative the
-  operator stopped.
+- **Superseded by `durable-operator-intent`**: stopped rows and their
+  TTL are gone — a deliberate stop deletes the registry row and removes
+  the entry from the hub's declared set, which is what now survives the
+  stopping node's absence (forever, no window). Readers meaning "what
+  should be running" go through `HubManager.declared_operatives/1`;
+  readers meaning "what is running with a live binding" go through
+  `HubManager.live_registry_dump/1`.
 - **GOTCHA — two loops now start operatives.** The reconcile starts
   orphans AND `Convergence.Loop` binds/rebinds on its own 5 s tick;
   neither is gated on the other. `reconcile_duplicate` telemetry is the
@@ -81,9 +79,11 @@
   was deleted (the persistent registry covers durability).
 - **Runtime config knobs**: `FLEZHA_PROCESS_HUB_RECONCILE_GRACE_MS`
   (45 s), `FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS` (30 s),
-  `FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS` (30 d),
   `FLEZHA_AUTO_RESTORE_ENABLED` (default `true`; `false` disables the
   reconcile entirely and reverts to in-memory `:ets`).
+  `FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS` was removed with the
+  tombstone model (`durable-operator-intent`); a deployment setting it
+  keeps booting, the value is simply no longer read.
 - **Removed by `consume-recovery-mode-and-self-heal`**:
   `Flezha.Boot.WalTransfer`; `:pre_replay_fleet_wait_ms` config key;
   `Flezha.Reconciler.{Loop, Actions, Health, Probe, Activity, Leader}`

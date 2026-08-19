@@ -7,6 +7,7 @@ defmodule Flezha.Convergence.Probe do
   `Intent.declared/0`.
   """
 
+  alias Flezha.Cluster.Directory
   alias Flezha.Convergence.{SafeCall, Snapshot}
   alias Flezha.Runner.FleetManager
   alias Flezha.Plugin.Extension.Table
@@ -18,9 +19,14 @@ defmodule Flezha.Convergence.Probe do
   # operative's plugins are probed in series, so allow for a few wedged ones.
   @health_probe_budget_ms Flezha.Plugin.ProviderBehaviour.probe_budget_ms() * 3
 
+  @type placement :: %{
+          {binary(), binary()} => %{local: [binary()] | :unknown, remote_nodes: [node()]}
+        }
+
   @type reality :: %{
           operatives: %{{binary(), binary()} => map()},
           active_runners: %{binary() => MapSet.t() | :unknown},
+          placement: placement(),
           recovery: %{atom() => atom()},
           tick_at: integer()
         }
@@ -30,10 +36,12 @@ defmodule Flezha.Convergence.Probe do
   @spec snapshot() :: reality()
   def snapshot() do
     namespaces = running_namespaces()
+    operatives = operatives(namespaces)
 
     %{
-      operatives: operatives(namespaces),
+      operatives: operatives,
       active_runners: active_runners(namespaces),
+      placement: placement(operatives),
       recovery: Snapshot.recovery_states(),
       tick_at: System.monotonic_time(:millisecond)
     }
@@ -126,6 +134,35 @@ defmodule Flezha.Convergence.Probe do
     _ -> %{}
   catch
     _, _ -> %{}
+  end
+
+  # For every observed `{namespace, factory}` pair: this node's runners
+  # advertising the factory, and the OTHER nodes whose fleets do. The facts
+  # that turn a doomed local rebind into a re-place op. A failed local read is
+  # `:unknown`, never `[]` — the Diff must not move an operative off a node on
+  # the strength of a read that failed.
+  defp placement(operatives) do
+    operatives
+    |> Enum.flat_map(fn {{ns, _rid}, observed} ->
+      case Map.get(observed, :factory_id) do
+        factory when is_binary(factory) -> [{ns, factory}]
+        _ -> []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.into(%{}, fn {ns, factory} ->
+      {{ns, factory},
+       %{
+         local: local_factory_runners(ns, factory),
+         remote_nodes: List.delete(Directory.factory_nodes(ns, factory), node())
+       }}
+    end)
+  end
+
+  defp local_factory_runners(namespace, factory) do
+    FleetManager.runners_for_factory(namespace, factory)
+  catch
+    :exit, _ -> :unknown
   end
 
   # On a failed FleetManager read we record `:unknown`, NOT an empty set:

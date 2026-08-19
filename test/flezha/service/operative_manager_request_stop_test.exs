@@ -7,8 +7,9 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   `start_operative/2` (the entity-quota leak fix).
 
   A minimal stub stands in for the Overwatch GenServer: it answers
-  `:get_overwatch_state` (kind / runner / entity count) and `:stop_operative`,
-  and notifies the test when the hard stop is driven.
+  `:get_overwatch_state` (kind / runner / entity count). The hard stop itself
+  rides `ProcessHub.stop_children` (the hub stop path removes the declared
+  entry before the child terminates), stubbed here at the ProcessHub seam.
   """
 
   use ExUnit.Case, async: false
@@ -39,6 +40,21 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
   end
 
   defp start_stub(state_reply), do: StubOverwatch.start_link(state_reply, self())
+
+  # The hub stop seam: `do_stop_operative` pipes `ProcessHub.stop_children`
+  # into `Future.await`; stub both ends and signal the test.
+  defp stub_hub_stop(test_pid, proc_id) do
+    ProcessHub
+    |> stub(:stop_children, fn _hub_id, [^proc_id], _opts ->
+      send(test_pid, {:hub_stop, proc_id})
+      {:awaitable, proc_id}
+    end)
+
+    ProcessHub.Future
+    |> stub(:await, fn {:awaitable, ^proc_id} ->
+      %ProcessHub.StopResult{status: :ok, stopped: [{proc_id, [node()]}], errors: []}
+    end)
+  end
 
   defp unique_id, do: "op-#{System.unique_integer([:positive])}"
 
@@ -71,6 +87,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
     Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
+    stub_hub_stop(test_pid, proc_id)
 
     ControlUnit
     |> stub(:workflow_stop, fn _e, _o ->
@@ -79,7 +96,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     end)
 
     assert :ok = OperativeManager.request_stop(@namespace, proc_id)
-    assert_receive {:stop_operative_received, ^stub}, 500
+    assert_receive {:hub_stop, ^proc_id}, 500
     refute_received {:workflow_stop_called, _}
   end
 
@@ -91,6 +108,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
+    stub_hub_stop(test_pid, proc_id)
 
     Quotas
     |> stub(:record_deallocation, fn @namespace, kind, n ->
@@ -113,6 +131,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
 
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
+    stub_hub_stop(test_pid, proc_id)
 
     Quotas
     |> stub(:record_deallocation, fn @namespace, kind, n ->
@@ -135,6 +154,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
     Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
+    stub_hub_stop(self(), proc_id)
 
     # Simulate what `handle_workflow_completed` wrote before teardown: a completion
     # record + retained Entity state.
@@ -166,6 +186,7 @@ defmodule FlezhaTest.Service.OperativeManagerRequestStopTest do
     HubManager |> stub(:get_pid, fn @namespace, ^proc_id -> {:ok, stub} end)
     PluginManager |> stub(:disable_operative_plugins, fn @namespace, ^proc_id -> :ok end)
     Quotas |> stub(:record_deallocation, fn _ns, _kind, _n -> :ok end)
+    stub_hub_stop(self(), proc_id)
 
     wal = Registry.wal_path({proc_id, "op0", "seg"})
     File.mkdir_p!(Path.dirname(wal))
@@ -190,10 +211,4 @@ defmodule StubOverwatch do
   @impl true
   def handle_call(:get_overwatch_state, _from, {state_reply, _notify} = s),
     do: {:reply, state_reply, s}
-
-  @impl true
-  def handle_call(:stop_operative, _from, {_state_reply, notify} = s) do
-    if notify, do: send(notify, {:stop_operative_received, self()})
-    {:reply, :ok, s}
-  end
 end

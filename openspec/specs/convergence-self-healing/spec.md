@@ -366,3 +366,51 @@ Every path that starts or binds an operative — the ProcessHub orphan reconcile
 #### Scenario: Quiet rounds are free
 - **WHEN** a reconcile round completes with `started = 0`
 - **THEN** no extra tick is triggered and the Loop's cadence is unchanged
+
+### Requirement: Rebind is node-placement-aware with cross-node re-placement
+
+The heal/rebind path SHALL only bind an operative to a runner reachable from
+the node hosting that operative's Overwatch, and every rebind path SHALL pick
+its target through the same factory-filtered placement function as the start
+path. An operative whose node has no eligible runner SHALL be re-placed onto a
+node whose fleet has one — through the existing drain/handover machinery with
+state transfer — rather than left permanently degraded retrying a doomed local
+bind.
+
+#### Scenario: No local runner triggers re-placement, not a stuck bind
+
+- **WHEN** an operative's Overwatch is on a node whose local fleet has no
+  runner advertising its factory, while another node's fleet does
+- **THEN** convergence re-places the operative onto that node with its durable
+  state intact, instead of retrying a local rebind forever
+
+#### Scenario: No eligible fleet anywhere degrades loudly, without churn
+
+- **WHEN** no node in the cluster has a runner advertising the operative's
+  factory
+- **THEN** the operative stays visibly degraded under backoff and no
+  re-placement churn is generated
+
+### Requirement: Registry rebinds commit only on a confirmed migrate
+
+Every rebind path SHALL commit the registry binding only after the operative
+confirms the migrate — the heal rebind and the runner-disconnect reroute
+alike. A failed, timed-out, or
+unconfirmable migrate SHALL leave the binding unchanged so frames continue to
+route to the operative's current runner, and the operative SHALL remain
+eligible for the next convergence tick.
+
+#### Scenario: Timed-out migrate does not switch the registry
+
+- **WHEN** a `runner_migrate` call times out or returns an error
+- **THEN** the durable registry binding is not switched to the new runner, and
+  the operative remains routable on its current runner until a migrate
+  succeeds
+
+#### Scenario: Reroute picks by placement, not at random
+
+- **WHEN** a runner disconnects and its operatives are rerouted to the
+  remaining fleet
+- **THEN** each replacement target is chosen by the factory-filtered placement
+  function, and no operative is bound to a runner that does not advertise its
+  factory

@@ -318,6 +318,7 @@ config :flezha,
       case System.get_env("FLEZHA_DURABILITY_BACKEND", "none") |> String.downcase() do
         "postgres" -> :postgres
         "s3" -> :s3
+        "local_path" -> :local_path
         _ -> :none
       end,
     # Backstop for entities that reach no compaction / checkpoint / commit
@@ -362,7 +363,11 @@ config :flezha,
       region: System.get_env("FLEZHA_DURABILITY_S3_REGION", "us-east-1"),
       access_key_id: System.get_env("FLEZHA_DURABILITY_S3_ACCESS_KEY_ID"),
       secret_access_key_env: System.get_env("FLEZHA_DURABILITY_S3_SECRET_ENV"),
-      prefix: System.get_env("FLEZHA_DURABILITY_S3_PREFIX", "flezha")
+      prefix: System.get_env("FLEZHA_DURABILITY_S3_PREFIX", "flezha"),
+      # LocalPath backend: a directory that must outlive the cluster's own
+      # disks (NFS mount, externally provisioned volume) — a node-local path
+      # shares the fate the tier exists to survive.
+      path: System.get_env("FLEZHA_DURABILITY_PATH")
     ]
   ],
   # ------------------------------------------------------------------------------------------------
@@ -523,12 +528,6 @@ if config_env() != :test do
       |> String.to_integer(),
     process_hub_reconcile_interval_ms:
       System.get_env("FLEZHA_PROCESS_HUB_RECONCILE_INTERVAL_MS", "30000")
-      |> String.to_integer(),
-    # A deliberately stopped operative keeps its durable row this long, so a
-    # stop survives a node's absence instead of being resurrected by a peer.
-    # 30 days — an operative stopped before a long weekend must not come back.
-    process_hub_stopped_row_ttl_ms:
-      System.get_env("FLEZHA_PROCESS_HUB_STOPPED_ROW_TTL_MS", "2592000000")
       |> String.to_integer(),
     boot_replay_timeout_ms:
       System.get_env("FLEZHA_BOOT_REPLAY_TIMEOUT_MS", "60000") |> String.to_integer(),

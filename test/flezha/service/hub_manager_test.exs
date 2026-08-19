@@ -299,9 +299,10 @@ defmodule Flezha.Service.HubManagerTest do
         assert parsed.reconcile_grace_ms == Keyword.fetch!(config, :reconcile_grace_ms)
         assert parsed.reconcile_interval_ms == Keyword.fetch!(config, :reconcile_interval_ms)
 
-        # A deliberately stopped operative must stay stopped across a long
-        # weekend, not be resurrected by the reconcile 24 h later.
-        assert parsed.stopped_row_ttl_ms == :timer.hours(24 * 30)
+        # No durability tier configured here, so the declared set stays
+        # local-only: the parsed config must carry an explicit nil, not a
+        # missing key upstream would warn about.
+        assert parsed.remote_manifest == nil
 
         # The grace holds the hub in `:recovering`, which gates the boot
         # path — it must clear the runner handshake window, not the other
@@ -310,6 +311,36 @@ defmodule Flezha.Service.HubManagerTest do
                  parsed.reconcile_grace_ms >= 30_000
       after
         Application.put_env(:flezha, :auto_restore_enabled, previous)
+      end
+    end
+
+    test "with the durability tier enabled the declared set ships through it" do
+      previous_restore = Application.get_env(:flezha, :auto_restore_enabled)
+      previous_tier = Application.get_env(:flezha, :durability_tier)
+      Application.put_env(:flezha, :auto_restore_enabled, true)
+
+      Application.put_env(:flezha, :durability_tier,
+        backend: :local_path,
+        backend_opts: [path: System.tmp_dir!()]
+      )
+
+      try do
+        config = HubManager.auto_recovery_config()
+
+        assert {:ok, parsed} = ProcessHub.Service.Recovery.parse_config(config)
+
+        assert parsed.remote_manifest ==
+                 {Flezha.State.DurabilityTier.DeclaredManifest, []}
+
+        # The adapter must also pass the hub's start-time validation, or the
+        # tier being on would fail every namespace hub start.
+        assert :ok = ProcessHub.Storage.RemoteManifest.validate(parsed.remote_manifest)
+      after
+        Application.put_env(:flezha, :auto_restore_enabled, previous_restore)
+
+        if previous_tier,
+          do: Application.put_env(:flezha, :durability_tier, previous_tier),
+          else: Application.delete_env(:flezha, :durability_tier)
       end
     end
 

@@ -7,6 +7,7 @@ defmodule Flezha.Service.HubManager do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.RegistryUpdate
   alias Flezha.State.DurabilityTier
+  alias ProcessHub.Service.DeclaredChildren
 
   require Logger
 
@@ -305,10 +306,10 @@ defmodule Flezha.Service.HubManager do
     end)
   end
 
-  # A deliberately stopped operative keeps a durable row until its TTL expires,
-  # so `dump/1`'s default would report it as intent. Every caller here means
-  # "what should be running", and resurrecting a stopped operative is exactly
-  # what that would cause.
+  # Every caller here means "what is currently running with a live binding":
+  # unbound rows are replay residue, not runtime. Declared intent is a
+  # different question — `declared_operatives/1` answers that from the hub's
+  # declared set.
   defp live_registry_dump(hub_id) do
     ProcessRegistry.dump_all(hub_id, include_unbound: false, include_stopped: false)
   end
@@ -339,10 +340,10 @@ defmodule Flezha.Service.HubManager do
   Returns `nil` when no live pid remains.
 
   This centralises the multi-node-safe access that replaced the former
-  single-element `[{_node, pid}]` matches in `get_all_operatives/1`,
-  `runner_switch/3`, and `Flezha.Runner.FleetManager.runner_reroute/4` —
-  any of which raised `FunctionClauseError` the moment a operative was registered on
-  more than one node.
+  single-element `[{_node, pid}]` matches in `get_all_operatives/1` and
+  `Flezha.Runner.FleetManager.runner_reroute/4` — either of which raised
+  `FunctionClauseError` the moment a operative was registered on more than
+  one node.
   """
   @spec live_pid([{node(), pid()}]) :: pid() | nil
   def live_pid(node_pids) when is_list(node_pids) do
@@ -527,22 +528,6 @@ defmodule Flezha.Service.HubManager do
     hub_id = Identificator.hub(namespace)
 
     ProcessHub.tag_query(hub_id, runner_id)
-  end
-
-  def runner_switch(namespace, old_runner_id, new_runner_id) do
-    hub_id = Identificator.hub(namespace)
-
-    # Updates the runner id in the registry. Only the operative_id is needed here,
-    # so accept any node_pids arity (a multi-node operative must not crash this).
-    runner_operatives(namespace, old_runner_id)
-    |> Enum.each(fn {operative_id, _node_pids} ->
-      operative_set_runner(namespace, operative_id, new_runner_id)
-    end)
-
-    # Propagate the change to all nodes in the namespace.
-    hub_id
-    |> ProcessHub.Coordinator.get_hub()
-    |> ProcessHub.Service.Synchronizer.trigger_sync()
   end
 
   def operative_set_runner(namespace, operative_id, runner_id) do
@@ -909,16 +894,14 @@ defmodule Flezha.Service.HubManager do
     # the kill-switch), there is no point persisting the registry to
     # disk — the DETS file would only become test-isolation noise. ETS
     # gives us identical in-memory semantics with no on-disk residue.
-    case Application.get_env(:flezha, :auto_restore_enabled, true) do
-      false ->
-        :ets
-
-      _ ->
-        # `:durable_ets` serves reads from ETS and mirrors writes to disk
-        # synchronously, so the reconcile's per-round registry reads stay
-        # in-memory while the file remains the record a cold cluster
-        # recovers from. Same on-disk format as `:dets`.
-        {:durable_ets, [path: registry_path(hub_id)]}
+    if durable_starts?() do
+      # `:durable_ets` serves reads from ETS and mirrors writes to disk
+      # synchronously, so the reconcile's per-round registry reads stay
+      # in-memory while the file remains the record a cold cluster
+      # recovers from. Same on-disk format as `:dets`.
+      {:durable_ets, [path: registry_path(hub_id)]}
+    else
+      :ets
     end
   end
 
@@ -963,10 +946,7 @@ defmodule Flezha.Service.HubManager do
   """
   @spec durable_registry_pending?() :: boolean()
   def durable_registry_pending?() do
-    # Kill-switch semantics: only an explicit `false` disables auto-restore.
-    # Reading it as a strict boolean would crash the convergence Loop tick on
-    # a non-boolean value; `!= false` keeps the default-on behaviour robust.
-    Application.get_env(:flezha, :auto_restore_enabled, true) != false and
+    durable_starts?() and
       (running_hub_operatives_unbound?() or unstarted_hub_has_registry?())
   end
 
@@ -985,6 +965,44 @@ defmodule Flezha.Service.HubManager do
     map_size(live_registry_dump(hub_id))
   catch
     :exit, _ -> 0
+  end
+
+  @doc """
+  Whether operative starts declare durable intent — `durable: true` through
+  the hub's declared set. THE auto-restore kill-switch predicate: the start
+  authority, the hub's `auto_recovery` config, the registry backend, and the
+  pending-restore health read all flip on it together — a hub without
+  auto-recovery refuses durable starts, so they cannot diverge.
+
+  Only an explicit `false` disables. Reading it as a strict boolean would
+  crash callers on a non-boolean value; `!= false` keeps the default-on
+  behaviour robust.
+  """
+  @spec durable_starts?() :: boolean()
+  def durable_starts?() do
+    Application.get_env(:flezha, :auto_restore_enabled, true) != false
+  end
+
+  @doc """
+  The namespace's declared operatives, read from the hub's declared set:
+  intent, not runtime. An entry exists here for exactly as long as the
+  operative should exist, whether or not anything currently runs it — a wiped
+  runtime registry does not empty this list, and a deliberate stop removes its
+  entry for good. Parsed through the same cspec start-args shapes the registry
+  readers use; an entry whose args no current clause understands still counts
+  as declared, with an unknown factory.
+  """
+  @spec declared_operatives(binary() | atom()) ::
+          [%{id: binary(), factory_id: binary() | nil}]
+  def declared_operatives(namespace) do
+    with_live_hub(namespace, [], fn hub_id ->
+      %{children: children} = DeclaredChildren.declared_children(hub_id)
+
+      Enum.map(children, fn child_spec ->
+        operative = cspec_operative(child_spec)
+        %{id: child_spec.id, factory_id: operative && Map.get(operative, :factory_id)}
+      end)
+    end)
   end
 
   @doc """
@@ -1034,24 +1052,34 @@ defmodule Flezha.Service.HubManager do
 
   @doc false
   def auto_recovery_config do
-    # Orphan reconcile: each round starts the difference between this node's
-    # durable registry and what the cluster is observed to hold. The grace is
+    # Orphan reconcile: each round converges the cluster toward the hub's
+    # declared set — starting declared children observed running nowhere,
+    # stopping running durable children whose entry was removed. The grace is
     # also what holds the hub in `:recovering`, so it gates `RecoveryGate` and
     # `BootLoader.await_namespace_hubs` — it is set long enough for runners to
     # finish their handshake, since an orphan start needs one to place against.
-    case Application.get_env(:flezha, :auto_restore_enabled, true) do
-      false ->
-        false
+    if durable_starts?() do
+      [
+        reconcile_grace_ms: Application.get_env(:flezha, :process_hub_reconcile_grace_ms, 45_000),
+        reconcile_interval_ms:
+          Application.get_env(:flezha, :process_hub_reconcile_interval_ms, 30_000),
+        remote_manifest: remote_manifest_config()
+      ]
+    else
+      false
+    end
+  end
 
-      _ ->
-        [
-          reconcile_grace_ms:
-            Application.get_env(:flezha, :process_hub_reconcile_grace_ms, 45_000),
-          reconcile_interval_ms:
-            Application.get_env(:flezha, :process_hub_reconcile_interval_ms, 30_000),
-          stopped_row_ttl_ms:
-            Application.get_env(:flezha, :process_hub_stopped_row_ttl_ms, :timer.hours(24 * 30))
-        ]
+  # The declared set's off-cluster copy rides the durability tier the operator
+  # already configured — one remote-storage path, every tier backend
+  # (`:postgres`, `:s3`, `:local_path`, custom) works unchanged. No tier, no
+  # remote copy: `nil` keeps the feature local-only, exactly as before the
+  # tier existed.
+  defp remote_manifest_config do
+    if DurabilityTier.enabled?() do
+      {Flezha.State.DurabilityTier.DeclaredManifest, []}
+    else
+      nil
     end
   end
 end

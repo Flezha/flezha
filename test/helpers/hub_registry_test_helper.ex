@@ -24,6 +24,11 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
     # Stands in for an Overwatch, which absorbs the binding re-assert nudge.
     @impl true
     def handle_info(_msg, state), do: {:noreply, state}
+
+    # Overwatch verbs (`:get_overwatch_state`, quota reads) probed by the stop
+    # path must not kill the stub — answer as an unreadable operative instead.
+    @impl true
+    def handle_call(_msg, _from, state), do: {:reply, {:error, :stub}, state}
   end
 
   # `start_args/1`'s two-element clause yields a nil recorded runner, and
@@ -71,4 +76,49 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   """
   def inject_operative(ns, operative_id),
     do: inject_operative(ns, operative_id, [{node(), spawn(fn -> Process.sleep(:infinity) end)}])
+
+  @doc """
+  Seed a synthetic active runner — its fleet entry, factory advertisement, and
+  control-unit registration — so placement hands out its id without a live
+  SDK. The caller owns FleetManager state restoration (snapshot +
+  `:sys.replace_state` on exit).
+  """
+  def seed_runner(ns, runner_id, factory_id) do
+    :sys.replace_state(Flezha.Runner.FleetManager, fn state ->
+      state
+      |> put_in(
+        [:runner_namespaces, ns],
+        %{runner_id => {:active, System.system_time(:millisecond)}}
+      )
+      |> put_in(
+        [:namespace_factories, ns],
+        %{factory_id => %{description: nil, ce_ids: MapSet.new([runner_id])}}
+      )
+    end)
+
+    register_control_unit(runner_id)
+  end
+
+  # `runner_registered?/1` gates on the CU registration, so a synthetic runner
+  # needs one before placement will hand out its id. Unlinked: on_exit kills
+  # it, and a kill must not propagate into ExUnit.
+  defp register_control_unit(runner_id) do
+    owner = self()
+
+    {:ok, cu} =
+      Task.start(fn ->
+        {:ok, _} = Registry.register(Identificator, "#{runner_id}_cu", nil)
+        send(owner, {:cu_registered, runner_id})
+        Process.sleep(:infinity)
+      end)
+
+    receive do
+      {:cu_registered, ^runner_id} -> :ok
+    after
+      1_000 -> raise "control unit for #{runner_id} did not register"
+    end
+
+    ExUnit.Callbacks.on_exit(fn -> Process.exit(cu, :kill) end)
+    :ok
+  end
 end
