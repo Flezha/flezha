@@ -19,7 +19,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   import ExUnit.CaptureLog
 
   alias Flezha.State.DurabilityTier
-  alias Flezha.State.DurabilityTier.{Artifact, Manifest, Shipper}
+  alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
   alias Flezha.State.TestHelpers
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
@@ -211,6 +211,64 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     refute orphan in Stub.keys()
   end
 
+  describe "the platform stores under two writers" do
+    test "one parked set has one shipper, and the loser stops quietly", ctx do
+      ref = {:dlq, {ctx.class, "proc"}}
+      write_park(ctx.class, "parked-by-owner")
+
+      {:ok, _} = start_supervised(Shipper)
+      assert :ok = Shipper.ship_now(ref)
+      assert Stub.stored_manifest(ref).owner == this_writer()
+
+      # The operative migrates, and its parked failures move with it: the parks
+      # are claim-fenced exactly like the Entity state, so the new node bids the
+      # lineage up rather than writing beside it.
+      peer = start_peer_node(ctx.peer_base)
+
+      with_root(ctx.peer_base, fn ->
+        GenServer.cast(peer, {:adopt, ctx.class})
+        assert :ok = GenServer.call(peer, {:ship_now, ref})
+      end)
+
+      assert %{owner: @peer_writer, claim: 2} = Stub.stored_manifest(ref)
+
+      write_park(ctx.class, "parked-after-handover")
+      assert {:error, {:superseded, @peer_writer}} = Shipper.ship_now(ref)
+    end
+
+    test "two controllers' control-plane replicas never collide", ctx do
+      auth_dir = Flezha.AuthZ.Config.auth_dir()
+      File.mkdir_p!(auth_dir)
+      roles = Path.join(auth_dir, "roles.dets")
+
+      peer = start_peer_node(ctx.peer_base)
+      File.write!(roles, "peer-roles")
+      with_root(ctx.peer_base, fn -> :ok = GenServer.call(peer, :sweep_now) end)
+
+      # The replica tie-break is the writing node's wall clock, so the two ships
+      # have to land in different milliseconds for "newest" to mean anything.
+      Process.sleep(2)
+
+      {:ok, _} = start_supervised(Shipper)
+      File.write!(roles, "owner-roles")
+      :ok = Shipper.sweep_now()
+
+      own_ref = {:control, {"authz", this_writer()}}
+      peer_ref = {:control, {"authz", @peer_writer}}
+
+      # Separate keys, separate lineages: neither node is fenced out of shipping
+      # its own copy of a store the cluster never replicates.
+      assert Manifest.key(own_ref) != Manifest.key(peer_ref)
+      assert %{owner: peer_owner} = Stub.stored_manifest(peer_ref)
+      assert peer_owner == @peer_writer
+      assert Stub.stored_manifest(own_ref).owner == this_writer()
+
+      File.rm_rf!(auth_dir)
+      assert :ok = Hydrator.hydrate_control_stores()
+      assert File.read!(roles) == "owner-roles"
+    end
+  end
+
   test "two nodes holding one reference cannot overwrite each other's bytes", ctx do
     ref = {:entity, ctx.entity_id}
 
@@ -394,6 +452,16 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
   end
 
   defp this_writer(), do: to_string(node())
+
+  # The parked set as the store lays it out — an index line plus a payload blob.
+  # Written directly: the case is about who may ship the directory, not about
+  # how a park gets into it.
+  defp write_park(class, payload) do
+    dir = Flezha.Dlq.Store.proc_dir(class, "proc")
+    File.mkdir_p!(dir)
+    File.write!(Path.join(dir, "entries.jsonl"), ~s({"id":"#{payload}"}\n))
+    File.write!(Path.join(dir, "#{payload}.bin"), payload)
+  end
 
   defp status_of(ref), do: Enum.find(Shipper.status(), &(&1.ref == ref))
 

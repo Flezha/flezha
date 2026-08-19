@@ -13,7 +13,7 @@ a backend is configured, both layers below can be rehydrated from it first.)
 |---|---|---|
 | ProcessHub durable registry (operative specs incl. `opts[:plugins]`) | `app_data/process_hub/<hub_id>/registry.dets` | `Flezha.Service.HubManager` (configures `registry_backend: {:durable_ets, ...}`) |
 | Per-Entity WAL + snapshots (change-by-change progress) | `app_data/state/<operative_class>/<procedure_id>/<entity_key>.{wal,snap.N,outbox.dedup}` | `Flezha.State.Supervisor` and friends |
-| *(opt-in)* remote manifest + artifacts backing both layers above | Postgres / S3, `FLEZHA_DURABILITY_BACKEND` | `Flezha.State.DurabilityTier` (`Shipper` out, `Hydrator` back) |
+| *(unless opted out)* remote manifest + artifacts backing both layers above, plus the DLQ and the control-plane stores | Postgres / S3 / file, `FLEZHA_DURABILITY_BACKEND` | `Flezha.State.DurabilityTier` (`Shipper` out, `Hydrator` back) |
 
 The path layout is **flat in the operative_class direction** — there is
 no `runner_id` component. A runner pod restart that rotates

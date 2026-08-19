@@ -2,7 +2,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   @moduledoc """
   Rebuilds local durable files from the remote manifest, so a controller with an
   empty state directory can adopt an operative that lived on a node whose disk
-  is gone.
+  is gone — and, at boot, can come back as itself rather than as a blank cluster.
 
   Recovery reads **only** the manifest. Blobs the manifest does not name are
   invisible here whatever they are — a torn upload, a superseded range, a
@@ -20,6 +20,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   require Logger
 
+  alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.{Artifact, Backend, Manifest}
   alias Flezha.State.{InputLog, Outbox, Registry}
 
@@ -27,13 +28,12 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   Hydrate every shipped reference of `operative_class` whose local files are
   absent. Called from the bind-time restore enumeration, so a fresh controller
   binding a remote-only operative finds its Entities, proc-journal, durable
-  inbox and input log on disk by the time it enumerates them.
+  inbox, input log and parked failures on disk by the time it enumerates them.
   """
   @spec hydrate_operative(binary()) :: :ok
   def hydrate_operative(operative_class) when is_binary(operative_class) do
-    with {module, opts} <- Backend.resolve(),
-         {:ok, entries} <- module.list(Manifest.class_prefix(operative_class), opts) do
-      Enum.each(entries, fn {key, _age} -> hydrate_key(module, opts, key) end)
+    with {module, opts} <- Backend.resolve() do
+      hydrate_prefix(module, opts, Manifest.prefix(:entity, [operative_class]))
 
       # The input log is class-level, so it sits outside the per-Entity prefix
       # above and has to be asked for by name. Without it a hydrated Entity
@@ -41,6 +41,15 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
       # the next input lands at offset 0, below the floor, and is silently
       # skipped as already-consumed.
       hydrate_ref(module, opts, {:input_log, operative_class})
+
+      # Parked failures belong to the operative that produced them, so they come
+      # back with it rather than at boot: a replacement controller's `flz dlq`
+      # sees the inherited parks from the moment it binds the operative.
+      hydrate_prefix(
+        module,
+        opts,
+        Manifest.prefix(:dlq, [Dlq.Store.path_component(operative_class)])
+      )
     end
 
     :ok
@@ -75,9 +84,77 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
   and the operatives it names are never started.
   """
   @spec hydrate_cspecs() :: :ok
-  def hydrate_cspecs() do
-    with {module, opts} <- Backend.resolve(),
-         {:ok, entries} <- module.list(Manifest.cspec_prefix(), opts) do
+  def hydrate_cspecs(), do: hydrate_replicas(Manifest.prefix(:cspec))
+
+  @doc """
+  Hydrate every shipped control-plane store whose local files are absent — the
+  authz registries and the schedule definitions.
+
+  Same replica shape as the cspec: node-local stores with no cross-node
+  replication, so each controller ships its own copy and recovery takes the
+  newest.
+  """
+  @spec hydrate_control_stores() :: :ok
+  def hydrate_control_stores(), do: hydrate_replicas(Manifest.prefix(:control))
+
+  # Every controller ships its own replica of one node-local store, and they all
+  # restore to the same local path — so the choice has to be made here rather
+  # than left to listing order. The replicas are equivalent by design; newest is
+  # the tie-break that behaves best when they are not yet converged.
+  #
+  # `shipped_at_ms` is the writing node's wall clock, so skew could pick a
+  # slightly older replica. That is acceptable and not merely tolerated: the
+  # orphan reconcile heals the difference, and there is no cluster-wide
+  # monotonic source at this layer to do better.
+  defp hydrate_replicas(prefix) do
+    with {module, opts} <- Backend.resolve() do
+      hydrate_prefix(module, opts, prefix, &newest_replicas/1)
+    end
+
+    :ok
+  end
+
+  defp newest_replicas(manifests) do
+    manifests
+    |> Enum.group_by(&replica_identity(&1.ref))
+    |> Enum.map(fn {_identity, replicas} ->
+      Enum.max_by(replicas, &{&1.shipped_at_ms, writer_of(&1.ref)})
+    end)
+  end
+
+  # What the replicas of one store are replicas OF: the writer is what separates
+  # them, so it is the one part of the reference the grouping drops.
+  defp replica_identity({kind, {id, _writer}}), do: {kind, id}
+  defp writer_of({_kind, {_id, writer}}), do: writer
+
+  @doc """
+  One-shot supervision child that hydrates everything a controller needs before
+  it starts serving: the control-plane stores, then the registry cspec.
+
+  Placed ahead of `Flezha.Service.HubManager` in the application tree, where
+  returning `:ignore` from `start_link` is what makes the ordering a guarantee
+  rather than a race. Security state goes first: a resurrected controller must
+  enforce from its first accepted connection, and the one-shot bootstrap claim
+  must read already-claimed rather than being re-runnable.
+  """
+  @spec hydrate_on_boot() :: :ignore
+  def hydrate_on_boot() do
+    hydrate_control_stores()
+    hydrate_cspecs()
+    :ignore
+  rescue
+    error ->
+      Logger.error("[durability] boot hydration failed: #{inspect(error)}")
+      :ignore
+  end
+
+  # ---------- one reference ----------
+
+  # One walk over a manifest-key prefix. `select` narrows the entries found to
+  # the authoritative ones — identity for a prefix whose entries are all
+  # distinct references, newest-per-store for one whose entries are replicas.
+  defp hydrate_prefix(module, opts, prefix, select \\ & &1) do
+    with {:ok, entries} <- module.list(prefix, opts) do
       entries
       |> Enum.flat_map(fn {key, _age} ->
         case read_manifest(module, opts, key) do
@@ -85,56 +162,11 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
           :error -> []
         end
       end)
-      |> newest_per_hub()
+      |> select.()
       |> Enum.each(&apply_manifest(module, opts, &1))
     end
 
     :ok
-  end
-
-  # Every controller in a namespace ships its own replica of one gossiped
-  # registry, and they all restore to the same local path — so the choice has to
-  # be made here rather than left to listing order. The replicas are equivalent
-  # by design; newest is the tie-break that behaves best when they are not yet
-  # converged.
-  #
-  # `shipped_at_ms` is the writing node's wall clock, so skew could pick a
-  # slightly older replica. That is acceptable and not merely tolerated: the
-  # orphan reconcile heals the difference, and there is no cluster-wide
-  # monotonic source at this layer to do better.
-  defp newest_per_hub(manifests) do
-    manifests
-    |> Enum.group_by(fn %Manifest{ref: {:cspec, {hub_id, _writer}}} -> hub_id end)
-    |> Enum.map(fn {_hub_id, replicas} ->
-      Enum.max_by(replicas, fn %Manifest{ref: {:cspec, {_h, writer}}} = m ->
-        {m.shipped_at_ms, writer}
-      end)
-    end)
-  end
-
-  @doc """
-  One-shot supervision child that runs `hydrate_cspecs/0` and then gets out of
-  the way. Placed ahead of `Flezha.Service.HubManager` in the application tree,
-  where returning `:ignore` from `start_link` is what makes the ordering a
-  guarantee rather than a race.
-  """
-  @spec hydrate_cspecs_on_boot() :: :ignore
-  def hydrate_cspecs_on_boot() do
-    hydrate_cspecs()
-    :ignore
-  rescue
-    error ->
-      Logger.error("[durability] cspec hydration failed: #{inspect(error)}")
-      :ignore
-  end
-
-  # ---------- one reference ----------
-
-  defp hydrate_key(module, opts, manifest_key) do
-    case read_manifest(module, opts, manifest_key) do
-      {:ok, manifest} -> apply_manifest(module, opts, manifest)
-      :error -> :ok
-    end
   end
 
   defp read_manifest(module, opts, manifest_key) do
@@ -150,7 +182,12 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   # `apply_manifest/3` is where local-state precedence is decided, so this only
   # names the manifest to fetch.
-  defp hydrate_ref(module, opts, ref), do: hydrate_key(module, opts, Manifest.key(ref))
+  defp hydrate_ref(module, opts, ref) do
+    case read_manifest(module, opts, Manifest.key(ref)) do
+      {:ok, manifest} -> apply_manifest(module, opts, manifest)
+      :error -> :ok
+    end
+  end
 
   defp apply_manifest(module, opts, %Manifest{ref: ref} = manifest) do
     if Artifact.has_local_state?(ref) do
@@ -193,7 +230,7 @@ defmodule Flezha.State.DurabilityTier.Hydrator do
 
   defp fetch_and_write(module, opts, %Manifest{file: %{blob: blob}} = manifest) do
     with {:ok, bytes} <- fetch_artifact(module, opts, blob) do
-      Artifact.write_file(manifest.ref, bytes)
+      Artifact.unpack(manifest.ref, bytes)
     end
   end
 

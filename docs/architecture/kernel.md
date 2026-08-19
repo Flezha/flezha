@@ -294,8 +294,9 @@ is the guarantee that the inputs a correction wants to replay are still on disk.
 
 Everything above is node-local, and by default that is the whole story: a controller that dies
 **with its disk** takes its operatives' state — and the registry record of their existence —
-with it. The remote durability tier is the opt-in answer (`FLEZHA_DURABILITY_BACKEND`, default
-`none` — byte-identical to a build without the tier). It is **not** a pluggable WAL: the local
+with it. The remote durability tier is the answer, and a prod boot must choose one
+(`FLEZHA_DURABILITY_BACKEND`; unset refuses to start, explicit `none` is local-only and
+byte-identical to a build without the tier). It is **not** a pluggable WAL: the local
 write path is untouched, every ack still gates on local fsync, and the local files stay
 authoritative. What ships are **immutable artifacts**, at boundaries that already exist.
 

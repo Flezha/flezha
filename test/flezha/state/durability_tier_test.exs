@@ -14,10 +14,15 @@ defmodule Flezha.State.DurabilityTierTest do
   """
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureIO
+
+  alias Flezha.AuthZ.{AuthState, NamespaceStore, QuotaCounters, RoleStore, TokenStore}
+  alias Flezha.Dlq
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.DurabilityTier
-  alias Flezha.State.DurabilityTier.{Artifact, Manifest, Shipper}
+  alias Flezha.State.DurabilityTier.{Artifact, Hydrator, Manifest, Shipper}
   alias Flezha.State.{Outbox, Registry, TestHelpers}
+  alias FlezhaTest.Helper.AuthTestHelper
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
   setup do
@@ -48,7 +53,7 @@ defmodule Flezha.State.DurabilityTierTest do
       refute DurabilityTier.enabled?()
       assert DurabilityTier.ship({:entity, ctx.entity_id}) == :ok
       assert DurabilityTier.hydrate_operative(ctx.class) == :ok
-      assert DurabilityTier.hydrate_cspecs() == :ok
+      assert Hydrator.hydrate_cspecs() == :ok
       assert DurabilityTier.breaches() == []
       refute DurabilityTier.sync_class?(ctx.class)
       assert Shipper.status() == []
@@ -59,6 +64,49 @@ defmodule Flezha.State.DurabilityTierTest do
       refute DurabilityTier.enabled?()
       assert DurabilityTier.children() == []
       assert DurabilityTier.ship({:entity, ctx.entity_id}) == :ok
+    end
+  end
+
+  # ---------- the durability decision ----------
+
+  describe "the durability posture" do
+    test "a production boot that made no decision refuses to start" do
+      Application.put_env(:flezha, :durability_tier, backend: :unset)
+      assert DurabilityTier.unconfigured?()
+
+      {error, printed} =
+        with_io(:stderr, fn -> assert_raise RuntimeError, fn -> DurabilityTier.children() end end)
+
+      # Whoever reads this is looking at a container that will not come up, so
+      # the guidance has to be actionable without any other document — and it
+      # has to survive the BEAM's crash-report formatting, which is why it is
+      # printed as well as raised.
+      for text <- [error.message, printed] do
+        assert text =~ "FLEZHA_DURABILITY_BACKEND"
+        assert text =~ "FLEZHA_DURABILITY_BACKEND=postgres"
+        assert text =~ "FLEZHA_DURABILITY_BACKEND=none"
+      end
+    end
+
+    test "config/runtime.exs resolves an unset variable to :unset in prod and :none in dev" do
+      System.delete_env("FLEZHA_DURABILITY_BACKEND")
+
+      assert backend_from_runtime_config(:prod) == :unset
+      assert backend_from_runtime_config(:dev) == :none
+    end
+
+    test "an explicit opt-out is inert and reports the local-only posture", ctx do
+      Application.put_env(:flezha, :durability_tier, backend: :none)
+
+      refute DurabilityTier.unconfigured?()
+      assert DurabilityTier.children() == []
+      assert DurabilityTier.posture() == :local_only
+      assert DurabilityTier.ship({:entity, ctx.entity_id}) == :ok
+    end
+
+    test "a configured backend reports the remote posture" do
+      Stub.install()
+      assert DurabilityTier.posture() == :remote_tier
     end
   end
 
@@ -325,7 +373,8 @@ defmodule Flezha.State.DurabilityTierTest do
       # Derived from the store rather than constructed, so the case says nothing
       # about how a blob is named.
       referenced = Manifest.blob_keys(Stub.stored_manifest({:entity, ctx.entity_id}))
-      blobs = Enum.filter(Stub.keys(), &String.starts_with?(&1, "blob/"))
+      prefix = Manifest.blob_key({:entity, ctx.entity_id}, "")
+      blobs = Enum.filter(Stub.keys(), &String.starts_with?(&1, prefix))
       assert [orphan] = blobs -- referenced
 
       # No clock advance: this is exactly what a peer controller's in-flight
@@ -439,7 +488,7 @@ defmodule Flezha.State.DurabilityTierTest do
       assert Stub.writes() == writes, "unchanged bytes must not re-upload"
 
       File.rm!(path)
-      assert :ok = DurabilityTier.hydrate_cspecs()
+      assert :ok = Hydrator.hydrate_cspecs()
       assert File.read!(path) == "cspec-bytes"
     end
 
@@ -463,8 +512,114 @@ defmodule Flezha.State.DurabilityTierTest do
       assert Manifest.key(own_ref) in Stub.keys()
 
       File.rm!(path)
-      assert :ok = DurabilityTier.hydrate_cspecs()
+      assert :ok = Hydrator.hydrate_cspecs()
       assert File.read!(path) == "local-registry"
+    end
+  end
+
+  # ---------- platform stores ----------
+
+  describe "a controller that died with its disk" do
+    setup ctx do
+      Stub.install()
+
+      dlq_dir = Path.join(ctx.base, "dlq")
+      on_exit(TestHelpers.override_env(:dlq, dir: dlq_dir))
+
+      auth = AuthTestHelper.setup_auth_stores(prefix: "flz_dur_authz")
+      store = start_supervised!({Dlq.Store, name: :"dlq_#{System.unique_integer([:positive])}"})
+
+      start_shipper()
+      Map.merge(ctx, %{dlq_dir: dlq_dir, auth_dir: auth.auth_dir, dlq: store})
+    end
+
+    test "its operatives, its parked failures and its security state all come back", ctx do
+      TestHelpers.write_wal(ctx.entity_id, 0..3)
+      {:ok, entry_ref} = Dlq.Store.append(ctx.dlq, park(ctx, "poison-bytes"))
+      :ok = RoleStore.bind("alice", "_system", :admin)
+      {:ok, raw_token, _entry} = TokenStore.issue("alice", "_system", :admin, 3600)
+      :ok = AuthState.set_enabled()
+
+      # One sweep is the whole cut: the backstop reaches every reference this
+      # node holds, which is what an RPO window buys an operator.
+      assert :ok = Shipper.sweep_now()
+
+      # The disk dies with the controller. The stores have to be down before it
+      # goes, or DETS writes a closing image over the empty directory.
+      AuthTestHelper.stop_if_running([
+        AuthState,
+        RoleStore,
+        NamespaceStore,
+        TokenStore,
+        QuotaCounters
+      ])
+
+      TestHelpers.wipe_entity(ctx.entity_id)
+      File.rm_rf!(ctx.dlq_dir)
+      File.rm_rf!(ctx.auth_dir)
+
+      assert :ignore = Hydrator.hydrate_on_boot()
+      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+
+      assert seqs_in_wal(ctx.entity_id) == [0, 1, 2, 3]
+      assert [%{"id" => _}] = Dlq.Store.list(ctx.dlq, ctx.class)
+      assert {:ok, _entry, "poison-bytes"} = Dlq.Store.get(ctx.dlq, entry_ref)
+
+      {:ok, _} = RoleStore.start_link([])
+      {:ok, _} = TokenStore.start_link([])
+      {:ok, _} = AuthState.start_link([])
+
+      assert RoleStore.admin_system_exists?(), "bootstrap must read already-claimed"
+      assert AuthState.enabled?()
+      assert {:ok, %{principal: "alice", role: :admin}} = TokenStore.verify(raw_token)
+    end
+
+    test "the bootstrap secret never reaches the backend", ctx do
+      token_path = Path.join(ctx.auth_dir, "bootstrap.token")
+      File.write!(token_path, "SECRET")
+      :ok = RoleStore.bind("alice", "_system", :admin)
+
+      # What leaves the node is exactly the named store files: the shipped set is
+      # a list, not a scan of the directory the secret happens to sit in.
+      {:ok, packed} = Artifact.pack({:control, {"authz", DurabilityTier.writer_id()}})
+      files = :erlang.binary_to_term(packed)
+
+      assert Map.has_key?(files, "roles.dets")
+      refute Map.has_key?(files, "bootstrap.token")
+
+      assert :ok = Shipper.sweep_now()
+      File.rm_rf!(ctx.auth_dir)
+      assert :ok = Hydrator.hydrate_control_stores()
+
+      assert File.exists?(Path.join(ctx.auth_dir, "roles.dets"))
+      refute File.exists?(token_path)
+    end
+
+    test "a resolved park is removed remotely, not resurrected", ctx do
+      {:ok, entry_ref} = Dlq.Store.append(ctx.dlq, park(ctx, "poison-bytes"))
+      assert :ok = Shipper.sweep_now()
+
+      :ok = Dlq.Store.drop(ctx.dlq, entry_ref)
+      assert :ok = Shipper.sweep_now()
+
+      File.rm_rf!(ctx.dlq_dir)
+      assert :ok = DurabilityTier.hydrate_operative(ctx.class)
+
+      assert Dlq.Store.list(ctx.dlq, ctx.class) == [],
+             "the artifact is the whole directory, so a drop must reach the backend too"
+    end
+
+    test "schedule definitions ride the same replica shape", ctx do
+      dir = Path.join(ctx.base, "schedules")
+      on_exit(TestHelpers.override_env(:schedules, dir: dir, application_managed: false))
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "schedules.dets"), "cron-defs")
+
+      assert :ok = Shipper.sweep_now()
+
+      File.rm_rf!(dir)
+      assert :ok = Hydrator.hydrate_control_stores()
+      assert File.read!(Path.join(dir, "schedules.dets")) == "cron-defs"
     end
   end
 
@@ -513,6 +668,28 @@ defmodule Flezha.State.DurabilityTierTest do
   defp start_shipper() do
     {:ok, _pid} = start_supervised(Shipper)
     :ok = Shipper.sweep_now()
+  end
+
+  defp park(ctx, payload) do
+    %{
+      operative_class: ctx.class,
+      procedure_id: "proc",
+      entity_key: "k1",
+      channel: "input",
+      origin_offset: nil,
+      error: "boom",
+      attempts: 3,
+      payload: payload,
+      park_id: "park-1"
+    }
+  end
+
+  # Evaluates the real `config/runtime.exs` for one environment, which is the
+  # only way to pin the prod-vs-dev half of the decision: the refusal itself is
+  # `children/0`'s, but what reaches it comes from here.
+  defp backend_from_runtime_config(env) do
+    Config.Reader.read!("config/runtime.exs", env: env, target: :host)
+    |> get_in([:flezha, :durability_tier, :backend])
   end
 
   defp local_only_record(), do: TestHelpers.build_wal_record(99, "local-only")

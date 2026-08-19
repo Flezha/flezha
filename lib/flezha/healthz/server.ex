@@ -38,6 +38,11 @@ defmodule Flezha.Healthz.Server do
     * `GET /` — `pong\\n` (cheap probe target).
     * Anything else → `404 / 405 / 400`.
 
+  Every response also carries `durability`: `remote_tier` when a durability
+  backend is configured, `local_only` when this node's disk is the only copy of
+  its durable state. It never changes the verdict — local-only is a supported
+  posture — but a fleet audit has to be able to find it.
+
   Gated by `:healthz_enabled` (default `false`); when off the
   application supervisor omits this child entirely.
   """
@@ -121,9 +126,20 @@ defmodule Flezha.Healthz.Server do
 
   defp route(socket, :bad), do: Listener.send_response(socket, 400, "text/plain", "bad request\n")
 
+  # `compute_health/0` decides the verdict and the fields that explain it; the
+  # facts every response carries whatever the verdict are merged in here, so a
+  # branch cannot forget one. `durability` names the posture rather than the
+  # backend: `local_only` is a supported choice, and one an operator must be
+  # able to find across a fleet without inspecting each node's configuration.
   defp respond_healthz(socket) do
     {status, body} = compute_health()
     code = if status == :unhealthy, do: 503, else: 200
+
+    body =
+      body
+      |> Map.put(:durability, to_string(Flezha.State.DurabilityTier.posture()))
+      |> Jason.encode!()
+
     Listener.send_response(socket, code, "application/json", body)
   end
 
@@ -152,18 +168,18 @@ defmodule Flezha.Healthz.Server do
     cond do
       any_recovering?(recovery_states) ->
         {:recovering,
-         encode_json(%{
+         %{
            status: "recovering",
            recovery_state: pick_recovery_state(recovery_states)
-         })}
+         }}
 
       loop_hard_wedged?(last_tick_at) ->
         {:unhealthy,
-         encode_json(%{
+         %{
            status: "unhealthy",
            reason: "tick_stale",
            tick_age_ms: tick_age(last_tick_at)
-         })}
+         }}
 
       # The controller's own driver thread is wedged and has stayed wedged.
       # Ranked with `tick_stale`, above every degraded case: a heal issued from
@@ -173,12 +189,12 @@ defmodule Flezha.Healthz.Server do
         {:fabric, layer, polls} = data_plane
 
         {:unhealthy,
-         encode_json(%{
+         %{
            status: "unhealthy",
            reason: "data_plane_fabric_wedged",
            layer: to_string(layer),
            polls: polls
-         })}
+         }}
 
       loop_tick_gapped?(last_tick_at) ->
         # One large tick gap means the whole BEAM was suspended (host
@@ -186,34 +202,34 @@ defmodule Flezha.Healthz.Server do
         # wedged. Report recovering so kubelet does not restart during a planned
         # wake; this escalates to 503 only once the gap exceeds the hard bound.
         {:recovering,
-         encode_json(%{
+         %{
            status: "recovering",
            reason: "tick_resuming",
            tick_age_ms: tick_age(last_tick_at)
-         })}
+         }}
 
       bound < intended ->
         # Declared but not all bound: recovering within the grace, degraded
         # past it. Always 200 — a restart can't re-bind a runner-orphaned operative.
         if is_integer(unmet_intent_ms) and unmet_intent_ms > unmet_intent_grace_ms() do
           {:degraded,
-           encode_json(%{
+           %{
              status: "degraded",
              reason: "operatives_unbound",
              intended_operatives: intended,
              bound_operatives: bound,
              producing_operatives: producing,
              unmet_intent_ms: unmet_intent_ms
-           })}
+           }}
         else
           {:recovering,
-           encode_json(%{
+           %{
              status: "recovering",
              reason: "operatives_rebinding",
              intended_operatives: intended,
              bound_operatives: bound,
              producing_operatives: producing
-           })}
+           }}
         end
 
       pending_restore ->
@@ -224,13 +240,13 @@ defmodule Flezha.Healthz.Server do
         # (0 < 0 is false), so without this the system reports vacuously
         # `healthy`. Recovering, never healthy, until the registry is loaded.
         {:recovering,
-         encode_json(%{
+         %{
            status: "recovering",
            reason: "restoring_registry",
            intended_operatives: intended,
            bound_operatives: bound,
            producing_operatives: producing
-         })}
+         }}
 
       # A remote-durability RPO breach is degraded, never 503: local durability
       # is intact and a kubelet restart cannot reach the backend that is not
@@ -239,20 +255,20 @@ defmodule Flezha.Healthz.Server do
       # prevent.
       rpo_breaches != [] ->
         {:degraded,
-         encode_json(%{
+         %{
            status: "degraded",
            reason: "durability_rpo_exceeded",
            rpo_breached_refs: length(rpo_breaches),
            bound_operatives: bound,
            producing_operatives: producing
-         })}
+         }}
 
       # Never 503 on intent mismatch or a dead sensor: the data plane may be
       # legitimately stopped, and a kubelet restart repairs neither missing
       # intent nor a supervisor-restartable sensor.
       producing < bound or degraded != [] ->
         {:degraded,
-         encode_json(%{
+         %{
            status: "degraded",
            reason: degraded_reason(degraded),
            tick_age_ms: tick_age(last_tick_at),
@@ -264,16 +280,16 @@ defmodule Flezha.Healthz.Server do
            intent_mismatch: mismatch,
            stale_sensors: stale_sensors,
            data_plane_layer: pipeline_layer(data_plane)
-         })}
+         }}
 
       true ->
         {:healthy,
-         encode_json(%{
+         %{
            status: "healthy",
            tick_age_ms: tick_age(last_tick_at),
            bound_operatives: bound,
            producing_operatives: producing
-         })}
+         }}
     end
   end
 
@@ -373,6 +389,4 @@ defmodule Flezha.Healthz.Server do
   defp tick_age(last_tick_at), do: now_ms() - last_tick_at
 
   defp now_ms(), do: System.monotonic_time(:millisecond)
-
-  defp encode_json(map), do: Jason.encode!(map)
 end

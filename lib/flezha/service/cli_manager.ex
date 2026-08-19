@@ -2535,6 +2535,7 @@ defmodule Flezha.Service.CliManager do
         IO.puts("graceful_shutdown_enabled:     #{status.graceful_shutdown_enabled}")
         IO.puts("graceful_shutdown_timeout_ms:  #{status.graceful_shutdown_timeout_ms}")
         IO.puts("durability_backend:            #{status.durability_backend}")
+        IO.puts("durability_posture:            #{status.durability_posture}")
         IO.puts("durability_rpo_breaches:       #{status.durability_rpo_breaches}")
         IO.puts("durability_superseded:         #{status.durability_superseded}")
     end
@@ -2551,11 +2552,12 @@ defmodule Flezha.Service.CliManager do
   # but a count that keeps climbing on a node that should still own its
   # operatives is how a placement problem shows up here.
   defp durability_status() do
-    backend =
-      Application.get_env(:flezha, :durability_tier, []) |> Keyword.get(:backend, :none)
-
     %{
-      durability_backend: backend,
+      durability_backend: Flezha.State.DurabilityTier.configured_backend(),
+      # `local_only` is a supported posture, not a misconfiguration — but it is
+      # one a fleet audit has to be able to find, so it is reported rather than
+      # left to be inferred from the backend name.
+      durability_posture: Flezha.State.DurabilityTier.posture(),
       durability_rpo_breaches: length(Flezha.State.DurabilityTier.breaches()),
       durability_superseded:
         Enum.count(Flezha.State.DurabilityTier.status(), &(&1.superseded_by != nil))

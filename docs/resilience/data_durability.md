@@ -602,16 +602,20 @@ heal the recent past. A target older than retention is refused with
 Everything above is local. A controller that dies **with its disk** takes its
 operatives' state — and the registry record of which operatives existed — with
 it; `WalTransfer` is a one-shot pull at migration time, not replication. The
-remote durability tier is the answer, and it is **off by default**
-(`FLEZHA_DURABILITY_BACKEND=none`), under which behaviour is byte-identical to a
-build without it.
+remote durability tier is the answer, and a production boot must choose: with
+`FLEZHA_DURABILITY_BACKEND` unset the controller refuses to start, and the
+explicit opt-out `FLEZHA_DURABILITY_BACKEND=none` is byte-identical to a build
+without the tier (reported as `durability_posture: local_only`).
 
 When enabled, it ships immutable artifacts — compaction snapshots,
 seq-addressed WAL record bundles, proc-journal and inbox suffixes, the input log,
-the registry cspec — to a Postgres or S3-compatible backend at boundaries that
-already exist (checkpoint close, compaction, workflow commit barriers), plus one
-backstop timer. The per-reference manifest is written last, so a torn upload is
-invisible to recovery.
+the registry cspec, the DLQ's parked records, and the control-plane stores (authz
+and schedules) — to a Postgres, S3-compatible or file backend at boundaries that
+already exist (checkpoint close, compaction, workflow commit barriers, a park or
+a drop), plus one backstop timer. The per-reference manifest is written last, so
+a torn upload is invisible to recovery. Recovery hydrates the control-plane
+stores before any hub starts, so a resurrected controller enforces authz from its
+first accepted connection.
 
 **RPO by kind:**
 

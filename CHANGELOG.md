@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Changed — a production controller must choose a durability posture (`durability-tier-default-on`)
+
+**BREAKING for operators.** `FLEZHA_DURABILITY_BACKEND` no longer defaults to
+`none` in production. A prod release booting with it unset refuses to start and
+prints the two valid moves; dev and test are unchanged.
+
+- **Set one line before rolling the new image.**
+  `FLEZHA_DURABILITY_BACKEND=postgres` (or `s3`, or `local_path`) turns the
+  remote durability tier on; `FLEZHA_DURABILITY_BACKEND=none` is the explicit
+  local-only opt-out and reproduces the previous behaviour exactly — no tier
+  processes, no backend connection, no change on any ack path. Rollback stays
+  lossless: local state was authoritative throughout.
+- **Local-only is visible.** `/healthz` carries `"durability":"local_only"` on
+  every response and `flz controller status` prints
+  `durability_posture: local_only`, so a fleet audit can find the controllers
+  whose durable state has exactly one copy. Neither is an alarm.
+- **The tier now ships the platform stores too.** A controller that dies with
+  its disk used to lose its parked failures and its security state even with the
+  tier on. Dead-letter parked records ship as one claim-fenced artifact per
+  procedure — on every park, drop, replay-mark and retention drop, so a resolved
+  entry disappears from the backend rather than being resurrected — and hydrate
+  with the operative that owns them. The control-plane stores (authz roles,
+  tokens, namespaces, quota counters and the durable enabled flag; the schedule
+  definitions) ship on the backstop sweep as per-writer replicas and hydrate
+  **before** any hub starts or any connection is accepted, so a resurrected
+  controller enforces from its first verb and the one-shot bootstrap claim reads
+  already-claimed.
+- **`bootstrap.token` never leaves the node.** The shipped file list is explicit
+  rather than a directory scan: the one-shot plaintext secret beside the authz
+  DETS is excluded by construction, along with the break-glass `REBOOTSTRAP`
+  marker and the TLS material.
+- **Every durable store is now accounted for.** `docs/remote_durability_tier.md`
+  carries the shipped set and the accepted-exclusions table (the audit log,
+  delegated to external log shipping, plus the four non-stores above). A store
+  on neither list is a defect.
+
 ### Changed — declared intent lives in the hub's declared set (`durable-operator-intent`)
 
 - **Every operative start is declared, every stop is remembered for good.**

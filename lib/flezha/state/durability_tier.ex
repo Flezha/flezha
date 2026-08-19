@@ -10,15 +10,21 @@ defmodule Flezha.State.DurabilityTier do
 
   What ships are immutable artifacts at boundaries that already exist —
   compaction snapshots, seq-addressed WAL record bundles, proc-journal and inbox
-  suffixes, the input log, the registry cspec — plus one backstop timer for
-  entities that reach no boundary at all. The per-entity manifest is written
-  last, so a torn upload is invisible to recovery.
+  suffixes, the input log, the registry cspec — plus the platform stores a
+  replacement controller needs to come back as itself: the dead-letter queue's
+  parked records and the control-plane registries (authz, schedules). One
+  backstop timer covers entities that reach no boundary at all. The per-entity
+  manifest is written last, so a torn upload is invisible to recovery.
 
   The public surface is triggers (`ship/1`, `on_compaction_completed/1`,
   `on_effect_flushed/2`, `commit_sync/1`), recovery (`hydrate_operative/1`,
-  `hydrate_cspecs/0`) and status (`status/0`). All of them are cheap no-ops
-  while `backend: :none` — the default, under which `children/0` returns `[]`
-  and nothing at all is started.
+  `hydrate_entities/3`) and status (`status/0`). All of them are cheap no-ops
+  while `backend: :none`, under which `children/0` returns `[]` and nothing at
+  all is started — the boot-time hydration among those children included.
+
+  A **production** boot must say which it is: `config/runtime.exs` resolves an
+  unset `FLEZHA_DURABILITY_BACKEND` to `:unset`, and `children/0` refuses to
+  start on it. Local-only durability is available, but only by asking for it.
 
   See `docs/remote_durability_tier.md`.
   """
@@ -43,6 +49,35 @@ defmodule Flezha.State.DurabilityTier do
   @doc "Whether a remote backend is configured. `false` makes every entry point inert."
   @spec enabled?() :: boolean()
   def enabled?(), do: Backend.resolve() != :none
+
+  @doc """
+  How this controller's durable state is protected, as an operator reads it.
+
+  `:local_only` means the disk under this node is the only copy — a deliberate,
+  supported posture, and one a fleet audit must be able to find, so it is
+  surfaced on `/healthz` and `flz controller status` rather than only inferable
+  from the absence of a backend.
+  """
+  @spec posture() :: :remote_tier | :local_only
+  def posture(), do: if(enabled?(), do: :remote_tier, else: :local_only)
+
+  @doc """
+  Whether the deployment has made no durability decision at all.
+
+  `config/runtime.exs` resolves an unset `FLEZHA_DURABILITY_BACKEND` to
+  `:unset` in production only; every other environment keeps defaulting to
+  `:none`, so the development loop is untouched.
+  """
+  @spec unconfigured?() :: boolean()
+  def unconfigured?(), do: configured_backend() == :unset
+
+  @doc """
+  The backend as an operator named it, rather than as `Backend.resolve/0`
+  resolves it — what `flz controller status` reports.
+  """
+  @spec configured_backend() :: atom() | {module(), keyword()}
+  def configured_backend(),
+    do: Application.get_env(:flezha, :durability_tier, []) |> Keyword.get(:backend, :none)
 
   @doc """
   This controller's identity as a writer of remote lineages.
@@ -132,18 +167,23 @@ defmodule Flezha.State.DurabilityTier do
 
   @doc """
   Supervision children for `Flezha.Application`: the backend connection, the
-  boot-time cspec hydration, and the shipper — or `[]` when the tier is off,
-  which is what makes the default configuration byte-identical to a build
-  without the tier.
+  boot-time hydration of the control-plane stores and the registry cspec, and
+  the shipper — or `[]` when the tier is off, which is what makes an explicit
+  `none` byte-identical to a build without the tier.
 
-  Order is load-bearing. The cspec hydration is a one-shot child that does its
-  work in `start_link` and returns `:ignore`, so it completes before the
-  supervisor starts anything after it — and it must be placed ahead of
+  Order is load-bearing. The hydration is a one-shot child that does its work in
+  `start_link` and returns `:ignore`, so it completes before the supervisor
+  starts anything after it — and it must be placed ahead of
   `Flezha.Service.HubManager`, because ProcessHub opens `registry.dets` at hub
   start and a hydration afterwards would be invisible to the orphan reconcile.
+  The same placement puts the authz stores on disk before
+  `Flezha.AuthZ.Supervisor` opens them and before the transport accepts a
+  connection, so a resurrected controller enforces from its first accepted verb.
   """
   @spec children() :: [Supervisor.child_spec() | module() | {module(), term()}]
   def children() do
+    if unconfigured?(), do: refuse_unconfigured_backend!()
+
     case Backend.resolve() do
       :none ->
         []
@@ -152,14 +192,45 @@ defmodule Flezha.State.DurabilityTier do
         backend_children(module, opts) ++
           [
             %{
-              id: :flezha_durability_cspec_hydration,
-              start: {Hydrator, :hydrate_cspecs_on_boot, []},
+              id: :flezha_durability_boot_hydration,
+              start: {Hydrator, :hydrate_on_boot, []},
               restart: :temporary,
               type: :worker
             },
             Shipper
           ]
     end
+  end
+
+  # Fail closed, not warn. The audit finding this closes is that every real
+  # deployment ships the default, so a warning would be ignored by exactly the
+  # deployments that need it. Both moves are one env line, and the opt-out is
+  # lossless.
+  defp refuse_unconfigured_backend!() do
+    message = """
+    FLEZHA_DURABILITY_BACKEND is not set, and a production controller must make \
+    an explicit durability decision.
+
+    Without a remote durability tier this controller is both the coordination \
+    brain and the durable store on one local disk: if it dies WITH that disk, \
+    every operative's state goes with it.
+
+    Two valid moves:
+
+      FLEZHA_DURABILITY_BACKEND=postgres   # or s3, or local_path — durable state
+                                           # leaves this node's disk
+      FLEZHA_DURABILITY_BACKEND=none       # explicit opt-out: the local disk is
+                                           # the only copy, and that is accepted
+
+    See docs/remote_durability_tier.md for backend provisioning.
+    """
+
+    # Printed as well as raised. The refusal reaches the operator as an
+    # application-start failure, which the BEAM formats as an Erlang term and
+    # can truncate — and a refusal whose guidance is unreadable is just a
+    # container that will not come up.
+    IO.puts(:stderr, message)
+    raise message
   end
 
   defp backend_children(module, opts) do
@@ -212,7 +283,7 @@ defmodule Flezha.State.DurabilityTier do
   def refs_of_state_key(state_key) when is_binary(state_key) do
     input_log = {:input_log, state_key}
     extra = if Artifact.has_local_state?(input_log), do: [input_log], else: []
-    Artifact.entity_refs(state_key) ++ extra
+    Artifact.entity_refs(state_key) ++ extra ++ Artifact.dlq_refs(state_key)
   end
 
   @doc """
@@ -226,8 +297,14 @@ defmodule Flezha.State.DurabilityTier do
   """
   @spec all_refs(binary()) :: [Artifact.ref()]
   def all_refs(writer) when is_binary(writer) do
-    Enum.flat_map(Registry.operative_classes(), &refs_of_state_key/1) ++
-      Artifact.cspec_refs(writer)
+    # Classes with Entity state UNION classes with parked failures: a stopped
+    # operative keeps its parks and no longer has state, and its parks are still
+    # this node's to ship.
+    (Registry.operative_classes() ++ Artifact.dlq_classes())
+    |> Enum.uniq()
+    |> Enum.flat_map(&refs_of_state_key/1)
+    |> Enum.concat(Artifact.cspec_refs(writer))
+    |> Enum.concat(Artifact.control_refs(writer))
   end
 
   @doc """
@@ -338,10 +415,6 @@ defmodule Flezha.State.DurabilityTier do
       :ok
     end
   end
-
-  @doc "Hydrate every shipped registry cspec whose local file is absent."
-  @spec hydrate_cspecs() :: :ok
-  def hydrate_cspecs(), do: if(enabled?(), do: Hydrator.hydrate_cspecs(), else: :ok)
 
   # ---------- observability ----------
 

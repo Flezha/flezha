@@ -35,6 +35,11 @@ defmodule Flezha.State.WatchdogTest do
       end
     end
 
+    # The durability sweep enumerates every registry cspec on this node, so the
+    # cspec root has to be isolated with the state root — otherwise a case picks
+    # up whatever hubs the developer's own `app_data/` happens to hold.
+    on_exit(TestHelpers.override_env(:process_hub_registry_root, Path.join(base, "process_hub")))
+
     on_exit(TestHelpers.override_env(:default_output_stall_timeout_ms, @stall_ms))
     on_exit(TestHelpers.override_env(:compaction_timeout_ms, @compaction_ms))
 

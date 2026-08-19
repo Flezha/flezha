@@ -4,8 +4,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   onto on disk, how a seq range is read out of it, and how a fetched artifact is
   written back.
 
-  Three reference shapes cover every durable byte the tier owns, and two of them
-  are the same substrate:
+  References come in two families. **Seq-addressed** ones are read as a range of
+  WAL records:
 
     * `{:entity, entity_id}` — an Entity's WAL plus its snapshots. A workflow
       instance's proc-journal and durable inbox are *also* this shape: they ride
@@ -14,21 +14,47 @@ defmodule Flezha.State.DurabilityTier.Artifact do
     * `{:input_log, operative_class}` — the effectively-once tier's durable
       input log, which shares the WAL record framing and so shares the
       seq-range reader.
-    * `{:cspec, {hub_id, writer}}` — the ProcessHub durable registry, a whole
-      file. Every node in a namespace holds its own replica, so the writer is
-      part of the identity rather than something to arbitrate.
 
-  Record bundles are read **at ship time** through `WalWriter.fold_records/3`
-  and re-framed with `WalWriter.encode_record/3`, never copied as file byte
-  ranges: compaction (`rewrite_keep_seq_gt`) and correction (`rewind_to`)
+  **Whole-payload** ones are read as the files they name, packed into one blob
+  by `pack/1` (`payload_files/1` is the only thing that differs between them):
+
+    * `{:cspec, {hub_id, writer}}` — the ProcessHub durable registry. Every node
+      in a namespace holds its own replica, so the writer is part of the
+      identity rather than something to arbitrate.
+    * `{:dlq, {operative_class, procedure_id}}` — one procedure's parked
+      failures: the JSONL index and one blob per payload. Claim-fenced, because
+      exactly one node runs the operative that produced them.
+    * `{:control, {store, writer}}` — a control-plane store's DETS tables
+      (`"authz"`, `"schedules"`). Node-local and unreplicated, so it keys per
+      writer like the cspec.
+
+  Record bundles are read **at ship time** through `WalWriter.fold_path/3` and
+  re-framed with `WalWriter.encode_record/3`, never copied as file byte ranges: compaction (`rewrite_keep_seq_gt`) and correction (`rewind_to`)
   rewrite the live WAL in place, so an offset recorded yesterday addresses
   different records today. A seq range does not move.
   """
 
+  alias Flezha.Dlq
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{Outbox, Registry, Restore, WalWriter, Wire}
 
   @type ref :: Manifest.ref()
+
+  @whole_payload_kinds [:cspec, :dlq, :control]
+
+  # The control-plane stores that ship, as `store => files`. Each is a
+  # node-local DETS registry a replacement controller needs in order to come
+  # back as itself rather than as a blank cluster.
+  #
+  # The file list is explicit rather than a directory scan, and that is the
+  # security boundary: `bootstrap.token` lives beside these and is a plaintext
+  # one-shot secret that must never leave the node. A resurrected controller
+  # reads "already claimed" out of `state.dets`, so it never needs the token
+  # back.
+  @control_stores %{
+    "authz" => ~w(state.dets roles.dets namespaces.dets tokens.dets quota_counters.dets),
+    "schedules" => ~w(schedules.dets)
+  }
 
   @doc """
   Every Entity reference of `operative_class` that has local durable files —
@@ -50,14 +76,46 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   @spec wal_path(ref()) :: binary() | nil
   def wal_path({:entity, entity_id}), do: Registry.wal_path(entity_id)
   def wal_path({:input_log, operative_class}), do: Registry.input_log_path(operative_class)
-  def wal_path({:cspec, _}), do: nil
+  def wal_path(_ref), do: nil
 
-  @doc "Local whole-file path of `ref`, or `nil` for a seq-addressed reference."
-  @spec file_path(ref()) :: binary() | nil
-  def file_path({:cspec, {hub_id, _writer}}),
-    do: Path.join([cspec_root(), hub_id, "registry.dets"])
+  @doc """
+  Whether `ref` is packed whole rather than read as a seq range — the one place
+  the two artifact families are told apart.
+  """
+  @spec whole_payload?(ref()) :: boolean()
+  def whole_payload?(ref) when is_tuple(ref), do: elem(ref, 0) in @whole_payload_kinds
 
-  def file_path(_ref), do: nil
+  @doc """
+  The files making up a whole-payload artifact as `{root, names}` — only the
+  names that exist and hold bytes right now — or `nil` for a seq-addressed one.
+
+  This is the only per-artifact knowledge in the packing path: adding a
+  whole-payload artifact is a clause here, not a mechanism.
+  """
+  @spec payload_files(ref()) :: {binary(), [binary()]} | nil
+  def payload_files({:cspec, {hub_id, _writer}}),
+    do: present(Path.join(cspec_root(), hub_id), ["registry.dets"])
+
+  def payload_files({:dlq, {operative_class, procedure_id}}) do
+    root = Dlq.Store.proc_dir(operative_class, procedure_id)
+
+    case File.ls(root) do
+      {:ok, names} -> present(root, names)
+      {:error, _} -> {root, []}
+    end
+  end
+
+  def payload_files({:control, {store, _writer}}),
+    do: present(control_root(store), Map.fetch!(@control_stores, store))
+
+  def payload_files(_ref), do: nil
+
+  defp control_root("authz"), do: Flezha.AuthZ.Config.auth_dir()
+  defp control_root("schedules"), do: Flezha.Schedule.Store.dir()
+
+  defp present(root, names) do
+    {root, Enum.filter(names, &non_empty?(Path.join(root, &1)))}
+  end
 
   @doc """
   Every hub whose registry cspec exists on this node, stamped with `writer`.
@@ -78,6 +136,43 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   end
 
   @doc """
+  Every parked-failure set of `operative_class` with a directory on this node.
+
+  Deliberately not filtered by `has_local_state?/1`: an emptied set has to stay
+  in the sweep so its remote entry stops naming a blob whose entries the operator
+  has since resolved.
+  """
+  @spec dlq_refs(binary()) :: [ref()]
+  def dlq_refs(operative_class) when is_binary(operative_class),
+    do: operative_class |> Dlq.Store.procedures() |> Enum.map(&{:dlq, &1})
+
+  @doc """
+  Every operative class with parked failures on this node.
+
+  Unioned with the classes that have Entity state, because the two sets differ:
+  a stopped operative keeps its parked failures, and losing them on a disk death
+  is exactly what shipping them prevents.
+  """
+  @spec dlq_classes() :: [binary()]
+  def dlq_classes(),
+    do: Dlq.Store.procedures() |> Enum.map(fn {class, _procedure} -> class end) |> Enum.uniq()
+
+  @doc """
+  Every control-plane store with local files, stamped with `writer`.
+
+  Like the cspec these are per-writer replicas rather than one arbitrated
+  lineage: each controller's copy is its own truth, and hydration takes the
+  newest.
+  """
+  @spec control_refs(binary()) :: [ref()]
+  def control_refs(writer) when is_binary(writer) do
+    @control_stores
+    |> Map.keys()
+    |> Enum.map(&{:control, {&1, writer}})
+    |> Enum.filter(&has_local_state?/1)
+  end
+
+  @doc """
   The on-disk state key `ref` lives under — the directory name that
   `DurabilityTier.refs_of_state_key/1` enumerates from, and the unit an operative is
   adopted as.
@@ -86,6 +181,8 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   def state_key({:entity, {class, _procedure, _entity_key}}), do: class
   def state_key({:input_log, class}), do: class
   def state_key({:cspec, {hub_id, _writer}}), do: hub_id
+  def state_key({:dlq, {class, _procedure}}), do: class
+  def state_key({:control, {store, _writer}}), do: store
 
   defp cspec_root(),
     do: Application.get_env(:flezha, :process_hub_registry_root, "app_data/process_hub")
@@ -130,7 +227,13 @@ defmodule Flezha.State.DurabilityTier.Artifact do
   """
   @spec has_local_state?(ref()) :: boolean()
   def has_local_state?({:entity, entity_id}), do: Restore.has_persisted_state?(entity_id)
-  def has_local_state?(ref), do: non_empty?(wal_path(ref)) or non_empty?(file_path(ref))
+
+  def has_local_state?(ref) do
+    case payload_files(ref) do
+      nil -> non_empty?(wal_path(ref))
+      {_root, names} -> names != []
+    end
+  end
 
   defp non_empty?(nil), do: false
 
@@ -230,12 +333,73 @@ defmodule Flezha.State.DurabilityTier.Artifact do
 
   def write_snapshot(_ref, _seq, _bytes), do: {:error, :not_snapshotted}
 
-  @spec write_file(ref(), binary()) :: :ok | {:error, term()}
-  def write_file(ref, bytes) do
-    case file_path(ref) do
-      nil -> {:error, :not_whole_file}
-      path -> atomic_write(path, bytes)
+  @doc """
+  A whole-payload artifact's bytes: every file it names, in one blob.
+
+  One blob rather than one per file because the set is the unit of consistency —
+  a parked record's index line and its payload must land together or not at all.
+  Term format for the same reason the manifest uses it: both ends are the same
+  controller build. `:empty` means the artifact has nothing on disk right now,
+  which for a parked set is the ordinary end state after the last entry is
+  resolved.
+  """
+  @spec pack(ref()) :: {:ok, binary()} | :empty | {:error, term()}
+  def pack(ref) do
+    case payload_files(ref) do
+      nil -> {:error, :not_whole_payload}
+      {_root, []} -> :empty
+      {root, names} -> read_all(root, names)
     end
+  end
+
+  @doc """
+  Write a packed artifact back, file by file, each through the same atomic
+  install every other hydrated file uses.
+
+  A name is only ever a basename — `pack/1` writes them that way — so anything
+  else in a fetched blob is a corrupt or hostile entry and is refused rather
+  than allowed to address a path outside the artifact's root.
+  """
+  @spec unpack(ref(), binary()) :: :ok | {:error, term()}
+  def unpack(ref, bytes) do
+    with {root, _names} <- payload_files(ref),
+         {:ok, files} when is_map(files) <- decode_payload(bytes) do
+      Enum.reduce_while(files, :ok, fn {name, content}, :ok ->
+        if Path.basename(name) == name and name not in [".", ".."] do
+          case atomic_write(Path.join(root, name), content) do
+            :ok -> {:cont, :ok}
+            {:error, _} = err -> {:halt, err}
+          end
+        else
+          {:halt, {:error, {:unsafe_artifact_name, name}}}
+        end
+      end)
+    else
+      nil -> {:error, :not_whole_payload}
+      _ -> {:error, :malformed_payload}
+    end
+  end
+
+  defp read_all(root, names) do
+    Enum.reduce_while(names, {:ok, %{}}, fn name, {:ok, acc} ->
+      case File.read(Path.join(root, name)) do
+        {:ok, bytes} -> {:cont, {:ok, Map.put(acc, name, bytes)}}
+        # Deleted between the listing and the read — it drops out of this cut
+        # rather than failing it, exactly as a retention-deleted snapshot does.
+        {:error, :enoent} -> {:cont, {:ok, acc}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, files} -> {:ok, :erlang.term_to_binary(files, compressed: 6)}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp decode_payload(bytes) do
+    {:ok, :erlang.binary_to_term(bytes, [:safe])}
+  rescue
+    _ -> :error
   end
 
   defp atomic_write(path, bytes),

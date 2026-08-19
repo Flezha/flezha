@@ -311,15 +311,24 @@ config :flezha,
   # inbox suffixes, the input log, the ProcessHub registry cspec — to a remote
   # backend so a controller that dies WITH its disk is recoverable.
   #
-  # `backend: :none` (the default) wires nothing into the supervision tree and
-  # leaves every ack path gating on local fsync exactly as before.
+  # `backend: :none` wires nothing into the supervision tree and leaves every ack
+  # path gating on local fsync exactly as before — but in production it has to be
+  # asked for. An unset variable resolves to `:unset`, which
+  # `DurabilityTier.children/0` refuses to boot on; dev and test keep defaulting
+  # to local-only so the development loop is untouched.
   durability_tier: [
     backend:
-      case System.get_env("FLEZHA_DURABILITY_BACKEND", "none") |> String.downcase() do
-        "postgres" -> :postgres
-        "s3" -> :s3
-        "local_path" -> :local_path
-        _ -> :none
+      case System.get_env("FLEZHA_DURABILITY_BACKEND") do
+        nil ->
+          if config_env() == :prod, do: :unset, else: :none
+
+        value ->
+          case String.downcase(value) do
+            "postgres" -> :postgres
+            "s3" -> :s3
+            "local_path" -> :local_path
+            _ -> :none
+          end
       end,
     # Backstop for entities that reach no compaction / checkpoint / commit
     # boundary — the bound on how stale a quiet entity's remote copy gets.

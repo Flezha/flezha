@@ -12,9 +12,12 @@ The remote durability tier closes that. It ships immutable artifacts to a
 config-selected remote backend at boundaries that already exist, and hydrates
 them back when a controller binds an operative whose local state is absent.
 
-**It is off by default.** With `backend: none` — the default — nothing is
-started, no dependency is loaded, and every acknowledgement path gates on local
-fsync exactly as it did before the tier existed.
+**A production controller must choose.** A prod release boot with
+`FLEZHA_DURABILITY_BACKEND` unset refuses to start and names the two valid
+moves. With `backend: none` — set explicitly — nothing is started, no dependency
+is loaded, and every acknowledgement path gates on local fsync exactly as it did
+before the tier existed; the local-only posture then shows on `/healthz` and
+`flz controller status`. Dev and test still default to `none` with no refusal.
 
 ## What it is not
 
@@ -33,7 +36,7 @@ mode below.
 
 ```elixir
 config :flezha, :durability_tier,
-  backend: :postgres,          # :none (default) | :postgres | :s3 | :local_path
+  backend: :postgres,          # :none | :postgres | :s3 | :local_path
   ship_interval_ms: 30_000,    # backstop sweep for entities that hit no boundary
   rpo_target_ms: 120_000,      # unshipped-progress age at which the alarm fires
   gc_interval_ms: 3_600_000,   # orphan-blob collection period
@@ -41,6 +44,40 @@ config :flezha, :durability_tier,
   gc_abandoned_after_ms: 604_800_000,  # reclaim outside this node's scope
   backend_opts: [...]
 ```
+
+### Choosing a posture
+
+`FLEZHA_DURABILITY_BACKEND` has **no production default**. Unset, a prod release
+refuses to boot with a message naming both moves:
+
+```
+FLEZHA_DURABILITY_BACKEND=postgres   # or s3, or local_path
+FLEZHA_DURABILITY_BACKEND=none       # explicit opt-out, local disk only
+```
+
+The refusal is deliberate rather than a warning: the tier exists because a
+controller that dies with its disk loses everything, and a warning would be
+ignored by exactly the deployments that ship the default. Both moves are one
+line of environment.
+
+**Upgrading an existing deployment.** Add one of the two lines before rolling the
+new image. `none` reproduces the previous behaviour exactly — the tier is not
+started, nothing is shipped, and no ack path changes — so it is a safe
+placeholder while a backend is provisioned.
+
+**Finding local-only controllers.** With `none`, `/healthz` reports
+`"durability":"local_only"` on every response and `flz controller status` prints
+`durability_posture: local_only`. Neither is an alarm; both are how a fleet audit
+finds the nodes whose durable state has one copy.
+
+**Provisioning a backend** — the per-backend options are below. Postgres is the
+default recommendation (real compare-and-swap for the fencing write, server-side
+clock for collection's grace); S3 suits deployments that already have object
+storage; `local_path` needs a root that outlives the cluster, such as an NFS
+mount.
+
+**Rollback is lossless.** Set `none` and restart: local state was authoritative
+throughout, so nothing on disk changes and the remote artifacts merely go stale.
 
 Environment variables (`config/runtime.exs`): `FLEZHA_DURABILITY_BACKEND`,
 `FLEZHA_DURABILITY_SHIP_INTERVAL_MS`, `FLEZHA_DURABILITY_RPO_TARGET_MS`,
@@ -112,6 +149,22 @@ write (`put_if/4`) is read-then-write: correct under the tier's normal
 one-writer-per-lineage operation, but a deployment that needs hard multi-writer
 fencing should prefer the Postgres or S3 backend.
 
+### The DLQ and the control-plane stores
+
+Parked failures ship as one whole-payload artifact per `<operative_class>/<procedure_id>`
+directory, claim-fenced like the operative that produced them and hydrated with
+it — so `flz dlq` on a replacement controller sees the inherited parks the moment
+the operative binds. The unit is the whole directory on purpose: a resolved entry
+has to *disappear* from the backend, and a per-entry artifact would leave the
+remote copy resurrecting it.
+
+The control-plane stores — the authz registries and the schedule definitions —
+are node-local with no cross-node replication, so like the cspec each controller
+ships its own replica and recovery takes the newest. They hydrate in the boot
+child, **before** any hub starts and before the transport accepts a connection:
+a resurrected controller enforces from its first accepted verb, and the one-shot
+bootstrap claim reads already-claimed rather than being re-runnable.
+
 ### The declared list rides the tier too
 
 With any backend configured, each namespace hub's **declared list** (the
@@ -122,6 +175,15 @@ configure: `HubManager` wires the hub's `remote_manifest` automatically
 whenever the tier is on, and boot adopts whichever copy — local or remote —
 carries the higher version. See
 `docs/resilience/process_hub_recovery_model.md`.
+
+### Adding an artifact class
+
+An artifact class is a row in `Flezha.State.DurabilityTier.Manifest`'s
+`@classes` table — its key tag and how many segments its identity takes, which
+is what makes the key encoder and its inverse two readings of one fact — plus a
+clause in `Artifact.payload_files/1` (whole-payload) or a WAL path
+(seq-addressed). Shipping, manifest-last atomicity, fencing, hydration and
+orphan collection are shared and need no change.
 
 ### Adding a backend
 
@@ -152,7 +214,9 @@ Two of those carry more than their names suggest:
 | Entity snapshots | the `*.snap.<seq>` file as-is | compaction completion |
 | Proc-journal / durable inbox | seq-addressed bundle (same substrate) | ProcCommit / IterCommit |
 | Input log | seq-addressed bundle | checkpoint close, backstop |
-| Registry cspec | whole file, content-addressed | cspec mutation, backstop |
+| Registry cspec | whole payload, content-addressed | cspec mutation, backstop |
+| DLQ parked records | whole payload (JSONL index + payload blobs) | every park, drop, replay-mark, retention drop |
+| Control-plane stores | whole payload (authz + schedule DETS) | backstop |
 
 A shipped WAL artifact is a **seq range read at ship time**, never a file byte
 range. The entity WAL is one live file that compaction (`rewrite_keep_seq_gt`)
@@ -407,13 +471,29 @@ Set `backend: none` and restart. Local state is authoritative throughout, so
 disabling the tier alters nothing on disk — the remote artifacts merely go
 stale.
 
-## Scope
+## Scope, and the accepted exclusions
 
-Shipped: Entity state, proc-journals, durable inboxes, the input log, and the
-registry cspec — everything needed for an operative to resurrect elsewhere with
-full fidelity.
+Shipped — everything a replacement controller needs to come back as itself:
 
-Deliberately excluded: DLQ entries, the audit log, and auth DETS. Their loss
-degrades operability, not the correctness of live dataflow, and each has its own
-retention and ownership model. The manifest namespace is generic, so they can
-ride the same tier later with no design change.
+| Store | On disk | Artifact |
+| --- | --- | --- |
+| Entity state, proc-journals, durable inboxes | `app_data/state/` | seq-addressed |
+| Input log | `app_data/state/` | seq-addressed |
+| Registry cspec | `app_data/process_hub/` | whole payload, per writer |
+| Declared operative intent | *(remote only)* | `declared/<hub_id>`, version-guarded |
+| DLQ parked records | `app_data/dlq/` | whole payload, claim-fenced |
+| Authz state (roles, tokens, namespaces, quota counters, the durable enabled flag) | `app_data/auth/` | whole payload, per writer |
+| Schedule definitions | `app_data/schedules/` | whole payload, per writer |
+
+**Accepted exclusions.** Anything durable under `app_data/` that is not shipped
+appears here with its alternative durability story. A store missing from both
+lists is a defect, not an accepted loss.
+
+| Excluded | Why | Alternative |
+| --- | --- | --- |
+| Audit log (`app_data/audit/`) | Append-only, monotonic, with its own retention story; shipping it would make the tier a log-shipping system | External log shipping — the JSONL records are designed to be tailed off the node |
+| `app_data/auth/bootstrap.token` | A one-shot plaintext secret whose only job is local; a resurrected controller reads *already claimed* out of `roles.dets` and never needs the token back | Re-issued by the ordinary bootstrap flow if no admin binding exists |
+| `app_data/auth/REBOOTSTRAP` | Break-glass marker an operator writes by hand, with the controller stopped | Re-created by hand where it is needed |
+| TLS material (`app_data/certs/`) | Provisioned key material, not runtime state; private keys must not enter a shared backend | Provisioned with the deployment |
+| Installed plugin artifacts (`app_data/plugins/`) | Content-addressed build output, re-installable from its source | Plugin installer re-fetches on demand |
+| Sockets (`app_data/sockets/`) | Not durable — recreated at boot | — |

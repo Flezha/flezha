@@ -344,4 +344,8 @@ fn print_status_help() {
     );
     println!("    graceful_shutdown_enabled  Configured kill-switch state");
     println!("    graceful_shutdown_timeout_ms  Configured drain timeout");
+    println!("    durability_backend         none | postgres | s3 | local_path");
+    println!("    durability_posture         local_only | remote_tier");
+    println!("    durability_rpo_breaches    References past the remote RPO target");
+    println!("    durability_superseded      References another controller now ships");
 }

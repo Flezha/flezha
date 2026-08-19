@@ -4,8 +4,9 @@ defmodule Flezha.State.DurabilityTier.Manifest do
 
   A manifest entry describes one shippable unit — an Entity (its WAL and
   snapshots), a workflow instance's proc-journal or durable inbox (which ride
-  the same substrate under reserved entity keys), an operative's input log, or
-  the ProcessHub registry cspec — as of one shipped cut. It is written **last**
+  the same substrate under reserved entity keys), an operative's input log, its
+  parked failures, the ProcessHub registry cspec, or a control-plane store — as
+  of one shipped cut. It is written **last**
   in every ship, so a crash mid-upload leaves the previous entry authoritative
   and the half-uploaded blobs invisible (`docs/remote_durability_tier.md`).
 
@@ -42,6 +43,8 @@ defmodule Flezha.State.DurabilityTier.Manifest do
           {:entity, Registry.entity_id()}
           | {:input_log, binary()}
           | {:cspec, {binary(), binary()}}
+          | {:dlq, {binary(), binary()}}
+          | {:control, {binary(), binary()}}
 
   @type range :: %{
           from: non_neg_integer(),
@@ -236,6 +239,27 @@ defmodule Flezha.State.DurabilityTier.Manifest do
 
   # ---------- keys ----------
 
+  # Every artifact class, as `tag => {kind, identity segments}`. The tag is the
+  # first path segment of every key the class owns; the count is how many
+  # segments its identity takes, so `path_of/1` and `ref_of_blob_key/1` are two
+  # readings of one table rather than hand-written inverses that can drift. A
+  # new artifact class is a row here plus an `Artifact.payload_files/1` clause.
+  #
+  # Which classes carry a writer in their identity is the ownership model in
+  # one line: the cspec and the control-plane stores are per-writer replicas of
+  # something no node replicates for another, while an Entity's state and an
+  # operative's parked failures belong to whichever node runs it and are
+  # arbitrated by the claim counter instead.
+  @classes %{
+    "e" => {:entity, 3},
+    "i" => {:input_log, 1},
+    "c" => {:cspec, 2},
+    "d" => {:dlq, 2},
+    "p" => {:control, 2}
+  }
+
+  @tags Map.new(@classes, fn {tag, {kind, _segments}} -> {kind, tag} end)
+
   @doc "Storage key of `ref`'s manifest entry."
   @spec key(ref()) :: binary()
   def key(ref), do: "manifest/" <> path_of(ref)
@@ -256,30 +280,28 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   def ref_of_blob_key("blob/" <> path) do
     # The blob name is the last segment and no segment can contain "/" —
     # `Registry.encode_entity_key/1` emits url-base64, which has none.
-    case String.split(path, "/") do
-      ["e", class, procedure, entity_key, _name] ->
-        {:ok, {:entity, {unsegment(class), unsegment(procedure), unsegment(entity_key)}}}
+    [tag | rest] = String.split(path, "/")
 
-      ["i", class, _name] ->
-        {:ok, {:input_log, unsegment(class)}}
-
-      ["c", hub_id, writer, _name] ->
-        {:ok, {:cspec, {unsegment(hub_id), unsegment(writer)}}}
-
-      _ ->
-        :error
+    with {:ok, {kind, segments}} <- Map.fetch(@classes, tag),
+         ^segments <- length(rest) - 1 do
+      {:ok, {kind, rest |> Enum.take(segments) |> Enum.map(&unsegment/1) |> identity()}}
+    else
+      _ -> :error
     end
   end
 
   def ref_of_blob_key(_other), do: :error
 
-  @doc "Manifest-key prefix covering every Entity of `operative_class`."
-  @spec class_prefix(binary()) :: binary()
-  def class_prefix(operative_class), do: "manifest/e/" <> segment(operative_class) <> "/"
+  @doc """
+  Manifest-key prefix covering every artifact of `kind`, narrowed by the leading
+  identity segments in `parts`.
 
-  @doc "Manifest-key prefix covering every cspec."
-  @spec cspec_prefix() :: binary()
-  def cspec_prefix(), do: "manifest/c/"
+  `prefix(:entity, [class])` is every Entity of one operative class;
+  `prefix(:cspec)` is every registry replica there is.
+  """
+  @spec prefix(atom(), [binary()]) :: binary()
+  def prefix(kind, parts \\ []),
+    do: "manifest/" <> Enum.join([tag!(kind) | Enum.map(parts, &segment/1)], "/") <> "/"
 
   @doc "Key prefix under which every blob lives — the GC's candidate set."
   @spec blob_prefix() :: binary()
@@ -303,20 +325,22 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   @spec snapshot_name(non_neg_integer(), binary()) :: binary()
   def snapshot_name(seq, sha_hex), do: "s-#{seq}-#{sha_hex}"
 
-  @doc "Name of a whole-file blob, content-addressed so a re-ship is idempotent."
+  @doc "Name of a whole-payload blob, content-addressed so a re-ship is idempotent."
   @spec file_name(binary()) :: binary()
   def file_name(sha_hex), do: "f-" <> sha_hex
 
-  defp path_of({:entity, {class, procedure, entity_key}}),
-    do: Enum.map_join(["e", class, procedure, entity_key], "/", &segment/1)
+  defp path_of({kind, identity}),
+    do: Enum.join([tag!(kind) | Enum.map(parts_of(identity), &segment/1)], "/")
 
-  defp path_of({:input_log, class}), do: "i/" <> segment(class)
-  # The writer is part of the key, not guarded by a claim: N controllers each
-  # holding a replica of one gossiped registry are all legitimate writers, so a
-  # claim would make correct nodes fence each other out of shipping it. Separate
-  # keys let every node keep its own lineage and hydration choose between them.
-  defp path_of({:cspec, {hub_id, writer}}),
-    do: "c/" <> segment(hub_id) <> "/" <> segment(writer)
+  defp tag!(kind), do: Map.fetch!(@tags, kind)
+
+  # An identity is a tuple of segments, or a bare binary where one segment says
+  # everything — `parts_of/1` and `identity/1` are the two directions of that.
+  defp parts_of(identity) when is_tuple(identity), do: Tuple.to_list(identity)
+  defp parts_of(identity) when is_binary(identity), do: [identity]
+
+  defp identity([one]), do: one
+  defp identity(parts), do: List.to_tuple(parts)
 
   # Reuses the Entity-key filesystem encoding: the same "safe chars or
   # url-base64" rule that keeps a key legal as a filename keeps it legal as a

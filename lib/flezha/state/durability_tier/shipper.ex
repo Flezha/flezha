@@ -239,8 +239,9 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   # The backstop: every reference with local durable state, so an entity that
   # reaches no compaction, checkpoint or commit boundary is still bounded by one
-  # sweep period. The cspec rides the same sweep — it changes rarely and a
-  # whole-file ship whose content is unchanged costs one hash.
+  # sweep period. The whole-payload artifacts — the cspec, the parked failures,
+  # the control-plane stores — ride the same sweep: they change rarely, and a
+  # re-ship whose content is unchanged costs one hash.
   defp sweep(state),
     do: Enum.reduce(DurabilityTier.all_refs(state.writer), state, &push(&2, &1))
 
@@ -304,36 +305,52 @@ defmodule Flezha.State.DurabilityTier.Shipper do
 
   defp adopted?(state, ref), do: MapSet.member?(state.adopted, Artifact.state_key(ref))
 
-  defp do_ship(state, {:cspec, _} = ref), do: ship_whole_file(state, ref)
-  defp do_ship(state, ref), do: ship_seq_addressed(state, ref)
-
-  # Whole-file artifact (the ProcessHub registry cspec). Content-addressed, so a
-  # re-ship of unchanged bytes writes nothing and a torn upload is orphaned
-  # under a key nothing references.
-  defp ship_whole_file(state, ref) do
-    with path when is_binary(path) <- Artifact.file_path(ref),
-         {:ok, bytes} <- File.read(path) do
-      sha = sha256(bytes)
-      manifest = manifest_for(state, ref)
-
-      if match?(%{sha: ^sha}, manifest.file) do
-        :nothing_to_ship
-      else
-        blob = Manifest.blob_key(ref, Manifest.file_name(sha))
-        shipped = %{manifest | file: %{blob: blob, size: byte_size(bytes), sha: sha}}
-
-        with :ok <- state.backend.put(blob, bytes, state.opts) do
-          # `local_top` is -1: a whole file has no seq, so an entry naming it is
-          # by definition caught up.
-          commit_cut(state, ref, manifest, shipped, %{bytes: byte_size(bytes), count: 0}, -1)
-        end
-      end
+  defp do_ship(state, ref) do
+    if Artifact.whole_payload?(ref) do
+      ship_whole_payload(state, ref)
     else
-      nil -> :nothing_to_ship
-      {:error, :enoent} -> :nothing_to_ship
-      {:error, _} = err -> err
+      ship_seq_addressed(state, ref)
     end
   end
+
+  # Whole-payload artifact (the registry cspec, a parked-failure set, a
+  # control-plane store). Content-addressed, so a re-ship of unchanged bytes
+  # uploads nothing and a torn upload is orphaned under a key nothing references.
+  #
+  # `local_top` is -1 throughout: a whole payload has no seq, so an entry naming
+  # it is by definition caught up.
+  defp ship_whole_payload(state, ref) do
+    manifest = manifest_for(state, ref)
+
+    case Artifact.pack(ref) do
+      {:ok, bytes} ->
+        sha = sha256(bytes)
+        blob = Manifest.blob_key(ref, Manifest.file_name(sha))
+
+        with :ok <- upload_payload(state, manifest, blob, bytes) do
+          shipped = %{manifest | file: %{blob: blob, size: byte_size(bytes), sha: sha}}
+          commit_cut(state, ref, manifest, shipped, %{bytes: byte_size(bytes), count: 0}, -1)
+        end
+
+      # Nothing on disk any more — the operator resolved the last parked record
+      # of a set. The entry must stop naming the old blob, or a replacement
+      # controller would hydrate entries that were deliberately deleted.
+      :empty ->
+        commit_cut(state, ref, manifest, %{manifest | file: nil}, %{bytes: 0, count: 0}, -1)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # The blob name IS the hash, so an entry already naming it means the bytes are
+  # up. The manifest write is deliberately not skipped with it: a takeover
+  # changes no bytes at all, and `commit_cut` is the only place allowed to
+  # conclude that a cut is unchanged — it compares the owner and the claim too.
+  defp upload_payload(_state, %Manifest{file: %{blob: blob}}, blob, _bytes), do: :ok
+
+  defp upload_payload(state, _manifest, blob, bytes),
+    do: state.backend.put(blob, bytes, state.opts)
 
   # Seq-addressed artifact (Entity WAL + snapshots, proc-journal, durable inbox,
   # input log). The manifest is reconciled against local truth first — a rewind

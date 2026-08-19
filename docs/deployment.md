@@ -45,7 +45,7 @@ Key variables:
 | `FLEZHA_MAX_RECONNECTS` | `10` | Max reconnect attempts |
 | `FLEZHA_HEALTHZ_ENABLED` | `false` | Opt-in `/healthz` HTTP listener (`FLEZHA_HEALTHZ_PORT` 9569, `FLEZHA_HEALTHZ_BIND` `127.0.0.1`) — required for orchestrator liveness probes |
 | `FLEZHA_FABRIC_503_POLLS` | `3` | Consecutive classifier polls a controller-fabric wedge (`driver_loop_frozen` / `nif_queue_backing_up`) must hold before `/healthz` answers 503 and the orchestrator restarts the pod; `0` disables the fabric 503 |
-| `FLEZHA_DURABILITY_BACKEND` | `none` | Remote durability tier backend: `none`, `postgres`, or `s3`. `none` = local-only, byte-identical to a build without the tier |
+| `FLEZHA_DURABILITY_BACKEND` | *(none in dev/test; **required** in prod)* | Remote durability tier backend: `none`, `postgres`, `s3`, or `local_path`. A prod release with it unset refuses to boot; `none` is the explicit local-only opt-out, byte-identical to a build without the tier and reported as `durability_posture: local_only` |
 | `FLEZHA_DURABILITY_SHIP_INTERVAL_MS` | `30000` | Backstop ship sweep for entities that hit no compaction/checkpoint/commit boundary |
 | `FLEZHA_DURABILITY_RPO_TARGET_MS` | `120000` | Unshipped-progress age at which the alarm-grade `rpo_exceeded` fires (`/healthz` reports `durability_rpo_exceeded`) |
 | `FLEZHA_DURABILITY_GC_INTERVAL_MS` | `3600000` | Orphan-blob collection interval |

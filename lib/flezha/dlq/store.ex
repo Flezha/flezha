@@ -94,6 +94,42 @@ defmodule Flezha.Dlq.Store do
   @spec sweep(pid() | atom()) :: :ok
   def sweep(server \\ __MODULE__), do: GenServer.call(server, :sweep, 60_000)
 
+  @doc """
+  Every `{operative_class, procedure_id}` with a parked-failure directory on
+  disk, as the directory names — `nil` lists every class.
+
+  The names are already path-sanitised, which is what makes them safe to use as
+  a durable artifact identity: `proc_dir/2` maps one back to the same directory.
+  """
+  @spec procedures(String.t() | nil) :: [{String.t(), String.t()}]
+  def procedures(operative_class \\ nil) do
+    classes =
+      case operative_class do
+        nil -> File.ls(root()) |> ok_or([])
+        rc -> [safe(rc)]
+      end
+
+    Enum.flat_map(classes, fn rc ->
+      Path.join(root(), rc)
+      |> File.ls()
+      |> ok_or([])
+      |> Enum.filter(&File.dir?(Path.join([root(), rc, &1])))
+      |> Enum.map(&{rc, &1})
+    end)
+  end
+
+  @doc "Directory holding one procedure's parked failures."
+  @spec proc_dir(String.t(), String.t()) :: String.t()
+  def proc_dir(rc, sh), do: Path.join([root(), safe(rc), safe(sh)])
+
+  @doc """
+  One identity component as it appears on disk. The durable-tier artifact for a
+  parked set is addressed by these, so a caller holding a live operative class
+  maps it through here to name the artifact.
+  """
+  @spec path_component(String.t()) :: String.t()
+  def path_component(component), do: safe(component)
+
   defp root() do
     config()[:dir] || "app_data/dlq"
   end
@@ -115,7 +151,7 @@ defmodule Flezha.Dlq.Store do
 
   def handle_call({:list, operative_class}, _from, state) do
     entries =
-      list_procedure_dirs(operative_class)
+      procedures(operative_class)
       |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
       |> Enum.sort_by(& &1["ts_ms"])
 
@@ -150,10 +186,12 @@ defmodule Flezha.Dlq.Store do
   def handle_call({:mark_replaying, entry_ref}, _from, state) do
     reply =
       with {:ok, rc, sh, id} <- parse_ref(entry_ref),
-           {:ok, _entry} <- find_entry(rc, sh, id) do
-        rewrite_entries(rc, sh, fn e ->
-          if e["id"] == id, do: Map.put(e, "status", "replaying"), else: e
-        end)
+           {:ok, _entry} <- find_entry(rc, sh, id),
+           :ok <-
+             rewrite_entries(rc, sh, fn e ->
+               if e["id"] == id, do: Map.put(e, "status", "replaying"), else: e
+             end) do
+        dir_changed(rc, sh)
       end
 
     {:reply, reply, state}
@@ -161,7 +199,7 @@ defmodule Flezha.Dlq.Store do
 
   def handle_call(:stats, _from, state) do
     stats =
-      list_procedure_dirs(nil)
+      procedures()
       |> Enum.map(fn {rc, sh} ->
         entries = load_entries(rc, sh)
 
@@ -258,7 +296,7 @@ defmodule Flezha.Dlq.Store do
       generation: record["generation"]
     })
 
-    emit_usage(rc, sh)
+    dir_changed(rc, sh)
     {:ok, ref(rc, sh, id)}
   rescue
     e -> {:error, e}
@@ -289,6 +327,7 @@ defmodule Flezha.Dlq.Store do
       generation: (existing["generation"] || 1) + 1
     })
 
+    dir_changed(rc, sh)
     {:ok, ref(rc, sh, id)}
   end
 
@@ -321,7 +360,7 @@ defmodule Flezha.Dlq.Store do
     cutoff_ms = System.system_time(:millisecond) - retention_s * 1000
 
     all =
-      list_procedure_dirs(nil)
+      procedures()
       |> Enum.flat_map(fn {rc, sh} -> load_entries(rc, sh) end)
       |> Enum.sort_by(& &1["ts_ms"])
 
@@ -376,8 +415,6 @@ defmodule Flezha.Dlq.Store do
 
   # ---------- index file plumbing ----------
 
-  defp proc_dir(rc, sh), do: Path.join([root(), safe(rc), safe(sh)])
-
   defp entries_path(rc, sh), do: Path.join(proc_dir(rc, sh), @entries_file)
 
   defp blob_path(rc, sh, id), do: Path.join(proc_dir(rc, sh), id <> ".bin")
@@ -395,22 +432,6 @@ defmodule Flezha.Dlq.Store do
   # out of the DLQ root.
   defp safe(component) do
     String.replace(component, ~r/[^A-Za-z0-9._-]/, "_")
-  end
-
-  defp list_procedure_dirs(operative_class) do
-    classes =
-      case operative_class do
-        nil -> File.ls(root()) |> ok_or([])
-        rc -> [safe(rc)]
-      end
-
-    Enum.flat_map(classes, fn rc ->
-      Path.join(root(), rc)
-      |> File.ls()
-      |> ok_or([])
-      |> Enum.filter(&File.dir?(Path.join([root(), rc, &1])))
-      |> Enum.map(&{rc, &1})
-    end)
   end
 
   defp ok_or({:ok, value}, _default), do: value
@@ -470,7 +491,7 @@ defmodule Flezha.Dlq.Store do
       {:ok, _entry} ->
         :ok = rewrite_entries(rc, sh, fn e -> if e["id"] == id, do: nil, else: e end)
         File.rm(blob_path(rc, sh, id))
-        emit_usage(rc, sh)
+        dir_changed(rc, sh)
         :ok
 
       {:error, :not_found} ->
@@ -492,12 +513,18 @@ defmodule Flezha.Dlq.Store do
     |> Enum.sum()
   end
 
-  defp emit_usage(rc, sh) do
+  # One procedure's parked set changed: republish the usage gauge, and offer the
+  # directory to the durability tier, which ships it whole. A drop has to reach
+  # the backend as surely as a park — a stale remote copy would resurrect an
+  # entry the operator already resolved. Inert while no backend is configured.
+  defp dir_changed(rc, sh) do
     :telemetry.execute(
       [:flezha, :dlq, :usage],
       %{entries: length(load_entries(rc, sh)), bytes: dir_bytes(rc, sh)},
       %{operative_class: rc, procedure_id: sh}
     )
+
+    Flezha.State.DurabilityTier.ship({:dlq, {safe(rc), safe(sh)}})
   end
 
   defp fsync_file(path) do

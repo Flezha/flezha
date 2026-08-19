@@ -11,6 +11,7 @@ Never inline the notes in this file — it must stay small enough to load whole.
 
 ## Per-change notes index
 
+- [Durability posture is a decision](docs/dev_notes/durability-tier-default-on.md) — prod refuses to boot with no `FLEZHA_DURABILITY_BACKEND`; the refusal is `children/0`, NEVER `config/runtime.exs`; artifact classes are one `Manifest.@classes` table; a parked set ships as the WHOLE directory so a drop propagates; authz ships an explicit file list, never `bootstrap.token`
 - [Durable operator intent](docs/dev_notes/durable-operator-intent.md) — intent = the hub declared set (pairs with process_hub `declared-children-and-remote-manifest`); every deliberate stop MUST ride `stop_children`; cspec stays `:transient` (upstream loosened); re-place uses `migrate_child`, never stop+start
 - [Wire-frame limits](docs/dev_notes/wire-frame-limits.md) — reject a declared length BEFORE allocating, pre-auth; one `max_frame_bytes()` in flz_transport for both parsers; a bad header poisons the stream, there is no resync
 - [Authn/authz finished end to end](docs/dev_notes/finish-platform-authn-authz.md) — three-way enforcement posture; identity ONLY from the transport; namespace-prefixed state at the `Registry.class_dir/1` seam; the monotonic-time disk-cache bug

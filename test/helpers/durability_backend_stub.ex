@@ -15,6 +15,14 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
   @control :flezha_durability_stub_control
   @owner :flezha_durability_stub_owner
 
+  # A swept node ships its platform stores, so a unit test running with the tier
+  # on must not be pointed at the developer's real `app_data/{auth,schedules,dlq}`
+  # — what a case collects would then depend on the machine it runs on. An empty
+  # tmp root makes them absent rather than special-cased; a case that wants one
+  # of them puts its own dir over this.
+  @isolated_store_dirs [{:authn_authz, :auth_dir}, {:schedules, :dir}, {:dlq, :dir}]
+  @isolated_prefix "flezha_durability_stub_"
+
   # ---------- test control ----------
 
   @doc "Fresh, empty store with no faults armed. Selects this backend in config."
@@ -33,13 +41,47 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
       gc_abandoned_after_ms: 3_600_000
     )
 
+    isolate_store_dirs()
     :ok
   end
 
   def uninstall() do
     Application.delete_env(:flezha, :durability_tier)
+    restore_store_dirs()
     reset()
   end
+
+  defp isolate_store_dirs() do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        @isolated_prefix <> Integer.to_string(System.unique_integer([:positive]))
+      )
+
+    for {key, subkey} <- @isolated_store_dirs do
+      previous = Application.get_env(:flezha, key, [])
+
+      # A second `install/0` in one test must not save the isolated dir as the
+      # thing to restore.
+      unless isolated?(Keyword.get(previous, subkey)) do
+        control({:saved, key}, previous)
+      end
+
+      Application.put_env(:flezha, key, Keyword.put(previous, subkey, Path.join(root, "#{key}")))
+    end
+  end
+
+  defp restore_store_dirs() do
+    for {key, _subkey} <- @isolated_store_dirs do
+      case control_get({:saved, key}, :never_saved) do
+        :never_saved -> :ok
+        previous -> Application.put_env(:flezha, key, previous)
+      end
+    end
+  end
+
+  defp isolated?(path) when is_binary(path), do: String.contains?(path, @isolated_prefix)
+  defp isolated?(_path), do: false
 
   def reset() do
     owner = ensure_owner()
@@ -112,10 +154,16 @@ defmodule FlezhaTest.Helper.DurabilityBackendStub do
 
   defp control(key, value), do: :ets.insert(@control, {key, value})
 
+  # Tolerates an absent table: `uninstall/0` runs from an `on_exit` that a case
+  # which never installed the stub still registers.
   defp control_get(key, default) do
-    case :ets.lookup(@control, key) do
-      [{^key, value}] -> value
-      [] -> default
+    if :ets.whereis(@control) == :undefined do
+      default
+    else
+      case :ets.lookup(@control, key) do
+        [{^key, value}] -> value
+        [] -> default
+      end
     end
   end
 

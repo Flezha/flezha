@@ -3,17 +3,6 @@
 ## Purpose
 TBD - created by archiving change add-remote-durability-tier. Update Purpose after archive.
 ## Requirements
-### Requirement: Backend selection with a byte-identical default
-The controller SHALL select the durability backend from configuration (`FLEZHA_DURABILITY_BACKEND`, values `none | postgres | s3`), defaulting to `none`, and with `none` the system SHALL behave byte-identically to a build without the tier: no new processes on write paths, no new dependencies loaded, no latency change on any ack path.
-
-#### Scenario: Default configuration is inert
-- **WHEN** the controller boots with no durability backend configured
-- **THEN** no tier processes ship artifacts, no backend connection is attempted, and every ack path gates only on local fsync as before
-
-#### Scenario: Backend selected by configuration
-- **WHEN** `FLEZHA_DURABILITY_BACKEND=postgres` is set with valid connection options
-- **THEN** the tier starts, connects, and shipping begins at the next trigger boundary
-
 ### Requirement: Backends implement blob storage only
 A backend SHALL implement exactly the blob-level contract — `put`, `get`, `list`, `delete`, and epoch-conditional `put_if` — and SHALL NOT implement or duplicate any WAL semantics (framing, folding, truncation, torn-tail repair). All artifact and manifest semantics SHALL live in the tier, shared across backends.
 
@@ -169,4 +158,72 @@ Setting the backend to `none` on a controller with intact local state SHALL be a
 #### Scenario: Rollback by configuration
 - **WHEN** an operator disables the tier and restarts the controller
 - **THEN** all operatives restore from local state exactly as before the tier existed
+
+### Requirement: Backend selection requires an explicit durability decision in production
+
+The controller SHALL select the durability backend from configuration
+(`FLEZHA_DURABILITY_BACKEND`, values `none | postgres | s3`). A production
+release boot with no backend configured SHALL refuse to start, with a message
+naming the two valid moves (configure a backend, or explicitly set `none`).
+With `none` set explicitly the system SHALL behave byte-identically to a build
+without the tier — no new processes on write paths, no new dependencies
+loaded, no latency change on any ack path — and the local-only posture SHALL
+be surfaced on `/healthz` and `flz controller status`. Non-production (dev and
+test) boots SHALL keep defaulting to `none` with no refusal.
+
+#### Scenario: Unset backend refuses a production boot
+
+- **WHEN** a production release boots with `FLEZHA_DURABILITY_BACKEND` unset
+- **THEN** the controller refuses to start and the error names the env
+  variable, the supported backends, and the explicit `none` opt-out
+
+#### Scenario: Explicit opt-out is inert but visible
+
+- **WHEN** a production controller boots with `FLEZHA_DURABILITY_BACKEND=none`
+- **THEN** no tier processes ship artifacts, no backend connection is
+  attempted, every ack path gates only on local fsync, and `/healthz` and
+  `flz controller status` report the local-only durability posture
+
+#### Scenario: Backend selected by configuration
+
+- **WHEN** `FLEZHA_DURABILITY_BACKEND=postgres` is set with valid connection
+  options
+- **THEN** the tier starts, connects, and shipping begins at the next trigger
+  boundary
+
+### Requirement: Platform durable stores ship with the tier
+
+Beyond the operative's durable identity, the tier SHALL ship the platform
+stores a replacement controller needs to resurrect completely: the dead-letter
+queue's parked records and the authn/authz state (the roles/tokens/quotas
+store, namespace claims, and the durable bootstrap-enabled flag). These SHALL
+ship under the writing controller's claim with the same manifest-last
+atomicity and fencing as operative artifacts. Recovery SHALL hydrate authz
+state before any hub starts or any verb is accepted, so a resurrected
+controller enforces from its first accepted connection and the one-shot
+bootstrap claim cannot be re-run. Every other durable store under the state
+root SHALL be either in shipped scope or named on a documented
+accepted-exclusions list (initially: the audit log, delegated to external log
+shipping); an undocumented gap is a spec violation, not an accepted loss.
+
+#### Scenario: A dead controller's parked failures survive it
+
+- **WHEN** a controller dies with its disk after parking records to the DLQ
+- **THEN** a replacement controller hydrates the parked records with their
+  owning operatives, and `flz dlq` operations see them
+
+#### Scenario: A resurrected controller stays locked
+
+- **WHEN** a replacement controller hydrates from the backend after the
+  original died with its disk
+- **THEN** authz state is restored before any connection is accepted: existing
+  tokens work, enforcement posture is unchanged, and the bootstrap claim
+  reports already-claimed
+
+#### Scenario: Exclusions are documented, not silent
+
+- **WHEN** a durable store exists under the state root that the tier does not
+  ship
+- **THEN** it appears on the accepted-exclusions list with its alternative
+  durability story, and tier documentation reflects it
 

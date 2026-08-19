@@ -87,6 +87,13 @@ defmodule Flezha.Schedule.Store do
   @spec path() :: String.t()
   def path(), do: Path.join(dir(), @filename)
 
+  @doc "Directory holding the durable schedule definitions."
+  @spec dir() :: String.t()
+  def dir() do
+    Application.get_env(:flezha, :schedules, [])
+    |> Keyword.get(:dir, "app_data/schedules")
+  end
+
   ## ----- GenServer -----
 
   @impl true
@@ -120,11 +127,6 @@ defmodule Flezha.Schedule.Store do
   end
 
   ## ----- private -----
-
-  defp dir() do
-    Application.get_env(:flezha, :schedules, [])
-    |> Keyword.get(:dir, "app_data/schedules")
-  end
 
   # The name is embedded in instance ids as `<name>@<slot>`, so it must be
   # unambiguous there (no `@`, no whitespace, filesystem-safe) and short
