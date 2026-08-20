@@ -36,6 +36,10 @@ defmodule Flezha.State.WalWriter do
   @reservoir_capacity 1024
   @reserved_entity_keys Registry.reserved_entity_keys()
 
+  # Floor between resync attempts for one Entity. Low enough that a genuine gap
+  # heals promptly, high enough that a per-frame gap flood cannot fan out.
+  @resync_retry_interval_ms 1_000
+
   defstruct [
     :entity_id,
     :file_handle,
@@ -54,6 +58,7 @@ defmodule Flezha.State.WalWriter do
     :latency_reservoir,
     :backpressured?,
     :shedding?,
+    :last_resync_at,
     :awaiting_baseline?,
     :oldest_unsnapshotted_at,
     :credit_pending,
@@ -104,6 +109,7 @@ defmodule Flezha.State.WalWriter do
           latency_reservoir: :queue.queue(),
           backpressured?: boolean(),
           shedding?: boolean(),
+          last_resync_at: integer() | nil,
           awaiting_baseline?: boolean(),
           oldest_unsnapshotted_at: integer() | nil,
           credit_pending: %{optional({pid(), binary()}) => pos_integer()},
@@ -370,6 +376,7 @@ defmodule Flezha.State.WalWriter do
       latency_reservoir: :queue.new(),
       backpressured?: false,
       shedding?: false,
+      last_resync_at: nil,
       awaiting_baseline?: false,
       oldest_unsnapshotted_at: nil,
       credit_pending: %{},
@@ -725,16 +732,36 @@ defmodule Flezha.State.WalWriter do
         # Resync (a RestoreInitState handshake / WAL replay) runs in a separate
         # process so it never blocks this writer's append queue — and so the
         # test resync fun may re-enter `append/5` without self-deadlock.
-        entity_id = new_state.entity_id
+        #
+        # Rate-limited, for the same reason `shed/3` guards its own resync: a
+        # sustained flood produces a gap per frame, and one unguarded spawn
+        # each piles up tens of thousands of resync processes long before any
+        # completes. A per-episode latch would be simpler but cannot heal — a
+        # resync can fail (a torn control channel answers `:no_control_channel`)
+        # and the gap itself suppresses the contiguous append that would re-arm
+        # the latch. An interval bounds the fan-out without giving up.
+        now = now_ms()
 
-        spawn(fn ->
-          Recovery.resync(entity_id, runner_id: runner_id, reason: :seq_gap)
-        end)
+        new_state =
+          if is_integer(new_state.last_resync_at) and
+               now - new_state.last_resync_at < @resync_retry_interval_ms do
+            new_state
+          else
+            entity_id = new_state.entity_id
+
+            spawn(fn ->
+              Recovery.resync(entity_id, runner_id: runner_id, reason: :seq_gap)
+            end)
+
+            %{new_state | last_resync_at: now}
+          end
 
         {:noreply, new_state}
 
       {:reply, :ok, new_state} ->
-        {:noreply, track_credit(new_state, credit_opts)}
+        # A contiguous append is evidence the gap healed, so the episode ends
+        # and the next gap may resync immediately.
+        {:noreply, track_credit(%{new_state | last_resync_at: nil}, credit_opts)}
 
       {:reply, _result, new_state} ->
         release_credit(credit_opts)
@@ -1514,11 +1541,18 @@ defmodule Flezha.State.WalWriter do
 
   # Last-resort safety net above the soft watermark: cooperative SDKs throttle on
   # `EntityMailboxStatus` first; only a slow disk or a non-cooperating SDK
-  # reaches here. Covers un-fsynced bytes AND mailbox depth — a cast flood grows
-  # the mailbox even when bytes-per-record is small.
+  # reaches here.
+  #
+  # The un-fsynced byte bound always applies. The mailbox-depth cap applies only
+  # to an un-credited stream, where nothing else stops a cast flood: it counts
+  # MESSAGES while credit counts BYTES, so on a credit-speaking stream it fires
+  # far below the window it is meant to backstop — at 128-byte Changes, 5_000
+  # messages is ~0.6 MB against a 16 MB window, shedding a conformant sender's
+  # Changes 25x early. Credit already bounds mailbox + un-fsynced bytes to the
+  # window (the channel debits at admit, before the cast).
   defp over_hard_bound?(state) do
     state.pending_bytes >= state.hard_watermark or
-      message_queue_len() >= state.pending_msg_cap
+      (not state.credit_active? and message_queue_len() >= state.pending_msg_cap)
   end
 
   defp message_queue_len() do

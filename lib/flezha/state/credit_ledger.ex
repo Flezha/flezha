@@ -53,14 +53,29 @@ defmodule Flezha.State.CreditLedger do
   @doc """
   Register `bytes` of durable drain. Returns `{grant, ledger}`: `grant` is
   the batched replenishment owed to the sender — all freed-but-ungranted
-  bytes once the un-drained buffer falls below the low watermark, `0`
-  otherwise (a stalled drain mints nothing).
+  bytes once either the un-drained buffer falls below the low watermark or
+  `low` bytes have been freed since the last grant, `0` otherwise (a stalled
+  drain mints nothing).
   """
   def drain(%__MODULE__{} = ledger, bytes) do
     ledger = %{ledger | drained: ledger.drained + bytes}
+    freed = ledger.drained - ledger.granted
 
-    if ledger.debited - ledger.drained < ledger.low and ledger.drained > ledger.granted do
-      {ledger.drained - ledger.granted, %{ledger | granted: ledger.drained}}
+    # Two ways to earn a grant, and the sender needs both:
+    #
+    #   * the un-drained buffer fell below the low watermark — a trickling
+    #     sender stays alive even though little has been freed;
+    #   * at least `low` bytes have been freed since the last grant — a sender
+    #     that actually fills its window keeps moving.
+    #
+    # The second is what makes a full window usable. On the first condition
+    # alone, a sender saturating the window sees no grant until the buffer
+    # drains below half, so it parks, bursts, and parks again — throughput
+    # collapses to that sawtooth exactly when the pipeline is busiest.
+    # Granting earlier is always safe: `granted` never exceeds `drained`, so a
+    # grant only returns credit the writer has already made durable.
+    if freed > 0 and (ledger.debited - ledger.drained < ledger.low or freed >= ledger.low) do
+      {freed, %{ledger | granted: ledger.drained}}
     else
       {0, ledger}
     end
