@@ -491,18 +491,25 @@ defmodule Flezha.State.InputLog do
 
   # Admit in arrival order, encode into one iolist, write once, reply to all.
   # The first record that overruns credit parks, and so does everything behind
-  # it — parking the whole tail is what preserves ordering.
+  # it: once one has parked, the rest of the batch parks without re-testing the
+  # ledger, so a later smaller record can never be admitted ahead of an earlier
+  # parked one. That whole-tail park is what preserves the source's order — the
+  # same order one-append-per-message got for free from the mailbox.
   defp write_queued_appends(state, batch) do
-    {state, iodata, replies} =
-      Enum.reduce(batch, {state, [], []}, fn {from, body}, {st, io, replies} ->
-        case CreditLedger.admit(st.ledger, byte_size(body)) do
-          {:ok, ledger} ->
-            {offset, record, st} = encode_append(%{st | ledger: ledger}, body)
-            {st, [io, record], [{from, offset} | replies]}
+    {state, iodata, replies, _parking?} =
+      Enum.reduce(batch, {state, [], [], false}, fn
+        {from, body}, {st, io, replies, false} ->
+          case CreditLedger.admit(st.ledger, byte_size(body)) do
+            {:ok, ledger} ->
+              {offset, record, st} = encode_append(%{st | ledger: ledger}, body)
+              {st, [io, record], [{from, offset} | replies], false}
 
-          {:overrun, ledger} ->
-            {park(%{st | ledger: ledger}, from, body), io, replies}
-        end
+            {:overrun, ledger} ->
+              {park(%{st | ledger: ledger}, from, body), io, replies, true}
+          end
+
+        {from, body}, {st, io, replies, true} ->
+          {park(st, from, body), io, replies, true}
       end)
 
     state = flush_records(state, iodata)

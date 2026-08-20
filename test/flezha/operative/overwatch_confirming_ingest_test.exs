@@ -15,8 +15,6 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
   alias Flezha.Plugin.Extension.Table
   alias Flezha.State.{ProcInbox, TestHelpers}
 
-  setup :set_mimic_global
-
   setup do
     root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(root) end)
@@ -169,10 +167,6 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
   end
 
   describe "send_io_confirming_many/5" do
-    # Private stubs: the lookup runs in this process, and a global stub of the
-    # pid resolver would route every other test's sends into the stand-in.
-    setup :set_mimic_private
-
     # Stand-in operative: answers `{:ingest, ..}` like an Overwatch, records
     # the order it saw inputs in and the deepest queue it ever had — the queue
     # is what proves the caller's round trips overlap.

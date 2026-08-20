@@ -195,6 +195,7 @@ defmodule Flezha.State.WalWriter do
   def fsync(server), do: GenServer.call(server, :fsync)
 
   @doc "Fire-and-forget `fsync/1`: how the batcher's tick syncs every dirty writer at once."
+  @spec fsync_async(GenServer.server()) :: :ok
   def fsync_async(server), do: GenServer.cast(server, :fsync)
 
   @doc """
@@ -1563,14 +1564,6 @@ defmodule Flezha.State.WalWriter do
   # messages is ~0.6 MB against a 16 MB window, shedding a conformant sender's
   # Changes 25x early. Credit already bounds mailbox + un-fsynced bytes to the
   # window (the channel debits at admit, before the cast).
-  # Drive a resync for this Entity off-process. Captures `entity_id` only —
-  # closing over `state` would retain the writer's file handle, metrics and
-  # outbox in the spawned process — and never blocks the writer's append queue.
-  defp spawn_resync(state, runner_id, reason) do
-    entity_id = state.entity_id
-    spawn(fn -> Recovery.resync(entity_id, runner_id: runner_id, reason: reason) end)
-  end
-
   defp over_hard_bound?(state) do
     state.pending_bytes >= state.hard_watermark or
       (not state.credit_active? and message_queue_len() >= state.pending_msg_cap)
@@ -1581,6 +1574,14 @@ defmodule Flezha.State.WalWriter do
       {:message_queue_len, n} -> n
       nil -> 0
     end
+  end
+
+  # Drive a resync for this Entity off-process. Captures `entity_id` only —
+  # closing over `state` would retain the writer's file handle, metrics and
+  # outbox in the spawned process — and never blocks the writer's append queue.
+  defp spawn_resync(state, runner_id, reason) do
+    entity_id = state.entity_id
+    spawn(fn -> Recovery.resync(entity_id, runner_id: runner_id, reason: reason) end)
   end
 
   # Drop the Change without writing; the resulting seq gap drives the existing
