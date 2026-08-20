@@ -61,10 +61,14 @@ defmodule Flezha.Operative.Plugins do
   @spec transform_io(Overwatch.t(), :on_input | :on_output, binary(), map()) ::
           {binary(), map()} | nil
   def transform_io(%Overwatch{} = state, chain, message, metadata) do
-    case run_chain(state, chain, %{message: message, metadata: metadata}) do
-      {:ok, %Ctx.IO{message: msg, metadata: md}} -> {msg, md}
-      {:skip, _reason} -> nil
-      {:error, _reason} -> {message, metadata}
+    if Extension.active?(state.extensions, chain) do
+      case run_chain(state, chain, %{message: message, metadata: metadata}) do
+        {:ok, %Ctx.IO{message: msg, metadata: md}} -> {msg, md}
+        {:skip, _reason} -> nil
+        {:error, _reason} -> {message, metadata}
+      end
+    else
+      {message, metadata}
     end
   end
 

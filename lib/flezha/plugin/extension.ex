@@ -47,6 +47,19 @@ defmodule Flezha.Plugin.Extension do
     end
   end
 
+  @doc """
+  Whether any running plugin subscribes to `name`. A caller on a hot path asks
+  this before building the chain's context — an unsubscribed chain is a
+  passthrough and the context would be thrown away.
+  """
+  @spec active?(Table.t(), atom()) :: boolean()
+  def active?(%Table{} = table, name) do
+    case Map.fetch(table.catalog, name) do
+      {:ok, %{bit_index: bit}} -> Bitwise.band(table.active_mask, Bitwise.bsl(1, bit)) != 0
+      :error -> false
+    end
+  end
+
   defp empty_result(:fold, ctx), do: {:ok, ctx}
   defp empty_result(:transform, ctx), do: {:ok, ctx}
   defp empty_result(:fanout, _ctx), do: :ok

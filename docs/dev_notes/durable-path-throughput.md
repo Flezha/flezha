@@ -181,6 +181,17 @@ harness's setting; several batches in flight per partition, safe under
 idempotent sequence numbers, is the fix and a spec change
 (`kafka-producer-plugin` pins the singular in-flight batch).
 
+## Where the keyed tiers stand
+
+keyed/state ~41K and exactly-once ~24K do not move with pipelines (4 → 8) or
+runners (2 → 4), and during those runs the box is saturated — BEAM ~5 cores,
+system idle 0.6–1.5% with the broker JVM and the harness's own Kafka
+encode/decode taking the rest. keyed/off (no WAL) reaches 82K on the identical
+path, so the ~120 µs of BEAM CPU per record spent across StreamChannel,
+WalWriter, Overwatch and the sink on the persistence path is the remaining
+cost. The ranking is flat; single runs drift ±20%, so cuts under ~15% need
+repeated-run medians to be seen at all.
+
 ## Left open, measured or seen, not fixed
 
 - WAL appends are one `:file.write` each (`:prim_file.write_nif` ~4% + kernel
