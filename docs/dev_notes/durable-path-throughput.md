@@ -117,6 +117,37 @@ includes it; everything else in `WorkerRegistry` is unchanged.
 - `ProducerWorker.drain/4` re-summed the accumulator per record (O(n²) batch
   assembly).
 
+## The InputLog syncs on a companion handle
+
+`:file.datasync` ran inline in the log's message loop, ~3 ms per 5 ms tick on
+this disk, and an effectively-once ingest call waits on that loop one record
+at a time. A linked companion opens a second raw handle on the same path
+(fdatasync syncs the inode, not the descriptor) and takes the batcher's
+`:fsync`; the synchronous flush (`flush_now`, shutdown) round-trips to it.
+`truncate_below` renames the file, so it tells the companion to reopen; a
+`:normal` exit would not take a linked process along, so `terminate/2` stops
+it explicitly. EO per-record 11.2K → 15.6K/s.
+
+## One source, many requests in flight
+
+`OperativeManager.send_io_confirming_many/5` keeps a window (default 64) of
+ordinary `{:ingest, ..}` requests in flight with `:gen_server.send_request`
+and a request-id collection. The operative runs its single `ingest/3` once per
+input, in order (one caller, one server); only the round trips overlap. This is
+the seam a source holding a batch (a Kafka source, the bench bridge) drives —
+not the removed batch path, which ran a second server-side ingest. Paced
+latency is unchanged by it.
+
+## Not the disk, still
+
+With the ETS contention gone the profile shows `:prim_file.sync_nif` at 30%
+of traced time — but that is the companion's *blocked* wall time (tprof counts
+time inside a BIF), not CPU: tmpfs (`FLEZHA_STATE_DIR=/dev/shm/..`) gives the
+same throughput as disk, and a 25 ms tick only +12%. The per-record ceiling is
+wall time inside the Overwatch: two synchronous hops per ingest (`InputLog`,
+the shared primary `StreamChannel` — consulted only to learn bound/unbound),
+the `io_out` chain, ~7 messages per record.
+
 ## Left open, measured or seen, not fixed
 
 - WAL appends are one `:file.write` each (`:prim_file.write_nif` ~4% + kernel
@@ -133,6 +164,10 @@ includes it; everything else in `WorkerRegistry` is unchanged.
   `--profile`.
 - `BLOCK_PARK_TIMEOUT` (50 ms) and the 1 024 default mailbox bound a parked
   reader's cadence; a larger mailbox is memory per Entity, not a free default.
+- The primary `StreamChannel` hop on every `io_in`: the channel could publish
+  its `stream_ref` and counters ref and let the Overwatch call
+  `Native.send_frame/4` itself — the NIF only pushes into a channel. That
+  removes one synchronous hop per record and the per-runner funnel.
 
 ## Tests
 

@@ -78,7 +78,8 @@ defmodule Flezha.State.InputLog do
     :ledger,
     :offset_sizes,
     :waiters,
-    :consumed
+    :consumed,
+    :syncer
   ]
 
   # Cap on how many queued messages of one kind a handler folds into one pass
@@ -307,7 +308,15 @@ defmodule Flezha.State.InputLog do
 
     # Offsets reported before this log (re)started are in the published table.
     consumed = Map.new(entity_offsets(state.operative_class))
-    {:noreply, %{state | file_handle: file, next_offset: last + 1, consumed: consumed}}
+
+    {:noreply,
+     %{
+       state
+       | file_handle: file,
+         next_offset: last + 1,
+         consumed: consumed,
+         syncer: start_syncer(state.path)
+     }}
   end
 
   @impl true
@@ -321,8 +330,7 @@ defmodule Flezha.State.InputLog do
   end
 
   def handle_call(:fsync, _from, state) do
-    :ok = :file.datasync(state.file_handle)
-    {:reply, :ok, state}
+    {:reply, sync_now(state.syncer), state}
   end
 
   def handle_call(:last_offset, _from, state) do
@@ -343,12 +351,15 @@ defmodule Flezha.State.InputLog do
     :ok = File.rename(new_path, state.path)
     {:ok, file} = :file.open(state.path, [:raw, :read, :write, :binary])
     {:ok, _} = :file.position(file, :eof)
+    # The companion's descriptor still names the file the rename replaced.
+    send(state.syncer, {:reopen, state.path})
     {:reply, :ok, %{state | file_handle: file}}
   end
 
   @impl true
+  # The batcher's tick: the companion syncs while this loop keeps appending.
   def handle_cast(:fsync, state) do
-    :ok = :file.datasync(state.file_handle)
+    send(state.syncer, :sync)
     {:noreply, state}
   end
 
@@ -373,7 +384,66 @@ defmodule Flezha.State.InputLog do
       _ = :file.close(state.file_handle)
     end
 
+    # Linked, but a `:normal` exit would not take it along.
+    if state.syncer, do: send(state.syncer, :stop)
     :ok
+  end
+
+  # ---------- Sync companion ----------
+
+  # A second raw handle on the same file, in its own process: fdatasync syncs
+  # the inode, not the descriptor, so the ~ms a datasync takes is spent here
+  # while the log's loop keeps answering appends — which the effectively-once
+  # ingest call waits on, one record at a time.
+  defp start_syncer(path) do
+    spawn_link(fn -> syncer_loop(open_raw(path)) end)
+  end
+
+  defp open_raw(path) do
+    {:ok, fh} = :file.open(path, [:raw, :read, :write, :binary])
+    fh
+  end
+
+  defp syncer_loop(fh) do
+    receive do
+      :sync ->
+        # A backlog of ticks is one sync: datasync covers every write before it.
+        drain_syncs()
+        :ok = :file.datasync(fh)
+        syncer_loop(fh)
+
+      {:sync, from, ref} ->
+        :ok = :file.datasync(fh)
+        send(from, {ref, :ok})
+        syncer_loop(fh)
+
+      {:reopen, path} ->
+        _ = :file.close(fh)
+        syncer_loop(open_raw(path))
+
+      :stop ->
+        _ = :file.close(fh)
+        :ok
+    end
+  end
+
+  defp drain_syncs() do
+    receive do
+      :sync -> drain_syncs()
+    after
+      0 -> :ok
+    end
+  end
+
+  # The synchronous flush (`flush_now`, shutdown): the caller's call timeout
+  # bounds the wait.
+  defp sync_now(syncer) do
+    ref = make_ref()
+    send(syncer, {:sync, self(), ref})
+
+    receive do
+      {^ref, :ok} -> :ok
+    end
   end
 
   # ---------- Internals ----------

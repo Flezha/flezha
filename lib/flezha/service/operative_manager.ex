@@ -561,6 +561,72 @@ defmodule Flezha.Service.OperativeManager do
   end
 
   @doc """
+  `send_io_confirming/5` for a source holding many inputs at once, with up to
+  `window` requests in flight. Every input is the same `{:ingest, ...}` call —
+  the operative runs its single ingest path once per input, in input order —
+  only this caller's round trips overlap, which is what lets one source drive
+  a pipeline at line rate instead of at one round trip per record. Answers a
+  verdict per input, in input order; an unresolvable target answers
+  `{:error, :not_found}` for all of them.
+  """
+  @spec send_io_confirming_many(
+          String.t(),
+          String.t(),
+          [{binary(), map()}],
+          timeout(),
+          pos_integer()
+        ) :: [ingest_verdict()]
+  def send_io_confirming_many(operative_id, namespace, payloads, timeout \\ 5_000, window \\ 64)
+
+  def send_io_confirming_many(_operative_id, _namespace, [], _timeout, _window), do: []
+
+  def send_io_confirming_many(operative_id, namespace, payloads, timeout, window) do
+    case get_operative_pid(namespace, operative_id) do
+      {:ok, operative_pid} ->
+        pipeline(
+          operative_pid,
+          Enum.with_index(payloads),
+          timeout,
+          window,
+          :gen_server.reqids_new(),
+          %{}
+        )
+
+      _err ->
+        Enum.map(payloads, fn _ -> {:error, :not_found} end)
+    end
+  end
+
+  # Fill the window, then await one reply per free slot. Replies come back in
+  # request order (one server, one caller); `verdicts` is keyed by input index
+  # only so the order the collection hands them out in cannot matter.
+  defp pipeline(pid, pending, timeout, window, reqids, verdicts) do
+    in_flight = :gen_server.reqids_size(reqids)
+
+    cond do
+      pending != [] and in_flight < window ->
+        [{{message, metadata}, index} | rest] = pending
+        reqids = :gen_server.send_request(pid, {:ingest, message, metadata}, index, reqids)
+        pipeline(pid, rest, timeout, window, reqids, verdicts)
+
+      in_flight == 0 ->
+        verdicts |> Enum.sort() |> Enum.map(&elem(&1, 1))
+
+      true ->
+        case :gen_server.wait_response(reqids, timeout, true) do
+          {{:reply, verdict}, index, reqids} ->
+            pipeline(pid, pending, timeout, window, reqids, Map.put(verdicts, index, verdict))
+
+          {{:error, {reason, _server}}, _index, _reqids} ->
+            exit({reason, {__MODULE__, :send_io_confirming_many, [pid, timeout]}})
+
+          :timeout ->
+            exit({:timeout, {__MODULE__, :send_io_confirming_many, [pid, timeout]}})
+        end
+    end
+  end
+
+  @doc """
   Start a workflow instance of `factory_id` under `instance_id`, answering
   `:duplicate` when that id is already claimed.
 

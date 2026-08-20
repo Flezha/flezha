@@ -169,6 +169,73 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
              )
   end
 
+  describe "send_io_confirming_many/5" do
+    # Stand-in operative: answers `{:ingest, ..}` like an Overwatch, records
+    # the order it saw inputs in and the deepest queue it ever had — the queue
+    # is what proves the caller's round trips overlap.
+    defmodule IngestStub do
+      use GenServer
+      def start_link(reply), do: GenServer.start_link(__MODULE__, reply)
+      def init(reply), do: {:ok, %{reply: reply, seen: [], max_queued: 0}}
+
+      def handle_call({:ingest, message, _md}, _from, state) do
+        {:message_queue_len, queued} = Process.info(self(), :message_queue_len)
+        Process.sleep(2)
+
+        {:reply, state.reply,
+         %{state | seen: [message | state.seen], max_queued: max(state.max_queued, queued)}}
+      end
+
+      def handle_call(:report, _from, state),
+        do: {:reply, {Enum.reverse(state.seen), state.max_queued}, state}
+    end
+
+    test "inputs are ingested in order, round trips overlap, the window bounds them" do
+      {:ok, stub} = IngestStub.start_link(:ok)
+      stub(Flezha.Service.HubManager, :get_pid, fn _ns, _id -> {:ok, stub} end)
+
+      inputs = for i <- 1..20, do: {"m#{i}", %{}}
+
+      verdicts =
+        Flezha.Service.OperativeManager.send_io_confirming_many(
+          "target",
+          "default",
+          inputs,
+          5_000,
+          4
+        )
+
+      assert verdicts == List.duplicate(:ok, 20)
+      {seen, max_queued} = GenServer.call(stub, :report)
+      assert seen == Enum.map(inputs, &elem(&1, 0))
+      assert max_queued >= 1, "requests never overlapped"
+      assert max_queued <= 3, "more than the window was in flight"
+    end
+
+    test "verdicts come back per input, in input order" do
+      {:ok, stub} = IngestStub.start_link({:ok, :absorbed})
+      stub(Flezha.Service.HubManager, :get_pid, fn _ns, _id -> {:ok, stub} end)
+
+      assert [{:ok, :absorbed}, {:ok, :absorbed}] =
+               Flezha.Service.OperativeManager.send_io_confirming_many(
+                 "target",
+                 "default",
+                 [{"a", %{}}, {"b", %{}}]
+               )
+    end
+
+    test "an unresolvable target answers not-found for every input" do
+      stub(Flezha.Service.HubManager, :get_pid, fn _ns, _id -> {:error, "no pid found"} end)
+
+      assert [{:error, :not_found}, {:error, :not_found}] =
+               Flezha.Service.OperativeManager.send_io_confirming_many(
+                 "ghost",
+                 "default",
+                 [{"a", %{}}, {"b", %{}}]
+               )
+    end
+  end
+
   test "the existing cast keeps its silent drop for a parked operative" do
     state = state(instance_id(), init_error: :sdk_start_failed, channel: fake_channel(:ok))
 
