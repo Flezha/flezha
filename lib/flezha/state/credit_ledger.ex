@@ -2,13 +2,12 @@ defmodule Flezha.State.CreditLedger do
   @moduledoc """
   Pure byte-credit ledger for credit-grant flow control: the receiver
   debits work on receipt, durable drain frees the bytes, and freed
-  credit is granted back in low-watermark batches — never per record.
+  credit is granted back in batches — never per record.
 
   Accounting only — no processes, no side effects — so one core serves
-  every credit loop: today the runner→controller state stream
-  (`Flezha.Runner.StreamChannel` drives it and performs the sends),
-  and the per-Operative source-ingestion ledger when the
-  effectively-once tier's input-log lands.
+  every credit loop: the runner→controller state stream
+  (`Flezha.Runner.StreamChannel` drives it and performs the sends) and
+  the per-Operative source-ingestion ledger in `Flezha.State.InputLog`.
   """
 
   @enforce_keys [:session, :window, :low]
@@ -28,10 +27,14 @@ defmodule Flezha.State.CreditLedger do
     %__MODULE__{session: session, window: window, low: low}
   end
 
+  @doc """
+  Bytes debited but not yet durably drained — the work the receiver is still
+  holding. Every admission and grant decision is a comparison against this.
+  """
+  def outstanding(%__MODULE__{} = ledger), do: ledger.debited - ledger.drained
+
   @doc "Remaining credit (window minus un-drained debits). Negative on overshoot."
-  def level(%__MODULE__{} = ledger) do
-    ledger.window - (ledger.debited - ledger.drained)
-  end
+  def level(%__MODULE__{} = ledger), do: ledger.window - outstanding(ledger)
 
   @doc """
   Admit `size` bytes of work: `{:ok, ledger}` debits them;
@@ -41,7 +44,7 @@ defmodule Flezha.State.CreditLedger do
   mirrors this by sending at a full window).
   """
   def admit(%__MODULE__{} = ledger, size) do
-    un_drained = ledger.debited - ledger.drained
+    un_drained = outstanding(ledger)
 
     if un_drained > 0 and un_drained + size > ledger.window do
       {:overrun, %{ledger | overrun?: true}}
@@ -61,20 +64,13 @@ defmodule Flezha.State.CreditLedger do
     ledger = %{ledger | drained: ledger.drained + bytes}
     freed = ledger.drained - ledger.granted
 
-    # Two ways to earn a grant, and the sender needs both:
-    #
-    #   * the un-drained buffer fell below the low watermark — a trickling
-    #     sender stays alive even though little has been freed;
-    #   * at least `low` bytes have been freed since the last grant — a sender
-    #     that actually fills its window keeps moving.
-    #
-    # The second is what makes a full window usable. On the first condition
-    # alone, a sender saturating the window sees no grant until the buffer
-    # drains below half, so it parks, bursts, and parks again — throughput
-    # collapses to that sawtooth exactly when the pipeline is busiest.
-    # Granting earlier is always safe: `granted` never exceeds `drained`, so a
-    # grant only returns credit the writer has already made durable.
-    if freed > 0 and (ledger.debited - ledger.drained < ledger.low or freed >= ledger.low) do
+    # Either trigger earns a grant, and the sender needs both: a drained buffer
+    # keeps a trickling sender alive, and `low` bytes freed keeps a sender that
+    # actually fills its window moving. Without the second, a saturating sender
+    # sees nothing until the buffer halves, so it parks, bursts, parks again.
+    # Granting earlier is safe by construction — `granted` never exceeds
+    # `drained`, so a grant only returns credit already made durable.
+    if freed > 0 and (outstanding(ledger) < ledger.low or freed >= ledger.low) do
       {freed, %{ledger | granted: ledger.drained}}
     else
       {0, ledger}

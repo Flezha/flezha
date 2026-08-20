@@ -655,7 +655,7 @@ defmodule Flezha.Runner.StreamChannel do
 
     :telemetry.execute(
       [:flezha, :state, :credit_anomaly],
-      %{count: 1, un_fsynced: pre.debited - pre.drained, frame_bytes: size},
+      %{count: 1, un_fsynced: CreditLedger.outstanding(pre), frame_bytes: size},
       %{kind: :overrun, runner: state.runner_id, session: pre.session}
     )
 
