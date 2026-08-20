@@ -174,13 +174,19 @@ defmodule Flezha.State.Wire do
   `<proc_idx>.<seq_in_proc>`, an undo carrying a trailing `.1`). `seq` is a numeric
   dotted sequence so a sink can order it; `key` is omitted when the output
   carries no natural key.
+
+  `ack` is the delivery-confirmation token (`Flezha.State.Outbox`) the owning
+  writer waits on before advancing its cursor. Both durable flushes mint one;
+  live non-durable output carries none, and a sink treats its absence as "no
+  cursor is waiting on this".
   """
   @spec output_stamps(%{
           required(:entity) => {binary(), binary(), binary()} | binary(),
           required(:seq) => binary(),
           required(:epoch) => non_neg_integer(),
           required(:channel) => binary(),
-          optional(:key) => binary()
+          optional(:key) => binary(),
+          optional(:ack) => binary()
         }) :: %{binary() => binary()}
   def output_stamps(identity) do
     stamps = %{
@@ -190,11 +196,15 @@ defmodule Flezha.State.Wire do
       "flz.epoch" => Integer.to_string(identity.epoch)
     }
 
-    case Map.get(identity, :key) do
-      key when is_binary(key) and key != "" -> Map.put(stamps, "flz.key", key)
-      _ -> stamps
-    end
+    stamps
+    |> put_stamp("flz.key", Map.get(identity, :key))
+    |> put_stamp(Flezha.State.Outbox.ack_key(), Map.get(identity, :ack))
   end
+
+  defp put_stamp(stamps, key, value) when is_binary(value) and value != "",
+    do: Map.put(stamps, key, value)
+
+  defp put_stamp(stamps, _key, _value), do: stamps
 
   @doc """
   Decode an inbound `entity_state_change` / `entity_state_snapshot`

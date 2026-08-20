@@ -169,6 +169,36 @@ defmodule FlezhaTest.Plugin.Provider.OperativeForwardTest do
     assert_receive {:target_got, "candle", ^stamps}, 1_000
   end
 
+  test "the target's confirming ingest answers the outbox hold" do
+    entity_id = {uniq("of"), "proc", "k1"}
+    :ok = Flezha.State.TestHelpers.stub_outbox_owner(entity_id)
+
+    # Refused once, then accepted: the hold survives the retry and is answered
+    # exactly when the target confirms — never on the hand-off.
+    counter = :counters.new(1, [])
+
+    target =
+      fake_target(fn _ ->
+        :counters.add(counter, 1, 1)
+        if :counters.get(counter, 1) == 1, do: {:error, :not_ready}, else: :ok
+      end)
+
+    resolve_to(%{"sink" => target})
+    {:ok, opts, _pid} = prepare("src", "sink", %{retry_backoff_ms: 300})
+
+    metadata = %{
+      Flezha.State.Outbox.ack_key() => Flezha.State.Outbox.token(entity_id, {:cursor, 4})
+    }
+
+    emit(opts, "payload", metadata)
+
+    assert_receive {:target_got, "payload", _}, 1_000
+    refute_receive {:"$gen_cast", {:outbox_confirmed, _}}, 100
+
+    assert_receive {:target_got, "payload", _}, 1_000
+    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 4}}}, 1_000
+  end
+
   test "terminal verdicts are not retried" do
     for verdict <- [:ok, {:ok, :absorbed}, {:ok, :suspended}] do
       target = fake_target(fn _ -> verdict end)

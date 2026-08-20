@@ -131,7 +131,8 @@ defmodule Flezha.Operative.Handover do
   Busy classification for ProcessHub's migration consent: defer while a
   correction is pending, while a durable workflow is off an iteration
   boundary (suspension IS the safe barrier), or while the effectively-once
-  outbox still owes output that would strand on this node.
+  outbox still owes output that would strand on this node — queued behind the
+  flush, or dispatched and not yet confirmed by a sink.
 
   The synchronous correction transaction needs no clause — mid-run this process
   cannot answer, and consent's no-reply timeout defers it.
@@ -152,7 +153,10 @@ defmodule Flezha.Operative.Handover do
     Overwatch.operative_class(state)
     |> Flezha.State.Supervisor.live_writers()
     |> Enum.any?(fn pid ->
-      match?(%{pending: p} when p > 0, Flezha.State.WalWriter.outbox_status(pid, 1_000))
+      match?(
+        %{pending: p, awaiting: a} when p + a > 0,
+        Flezha.State.WalWriter.outbox_status(pid, 1_000)
+      )
     end)
   rescue
     _ -> false

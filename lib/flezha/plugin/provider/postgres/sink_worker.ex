@@ -11,9 +11,14 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
   epochs are no-ops. An unreachable database delays the flush (retry with
   backoff) — records are never dropped; enqueue callers park once the
   buffer passes `:queue_max`, propagating backpressure into the Overwatch.
+
+  The committed transaction is the delivery confirmation: it answers the
+  outbox hold each guaranteed record was handed over with, which is what lets
+  the controller's flush cursor advance (`Flezha.State.Outbox`).
   """
 
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.State.Outbox
 
   use GenServer
 
@@ -232,6 +237,10 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
 
     case commit_batch(state, batch) do
       :ok ->
+        # The commit is the confirmation: every guaranteed record in the batch
+        # answers its outbox hold, and only now may its cursor advance.
+        Enum.each(batch, &Outbox.confirm(&1.metadata))
+
         state = %{
           state
           | buffer: rest,
@@ -357,11 +366,21 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
         seq: seq,
         epoch: epoch,
         sort: sort_key(epoch, seq),
-        payload: msg
+        payload: msg,
+        metadata: metadata
       }
     else
       key = Map.get(metadata, "flz.key") || anon_key()
-      %{key: key, entity: "", seq: "", epoch: 0, sort: sort_key(0, ""), payload: msg}
+
+      %{
+        key: key,
+        entity: "",
+        seq: "",
+        epoch: 0,
+        sort: sort_key(0, ""),
+        payload: msg,
+        metadata: metadata
+      }
     end
   end
 

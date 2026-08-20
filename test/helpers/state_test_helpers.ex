@@ -9,7 +9,7 @@ defmodule Flezha.State.TestHelpers do
   that must not be reachable from a release.
   """
 
-  alias Flezha.State.{Registry, Supervisor, WalWriter}
+  alias Flezha.State.{Outbox, Registry, Supervisor, WalWriter}
 
   @doc """
   Allocates a per-test temporary directory under `System.tmp_dir!/0` and
@@ -28,6 +28,45 @@ defmodule Flezha.State.TestHelpers do
     File.mkdir_p!(base)
     Application.put_env(:flezha, :state_root, base)
     base
+  end
+
+  @doc """
+  Stand in as the WalWriter that owns `entity_id`'s outbox cursor: the
+  delivery-confirmation seam (`Flezha.State.Outbox`) resolves the owning writer
+  through the state registry, so a registered test process receives the sink's
+  `hold` / `settled` / `confirm` reports as plain casts.
+
+  Used by the sink-plugin suites, which exercise the confirmation seam without a
+  real persistence subsystem behind it.
+  """
+  @spec stub_outbox_owner(Registry.entity_id()) :: :ok
+  def stub_outbox_owner(entity_id) do
+    case Elixir.Registry.start_link(keys: :unique, name: Supervisor.registry_name()) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
+    {:ok, _} = Elixir.Registry.register(Supervisor.registry_name(), entity_id, nil)
+    :ok
+  end
+
+  @doc """
+  Metadata a durable outbox flush would stamp on one output of `entity_id`'s
+  entry `seq` — identity plus the confirmation token the owning writer waits
+  on. `extra` merges over it for the fields a given sink reads.
+  """
+  @spec guaranteed_metadata(Registry.entity_id(), non_neg_integer(), map()) :: map()
+  def guaranteed_metadata({rc, sh, pk} = entity_id, seq, extra \\ %{}) do
+    Map.merge(
+      %{
+        "channel" => "out",
+        "flz.entity" => "#{rc}/#{sh}/#{pk}",
+        "flz.seq" => "#{seq}.0",
+        "flz.epoch" => "0",
+        Outbox.ack_key() => Outbox.token(entity_id, {:cursor, seq})
+      },
+      extra
+    )
   end
 
   @doc """

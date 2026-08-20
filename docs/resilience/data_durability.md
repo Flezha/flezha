@@ -138,13 +138,28 @@ key + idempotent sink = effectively-once*:
   applied twice at a conforming sink** (Kafka: message key = `flz.key`,
   header `flezha.dedup_key` — see `docs/kafka-producer.md` for the
   changelog-vs-append contract).
+- **The cursor advances on confirmation, not on dispatch.** Handing an
+  output to the plugin chain is an in-memory hand-off, so it cannot be
+  what marks the entry delivered. Each flushed output carries an opaque
+  `flz.ack` token naming the writer that owns its cursor; a
+  delivery-guaranteed sink takes a *hold* on it as it accepts the record
+  and answers when its write is durable (Kafka produce acked, Postgres
+  transaction committed, forwarded ingest confirmed). An entry whose
+  outputs no sink held completes as soon as the chain has run them, so a
+  chain without a guaranteed sink behaves exactly as before. A batch whose
+  retry budget is permanently exhausted **parks** through the dead-letter
+  path with its identity attached, and only then may the cursor pass it:
+  recorded and replayable, never silently dropped. Unconfirmed output is
+  visible as `outbox_unconfirmed_ms` in the Entity's stall status and
+  reaches the convergence loop as the `outbox_flat` verdict.
 - **Postgres sink (built-in conforming sink).** The `operative_postgres`
   `io_binding` plugin (`Flezha.Plugin.Provider.Postgres`) makes the tier
   effectively-once *into the database*: per flush batch ONE transaction
   upserts every record into `flezha_records` (keyed by `flz.key`, falling
   back to the durable identity for keyless tier outputs) and advances the
   per-Entity `flezha_sink_progress` watermark row — data and progress can
-  never diverge. Every upsert is guarded by `(epoch, seq)` monotonicity,
+  never diverge, and that commit is what confirms the batch back to the
+  controller's outbox cursor. Every upsert is guarded by `(epoch, seq)` monotonicity,
   so controller re-drives and stale epochs are byte-exact no-ops. An
   unreachable database delays the flush (retry with backoff; enqueue
   callers park past `queue_max`) — data delayed, never dropped. The schema
@@ -239,16 +254,19 @@ escape before that procedure is durable.
   apart.
 - **Flush after the durable point.** Only once that fsync lands does the
   controller deliver the entries — in journal order, through the same
-  plugin fan-out live workflow output uses — then record an
-  `outbox_flushed` entry. A delivery that cannot happen yet (operative not
-  bound) is retried; entries are never silently dropped. Compute progress
+  plugin fan-out live workflow output uses. The `outbox_flushed` entry is
+  recorded when the sinks confirm the delivery, not when the chain is
+  handed the payload; a flush re-entered while an entry is still with the
+  chain does not deliver it twice. A delivery that cannot happen yet
+  (operative not bound) is retried; entries are never silently dropped. Compute progress
   is not coupled to sink health: the next procedure runs while the flush
   lands, because the chain hands data forward through the handoff, never
   through the sink.
 - **Crash before flush re-drives.** On restore, every `proc_committed` (and
   `compensated`) entry with no matching `outbox_flushed` is re-delivered
-  with its **original keys** before the resumed run advances. A proc whose
-  flush IS recorded is never re-delivered.
+  with its **original keys** before the resumed run advances — including
+  one that reached the chain but was never confirmed. A proc whose flush IS
+  recorded is never re-delivered.
 - **Branches resume independently.** The procedure topology is a tree
   (`workflow-branching`), so the restore state carries each in-flight
   commit's handoff under its own `proc_idx`: a respawn re-runs exactly the
@@ -278,9 +296,10 @@ escape before that procedure is durable.
   run on resume.
 
 **Guarantee.** Never lost, never leaked before commit — and **at-least-once
-with stable keys** on the re-drive window (the overlap between a delivery
-and its unwritten `outbox_flushed` marker). A dedup-capable sink absorbs
-that duplicate exactly; without one, a re-driven output can appear twice.
+with stable keys** on the re-drive window (the overlap between a sink's
+confirmation and the `outbox_flushed` marker it triggers). A dedup-capable
+sink absorbs that duplicate exactly; without one, a re-driven output can
+appear twice.
 Inspect what an instance owes with `flz state journal <instance>`.
 
 ## Workflow operatives: the durable inbox
@@ -350,24 +369,20 @@ An acknowledgement is only worth having if the sender can act on it, and acting
 means re-sending from a durable record. A source with no outbox has nothing to
 re-send from, so an ack mode would sell it a guarantee that cannot be honoured.
 
-**Limitation — in-flight items do not survive a controller restart.** Verified
-against both outbox drivers, and the answer is the same for each:
+**In-flight items survive a controller restart.** Both outbox drivers gate
+their cursor on the sink, so a payload still sitting in the forward worker's
+queue when the controller dies is still owed:
 
-- durable workflow: `ProcJournal.flush_entry/3` casts `{:io_out, ...}` to the
-  Overwatch and *then* appends the `outbox_flushed` marker. Once that marker
-  lands the entry is no longer owed, so `flush_pending/2` will not re-drive it.
-- effectively-once stream: `WalWriter.dispatch_outbox_entries/2` casts, then
-  advances `outbox_flushed_seq` and persists it. A restore re-drives only
-  entries *above* that persisted seq.
+- durable workflow: `ProcJournal.flush_entry/3` registers the entry with the
+  instance's journal writer, which appends the `outbox_flushed` marker only
+  once the delivery is confirmed. Until then `flush_pending/2` re-drives it.
+- effectively-once stream: `WalWriter.dispatch_outbox_entries/2` keeps each
+  dispatched entry in a confirmation tally and advances `outbox_flushed_seq`
+  over the leading run of confirmed ones. A restore re-drives everything above
+  that persisted seq.
 
-Neither cursor is gated on a sink acknowledging anything, so a payload sitting
-in the forward worker's in-memory queue when the controller dies is lost. The
-window runs from the marker/cursor advance to the confirming delivery, workflow
-by the retry backoff.
-
-This is the same posture as every other sink — the Kafka producer's buffer and
-the Postgres sink's buffer are lost identically. Diverging here would mean a
-second durable ledger beside the outbox that already exists.
+A source with no outbox has nothing to re-send from and keeps the plain
+at-least-once posture: retry-until-confirmed within the worker's lifetime.
 
 See [`../operative_forward_plugin.md`](../operative_forward_plugin.md) for the
 verdicts, refusals, and telemetry.

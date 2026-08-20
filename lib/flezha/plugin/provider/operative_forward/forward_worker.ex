@@ -4,6 +4,8 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
   operative-forward plugin: buffers payloads handed over by the source
   operative's `:on_output` / `:on_input` callback and delivers each one into the
   target operative's durable input stream, retrying until the target confirms.
+  That confirming reply is also what answers the outbox hold a
+  delivery-guaranteed payload carries (`Flezha.State.Outbox`).
 
   Delivery runs in a short-lived monitored process, never in the worker's own
   `handle_call`, so the worker always services an enqueue promptly. That is what
@@ -19,6 +21,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
 
   alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, Telemetry}
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.State.Outbox
   alias Flezha.Service.OperativeManager
 
   # `:transient` so disabling the plugin stops the worker for good: the host
@@ -215,7 +218,12 @@ defmodule Flezha.Plugin.Provider.OperativeForward.ForwardWorker do
 
   # Terminal: the receiver has decided the payload needs no further delivery.
   defp settle(state, verdict) when verdict in [:ok, {:ok, :absorbed}, {:ok, :suspended}] do
-    {_delivered, rest} = :queue.out(state.buffer)
+    {delivered, rest} = :queue.out(state.buffer)
+
+    # The target's confirming ingest is the delivery confirmation: it answers
+    # the outbox hold this payload was handed over with.
+    with {:value, {_message, metadata}} <- delivered,
+         do: Outbox.confirm(metadata)
 
     state = %{
       state

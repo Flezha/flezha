@@ -12,10 +12,12 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   """
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+
   alias Flezha.Operative.ClassRegistry
   alias Flezha.Runner.ControlChannel
   alias Flezha.State.DurabilityTier.Manifest
-  alias Flezha.State.{ProcInbox, ProcJournal, Registry, TestHelpers, Wire}
+  alias Flezha.State.{Outbox, ProcInbox, ProcJournal, Registry, TestHelpers, Wire}
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
   @namespace "ctrl-chan-proc-commit-test"
@@ -75,6 +77,19 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     assert {:ok, []} = ProcJournal.read(inst)
   end
 
+  # The marker is appended by the instance's journal writer once the delivery is
+  # confirmed, off the flushing process — so the journal is read after it lands.
+  defp await_marker(inst) do
+    assert wait_until(
+             fn ->
+               {:ok, entries} = ProcJournal.read(inst)
+               Enum.any?(entries, &(&1.type == :outbox_flushed))
+             end,
+             2_000
+           ),
+           "outbox_flushed marker never landed"
+  end
+
   test "the staged outbox is journaled with the commit and flushed only after the ack" do
     inst = "opc_outbox_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("outbox")
@@ -108,9 +123,11 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     assert meta_one["channel"] == "out"
     assert meta_two["flz.seq"] == "0.1"
 
-    # The flush runs on the ControlChannel, so a sync call on it means the
-    # post-delivery `outbox_flushed` append has landed.
-    _ = :sys.get_state(control_channel)
+    # Standing in for the Overwatch also means reporting the chain run: the
+    # marker is what a confirmed delivery leaves behind, never the hand-off.
+    :ok = Outbox.settled(meta_one)
+    :ok = Outbox.settled(meta_two)
+    await_marker(inst)
 
     # Outbox and progress are one record; the flush is recorded separately.
     assert {:ok, [committed, flushed]} = ProcJournal.read(inst)
@@ -213,7 +230,8 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     # The comp marker keeps the undo key off the forward output it reverses.
     assert meta["flz.seq"] == "2.0.1"
 
-    _ = :sys.get_state(control_channel)
+    :ok = Outbox.settled(meta)
+    await_marker(inst)
 
     assert {:ok, [compensated, flushed]} = ProcJournal.read(inst)
     assert %{type: :compensated, proc_idx: 2} = compensated

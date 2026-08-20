@@ -443,3 +443,34 @@ work. The plugin SHALL NOT claim broker-side exactly-once.
 - **THEN** the changelog-vs-append exactness contract and the consumer-side
   header check are stated explicitly
 
+### Requirement: A delivery-guaranteed outbox is served without silent loss
+
+A producer chain serving an effectively-once (delivery-guaranteed) outbox SHALL
+default the bounded outbound queue's `:queue_overflow` to `:block` —
+back-pressuring the outbox flush, which runs off the ingest hot path — rather
+than `:drop_oldest`. An operator MAY still configure `drop_oldest` or
+`drop_newest` explicitly on such a chain; each resulting drop SHALL emit an
+alarm-grade event, not only the `dropped_total` counter. On permanent failure
+of a batch carrying guaranteed records, the producer SHALL surface the failure
+to the outbox confirmation seam (so the batch parks through the dead-letter
+path) instead of dropping the records with only `:produce, :failed` telemetry.
+Plain (non-guaranteed) chains keep the existing defaults and semantics.
+
+#### Scenario: Overflow back-pressures the flush, not the broker's data
+
+- **WHEN** the broker is unreachable and a guaranteed chain's queue reaches
+  `:queue_max`
+- **THEN** the outbox flush blocks and no admitted record is evicted; ingest
+  and effect-record durability are unaffected
+
+#### Scenario: Confirmed batches report to the outbox
+
+- **WHEN** a produce for a guaranteed batch is acknowledged by the broker
+- **THEN** the producer reports the batch's outbox range confirmed, at the
+  same completion point where produce telemetry is emitted today
+
+#### Scenario: Permanent failure escalates instead of vanishing
+
+- **WHEN** a guaranteed batch exhausts its retry budget with a permanent error
+- **THEN** the records are handed to the outbox's park path with their range,
+  and are not dropped from the queue as if delivered

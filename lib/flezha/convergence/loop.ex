@@ -440,7 +440,8 @@ defmodule Flezha.Convergence.Loop do
           last_change_seen_at: s.last_change_seen_at,
           last_advance_at: s.last_advance_at,
           out_pending_seq: s.out_pending_seq,
-          outbox_flushed_seq: s.outbox_flushed_seq
+          outbox_flushed_seq: s.outbox_flushed_seq,
+          outbox_unconfirmed_ms: s.outbox_unconfirmed_ms
         }
         |> merge_input_cursors(cursors, entity_id)
       end)

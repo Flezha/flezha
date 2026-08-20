@@ -20,6 +20,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   alias Flezha.Plugin.Provider.Kafka.ProducerSup
   alias Flezha.Plugin.Provider.Kafka.Telemetry
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+  alias Flezha.State.Outbox
   alias KafkaEx.Client, as: KafkaClient
   alias KafkaEx.Client.NodeSelector
 
@@ -121,13 +122,15 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   Asynchronous, non-blocking enqueue used by the chain dispatch path.
   Returns `:ok` immediately after handing the message off to the worker's
   mailbox. Admission against the bounded queue happens inside the worker;
-  overflow is resolved per the configured `:queue_overflow` strategy with
-  the caveat that `:block` mode is not honored on this path (it is treated
-  as `:drop_newest` with a one-shot deprecation warning).
+  overflow is resolved per the configured `:queue_overflow` strategy. Under
+  `:block` a cast-admitted record waits for room instead of being dropped —
+  the caller is never blocked, the record simply is not admitted yet, which is
+  what back-pressures the outbox flush that produced it.
 
-  Permanent delivery failures of cast-admitted records surface only through
+  Permanent delivery failures of cast-admitted records surface through
   `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry tagged with
-  `caller: :async` — there is no caller to reply to.
+  `caller: :async`, and — for a delivery-guaranteed record — through the
+  outbox park path; there is no caller to reply to.
   """
   @spec cast_enqueue(GenServer.server(), binary(), map()) :: :ok
   def cast_enqueue(server, msg, metadata) do
@@ -186,7 +189,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       linger_ms: Keyword.get(opts, :linger_ms, 10),
       max_batch_bytes: Keyword.get(opts, :max_batch_bytes, 1_048_576),
       queue_max: Keyword.get(opts, :queue_max, 10_000),
-      queue_overflow: Keyword.get(opts, :queue_overflow, :drop_oldest),
+      queue_overflow: Keyword.get(opts, :queue_overflow),
       queue_block_timeout_ms: Keyword.get(opts, :queue_block_timeout_ms, 5_000),
       retries: Keyword.get(opts, :retries, 5),
       retry_backoff_ms: Keyword.get(opts, :retry_backoff_ms, 100),
@@ -223,7 +226,6 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       consecutive_failures: 0,
       stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold),
       last_force_replace_at: nil,
-      block_in_cast_warned?: false,
       swap_started_at: nil,
       swap_attempt: 0,
       pending_swap_telemetry: nil
@@ -297,6 +299,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
     case admit_record(state, record, :async) do
       {:admitted, state} -> {:noreply, maybe_kick_batch(state)}
+      {:blocked, state} -> {:noreply, state}
       {:dropped_async, state} -> {:noreply, state}
     end
   end
@@ -452,78 +455,86 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp admit_record(state, record, from_or_async) do
-    cond do
-      state.queue_size < state.queue_max ->
-        {:admitted, push(state, record)}
-
-      state.queue_overflow == :drop_newest ->
-        Telemetry.dropped(1, %{
-          plugin_id: state.plugin_id,
-          topic: state.topic,
-          partition: state.partition,
-          queue_depth: state.queue_size,
-          overflow_strategy: :drop_newest,
-          reason: :overflow
-        })
-
-        case from_or_async do
-          :async -> {:dropped_async, state}
-          _from -> {:replied, {:error, {:queue_full, :overflow}}, state}
-        end
-
-      state.queue_overflow == :drop_oldest ->
-        {state, evicted} = pop(state)
-        reply_to_record(evicted, {:error, {:queue_full, :evicted}})
-
-        Telemetry.dropped(1, %{
-          plugin_id: state.plugin_id,
-          topic: state.topic,
-          partition: state.partition,
-          queue_depth: state.queue_size,
-          overflow_strategy: :drop_oldest,
-          reason: :overflow
-        })
-
-        {:admitted, push(state, record)}
-
-      state.queue_overflow == :block and from_or_async == :async ->
-        state = warn_block_in_cast_unsupported(state)
-
-        Telemetry.dropped(1, %{
-          plugin_id: state.plugin_id,
-          topic: state.topic,
-          partition: state.partition,
-          queue_depth: state.queue_size,
-          overflow_strategy: :block_in_cast_unsupported,
-          reason: :overflow
-        })
-
-        {:dropped_async, state}
-
-      state.queue_overflow == :block ->
-        from = from_or_async
-        Process.send_after(self(), {:block_timeout, from}, state.queue_block_timeout_ms)
-        {:blocked, %{state | blocked: :queue.in({from, record}, state.blocked)}}
+    if state.queue_size < state.queue_max do
+      {:admitted, push(state, record)}
+    else
+      overflow(state, record, from_or_async, overflow_strategy(state, record))
     end
   end
+
+  # A record carrying an outbox confirmation token is delivery-guaranteed: a
+  # cursor upstream is waiting on it, so dropping it would claim a delivery that
+  # never happened. Such a record blocks by default; an operator who configured
+  # a drop policy explicitly still gets it, loudly.
+  defp overflow_strategy(%{queue_overflow: nil}, record),
+    do: if(Outbox.guaranteed?(record.metadata), do: :block, else: :drop_oldest)
+
+  defp overflow_strategy(%{queue_overflow: strategy}, _record), do: strategy
+
+  defp overflow(state, record, from_or_async, :drop_newest) do
+    drop_telemetry(state, record, :drop_newest)
+
+    case from_or_async do
+      :async -> {:dropped_async, state}
+      _from -> {:replied, {:error, {:queue_full, :overflow}}, state}
+    end
+  end
+
+  defp overflow(state, record, _from_or_async, :drop_oldest) do
+    {state, evicted} = pop(state)
+    reply_to_record(evicted, {:error, {:queue_full, :evicted}})
+    drop_telemetry(state, evicted, :drop_oldest)
+    {:admitted, push(state, record)}
+  end
+
+  # Room is made by a drained batch, never by evicting an admitted record. A
+  # synchronous caller waits out its own timeout; a cast-admitted record simply
+  # waits — the enqueueing process is not blocked either way.
+  defp overflow(state, record, :async, :block),
+    do: {:blocked, %{state | blocked: :queue.in({:async, record}, state.blocked)}}
+
+  defp overflow(state, record, from, :block) do
+    Process.send_after(self(), {:block_timeout, from}, state.queue_block_timeout_ms)
+    {:blocked, %{state | blocked: :queue.in({from, record}, state.blocked)}}
+  end
+
+  # A dropped delivery-guaranteed record is alarm-grade: its outbox cursor stays
+  # where it is, so the loss is visible as an outbox that stops draining rather
+  # than as a counter nobody reads.
+  defp drop_telemetry(state, record, strategy) do
+    guaranteed? = record != nil and Outbox.guaranteed?(record.metadata)
+
+    if guaranteed? do
+      Logger.error(
+        "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+          "dropped a delivery-guaranteed record under :queue_overflow = #{strategy}; " <>
+          "its outbox cursor will not advance until the entry is re-driven"
+      )
+    end
+
+    Telemetry.dropped(1, %{
+      plugin_id: state.plugin_id,
+      topic: state.topic,
+      partition: state.partition,
+      queue_depth: state.queue_size,
+      overflow_strategy: strategy,
+      guaranteed: guaranteed?,
+      reason: :overflow
+    })
+  end
+
+  # The outbox confirmation seam: an acked batch confirms every guaranteed
+  # record it carried, and a permanently failed one parks them with their own
+  # identity — a recorded, replayable loss instead of a silent one. Records
+  # carrying no token belong to a plain chain and settle nothing.
+  defp settle_outbox(record, _batch, :ok), do: Outbox.confirm(record.metadata)
+
+  defp settle_outbox(record, batch, {:error, {_kind, reason}}),
+    do: Outbox.park(record.metadata, record.value, reason, batch.attempt + 1)
 
   defp reply_to_record(nil, _reply), do: :ok
   defp reply_to_record(%{from: :async}, _reply), do: :ok
   defp reply_to_record(%{from: from}, reply), do: GenServer.reply(from, reply)
-
-  defp warn_block_in_cast_unsupported(%{block_in_cast_warned?: true} = state), do: state
-
-  defp warn_block_in_cast_unsupported(state) do
-    Logger.warning(
-      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
-        ":queue_overflow = :block is not honored on the chain dispatch path " <>
-        "(cast_enqueue/3). Cast-admitted records are treated as :drop_newest " <>
-        "with telemetry. Use :drop_oldest or :drop_newest explicitly to silence " <>
-        "this warning."
-    )
-
-    %{state | block_in_cast_warned?: true}
-  end
 
   defp push(state, record) do
     %{
@@ -985,7 +996,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp caller_tag(_), do: :sync
 
   defp complete_batch(state, batch, reply) do
-    Enum.each(batch.records, fn r -> reply_to_record(r, reply) end)
+    Enum.each(batch.records, fn r ->
+      reply_to_record(r, reply)
+      settle_outbox(r, batch, reply)
+    end)
 
     state = %{
       state

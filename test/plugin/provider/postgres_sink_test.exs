@@ -111,6 +111,45 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
            "a re-driven batch must leave rows and progress byte-identical"
   end
 
+  test "the committed transaction confirms the outbox range, and a re-drive re-confirms", %{
+    db: db
+  } do
+    rc = "pg_#{System.unique_integer([:positive])}"
+    entity_id = {rc, "proc", "k1"}
+    :ok = Flezha.State.TestHelpers.stub_outbox_owner(entity_id)
+
+    {opts, _pid} = start_provider()
+    entity = "#{rc}/proc/k1"
+
+    ack = fn seq ->
+      Map.put(
+        stamps(entity, "#{seq}.0", "1", "k#{seq}"),
+        Flezha.State.Outbox.ack_key(),
+        Flezha.State.Outbox.token(entity_id, {:cursor, seq})
+      )
+    end
+
+    emit(opts, "v1", ack.(1))
+    emit(opts, "v2", ack.(2))
+
+    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 1}}}, 10_000
+    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 2}}}, 10_000
+    assert wait_until(fn -> progress(db) == [[entity, "2.0", 1]] end, 10_000)
+
+    before = {rows(db), progress(db)}
+
+    # A crash between confirmation and cursor write re-drives the same identity:
+    # the `(epoch, seq)` guard absorbs it and the commit confirms it again.
+    emit(opts, "v1", ack.(1))
+    emit(opts, "v2", ack.(2))
+
+    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 1}}}, 10_000
+    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 2}}}, 10_000
+
+    assert {rows(db), progress(db)} == before,
+           "a re-driven batch must leave rows and progress byte-identical"
+  end
+
   test "stale epoch cannot regress a row or the watermark", %{db: db} do
     {opts, pid} = start_provider()
     entity = "op/tier_op/"

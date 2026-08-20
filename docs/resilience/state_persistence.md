@@ -71,7 +71,7 @@ Configurable root via `:flezha, :state_root` (default `app_data/state`).
 | `Flezha.State.Registry` | Path resolution + directory enumeration. No GenServer, no I/O beyond `File.ls/1`. |
 | `Flezha.State.Wire` | Wire-frame codec for `entity_state_change` / `entity_effect_record` / `entity_state_snapshot` payload-ids (+ the postcard `EffectRecordBody` codec). |
 | `Flezha.State.Metrics` | Per-Entity `:counters` references; lazy allocation in a `:ets` table. |
-| `Flezha.State.Outbox` | Per-Entity dedup file (`<entity_key>.outbox.dedup`): `last_persisted_seq` + `outbox_flushed_seq` + realign `epoch`. A rebuildable cache advanced at fsync-batch cadence (never per record); boot repairs it from the WAL scan. |
+| `Flezha.State.Outbox` | Per-Entity dedup file (`<entity_key>.outbox.dedup`): `last_persisted_seq` + `outbox_flushed_seq` + realign `epoch`. A rebuildable cache advanced at fsync-batch cadence (never per record); boot repairs it from the WAL scan. Also the delivery-confirmation seam that moves the flush cursor: mints the `flz.ack` token, and routes a sink's hold / confirm / park back to the writer that owns it. |
 | `Flezha.State.InputLog` | Effectively-once tier: per-operative durable ingest journal (`<class>/input.log`), min-watermark tracker + truncation, and the source-ingestion credit ledger. |
 | `Flezha.State.PersistenceResolver` | Per-Operative config resolution (`operative_persistence`, `time_travel_retention_hours`, `compact_after_bytes`). |
 | `Flezha.State.Supervisor` | `DynamicSupervisor` for per-Entity `WalWriter` GenServers + a process registry for name lookup. |

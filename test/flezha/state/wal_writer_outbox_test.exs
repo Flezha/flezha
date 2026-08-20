@@ -49,9 +49,15 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     on_exit(fn ->
       # Stop the writer first so a late persist cannot race the rm_rf.
-      case Supervisor.lookup(entity_id) do
-        {:ok, pid} -> WalWriter.close(pid)
-        :error -> :ok
+      try do
+        case Supervisor.lookup(entity_id) do
+          {:ok, pid} -> WalWriter.close(pid)
+          :error -> :ok
+        end
+      catch
+        # A test that closed its own writer may still see the registry entry
+        # until the sweep lands; stopping it twice is not a failure.
+        :exit, _ -> :ok
       end
 
       Application.delete_env(:flezha, :state_root)
@@ -80,6 +86,11 @@ defmodule Flezha.State.WalWriterOutboxTest do
     Application.put_env(:flezha, :dlq, Keyword.put(original, :dir, Path.join(base, "dlq")))
     on_exit(fn -> Application.put_env(:flezha, :dlq, original) end)
   end
+
+  # This test process stands in for the Overwatch: the plugin chain run is what
+  # settles a dispatched output, so a test expecting the cursor to move reports
+  # it the same way the real dispatcher does.
+  defp settle(metadata), do: :ok = Outbox.settled(metadata)
 
   defp output(key, payload, metadata \\ []) do
     %{channel: "out", key: key, metadata: metadata, payload: payload}
@@ -135,7 +146,14 @@ defmodule Flezha.State.WalWriterOutboxTest do
     # The durable consumed-offset advanced the input-log watermark.
     assert InputLog.watermark(rc) == 4711
 
-    # And the cursor advanced (at batch cadence) to the dispatched seq.
+    # The cursor does NOT move on the hand-off — only once the chain has run
+    # both outputs and no sink is holding either.
+    assert Outbox.read(entity_id).outbox_flushed_seq == -1
+
+    settle(md1)
+    settle(md2)
+    :ok = WalWriter.fsync(pid)
+
     assert Outbox.read(entity_id).outbox_flushed_seq == 0
   end
 
@@ -241,6 +259,8 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "payload-y")], 1))
     :ok = WalWriter.fsync(pid)
     assert_receive {:"$gen_cast", {:io_out, "payload-y", md_first}}
+    settle(md_first)
+    :ok = WalWriter.fsync(pid)
     close_writer(pid, entity_id)
 
     # The cursor write never landed (crash window): reset it to stale.
@@ -301,7 +321,9 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "p")], 3))
     :ok = WalWriter.fsync(pid)
-    assert_receive {:"$gen_cast", {:io_out, _, _}}
+    assert_receive {:"$gen_cast", {:io_out, _, md}}
+    settle(md)
+    :ok = WalWriter.fsync(pid)
 
     live =
       ExUnit.CaptureIO.capture_io(fn ->
@@ -502,9 +524,11 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "v")], 101))
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "v", _}}, 2_000
+    assert_receive {:"$gen_cast", {:io_out, "v", md}}, 2_000
+    settle(md)
 
-    assert %{out_pending_seq: 1, outbox_flushed_seq: 1} = WalWriter.stall_status(pid)
+    assert %{out_pending_seq: 1, outbox_flushed_seq: 1, outbox_unconfirmed_ms: 0} =
+             WalWriter.stall_status(pid)
 
     :ok = WalWriter.close(pid)
   end
@@ -531,5 +555,149 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert %{out_pending_seq: 1} = WalWriter.stall_status(pid)
 
     :ok = WalWriter.close(pid)
+  end
+
+  # ---------- delivery confirmation ----------
+
+  test "a held output holds the cursor until the sink confirms", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "held")], 1))
+    :ok = WalWriter.fsync(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "held", md}}
+
+    # A delivery-guaranteed sink takes ownership before the chain settles.
+    :ok = Outbox.hold(md)
+    settle(md)
+    :ok = WalWriter.fsync(pid)
+
+    assert %{outbox_flushed_seq: -1, awaiting: 1} = WalWriter.outbox_status(pid)
+
+    :ok = Outbox.confirm(md)
+    :ok = WalWriter.fsync(pid)
+
+    assert %{outbox_flushed_seq: 0, awaiting: 0} = WalWriter.outbox_status(pid)
+    assert Outbox.read(entity_id).outbox_flushed_seq == 0
+  end
+
+  test "an unconfirmed entry blocks the cursor behind a later confirmed one", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "first")], 1))
+    :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "second")], 2))
+    :ok = WalWriter.fsync(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "first", md_first}}
+    assert_receive {:"$gen_cast", {:io_out, "second", md_second}}
+
+    for md <- [md_first, md_second] do
+      :ok = Outbox.hold(md)
+      settle(md)
+    end
+
+    # The later entry confirms first: the cursor may not pass the earlier one.
+    :ok = Outbox.confirm(md_second)
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: -1} = WalWriter.outbox_status(pid)
+
+    :ok = Outbox.confirm(md_first)
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: 1, awaiting: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a permanently failed output parks and advances exactly its range", %{
+    rc: rc,
+    entity_id: entity_id,
+    base: base
+  } do
+    redirect_dlq_dir(base)
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "doomed")], 1))
+    :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "fine")], 2))
+    :ok = WalWriter.fsync(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "doomed", md_doomed}}
+    assert_receive {:"$gen_cast", {:io_out, "fine", md_fine}}
+
+    for md <- [md_doomed, md_fine] do
+      :ok = Outbox.hold(md)
+      settle(md)
+    end
+
+    :ok = Outbox.park(md_doomed, "doomed", :broker_gone, 6)
+    :ok = Outbox.confirm(md_fine)
+    :ok = WalWriter.fsync(pid)
+
+    assert %{outbox_flushed_seq: 1, awaiting: 0} = WalWriter.outbox_status(pid)
+
+    assert [entry] = Flezha.Dlq.Store.list(rc)
+    assert entry["entity_key"] == "k1"
+    assert entry["channel"] == "out"
+    assert entry["attempts"] == 6
+    assert entry["error"] =~ "broker_gone"
+    assert {:ok, _entry, "doomed"} = Flezha.Dlq.Store.get("#{rc}/proc/#{entry["id"]}")
+  end
+
+  test "the in-flight window back-pressures the flush instead of dropping", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    Application.put_env(:flezha, :outbox_inflight_max, 1)
+    on_exit(fn -> Application.delete_env(:flezha, :outbox_inflight_max) end)
+
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "one")], 1))
+    :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "two")], 2))
+    :ok = WalWriter.fsync(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "one", md_one}}
+    refute_receive {:"$gen_cast", {:io_out, "two", _}}, 100
+
+    assert %{pending: 1} = WalWriter.outbox_status(pid)
+
+    :ok = Outbox.hold(md_one)
+    settle(md_one)
+    :ok = Outbox.confirm(md_one)
+    :ok = WalWriter.fsync(pid)
+
+    assert_receive {:"$gen_cast", {:io_out, "two", _}}, 2_000
+  end
+
+  test "a chain run that never reports back is re-dispatched, not wedged", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    Application.put_env(:flezha, :outbox_resettle_ms, 50)
+    on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
+
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "lost")], 1))
+    :ok = WalWriter.fsync(pid)
+
+    # The Overwatch died mid-chain: the output was dispatched and nothing ever
+    # settled it. The retry tick re-dispatches it with identical identity.
+    assert_receive {:"$gen_cast", {:io_out, "lost", md}}
+    assert_receive {:"$gen_cast", {:io_out, "lost", md_again}}, 3_000
+    assert md_again["flz.seq"] == md["flz.seq"]
+    assert md_again["flz.epoch"] == md["flz.epoch"]
+
+    settle(md_again)
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
   end
 end

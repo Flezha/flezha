@@ -34,9 +34,7 @@ defmodule Flezha.State.RecordLog do
           {:ok, non_neg_integer()} | {:error, term()}
   def append(log_id, header, body) when is_binary(header) and is_binary(body) do
     with {:ok, pid} <- Supervisor.find_or_start(log_id),
-         seq = WalWriter.last_persisted_seq(pid) + 1,
-         :ok <- WalWriter.append(pid, seq, header, body),
-         :ok <- WalWriter.fsync(pid) do
+         {:ok, seq} <- WalWriter.append_next(pid, header, body) do
       {:ok, seq}
     else
       {:error, _} = err -> err

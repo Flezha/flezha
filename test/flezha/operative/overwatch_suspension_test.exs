@@ -344,10 +344,23 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
       stub(Flezha.State.Supervisor, :live_writers, fn _class -> [self()] end)
 
-      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout -> %{pending: 3} end)
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout ->
+        %{pending: 3, awaiting: 0}
+      end)
+
       assert Overwatch.migration_consent(st) == :defer
 
-      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout -> %{pending: 0} end)
+      # Dispatched but unconfirmed still owes output that would strand here.
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout ->
+        %{pending: 0, awaiting: 2}
+      end)
+
+      assert Overwatch.migration_consent(st) == :defer
+
+      stub(Flezha.State.WalWriter, :outbox_status, fn _pid, _timeout ->
+        %{pending: 0, awaiting: 0}
+      end)
+
       assert Overwatch.migration_consent(st) == :ready
     end
 

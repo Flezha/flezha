@@ -69,6 +69,15 @@ defmodule Flezha.State.WalWriter do
     :outbox_flushed_seq,
     :outbox_epoch,
     :outbox_retry_timer,
+    # Dispatched but not yet confirmed by the sinks: the per-entry tallies
+    # (`Flezha.State.Outbox` keys) and, for a stream writer, the dispatch-order
+    # queue of `{seq, at}` the cursor drains in. The cursor may only reach a seq
+    # once every earlier one has left this queue, which is what stops an
+    # out-of-order confirmation from advancing it past unconfirmed output.
+    :outbox_awaiting,
+    :outbox_inflight,
+    :outbox_inflight_max,
+    :outbox_resettle_ms,
     # Highest seq of an OUTPUT-BEARING effect record queued. Producing-liveness
     # compares it against `outbox_flushed_seq` to see an outbox that accumulates
     # without draining. It must count only output-bearing records:
@@ -119,7 +128,8 @@ defmodule Flezha.State.WalWriter do
           oldest_unsnapshotted_at: integer() | nil,
           owning_runner: binary() | nil,
           out_pending_seq: integer(),
-          outbox_flushed_seq: integer()
+          outbox_flushed_seq: integer(),
+          outbox_unconfirmed_ms: non_neg_integer()
         }
 
   # ---------- Public API ----------
@@ -178,6 +188,17 @@ defmodule Flezha.State.WalWriter do
   @spec fsync(GenServer.server()) :: :ok
   def fsync(server), do: GenServer.call(server, :fsync)
 
+  @doc """
+  Append one record at the log's own next seq and fsync it, answering the seq it
+  was assigned. Seq assignment, write and fsync are one call because they are
+  one decision: two processes appending to the same log would otherwise read the
+  same tail and collide, and the loser's record would be refused as a duplicate.
+  """
+  @spec append_next(GenServer.server(), binary(), binary()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def append_next(server, header, body),
+    do: GenServer.call(server, {:append_next, header, body})
+
   @spec truncate_up_to(GenServer.server(), non_neg_integer()) :: :ok
   def truncate_up_to(server, seq), do: GenServer.call(server, {:truncate_up_to, seq})
 
@@ -234,6 +255,17 @@ defmodule Flezha.State.WalWriter do
 
   @spec last_persisted_seq(GenServer.server()) :: integer()
   def last_persisted_seq(server), do: GenServer.call(server, :last_persisted_seq)
+
+  @doc """
+  Register one workflow transactional-outbox entry as owed to the sinks, so its
+  `outbox_flushed` marker is appended once they confirm. `:already_awaiting`
+  means a previous flush already handed this entry to the chain and the caller
+  must not deliver it again.
+  """
+  @spec await_outbox(GenServer.server(), Outbox.key(), pos_integer()) ::
+          :ok | :already_awaiting
+  def await_outbox(server, key, outputs),
+    do: GenServer.call(server, {:outbox_await, key, outputs})
 
   @doc "Live effectively-once outbox status (`flz state outbox`)."
   @spec outbox_status(GenServer.server(), timeout()) :: map()
@@ -313,7 +345,7 @@ defmodule Flezha.State.WalWriter do
   @impl true
   def init(entity_id) do
     Process.flag(:trap_exit, true)
-    now = :erlang.monotonic_time(:millisecond)
+    now = now_ms()
 
     # Disk I/O (mkdir/open/scan/seek) is deferred to `handle_continue/2` so this
     # `init` returns instantly: the process is already Registry-registered, so a
@@ -348,6 +380,10 @@ defmodule Flezha.State.WalWriter do
       outbox_flushed_seq: -1,
       outbox_epoch: 0,
       outbox_retry_timer: nil,
+      outbox_awaiting: %{},
+      outbox_inflight: :queue.new(),
+      outbox_inflight_max: outbox_inflight_max(),
+      outbox_resettle_ms: outbox_resettle_ms(),
       outbox_last_seq: -1
     }
 
@@ -370,7 +406,7 @@ defmodule Flezha.State.WalWriter do
 
     # Boot-time approximation: surviving records are at least this old, so
     # the age trigger under-fires by at most one boot-to-sweep interval.
-    oldest = if size > 0, do: :erlang.monotonic_time(:millisecond)
+    oldest = if size > 0, do: now_ms()
 
     # Restart re-drive (effectively-once): every durable effect record above
     # the flush cursor re-enters the outbox queue with identical identity —
@@ -412,7 +448,7 @@ defmodule Flezha.State.WalWriter do
     # Every received Change frame — accepted, deduped, realigned, or rejected
     # as a gap — proves the SDK is still emitting, which distinguishes a
     # stalled Entity from a genuinely idle one for the watchdog.
-    now = :erlang.monotonic_time(:millisecond)
+    now = now_ms()
     state = %{state | last_change_seen_at: now}
 
     cond do
@@ -451,6 +487,19 @@ defmodule Flezha.State.WalWriter do
 
       true ->
         write_record(state, seq, header, change_bytes, runner_id, now)
+    end
+  end
+
+  def handle_call({:append_next, header, body}, from, state) do
+    seq = state.last_persisted_seq + 1
+
+    case handle_call({:append, seq, header, body, nil}, from, state) do
+      {:reply, :ok, state} ->
+        {:reply, :ok, state} = handle_call(:fsync, from, state)
+        {:reply, {:ok, seq}, state}
+
+      {:reply, error, state} ->
+        {:reply, error, state}
     end
   end
 
@@ -521,7 +570,7 @@ defmodule Flezha.State.WalWriter do
     rewind_input_watermark(state, max_consumed)
 
     size = file_size(state.wal_path)
-    now = :erlang.monotonic_time(:millisecond)
+    now = now_ms()
     Metrics.put(state.metrics, :wal_size_bytes, size)
     Metrics.put(state.metrics, :wal_seq, seq)
     Metrics.put(state.metrics, :snapshot_seq, highest_snapshot_seq(state.entity_id))
@@ -558,7 +607,7 @@ defmodule Flezha.State.WalWriter do
 
     # Surviving tail records post-date the snapshot's baseline by at most the
     # compaction round-trip, so "now" is a safe age floor for the next trigger.
-    oldest = if size > 0, do: :erlang.monotonic_time(:millisecond)
+    oldest = if size > 0, do: now_ms()
 
     state = flush_credit_pending(state)
     state = establish_baseline(state, seq)
@@ -591,12 +640,25 @@ defmodule Flezha.State.WalWriter do
     {:reply, scan_consumed_at(state.file_handle, seq), state}
   end
 
+  # The workflow flush registers its entry here rather than inline (a stream
+  # writer registers its own as it dispatches). `:already_awaiting` is what
+  # keeps a re-entered journal flush from re-delivering an entry whose marker is
+  # merely waiting on the sinks.
+  def handle_call({:outbox_await, key, outputs}, _from, state) do
+    if Map.has_key?(state.outbox_awaiting, key) do
+      {:reply, :already_awaiting, state}
+    else
+      {:reply, :ok, register_entry(state, key, outputs, nil)}
+    end
+  end
+
   def handle_call(:outbox_status, _from, state) do
     status = %{
       last_persisted_seq: state.last_persisted_seq,
       outbox_flushed_seq: state.outbox_flushed_seq,
       epoch: state.outbox_epoch,
-      pending: :queue.len(state.pending_outbox)
+      pending: :queue.len(state.pending_outbox),
+      awaiting: map_size(state.outbox_awaiting)
     }
 
     {:reply, status, state}
@@ -611,7 +673,8 @@ defmodule Flezha.State.WalWriter do
       oldest_unsnapshotted_at: state.oldest_unsnapshotted_at,
       owning_runner: state.owning_runner,
       out_pending_seq: state.outbox_last_seq,
-      outbox_flushed_seq: state.outbox_flushed_seq
+      outbox_flushed_seq: state.outbox_flushed_seq,
+      outbox_unconfirmed_ms: unconfirmed_age_ms(state)
     }
 
     {:reply, status, state}
@@ -635,6 +698,17 @@ defmodule Flezha.State.WalWriter do
       )
     end
   end
+
+  # Delivery confirmation (`Flezha.State.Outbox`): sinks report against the entry
+  # the flush registered, whichever flush registered it.
+  def handle_cast({:outbox_hold, key}, state),
+    do: {:noreply, tally(state, key, &%{&1 | holds: &1.holds + 1})}
+
+  def handle_cast({:outbox_settled, key}, state),
+    do: {:noreply, tally(state, key, &%{&1 | pending: &1.pending - 1})}
+
+  def handle_cast({:outbox_confirmed, key}, state),
+    do: {:noreply, tally(state, key, &%{&1 | confirms: &1.confirms + 1})}
 
   defp do_append_async(seq, header, change_bytes, runner_id, state, credit_opts) do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
@@ -673,10 +747,15 @@ defmodule Flezha.State.WalWriter do
   @impl true
   def handle_info(:outbox_retry, state) do
     before = state.outbox_flushed_seq
-    state = try_dispatch_outbox(%{state | outbox_retry_timer: nil})
+    state = resettle_outbox(%{state | outbox_retry_timer: nil})
+    state = try_dispatch_outbox(state)
     state = if state.outbox_flushed_seq != before, do: persist_dedup(state), else: state
+    state = if state.outbox_awaiting == %{}, do: state, else: schedule_outbox_retry(state)
     {:noreply, state}
   end
+
+  def handle_info({:outbox_marked, key}, state),
+    do: {:noreply, %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}}
 
   def handle_info(_msg, state), do: {:noreply, state}
 
@@ -790,42 +869,61 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
+  # Back-pressure, not loss: with the confirmation window full the durable
+  # entries simply stay queued (and on disk) until a sink answers. Ingest and
+  # the effect-record fsync never wait on this.
   defp dispatch_outbox_entries(state, pid) do
     case :queue.out(state.pending_outbox) do
       {{:value, %{seq: seq} = entry}, rest} when seq <= state.outbox_durable_seq ->
-        dispatch_one_effect(state, pid, entry)
-
-        state = %{
+        if :queue.len(state.outbox_inflight) >= state.outbox_inflight_max do
           state
-          | pending_outbox: rest,
-            outbox_flushed_seq: entry.seq
-        }
+        else
+          key = {:cursor, entry.seq}
 
-        dispatch_outbox_entries(state, pid)
+          %{state | pending_outbox: rest}
+          |> await_entry(key, entry, dispatch_one_effect(state, pid, key, entry))
+          |> dispatch_outbox_entries(pid)
+        end
 
       _ ->
         state
     end
   end
 
-  defp dispatch_one_effect(state, pid, entry) do
-    {rc, sh, pk} = state.entity_id
+  # Answers how many outputs the entry handed to the chain — what the entry's
+  # tally waits on before the cursor may pass it.
+  defp dispatch_one_effect(state, pid, key, entry) do
+    outputs = dispatch_outputs(state, pid, key, entry)
+    apply_effect(state, entry)
+    outputs
+  end
 
+  # The outputs alone — what a re-dispatch owes. Answers how many the entry's
+  # tally waits on before the cursor may pass it.
+  defp dispatch_outputs(state, pid, key, entry) do
     entry.outputs
     |> Enum.with_index()
     |> Enum.each(fn {output, ordinal} ->
-      stamps =
-        Wire.output_stamps(%{
-          entity: state.entity_id,
-          seq: "#{entry.seq}.#{ordinal}",
-          epoch: state.outbox_epoch,
-          channel: output.channel,
-          key: output.key
-        })
-
-      metadata = Map.merge(Map.new(output.metadata), stamps)
-      GenServer.cast(pid, {:io_out, output.payload, metadata})
+      Outbox.dispatch(pid, output.payload, %{
+        owner: state.entity_id,
+        entry: key,
+        entity: state.entity_id,
+        seq: "#{entry.seq}.#{ordinal}",
+        epoch: state.outbox_epoch,
+        channel: output.channel,
+        key: output.key,
+        metadata: output.metadata
+      })
     end)
+
+    length(entry.outputs)
+  end
+
+  # The durable side effects the record carries beyond its outputs. They belong
+  # to the record, not to a delivery attempt, so a re-dispatch does not repeat
+  # them.
+  defp apply_effect(state, entry) do
+    {rc, sh, pk} = state.entity_id
 
     # Materialize a dead-letter park BEFORE the consumed-offset advance:
     # the watermark move can truncate the poison input out of the
@@ -869,6 +967,146 @@ defmodule Flezha.State.WalWriter do
   end
 
   defp schedule_outbox_retry(state), do: state
+
+  # One entry's outstanding delivery: `pending` counts outputs still inside the
+  # plugin chain, `holds` the sinks that took ownership of one, `confirms` the
+  # answers they owe. Complete once every output has settled and every hold has
+  # answered — an unheld output is complete the moment its chain run settles,
+  # which is what keeps a chain with no delivery-guaranteed sink behaving as it
+  # always did.
+  #
+  # Registration always precedes the reports (a stream writer registers inside
+  # the handler that casts, the journal flush registers with a call), so a report
+  # against an unknown entry is one a resettle superseded — dropped, because the
+  # live registration owns the entry now. `entry` is retained for exactly that
+  # resettle; the journal flush keeps `nil` and re-drives from its own journal.
+  defp register_entry(state, key, outputs, entry) do
+    tally = %{pending: outputs, holds: 0, confirms: 0, done?: false, entry: entry, at: now_ms()}
+
+    %{state | outbox_awaiting: Map.put(state.outbox_awaiting, key, tally)}
+    |> tally(key, & &1)
+  end
+
+  defp await_entry(state, {:cursor, seq} = key, entry, outputs) do
+    %{state | outbox_inflight: :queue.in({seq, now_ms()}, state.outbox_inflight)}
+    |> register_entry(key, outputs, entry)
+    |> schedule_outbox_retry()
+  end
+
+  defp tally(state, key, fun) do
+    case Map.fetch(state.outbox_awaiting, key) do
+      # A report for an entry that is gone (a resettle superseded it) or already
+      # completing changes nothing.
+      :error ->
+        state
+
+      {:ok, %{done?: true}} ->
+        state
+
+      {:ok, tally} ->
+        tally = fun.(tally)
+
+        if complete?(tally) do
+          complete_entry(
+            %{state | outbox_awaiting: Map.put(state.outbox_awaiting, key, tally)},
+            key
+          )
+        else
+          %{state | outbox_awaiting: Map.put(state.outbox_awaiting, key, tally)}
+        end
+    end
+  end
+
+  # `pending` may go negative when a superseded chain run settles late; its
+  # outputs were delivered under the same identity, so it is still complete.
+  defp complete?(%{pending: pending, holds: holds, confirms: confirms}),
+    do: pending <= 0 and confirms >= holds
+
+  # A chain run that never reported back — the Overwatch died between the cast
+  # and the settlement — leaves the entry owed with nothing in flight to answer
+  # it. Re-dispatch its outputs under their identical identity (conforming sinks
+  # dedup; the record's own side effects already landed) and
+  # start the tally over: a hold the lost run took would otherwise never be
+  # answered, wedging the cursor for good. The journal's entries carry no copy —
+  # dropping the tally is what lets the next journal-driven flush re-drive them.
+  defp resettle_outbox(state) do
+    if resettle_due?(state) do
+      Enum.reduce(state.outbox_awaiting, state, fn {key, tally}, acc ->
+        if tally.pending > 0 and now_ms() - tally.at >= acc.outbox_resettle_ms,
+          do: resettle_entry(acc, key, tally),
+          else: acc
+      end)
+    else
+      state
+    end
+  end
+
+  # The inflight head is the oldest dispatch, so one comparison rules the whole
+  # sweep out on a healthy stream writer.
+  defp resettle_due?(state) do
+    case :queue.peek(state.outbox_inflight) do
+      {:value, {_seq, at}} -> now_ms() - at >= state.outbox_resettle_ms
+      :empty -> map_size(state.outbox_awaiting) > 0
+    end
+  end
+
+  defp resettle_entry(state, key, %{entry: entry}) when entry != nil do
+    {rc, _sh, _pk} = state.entity_id
+
+    case ClassRegistry.overwatch_pid(rc) do
+      {:ok, pid} -> register_entry(state, key, dispatch_outputs(state, pid, key, entry), entry)
+      :error -> state
+    end
+  end
+
+  defp resettle_entry(state, key, _tally),
+    do: %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}
+
+  # The entry stays registered until its marker is durable: a journal-driven
+  # re-flush reads the journal, so dropping it any sooner would let the entry be
+  # delivered a second time. The append itself must not run here — it is a call
+  # back into this very process — so it runs off-process and reports back.
+  defp complete_entry(state, {:marker, _, _, _, _} = key) do
+    writer = self()
+    entity_id = state.entity_id
+
+    spawn(fn ->
+      Outbox.complete(entity_id, key)
+      send(writer, {:outbox_marked, key})
+    end)
+
+    put_in(state.outbox_awaiting[key].done?, true)
+  end
+
+  defp complete_entry(state, {:cursor, _seq} = key),
+    do: drain_confirmed(%{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)})
+
+  # The cursor advances over the leading run of confirmed entries only: an entry
+  # still in `outbox_awaiting` stops the drain, so a later confirmation can
+  # never carry the cursor past output no sink has taken.
+  defp drain_confirmed(state) do
+    case :queue.peek(state.outbox_inflight) do
+      {:value, {seq, _at}} ->
+        if Map.has_key?(state.outbox_awaiting, {:cursor, seq}) do
+          state
+        else
+          {_, rest} = :queue.out(state.outbox_inflight)
+          drain_confirmed(%{state | outbox_inflight: rest, outbox_flushed_seq: seq})
+        end
+
+      :empty ->
+        state
+    end
+  end
+
+  # Age of the oldest output no sink has confirmed — the producing-liveness
+  # evidence for a sink that stopped answering while nothing new is emitted.
+  defp unconfirmed_age_ms(state) do
+    case :queue.peek(state.outbox_inflight) do
+      {:value, {_seq, at}} -> now_ms() - at
+      :empty -> 0
+    end
+  end
 
   # Advance the dedup file (persistence watermark + flush cursor + epoch)
   # with one atomic tmp+rename — at most once per fsync batch. The reserved
@@ -984,6 +1222,8 @@ defmodule Flezha.State.WalWriter do
       | pending_outbox: pending,
         outbox_durable_seq: durable,
         outbox_flushed_seq: flushed,
+        outbox_awaiting: %{},
+        outbox_inflight: :queue.new(),
         outbox_epoch: e
     }
 
@@ -1022,7 +1262,7 @@ defmodule Flezha.State.WalWriter do
   # deltas, so adopt it and let the runner's next delta append contiguously.
   defp establish_baseline(%{awaiting_baseline?: true, last_persisted_seq: last} = state, seq)
        when seq > last do
-    now = :erlang.monotonic_time(:millisecond)
+    now = now_ms()
     Metrics.put(state.metrics, :wal_seq, seq)
     state = %{state | awaiting_baseline?: false, last_persisted_seq: seq, last_advance_at: now}
     persist_dedup(state)
@@ -1463,4 +1703,20 @@ defmodule Flezha.State.WalWriter do
   defp pending_msg_cap() do
     Application.get_env(:flezha, :wal_pending_msg_cap, 5_000)
   end
+
+  # How many effect records may be inside the plugin chain unconfirmed before
+  # the flush stops handing over more. The durable entries keep queueing behind
+  # it; only the flush waits.
+  defp outbox_inflight_max() do
+    Application.get_env(:flezha, :outbox_inflight_max, 1_000)
+  end
+
+  # How long a dispatched entry may go without its chain run reporting back
+  # before it is re-dispatched. Long enough that a merely backlogged Overwatch
+  # is not duplicated into; a re-dispatch is safe either way.
+  defp outbox_resettle_ms() do
+    Application.get_env(:flezha, :outbox_resettle_ms, 60_000)
+  end
+
+  defp now_ms(), do: :erlang.monotonic_time(:millisecond)
 end

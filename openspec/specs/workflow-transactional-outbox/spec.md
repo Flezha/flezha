@@ -72,21 +72,32 @@ at-least-once with keys present (documented).
 
 ### Requirement: Crash before flush re-drives the outbox
 
-On instance restore, the controller SHALL re-flush every `proc_committed` entry's
-outbox that has no matching `outbox_flushed` entry, with the original keys,
-before reporting restore complete for the outbox. Procedures whose
-`outbox_flushed` entry exists SHALL NOT be re-flushed. A plugin-delivery
-failure SHALL leave `outbox_flushed` unwritten and SHALL be retried — outbox
-entries are never silently dropped.
+On instance restore, the controller SHALL re-flush every `proc_committed`
+entry's outbox that has no matching `outbox_flushed` entry, with the original
+keys, before reporting restore complete for the outbox. The `outbox_flushed`
+marker SHALL be journaled only after the external sink confirms the delivery;
+an in-memory hand-off to the operative's `:on_output` chain SHALL NOT be
+treated as delivery. Procedures whose `outbox_flushed` entry exists SHALL NOT
+be re-flushed. A plugin-delivery failure or missing confirmation SHALL leave
+`outbox_flushed` unwritten and SHALL be retried — outbox entries are never
+silently dropped.
 
 #### Scenario: Crash between commit and flush loses nothing
 
 - **WHEN** the controller crashes after journaling `proc_committed(B)` but before delivering B's outbox
 - **THEN** on restore B's outbox SHALL be delivered with the original keys
 
-#### Scenario: Already-flushed proc is not re-delivered by restore
+#### Scenario: Dispatched but unconfirmed output re-drives
 
-- **WHEN** the journal holds `proc_committed(A)` + `outbox_flushed(A)` and the instance restores
+- **WHEN** the controller crashes after casting B's outbox into the plugin
+  chain but before the sink confirms it
+- **THEN** the journal holds no `outbox_flushed(B)` and restore re-delivers
+  B's outbox with the original keys; a conforming sink deduplicates
+
+#### Scenario: Already-confirmed proc is not re-delivered by restore
+
+- **WHEN** the journal holds `proc_committed(A)` + `outbox_flushed(A)` —
+  written on confirmed delivery — and the instance restores
 - **THEN** the restore path SHALL NOT re-deliver A's outbox
 
 ### Requirement: Compensation undo-effects ride the transactional outbox

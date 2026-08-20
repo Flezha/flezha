@@ -33,6 +33,7 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.OperativeForward.{ForwardSup, ForwardWorker}
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.State.Outbox
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
 
@@ -162,6 +163,11 @@ defmodule Flezha.Plugin.Provider.OperativeForward do
   defp forward(%Ctx.IO{message: message, metadata: metadata} = ctx, opts) do
     case route(Map.fetch!(opts, :routes), metadata) do
       {:ok, %{pid: pid}} ->
+        # Take ownership of a delivery-guaranteed output before handing it over:
+        # the worker answers the hold when the target confirms the ingest. An
+        # unroutable payload takes no hold — it parks below, which is a durable
+        # outcome the outbox cursor may advance past.
+        Outbox.hold(metadata)
         :ok = ForwardWorker.enqueue(pid, message, metadata)
 
       {:error, reason} ->

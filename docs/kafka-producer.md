@@ -30,7 +30,9 @@ The plugin SHALL:
 * Batch messages per `:linger_ms` window or until `:max_batch_bytes` is
   reached, whichever comes first.
 * Cap in-process buffering at `:queue_max` items, applying the
-  `:queue_overflow` strategy when saturated.
+  `:queue_overflow` strategy when saturated — never dropping a record the
+  controller's outbox cursor is waiting on unless an operator configured that
+  explicitly.
 * Use idempotent producer semantics (Produce v5+ with per-`(topic, partition)`
   sequence numbers) when `:idempotent = true` (opt-in; default `false`) —
   retries cannot duplicate messages on the broker. On a broker-induced fence
@@ -96,7 +98,7 @@ re-drives unflushed outputs with *identical* key, header, and partition;
 | `:linger_ms` | `10` | `int` | batch window. `0` disables batching. |
 | `:max_batch_bytes` | `1_048_576` | `int` | flush early at 1 MiB by default |
 | `:queue_max` | `10_000` | `int` | per-`(plugin, topic, partition)` queue depth |
-| `:queue_overflow` | `:drop_oldest` | atom | `:drop_oldest` / `:drop_newest` / `:block` |
+| `:queue_overflow` | derived | atom | `:drop_oldest` / `:drop_newest` / `:block`; unset, it is `:block` for a delivery-guaranteed record and `:drop_oldest` otherwise |
 | `:queue_block_timeout_ms` | `5_000` | `int` | only used when `:queue_overflow = :block` |
 | `:idempotent` | `false` | `bool` | opt-in exactly-once; requires Kafka 0.11+; gracefully falls back to non-idempotent if `InitProducerId` fails |
 | `:auto_create_topic` | `true` | `bool` | issues `CreateTopics` on first `:unknown_topic_or_partition` |
@@ -115,19 +117,37 @@ covers most market-data streams; bump it for higher-volume pairs (e.g.
 
 ### `:queue_overflow` modes
 
-* **`:drop_oldest`** (default) — preserves *recency*. After an outage the
-  queue holds the most-recent N messages; the oldest are dropped first.
-  Right for streaming market data where stale prices are useless.
+Left unset, the mode is **derived per record**: a delivery-guaranteed record —
+one carrying the `flz.ack` confirmation token, so an outbox cursor upstream is
+waiting on it — gets `:block`, and everything else gets `:drop_oldest`. Setting
+the option explicitly applies that mode to every record on the chain.
+
+* **`:drop_oldest`** — preserves *recency*. After an outage the queue holds
+  the most-recent N messages; the oldest are dropped first. Right for
+  streaming market data where stale prices are useless.
 * **`:drop_newest`** — preserves *order*. Once full, new arrivals are
   rejected until space frees up. Right for audit-log streams where
   preserving the prefix matters.
-* **`:block`** — synchronous back-pressure to a sync `enqueue/4` caller.
-  Honored only for sync admissions; the chain dispatch path
-  (`cast_enqueue/3`) treats `:block` as `:drop_newest` with a one-shot
-  deprecation warning, because a cast has no caller to wait on. Use
-  `:block` only when you also configure a separate sync test/tooling
-  caller that can absorb back-pressure upstream (e.g. a websocket reader
-  that stops draining its socket).
+* **`:block`** — back-pressure instead of loss. A sync `enqueue/4` caller
+  waits out `:queue_block_timeout_ms`; a chain-dispatched record waits for
+  room without ever blocking the process that enqueued it, so the pressure
+  lands on the outbox flush that produced it rather than on ingest.
+
+Dropping a delivery-guaranteed record under an explicitly configured `drop_*`
+is alarm-grade: it logs at `error` and tags its
+`[:flezha, :plugin, :kafka, :produce, :dropped]` event `guaranteed: true`. The
+record's outbox cursor does not advance, so the loss shows up as an outbox that
+stops draining until the entry is re-driven.
+
+### Delivery confirmation
+
+A record carrying `flz.ack` is held by the producer on behalf of the
+controller's outbox cursor. The worker answers that hold at its existing
+per-batch completion point: an acked batch **confirms** every guaranteed record
+it carried, and a batch that exhausts its retry budget **parks** them through
+the dead-letter store with their own `(entity, seq, epoch)` identity, so the
+cursor advances past a recorded, replayable loss rather than a silent one.
+Records without the token belong to a plain chain and confirm nothing.
 
 ## Chain dispatch is non-blocking
 

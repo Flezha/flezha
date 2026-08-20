@@ -7,7 +7,9 @@ defmodule FlezhaTest.State.ProcJournalTest do
   """
   use ExUnit.Case, async: false
 
-  alias Flezha.State.{Commands, ProcJournal, Registry, TestHelpers, WalWriter, Wire}
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+
+  alias Flezha.State.{Commands, Outbox, ProcJournal, Registry, TestHelpers, WalWriter, Wire}
 
   setup do
     root = TestHelpers.tmp_app_data_dir()
@@ -251,12 +253,28 @@ defmodule FlezhaTest.State.ProcJournalTest do
   end
 
   # `flush_pending/2` delivers through `GenServer.cast(overwatch, {:io_out, ..})`,
-  # so a plain test pid stands in for the bound Overwatch.
+  # so a plain test pid stands in for the bound Overwatch — including its duty to
+  # settle the chain run, which is what lets the `outbox_flushed` marker land.
   defp assert_flushed(payload, seq, epoch \\ "0") do
     assert_receive {:"$gen_cast", {:io_out, ^payload, meta}}
     assert meta["flz.seq"] == seq
     assert meta["flz.epoch"] == epoch
+    :ok = Outbox.settled(meta)
     meta
+  end
+
+  # The marker is appended by the journal writer once the delivery is confirmed,
+  # off the flushing process — so the journal is read after it lands.
+  defp await_markers(inst, count) do
+    assert wait_until(fn -> length(markers(inst)) == count end, 2_000),
+           "expected #{count} outbox_flushed marker(s), got #{length(markers(inst))}"
+
+    markers(inst)
+  end
+
+  defp markers(inst) do
+    {:ok, entries} = ProcJournal.read(inst)
+    Enum.filter(entries, &(&1.type == :outbox_flushed))
   end
 
   test "a procedure's outbox is journaled inside its proc_committed entry" do
@@ -301,13 +319,10 @@ defmodule FlezhaTest.State.ProcJournalTest do
     refute_receive {:"$gen_cast", {:io_out, _, _}}
 
     # Delivery is recorded per entry, naming which entry type it flushed.
-    assert {:ok, entries} = ProcJournal.read(inst)
-
     assert [
              %{type: :outbox_flushed, proc_idx: 0, payload: %{for_type: :proc_committed}},
              %{proc_idx: 1}
-           ] =
-             Enum.filter(entries, &(&1.type == :outbox_flushed))
+           ] = await_markers(inst, 2)
 
     # An already-flushed proc is never re-delivered — a restore re-drive is a no-op.
     assert ProcJournal.pending_entries(inst) == []
@@ -329,6 +344,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     assert :ok = ProcJournal.flush_pending(inst, self())
     first = assert_flushed("once", "0.0")
+    await_markers(inst, 1)
 
     # Roll the journal back to the pre-flush bytes (the marker never landed)
     # and restore: the entry is owed again and re-drives with the SAME key.
@@ -352,6 +368,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     :ok = ProcJournal.append_proc_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "x")])
     assert :ok = ProcJournal.flush_pending(inst, self())
     assert_flushed("x", "0.0", "0")
+    await_markers(inst, 1)
 
     # A respawn (writer gone, journal on disk) keeps minting the same epoch, so
     # every re-driven output keys identically to its original delivery.
@@ -359,6 +376,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     :ok = ProcJournal.append_proc_committed(inst, 1, 0, [seg], [], [outbox_item(seg, 0, "y")])
     assert :ok = ProcJournal.flush_pending(inst, self())
     assert_flushed("y", "1.0", "0")
+    await_markers(inst, 2)
 
     assert ProcJournal.current_epoch(inst) == 0
     assert {:ok, entries} = ProcJournal.read(inst)
@@ -372,6 +390,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     :ok = ProcJournal.append_proc_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "did")])
     assert :ok = ProcJournal.flush_pending(inst, self())
     forward = assert_flushed("did", "0.0")
+    await_markers(inst, 1)
 
     # The undo of that very output: same procedure, same entity, same per-proc
     # sequence — only the comp marker keeps its key from colliding.
@@ -386,10 +405,8 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     # The two flush markers are distinct: the forward outbox and the undo outbox
     # of the SAME procedure are gated independently.
-    assert {:ok, entries} = ProcJournal.read(inst)
-
     assert [%{payload: %{for_type: :proc_committed}}, %{payload: %{for_type: :compensated}}] =
-             Enum.filter(entries, &(&1.type == :outbox_flushed))
+             await_markers(inst, 2)
 
     assert ProcJournal.pending_entries(inst) == []
   end
@@ -566,5 +583,34 @@ defmodule FlezhaTest.State.ProcJournalTest do
     :ok = ProcJournal.append_rewound(inst, 0)
     assert [%{proc_idx: 0, iter: 1}] = ProcJournal.restore_state(inst).rewind_undo
     assert ProcJournal.current_epoch(inst) == 2
+  end
+
+  test "the outbox_flushed marker waits for the sink, and a re-entered flush does not re-deliver" do
+    inst = instance_id()
+    seg = seg_identity(inst, "ProcA", "s0")
+
+    :ok = ProcJournal.append_proc_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "held")])
+
+    assert :ok = ProcJournal.flush_pending(inst, self())
+
+    # The hold is taken inside the chain, before the run settles — which is the
+    # order the real dispatcher produces.
+    assert_receive {:"$gen_cast", {:io_out, "held", meta}}
+    :ok = Outbox.hold(meta)
+    :ok = Outbox.settled(meta)
+
+    # Held by a delivery-guaranteed sink: dispatched is not delivered, so the
+    # marker must not land and the entry is still owed.
+    Process.sleep(100)
+    assert markers(inst) == []
+    assert [%{proc_idx: 0}] = ProcJournal.pending_entries(inst)
+
+    # A flush re-entered while the entry is with the chain must not send it twice.
+    assert :ok = ProcJournal.flush_pending(inst, self())
+    refute_receive {:"$gen_cast", {:io_out, _, _}}, 100
+
+    :ok = Outbox.confirm(meta)
+    assert [%{proc_idx: 0, payload: %{for_type: :proc_committed}}] = await_markers(inst, 1)
+    assert ProcJournal.pending_entries(inst) == []
   end
 end

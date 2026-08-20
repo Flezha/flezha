@@ -163,10 +163,17 @@ outside that). Under the tier, that tick is the added latency — and it is the 
 latency.
 
 Outbox state is three cursors on the writer: `outbox_durable_seq` (how far the fsync has
-reached — the gate), `outbox_flushed_seq` (how far the sink dispatch has reached), and
+reached — the gate), `outbox_flushed_seq` (how far the **sinks have confirmed**), and
 `outbox_epoch`. All three are persisted to a small `<entity>.outbox.dedup` side-file, so a
-restarted controller re-drives exactly the entries that were durable but never flushed. A stale
-cursor widens the re-drive, which sink dedup absorbs; it can never skip.
+restarted controller re-drives exactly the entries that were durable but never confirmed. A
+stale cursor widens the re-drive, which sink dedup absorbs; it can never skip.
+
+Dispatch is not delivery. Each flushed output carries an opaque `flz.ack` token
+(`Flezha.State.Outbox`); a delivery-guaranteed sink takes a hold on it and answers when its
+write is durable, while an output no sink held completes as soon as the chain has run it. The
+cursor advances over the leading run of completed entries, so an out-of-order confirmation can
+never carry it past output still in flight, and the number of unconfirmed entries is capped
+(`:outbox_inflight_max`, default 1000) — the flush waits, ingest does not.
 
 ## Snapshots, compaction, and restore
 
@@ -739,7 +746,7 @@ froze — the deepest wins, because one root cause freezes the shallower markers
 | --- | --- |
 | `wal_frozen` | change frames arrive, but the persisted sequence does not advance |
 | `watermark_frozen` | the input log grows, but this entity's durable consumed offset does not advance |
-| `outbox_flat` | output-bearing records accumulate, but the outbox flush cursor does not advance |
+| `outbox_flat` | output-bearing records accumulate while the outbox flush cursor stays flat, or dispatched output goes unconfirmed past the grace window |
 
 Each carries its own *is it being fed?* precondition — the input log must have *grown*, the
 output records must have *accumulated* — so an idle entity can never read as stuck. The

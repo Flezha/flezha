@@ -848,10 +848,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       assert Process.alive?(pid)
     end
 
-    test ":block + cast emits one-shot warning and drops via :block_in_cast_unsupported" do
-      on_exit(FlezhaTest.Helper.NodeTestHelper.override_log_level(:warning))
-
-      blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
+    test ":block on the cast path waits for room instead of dropping" do
+      blocking_send = fn _w, _r, _ns ->
+        Process.sleep(120)
+        Fakes.ok_response(@topic, @partition)
+      end
 
       {pid, script_pid} =
         start_worker(
@@ -861,38 +862,33 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         )
 
       Agent.update(script_pid, fn _ ->
-        [{:return_fn, blocking_send}]
+        [
+          {:return_fn, blocking_send}
+          | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
+        ]
       end)
 
       attach(:dropped)
 
-      :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
-      Process.sleep(20)
-      :ok = ProducerWorker.cast_enqueue(pid, "filler", %{})
-      Process.sleep(10)
+      for payload <- ["first", "filler", "waits-1", "waits-2"] do
+        :ok = ProducerWorker.cast_enqueue(pid, payload, %{})
+        Process.sleep(10)
+      end
 
-      log =
-        capture_log([level: :warning], fn ->
-          :ok = ProducerWorker.cast_enqueue(pid, "drop-1", %{})
-          :ok = ProducerWorker.cast_enqueue(pid, "drop-2", %{})
-          Process.sleep(20)
-        end)
+      # The cast never blocks its caller, and nothing is evicted: the records
+      # queue behind the in-flight batch and are produced once it drains.
+      refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}, 50
 
-      assert log =~ ":queue_overflow = :block is not honored"
-      # warning fires exactly once across both drops
-      first_match = String.split(log, ":queue_overflow = :block is not honored")
-      assert length(first_match) == 2
+      sent =
+        for _ <- 1..4, into: MapSet.new() do
+          assert_receive {:send_called, request, _ns}, 2_000
+          [%{data: [%{record_set: rb}]}] = request.topic_data
+          Enum.map(rb.records, & &1.value)
+        end
+        |> Enum.concat()
+        |> MapSet.new()
 
-      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
-                      %{overflow_strategy: :block_in_cast_unsupported, reason: :overflow}}
-
-      log2 =
-        capture_log([level: :warning], fn ->
-          :ok = ProducerWorker.cast_enqueue(pid, "drop-3", %{})
-          Process.sleep(20)
-        end)
-
-      refute log2 =~ ":queue_overflow = :block is not honored"
+      assert MapSet.equal?(sent, MapSet.new(["first", "filler", "waits-1", "waits-2"]))
     end
 
     test "permanent broker error fires :failed with caller: :async; no GenServer.reply" do
@@ -1424,6 +1420,143 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       post = :sys.get_state(pid)
       assert post.worker_pid == new_worker_pid
+    end
+  end
+
+  # ---------- outbox delivery confirmation ----------
+
+  describe "delivery-guaranteed output" do
+    setup do
+      rc = "kw_" <> Integer.to_string(System.unique_integer([:positive]))
+      entity_id = {rc, "proc", "k1"}
+      :ok = Flezha.State.TestHelpers.stub_outbox_owner(entity_id)
+      %{rc: rc, entity_id: entity_id}
+    end
+
+    test "an acked batch confirms its outbox range", %{entity_id: entity_id} do
+      {pid, _} = start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
+
+      :ok =
+        ProducerWorker.cast_enqueue(
+          pid,
+          "v",
+          Flezha.State.TestHelpers.guaranteed_metadata(entity_id, 7)
+        )
+
+      assert_receive {:send_called, _request, _ns}, 1_000
+      assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 7}}}, 1_000
+    end
+
+    test "a permanently failed batch parks the record instead of dropping it", %{
+      rc: rc,
+      entity_id: entity_id
+    } do
+      original = Application.get_env(:flezha, :dlq, [])
+      dir = Path.join(System.tmp_dir!(), "dlq_#{System.unique_integer([:positive])}")
+      Application.put_env(:flezha, :dlq, Keyword.put(original, :dir, dir))
+
+      on_exit(fn ->
+        Application.put_env(:flezha, :dlq, original)
+        File.rm_rf(dir)
+      end)
+
+      {pid, _} = start_worker(script: [{:return, Fakes.err_response(@topic, @partition, 18)}])
+
+      :ok =
+        ProducerWorker.cast_enqueue(
+          pid,
+          "poison",
+          Flezha.State.TestHelpers.guaranteed_metadata(entity_id, 3)
+        )
+
+      # Parked, then the hold is answered so the cursor may pass the parked range.
+      assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 3}}}, 1_000
+
+      assert [entry] = Flezha.Dlq.Store.list(rc)
+      assert entry["entity_key"] == "k1"
+      assert entry["channel"] == "out"
+      assert entry["error"] =~ "record_list_too_large"
+    end
+
+    test "with no configured overflow policy a guaranteed record waits instead of evicting", %{
+      entity_id: entity_id
+    } do
+      blocking_send = fn _w, _r, _ns ->
+        Process.sleep(120)
+        Fakes.ok_response(@topic, @partition)
+      end
+
+      {pid, script_pid} =
+        start_worker(queue_max: 1, queue_overflow: nil, linger_ms: 1)
+
+      Agent.update(script_pid, fn _ ->
+        [
+          {:return_fn, blocking_send}
+          | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
+        ]
+      end)
+
+      attach(:dropped)
+
+      for seq <- 0..2 do
+        :ok =
+          ProducerWorker.cast_enqueue(
+            pid,
+            "v#{seq}",
+            Flezha.State.TestHelpers.guaranteed_metadata(entity_id, seq)
+          )
+
+        Process.sleep(10)
+      end
+
+      # Every record is delivered — under `:drop_oldest` the middle one would
+      # have been evicted while its cursor claimed it delivered.
+      for seq <- 0..2 do
+        assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, ^seq}}}, 2_000
+      end
+
+      refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}, 50
+    end
+
+    test "an explicitly configured drop of a guaranteed record is alarm-grade", %{
+      entity_id: entity_id
+    } do
+      blocking_send = fn _w, _r, _ns ->
+        Process.sleep(150)
+        Fakes.ok_response(@topic, @partition)
+      end
+
+      {pid, script_pid} =
+        start_worker(queue_max: 1, queue_overflow: :drop_oldest, linger_ms: 1)
+
+      Agent.update(script_pid, fn _ ->
+        [
+          {:return_fn, blocking_send}
+          | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
+        ]
+      end)
+
+      attach(:dropped)
+
+      log =
+        capture_log(fn ->
+          for seq <- 0..2 do
+            :ok =
+              ProducerWorker.cast_enqueue(
+                pid,
+                "v#{seq}",
+                Flezha.State.TestHelpers.guaranteed_metadata(entity_id, seq)
+              )
+
+            Process.sleep(10)
+          end
+
+          assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], %{count: 1},
+                          %{overflow_strategy: :drop_oldest, guaranteed: true}},
+                         1_000
+        end)
+
+      assert log =~ "dropped a delivery-guaranteed record"
     end
   end
 end

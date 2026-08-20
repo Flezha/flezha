@@ -387,6 +387,18 @@ defmodule Flezha.Convergence.StallClassifierTest do
                StallClassifier.classify_producing([cur], [base], @opts)
     end
 
+    test "output unconfirmed past the grace window is STUCK outbox_flat, with no baseline" do
+      # Nothing new is emitted, so no accumulation comparison can see this: the
+      # evidence is that a sink has not answered for what is already dispatched.
+      cur = marker(out_pending_seq: 10, outbox_flushed_seq: 10, outbox_unconfirmed_ms: 90_000)
+
+      assert %{"btc" => {:stuck, :outbox_flat, %{entity: {"proc", "k1"}}}} =
+               StallClassifier.classify_producing([cur], nil, @opts)
+
+      fresh = marker(out_pending_seq: 10, outbox_flushed_seq: 10, outbox_unconfirmed_ms: 100)
+      assert %{"btc" => :advancing} = StallClassifier.classify_producing([fresh], nil, @opts)
+    end
+
     test "one root cause reports one deepest verdict (frozen WAL wins)" do
       base =
         marker(

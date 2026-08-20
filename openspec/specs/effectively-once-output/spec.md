@@ -85,24 +85,61 @@ the durable identity `(flz.entity, outbox_seq, epoch)` where `outbox_seq` is
 ### Requirement: Restart re-drives unflushed outbox entries
 
 The controller SHALL maintain a per-Entity `outbox_flushed_seq` cursor that
-never runs ahead of what was actually dispatched. On restart it SHALL re-drive
-every durable outbox entry above the cursor, in order. Re-driven entries carry
-identical identity so idempotent/dedup sinks absorb them: outputs are never lost
-and never applied twice at a conforming sink.
+never runs ahead of what the external sink has confirmed delivered. An
+in-memory hand-off (a cast to the operative or an async admission into a
+plugin queue) SHALL NOT advance the cursor. On restart the controller SHALL
+re-drive every durable outbox entry above the cursor, in order. Re-driven
+entries carry identical identity so idempotent/dedup sinks absorb them:
+outputs are never lost and never applied twice at a conforming sink.
 
 #### Scenario: Crash between fsync and flush
 
 - **WHEN** the controller crashes after fsyncing an effect record but before
   dispatching its outputs, then restarts
-- **THEN** the outputs are dispatched exactly once to the plugin chain with their
-  original identity
+- **THEN** the outputs are dispatched to the plugin chain with their original
+  identity and confirmed by the sink exactly once
 
-#### Scenario: Crash between flush and cursor write
+#### Scenario: Crash after dispatch but before sink confirmation
 
-- **WHEN** the controller crashes after dispatching outputs but before advancing
-  `outbox_flushed_seq`, then restarts
-- **THEN** the same outputs are re-dispatched with identical identity and a
-  conforming sink deduplicates them
+- **WHEN** the controller crashes after handing outputs to the plugin chain
+  but before the sink confirms the write, then restarts
+- **THEN** the cursor has not advanced past those entries and they are
+  re-driven with identical identity; a conforming sink deduplicates any
+  duplicate that did reach it
+
+#### Scenario: Crash between confirmation and cursor write
+
+- **WHEN** the controller crashes after the sink confirmed a batch but before
+  the advanced cursor is durable, then restarts
+- **THEN** the same outputs are re-dispatched with identical identity and the
+  sink deduplicates them
+
+### Requirement: Sink delivery confirmation gates the outbox cursor
+
+Delivery-guaranteed sinks SHALL confirm delivery per batch, keyed by the
+outbox range the batch covers, once the write is durable at the sink (e.g. a
+Kafka produce acknowledged, a Postgres transaction committed, a forwarded
+ingest confirmed). The confirmation gates only the cursor advance: emits, the
+effect-record fsync, and runner acknowledgements SHALL NOT wait on sink
+confirmation. A batch whose retry budget is permanently exhausted SHALL be
+parked through the existing dead-letter retry-then-park with its outbox range
+attached — recorded and replayable, never silently dropped — and only a parked
+or confirmed range may advance the cursor. Unconfirmed-outbox age SHALL be
+observable and feed the output-stall verdict.
+
+#### Scenario: Confirmation is off the hot path
+
+- **WHEN** a sink is slow to confirm while inputs keep arriving
+- **THEN** ingest, effect-record fsync, and runner acks proceed unchanged;
+  only `outbox_flushed_seq` lags, visibly
+
+#### Scenario: Permanent failure parks loudly instead of dropping
+
+- **WHEN** a batch exhausts its retry ladder against a permanently failing
+  sink
+- **THEN** the batch parks via the dead-letter path with its outbox range, an
+  alarm-grade event fires, and the cursor advances past exactly the parked
+  range
 
 ### Requirement: End-to-end effectively-once over crash-replay
 

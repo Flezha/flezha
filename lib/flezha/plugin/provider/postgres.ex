@@ -30,6 +30,7 @@ defmodule Flezha.Plugin.Provider.Postgres do
   alias Flezha.Plugin.Extension.Ctx
   alias Flezha.Plugin.Provider.Postgres.{SinkSup, SinkWorker}
   alias Flezha.Plugin.ProviderBehaviour
+  alias Flezha.State.Outbox
 
   use ProviderBehaviour
 
@@ -98,6 +99,10 @@ defmodule Flezha.Plugin.Provider.Postgres do
   def on_output(%Ctx.IO{} = ctx, opts), do: sink(ctx, opts)
 
   defp sink(%Ctx.IO{message: msg, metadata: md} = ctx, opts) do
+    # Take ownership of a delivery-guaranteed output before handing it over: the
+    # worker answers the hold when the batch's transaction commits. A plain
+    # output holds nothing and this is a no-op.
+    Outbox.hold(md)
     :ok = SinkWorker.enqueue(Map.fetch!(opts, :sink_pid), msg, md)
     {:ok, ctx}
   end

@@ -17,9 +17,29 @@ defmodule Flezha.State.Outbox do
   flushed yet) | epoch (unsigned)`. A legacy 8-byte file reports its value
   as `last_persisted_seq` with cursor `-1` and epoch `0`; shorter or
   unreadable files report the empty triple.
+
+  ## Delivery confirmation
+
+  The cursor is durable proof that a sink HAS the output, so it advances on the
+  sink's confirmation — never on the in-memory hand-off into the plugin chain.
+  Every flushed output carries an opaque `flz.ack` token naming the writer that
+  owns its cursor and the entry one confirmation completes. A
+  delivery-guaranteed sink `hold/1`s the token as it takes ownership and
+  `confirm/1`s it once its write is durable, or `park/4`s it when its retry
+  ladder is permanently exhausted; the dispatcher `settled/1`s each output once
+  the chain has run it. An entry completes when every output has settled and
+  every hold has answered — so a chain with no guaranteed sink completes as
+  soon as the chain has run, exactly as before.
+
+  Holds and settlements are both sent from the process running the chain, so
+  a hold can never be seen after the settlement it belongs to. A confirmation
+  that overtakes them is still counted: completion needs the settlements, which
+  only the dispatcher sends.
   """
 
-  alias Flezha.State.Registry
+  require Logger
+
+  alias Flezha.State.{Registry, Wire}
 
   @type t :: %{
           last_persisted_seq: non_neg_integer(),
@@ -61,4 +81,225 @@ defmodule Flezha.State.Outbox do
       :ok
     end
   end
+
+  # ---------- delivery confirmation ----------
+
+  @ack_key "flz.ack"
+
+  @typedoc """
+  What one confirmation completes on the owning writer: a stream tier entry's
+  cursor advance, or a workflow instance's `outbox_flushed` journal marker.
+  Every output of one entry decodes to the same key — that is what makes the
+  writer's tally per entry rather than per output.
+  """
+  @type key ::
+          {:cursor, non_neg_integer()}
+          | {:marker, byte(), non_neg_integer(), non_neg_integer(), non_neg_integer()}
+
+  @typedoc "Decoded `flz.ack` token: who owns the cursor, whose output it is, what it completes."
+  @type ack :: %{owner: Registry.entity_id(), target: Registry.entity_id(), key: key()}
+
+  @doc "Metadata key carrying the confirmation token on a durable output."
+  @spec ack_key() :: binary()
+  def ack_key(), do: @ack_key
+
+  @doc """
+  Hand one durable outbox output to the operative's `:on_output` chain, stamped
+  with its output identity and the confirmation token its entry is owed under.
+
+  The one place a durable output leaves an outbox — which is what makes the
+  token impossible to forget. `identity` is `Flezha.State.Wire.output_stamps/1`'s
+  input plus `:owner` (the writer whose ledger the entry sits in), `:entry` (the
+  key one confirmation completes) and optional `:metadata` the output carries of
+  its own.
+  """
+  @spec dispatch(pid(), binary(), map()) :: :ok
+  def dispatch(overwatch, payload, %{owner: owner, entry: entry, entity: entity} = identity) do
+    stamps =
+      identity
+      |> Map.drop([:owner, :entry, :metadata])
+      |> Map.put(:ack, token(owner, entity, entry))
+      |> Wire.output_stamps()
+
+    GenServer.cast(
+      overwatch,
+      {:io_out, payload, Map.merge(Map.new(Map.get(identity, :metadata, %{})), stamps)}
+    )
+  end
+
+  @doc """
+  Mint the confirmation token for one outbox entry: who owns the cursor it
+  moves, whose output it is, and what one confirmation completes. `target`
+  defaults to the owner — true for a stream Entity, whose writer owns its own
+  output; a workflow instance's journal writer owns output belonging to other
+  Entities.
+  """
+  @spec token(Registry.entity_id(), key()) :: binary()
+  def token(owner, key), do: token(owner, owner, key)
+
+  @spec token(Registry.entity_id(), Registry.entity_id() | binary(), key()) :: binary()
+  def token(owner, target, key) do
+    owner = entity_bytes(owner)
+    target = entity_bytes(target)
+    # An elided target reads back as the owner: the stream tier's every token
+    # would otherwise carry the same identity twice.
+    target = if target == owner, do: <<>>, else: target
+
+    encode(
+      <<byte_size(owner)::16-big, owner::binary, byte_size(target)::16-big, target::binary,
+        encode_key(key)::binary>>
+    )
+  end
+
+  @doc """
+  Whether this output's delivery is guaranteed — an outbox cursor is waiting on
+  it. The one test a sink uses to decide it must not drop a record.
+  """
+  @spec guaranteed?(map()) :: boolean()
+  def guaranteed?(metadata) when is_map(metadata), do: ack(metadata) != nil
+
+  # The confirmation token stamped on a durable output, or `nil` when no cursor
+  # is waiting on it.
+  defp ack(metadata) do
+    case Map.get(metadata, @ack_key) do
+      t when is_binary(t) and t != "" -> t
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Take ownership of a guaranteed output: the owning writer holds its entry open
+  until a matching `confirm/1` or `park/4`. Called from the plugin chain, before
+  the record is handed to the sink's own queue.
+  """
+  @spec hold(map()) :: :ok
+  def hold(metadata), do: notify(metadata, :outbox_hold)
+
+  @doc """
+  One output has been through the whole plugin chain. Sent by the dispatcher
+  regardless of what the chain did with it — a filtered output is settled with
+  no holds, which completes it.
+  """
+  @spec settled(map()) :: :ok
+  def settled(metadata), do: notify(metadata, :outbox_settled)
+
+  @doc "One hold's write is durable at the sink."
+  @spec confirm(map()) :: :ok
+  def confirm(metadata), do: notify(metadata, :outbox_confirmed)
+
+  @doc """
+  A hold whose retry budget is permanently exhausted: park the payload through
+  the dead-letter store — attributed to the output's own Entity and channel —
+  then answer the hold so the cursor advances past exactly the parked range.
+  Loud and replayable, never a silent drop.
+  """
+  @spec park(map(), binary() | nil, term(), non_neg_integer()) :: :ok
+  def park(metadata, payload, error, attempts) when is_map(metadata) do
+    with token when is_binary(token) <- ack(metadata),
+         {:ok, %{target: {rc, sh, pk}}} <- decode(token) do
+      entry = %{
+        operative_class: rc,
+        procedure_id: sh,
+        entity_key: pk,
+        channel: Map.get(metadata, "channel", ""),
+        origin_offset: nil,
+        error: inspect(error),
+        attempts: attempts,
+        payload: payload
+      }
+
+      case Flezha.Dlq.Store.append(entry) do
+        {:ok, ref} ->
+          Logger.error(
+            "[outbox] parked undeliverable output #{rc}/#{sh}/#{pk} " <>
+              "seq=#{Map.get(metadata, "flz.seq")} epoch=#{Map.get(metadata, "flz.epoch")} " <>
+              "after #{attempts} attempt(s): #{inspect(error)} — dead-letter #{ref}"
+          )
+
+          confirm(metadata)
+
+        {:error, reason} ->
+          # The park is the only record of this output; without it the cursor
+          # must not move. Left unconfirmed, the entry re-drives.
+          Logger.error(
+            "[outbox] dead-letter append FAILED for #{rc}/#{sh}/#{pk} " <>
+              "seq=#{Map.get(metadata, "flz.seq")}: #{inspect(reason)} — " <>
+              "the outbox cursor holds and the entry will re-drive"
+          )
+
+          :ok
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  @doc """
+  Run a completed entry's journal-marker completion. Called by the owning
+  writer, which must not append to its own log from inside its own callback.
+  """
+  @spec complete(Registry.entity_id(), key()) :: :ok
+  def complete({instance_id, _, _}, {:marker, for_type, proc_idx, iter, epoch}) do
+    Flezha.State.ProcJournal.mark_flushed(instance_id, for_type, proc_idx, iter, epoch)
+  end
+
+  @doc """
+  Decode a token into the writer that owns it, the Entity the output belongs
+  to, and the entry key one confirmation completes.
+  """
+  @spec decode(binary()) :: {:ok, ack()} | :error
+  def decode(token) when is_binary(token) do
+    with {:ok, bytes} <- Base.url_decode64(token, padding: false) do
+      decode_body(bytes)
+    else
+      _ -> :error
+    end
+  end
+
+  defp decode_body(
+         <<owner_len::16-big, owner::binary-size(owner_len), target_len::16-big,
+           target::binary-size(target_len), key::binary>>
+       ) do
+    with {:ok, owner_id} <- Wire.decode_entity_id(owner),
+         {:ok, target_id} <- decode_target(target, owner_id),
+         {:ok, key} <- decode_key(key) do
+      {:ok, %{owner: owner_id, target: target_id, key: key}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp decode_body(_), do: :error
+
+  defp decode_target(<<>>, owner_id), do: {:ok, owner_id}
+  defp decode_target(bytes, _owner_id), do: Wire.decode_entity_id(bytes)
+
+  defp encode_key({:cursor, seq}), do: <<1, seq::64-big>>
+
+  defp encode_key({:marker, for_type, proc_idx, iter, epoch}),
+    do: <<2, for_type::8, proc_idx::16-big, iter::32-big, epoch::32-big>>
+
+  defp decode_key(<<1, seq::64-big>>), do: {:ok, {:cursor, seq}}
+
+  defp decode_key(<<2, for_type::8, proc_idx::16-big, iter::32-big, epoch::32-big>>),
+    do: {:ok, {:marker, for_type, proc_idx, iter, epoch}}
+
+  defp decode_key(_), do: :error
+
+  # A writer that is gone cannot be told anything, and needs no telling: its
+  # cursor never advanced, so the restart re-drive owes the entry anyway.
+  defp notify(metadata, tag) when is_map(metadata) do
+    with token when is_binary(token) <- ack(metadata),
+         {:ok, %{owner: owner, key: key}} <- decode(token),
+         {:ok, pid} <- Flezha.State.Supervisor.lookup(owner) do
+      GenServer.cast(pid, {tag, key})
+    else
+      _ -> :ok
+    end
+  end
+
+  defp entity_bytes({rc, sh, pk}), do: Wire.encode_entity_id(rc, sh, pk)
+  defp entity_bytes(bytes) when is_binary(bytes), do: bytes
+
+  defp encode(bytes), do: Base.url_encode64(bytes, padding: false)
 end

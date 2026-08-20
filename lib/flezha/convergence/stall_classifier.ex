@@ -241,7 +241,9 @@ defmodule Flezha.Convergence.StallClassifier do
   `current` is one map per live Entity (built by the Loop from
   `Flezha.State.Watchdog.entity_statuses/0`): always `:operative_id`,
   `:entity`, `:last_change_seen_at`, `:last_advance_at` (the WAL
-  fed/advance evidence), `:out_pending_seq` and `:outbox_flushed_seq`, plus —
+  fed/advance evidence), `:out_pending_seq`, `:outbox_flushed_seq` and
+  `:outbox_unconfirmed_ms` (how long the oldest dispatched output has gone
+  unconfirmed by its sink), plus —
   when the effectively-once tier runs — `:input_log_tail` and this Entity's
   durable `:consumed_offset`. `baseline` is a snapshot taken at least one grace
   window earlier (`nil` before one has aged enough); cursor checks compare
@@ -281,7 +283,7 @@ defmodule Flezha.Convergence.StallClassifier do
     cond do
       fed? and not advanced? -> {:stuck, :wal_frozen, %{entity: m.entity}}
       watermark_frozen?(m, base) -> {:stuck, :watermark_frozen, %{entity: m.entity}}
-      outbox_flat?(m, base) -> {:stuck, :outbox_flat, %{entity: m.entity}}
+      outbox_flat?(m, base, grace_ms) -> {:stuck, :outbox_flat, %{entity: m.entity}}
       advanced? -> :advancing
       true -> :idle
     end
@@ -301,15 +303,25 @@ defmodule Flezha.Convergence.StallClassifier do
   defp watermark_frozen?(_m, _base), do: false
 
   # Tier-on: output-bearing WAL records accumulated while the outbox flush
-  # cursor stayed flat.
-  defp outbox_flat?(m, base) when is_map(base) do
+  # cursor stayed flat — or output already handed to the plugin chain has gone
+  # unconfirmed past the grace window. The second half is what catches a sink
+  # that stopped answering on an Entity quiet enough to emit nothing new, which
+  # no comparison against a baseline can see.
+  defp outbox_flat?(m, base, grace_ms) do
+    unconfirmed_stalled?(m, grace_ms) or accumulating?(m, base)
+  end
+
+  defp unconfirmed_stalled?(m, grace_ms),
+    do: is_integer(m[:outbox_unconfirmed_ms]) and m.outbox_unconfirmed_ms >= grace_ms
+
+  defp accumulating?(m, base) when is_map(base) do
     is_integer(m[:out_pending_seq]) and is_integer(base[:out_pending_seq]) and
       is_integer(m[:outbox_flushed_seq]) and is_integer(base[:outbox_flushed_seq]) and
       m.out_pending_seq > base.out_pending_seq and
       m.outbox_flushed_seq == base.outbox_flushed_seq
   end
 
-  defp outbox_flat?(_m, _base), do: false
+  defp accumulating?(_m, _base), do: false
 
   defp verdict_rank({:stuck, detail, _ctx}), do: {2, Map.get(@stuck_rank, detail, 0)}
   defp verdict_rank(:advancing), do: {1, 0}

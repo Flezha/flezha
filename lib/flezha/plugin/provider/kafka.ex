@@ -28,7 +28,9 @@ defmodule Flezha.Plugin.Provider.Kafka do
       * `:linger_ms`                       — int, default `10`
       * `:max_batch_bytes`                 — int, default `1_048_576`
       * `:queue_max`                       — int, default `10_000`
-      * `:queue_overflow`                  — `:drop_oldest` (default), `:drop_newest`, or `:block`
+      * `:queue_overflow`                  — `:drop_oldest`, `:drop_newest`, or `:block`.
+        Unset, it is derived per record: `:block` for a delivery-guaranteed
+        output (one an outbox cursor is waiting on), `:drop_oldest` otherwise
       * `:queue_block_timeout_ms`          — int, default `5_000`
       * `:idempotent`                      — bool, default `false` (opt in for exactly-once)
       * `:auto_create_topic`               — bool, default `true`
@@ -42,6 +44,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     alias Flezha.Plugin.Extension.Ctx
     alias Flezha.Plugin.Provider.Kafka.{ProducerSup, ProducerWorker}
     alias Flezha.Plugin.ProviderBehaviour
+    alias Flezha.State.Outbox
 
     use ProviderBehaviour
 
@@ -66,7 +69,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
                   linger_ms: 10,
                   max_batch_bytes: 1_048_576,
                   queue_max: 10_000,
-                  queue_overflow: :drop_oldest,
+                  queue_overflow: nil,
                   queue_block_timeout_ms: 5_000,
                   idempotent: false,
                   auto_create_topic: true,
@@ -201,6 +204,11 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
     defp do_produce(%Ctx.IO{} = ctx, opts, msg, md) do
       producer_pid = Map.fetch!(opts, :producer_pid)
+      # Take ownership of a delivery-guaranteed output before handing it over:
+      # the worker answers the hold when the broker acks its batch, or parks it
+      # when the retry ladder is permanently exhausted. A plain output holds
+      # nothing and this is a no-op.
+      Outbox.hold(md)
       :ok = ProducerWorker.cast_enqueue(producer_pid, msg, md)
       {:ok, ctx}
     end
@@ -214,7 +222,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
         linger_ms: coerce_int(Map.get(opts, :linger_ms, 10)),
         max_batch_bytes: coerce_int(Map.get(opts, :max_batch_bytes, 1_048_576)),
         queue_max: coerce_int(Map.get(opts, :queue_max, 10_000)),
-        queue_overflow: coerce_atom(Map.get(opts, :queue_overflow, :drop_oldest)),
+        queue_overflow: coerce_atom(Map.get(opts, :queue_overflow)),
         queue_block_timeout_ms: coerce_int(Map.get(opts, :queue_block_timeout_ms, 5_000)),
         retries: coerce_int(Map.get(opts, :retries, 5)),
         retry_backoff_ms: coerce_int(Map.get(opts, :retry_backoff_ms, 100)),

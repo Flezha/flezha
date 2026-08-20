@@ -82,7 +82,15 @@ defmodule Flezha.State.ProcJournal do
   require Logger
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{PersistenceResolver, RecordLog, Registry, Wire}
+
+  alias Flezha.State.{
+    Outbox,
+    PersistenceResolver,
+    RecordLog,
+    Registry,
+    Supervisor,
+    WalWriter
+  }
 
   @type_proc_committed 1
   @type_outbox_flushed 2
@@ -555,60 +563,87 @@ defmodule Flezha.State.ProcJournal do
 
   # Deliver one journaled entry's outbox through the operative's `:on_output`
   # chain — the same fan-out `StreamChannel` uses for live workflow output and
-  # `WalWriter` uses for the stream effectively-once outbox — then record the
-  # flush. The marker is written only after delivery, so a crash in between
-  # re-drives (at-least-once with identical keys) rather than losing output.
+  # `WalWriter` uses for the stream effectively-once outbox. Delivery is owed
+  # to the instance's journal writer first: it appends the `outbox_flushed`
+  # marker once the sinks confirm, and it is what tells a re-entered flush that
+  # this entry is already with the chain.
   defp flush_entry(instance_id, pid, entry) do
     comp? = entry.type == :compensated
+    for_type = entry_type_code(entry.type)
+    key = {:marker, for_type, entry.proc_idx, entry.iter, entry.epoch}
 
-    Enum.each(entry.payload.outbox, fn item ->
-      # An undo output's seq carries a trailing `.1` — the compensation marker —
-      # so it can never collide with the forward output it reverses while staying
-      # a numeric dotted sequence a keyed sink can order.
-      seq = "#{entry.proc_idx}.#{item.seq_in_proc}"
+    case await_outbox(instance_id, key, length(entry.payload.outbox)) do
+      :already_awaiting ->
+        :ok
 
-      stamps =
-        Wire.output_stamps(%{
-          entity: item.entity_id,
-          seq: if(comp?, do: seq <> ".1", else: seq),
-          epoch: entry.epoch,
-          channel: item.channel
-        })
+      :ok ->
+        owner = Registry.journal_id(instance_id)
 
-      GenServer.cast(pid, {:io_out, item.payload, stamps})
-    end)
+        Enum.each(entry.payload.outbox, fn item ->
+          # An undo output's seq carries a trailing `.1` — the compensation marker
+          # — so it can never collide with the forward output it reverses while
+          # staying a numeric dotted sequence a keyed sink can order.
+          seq = "#{entry.proc_idx}.#{item.seq_in_proc}"
 
-    :telemetry.execute(
-      [:flezha, :state, :proc_outbox_flush],
-      %{count: 1, entries: length(entry.payload.outbox)},
-      %{
-        operative_id: instance_id,
-        proc_idx: entry.proc_idx,
-        epoch: entry.epoch,
-        compensating: comp?
-      }
-    )
+          Outbox.dispatch(pid, item.payload, %{
+            owner: owner,
+            entry: key,
+            entity: item.entity_id,
+            seq: if(comp?, do: seq <> ".1", else: seq),
+            epoch: entry.epoch,
+            channel: item.channel
+          })
+        end)
 
-    case append(
-           instance_id,
-           @type_outbox_flushed,
-           entry.proc_idx,
-           entry.iter,
-           <<entry_type_code(entry.type)::8>>,
-           entry.epoch
-         ) do
+        :telemetry.execute(
+          [:flezha, :state, :proc_outbox_flush],
+          %{count: 1, entries: length(entry.payload.outbox)},
+          %{
+            operative_id: instance_id,
+            proc_idx: entry.proc_idx,
+            epoch: entry.epoch,
+            compensating: comp?
+          }
+        )
+    end
+  end
+
+  defp await_outbox(instance_id, key, outputs) do
+    case Supervisor.find_or_start(Registry.journal_id(instance_id)) do
+      {:ok, writer} -> WalWriter.await_outbox(writer, key, outputs)
+      {:error, _} -> :already_awaiting
+    end
+  end
+
+  @doc """
+  Record one entry's outbox as delivered — the sinks confirmed it. Called by the
+  instance's journal writer through `Flezha.State.Outbox`, never by the flush:
+  the marker is what a restore reads to know an entry is no longer owed, so it
+  may only follow a confirmed delivery.
+  """
+  @spec mark_flushed(
+          binary(),
+          byte(),
+          non_neg_integer(),
+          non_neg_integer(),
+          non_neg_integer()
+        ) :: :ok
+  def mark_flushed(instance_id, for_type, proc_idx, iter, epoch) do
+    case append(instance_id, @type_outbox_flushed, proc_idx, iter, <<for_type::8>>, epoch) do
       :ok ->
         :ok
 
       {:error, reason} ->
-        # The outbox reached the plugins but the marker did not land: a restore
+        # The outbox reached the sinks but the marker did not land: a restore
         # re-drives this entry. Duplicate delivery with an identical key is the
         # documented at-least-once posture; losing the marker write silently is
         # not.
         Logger.warning(
           "[proc_journal] outbox_flushed append failed instance=#{inspect(instance_id)} " <>
-            "proc_idx=#{entry.proc_idx}: #{inspect(reason)} — entry will re-drive on restore"
+            "proc_idx=#{proc_idx}: #{inspect(reason)} — entry will re-drive on restore"
         )
+
+        :ok
     end
   end
 
