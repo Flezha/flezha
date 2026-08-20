@@ -293,11 +293,15 @@ the given plugin id (plugin not running, or already torn down).
 
 ## Worker sharing
 
-Multiple plugin instances configured against the same `:hosts` (and SSL +
-auth opts) share a single underlying `KafkaEx.New.Client` connection pool
-via `Flezha.Plugin.Provider.Kafka.WorkerRegistry`. The registry refcounts
-owners; the underlying worker is stopped 5 s after the last owner releases.
-This eliminates the "one-worker-per-plugin" cardinality blowup.
+Plugin instances configured against the same `:hosts` (and SSL + auth opts)
+share underlying `KafkaEx.New.Client` connections via
+`Flezha.Plugin.Provider.Kafka.WorkerRegistry`, at most one per scheduler per
+cluster: a client answers one request at a time and encodes each batch in its
+own process, so a single shared client would serialise every partition's
+batches behind one core. Partitions are spread over the clients by
+`partition mod schedulers`. The registry refcounts owners; a worker is
+stopped 5 s after its last owner releases. This bounds the connection count
+by the node's cores instead of by the plugin count.
 
 Each plugin instance still owns its own per-`(topic, partition)`
 `ProducerWorker` (and therefore its own bounded queue, producer-id, and

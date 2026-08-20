@@ -14,7 +14,8 @@ defmodule Flezha.State.InputLog do
 
   Retention is watermark-driven: each Entity's durable consumed-offset is
   reported into a public ETS table (`record_consumed/3`, repopulated from the
-  WAL after a restart — the table is a rebuildable cache) and `sweep/1`
+  WAL after a restart — the table is a rebuildable cache, owned by
+  `Flezha.State.Supervisor`) and `sweep/1`
   truncates strictly below `min(watermark, now - hold_window)` with
   `hold_window` defaulting to zero. An Entity that has consumed nothing holds
   the watermark at the log start; a frozen watermark with a growing log emits
@@ -66,6 +67,9 @@ defmodule Flezha.State.InputLog do
   # by the low watermark); at zero credit the append parks via a deferred
   # reply, which blocks the source adapter's synchronous ingest call — the
   # websocket stops reading its socket until credit mints.
+  # `consumed` is the log's own copy of its Entities' durable consumed-offsets:
+  # the min-watermark that drains source credit is taken from it, so an advance
+  # never scans the shared table. The table stays the published view.
   defstruct [
     :operative_class,
     :path,
@@ -73,8 +77,15 @@ defmodule Flezha.State.InputLog do
     :next_offset,
     :ledger,
     :offset_sizes,
-    :waiters
+    :waiters,
+    :consumed
   ]
+
+  # Cap on how many queued messages of one kind a handler folds into one pass
+  # (appends into one write syscall, consumed-offsets into one watermark
+  # recompute). High enough to amortize a burst, low enough that nothing queued
+  # behind them waits on an unbounded amount of other work.
+  @max_append_batch 256
 
   # ---------- Public API ----------
 
@@ -104,7 +115,11 @@ defmodule Flezha.State.InputLog do
 
   defp do_append(operative_class, message, metadata, attempts) do
     {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
-    GenServer.call(pid, {:append, message, metadata}, :infinity)
+    # Encode here rather than in the server: every source process pays its own
+    # serialization in parallel instead of queueing behind the one journal
+    # process that every operative of this class shares.
+    body = :erlang.term_to_binary({message, metadata})
+    GenServer.call(pid, {:append, body}, :infinity)
   catch
     # A restarting log's registry entry can briefly point at the dead pid.
     :exit, {:noproc, _} when attempts > 1 ->
@@ -145,12 +160,14 @@ defmodule Flezha.State.InputLog do
     # A watermark advance may free source credit; the log server drains
     # the ledger and unparks waiting appends. Async — this runs on the
     # WalWriter's fsync path.
+    notify_consumed(operative_class, entity_id, offset)
+  end
+
+  defp notify_consumed(operative_class, entity_id, offset) do
     case Supervisor.lookup({operative_class, :input_log}) do
-      {:ok, pid} -> GenServer.cast(pid, :watermark_advance)
+      {:ok, pid} -> GenServer.cast(pid, {:consumed, entity_id, offset})
       :error -> :ok
     end
-
-    :ok
   end
 
   @doc """
@@ -172,7 +189,7 @@ defmodule Flezha.State.InputLog do
       :ets.insert(@watermarks, {{operative_class, entity_id}, offset})
     end
 
-    :ok
+    notify_consumed(operative_class, entity_id, offset)
   end
 
   @doc """
@@ -191,7 +208,7 @@ defmodule Flezha.State.InputLog do
   def forget_entity(operative_class, entity_id) do
     ensure_watermark_table()
     :ets.delete(@watermarks, {operative_class, entity_id})
-    :ok
+    notify_consumed(operative_class, entity_id, -1)
   end
 
   @doc """
@@ -271,8 +288,9 @@ defmodule Flezha.State.InputLog do
       file_handle: nil,
       next_offset: 0,
       ledger: CreditLedger.new("source:" <> operative_class, window, max(div(window, 2), 1)),
-      offset_sizes: %{},
-      waiters: :queue.new()
+      offset_sizes: :queue.new(),
+      waiters: :queue.new(),
+      consumed: %{}
     }
 
     {:ok, state, {:continue, :open}}
@@ -287,24 +305,19 @@ defmodule Flezha.State.InputLog do
     last = WalWriter.scan_for_last_valid_seq(file, state.path)
     {:ok, _} = :file.position(file, :eof)
 
-    {:noreply, %{state | file_handle: file, next_offset: last + 1}}
+    # Offsets reported before this log (re)started are in the published table.
+    consumed = Map.new(entity_offsets(state.operative_class))
+    {:noreply, %{state | file_handle: file, next_offset: last + 1, consumed: consumed}}
   end
 
   @impl true
-  def handle_call({:append, message, metadata}, from, state) do
-    body = :erlang.term_to_binary({message, metadata})
-
-    case CreditLedger.admit(state.ledger, byte_size(body)) do
-      {:ok, ledger} ->
-        {offset, state} = write_journal(%{state | ledger: ledger}, body)
-        {:reply, {:ok, offset}, state}
-
-      {:overrun, ledger} ->
-        # Zero source credit: park the caller (deferred reply) until the
-        # min-watermark advance drains the ledger. The blocked ingest call
-        # is the back-pressure that stops the source reading.
-        {:noreply, %{state | ledger: ledger, waiters: :queue.in({from, body}, state.waiters)}}
-    end
+  def handle_call({:append, body}, from, state) do
+    # Fold in the appends already queued behind this one so a burst costs one
+    # write syscall instead of N. Under light load the batch is a single
+    # record and this is the old path with one extra `receive` that returns
+    # immediately.
+    {:noreply,
+     write_queued_appends(state, [{from, body} | collect_appends(@max_append_batch - 1, [])])}
   end
 
   def handle_call(:fsync, _from, state) do
@@ -333,22 +346,24 @@ defmodule Flezha.State.InputLog do
     {:reply, :ok, %{state | file_handle: file}}
   end
 
-  # Min-watermark advance (an effect record's consumed-offset became
-  # durable): drain the freed bytes from the source ledger and, when the
-  # batched grant lands, unpark waiting appends in arrival order.
   @impl true
-  def handle_cast(:watermark_advance, state) do
-    case watermark(state.operative_class) do
-      nil ->
-        {:noreply, state}
+  def handle_cast(:fsync, state) do
+    :ok = :file.datasync(state.file_handle)
+    {:noreply, state}
+  end
 
-      wm ->
-        {freed, offset_sizes} = pop_freed(state.offset_sizes, wm)
-        {grant, ledger} = CreditLedger.drain(state.ledger, freed)
-        state = %{state | ledger: ledger, offset_sizes: offset_sizes}
-        state = if grant > 0, do: unpark_waiters(state), else: state
-        {:noreply, state}
-    end
+  # An Entity's durable consumed-offset moved (an effect record became durable,
+  # a correction rewound it, or the Entity was deleted: `-1`). Fold in every
+  # advance already queued, then drain the freed bytes from the source ledger
+  # once and, when the batched grant lands, unpark waiting appends in arrival
+  # order.
+  def handle_cast({:consumed, entity_id, offset}, state) do
+    state =
+      state
+      |> note_consumed(entity_id, offset)
+      |> collect_consumed(@max_append_batch - 1)
+
+    {:noreply, advance_watermark(state)}
   end
 
   @impl true
@@ -363,30 +378,112 @@ defmodule Flezha.State.InputLog do
 
   # ---------- Internals ----------
 
-  defp write_journal(state, body) do
+  defp note_consumed(state, entity_id, offset) when offset < 0,
+    do: %{state | consumed: Map.delete(state.consumed, entity_id)}
+
+  defp note_consumed(state, entity_id, offset),
+    do: %{state | consumed: Map.put(state.consumed, entity_id, offset)}
+
+  defp collect_consumed(state, 0), do: state
+
+  defp collect_consumed(state, remaining) do
+    receive do
+      {:"$gen_cast", {:consumed, entity_id, offset}} ->
+        collect_consumed(note_consumed(state, entity_id, offset), remaining - 1)
+    after
+      0 -> state
+    end
+  end
+
+  defp advance_watermark(%{consumed: consumed} = state) when map_size(consumed) == 0, do: state
+
+  defp advance_watermark(state) do
+    wm = state.consumed |> Map.values() |> Enum.min()
+    {freed, offset_sizes} = pop_freed(state.offset_sizes, wm)
+    {grant, ledger} = CreditLedger.drain(state.ledger, freed)
+    state = %{state | ledger: ledger, offset_sizes: offset_sizes}
+    if grant > 0, do: unpark_waiters(state), else: state
+  end
+
+  # Drain queued `{:append, body}` calls without disturbing the relative order
+  # of anything else in the mailbox — a selective receive leaves non-matching
+  # messages (`:fsync`, `{:consumed, ...}`, ...) queued where they were.
+  defp collect_appends(0, acc), do: Enum.reverse(acc)
+
+  defp collect_appends(remaining, acc) do
+    receive do
+      {:"$gen_call", from, {:append, body}} ->
+        collect_appends(remaining - 1, [{from, body} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  # Admit in arrival order, encode into one iolist, write once, reply to all.
+  # The first record that overruns credit parks, and so does everything behind
+  # it — parking the whole tail is what preserves ordering.
+  defp write_queued_appends(state, batch) do
+    {state, iodata, replies} =
+      Enum.reduce(batch, {state, [], []}, fn {from, body}, {st, io, replies} ->
+        case CreditLedger.admit(st.ledger, byte_size(body)) do
+          {:ok, ledger} ->
+            {offset, record, st} = encode_append(%{st | ledger: ledger}, body)
+            {st, [io, record], [{from, offset} | replies]}
+
+          {:overrun, ledger} ->
+            {park(%{st | ledger: ledger}, from, body), io, replies}
+        end
+      end)
+
+    state = flush_records(state, iodata)
+
+    Enum.each(Enum.reverse(replies), fn {from, offset} -> GenServer.reply(from, {:ok, offset}) end)
+
+    state
+  end
+
+  defp park(state, from, body),
+    do: %{state | waiters: :queue.in({from, body}, state.waiters)}
+
+  defp flush_records(state, []), do: state
+
+  defp flush_records(state, iodata) do
+    :ok = :file.write(state.file_handle, iodata)
+    FsyncBatcher.mark_dirty({state.operative_class, :input_log})
+    state
+  end
+
+  # Assign the next offset and encode the record; the caller decides when the
+  # bytes actually reach the file.
+  defp encode_append(state, body) do
     offset = state.next_offset
     header = record_header(System.system_time(:millisecond))
-    :ok = :file.write(state.file_handle, WalWriter.encode_record(offset, header, body))
-    FsyncBatcher.mark_dirty({state.operative_class, :input_log})
 
-    {offset,
+    {offset, WalWriter.encode_record(offset, header, body),
      %{
        state
        | next_offset: offset + 1,
-         offset_sizes: Map.put(state.offset_sizes, offset, byte_size(body))
+         offset_sizes: :queue.in({offset, byte_size(body)}, state.offset_sizes)
      }}
+  end
+
+  defp write_journal(state, body) do
+    {offset, record, state} = encode_append(state, body)
+    {offset, flush_records(state, [record])}
   end
 
   # Free the tracked bytes of every journaled offset at or below the
   # watermark (its consumption is durable; the log slot is reclaimable).
-  defp pop_freed(offset_sizes, watermark) do
-    Enum.reduce(offset_sizes, {0, offset_sizes}, fn
-      {offset, size}, {freed, sizes} when offset <= watermark ->
-        {freed + size, Map.delete(sizes, offset)}
+  # Offsets are assigned monotonically, so the freed set is always a prefix:
+  # popping it costs the number freed, not the number still in flight.
+  defp pop_freed(offset_sizes, watermark, freed \\ 0) do
+    case :queue.peek(offset_sizes) do
+      {:value, {offset, size}} when offset <= watermark ->
+        pop_freed(:queue.drop(offset_sizes), watermark, freed + size)
 
-      _, acc ->
-        acc
-    end)
+      _ ->
+        {freed, offset_sizes}
+    end
   end
 
   defp unpark_waiters(state) do
@@ -579,11 +676,14 @@ defmodule Flezha.State.InputLog do
     |> Enum.map(fn [entity_id, offset] -> {entity_id, offset} end)
   end
 
-  defp ensure_watermark_table() do
+  # Created by `Flezha.State.Supervisor` so it outlives any one reporter; the
+  # fallback here only serves callers running without the state subsystem.
+  @doc false
+  def ensure_watermark_table() do
     case :ets.whereis(@watermarks) do
       :undefined ->
         try do
-          :ets.new(@watermarks, [:set, :public, :named_table, read_concurrency: true])
+          :ets.new(@watermarks, [:set, :public, :named_table, write_concurrency: true])
         rescue
           ArgumentError -> :ok
         end

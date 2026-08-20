@@ -32,6 +32,7 @@ defmodule Flezha.State.Supervisor do
     # resolution degrades to the on-disk layout when it is absent (unit tests
     # that use `Flezha.State.Registry` without this supervisor).
     Flezha.State.Registry.ensure_claims_table()
+    Flezha.State.InputLog.ensure_watermark_table()
     DynamicSupervisor.init(strategy: :one_for_one)
   end
 
@@ -108,6 +109,12 @@ defmodule Flezha.State.Supervisor do
     Elixir.Registry.select(@registry, [
       {{{operative_class, :_, :_}, :"$1", :_}, [], [:"$1"]}
     ])
+  end
+
+  @doc "Every registered writer id — Entity writers and input logs alike."
+  @spec registered_ids() :: [tuple()]
+  def registered_ids() do
+    Elixir.Registry.select(@registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
   end
 
   @doc """

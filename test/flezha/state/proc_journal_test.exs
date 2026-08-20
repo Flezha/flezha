@@ -256,7 +256,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
   # so a plain test pid stands in for the bound Overwatch — including its duty to
   # settle the chain run, which is what lets the `outbox_flushed` marker land.
   defp assert_flushed(payload, seq, epoch \\ "0") do
-    assert_receive {:"$gen_cast", {:io_out, ^payload, meta}}
+    assert_receive {:"$gen_cast", {:io_out, ^payload, meta, _}}
     assert meta["flz.seq"] == seq
     assert meta["flz.epoch"] == epoch
     :ok = Outbox.settled(meta)
@@ -316,7 +316,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     assert meta["channel"] == "out"
     assert_flushed("b", "0.1")
     assert_flushed("c", "1.0")
-    refute_receive {:"$gen_cast", {:io_out, _, _}}
+    refute_receive {:"$gen_cast", {:io_out, _, _, _}}
 
     # Delivery is recorded per entry, naming which entry type it flushed.
     assert [
@@ -327,7 +327,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
     # An already-flushed proc is never re-delivered — a restore re-drive is a no-op.
     assert ProcJournal.pending_entries(inst) == []
     assert :ok = ProcJournal.flush_pending(inst, self())
-    refute_receive {:"$gen_cast", {:io_out, _, _}}
+    refute_receive {:"$gen_cast", {:io_out, _, _, _}}
   end
 
   test "a crash between commit and flush re-drives the outbox with identical keys" do
@@ -595,7 +595,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     # The hold is taken inside the chain, before the run settles — which is the
     # order the real dispatcher produces.
-    assert_receive {:"$gen_cast", {:io_out, "held", meta}}
+    assert_receive {:"$gen_cast", {:io_out, "held", meta, _}}
     :ok = Outbox.hold(meta)
     :ok = Outbox.settled(meta)
 
@@ -607,7 +607,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
     # A flush re-entered while the entry is with the chain must not send it twice.
     assert :ok = ProcJournal.flush_pending(inst, self())
-    refute_receive {:"$gen_cast", {:io_out, _, _}}, 100
+    refute_receive {:"$gen_cast", {:io_out, _, _, _}}, 100
 
     :ok = Outbox.confirm(meta)
     assert [%{proc_idx: 0, payload: %{for_type: :proc_committed}}] = await_markers(inst, 1)

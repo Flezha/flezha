@@ -115,8 +115,8 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
              decode_reply(reply).command
 
-    assert_receive {:"$gen_cast", {:io_out, "one", meta_one}}, 1_000
-    assert_receive {:"$gen_cast", {:io_out, "two", meta_two}}, 1_000
+    assert_receive {:"$gen_cast", {:io_out, "one", meta_one, _}}, 1_000
+    assert_receive {:"$gen_cast", {:io_out, "two", meta_two, _}}, 1_000
     assert meta_one["flz.entity"] == "#{inst}/ProcA/s0"
     assert meta_one["flz.seq"] == "0.0"
     assert meta_one["flz.epoch"] == "0"
@@ -226,7 +226,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
              decode_reply(reply).command
 
-    assert_receive {:"$gen_cast", {:io_out, "undo", meta}}, 1_000
+    assert_receive {:"$gen_cast", {:io_out, "undo", meta, _}}, 1_000
     # The comp marker keeps the undo key off the forward output it reverses.
     assert meta["flz.seq"] == "2.0.1"
 
@@ -263,7 +263,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
 
     assert error =~ "oversized_handoff"
     # Nothing durable ⇒ nothing delivered.
-    refute_receive {:"$gen_cast", {:io_out, _, _}}, 300
+    refute_receive {:"$gen_cast", {:io_out, _, _, _}}, 300
     assert {:ok, []} = ProcJournal.read(inst)
   end
 

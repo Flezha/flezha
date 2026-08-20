@@ -28,7 +28,29 @@ pub fn install_inline_serve(hook: fn(&Arc<EntitySlot>)) {
     let _ = INLINE_SERVE.set(hook);
 }
 
+thread_local! {
+    /// Nesting depth of activations running on this thread. Non-zero marks a
+    /// pool worker — the only kind of producer that may be the lone thread
+    /// able to drain the consumer it is blocked on.
+    static ACTIVATION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Run `f` as an activation on this thread, so a Block-policy push it makes
+/// into a full consumer drains that consumer inline instead of parking. A
+/// transport reader never runs inside this: it parks, and the pool drains —
+/// serving inline there would make the thread feeding every operative on the
+/// runner run one consumer's work.
+pub fn in_activation<R>(f: impl FnOnce() -> R) -> R {
+    ACTIVATION_DEPTH.with(|d| d.set(d.get() + 1));
+    let out = f();
+    ACTIVATION_DEPTH.with(|d| d.set(d.get() - 1));
+    out
+}
+
 fn serve_inline(slot: &Arc<EntitySlot>) {
+    if ACTIVATION_DEPTH.with(|d| d.get()) == 0 {
+        return;
+    }
     if let Some(serve) = INLINE_SERVE.get() {
         serve(slot);
     }
@@ -84,12 +106,13 @@ pub fn enqueue(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy)
                         blocked_since = Some(std::time::Instant::now());
                         crate::entity::BLOCKED_PARK_EPISODES.fetch_add(1, Ordering::Relaxed);
                     }
-                    // Serve the full slot inline rather than parking on it:
-                    // the slot's round may exist only as a queued pool task,
-                    // and a parked pool worker can be the lone thread able to
-                    // run it (a one-worker pool self-deadlocks; prod
-                    // 2026-06-10). The drain_active gate in try_assemble
-                    // keeps this race-safe and order-preserving.
+                    // A pool worker serves the full slot inline rather than
+                    // parking on it: the slot's round may exist only as a
+                    // queued pool task, and a parked pool worker can be the
+                    // lone thread able to run it (a one-worker pool
+                    // self-deadlocks; prod 2026-06-10). The drain_active gate
+                    // in try_assemble keeps this race-safe and
+                    // order-preserving. Any other producer parks below.
                     serve_inline(slot);
                     if slot.mailbox.is_full() {
                         // A live drainer on another thread owns progress;

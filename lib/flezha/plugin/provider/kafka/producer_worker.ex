@@ -616,24 +616,24 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     end
   end
 
-  defp drain_batch(state, max_bytes), do: drain(state, max_bytes, [])
+  defp drain_batch(state, max_bytes), do: drain(state, max_bytes, [], 0)
 
-  defp drain(state, max_bytes, acc) do
+  # `acc_bytes` rides along: re-summing the accumulator per record made a
+  # batch of n records cost n² additions.
+  defp drain(state, max_bytes, acc, acc_bytes) do
     case :queue.peek(state.queue) do
       :empty ->
         {Enum.reverse(acc), state}
 
       {:value, record} ->
-        if acc != [] and byte_acc(acc) + record.bytes > max_bytes do
+        if acc != [] and acc_bytes + record.bytes > max_bytes do
           {Enum.reverse(acc), state}
         else
           {state, _} = pop(state)
-          drain(state, max_bytes, [record | acc])
+          drain(state, max_bytes, [record | acc], acc_bytes + record.bytes)
         end
     end
   end
-
-  defp byte_acc(records), do: Enum.reduce(records, 0, fn r, n -> n + r.bytes end)
 
   defp do_send(state, batch, attempt) do
     parent = self()

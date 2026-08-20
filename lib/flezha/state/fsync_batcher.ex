@@ -3,10 +3,16 @@ defmodule Flezha.State.FsyncBatcher do
   Single shared `GenServer` that drives `:file.datasync/1` across every
   dirty `WalWriter` on a configurable cadence.
 
-  Writers cast `mark_dirty/1` after each append; the batcher coalesces
-  the calls into a single per-tick fsync per writer. Default tick
-  interval is `5 ms` (≈ 200 Hz), giving ≤10 ms total durability when
-  paired with the SDK flusher's 5 ms linger.
+  Writers cast `mark_dirty/1` on the first append of an fsync window; the
+  tick then casts one `:fsync` to every dirty writer, so the writers sync
+  concurrently in their own processes and a writer busy behind a deep
+  mailbox delays no one else's durability. Default tick interval is `5 ms`
+  (≈ 200 Hz), giving ≤10 ms total durability when paired with the SDK
+  flusher's 5 ms linger.
+
+  A (re)started batcher seeds its dirty set with every registered writer: a
+  writer marks once per window, so a dirty set lost with a crashed batcher
+  would otherwise never be rebuilt.
 
   Validates `:flezha, :agent_fsync_interval_ms` at `init/1`. Legal range
   `[1, 1000]`; out-of-range values prevent the batcher from booting.
@@ -92,7 +98,7 @@ defmodule Flezha.State.FsyncBatcher do
 
         {:ok,
          %__MODULE__{
-           dirty_set: MapSet.new(),
+           dirty_set: MapSet.new(Supervisor.registered_ids()),
            tick_ref: ref,
            tick_interval_ms: interval
          }}
@@ -110,12 +116,12 @@ defmodule Flezha.State.FsyncBatcher do
 
   @impl true
   def handle_call(:flush_now, _from, state) do
-    new_state = drain(state)
+    new_state = drain(state, :call)
     {:reply, :ok, new_state}
   end
 
   def handle_call(:flush_all, _from, state) do
-    new_state = drain(state)
+    new_state = drain(state, :call)
     {:reply, :ok, new_state}
   end
 
@@ -125,28 +131,24 @@ defmodule Flezha.State.FsyncBatcher do
 
   @impl true
   def handle_info(:tick, state) do
-    new_state = drain(state)
+    new_state = drain(state, :cast)
     ref = Process.send_after(self(), :tick, state.tick_interval_ms)
     {:noreply, %{new_state | tick_ref: ref}}
   end
 
-  defp drain(state) do
+  # The tick casts; `flush_now`/`flush_all` call, because their callers need
+  # every sync done when they return.
+  defp drain(state, mode) do
     count = MapSet.size(state.dirty_set)
 
-    Enum.each(state.dirty_set, fn entity_id ->
-      case Supervisor.lookup(entity_id) do
-        {:ok, pid} ->
-          # `try` because a writer can exit between `mark_dirty/1` and the tick.
-          try do
-            WalWriter.fsync(pid)
-          catch
-            :exit, _ -> :ok
-          end
-
-        :error ->
-          :ok
-      end
-    end)
+    # A writer that did not confirm its sync stays dirty for the next drain.
+    still_dirty =
+      Enum.filter(state.dirty_set, fn entity_id ->
+        case Supervisor.lookup(entity_id) do
+          {:ok, pid} -> fsync(pid, mode) == :error
+          :error -> false
+        end
+      end)
 
     # Only emit when work happened. An idle tick (≈200 Hz) carries no signal
     # and its constant fan-out to the observability bus races subsystem
@@ -159,7 +161,16 @@ defmodule Flezha.State.FsyncBatcher do
       )
     end
 
-    %{state | dirty_set: MapSet.new()}
+    %{state | dirty_set: MapSet.new(still_dirty)}
+  end
+
+  defp fsync(pid, :cast), do: WalWriter.fsync_async(pid)
+
+  # `try` because a writer can exit between `mark_dirty/1` and the drain.
+  defp fsync(pid, :call) do
+    WalWriter.fsync(pid)
+  catch
+    :exit, _ -> :error
   end
 
   defp configured_interval_ms() do

@@ -96,13 +96,19 @@ defmodule Flezha.Plugin.Provider.Kafka do
       # password cannot survive a restart from the redacted persisted opts.
       resolved_auth = resolve_auth(opts)
 
+      # A `KafkaEx.Client` answers one request at a time, encoding each batch
+      # in its own process, so every partition behind one client serialises
+      # on it. The lane spreads a cluster's partitions over as many clients
+      # as there are schedulers — one connection per core at most, which is
+      # all the encode parallelism the node has to give.
       identity = %{
         hosts: hosts,
         ssl_options: Map.get(opts, :ssl_options),
         use_ssl: Map.get(opts, :use_ssl),
         auth_fun: fn -> resolve_auth(opts) end,
         auth_key: resolved_auth && :erlang.phash2(resolved_auth),
-        metadata_update_interval: Map.get(opts, :metadata_update_interval)
+        metadata_update_interval: Map.get(opts, :metadata_update_interval),
+        lane: rem(partition, System.schedulers_online())
       }
 
       worker_opts = producer_opts(opts, identity, topic, partition, plugin_id)

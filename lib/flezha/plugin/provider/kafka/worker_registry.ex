@@ -42,7 +42,8 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
           optional(:ssl_options) => term(),
           optional(:use_ssl) => boolean(),
           optional(:auth) => term(),
-          optional(:metadata_update_interval) => pos_integer()
+          optional(:metadata_update_interval) => pos_integer(),
+          optional(:lane) => term()
         }
   @type ref :: {term(), reference()}
 
@@ -519,9 +520,10 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
     # `auth_key` is the provider-computed fingerprint of the resolved SASL
     # config — the registry groups on it without ever holding the secret.
+    # `lane` lets a provider split one cluster's traffic over several clients.
     auth_key = Map.get(identity, :auth_key) || :erlang.phash2(Map.get(identity, :auth))
 
-    {hosts, :erlang.phash2(Map.get(identity, :ssl_options)), auth_key}
+    {hosts, :erlang.phash2(Map.get(identity, :ssl_options)), auth_key, Map.get(identity, :lane)}
   end
 
   defp default_start(identity) do

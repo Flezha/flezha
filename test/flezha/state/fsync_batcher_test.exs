@@ -63,6 +63,9 @@ defmodule Flezha.State.FsyncBatcherTest do
       # into the mark loop and split the batch into two fsyncs (flaky); it also
       # stays idle here, so the global handler only sees this instance's tick.
       {:ok, batcher} = GenServer.start_link(FsyncBatcher, interval_ms: 1000)
+      # A fresh batcher starts with every registered writer dirty; drain that
+      # seed so the count below is the marks' alone.
+      :ok = FsyncBatcher.flush_now(batcher)
 
       {:ok, fakelog} = Agent.start_link(fn -> 0 end)
 

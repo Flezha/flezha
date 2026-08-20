@@ -194,6 +194,9 @@ defmodule Flezha.State.WalWriter do
   @spec fsync(GenServer.server()) :: :ok
   def fsync(server), do: GenServer.call(server, :fsync)
 
+  @doc "Fire-and-forget `fsync/1`: how the batcher's tick syncs every dirty writer at once."
+  def fsync_async(server), do: GenServer.cast(server, :fsync)
+
   @doc """
   Append one record at the log's own next seq and fsync it, answering the seq it
   was assigned. Seq assignment, write and fsync are one call because they are
@@ -502,52 +505,14 @@ defmodule Flezha.State.WalWriter do
 
     case handle_call({:append, seq, header, body, nil}, from, state) do
       {:reply, :ok, state} ->
-        {:reply, :ok, state} = handle_call(:fsync, from, state)
-        {:reply, {:ok, seq}, state}
+        {:reply, {:ok, seq}, do_fsync(state)}
 
       {:reply, error, state} ->
         {:reply, error, state}
     end
   end
 
-  def handle_call(:fsync, _from, state) do
-    t0 = System.monotonic_time(:microsecond)
-    :ok = :file.datasync(state.file_handle)
-    t1 = System.monotonic_time(:microsecond)
-
-    record_latency_sample(state.metrics, state.latency_reservoir, div(t1 - t0, 1000))
-    |> case do
-      {p99_ms, new_reservoir} ->
-        Metrics.put(state.metrics, :flush_latency_ms_p99, p99_ms)
-
-        Metrics.put(
-          state.metrics,
-          :fsync_durability_lag_ms,
-          fsync_lag_ms(state.pending_since_us, t1)
-        )
-
-        new_state = %{
-          state
-          | pending_bytes: 0,
-            pending_since_us: nil,
-            latency_reservoir: new_reservoir
-        }
-
-        # Durable drain: report the fsynced wire bytes back to each owning
-        # stream's ledger — the only point that mints credit for written
-        # records (append alone never does).
-        new_state = flush_credit_pending(new_state)
-        new_state = maybe_signal_backpressure(new_state, 0)
-
-        # Effectively-once: everything appended is now durable — dispatch
-        # the gated `:on_output` flush and advance the dedup file once per
-        # batch (never per record).
-        new_state = %{new_state | outbox_durable_seq: new_state.last_persisted_seq}
-        new_state = try_dispatch_outbox(new_state)
-        new_state = persist_dedup(new_state)
-        {:reply, :ok, new_state}
-    end
-  end
+  def handle_call(:fsync, _from, state), do: {:reply, :ok, do_fsync(state)}
 
   def handle_call({:rewind_to, seq, epoch}, _from, state) do
     :ok = :file.close(state.file_handle)
@@ -708,11 +673,13 @@ defmodule Flezha.State.WalWriter do
 
   # Delivery confirmation (`Flezha.State.Outbox`): sinks report against the entry
   # the flush registered, whichever flush registered it.
+  def handle_cast(:fsync, state), do: {:noreply, do_fsync(state)}
+
   def handle_cast({:outbox_hold, key}, state),
     do: {:noreply, tally(state, key, &%{&1 | holds: &1.holds + 1})}
 
-  def handle_cast({:outbox_settled, key}, state),
-    do: {:noreply, tally(state, key, &%{&1 | pending: &1.pending - 1})}
+  def handle_cast({:outbox_settled, key, holds}, state),
+    do: {:noreply, tally(state, key, &%{&1 | pending: &1.pending - 1, holds: &1.holds + holds})}
 
   def handle_cast({:outbox_confirmed, key}, state),
     do: {:noreply, tally(state, key, &%{&1 | confirms: &1.confirms + 1})}
@@ -729,17 +696,15 @@ defmodule Flezha.State.WalWriter do
           %{operative: rc, procedure: sh, key: pk}
         )
 
-        # Resync (a RestoreInitState handshake / WAL replay) runs in a separate
-        # process so it never blocks this writer's append queue — and so the
-        # test resync fun may re-enter `append/5` without self-deadlock.
+        # Off-process also lets a test resync fun re-enter `append/5` without
+        # self-deadlock.
         #
-        # Rate-limited, for the same reason `shed/3` guards its own resync: a
-        # sustained flood produces a gap per frame, and one unguarded spawn
-        # each piles up tens of thousands of resync processes long before any
-        # completes. A per-episode latch would be simpler but cannot heal — a
-        # resync can fail (a torn control channel answers `:no_control_channel`)
-        # and the gap itself suppresses the contiguous append that would re-arm
-        # the latch. An interval bounds the fan-out without giving up.
+        # Rate-limited: a sustained flood produces a gap per frame, and one
+        # unguarded spawn each piles up tens of thousands of resync processes
+        # before any completes. A per-episode latch would be simpler but cannot
+        # heal — a resync can fail (a torn control channel answers
+        # `:no_control_channel`) and the gap itself suppresses the contiguous
+        # append that would re-arm the latch.
         now = now_ms()
 
         new_state =
@@ -747,12 +712,7 @@ defmodule Flezha.State.WalWriter do
                now - new_state.last_resync_at < @resync_retry_interval_ms do
             new_state
           else
-            entity_id = new_state.entity_id
-
-            spawn(fn ->
-              Recovery.resync(entity_id, runner_id: runner_id, reason: :seq_gap)
-            end)
-
+            spawn_resync(new_state, runner_id, :seq_gap)
             %{new_state | last_resync_at: now}
           end
 
@@ -800,6 +760,44 @@ defmodule Flezha.State.WalWriter do
     :ok
   end
 
+  defp do_fsync(state) do
+    t0 = System.monotonic_time(:microsecond)
+    :ok = :file.datasync(state.file_handle)
+    t1 = System.monotonic_time(:microsecond)
+
+    record_latency_sample(state.metrics, state.latency_reservoir, div(t1 - t0, 1000))
+    |> case do
+      {p99_ms, new_reservoir} ->
+        Metrics.put(state.metrics, :flush_latency_ms_p99, p99_ms)
+
+        Metrics.put(
+          state.metrics,
+          :fsync_durability_lag_ms,
+          fsync_lag_ms(state.pending_since_us, t1)
+        )
+
+        new_state = %{
+          state
+          | pending_bytes: 0,
+            pending_since_us: nil,
+            latency_reservoir: new_reservoir
+        }
+
+        # Durable drain: report the fsynced wire bytes back to each owning
+        # stream's ledger — the only point that mints credit for written
+        # records (append alone never does).
+        new_state = flush_credit_pending(new_state)
+        new_state = maybe_signal_backpressure(new_state, 0)
+
+        # Effectively-once: everything appended is now durable — dispatch
+        # the gated `:on_output` flush and advance the dedup file once per
+        # batch (never per record).
+        new_state = %{new_state | outbox_durable_seq: new_state.last_persisted_seq}
+        new_state = try_dispatch_outbox(new_state)
+        persist_dedup(new_state)
+    end
+  end
+
   # ---------- Append / realign ----------
 
   defp write_record(state, seq, header, change_bytes, runner_id, now) do
@@ -817,7 +815,9 @@ defmodule Flezha.State.WalWriter do
     # from the WAL scan on boot).
     state = maybe_queue_effect(state, seq, header, change_bytes)
 
-    FsyncBatcher.mark_dirty(state.entity_id)
+    # One mark per fsync window: `pending_since_us` is nil exactly when nothing
+    # written since the last sync is waiting on the batcher.
+    if state.pending_since_us == nil, do: FsyncBatcher.mark_dirty(state.entity_id)
 
     new_pending = state.pending_bytes + size
 
@@ -878,6 +878,11 @@ defmodule Flezha.State.WalWriter do
   # `:on_output` chain with the durable identity `(flz.entity, outbox_seq,
   # epoch)`. Undispatchable (Overwatch not yet bound) → bounded retry timer;
   # the queue is bounded by the credit window like the un-fsynced buffer.
+  #
+  # Runs on every event that can open the window: an fsync (new durable
+  # entries) and a completed confirmation (a free slot). A confirmation that did
+  # not refill would leave the tail of a burst to the 1 s retry tick, one window
+  # per tick.
   defp try_dispatch_outbox(state) do
     case :queue.peek(state.pending_outbox) do
       :empty ->
@@ -887,11 +892,15 @@ defmodule Flezha.State.WalWriter do
         state
 
       {:value, _entry} ->
-        {rc, _sh, _pk} = state.entity_id
+        if window_full?(state) do
+          state
+        else
+          {rc, _sh, _pk} = state.entity_id
 
-        case ClassRegistry.overwatch_pid(rc) do
-          {:ok, pid} -> dispatch_outbox_entries(state, pid)
-          :error -> schedule_outbox_retry(state)
+          case ClassRegistry.overwatch_pid(rc) do
+            {:ok, pid} -> dispatch_outbox_entries(state, pid)
+            :error -> schedule_outbox_retry(state)
+          end
         end
     end
   end
@@ -902,7 +911,7 @@ defmodule Flezha.State.WalWriter do
   defp dispatch_outbox_entries(state, pid) do
     case :queue.out(state.pending_outbox) do
       {{:value, %{seq: seq} = entry}, rest} when seq <= state.outbox_durable_seq ->
-        if :queue.len(state.outbox_inflight) >= state.outbox_inflight_max do
+        if window_full?(state) do
           state
         else
           key = {:cursor, entry.seq}
@@ -916,6 +925,12 @@ defmodule Flezha.State.WalWriter do
         state
     end
   end
+
+  # The window counts entries inside the plugin chain unconfirmed — exactly the
+  # awaiting set. `:queue.len/1` on the inflight queue is O(n), which made every
+  # refill of a 1 000-deep window quadratic.
+  defp window_full?(state),
+    do: map_size(state.outbox_awaiting) >= state.outbox_inflight_max
 
   # Answers how many outputs the entry handed to the chain — what the entry's
   # tally waits on before the cursor may pass it.
@@ -1105,8 +1120,11 @@ defmodule Flezha.State.WalWriter do
     put_in(state.outbox_awaiting[key].done?, true)
   end
 
-  defp complete_entry(state, {:cursor, _seq} = key),
-    do: drain_confirmed(%{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)})
+  defp complete_entry(state, {:cursor, _seq} = key) do
+    %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}
+    |> drain_confirmed()
+    |> try_dispatch_outbox()
+  end
 
   # The cursor advances over the leading run of confirmed entries only: an entry
   # still in `outbox_awaiting` stops the drain, so a later confirmation can
@@ -1275,12 +1293,7 @@ defmodule Flezha.State.WalWriter do
         %{operative: rc, procedure: sh, key: pk, runner: runner_id}
       )
 
-      entity_id = state.entity_id
-
-      spawn(fn ->
-        Recovery.resync(entity_id, runner_id: runner_id, reason: :baseline_seed)
-      end)
-
+      spawn_resync(state, runner_id, :baseline_seed)
       %{state | awaiting_baseline?: true}
     end
   end
@@ -1550,6 +1563,14 @@ defmodule Flezha.State.WalWriter do
   # messages is ~0.6 MB against a 16 MB window, shedding a conformant sender's
   # Changes 25x early. Credit already bounds mailbox + un-fsynced bytes to the
   # window (the channel debits at admit, before the cast).
+  # Drive a resync for this Entity off-process. Captures `entity_id` only —
+  # closing over `state` would retain the writer's file handle, metrics and
+  # outbox in the spawned process — and never blocks the writer's append queue.
+  defp spawn_resync(state, runner_id, reason) do
+    entity_id = state.entity_id
+    spawn(fn -> Recovery.resync(entity_id, runner_id: runner_id, reason: reason) end)
+  end
+
   defp over_hard_bound?(state) do
     state.pending_bytes >= state.hard_watermark or
       (not state.credit_active? and message_queue_len() >= state.pending_msg_cap)
@@ -1568,13 +1589,12 @@ defmodule Flezha.State.WalWriter do
   # under a sustained flood.
   defp shed(state, seq, runner_id) do
     Metrics.add(state.metrics, :wal_shed_total, 1)
+    {rc, sh, pk} = state.entity_id
 
     # A conformant credit-speaking sender can never reach the hard bound
     # (the stream ledger refuses the overrun first) — a shed here is a
     # protocol anomaly, not back-pressure.
     if state.credit_active? do
-      {rc, sh, pk} = state.entity_id
-
       :telemetry.execute(
         [:flezha, :state, :credit_anomaly],
         %{count: 1},
@@ -1585,16 +1605,13 @@ defmodule Flezha.State.WalWriter do
     if state.shedding? do
       state
     else
-      {rc, sh, pk} = state.entity_id
-
       :telemetry.execute(
         [:flezha, :state, :seq_gap],
         %{expected: state.last_persisted_seq + 1, got: seq},
         %{operative: rc, procedure: sh, key: pk}
       )
 
-      entity_id = state.entity_id
-      spawn(fn -> Recovery.resync(entity_id, runner_id: runner_id, reason: :shed) end)
+      spawn_resync(state, runner_id, :shed)
       %{state | shedding?: true}
     end
   end

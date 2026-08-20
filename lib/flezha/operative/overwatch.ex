@@ -463,10 +463,19 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, state}
   end
 
-  # The durable outbox flushes stamp a confirmation token on their output: the
-  # chain run is what settles it, so an output no delivery-guaranteed sink took
-  # is complete the moment the chain has had it — filtered included.
+  # A durable outbox flush: the chain run settles the entry it was dispatched
+  # under, carrying the holds its sinks took — so an output no
+  # delivery-guaranteed sink took is complete the moment the chain has had it,
+  # filtered included.
   @impl true
+  def handle_cast({:io_out, message, metadata, ack}, state) do
+    Flezha.State.Outbox.run(ack, metadata, fn ->
+      Plugins.transform_io(state, :on_output, message, metadata)
+    end)
+
+    {:noreply, state}
+  end
+
   def handle_cast({:io_out, message, metadata}, state) do
     Plugins.transform_io(state, :on_output, message, metadata)
     Flezha.State.Outbox.settled(metadata)
