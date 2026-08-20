@@ -168,6 +168,19 @@ wall time inside the Overwatch: two synchronous hops per ingest (`InputLog`,
 the shared primary `StreamChannel` — consulted only to learn bound/unbound),
 the `io_out` chain, ~7 messages per record.
 
+## The sink's one batch in flight
+
+`ProducerWorker` keeps one batch in flight per partition. At linger 0 a short
+broker RTT (`acks=1`) makes each batch whatever arrived during the last
+round trip — a handful of records — and the per-batch cost (the send `spawn`,
+Kayrock encode, the kafka_ex client's `port_command`/recv/decode, per-record
+completion) caps a partition near 10K/s; a longer RTT (`acks=-1`) accidentally
+grows the batches, which is why identity/on out-ran identity/off 73K to 41K on
+an identical path. A 2 ms linger (identity/state 42.9K → 83.4K) is the
+harness's setting; several batches in flight per partition, safe under
+idempotent sequence numbers, is the fix and a spec change
+(`kafka-producer-plugin` pins the singular in-flight batch).
+
 ## Left open, measured or seen, not fixed
 
 - WAL appends are one `:file.write` each (`:prim_file.write_nif` ~4% + kernel
