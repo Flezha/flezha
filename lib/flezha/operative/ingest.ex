@@ -19,6 +19,7 @@ defmodule Flezha.Operative.Ingest do
   alias Flezha.Operative.Lifecycle
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Plugins
+  alias Flezha.Runner.StreamChannel
   alias Flezha.State.InputLog
   alias Flezha.State.ProcInbox
   alias Flezha.Transport.LivenessCounters
@@ -100,24 +101,11 @@ defmodule Flezha.Operative.Ingest do
 
   defp durable_input?(%Overwatch{effectively_once: eo, durable_workflow: db}), do: eo or db
 
-  # Counts an unbound-stream drop instead of discarding the channel's
-  # `{:error, :no_stream}` reply, so the reconciler-detected stall is observable
-  # (the probe rebinds the stream).
-  defp forward_input(%Overwatch{channel: nil} = state, _payload) do
-    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: state.id})
-    {:error, :no_stream}
-  end
-
-  defp forward_input(%Overwatch{} = state, payload) do
-    case GenServer.call(state.channel, {:io_in, state.id, payload}) do
-      {:error, :no_stream} ->
-        :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: state.id})
-        {:error, :no_stream}
-
-      _ ->
-        :ok
-    end
-  end
+  # An unbound or absent stream is counted and emitted by `StreamChannel.io_in/3`
+  # itself, so the reconciler-detected stall is observable (the probe rebinds
+  # the stream).
+  defp forward_input(%Overwatch{} = state, payload),
+    do: StreamChannel.io_in(state.channel, state.id, payload)
 
   # Durable ingest point — the one place an inbound payload is made durable
   # BEFORE it is forwarded, for both durability tiers:

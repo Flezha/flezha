@@ -138,6 +138,26 @@ the seam a source holding a batch (a Kafka source, the bench bridge) drives —
 not the removed batch path, which ran a second server-side ingest. Paced
 latency is unchanged by it.
 
+## The Overwatch sends the frame itself
+
+`Overwatch.state.channel` is the primary `StreamChannel`'s registered name
+(`Lifecycle.attach_channel/2`), and every ingest used to `GenServer.call` it
+just to learn bound-or-not while the channel's own work was one NIF push —
+a round trip per record through the one process every operative on the
+runner shares. The channel now publishes `{stream_ref, liveness_ref}` under
+its name in `:persistent_term` (written at init, bind and close; erased at
+terminate) and `StreamChannel.io_in/3` reads it and calls
+`Native.send_frame/4` from the caller. Unbound, unknown and `nil` channels
+answer `{:error, :no_stream}` and emit the drop themselves, so
+`Ingest.forward_input/2` and `Overwatch.deliver/2` are one line each. Tests
+stand in for the stream by stubbing `io_in/3` (`StreamChannel` is Mimic-copied
+now) instead of faking a channel process.
+
+With the hop gone (per record, 4 pipelines): identity/on 42.9K → 72.7K/s,
+keyed/off 41.7K → 63.9K, keyed/state 31.9K → 42.2K, identity/state 36K →
+43K; exactly-once unchanged at 15.6K — its ceiling is the `InputLog.append`
+round trip per record and the `io_out` chain.
+
 ## Not the disk, still
 
 With the ETS contention gone the profile shows `:prim_file.sync_nif` at 30%
@@ -164,10 +184,6 @@ the `io_out` chain, ~7 messages per record.
   `--profile`.
 - `BLOCK_PARK_TIMEOUT` (50 ms) and the 1 024 default mailbox bound a parked
   reader's cadence; a larger mailbox is memory per Entity, not a free default.
-- The primary `StreamChannel` hop on every `io_in`: the channel could publish
-  its `stream_ref` and counters ref and let the Overwatch call
-  `Native.send_frame/4` itself — the NIF only pushes into a channel. That
-  removes one synchronous hop per record and the per-runner funnel.
 
 ## Tests
 

@@ -16,10 +16,8 @@ defmodule Flezha.Runner.StreamChannelLivenessTest do
 
     {:ok, _pid} = StreamChannel.start_link({exec, name, :primary})
 
-    GenServer.cast(name, {:io_in, "operative1", {"msg", %{}}})
-    GenServer.cast(name, {:io_in, "operative1", {"msg", %{}}})
-    # Force the casts to drain before reading the counters.
-    _ = :sys.get_state(name)
+    {:error, :no_stream} = StreamChannel.io_in(name, "operative1", {"msg", %{}})
+    {:error, :no_stream} = StreamChannel.io_in(name, "operative1", {"msg", %{}})
 
     row =
       LivenessCounters.snapshot_all().channels

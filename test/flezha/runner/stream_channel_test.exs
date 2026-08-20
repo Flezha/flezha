@@ -91,24 +91,20 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       assert GenServer.call(pid, :stream_ref_status) == :ref_live
     end
 
-    test "{:io_in, ...} call on nil-ref returns {:error, :no_stream}", %{pid: pid} do
+    test "io_in/3 on nil-ref returns {:error, :no_stream}", %{pid: pid, name: name} do
       # The :no_stream error proves the guard fired before any NIF call —
       # there's no other code path that can reach this clause.
-      assert {:error, :no_stream} =
-               GenServer.call(pid, {:io_in, "p1", {"msg", %{}}})
-    end
-
-    test "{:io_in, ...} cast on nil-ref drops without raising", %{pid: pid} do
-      # Cast must not call into the NIF when stream_ref is nil — the
-      # GenServer survives the cast and remains responsive.
-      :ok = GenServer.cast(pid, {:io_in, "p1", {"msg", %{}}})
-      # Round-trip a synchronous call to flush the cast through the mailbox
-      # and confirm the channel is still alive and unchanged.
+      assert {:error, :no_stream} = StreamChannel.io_in(name, "p1", {"msg", %{}})
       assert GenServer.call(pid, :stream_ref_status) == nil
     end
 
-    test "{:io_in, ...} cast on nil-ref counts the drop (6.3) instead of silently dropping",
-         %{pid: pid} do
+    test "io_in/3 on an unknown channel is no_stream, never a crash" do
+      assert {:error, :no_stream} = StreamChannel.io_in(:no_such_channel, "p1", {"msg", %{}})
+      assert {:error, :no_stream} = StreamChannel.io_in(nil, "p1", {"msg", %{}})
+    end
+
+    test "io_in/3 on nil-ref counts the drop (6.3) instead of silently dropping",
+         %{pid: pid, name: name} do
       test_pid = self()
       id = "stream-channel-drop-#{System.unique_integer([:positive])}"
 
@@ -121,7 +117,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
 
       on_exit(fn -> :telemetry.detach(id) end)
 
-      :ok = GenServer.cast(pid, {:io_in, "p1", {"msg", %{}}})
+      {:error, :no_stream} = StreamChannel.io_in(name, "p1", {"msg", %{}})
       assert_receive {:drop, %{count: 1}, %{operative_id: "p1"}}
       assert GenServer.call(pid, :stream_ref_status) == nil
     end

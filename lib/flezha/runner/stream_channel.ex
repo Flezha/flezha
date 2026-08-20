@@ -32,6 +32,30 @@ defmodule Flezha.Runner.StreamChannel do
     "park_payload"
   ]
 
+  @doc """
+  Send one input frame on `channel`'s stream from the calling process — the
+  Overwatch's, on the ingest path. The channel publishes its bound
+  `stream_ref` (and liveness counters) under its registered name at bind and
+  clears it at close; a sender reads that instead of asking the channel, so an
+  ingest pays no round trip through the one process every operative on the
+  runner shares. Unbound, unknown or dead channels answer
+  `{:error, :no_stream}`, counted and emitted as `[:flezha, :stream, :drop]`.
+  """
+  @spec io_in(GenServer.name() | nil, binary(), {binary(), map()}) :: :ok | {:error, :no_stream}
+  def io_in(channel, operative_id, {message, metadata}) do
+    case :persistent_term.get({__MODULE__, channel}, nil) do
+      {stream_ref, liveness_ref} when stream_ref != nil ->
+        bump_send(liveness_ref)
+        Native.send_frame(stream_ref, operative_id, message, metadata)
+        :ok
+
+      published ->
+        if published, do: bump_drop(elem(published, 1))
+        :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: operative_id})
+        {:error, :no_stream}
+    end
+  end
+
   @impl true
   def init({runner_id, type, name}) do
     # The runner heartbeats every SECONDARY stream every ~10s; a bound
@@ -40,6 +64,9 @@ defmodule Flezha.Runner.StreamChannel do
     # `{:flz_closed}` write-error. Primary channels are send-only (the
     # runner never writes them), so the check would flag them forever.
     if type == :secondary, do: schedule_io_liveness_check()
+
+    liveness_ref = LivenessCounters.register_channel(runner_id, name)
+    publish_stream(name, nil, liveness_ref)
 
     {
       :ok,
@@ -50,7 +77,7 @@ defmodule Flezha.Runner.StreamChannel do
         operative_mapping: %{},
         name: name,
         last_seen: System.monotonic_time(:millisecond),
-        liveness_ref: LivenessCounters.register_channel(runner_id, name),
+        liveness_ref: liveness_ref,
         # Credit-grant session for this state stream, encoded in the shape:
         # `nil` (no offer yet) -> `{:offered, %CreditLedger{}}` (handshake
         # in flight) -> `%CreditLedger{}` (credit-speaking) or `:legacy`
@@ -80,64 +107,23 @@ defmodule Flezha.Runner.StreamChannel do
   # Count an outbound io_in: one frame received and one send_frame issued, with
   # the send timestamp. A stall shows whether the channel is still being fed
   # (io_in_received) and still calling send_frame (send_frame_calls).
-  defp bump_send(state) do
-    ref = state[:liveness_ref]
+  defp bump_send(ref) do
     LivenessCounters.bump_channel(ref, :io_in_received)
     LivenessCounters.bump_channel(ref, :send_frame_calls)
     LivenessCounters.set_channel(ref, :last_send_ms, System.monotonic_time(:millisecond))
   end
 
   # Count an io_in that hit an unbound stream: fed, but dropped (not sent).
-  defp bump_drop(state) do
-    ref = state[:liveness_ref]
+  defp bump_drop(ref) do
     LivenessCounters.bump_channel(ref, :io_in_received)
     LivenessCounters.bump_channel(ref, :nil_drops)
   end
 
-  @impl true
-  def handle_cast(
-        {:io_in, operative_id, {_message, _metadata}},
-        %{stream_ref: nil} = state
-      ) do
-    # Unbound channel: emit `[:flezha, :stream, :drop]` so the seam
-    # is observable. The convergence Loop subscribes to `:output_stall`
-    # for rebind decisions; drop telemetry remains a useful operator
-    # signal independent of that.
-    bump_drop(state)
-    :telemetry.execute([:flezha, :stream, :drop], %{count: 1}, %{operative_id: operative_id})
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_cast(
-        {:io_in, operative_id, {message, metadata}},
-        %{stream_ref: stream_ref} = state
-      ) do
-    bump_send(state)
-    Native.send_frame(stream_ref, operative_id, message, metadata)
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_call(
-        {:io_in, _operative_id, {_message, _metadata}},
-        _from,
-        %{stream_ref: nil} = state
-      ) do
-    bump_drop(state)
-    {:reply, {:error, :no_stream}, state}
-  end
-
-  @impl true
-  def handle_call(
-        {:io_in, operative_id, {message, metadata}},
-        _from,
-        %{stream_ref: stream_ref} = state
-      ) do
-    bump_send(state)
-    Native.send_frame(stream_ref, operative_id, message, metadata)
-    {:reply, :ok, state}
-  end
+  # What `io_in/3` reads, under the channel's registered name — the identity an
+  # Overwatch holds. Written at init, bind and close only: a persistent_term
+  # write is a global operation, a read is free.
+  defp publish_stream(name, stream_ref, liveness_ref),
+    do: :persistent_term.put({__MODULE__, name}, {stream_ref, liveness_ref})
 
   @impl true
   def handle_call({:operative_pid_update, operative_id, updated_pids}, _from, state) do
@@ -176,6 +162,7 @@ defmodule Flezha.Runner.StreamChannel do
   # snapshot-vs-bind race that could otherwise overwrite a live ref.
   @impl true
   def handle_call({:bind, new_ref}, _from, %{stream_ref: nil} = state) do
+    publish_stream(state.name, new_ref, state.liveness_ref)
     {:reply, :ok, %{state | stream_ref: new_ref, last_seen: System.monotonic_time(:millisecond)}}
   end
 
@@ -423,6 +410,7 @@ defmodule Flezha.Runner.StreamChannel do
     # convergence Loop triggers a rebind tick rather than waiting for the
     # Watchdog's 60s grace period to detect the dead socket.
     emit_output_stall(state.operative_mapping)
+    publish_stream(state.name, nil, state.liveness_ref)
 
     {:noreply, %{state | stream_ref: nil} |> reset_credit()}
   end
@@ -431,6 +419,12 @@ defmodule Flezha.Runner.StreamChannel do
     Logger.warning("Unexpected message at io channel: #{inspect(msg)}")
 
     {:noreply, state}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    _ = :persistent_term.erase({__MODULE__, state.name})
+    :ok
   end
 
   # Emit `output_stall` for each mapped operative whose kind runs the output-stall

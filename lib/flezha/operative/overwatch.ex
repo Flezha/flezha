@@ -127,8 +127,10 @@ defmodule Flezha.Operative.Overwatch do
   tiers' re-forward.
   """
   @spec deliver(t(), {binary(), map()}) :: :ok
-  def deliver(%__MODULE__{} = state, payload),
-    do: GenServer.cast(state.channel, {:io_in, state.id, payload})
+  def deliver(%__MODULE__{} = state, payload) do
+    _ = Flezha.Runner.StreamChannel.io_in(state.channel, state.id, payload)
+    :ok
+  end
 
   @doc """
   Time a known-blocking procedure and surface a `[Overwatch] proc_slow` warning

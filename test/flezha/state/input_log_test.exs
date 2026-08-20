@@ -6,6 +6,7 @@ defmodule Flezha.State.InputLogTest do
   journaling work, no file).
   """
   use ExUnit.Case, async: false
+  use Mimic
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
@@ -212,28 +213,29 @@ defmodule Flezha.State.InputLogTest do
   end
 
   describe "crash-replay re-forward (§6.1)" do
-    defmodule FakeChannel do
-      use GenServer
-      def start_link(test_pid), do: GenServer.start_link(__MODULE__, test_pid)
-      @impl true
-      def init(test_pid), do: {:ok, test_pid}
-      @impl true
-      def handle_cast({:io_in, id, payload}, test_pid) do
+    setup :set_mimic_global
+
+    # The forward lands on the stream through `StreamChannel.io_in/3`; the
+    # test stands in for it.
+    setup do
+      test_pid = self()
+
+      stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, id, payload ->
         send(test_pid, {:forwarded, id, payload})
-        {:noreply, test_pid}
-      end
+        :ok
+      end)
+
+      :ok
     end
 
     test "re-forwards only the tail above the min watermark, offsets intact", %{class: class} do
       for i <- 0..4, do: {:ok, _} = InputLog.append(class, "m#{i}", %{"input_type" => "2"})
       InputLog.record_consumed(class, {class, "proc", "a"}, 2)
 
-      {:ok, channel} = FakeChannel.start_link(self())
-
       state = %Overwatch{
         id: class,
         builder: %Flezha.Operative.Builder{id: class, factory_id: "f"},
-        channel: channel,
+        channel: :"chan_#{class}",
         effectively_once: true
       }
 
@@ -248,12 +250,10 @@ defmodule Flezha.State.InputLogTest do
     end
 
     test "no journal file means no re-forward work", %{class: class} do
-      {:ok, channel} = FakeChannel.start_link(self())
-
       state = %Overwatch{
         id: class,
         builder: %Flezha.Operative.Builder{id: class, factory_id: "f"},
-        channel: channel,
+        channel: :"chan_#{class}",
         effectively_once: true
       }
 

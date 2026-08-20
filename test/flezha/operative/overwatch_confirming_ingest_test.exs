@@ -25,18 +25,17 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
   defp instance_id(), do: "confirm_#{System.unique_integer([:positive])}"
 
-  # Stand-in StreamChannel. The test process cannot be the channel here: it is
-  # the one running the Overwatch callback, so a call to itself would deadlock.
+  # Stand-in stream: the forward lands through `StreamChannel.io_in/3`, so the
+  # test answers it and records what reached it. Returns an inert channel name.
   defp fake_channel(reply) do
     test_pid = self()
 
-    spawn_link(fn ->
-      receive do
-        {:"$gen_call", {from, ref}, {:io_in, id, payload}} ->
-          send(test_pid, {:channel_got, id, payload})
-          send(from, {ref, reply})
-      end
+    stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, id, payload ->
+      send(test_pid, {:channel_got, id, payload})
+      reply
     end)
+
+    :fake_channel
   end
 
   defp state(inst, overrides \\ []) do
@@ -170,6 +169,10 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
   end
 
   describe "send_io_confirming_many/5" do
+    # Private stubs: the lookup runs in this process, and a global stub of the
+    # pid resolver would route every other test's sends into the stand-in.
+    setup :set_mimic_private
+
     # Stand-in operative: answers `{:ingest, ..}` like an Overwatch, records
     # the order it saw inputs in and the deepest queue it ever had — the queue
     # is what proves the caller's round trips overlap.
