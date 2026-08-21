@@ -73,7 +73,7 @@ flz_nif/
 ├── Cargo.toml           # cdylib, deps: flz_transport, rustler, crossbeam, mio, quinn-proto, rustls
 └── src/
     ├── lib.rs           # rustler::init!, resource registration, module declarations
-    ├── atoms.rs         # Atoms: ok, error, flz_data, flz_closed, flz_connection, flz_stream
+    ├── atoms.rs         # Atoms: ok, error, flz_data, flz_closed, flz_connection, flz_stream, flz_refused
     ├── resources.rs     # ResourceArc types: TransportServer, StreamHandle
     ├── frame_buffer.rs  # Stateful frame parser (port of Elixir Payloader.parse_frame)
     ├── server.rs        # NIF functions: start_uds_server, start_quic_server, stop_server
@@ -267,6 +267,7 @@ Uses quinn-proto's flow control:
 | `{:flz_stream, stream_ref, type, index}` | New QUIC data stream identified (type: 1=primary, 2=secondary) |
 | `{:flz_data, stream_id, payload_id, message, metadata}` | Complete parsed frame |
 | `{:flz_closed, stream_id, reason}` | Stream/connection closed |
+| `{:flz_refused, reason}` | QUIC peer refused at the handshake before opening a stream (absent/untrusted client certificate). `Transport.Server` logs it and counts it on `[:flezha, :transport, :connect_rejected]` with `stage: :handshake`. |
 
 Messages are sent via `OwnedEnv::send_and_clear()` (Rustler wrapper for `enif_send`).
 

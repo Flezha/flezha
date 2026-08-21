@@ -8,4 +8,5 @@ rustler::atoms! {
     flz_closed,
     flz_connection,
     flz_stream,
+    flz_refused,
 }

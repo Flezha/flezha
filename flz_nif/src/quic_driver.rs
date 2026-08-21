@@ -15,7 +15,7 @@ use quinn_proto::{
 use rustler::{Encoder, LocalPid, OwnedEnv};
 
 use crate::atoms;
-use crate::driver_msg::{send_closed_msg, send_connection_msg, send_data_msg};
+use crate::driver_msg::{send_closed_msg, send_connection_msg, send_data_msg, send_refused_msg};
 use crate::frame_buffer::{FrameBuffer, ParsedFrame};
 use crate::resources::StreamHandle;
 use crate::uds_driver::ServerCommand;
@@ -382,13 +382,12 @@ fn driver_loop(
 
                         // A transport error on a connection that never opened a
                         // stream is a refused handshake (missing/untrusted
-                        // client cert lands here); make the refusal observable.
+                        // client cert lands here); report it to the acceptor so
+                        // it is logged and observable like every other event.
                         if conn_state.streams.is_empty()
                             && matches!(&reason, quinn_proto::ConnectionError::TransportError(_))
                         {
-                            eprintln!(
-                                "[flz_nif] QUIC peer refused before handshake completed: {reason}"
-                            );
+                            send_refused_msg(acceptor_pid, &reason.to_string());
                         }
 
                         for (_, stream_state) in conn_state.streams.drain() {

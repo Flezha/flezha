@@ -303,6 +303,18 @@ defmodule Flezha.Transport.Server do
     {:noreply, state}
   end
 
+  # The driver refuses a peer whose connection dies before it opens a stream —
+  # an absent or untrusted client certificate. It is the same rejection the
+  # application-level clause below reports, one layer down, so it rides the same
+  # signal; `:warning` because an unauthorized dial is an expected outcome on a
+  # public port, not a fault of this node.
+  @impl true
+  def handle_info({:flz_refused, reason}, state) do
+    Logger.warning("[Transport.Server] Peer refused at the handshake: #{reason}")
+    emit_connect_rejected(reason, :handshake, state.transport)
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info({:flz_closed, stream_id, reason}, state) do
     # Drop the pending entry so streams that close before completing the
@@ -371,15 +383,22 @@ defmodule Flezha.Transport.Server do
           "[Transport.Server] Rejected runner connect (#{inspect(reason)}); closing stream"
         )
 
-        :telemetry.execute(
-          [:flezha, :transport, :connect_rejected],
-          %{count: 1},
-          %{reason: reason, transport: state.transport}
-        )
+        emit_connect_rejected(reason, :authorization, state.transport)
 
         safe_close(stream_ref)
         {:noreply, state}
     end
+  end
+
+  # Every refused peer is counted here, whatever layer refused it, so the signal
+  # carries one shape and `stage` is the only thing that varies. How loud the
+  # refusal is stays with the caller — the levels differ by stage.
+  defp emit_connect_rejected(reason, stage, transport) do
+    :telemetry.execute(
+      [:flezha, :transport, :connect_rejected],
+      %{count: 1},
+      %{reason: reason, transport: transport, stage: stage}
+    )
   end
 
   # Closing a rejected/already-gone stream must never crash the transport
