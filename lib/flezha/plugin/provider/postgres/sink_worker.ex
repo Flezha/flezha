@@ -238,8 +238,9 @@ defmodule Flezha.Plugin.Provider.Postgres.SinkWorker do
     case commit_batch(state, batch) do
       :ok ->
         # The commit is the confirmation: every guaranteed record in the batch
-        # answers its outbox hold, and only now may its cursor advance.
-        Enum.each(batch, &Outbox.confirm(&1.metadata))
+        # answers its outbox hold in one report, and only now may its cursor
+        # advance.
+        Outbox.confirm_many(Enum.map(batch, & &1.metadata))
 
         state = %{
           state

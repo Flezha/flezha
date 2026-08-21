@@ -70,6 +70,17 @@ public final class HostClassDeclaration {
         }
         if (topology.checkpointAck()) {
             decl.put("ack_granularity", "checkpoint");
+            // Every key is omitted at its default: the core deserializes the
+            // declaration with `deny_unknown_fields`, so a class that declares
+            // nothing new stays byte-identical against an older core.
+            var checkpoint = topology.checkpoint();
+            if (checkpoint != null && checkpoint.every() > 0) {
+                decl.put("checkpoint_every", checkpoint.every());
+            }
+            if (checkpoint != null && checkpoint.outputsAtCheckpoint()) {
+                decl.put("checkpoint_outputs", "at_checkpoint");
+                decl.put("checkpoint_max_delay_ms", checkpoint.maxDelayMs());
+            }
         }
         if (topology.correctionWindowMs() > 0) {
             decl.put("correction_window_ms", topology.correctionWindowMs());
@@ -144,7 +155,7 @@ public final class HostClassDeclaration {
                 List.of(),
                 Map.of(),
                 false,
-                false,
+                null,
                 0,
                 com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL);
     }

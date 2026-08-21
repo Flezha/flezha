@@ -579,21 +579,25 @@ defmodule Flezha.State.ProcJournal do
       :ok ->
         owner = Registry.journal_id(instance_id)
 
-        Enum.each(entry.payload.outbox, fn item ->
-          # An undo output's seq carries a trailing `.1` — the compensation marker
-          # — so it can never collide with the forward output it reverses while
-          # staying a numeric dotted sequence a keyed sink can order.
-          seq = "#{entry.proc_idx}.#{item.seq_in_proc}"
+        outputs =
+          Enum.map(entry.payload.outbox, fn item ->
+            # An undo output's seq carries a trailing `.1` — the compensation
+            # marker — so it can never collide with the forward output it
+            # reverses while staying a numeric dotted sequence a keyed sink can
+            # order.
+            seq = "#{entry.proc_idx}.#{item.seq_in_proc}"
 
-          Outbox.dispatch(pid, item.payload, %{
-            owner: owner,
-            entry: key,
-            entity: item.entity_id,
-            seq: if(comp?, do: seq <> ".1", else: seq),
-            epoch: entry.epoch,
-            channel: item.channel
-          })
-        end)
+            Outbox.stamp(item.payload, %{
+              owner: owner,
+              entry: key,
+              entity: item.entity_id,
+              seq: if(comp?, do: seq <> ".1", else: seq),
+              epoch: entry.epoch,
+              channel: item.channel
+            })
+          end)
+
+        Outbox.dispatch(pid, outputs)
 
         :telemetry.execute(
           [:flezha, :state, :proc_outbox_flush],

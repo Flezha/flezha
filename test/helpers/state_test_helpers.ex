@@ -11,6 +11,9 @@ defmodule Flezha.State.TestHelpers do
 
   alias Flezha.State.{FsyncBatcher, Outbox, Registry, Supervisor, WalWriter}
 
+  # The outputs of a received dispatch batch not yet asserted on.
+  @dispatched {__MODULE__, :dispatched}
+
   @doc """
   Start the state subsystem's process tree under the test supervisor — the
   writer registry, `Flezha.State.Supervisor`, the `FsyncBatcher` and any
@@ -91,6 +94,109 @@ defmodule Flezha.State.TestHelpers do
       },
       extra
     )
+  end
+
+  @doc """
+  The next durable output the chain was handed.
+
+  The dispatcher hands a whole pass to the chain in ONE `{:io_out_batch,
+  outputs}` cast, so a test standing in for the Overwatch buffers the outputs
+  of that batch it has not asserted on yet. What one fsync window happened to
+  gather into a batch is timing, never contract — a test about anything but the
+  batching itself asserts on the outputs, in order.
+  """
+  def next_output(timeout \\ 100) do
+    case Process.get(@dispatched, []) do
+      [output | rest] ->
+        Process.put(@dispatched, rest)
+        output
+
+      [] ->
+        receive do
+          {:"$gen_cast", {:io_out_batch, outputs}} ->
+            Process.put(@dispatched, outputs)
+            next_output(timeout)
+        after
+          timeout -> ExUnit.Assertions.flunk("no output reached the chain in #{timeout}ms")
+        end
+    end
+  end
+
+  @doc """
+  The whole batch one dispatch pass handed over — what a test about the batching
+  itself asserts on, rather than `next_output/1`'s stream.
+  """
+  def assert_batch(timeout) do
+    receive do
+      {:"$gen_cast", {:io_out_batch, outputs}} -> outputs
+    after
+      timeout -> ExUnit.Assertions.flunk("no dispatch batch reached the chain in #{timeout}ms")
+    end
+  end
+
+  @doc """
+  Stand in for the Overwatch's `:io_out_batch` handler: run the batch's chains
+  exactly as the dispatcher does, so its entries settle in ONE report.
+  """
+  def run_batch(outputs, chain \\ fn _payload, _metadata -> :ok end),
+    do: :ok = Outbox.run(outputs, chain)
+
+  @doc "The metadata a stamped output carries — what a sink confirms against."
+  def metadata_of({_payload, metadata, _ack}), do: metadata
+
+  @doc """
+  Run `fun` with the shared 5 ms fsync batcher frozen, so a run of appends lands
+  in ONE durable window and the dispatch pass under test is exactly one batch.
+  """
+  def in_one_window(fun) do
+    :ok = :sys.suspend(FsyncBatcher)
+
+    try do
+      fun.()
+    after
+      :ok = :sys.resume(FsyncBatcher)
+    end
+  end
+
+  @doc "No output reached the chain: nothing buffered and no batch arriving."
+  def refute_dispatched(timeout \\ 50) do
+    case Process.get(@dispatched, []) do
+      [] ->
+        receive do
+          {:"$gen_cast", {:io_out_batch, outputs}} ->
+            ExUnit.Assertions.flunk("unexpected dispatch: #{inspect(outputs)}")
+        after
+          timeout -> :ok
+        end
+
+      buffered ->
+        ExUnit.Assertions.flunk("output queued from an earlier batch: #{inspect(buffered)}")
+    end
+  end
+
+  @doc """
+  Every named entry is confirmed to its owning writer. A sink confirms a
+  completed batch in one report and parks one record at a time, and how many
+  records a linger window gathered into a batch is timing — so this asserts on
+  the entries confirmed, never on how they were reported.
+  """
+  def assert_confirmed(keys, timeout \\ 2_000), do: await_confirmed(MapSet.new(keys), timeout)
+
+  defp await_confirmed(remaining, timeout) do
+    if MapSet.size(remaining) == 0 do
+      :ok
+    else
+      receive do
+        {:"$gen_cast", {:outbox_confirmed_many, keys}} ->
+          await_confirmed(Enum.reduce(keys, remaining, &MapSet.delete(&2, &1)), timeout)
+
+        {:"$gen_cast", {:outbox_confirmed, key}} ->
+          await_confirmed(MapSet.delete(remaining, key), timeout)
+      after
+        timeout ->
+          ExUnit.Assertions.flunk("never confirmed: #{inspect(MapSet.to_list(remaining))}")
+      end
+    end
   end
 
   @doc """

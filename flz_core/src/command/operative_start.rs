@@ -154,7 +154,7 @@ fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String>
 /// bytes when nothing is declared (the default), keeping the response
 /// byte-identical to pre-tier builds.
 fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
-    use crate::operative::topology::{AckGranularity, BeyondWindowPolicy};
+    use crate::operative::topology::BeyondWindowPolicy;
 
     let mut metadata = std::collections::HashMap::new();
 
@@ -218,7 +218,7 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
         // checkpoint holds its input-log watermark still for the whole interval
         // — the controller's silence-based liveness detectors have to read that
         // as the steady state it is, not as a stall.
-        if topology.ack_granularity == AckGranularity::Checkpoint {
+        if topology.ack_granularity.is_checkpoint() {
             metadata.insert("ack_granularity".to_string(), "checkpoint".to_string());
         }
 

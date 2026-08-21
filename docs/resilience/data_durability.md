@@ -152,6 +152,16 @@ key + idempotent sink = effectively-once*:
   recorded and replayable, never silently dropped. Unconfirmed output is
   visible as `outbox_unconfirmed_ms` in the Entity's stall status and
   reaches the convergence loop as the `outbox_flat` verdict.
+- **The reports are batched, never the facts.** One dispatch pass hands
+  its whole window to the chain in one cast and settles it with one
+  report carrying each entry's holds; a sink confirms a completed batch
+  with one report naming every entry the batch completed (a park stays per
+  record — it carries a payload). What completes an entry, when the cursor
+  may pass it, and what happens to a report for an entry a resettle
+  superseded are unchanged: a batch report is the same per-entry facts
+  delivered at once. A chain that crashes mid-batch settles nothing for
+  the whole batch, and the resettle re-drives every entry still pending
+  under identical identity.
 - **Postgres sink (built-in conforming sink).** The `operative_postgres`
   `io_binding` plugin (`Flezha.Plugin.Provider.Postgres`) makes the tier
   effectively-once *into the database*: per flush batch ONE transaction
@@ -207,10 +217,28 @@ and calls `ctx.checkpoint()` where its state is genuinely coherent:
   their own. The checkpoint ships the whole interval's changes together with
   the offset of the input that closed it — one record, one fsync. State and
   offset advance together or not at all.
-- **Emits still flush as they happen.** Checkpointing moves the
+- **Emits still flush as they happen, by default.** Checkpointing moves the
   *acknowledgement*, not the output: a mid-interval emit ships in a record
   carrying no offset, and reaches its plugin as soon as that record is
   fsynced.
+- **Unless the operative asks otherwise.** `outputs_at_checkpoint(max_delay_ms)`
+  (`outputsAtCheckpoint` in Java) holds the interval's outputs with its changes
+  and ships them *inside* its checkpoint record, which the controller then
+  flushes as one batch after that record's fsync — one WAL append per interval
+  instead of one per invocation. The trade is output latency, and
+  `max_delay_ms` bounds it: the interval closes that long after the input that
+  opened it even if nothing else arrives, so a quiet Entity never holds an
+  output indefinitely. The delay is a *parameter* of the option rather than an
+  option of its own, so an unbounded hold cannot be declared by omission.
+  Replay semantics are unchanged: an interval that did not checkpoint
+  re-produces its outputs when it replays, a checkpointed record re-drives with
+  identical identity, and the keyed-sink dedup the tier already requires
+  absorbs both.
+- **The interval can close on its own.** `checkpoint_every(n)`
+  (`checkpointEvery`) closes it after `n` inputs without the body calling
+  `ctx.checkpoint()`; an explicit checkpoint still closes it early. Both
+  closers, and the delay, are declared — the core owns the interval, so a host
+  in any language gets the same rules.
 - **A park closes the interval.** An input that exhausts its retries is
   acknowledged into the dead-letter queue along with the interval's state,
   so a later replay starts *after* the poison rather than re-tripping it.

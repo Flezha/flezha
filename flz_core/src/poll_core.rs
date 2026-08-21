@@ -168,6 +168,10 @@ enum WakeTiebreak {
     /// so a second retry for the same entity cannot exist; a plain sequence
     /// says so without a key collision able to drop an owed re-arm.
     Retry(u64),
+    /// The Entity whose open checkpoint interval is due to close. Distinct
+    /// from `Timer` so an interval deadline and an author's processing-time
+    /// timer landing on the same millisecond cannot evict each other.
+    Interval(Arc<Vec<u8>>),
 }
 
 enum Wake {
@@ -182,6 +186,9 @@ enum Wake {
         slot: Weak<EntitySlot>,
         stream: Arc<FlezhaStream>,
     },
+    /// A checkpoint interval's `max_delay_ms` has elapsed. `Weak` for the same
+    /// reason a timer is: an evicted Entity's interval died with its state.
+    CloseInterval { slot: Weak<EntitySlot> },
 }
 
 /// The core's one deferred-wake list. It owns no thread: entries are promoted
@@ -224,7 +231,10 @@ impl DeferredWake {
         let mut entries = self.entries.lock_recover();
         let doomed: Vec<WakeKey> = entries
             .keys()
-            .filter(|k| matches!(&k.tiebreak, WakeTiebreak::Timer(armed) if armed == entity))
+            .filter(|k| match &k.tiebreak {
+                WakeTiebreak::Timer(armed) | WakeTiebreak::Interval(armed) => armed == entity,
+                WakeTiebreak::Retry(_) => false,
+            })
             .cloned()
             .collect();
         for key in doomed {
@@ -532,6 +542,23 @@ impl PollCore {
         for (key, wake) in self.wakes.take_due(crate::util::wall_now_ms()) {
             match wake {
                 Wake::Retry(slot) => self.release_and_rearm(&slot),
+                Wake::CloseInterval { slot } => {
+                    let Some(slot) = slot.upgrade() else {
+                        continue;
+                    };
+                    // Same Block/inline reasoning as a timer promotion: the
+                    // promoter may be the only pool thread able to drain this
+                    // slot, and a close silently dropped would hold the
+                    // interval's outputs until the next input — exactly what
+                    // the delay exists to prevent.
+                    crate::routing::in_activation(|| {
+                        crate::routing::enqueue(
+                            &slot,
+                            EntityItem::CloseInterval,
+                            OverflowPolicy::Block,
+                        )
+                    });
+                }
                 Wake::Timer { slot, stream } => {
                     let Some(slot) = slot.upgrade() else {
                         continue;
@@ -573,6 +600,31 @@ impl PollCore {
             },
         );
         self.notify_waiters();
+    }
+
+    /// Arm the close of an Entity's open checkpoint interval. Re-arming
+    /// replaces the entry, so an interval whose deadline moved (a fresh
+    /// interval opened) never has two.
+    pub fn arm_interval_close(&self, slot: &Arc<EntitySlot>, deadline_ms: u64) {
+        self.wakes.record(
+            WakeKey {
+                due_at_ms: deadline_ms,
+                tiebreak: WakeTiebreak::Interval(Arc::clone(&slot.entity_identity)),
+            },
+            Wake::CloseInterval {
+                slot: Arc::downgrade(slot),
+            },
+        );
+        self.notify_waiters();
+    }
+
+    /// Disarm an Entity's interval close — the interval closed on its own
+    /// (an input, a count, an explicit checkpoint). Idempotent.
+    pub fn disarm_interval_close(&self, entity: &Arc<Vec<u8>>, deadline_ms: u64) {
+        self.wakes.remove(&WakeKey {
+            due_at_ms: deadline_ms,
+            tiebreak: WakeTiebreak::Interval(Arc::clone(entity)),
+        });
     }
 
     /// Disarm one processing-time timer. Idempotent — a firing that already
@@ -925,12 +977,10 @@ fn assemble_batch(slot: &Arc<EntitySlot>) -> Vec<WorkItem> {
             held.drain(..).collect()
         };
         for item in deferred {
-            if let Staged::AdmittedInput =
-                stage_popped_item(slot, item, &mut items, &mut fired, policy, event_time_class)
-            {
-                if event_time_class {
-                    return items;
-                }
+            match stage_popped_item(slot, item, &mut items, &mut fired, policy, event_time_class) {
+                Staged::AdmittedInput if event_time_class => return items,
+                Staged::BatchClosed => return items,
+                _ => {}
             }
         }
     }
@@ -964,11 +1014,13 @@ fn assemble_batch(slot: &Arc<EntitySlot>) -> Vec<WorkItem> {
             }
             match stage_popped_item(slot, item, &mut items, &mut fired, policy, event_time_class) {
                 Staged::AdmittedInput if event_time_class => break,
+                Staged::BatchClosed => break,
                 _ => continue,
             }
         }
         match stage_popped_item(slot, item, &mut items, &mut fired, policy, event_time_class) {
             Staged::AdmittedInput if event_time_class => break,
+            Staged::BatchClosed => break,
             _ => continue,
         }
     }
@@ -989,6 +1041,12 @@ enum Staged {
     AdmittedInput,
     /// Buffered, skipped, dropped, or a timer item — the batch stays open.
     Other,
+    /// The item ends this batch and was deferred to the next round. A
+    /// checkpoint close behind live items does this: those items belong to the
+    /// interval it closes, so it must not overtake them — and nothing popped
+    /// after it may join the batch either, or it would fold into an interval
+    /// that had already ended.
+    BatchClosed,
 }
 
 /// Classify and stage one mailbox item — the shared body for fresh pops and
@@ -1002,6 +1060,20 @@ fn stage_popped_item(
     event_time_class: bool,
 ) -> Staged {
     let payload = match item {
+        // The close must land in mailbox order: an input ahead of it belongs
+        // to the interval it closes. At the head of a batch nothing is ahead
+        // of it, so close now and keep draining; behind live items, defer it
+        // and end the batch so those items run first.
+        EntityItem::CloseInterval => {
+            if items.is_empty() {
+                close_due_interval(slot);
+                return Staged::Other;
+            }
+            slot.deferred_live
+                .lock_recover()
+                .push_back(EntityItem::CloseInterval);
+            return Staged::BatchClosed;
+        }
         EntityItem::Timer(fire) => {
             // The wake list holds no lock on the pending set, so an entry can
             // outlive the timer: a cancellation, a re-fire after a restore
@@ -1048,6 +1120,14 @@ fn stage_popped_item(
     } else {
         Staged::Other
     }
+}
+
+/// Ship an open checkpoint interval's accumulation because its `max_delay_ms`
+/// elapsed. The slot is claimed by this drainer, so taking the flush buffer is
+/// uncontended; an interval an input already closed makes it a no-op.
+fn close_due_interval(slot: &Arc<EntitySlot>) {
+    let mut buffer = slot.flush_buffer.lock_recover();
+    slot.dispatcher.close_interval(&mut buffer);
 }
 
 /// Admit one live (or replayed, via `flush_closed_slice`) input and stage it

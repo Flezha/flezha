@@ -91,6 +91,28 @@ public class StreamOperativeConfigurationException extends RuntimeException {
     }
 
     /**
+     * Raised when {@code checkpointEvery(0)} is declared. An interval that
+     * closes every zero inputs is not an interval — omitting the call is how
+     * an Operative says "close only on an explicit {@code ctx.checkpoint()}".
+     */
+    public static StreamOperativeConfigurationException checkpointEveryZero() {
+        return new StreamOperativeConfigurationException(
+                "CheckpointEveryZero: `checkpointEvery(0)` is not an interval; omit it to close "
+                        + "only on an explicit ctx.checkpoint()");
+    }
+
+    /**
+     * Raised when {@code outputsAtCheckpoint(0)} is declared. The delay is what
+     * bounds a quiet Entity's output latency; zero would make the bound
+     * meaningless rather than tight.
+     */
+    public static StreamOperativeConfigurationException checkpointDelayZero() {
+        return new StreamOperativeConfigurationException(
+                "CheckpointDelayZero: `outputsAtCheckpoint(0)` gives the interval no time to "
+                        + "accumulate; declare the delay you are willing to hold an output for");
+    }
+
+    /**
      * Raised when {@code correctionWindow(...)} is declared without a
      * prerequisite it cannot work without: the tier (a correction rewinds a
      * consumed offset), an {@code EventTimeFrom} clock (there is no event time

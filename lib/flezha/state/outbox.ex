@@ -31,12 +31,19 @@ defmodule Flezha.State.Outbox do
   every hold has answered — so a chain with no guaranteed sink completes as
   soon as the chain has run, exactly as before.
 
-  The dispatcher runs each output's chain inside `run/3`, which counts the
+  The dispatcher runs each output's chain inside `run/2`, which counts the
   holds that run takes and reports them on its settlement — one report, no
   token decode, and a hold can never be seen after the settlement it belongs
   to. A confirmation that overtakes them is still counted: completion needs the
   settlements, which only the dispatcher sends. A `hold/1` outside any run (a
   sink fed by something other than the dispatcher) reports through the token.
+
+  The reports are batched, never the facts. One dispatch pass hands its whole
+  window to the chain as one `{:io_out_batch, outputs}` cast, settles it with
+  one `{:outbox_settled_many, entries}` report, and a sink answers a completed
+  batch with one `confirm_many/1`. Each entry still completes on its own
+  outputs and its own holds — a batch report is the same per-entry facts
+  delivered at once.
   """
 
   require Logger
@@ -103,48 +110,69 @@ defmodule Flezha.State.Outbox do
   @typedoc "Decoded `flz.ack` token: who owns the cursor, whose output it is, what it completes."
   @type ack :: %{owner: Registry.entity_id(), target: Registry.entity_id(), key: key()}
 
+  @typedoc """
+  One stamped output on its way to the chain: the payload, the metadata it
+  carries, and the entry the dispatcher settles it under — the decoded ack, so
+  neither the dispatcher nor the chain pays a token decode.
+  """
+  @type output :: {binary(), map(), %{owner: Registry.entity_id(), key: key()}}
+
   @doc "Metadata key carrying the confirmation token on a durable output."
   @spec ack_key() :: binary()
   def ack_key(), do: @ack_key
 
   @doc """
-  Hand one durable outbox output to the operative's `:on_output` chain, stamped
-  with its output identity and the confirmation token its entry is owed under,
-  plus the decoded ack the dispatcher settles it with (`run/3`).
+  Stamp one durable outbox output with its output identity, the confirmation
+  token its entry is owed under, and the decoded ack the dispatcher settles it
+  with (`run/2`).
 
-  The one place a durable output leaves an outbox — which is what makes the
-  token impossible to forget. `identity` is `Flezha.State.Wire.output_stamps/1`'s
+  The one place a durable output is minted — which is what makes the token
+  impossible to forget. `identity` is `Flezha.State.Wire.output_stamps/1`'s
   input plus `:owner` (the writer whose ledger the entry sits in), `:entry` (the
   key one confirmation completes) and optional `:metadata` the output carries of
   its own.
+
+  The token names the entry, not the output, so every output of one entry whose
+  target is also its owner carries the identical token: such a caller mints it
+  once with `token/2` and passes it as `:ack`.
   """
-  @spec dispatch(pid(), binary(), map()) :: :ok
-  def dispatch(overwatch, payload, %{owner: owner, entry: entry, entity: entity} = identity) do
+  @spec stamp(binary(), map()) :: output()
+  def stamp(payload, %{owner: owner, entry: entry, entity: entity} = identity) do
     stamps =
       identity
       |> Map.drop([:owner, :entry, :metadata])
-      |> Map.put(:ack, token(owner, entity, entry))
+      |> Map.put_new_lazy(:ack, fn -> token(owner, entity, entry) end)
       |> Wire.output_stamps()
 
-    GenServer.cast(
-      overwatch,
-      {:io_out, payload, Map.merge(Map.new(Map.get(identity, :metadata, %{})), stamps),
-       %{owner: owner, key: entry}}
-    )
+    {payload, Map.merge(Map.new(Map.get(identity, :metadata, %{})), stamps),
+     %{owner: owner, key: entry}}
   end
 
   @doc """
-  Run one durable output's chain as the dispatcher: `fun` is the chain, every
-  `hold/1` it takes is counted here, and the entry is settled with that count
-  when it returns. A chain that crashes settles nothing — the entry stays
-  pending and the resettle tick re-dispatches it.
+  Hand one dispatch pass's stamped outputs to the operative's `:on_output`
+  chain as one cast — the one place a durable output leaves an outbox.
   """
-  @spec run(%{owner: Registry.entity_id(), key: key()}, map(), (-> term())) :: :ok
-  def run(%{owner: owner, key: key}, metadata, fun) when is_function(fun, 0) do
-    Process.put(@run_key, {ack(metadata), 0})
-    fun.()
-    {_token, holds} = Process.delete(@run_key)
-    report(owner, {:outbox_settled, key, holds})
+  @spec dispatch(pid(), [output()]) :: :ok
+  def dispatch(_overwatch, []), do: :ok
+  def dispatch(overwatch, outputs), do: GenServer.cast(overwatch, {:io_out_batch, outputs})
+
+  @doc """
+  Run a dispatch batch's chains as the dispatcher: `fun` is the chain, every
+  `hold/1` an output's run takes is counted against that output, and the
+  batch's entries are settled with their counts in one report per owning
+  writer. A chain that crashes settles nothing — not its own entry and not the
+  rest of the batch — and the resettle tick re-dispatches what stayed pending.
+  """
+  @spec run([output()], (binary(), map() -> term())) :: :ok
+  def run(outputs, fun) when is_function(fun, 2) do
+    outputs
+    |> Enum.reduce(%{}, fn {payload, metadata, %{owner: owner, key: key}}, settled ->
+      Process.put(@run_key, {ack(metadata), 0})
+      fun.(payload, metadata)
+      {_token, holds} = Process.delete(@run_key)
+      Map.update(settled, owner, [{key, holds}], &[{key, holds} | &1])
+    end)
+    |> report_per_owner(:outbox_settled_many)
   end
 
   @doc """
@@ -218,6 +246,23 @@ defmodule Flezha.State.Outbox do
   @doc "One hold's write is durable at the sink."
   @spec confirm(map()) :: :ok
   def confirm(metadata), do: notify(metadata, :outbox_confirmed)
+
+  @doc """
+  A whole batch's writes are durable at the sink: one report per owning writer
+  naming every entry the batch completed. Records carrying no token settle
+  nothing, exactly as under `confirm/1`.
+  """
+  @spec confirm_many([map()]) :: :ok
+  def confirm_many(metadatas) when is_list(metadatas) do
+    metadatas
+    |> Enum.reduce(%{}, fn metadata, owed ->
+      case entry_of(metadata) do
+        {owner, key} -> Map.update(owed, owner, [key], &[key | &1])
+        nil -> owed
+      end
+    end)
+    |> report_per_owner(:outbox_confirmed_many)
+  end
 
   @doc """
   A hold whose retry budget is permanently exhausted: park the payload through
@@ -319,16 +364,30 @@ defmodule Flezha.State.Outbox do
   defp decode_key(_), do: :error
 
   defp notify(metadata, tag) when is_map(metadata) do
+    case entry_of(metadata) do
+      {owner, key} -> report(owner, report_for(tag, key))
+      nil -> :ok
+    end
+  end
+
+  # The writer this output's entry belongs to, and the entry — `nil` when no
+  # cursor is waiting on it.
+  defp entry_of(metadata) do
     with token when is_binary(token) <- ack(metadata),
          {:ok, %{owner: owner, key: key}} <- decode(token) do
-      report(owner, report_for(tag, key))
+      {owner, key}
     else
-      _ -> :ok
+      _ -> nil
     end
   end
 
   defp report_for({:outbox_settled, holds}, key), do: {:outbox_settled, key, holds}
   defp report_for(tag, key) when is_atom(tag), do: {tag, key}
+
+  # One batch report per owning writer, in the order the batch collected them.
+  defp report_per_owner(by_owner, tag) do
+    Enum.each(by_owner, fn {owner, entries} -> report(owner, {tag, Enum.reverse(entries)}) end)
+  end
 
   # A writer that is gone cannot be told anything, and needs no telling: its
   # cursor never advanced, so the restart re-drive owes the entry anyway.

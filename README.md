@@ -5,7 +5,8 @@ Distributed stateful operatives. Provides static and dynamic creation of operati
 
 **Start here:** [`docs/architecture/`](docs/architecture/README.md) — the durable-compute
 kernel, the two operative profiles, and the diagrams. Vocabulary:
-[`docs/glossary.md`](docs/glossary.md).
+[`docs/glossary.md`](docs/glossary.md). Every knob, by layer:
+[`docs/configuration.md`](docs/configuration.md).
 
 ## Features
 - Clustered, hot-swap-migratable operatives

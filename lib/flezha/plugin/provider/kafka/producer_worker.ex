@@ -522,13 +522,14 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   # The outbox confirmation seam: an acked batch confirms every guaranteed
-  # record it carried, and a permanently failed one parks them with their own
-  # identity — a recorded, replayable loss instead of a silent one. Records
-  # carrying no token belong to a plain chain and settle nothing.
-  defp settle_outbox(record, _batch, :ok), do: Outbox.confirm(record.metadata)
+  # record it carried in ONE report, and a permanently failed one parks them
+  # with their own identity — a recorded, replayable loss instead of a silent
+  # one, and a park carries a payload, so it stays per record. Records carrying
+  # no token belong to a plain chain and settle nothing.
+  defp settle_outbox(batch, :ok), do: Outbox.confirm_many(Enum.map(batch.records, & &1.metadata))
 
-  defp settle_outbox(record, batch, {:error, {_kind, reason}}),
-    do: Outbox.park(record.metadata, record.value, reason, batch.attempt + 1)
+  defp settle_outbox(batch, {:error, {_kind, reason}}),
+    do: Enum.each(batch.records, &Outbox.park(&1.metadata, &1.value, reason, batch.attempt + 1))
 
   defp reply_to_record(nil, _reply), do: :ok
   defp reply_to_record(%{from: :async}, _reply), do: :ok
@@ -994,10 +995,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp caller_tag(_), do: :sync
 
   defp complete_batch(state, batch, reply) do
-    Enum.each(batch.records, fn r ->
-      reply_to_record(r, reply)
-      settle_outbox(r, batch, reply)
-    end)
+    Enum.each(batch.records, &reply_to_record(&1, reply))
+    settle_outbox(batch, reply)
 
     state = %{
       state

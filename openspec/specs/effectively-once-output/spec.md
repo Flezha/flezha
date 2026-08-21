@@ -148,13 +148,21 @@ naming the writer that owns the cursor and the entry one confirmation
 completes. A delivery-guaranteed sink SHALL hold the token as it takes
 ownership of the output and SHALL confirm it once its write is durable (or
 park it). The dispatcher SHALL run each output's chain as one run that counts
-the holds the run takes and settles the entry with that count in a single
-report; an entry completes when every output has settled and every hold has
-been answered, so a chain with no guaranteed sink completes as soon as it has
-run. A chain that crashes SHALL settle nothing — the entry stays pending and
-the resettle re-dispatches it under identical identity. A hold taken outside
-a dispatcher run (a sink fed by something other than the dispatcher) SHALL
-report through the token itself.
+the holds the run takes and settles the entry with that count; an entry
+completes when every output has settled and every hold has been answered, so
+a chain with no guaranteed sink completes as soon as it has run. A chain that
+crashes SHALL settle nothing — the entry stays pending and the resettle
+re-dispatches it under identical identity. A hold taken outside a dispatcher
+run (a sink fed by something other than the dispatcher) SHALL report through
+the token itself.
+
+The reports SHALL be batched, never the facts: a sink SHALL confirm a
+completed batch with one report covering every entry the batch completed, and
+the dispatcher SHALL hand an fsync window's outputs to the chain as one batch
+that settles with one report carrying each entry's holds. A batch report is
+the same per-entry facts delivered at once; per-entry completion, the cursor's
+leading-run advance, and the handling of a report for an entry a resettle
+superseded are unchanged by batching.
 
 #### Scenario: Confirmation is off the hot path
 
@@ -191,6 +199,20 @@ report through the token itself.
   the dispatcher's chain
 - **THEN** the hold reaches the owning writer through the token and the entry
   waits for its confirmation exactly as for a hold taken inside a run
+
+#### Scenario: A batch of outputs costs one confirmation report
+
+- **WHEN** a sink's batch of 200 guaranteed outputs spanning 200 entries is
+  acknowledged
+- **THEN** the writer receives one report naming the 200 entries, each entry
+  completes exactly as it would have from 200 single reports, and the cursor
+  advances over the leading completed run
+
+#### Scenario: A batch report for a superseded entry changes nothing
+
+- **WHEN** a batch report names an entry the resettle re-dispatched meanwhile
+- **THEN** that entry's tally is left to its live dispatch and every other
+  entry in the report completes normally
 
 ### Requirement: End-to-end effectively-once over crash-replay
 

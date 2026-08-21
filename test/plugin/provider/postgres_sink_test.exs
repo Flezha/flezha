@@ -132,8 +132,9 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "v1", ack.(1))
     emit(opts, "v2", ack.(2))
 
-    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 1}}}, 10_000
-    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 2}}}, 10_000
+    assert :ok =
+             Flezha.State.TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
+
     assert wait_until(fn -> progress(db) == [[entity, "2.0", 1]] end, 10_000)
 
     before = {rows(db), progress(db)}
@@ -143,8 +144,8 @@ defmodule FlezhaTest.Plugin.Provider.PostgresSinkTest do
     emit(opts, "v1", ack.(1))
     emit(opts, "v2", ack.(2))
 
-    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 1}}}, 10_000
-    assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 2}}}, 10_000
+    assert :ok =
+             Flezha.State.TestHelpers.assert_confirmed([{:cursor, 1}, {:cursor, 2}], 10_000)
 
     assert {rows(db), progress(db)} == before,
            "a re-driven batch must leave rows and progress byte-identical"

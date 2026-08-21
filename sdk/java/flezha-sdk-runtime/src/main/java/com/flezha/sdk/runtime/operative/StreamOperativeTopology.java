@@ -3,6 +3,7 @@ package com.flezha.sdk.runtime.operative;
 import java.util.List;
 import java.util.Map;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * Frozen, immutable per-StreamOperative-class topology produced by
@@ -24,7 +25,7 @@ public final class StreamOperativeTopology {
     private final List<ProcedureDescriptor> procedures;
     private final Map<String, Integer> procedureNameToId;
     private final boolean effectivelyOnce;
-    private final boolean checkpointAck;
+    private final CheckpointPolicy checkpoint;
     private final long correctionWindowMs;
     private final com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy;
 
@@ -35,11 +36,11 @@ public final class StreamOperativeTopology {
             @Nonnull List<ProcedureDescriptor> procedures,
             @Nonnull Map<String, Integer> procedureNameToId,
             boolean effectivelyOnce,
-            boolean checkpointAck,
+            @Nullable CheckpointPolicy checkpoint,
             long correctionWindowMs,
             @Nonnull com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy) {
         this.effectivelyOnce = effectivelyOnce;
-        this.checkpointAck = checkpointAck;
+        this.checkpoint = checkpoint;
         this.correctionWindowMs = correctionWindowMs;
         this.beyondWindowPolicy = beyondWindowPolicy;
         this.factoryId = factoryId;
@@ -59,13 +60,22 @@ public final class StreamOperativeTopology {
     }
 
     /**
-     * Whether the consumed offset is acknowledged only at an explicit
-     * {@code ctx.checkpoint()}. Rides the {@code ack_granularity} declaration —
-     * the controller needs it because a checkpoint Entity's silence between
-     * boundaries is its steady state, not a stall.
+     * Whether the consumed offset is acknowledged only when an interval closes.
+     * Rides the {@code ack_granularity} declaration — the controller needs it
+     * because a checkpoint Entity's silence between boundaries is its steady
+     * state, not a stall.
      */
     public boolean checkpointAck() {
-        return checkpointAck;
+        return checkpoint != null;
+    }
+
+    /**
+     * How the interval closes and what it does with its outputs, or
+     * {@code null} under the per-input default.
+     */
+    @Nullable
+    public CheckpointPolicy checkpoint() {
+        return checkpoint;
     }
 
     /** The declared late-input correction window in millis; {@code 0} = none. */

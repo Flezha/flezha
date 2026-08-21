@@ -31,7 +31,8 @@ use crate::flusher::{EntityFlusher, FlushFrame, FlushableBuffer};
 use crate::header::HeaderTemplate;
 use crate::operative::instance::StreamInstance;
 use crate::operative::topology::{
-    AckGranularity, CorrectionPolicy, EntityMode, OperativeTopology, ProcedureDescriptor,
+    AckGranularity, CheckpointOutputs, CorrectionPolicy, EntityMode, OperativeTopology,
+    ProcedureDescriptor,
 };
 use crate::poll_core::{EngineActivation, EnginePayload, PollCore, WorkItem};
 use crate::schema::{self, TimerOp};
@@ -175,6 +176,16 @@ pub struct HostClassDecl {
     /// `per_input` (default) | `checkpoint`.
     #[serde(default)]
     pub ack_granularity: HostAckGranularity,
+    /// Close a checkpoint interval once this many inputs have folded into it
+    /// (absent = only an explicit checkpoint closes it).
+    #[serde(default)]
+    pub checkpoint_every: Option<u32>,
+    /// `as_produced` (default) | `at_checkpoint`.
+    #[serde(default)]
+    pub checkpoint_outputs: HostCheckpointOutputs,
+    /// Close a checkpoint interval this long after the input that opened it.
+    #[serde(default)]
+    pub checkpoint_max_delay_ms: Option<u64>,
     /// Late-input correction window (event-time classes).
     #[serde(default)]
     pub correction_window_ms: Option<u64>,
@@ -251,6 +262,14 @@ pub enum HostAckGranularity {
     #[default]
     PerInput,
     Checkpoint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostCheckpointOutputs {
+    #[default]
+    AsProduced,
+    AtCheckpoint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
@@ -384,6 +403,31 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
     if decl.ack_granularity == HostAckGranularity::Checkpoint && !decl.effectively_once {
         return Err("ack_granularity checkpoint requires effectively_once".to_string());
     }
+    if decl.ack_granularity != HostAckGranularity::Checkpoint
+        && (decl.checkpoint_every.is_some()
+            || decl.checkpoint_outputs == HostCheckpointOutputs::AtCheckpoint
+            || decl.checkpoint_max_delay_ms.is_some())
+    {
+        return Err(
+            "checkpoint_every / checkpoint_outputs / checkpoint_max_delay_ms require \
+             ack_granularity checkpoint"
+                .to_string(),
+        );
+    }
+    if decl.checkpoint_outputs == HostCheckpointOutputs::AtCheckpoint
+        && decl.checkpoint_max_delay_ms.is_none()
+    {
+        return Err(
+            "checkpoint_outputs at_checkpoint requires checkpoint_max_delay_ms: an interval that \
+             never closes would hold its outputs forever on a quiet Entity"
+                .to_string(),
+        );
+    }
+    if decl.checkpoint_every == Some(0) || decl.checkpoint_max_delay_ms == Some(0) {
+        return Err(
+            "checkpoint_every / checkpoint_max_delay_ms must be greater than zero".to_string(),
+        );
+    }
     if decl.correction_window_ms.is_some()
         && !decl
             .procedures
@@ -510,6 +554,22 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             HostBeyondWindow::Drop => crate::operative::topology::BeyondWindowPolicy::Drop,
         },
     });
+    // Resolved once: the per-procedure facts and the shared topology must
+    // agree on the interval's rules, so they read the same value.
+    let ack_granularity = match decl.ack_granularity {
+        HostAckGranularity::PerInput => AckGranularity::PerInput,
+        HostAckGranularity::Checkpoint => {
+            AckGranularity::Checkpoint(crate::operative::topology::CheckpointPolicy {
+                every: decl.checkpoint_every,
+                outputs: match decl.checkpoint_outputs {
+                    HostCheckpointOutputs::AsProduced => CheckpointOutputs::AsProduced,
+                    HostCheckpointOutputs::AtCheckpoint => CheckpointOutputs::AtCheckpoint,
+                },
+                max_delay_ms: decl.checkpoint_max_delay_ms,
+            })
+        }
+    };
+    let checkpoint_policy = ack_granularity.checkpoint();
     let compact_after_bytes = decl
         .compact_after_bytes
         .unwrap_or(crate::persistence::DEFAULT_COMPACT_AFTER_BYTES);
@@ -618,7 +678,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             schema_version,
             persistent,
             effectively_once: decl.effectively_once,
-            checkpoint_ack: decl.ack_granularity == HostAckGranularity::Checkpoint,
+            checkpoint: checkpoint_policy,
             clock: proc_decl.clock,
             sdk_lang: decl.sdk_lang,
             change_format_id: decl.change_format_id,
@@ -671,10 +731,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
         persistence_enabled_const: persistent,
         effectively_once: decl.effectively_once,
         correction,
-        ack_granularity: match decl.ack_granularity {
-            HostAckGranularity::PerInput => AckGranularity::PerInput,
-            HostAckGranularity::Checkpoint => AckGranularity::Checkpoint,
-        },
+        ack_granularity,
     });
     match &decl.workflow {
         Some(workflow) => {
@@ -883,7 +940,7 @@ pub struct HostProcedureFacts {
     pub effectively_once: bool,
     /// Checkpoint ack-granularity: the open interval's changes stage until a
     /// completion carries `checkpoint` (or a park closes the interval).
-    pub checkpoint_ack: bool,
+    pub checkpoint: Option<crate::operative::topology::CheckpointPolicy>,
     /// The declared clock; drives `now` stamping and event-time admission.
     pub clock: HostClock,
     /// Header lang byte the host's durable records claim (Rust 1, Java 2).
@@ -1052,6 +1109,32 @@ impl ProcedureDispatcher for HostDispatcher {
         Some(self.facts.as_ref())
     }
 
+    fn close_interval(&self, flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>) -> bool {
+        // Only a checkpoint class has an interval to close.
+        if self.facts.checkpoint.is_none() {
+            return false;
+        }
+        let Some(bytes) = flush_buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
+            return false;
+        };
+        let Some(record) = bytes.staged.close_on_deadline() else {
+            return false;
+        };
+        bytes
+            .effects
+            .push(crate::flusher::EffectRecordBody::from_shipped(record, None));
+        true
+    }
+
+    fn interval_deadline(
+        &self,
+        flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
+    ) -> Option<u64> {
+        let policy = self.facts.checkpoint?;
+        let bytes = flush_buffer.as_any_mut().downcast_mut::<BytesBuffer>()?;
+        bytes.staged.deadline_ms(policy)
+    }
+
     fn procedure_id(&self) -> u32 {
         self.procedure_id
     }
@@ -1135,18 +1218,16 @@ impl ProcedureDispatcher for HostDispatcher {
 /// completions; the core frames and ships them exactly as it does a typed
 /// drain. Mirrors `TypedBuffer<S>` field-for-field at the bytes level:
 /// `changes`/`timer_ops` are the tier-off home, `effects` the
-/// effectively-once one, `staged`/`staged_timers` hold a checkpoint
-/// interval's unacknowledged accumulation (deliberately NOT flushable —
-/// draining them alone would put state ahead of its offset), and
-/// `pending_attempt` holds a failed-but-retryable attempt's changes out of
-/// the flusher's reach until the item resolves.
+/// effectively-once one, `staged` holds a checkpoint interval's
+/// unacknowledged accumulation, and `pending_attempt` holds a
+/// failed-but-retryable attempt's changes out of the flusher's reach until
+/// the item resolves.
 #[derive(Default)]
 pub struct BytesBuffer {
     pub changes: Vec<Vec<u8>>,
     pub timer_ops: Vec<TimerOp>,
     pub effects: Vec<crate::flusher::EffectRecordBody>,
-    pub staged: Vec<Vec<u8>>,
-    pub staged_timers: Vec<TimerOp>,
+    pub staged: crate::flusher::StagedInterval<Vec<u8>>,
     pub pending_attempt: Vec<Vec<u8>>,
 }
 
@@ -1187,7 +1268,6 @@ impl FlushableBuffer for BytesBuffer {
 
     fn discard_staged(&mut self) {
         self.staged.clear();
-        self.staged_timers.clear();
         // A mid-ladder attempt's changes belong to the same superseded past.
         self.pending_attempt.clear();
     }
@@ -1263,6 +1343,10 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
             let now_fallback = host_clock_now(slot);
             let schema_items = items
                 .iter()
+                // A close is consumed by the batch assembler; it never becomes
+                // host work, and filtering keeps the effect-to-item zip aligned
+                // if that invariant ever loosened.
+                .filter(|work| !matches!(work.item, EntityItem::CloseInterval))
                 .map(|work| match &work.item {
                     EntityItem::Input(payload) => {
                         let (channel, bytes, metadata) =
@@ -1279,6 +1363,11 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
                     EntityItem::Timer(fire) => schema::WorkItem::Timer(schema::TimerItem {
                         kind: fire.kind,
                         scheduled_at: fire.scheduled_at,
+                    }),
+                    // Filtered out above; a firing item is the harmless shape.
+                    EntityItem::CloseInterval => schema::WorkItem::Timer(schema::TimerItem {
+                        kind: schema::TimerKind::ProcessingTime,
+                        scheduled_at: 0,
                     }),
                 })
                 .collect();
@@ -1513,6 +1602,13 @@ fn resolve_item(
     let stream = match &work.item {
         EntityItem::Input(p) => Arc::clone(&p.stream),
         EntityItem::Timer(f) => Arc::clone(&f.stream),
+        // Never resolved as host work (the assembler consumes it); without a
+        // connection of its own it takes the live secondary, as a chained
+        // deadline does.
+        EntityItem::CloseInterval => match crate::state_sink::secondary_stream() {
+            Some(stream) => stream,
+            None => return,
+        },
     };
     let parked = park.is_some();
 
@@ -1522,7 +1618,7 @@ fn resolve_item(
     let timers: Vec<TimerOp> = if parked {
         match &work.item {
             EntityItem::Timer(fire) => vec![TimerOp::cancel(fire.kind, fire.scheduled_at)],
-            EntityItem::Input(_) => Vec::new(),
+            EntityItem::Input(_) | EntityItem::CloseInterval => Vec::new(),
         }
     } else {
         effect.timers
@@ -1540,7 +1636,7 @@ fn resolve_item(
     // what it consumed; a firing consumes nothing.
     let consumed_offset = match &work.item {
         EntityItem::Input(p) => p.consumed_offset,
-        EntityItem::Timer(_) => None,
+        EntityItem::Timer(_) | EntityItem::CloseInterval => None,
     };
 
     let dlq = park.map(|(error, attempts)| {
@@ -1560,7 +1656,7 @@ fn resolve_item(
                     .value
                     .downcast_ref::<HostPayload>()
                     .map(|hp| hp.bytes.clone()),
-                EntityItem::Timer(_) => None,
+                EntityItem::Timer(_) | EntityItem::CloseInterval => None,
             },
         }
     });
@@ -1594,39 +1690,23 @@ fn resolve_item(
                         schema::OutputTarget::Edge { .. } => None,
                     })
                     .collect();
-                let (rec_changes, rec_timers, rec_offset, ship) = if facts.checkpoint_ack {
-                    bytes.staged.extend(changes);
-                    bytes.staged_timers.extend(timers.iter().copied());
-                    // The interval closes on an explicit checkpoint — or on
-                    // a park, whose poison input is about to be acknowledged
-                    // into the DLQ and must never be replayed back.
-                    if effect.checkpoint || dlq.is_some() {
-                        (
-                            std::mem::take(&mut bytes.staged),
-                            std::mem::take(&mut bytes.staged_timers),
-                            consumed_offset,
-                            true,
-                        )
-                    } else {
-                        // Mid-interval: emits still flush as they happen, but
-                        // they acknowledge nothing.
-                        (Vec::new(), Vec::new(), None, !output_records.is_empty())
-                    }
-                } else {
-                    let ship =
-                        !(changes.is_empty() && output_records.is_empty() && timers.is_empty())
-                            || dlq.is_some();
-                    (changes, timers.clone(), consumed_offset, ship)
-                };
-                if ship {
-                    bytes.effects.push(crate::flusher::EffectRecordBody {
-                        changes: rec_changes,
+                let shipped = bytes.staged.fold(
+                    facts.checkpoint,
+                    crate::flusher::InvocationEffects {
+                        changes,
+                        timers: timers.clone(),
                         outputs: output_records,
-                        consumed_offset: rec_offset,
-                        dlq,
+                        offset: consumed_offset,
                         event_time: effect.event_time,
-                        timers: rec_timers,
-                    });
+                        checkpointed: effect.checkpoint,
+                        parked: dlq.is_some(),
+                    },
+                    crate::util::wall_now_ms(),
+                );
+                if let Some(record) = shipped {
+                    bytes
+                        .effects
+                        .push(crate::flusher::EffectRecordBody::from_shipped(record, dlq));
                 }
             } else {
                 if slot.flusher_entry_id.is_some() {
@@ -1650,6 +1730,8 @@ fn resolve_item(
         }
         crate::timer::apply_ops(slot, &timers, &stream);
     }
+
+    crate::timer::arm_interval_deadline(slot);
 
     // Edge values into consumer mailboxes — the offset propagates exactly as
     // the typed emit path propagates it.
@@ -2376,6 +2458,107 @@ mod entry_observation_decl_tests {
 
         entry.observe_delivery();
         assert!(crate::entry_input::last_delivery("host_trades_in").is_some());
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_interval_decl_tests {
+    //! The checkpoint interval's declaration crosses the C ABI as JSON, so its
+    //! refusals live here rather than in a typed SDK — a declaration can arrive
+    //! from any host language, and `deny_unknown_fields` makes a field the core
+    //! never learned a refusal rather than a silent degrade.
+
+    use crate::operative::topology::CheckpointOutputs;
+
+    fn decl(json: &str) -> Result<(), String> {
+        super::register_host_class_json(json.as_bytes())
+    }
+
+    fn factory(name: &str) -> String {
+        format!("{name}_{}", std::process::id())
+    }
+
+    fn tier_class(id: &str, extra: &str) -> String {
+        format!(
+            r#"{{"factory_id":"{id}","persistent":true,"effectively_once":true,{extra}
+                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
+                             {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
+                 "procedures":[{{"name":"p0"}}]}}"#
+        )
+    }
+
+    #[test]
+    fn a_declared_interval_reaches_the_topology() {
+        let id = factory("ckpt_full");
+        decl(&tier_class(
+            &id,
+            r#""ack_granularity":"checkpoint","checkpoint_every":500,
+               "checkpoint_outputs":"at_checkpoint","checkpoint_max_delay_ms":50,"#,
+        ))
+        .expect("a fully declared checkpoint interval registers");
+
+        let policy = crate::operative::registry::get_class(&id)
+            .expect("class registered")
+            .ack_granularity
+            .checkpoint()
+            .expect("the class declared the checkpoint granularity");
+
+        assert_eq!(policy.every, Some(500));
+        assert_eq!(policy.outputs, CheckpointOutputs::AtCheckpoint);
+        assert_eq!(policy.max_delay_ms, Some(50));
+    }
+
+    #[test]
+    fn undeclared_options_are_the_as_produced_default() {
+        let id = factory("ckpt_bare");
+        decl(&tier_class(&id, r#""ack_granularity":"checkpoint","#))
+            .expect("a bare checkpoint declaration registers");
+
+        let policy = crate::operative::registry::get_class(&id)
+            .expect("class registered")
+            .ack_granularity
+            .checkpoint()
+            .expect("the class declared the checkpoint granularity");
+
+        assert_eq!(policy.every, None);
+        assert_eq!(policy.outputs, CheckpointOutputs::AsProduced);
+        assert_eq!(policy.max_delay_ms, None);
+    }
+
+    #[test]
+    fn holding_outputs_without_a_delay_is_refused_by_name() {
+        let id = factory("ckpt_no_delay");
+        let err = decl(&tier_class(
+            &id,
+            r#""ack_granularity":"checkpoint","checkpoint_outputs":"at_checkpoint","#,
+        ))
+        .expect_err("an unbounded output hold must not be declarable");
+
+        assert!(
+            err.contains("checkpoint_max_delay_ms"),
+            "the refusal names the missing field: {err}"
+        );
+    }
+
+    #[test]
+    fn interval_options_without_the_checkpoint_granularity_are_refused() {
+        let id = factory("ckpt_orphan");
+        let err = decl(&tier_class(&id, r#""checkpoint_every":500,"#))
+            .expect_err("an interval option means nothing without an interval");
+
+        assert!(err.contains("ack_granularity checkpoint"), "{err}");
+    }
+
+    #[test]
+    fn a_zero_interval_is_refused() {
+        let id = factory("ckpt_zero");
+        let err = decl(&tier_class(
+            &id,
+            r#""ack_granularity":"checkpoint","checkpoint_every":0,"#,
+        ))
+        .expect_err("an interval that closes every zero inputs is not an interval");
+
+        assert!(err.contains("greater than zero"), "{err}");
     }
 }
 

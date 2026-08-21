@@ -163,8 +163,41 @@ public interface ChannelBuilder {
      * <p>Requires {@link #effectivelyOnce()} — there is no offset to withhold
      * without the tier — and declaring it alone fails registration with
      * {@code CheckpointAckWithoutTier}.
+     *
+     * <p>Emits made before a checkpoint are still flushed as they happen —
+     * checkpointing moves the <em>acknowledgement</em>, not the output. To hold
+     * them for the interval too, see {@link #outputsAtCheckpoint(long)}.
      */
     void checkpointAck();
+
+    /**
+     * Close the checkpoint interval once {@code inputs} inputs have folded into
+     * it, instead of waiting for an explicit {@code ctx.checkpoint()}.
+     *
+     * <p>An explicit checkpoint still closes the interval early: this is the
+     * ceiling, not the only closer. Implies {@link #checkpointAck()}.
+     */
+    void checkpointEvery(int inputs);
+
+    /**
+     * Hold the interval's outputs with its changes and ship them inside its
+     * checkpoint record, which the controller flushes as one batch after that
+     * record is fsynced — one WAL append per interval instead of one per
+     * invocation.
+     *
+     * <p>The trade is output latency: an emit is not visible downstream until
+     * its interval closes. {@code maxDelayMs} bounds that — the interval closes
+     * that long after the input that opened it even if nothing else arrives, so
+     * a quiet Entity never holds an output indefinitely. It is a parameter
+     * rather than an option because an unbounded hold is not a posture anyone
+     * should be able to declare by omission.
+     *
+     * <p>Replay is exactly the mode's existing contract: an interval that did
+     * not checkpoint re-produces its outputs when it replays, a checkpointed
+     * record re-drives with identical identity, and the keyed-sink dedup the
+     * tier already requires absorbs both. Implies {@link #checkpointAck()}.
+     */
+    void outputsAtCheckpoint(long maxDelayMs);
 
     /**
      * Declare that this Operative corrects itself when an input arrives late:

@@ -75,7 +75,8 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     private final Map<String, Integer> procedureNameToId = new LinkedHashMap<>();
     private final List<String> errors = new ArrayList<>();
     private boolean effectivelyOnce;
-    private boolean checkpointAck;
+    /** {@code null} until {@code checkpointAck()} (or an option implying it). */
+    private com.flezha.sdk.runtime.operative.CheckpointPolicy checkpoint;
     private long correctionWindowMs;
     private com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy =
             com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL;
@@ -211,8 +212,31 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
 
     @Override
     public void checkpointAck() {
+        amendCheckpoint(policy -> policy);
+    }
+
+    @Override
+    public void checkpointEvery(int inputs) {
+        amendCheckpoint(policy -> policy.withEvery(inputs));
+    }
+
+    @Override
+    public void outputsAtCheckpoint(long maxDelayMs) {
+        amendCheckpoint(policy -> policy.withOutputsAtCheckpoint(maxDelayMs));
+    }
+
+    /**
+     * Turn the checkpoint granularity on (idempotent) and amend its policy, so
+     * each option is one call that preserves the others.
+     */
+    private void amendCheckpoint(
+            java.util.function.UnaryOperator<com.flezha.sdk.runtime.operative.CheckpointPolicy>
+                    amend) {
         checkMutable();
-        this.checkpointAck = true;
+        this.checkpoint = amend.apply(
+                this.checkpoint == null
+                        ? com.flezha.sdk.runtime.operative.CheckpointPolicy.defaults()
+                        : this.checkpoint);
     }
 
     @Override
@@ -341,9 +365,15 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
             }
         }
 
-        if (checkpointAck && !effectivelyOnce) {
+        if (checkpoint != null && !effectivelyOnce) {
             errors.add(StreamOperativeConfigurationException.checkpointAckWithoutTier()
                     .getMessage());
+        }
+        if (checkpoint != null && checkpoint.every() < 0) {
+            errors.add(StreamOperativeConfigurationException.checkpointEveryZero().getMessage());
+        }
+        if (checkpoint != null && checkpoint.outputsAtCheckpoint() && checkpoint.maxDelayMs() <= 0) {
+            errors.add(StreamOperativeConfigurationException.checkpointDelayZero().getMessage());
         }
 
         for (ChannelEntry entry : channels) {
@@ -430,7 +460,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
                 procedureDescriptors,
                 Map.copyOf(procedureNameToId),
                 effectivelyOnce,
-                checkpointAck,
+                checkpoint,
                 correctionWindowMs,
                 beyondWindowPolicy);
     }

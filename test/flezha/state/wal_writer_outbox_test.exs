@@ -14,6 +14,19 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  import Flezha.State.TestHelpers,
+    only: [
+      assert_batch: 1,
+      in_one_window: 1,
+      metadata_of: 1,
+      next_output: 0,
+      next_output: 1,
+      refute_dispatched: 0,
+      refute_dispatched: 1,
+      run_batch: 1,
+      run_batch: 2
+    ]
+
   alias Flezha.Operative.ClassRegistry
 
   alias Flezha.State.{
@@ -116,12 +129,12 @@ defmodule Flezha.State.WalWriterOutboxTest do
     # between append and fsync the outputs must not reach any plugin.
     :ok = :sys.suspend(FsyncBatcher)
     :ok = WalWriter.append(pid, 0, effect_header(), body)
-    refute_receive {:"$gen_cast", {:io_out, _, _, _}}, 50
+    refute_dispatched()
     :ok = :sys.resume(FsyncBatcher)
 
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "candle-1", md1, _}}
+    assert {"candle-1", md1, _} = next_output()
     assert md1["channel"] == "out"
     assert md1["flz.entity"] == "#{rc}/proc/k1"
     assert md1["flz.seq"] == "0.0"
@@ -129,7 +142,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert md1["flz.key"] == "BTC/1m"
     assert md1["a"] == "b"
 
-    assert_receive {:"$gen_cast", {:io_out, "candle-2", md2, _}}
+    assert {"candle-2", md2, _} = next_output()
     assert md2["flz.seq"] == "0.1"
 
     # The durable consumed-offset advanced the input-log watermark.
@@ -158,7 +171,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k1", "v1")], nil))
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "v1", md, _}}
+    assert {"v1", md, _} = next_output()
     assert md["flz.key"] == "k1"
 
     refute InputLog.watermark(rc),
@@ -168,7 +181,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k2", "v2")], 4710))
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "v2", _, _}}
+    assert {"v2", _, _} = next_output()
 
     assert InputLog.watermark(rc) == 4710,
            "the checkpoint must advance the watermark to the interval's closing offset"
@@ -222,7 +235,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "payload-x")], 7))
     :ok = WalWriter.fsync(pid)
-    refute_receive {:"$gen_cast", {:io_out, _, _, _}}, 50
+    refute_dispatched()
     close_writer(pid, entity_id)
 
     assert Outbox.read(entity_id).outbox_flushed_seq == -1
@@ -233,10 +246,10 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     _ = WalWriter.last_persisted_seq(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "payload-x", md, _}}, 2_000
+    assert {"payload-x", md, _} = next_output(2_000)
     assert md["flz.seq"] == "0.0"
     assert md["flz.epoch"] == "0"
-    refute_receive {:"$gen_cast", {:io_out, _, _, _}}, 50
+    refute_dispatched()
   end
 
   test "crash after flush but before cursor write: identical re-drive", %{
@@ -247,7 +260,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "payload-y")], 1))
     :ok = WalWriter.fsync(pid)
-    assert_receive {:"$gen_cast", {:io_out, "payload-y", md_first, _}}
+    assert {"payload-y", md_first, _} = next_output()
     settle(md_first)
     :ok = WalWriter.fsync(pid)
     close_writer(pid, entity_id)
@@ -259,7 +272,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     _ = WalWriter.last_persisted_seq(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "payload-y", md_again, _}}, 2_000
+    assert {"payload-y", md_again, _} = next_output(2_000)
     assert md_again["flz.seq"] == md_first["flz.seq"]
     assert md_again["flz.epoch"] == md_first["flz.epoch"]
     assert md_again["flz.entity"] == md_first["flz.entity"]
@@ -272,11 +285,11 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "late")], 2))
     :ok = WalWriter.fsync(pid)
-    refute_receive {:"$gen_cast", {:io_out, _, _, _}}, 50
+    refute_dispatched()
 
     # Bind after the fact: the 1s retry timer picks it up.
     ClassRegistry.put_overwatch(rc, self())
-    assert_receive {:"$gen_cast", {:io_out, "late", _, _}}, 3_000
+    assert {"late", _, _} = next_output(3_000)
   end
 
   test "reopen repopulates the entity's consumed-offset watermark", %{
@@ -288,7 +301,8 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "a")], 10))
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "b")], 17))
     :ok = WalWriter.fsync(pid)
-    assert_receive {:"$gen_cast", {:io_out, "b", _, _}}
+    assert {"a", _, _} = next_output()
+    assert {"b", _, _} = next_output()
     close_writer(pid, entity_id)
 
     # Crash simulation: the rebuildable watermark cache is gone.
@@ -310,7 +324,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "p")], 3))
     :ok = WalWriter.fsync(pid)
-    assert_receive {:"$gen_cast", {:io_out, _, md, _}}
+    assert {_, md, _} = next_output()
     settle(md)
     :ok = WalWriter.fsync(pid)
 
@@ -359,7 +373,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     assert Flezha.Dlq.Store.list(rc) == []
 
     :ok = WalWriter.fsync(pid)
-    assert_receive {:"$gen_cast", {:io_out, "good", _, _}}
+    assert {"good", _, _} = next_output()
 
     assert [entry] = Flezha.Dlq.Store.list(rc)
     assert entry["channel"] == "in"
@@ -397,7 +411,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "marker")], 6))
 
     :ok = WalWriter.fsync(pid)
-    assert_receive {:"$gen_cast", {:io_out, "marker", _, _}}
+    assert {"marker", _, _} = next_output()
     assert [_entry] = Flezha.Dlq.Store.list(rc)
     close_writer(pid, entity_id)
 
@@ -410,7 +424,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     _ = WalWriter.last_persisted_seq(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "marker", _, _}}, 2_000
+    assert {"marker", _, _} = next_output(2_000)
     assert [_exactly_one] = Flezha.Dlq.Store.list(rc)
   end
 
@@ -473,7 +487,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
       assert WalWriter.last_persisted_seq(pid) == 0,
              "cut=#{cut}: torn effect record must be discarded entirely"
 
-      refute_receive {:"$gen_cast", {:io_out, _, _, _}}, 10
+      refute_dispatched(10)
       :ok = WalWriter.close(pid)
       # The writer truncated the torn tail; reset the fixture for the next cut.
       File.rm!(wal_path)
@@ -485,7 +499,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     pid = start_writer(entity_id)
     assert WalWriter.last_persisted_seq(pid) == 1
 
-    assert_receive {:"$gen_cast", {:io_out, "torn?", md, _}}, 2_000
+    assert {"torn?", md, _} = next_output(2_000)
     assert md["flz.seq"] == "1.0"
     assert InputLog.watermark(rc) == 9
     :ok = WalWriter.close(pid)
@@ -513,7 +527,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "v")], 101))
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "v", md, _}}, 2_000
+    assert {"v", md, _} = next_output(2_000)
     settle(md)
 
     assert %{out_pending_seq: 1, outbox_flushed_seq: 1, outbox_unconfirmed_ms: 0} =
@@ -558,7 +572,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "held")], 1))
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "held", md, _}}
+    assert {"held", md, _} = next_output()
 
     # A delivery-guaranteed sink takes ownership before the chain settles.
     :ok = Outbox.hold(md)
@@ -585,8 +599,8 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "second")], 2))
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "first", md_first, _}}
-    assert_receive {:"$gen_cast", {:io_out, "second", md_second, _}}
+    assert {"first", md_first, _} = next_output()
+    assert {"second", md_second, _} = next_output()
 
     for md <- [md_first, md_second] do
       :ok = Outbox.hold(md)
@@ -616,8 +630,8 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "fine")], 2))
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "doomed", md_doomed, _}}
-    assert_receive {:"$gen_cast", {:io_out, "fine", md_fine, _}}
+    assert {"doomed", md_doomed, _} = next_output()
+    assert {"fine", md_fine, _} = next_output()
 
     for md <- [md_doomed, md_fine] do
       :ok = Outbox.hold(md)
@@ -660,8 +674,8 @@ defmodule Flezha.State.WalWriterOutboxTest do
     :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "two")], 2))
     :ok = WalWriter.fsync(pid)
 
-    assert_receive {:"$gen_cast", {:io_out, "one", md_one, _}}
-    refute_receive {:"$gen_cast", {:io_out, "two", _, _}}, 100
+    assert {"one", md_one, _} = next_output()
+    refute_dispatched(100)
 
     assert %{pending: 1} = WalWriter.outbox_status(pid)
 
@@ -671,7 +685,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     # The confirmation itself refills the window — no fsync and no retry tick
     # (1 s) in between, or a burst's tail would drain one window per tick.
-    assert_receive {:"$gen_cast", {:io_out, "two", _, _}}, 500
+    assert {"two", _, _} = next_output(500)
   end
 
   test "a chain run that never reports back is re-dispatched, not wedged", %{
@@ -689,13 +703,233 @@ defmodule Flezha.State.WalWriterOutboxTest do
 
     # The Overwatch died mid-chain: the output was dispatched and nothing ever
     # settled it. The retry tick re-dispatches it with identical identity.
-    assert_receive {:"$gen_cast", {:io_out, "lost", md, _}}
-    assert_receive {:"$gen_cast", {:io_out, "lost", md_again, _}}, 3_000
+    assert {"lost", md, _} = next_output()
+    assert {"lost", md_again, _} = next_output(3_000)
     assert md_again["flz.seq"] == md["flz.seq"]
     assert md_again["flz.epoch"] == md["flz.epoch"]
 
     settle(md_again)
     :ok = WalWriter.fsync(pid)
     assert %{outbox_flushed_seq: 0} = WalWriter.outbox_status(pid)
+  end
+
+  # ---------- batched reports ----------
+
+  test "one settlement and one confirmation report complete a whole batch", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    in_one_window(fn ->
+      for seq <- 0..9 do
+        :ok =
+          WalWriter.append(
+            pid,
+            seq,
+            effect_header(),
+            effect_body([output("k", "p#{seq}")], seq + 1)
+          )
+      end
+    end)
+
+    :ok = WalWriter.fsync(pid)
+
+    outputs = assert_batch(2_000)
+    assert length(outputs) == 10, "one dispatch pass must reach the chain as one batch"
+
+    # One pass advances the watermark once, to the furthest offset it carried.
+    assert InputLog.watermark(rc) == 10
+
+    # The chain runs as the dispatcher does: every output held, the whole batch
+    # settled in ONE report. Nothing confirmed yet, so no cursor may move.
+    run_batch(outputs, fn _payload, metadata -> Outbox.hold(metadata) end)
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: -1, awaiting: 10} = WalWriter.outbox_status(pid)
+
+    # And ONE report from the sink completes all ten entries.
+    :ok = Outbox.confirm_many(Enum.map(outputs, &metadata_of/1))
+    :ok = WalWriter.fsync(pid)
+
+    assert %{outbox_flushed_seq: 9, awaiting: 0} = WalWriter.outbox_status(pid)
+    assert Outbox.read(entity_id).outbox_flushed_seq == 9
+  end
+
+  test "an out-of-order batch report cannot carry the cursor past an unconfirmed entry", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "early")], 1))
+    :ok = WalWriter.fsync(pid)
+    early = assert_batch(2_000)
+
+    :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "late")], 2))
+    :ok = WalWriter.fsync(pid)
+    late = assert_batch(2_000)
+
+    for batch <- [early, late],
+        do: run_batch(batch, fn _payload, metadata -> Outbox.hold(metadata) end)
+
+    :ok = Outbox.confirm_many(Enum.map(late, &metadata_of/1))
+    :ok = WalWriter.fsync(pid)
+
+    assert %{outbox_flushed_seq: -1} = WalWriter.outbox_status(pid),
+           "the later batch's report must not move the cursor past the earlier entry"
+
+    :ok = Outbox.confirm_many(Enum.map(early, &metadata_of/1))
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: 1, awaiting: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a crashed batch run settles none of its entries and the resettle re-drives them", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    Application.put_env(:flezha, :outbox_resettle_ms, 50)
+    on_exit(fn -> Application.delete_env(:flezha, :outbox_resettle_ms) end)
+
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    in_one_window(fn ->
+      :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "a")], 1))
+      :ok = WalWriter.append(pid, 1, effect_header(), effect_body([output("k", "b")], 2))
+    end)
+
+    :ok = WalWriter.fsync(pid)
+    outputs = assert_batch(2_000)
+    assert length(outputs) == 2
+
+    # The chain crashes partway through the batch. `run/2` reports only after
+    # the whole batch has run, so neither entry is settled and the hold the
+    # dead run took is never answered.
+    capture_log(fn ->
+      {:ok, runner} =
+        Task.start(fn ->
+          Outbox.run(outputs, fn payload, metadata ->
+            :ok = Outbox.hold(metadata)
+            if payload == "b", do: raise("chain crashed")
+          end)
+        end)
+
+      ref = Process.monitor(runner)
+      assert_receive {:DOWN, ^ref, :process, ^runner, _}, 1_000
+    end)
+
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: -1, awaiting: 2} = WalWriter.outbox_status(pid)
+
+    # The resettle re-dispatches both under identical identity.
+    redriven = assert_batch(3_000)
+
+    assert [{"a", %{"flz.seq" => "0.0"}, _}, {"b", %{"flz.seq" => "1.0"}, _}] =
+             Enum.sort_by(redriven, fn {payload, _metadata, _ack} -> payload end)
+
+    run_batch(redriven)
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: 1, awaiting: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a checkpoint record's outputs flush as one batch with sequential ordinals", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    # What an `outputs: :at_checkpoint` interval ships: ONE record carrying the
+    # whole interval's outputs and the offset of the input that closed it.
+    outputs = for n <- 0..299, do: output("k#{n}", "v#{n}")
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body(outputs, 4_711))
+    :ok = WalWriter.fsync(pid)
+
+    batch = assert_batch(2_000)
+
+    assert length(batch) == 300,
+           "the interval's outputs reach the chain as one batch, not 300 casts"
+
+    assert Enum.map(batch, fn {_payload, md, _ack} -> md["flz.seq"] end) ==
+             Enum.map(0..299, &"0.#{&1}"),
+           "identities are `<record seq>.<ordinal>`, sequential across the batch"
+
+    assert InputLog.watermark(rc) == 4_711,
+           "the closing record acknowledges the interval's last input"
+
+    # One settlement report and one confirmation complete the whole interval.
+    run_batch(batch, fn _payload, metadata -> Outbox.hold(metadata) end)
+    :ok = Outbox.confirm_many(Enum.map(batch, &metadata_of/1))
+    :ok = WalWriter.fsync(pid)
+
+    assert %{outbox_flushed_seq: 0, awaiting: 0} = WalWriter.outbox_status(pid)
+  end
+
+  test "a re-drive re-sends a checkpoint record's outputs under identical identity", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    :ok =
+      WalWriter.append(
+        pid,
+        0,
+        effect_header(),
+        effect_body([output("k", "a"), output("k", "b")], 9)
+      )
+
+    :ok = WalWriter.fsync(pid)
+
+    first = assert_batch(2_000)
+    run_batch(first)
+    close_writer(pid, entity_id)
+
+    # Crash before the cursor write: the re-drive owes the whole record again.
+    dedup = Outbox.read(entity_id)
+    :ok = Outbox.write(entity_id, %{dedup | outbox_flushed_seq: -1})
+
+    pid = start_writer(entity_id)
+    _ = WalWriter.last_persisted_seq(pid)
+
+    again = assert_batch(3_000)
+
+    assert Enum.map(again, fn {payload, md, _} -> {payload, md["flz.seq"], md["flz.epoch"]} end) ==
+             Enum.map(first, fn {payload, md, _} -> {payload, md["flz.seq"], md["flz.epoch"]} end),
+           "a re-driven record carries byte-identical identity, which is what sink dedup absorbs"
+
+    :ok = WalWriter.close(pid)
+  end
+
+  test "a batch report naming entries the writer no longer owes changes nothing", %{
+    rc: rc,
+    entity_id: entity_id
+  } do
+    ClassRegistry.put_overwatch(rc, self())
+    pid = start_writer(entity_id)
+
+    :ok = WalWriter.append(pid, 0, effect_header(), effect_body([output("k", "done")], 1))
+    :ok = WalWriter.fsync(pid)
+
+    outputs = assert_batch(2_000)
+    run_batch(outputs, fn _payload, metadata -> Outbox.hold(metadata) end)
+    :ok = Outbox.confirm_many(Enum.map(outputs, &metadata_of/1))
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: 0, awaiting: 0} = WalWriter.outbox_status(pid)
+
+    # A superseded run answering late: every key it names is gone from the
+    # ledger, so both batch reports are dropped per key and nothing moves.
+    :ok = Outbox.confirm_many(Enum.map(outputs, &metadata_of/1))
+
+    GenServer.cast(
+      pid,
+      {:outbox_settled_many, Enum.map(outputs, fn {_payload, _md, %{key: key}} -> {key, 1} end)}
+    )
+
+    :ok = WalWriter.fsync(pid)
+    assert %{outbox_flushed_seq: 0, awaiting: 0} = WalWriter.outbox_status(pid)
   end
 end

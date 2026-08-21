@@ -1453,7 +1453,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         )
 
       assert_receive {:send_called, _request, _ns}, 1_000
-      assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 7}}}, 1_000
+      assert :ok = Flezha.State.TestHelpers.assert_confirmed([{:cursor, 7}], 1_000)
     end
 
     test "a permanently failed batch parks the record instead of dropping it", %{
@@ -1484,7 +1484,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
             )
 
           # Parked, then the hold is answered so the cursor may pass the parked range.
-          assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 3}}}, 1_000
+          assert :ok = Flezha.State.TestHelpers.assert_confirmed([{:cursor, 3}], 1_000)
         end)
 
       assert log =~ "parked undeliverable output"
@@ -1529,9 +1529,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       # Every record is delivered — under `:drop_oldest` the middle one would
       # have been evicted while its cursor claimed it delivered.
-      for seq <- 0..2 do
-        assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, ^seq}}}, 2_000
-      end
+      assert :ok =
+               Flezha.State.TestHelpers.assert_confirmed(
+                 Enum.map(0..2, &{:cursor, &1}),
+                 2_000
+               )
 
       refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}, 50
     end

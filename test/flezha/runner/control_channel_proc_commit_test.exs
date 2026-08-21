@@ -18,6 +18,9 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   alias Flezha.Runner.ControlChannel
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{Outbox, ProcInbox, ProcJournal, Registry, TestHelpers, Wire}
+
+  import Flezha.State.TestHelpers, only: [next_output: 1, refute_dispatched: 1]
+
   alias FlezhaTest.Helper.DurabilityBackendStub, as: Stub
 
   @namespace "ctrl-chan-proc-commit-test"
@@ -94,7 +97,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     inst = "opc_outbox_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("outbox")
 
-    # Stand in as the bound operative: the flush casts `:io_out` at us.
+    # Stand in as the bound operative: the flush casts `:io_out_batch` at us.
     ClassRegistry.put_overwatch(inst, self())
 
     seg = Wire.encode_entity_id(inst, "ProcA", "s0")
@@ -115,8 +118,8 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
              decode_reply(reply).command
 
-    assert_receive {:"$gen_cast", {:io_out, "one", meta_one, _}}, 1_000
-    assert_receive {:"$gen_cast", {:io_out, "two", meta_two, _}}, 1_000
+    assert {"one", meta_one, _} = next_output(1_000)
+    assert {"two", meta_two, _} = next_output(1_000)
     assert meta_one["flz.entity"] == "#{inst}/ProcA/s0"
     assert meta_one["flz.seq"] == "0.0"
     assert meta_one["flz.epoch"] == "0"
@@ -226,7 +229,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     assert {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: ""}} =
              decode_reply(reply).command
 
-    assert_receive {:"$gen_cast", {:io_out, "undo", meta, _}}, 1_000
+    assert {"undo", meta, _} = next_output(1_000)
     # The comp marker keeps the undo key off the forward output it reverses.
     assert meta["flz.seq"] == "2.0.1"
 
@@ -263,7 +266,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
 
     assert error =~ "oversized_handoff"
     # Nothing durable ⇒ nothing delivered.
-    refute_receive {:"$gen_cast", {:io_out, _, _, _}}, 300
+    refute_dispatched(300)
     assert {:ok, []} = ProcJournal.read(inst)
   end
 

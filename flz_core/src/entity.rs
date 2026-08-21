@@ -86,6 +86,12 @@ pub fn make_entity_payload(
 pub enum EntityItem {
     Input(EntityPayload),
     Timer(crate::timer::TimerFire),
+    /// An open checkpoint interval has reached its `max_delay_ms` and must
+    /// close. It rides the mailbox rather than firing on the wake list's
+    /// thread so the close is serialized with the Entity's own invocations —
+    /// and it runs NO author code: the interval's accumulation is already
+    /// computed, the close only ships it.
+    CloseInterval,
 }
 
 pub type EntityMailbox = Arc<Mailbox<EntityItem>>;
@@ -406,6 +412,30 @@ pub trait ProcedureDispatcher: Send + Sync + 'static {
     /// ([`crate::poll_core::PollCore::host_command`]) instead of the
     /// in-process calls the typed methods below implement.
     fn host_facts(&self) -> Option<&crate::host::HostProcedureFacts> {
+        None
+    }
+
+    /// Close an open checkpoint interval whose `max_delay_ms` has elapsed,
+    /// shipping its accumulation as the record it owes. Runs NO author code:
+    /// the accumulation is already computed, and the close only decides that
+    /// it ships now instead of waiting for an input that may never come.
+    ///
+    /// `false` when there was no open interval — an input closed it between
+    /// the wake being armed and its promotion, which is the common case on a
+    /// busy Entity.
+    fn close_interval(&self, flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>) -> bool {
+        let _ = flush_buffer;
+        false
+    }
+
+    /// When this Entity's open checkpoint interval must close by, for the
+    /// caller to arm the deferred wake against. `None` when nothing is open
+    /// or the class declared no delay.
+    fn interval_deadline(
+        &self,
+        flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
+    ) -> Option<u64> {
+        let _ = flush_buffer;
         None
     }
 

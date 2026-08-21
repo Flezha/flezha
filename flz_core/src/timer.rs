@@ -416,6 +416,22 @@ pub fn apply_ops(slot: &Arc<EntitySlot>, ops: &[TimerOp], stream: &Arc<FlezhaStr
     }
 }
 
+/// Arm the deferred wake that closes an Entity's open checkpoint interval when
+/// its `max_delay_ms` elapses — what makes a quiet Entity's held outputs leave
+/// within the declared delay instead of waiting for an input that never comes.
+///
+/// A close leaves its spent entry armed rather than tracking the previous
+/// deadline to remove: it comes due, finds no open interval, and does nothing.
+pub fn arm_interval_deadline(slot: &Arc<EntitySlot>) {
+    let deadline = {
+        let mut buffer = slot.flush_buffer.lock_recover();
+        slot.dispatcher.interval_deadline(&mut buffer)
+    };
+    if let Some(at) = deadline {
+        crate::poll_core::global().arm_interval_close(slot, at);
+    }
+}
+
 /// Re-arm a restored Entity's processing-time timers. The pending set came back
 /// through the change-log fold; anything already past its deadline fires on the
 /// next promotion, in ascending order. Event-time timers need nothing — the

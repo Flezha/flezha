@@ -19,6 +19,12 @@ All commands are run from the **project root** unless stated otherwise.
 
 ## 1. Environment variables
 
+> The deploy-time variables are below. For the **complete** inventory — every
+> environment variable, every `:flezha` application-env key, the per-operative
+> SDK declarations, and the per-plugin options, each with its default and the
+> file that reads it — see
+> [`docs/configuration.md`](configuration.md).
+
 Copy the example file before first use:
 
 ```bash

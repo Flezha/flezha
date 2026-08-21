@@ -9,9 +9,7 @@ granularity coherently: the offset would advance with state they never published
 and a restore would resume past inputs the restored state never saw. This
 capability is the opt-in that moves the acknowledgement to where such an
 operative's state actually becomes kernel-visible — the checkpoint.
-
 ## Requirements
-
 ### Requirement: Checkpoint ack-granularity is a per-operative opt-in on the effectively-once tier
 
 An operative with the effectively-once tier enabled SHALL be able to opt into
@@ -67,11 +65,22 @@ record exists to carry the offset.
 
 ### Requirement: Mid-interval outputs flush when they are produced
 
-An emit made before the interval closes SHALL be flushed by the controller as
-soon as its record is fsynced, in a record carrying NO consumed-offset.
-Checkpointing moves the acknowledgement, not the output. An interval's outputs
-are therefore emitted again when the interval replays, and the keyed-sink dedup
-the tier already requires SHALL absorb them.
+By default an emit made before the interval closes SHALL be flushed by the
+controller as soon as its record is fsynced, in a record carrying NO
+consumed-offset. Checkpointing moves the acknowledgement, not the output. An
+interval's outputs are therefore emitted again when the interval replays, and
+the keyed-sink dedup the tier already requires SHALL absorb them.
+
+A checkpoint-ack operative MAY declare `outputs: :at_checkpoint` with a
+`max_delay_ms`: its mid-interval outputs SHALL then ride the interval's
+checkpoint record and be flushed as one batch after that record is fsynced,
+and the interval SHALL close after `every` inputs or `max_delay_ms` since its
+first un-checkpointed input, whichever comes first, so a quiet Entity never
+holds an output longer than `max_delay_ms`. Replay semantics SHALL be
+unchanged by the option: outputs of an interval that did not checkpoint are
+re-produced when the interval replays, outputs of a checkpointed record are
+re-driven with identical identity from the cursor, and a conforming keyed sink
+absorbs both.
 
 #### Scenario: An emit does not wait for the checkpoint
 
@@ -79,6 +88,28 @@ the tier already requires SHALL absorb them.
   checkpoint
 - **THEN** the output is flushed to the plugin after its record is fsynced, and
   the Entity's durable consumed-offset is unchanged
+
+#### Scenario: Batched outputs flush with the checkpoint record
+
+- **WHEN** an operative declared `outputs: :at_checkpoint` emits 300 outputs
+  across an interval of 500 inputs
+- **THEN** no output reaches a plugin before the checkpoint, and after the
+  checkpoint record is fsynced all 300 are handed to the chain as one batch
+  with identities `<record seq>.0` … `<record seq>.299`
+
+#### Scenario: A quiet Entity's outputs flush within the delay
+
+- **WHEN** an `outputs: :at_checkpoint` Entity with `max_delay_ms: 50` emits
+  once and receives no further input
+- **THEN** its interval closes within 50 ms and the output is flushed, with the
+  consumed-offset acknowledged at that close
+
+#### Scenario: A crash before the checkpoint loses nothing and duplicates nothing durable
+
+- **WHEN** an `outputs: :at_checkpoint` Entity crashes after emitting but
+  before its interval checkpoints
+- **THEN** no output of that interval reached a plugin, the interval replays
+  from the checkpointed offset, and the re-produced outputs reach the sink once
 
 ### Requirement: A dead-letter park closes the interval
 
@@ -144,3 +175,4 @@ interval. Silence between checkpoints is the mode's steady state.
 - **WHEN** a checkpoint-mode operative that has produced output before makes
   nothing durable for longer than the dataflow-stop timeout
 - **THEN** no `catastrophic_dataflow_stop` is reported for it
+

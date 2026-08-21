@@ -52,6 +52,11 @@ class HostClassDeclarationTest {
         assertThat(decl.get("change_format_id").asInt()).isEqualTo(4);
         assertThat(decl.get("effectively_once").asBoolean()).isTrue();
         assertThat(decl.get("ack_granularity").asText()).isEqualTo("checkpoint");
+        assertThat(decl.has("checkpoint_every"))
+                .as("a bare checkpointAck() declares no interval options")
+                .isFalse();
+        assertThat(decl.has("checkpoint_outputs")).isFalse();
+        assertThat(decl.has("checkpoint_max_delay_ms")).isFalse();
         assertThat(decl.has("correction_window_ms")).isFalse();
         assertThat(decl.has("persistent"))
                 .as("every procedure declares NoChange")
@@ -67,7 +72,9 @@ class HostClassDeclarationTest {
         assertThat(channels.get(1).get("kind").asText()).isEqualTo("plugin");
         assertThat(channels.get(1).get("producer").asInt()).isEqualTo(0);
         assertThat(channels.get(1).get("keyed").asBoolean()).isTrue();
-        assertThat(channels.get(0).get("overflow").asText()).isEqualTo("drop_newest");
+        assertThat(channels.get(0).get("overflow").asText())
+                .as("nothing drops by default: an entry channel blocks")
+                .isEqualTo("block");
 
         JsonNode procedures = decl.get("procedures");
         assertThat(procedures).hasSize(1);
@@ -124,6 +131,62 @@ class HostClassDeclarationTest {
         assertThatThrownBy(() -> HostClassDeclaration.forFactory("missing"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("missing");
+    }
+
+    @Test
+    @DisplayName("the checkpoint interval options ride the declaration only when declared")
+    void checkpointIntervalOptions() throws Exception {
+        StreamOperativeClassRegistry.registerClass(BatchedOutputsOperative.class);
+        StreamOperativeTopology topology =
+                StreamOperativeClassRegistry.getTopology("decl_batched_op");
+        JsonNode decl = JSON.readTree(HostClassDeclaration.forStream(topology));
+
+        assertThat(decl.get("ack_granularity").asText()).isEqualTo("checkpoint");
+        assertThat(decl.get("checkpoint_every").asInt()).isEqualTo(500);
+        assertThat(decl.get("checkpoint_outputs").asText()).isEqualTo("at_checkpoint");
+        assertThat(decl.get("checkpoint_max_delay_ms").asLong()).isEqualTo(50L);
+    }
+
+    @Test
+    @DisplayName("an interval option without the tier is refused, naming the missing tier")
+    void checkpointOptionsWithoutTier() {
+        assertThatThrownBy(
+                        () -> StreamOperativeClassRegistry.registerClass(NoTierBatchedOperative.class))
+                .hasMessageContaining("CheckpointAckWithoutTier");
+    }
+
+    public static final class BatchedOutputsOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "decl_batched_op";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.effectivelyOnce();
+            c.checkpointEvery(500);
+            c.outputsAtCheckpoint(50);
+            c.input(String.class, "in")
+                    .into(DeclProc.class)
+                    .keyed()
+                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    public static final class NoTierBatchedOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "decl_no_tier_batched_op";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.outputsAtCheckpoint(50);
+            c.input(String.class, "in")
+                    .into(DeclProc.class)
+                    .keyed()
+                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     public static final class TierOperative implements StreamOperative {

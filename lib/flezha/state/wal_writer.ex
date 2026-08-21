@@ -670,10 +670,16 @@ defmodule Flezha.State.WalWriter do
     do: {:noreply, tally(state, key, &%{&1 | holds: &1.holds + 1})}
 
   def handle_cast({:outbox_settled, key, holds}, state),
-    do: {:noreply, tally(state, key, &%{&1 | pending: &1.pending - 1, holds: &1.holds + holds})}
+    do: {:noreply, settled(state, {key, holds})}
+
+  def handle_cast({:outbox_settled_many, entries}, state),
+    do: {:noreply, Enum.reduce(entries, state, &settled(&2, &1))}
 
   def handle_cast({:outbox_confirmed, key}, state),
-    do: {:noreply, tally(state, key, &%{&1 | confirms: &1.confirms + 1})}
+    do: {:noreply, confirmed(state, key)}
+
+  def handle_cast({:outbox_confirmed_many, keys}, state),
+    do: {:noreply, Enum.reduce(keys, state, &confirmed(&2, &1))}
 
   defp do_append_async(seq, header, change_bytes, runner_id, state, credit_opts) do
     case handle_call({:append, seq, header, change_bytes, runner_id}, nil, state) do
@@ -882,31 +888,49 @@ defmodule Flezha.State.WalWriter do
           {rc, _sh, _pk} = state.entity_id
 
           case ClassRegistry.overwatch_pid(rc) do
-            {:ok, pid} -> dispatch_outbox_entries(state, pid)
+            {:ok, pid} -> dispatch_outbox_window(state, pid)
             :error -> schedule_outbox_retry(state)
           end
         end
     end
   end
 
+  # One window, one batch: every entry the window admits reaches the chain in one
+  # cast, and the furthest consumed-offset the window carried advances the
+  # watermark once. Every entry is registered before the cast leaves, so no
+  # report can name an entry that does not exist yet.
+  defp dispatch_outbox_window(state, pid) do
+    {state, chunks, consumed} = take_outbox_window(state, [], -1)
+
+    Outbox.dispatch(pid, in_dispatch_order(chunks))
+    advance_consumed(state, consumed)
+
+    state
+  end
+
+  # Each entry contributed its outputs as one chunk, newest first.
+  defp in_dispatch_order(chunks), do: chunks |> Enum.reverse() |> Enum.concat()
+
   # Back-pressure, not loss: with the confirmation window full the durable
   # entries simply stay queued (and on disk) until a sink answers. Ingest and
   # the effect-record fsync never wait on this.
-  defp dispatch_outbox_entries(state, pid) do
+  defp take_outbox_window(state, chunks, consumed) do
     case :queue.out(state.pending_outbox) do
       {{:value, %{seq: seq} = entry}, rest} when seq <= state.outbox_durable_seq ->
         if window_full?(state) do
-          state
+          {state, chunks, consumed}
         else
-          key = {:cursor, entry.seq}
+          key = {:cursor, seq}
+          outputs = entry_outputs(state, key, entry)
+          state = await_entry(%{state | pending_outbox: rest}, key, entry, length(outputs))
 
-          %{state | pending_outbox: rest}
-          |> await_entry(key, entry, dispatch_one_effect(state, pid, key, entry))
-          |> dispatch_outbox_entries(pid)
+          apply_effect(state, entry)
+
+          take_outbox_window(state, [outputs | chunks], furthest_consumed(consumed, entry))
         end
 
       _ ->
-        state
+        {state, chunks, consumed}
     end
   end
 
@@ -916,24 +940,21 @@ defmodule Flezha.State.WalWriter do
   defp window_full?(state),
     do: map_size(state.outbox_awaiting) >= state.outbox_inflight_max
 
-  # Answers how many outputs the entry handed to the chain — what the entry's
-  # tally waits on before the cursor may pass it.
-  defp dispatch_one_effect(state, pid, key, entry) do
-    outputs = dispatch_outputs(state, pid, key, entry)
-    apply_effect(state, entry)
-    outputs
-  end
+  # The stamped outputs alone — what a re-dispatch owes, and how many the
+  # entry's tally waits on before the cursor may pass it.
+  defp entry_outputs(state, key, entry) do
+    # The token names the entry, and a stream Entity's writer owns its own
+    # output — so one token covers every output of the entry.
+    ack = Outbox.token(state.entity_id, key)
 
-  # The outputs alone — what a re-dispatch owes. Answers how many the entry's
-  # tally waits on before the cursor may pass it.
-  defp dispatch_outputs(state, pid, key, entry) do
     entry.outputs
     |> Enum.with_index()
-    |> Enum.each(fn {output, ordinal} ->
-      Outbox.dispatch(pid, output.payload, %{
+    |> Enum.map(fn {output, ordinal} ->
+      Outbox.stamp(output.payload, %{
         owner: state.entity_id,
         entry: key,
         entity: state.entity_id,
+        ack: ack,
         seq: "#{entry.seq}.#{ordinal}",
         epoch: state.outbox_epoch,
         channel: output.channel,
@@ -941,8 +962,23 @@ defmodule Flezha.State.WalWriter do
         metadata: output.metadata
       })
     end)
+  end
 
-    length(entry.outputs)
+  # Consumed-offsets only move forward, so the window's furthest offset is the
+  # same watermark every entry's own advance would have reached — at one ETS
+  # write and one credit recompute instead of one per record.
+  defp furthest_consumed(consumed, %{consumed_offset: offset}) when is_integer(offset),
+    do: max(consumed, offset)
+
+  defp furthest_consumed(consumed, _entry), do: consumed
+
+  # -1 is the window that acknowledged nothing: mid-interval records carry no
+  # offset, and a whole window of them must not touch the watermark.
+  defp advance_consumed(_state, -1), do: :ok
+
+  defp advance_consumed(state, offset) do
+    {rc, _sh, _pk} = state.entity_id
+    InputLog.record_consumed(rc, state.entity_id, offset)
   end
 
   # The durable side effects the record carries beyond its outputs. They belong
@@ -951,7 +987,7 @@ defmodule Flezha.State.WalWriter do
   defp apply_effect(state, entry) do
     {rc, sh, pk} = state.entity_id
 
-    # Materialize a dead-letter park BEFORE the consumed-offset advance:
+    # Materialize a dead-letter park BEFORE the pass's consumed-offset advance:
     # the watermark move can truncate the poison input out of the
     # input-log, so the DLQ store entry must be durable first (synchronous
     # — the append is fsynced and idempotent, so a boot re-drive of the
@@ -973,11 +1009,6 @@ defmodule Flezha.State.WalWriter do
             attempts: dlq.attempts,
             payload: dlq.payload
           })
-    end
-
-    # Durable consumed-offset: advances the input-log min-watermark.
-    if is_integer(entry.consumed_offset) do
-      InputLog.record_consumed(rc, state.entity_id, entry.consumed_offset)
     end
 
     # An integer offset on a checkpoint-ack class means an interval just closed:
@@ -1019,6 +1050,13 @@ defmodule Flezha.State.WalWriter do
     |> schedule_outbox_retry()
   end
 
+  # A batch report carries the same per-entry facts as the single-key reports
+  # it replaces, so both shapes fold through the one tally.
+  defp settled(state, {key, holds}),
+    do: tally(state, key, &%{&1 | pending: &1.pending - 1, holds: &1.holds + holds})
+
+  defp confirmed(state, key), do: tally(state, key, &%{&1 | confirms: &1.confirms + 1})
+
   defp tally(state, key, fun) do
     case Map.fetch(state.outbox_awaiting, key) do
       # A report for an entry that is gone (a resettle superseded it) or already
@@ -1057,11 +1095,19 @@ defmodule Flezha.State.WalWriter do
   # dropping the tally is what lets the next journal-driven flush re-drive them.
   defp resettle_outbox(state) do
     if resettle_due?(state) do
-      Enum.reduce(state.outbox_awaiting, state, fn {key, tally}, acc ->
-        if tally.pending > 0 and now_ms() - tally.at >= acc.outbox_resettle_ms,
-          do: resettle_entry(acc, key, tally),
-          else: acc
-      end)
+      {rc, _sh, _pk} = state.entity_id
+      overwatch = ClassRegistry.overwatch_pid(rc)
+
+      {state, chunks} =
+        Enum.reduce(state.outbox_awaiting, {state, []}, fn {key, tally}, {acc, chunks} ->
+          if tally.pending > 0 and now_ms() - tally.at >= acc.outbox_resettle_ms,
+            do: resettle_entry(overwatch, acc, chunks, key, tally),
+            else: {acc, chunks}
+        end)
+
+      with {:ok, pid} <- overwatch, do: Outbox.dispatch(pid, in_dispatch_order(chunks))
+
+      state
     else
       state
     end
@@ -1076,17 +1122,19 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
-  defp resettle_entry(state, key, %{entry: entry}) when entry != nil do
-    {rc, _sh, _pk} = state.entity_id
-
-    case ClassRegistry.overwatch_pid(rc) do
-      {:ok, pid} -> register_entry(state, key, dispatch_outputs(state, pid, key, entry), entry)
-      :error -> state
-    end
+  defp resettle_entry({:ok, _pid}, state, chunks, key, %{entry: entry}) when entry != nil do
+    outputs = entry_outputs(state, key, entry)
+    {register_entry(state, key, length(outputs), entry), [outputs | chunks]}
   end
 
-  defp resettle_entry(state, key, _tally),
-    do: %{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}
+  # Nothing to re-dispatch to: the entry stays owed with its tally untouched, so
+  # the next tick tries again instead of restarting the clock against a chain
+  # that cannot run.
+  defp resettle_entry(:error, state, chunks, _key, %{entry: entry}) when entry != nil,
+    do: {state, chunks}
+
+  defp resettle_entry(_overwatch, state, chunks, key, _tally),
+    do: {%{state | outbox_awaiting: Map.delete(state.outbox_awaiting, key)}, chunks}
 
   # The entry stays registered until its marker is durable: a journal-driven
   # re-flush reads the journal, so dropping it any sooner would let the entry be

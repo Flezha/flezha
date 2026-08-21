@@ -118,14 +118,62 @@ pub enum AckGranularity {
     /// state is kernel-visible after every input.
     #[default]
     PerInput,
-    /// The consumed-offset advances only at an explicit `ctx.checkpoint()`.
-    /// Changes applied in between are held in the Entity's flush buffer and
-    /// ship — with the offset of the input that closed the interval — as one
-    /// fsynced record, so the state a restore sees and the offset it resumes
-    /// from can never tear. The interval's inputs are re-forwarded from the
-    /// input log on recovery and its outputs re-emitted; both are absorbed by
-    /// the keyed-sink dedup the tier already requires.
-    Checkpoint,
+    /// The consumed-offset advances only when the interval closes. Changes
+    /// applied in between are held in the Entity's flush buffer and ship —
+    /// with the offset of the input that closed the interval — as one fsynced
+    /// record, so the state a restore sees and the offset it resumes from can
+    /// never tear. The interval's inputs are re-forwarded from the input log
+    /// on recovery and its outputs re-emitted; both are absorbed by the
+    /// keyed-sink dedup the tier already requires.
+    Checkpoint(CheckpointPolicy),
+}
+
+impl AckGranularity {
+    /// The checkpoint policy, or `None` under the per-input default.
+    pub fn checkpoint(self) -> Option<CheckpointPolicy> {
+        match self {
+            AckGranularity::PerInput => None,
+            AckGranularity::Checkpoint(policy) => Some(policy),
+        }
+    }
+
+    /// Whether the consumed-offset waits for an interval to close.
+    pub fn is_checkpoint(self) -> bool {
+        self.checkpoint().is_some()
+    }
+}
+
+/// How a checkpoint-ack operative closes its interval, and what the open
+/// interval does with the outputs its invocations produce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CheckpointPolicy {
+    /// Close the interval once this many inputs have folded into it. `None`
+    /// — the default — leaves `ctx.checkpoint()` its only closer.
+    pub every: Option<u32>,
+    /// What the open interval does with its outputs.
+    pub outputs: CheckpointOutputs,
+    /// Close the interval this long after the input that opened it, so a
+    /// quiet Entity never holds an output indefinitely. Always set under
+    /// [`CheckpointOutputs::AtCheckpoint`] — the surface that selects it
+    /// takes the delay, so an unbounded hold cannot be declared.
+    pub max_delay_ms: Option<u64>,
+}
+
+/// What an open checkpoint interval does with the outputs its invocations
+/// produce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CheckpointOutputs {
+    /// Flushed as they are produced, each in a record carrying no
+    /// consumed-offset: checkpointing moves the acknowledgement, not the
+    /// output. The default, and byte-identical to the mode before the option
+    /// existed.
+    #[default]
+    AsProduced,
+    /// Held with the interval's changes and shipped inside its checkpoint
+    /// record, which the controller flushes as one batch after that record's
+    /// fsync — one WAL append per interval instead of one per invocation, at
+    /// the cost of up to `max_delay_ms` of output latency.
+    AtCheckpoint,
 }
 
 /// What an operative does about an input that arrives behind its Entity's

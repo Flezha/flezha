@@ -466,13 +466,13 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, state}
   end
 
-  # A durable outbox flush: the chain run settles the entry it was dispatched
-  # under, carrying the holds its sinks took — so an output no
-  # delivery-guaranteed sink took is complete the moment the chain has had it,
-  # filtered included.
+  # A durable outbox flush: one dispatch pass's whole batch. Each output's chain
+  # run settles the entry it was dispatched under, carrying the holds its sinks
+  # took — so an output no delivery-guaranteed sink took is complete the moment
+  # the chain has had it, filtered included.
   @impl true
-  def handle_cast({:io_out, message, metadata, ack}, state) do
-    Flezha.State.Outbox.run(ack, metadata, fn ->
+  def handle_cast({:io_out_batch, outputs}, state) do
+    Flezha.State.Outbox.run(outputs, fn message, metadata ->
       Plugins.transform_io(state, :on_output, message, metadata)
     end)
 

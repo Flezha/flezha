@@ -143,10 +143,12 @@ stops draining until the entry is re-driven.
 A record carrying `flz.ack` is held by the producer on behalf of the
 controller's outbox cursor. The worker answers that hold at its existing
 per-batch completion point: an acked batch **confirms** every guaranteed record
-it carried, and a batch that exhausts its retry budget **parks** them through
-the dead-letter store with their own `(entity, seq, epoch)` identity, so the
-cursor advances past a recorded, replayable loss rather than a silent one.
-Records without the token belong to a plain chain and confirm nothing.
+it carried in ONE report to each owning writer (`Outbox.confirm_many/1`), and a
+batch that exhausts its retry budget **parks** them through the dead-letter
+store with their own `(entity, seq, epoch)` identity — one park per record,
+since a park carries the payload — so the cursor advances past a recorded,
+replayable loss rather than a silent one. Records without the token belong to a
+plain chain and confirm nothing.
 
 ## Chain dispatch is non-blocking
 

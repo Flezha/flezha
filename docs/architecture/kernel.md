@@ -177,6 +177,22 @@ unconfirmed is capped (`:outbox_inflight_max`, default 1000) — the flush waits
 not. Every completed confirmation refills that window, so a burst drains at the sink's rate
 rather than one window per retry tick.
 
+The reports are batched, never the facts. One dispatch pass hands its whole window to the
+chain as one cast, settles it with one report carrying each entry's holds, and advances the
+input-log watermark once to the furthest consumed-offset the pass carried; a sink confirms a
+completed batch with one report naming every entry it completed. Per-entry completion, the
+leading-run cursor advance, and the dropping of a report for an entry a resettle superseded
+are all exactly as they are for single-record reports — a batch is the same facts delivered
+at once, which is what takes the per-output message count off the hot path.
+
+A checkpoint-ack operative may go one step further and batch the *records* too:
+`outputs_at_checkpoint(max_delay_ms)` holds an interval's outputs with its changes so the
+whole interval is one WAL append, which the controller flushes as one dispatch batch after
+that record's fsync. That trades output latency for the append — bounded by `max_delay_ms`,
+which closes the interval even on an Entity that receives nothing more. It is off unless
+declared, because it changes a user-visible property (when an emit becomes visible
+downstream) rather than only how many messages carry it.
+
 ## Snapshots, compaction, and restore
 
 An entity's WAL is a change log. Left alone it grows forever, so the controller periodically
