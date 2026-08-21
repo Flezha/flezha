@@ -8,9 +8,11 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   `KafkaEx.Client` (Kayrock-based) shared worker pid acquired from
   `Flezha.Plugin.Provider.Kafka.WorkerRegistry`.
 
-  All side-effects (broker I/O, metadata refreshes, topic creation) run in
-  short-lived spawned processes so the GenServer mailbox stays drainable
-  during in-flight batches and retry sleeps.
+  Up to `:max_in_flight` Produce requests are outstanding per partition at a
+  time: the worker sends them itself through the client's asynchronous API and
+  reads the outcomes off its own mailbox. Metadata refreshes and topic creation
+  are synchronous client calls and still run in short-lived spawned processes
+  so the mailbox stays drainable.
   """
 
   use GenServer
@@ -33,7 +35,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     :not_enough_replicas_after_append,
     :replica_not_available,
     :leader_not_available,
-    :broker_not_available
+    :broker_not_available,
+    :closed,
+    :correlation_mismatch
   ]
 
   @permanent [
@@ -67,7 +71,14 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   # emit only one batch per input burst. Recreate is throttled by
   # `@force_replace_throttle_ms` so a genuinely-down broker is not recreated on
   # every batch.
-  @client_wedged [:no_broker, :broker_not_available, :network_exception, :leader_not_available]
+  @client_wedged [
+    :no_broker,
+    :broker_not_available,
+    :network_exception,
+    :leader_not_available,
+    :closed,
+    :correlation_mismatch
+  ]
   @force_replace_throttle_ms 2_000
 
   @spec via(binary(), binary(), non_neg_integer()) :: {:via, Registry, term()}
@@ -199,6 +210,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       required_acks: Keyword.get(opts, :required_acks, -1),
       request_timeout_ms: Keyword.get(opts, :request_timeout_ms, 10_000),
       idempotent: Keyword.get(opts, :idempotent, false),
+      max_in_flight: Keyword.get(opts, :max_in_flight, 1),
       auto_create_topic: Keyword.get(opts, :auto_create_topic, true),
       auto_create_partitions: Keyword.get(opts, :auto_create_partitions, 1),
       auto_create_replication_factor: Keyword.get(opts, :auto_create_replication_factor, 2),
@@ -218,9 +230,9 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       queue_size: 0,
       queue_bytes: 0,
       linger_timer: nil,
-      in_flight: nil,
+      # Batches outstanding on the wire, oldest first.
+      in_flight: [],
       retry_timer: nil,
-      dispatch_timer: nil,
       blocked: :queue.new(),
       last_error: nil,
       consecutive_failures: 0,
@@ -248,11 +260,13 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
       {:error, reason} ->
         Logger.warning(
-          "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+          "#{tag(state)} " <>
             "InitProducerId failed: #{inspect(reason)} — running in non-idempotent mode"
         )
 
-        state = %{state | idempotent: false, last_error: reason}
+        # Without a producer session nothing keeps a retry inside a window in
+        # order, so the fallback narrows it to one as well.
+        state = %{state | idempotent: false, max_in_flight: 1, last_error: reason}
         {:noreply, emit_pending_swap_telemetry(state) |> maybe_kick_batch()}
     end
   end
@@ -288,7 +302,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   def handle_cast(:refresh_broker, state) do
     Logger.info(
-      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+      "#{tag(state)} " <>
         "convergence requested broker refresh; forcing fresh connection"
     )
 
@@ -311,75 +325,48 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     {:noreply, maybe_send_batch(%{state | linger_timer: nil})}
   end
 
-  def handle_info({:batch_result, batch_ref, result, attempt_no}, state) do
-    case state.in_flight do
-      %{ref: ^batch_ref} = batch ->
-        state = cancel_dispatch_timer(state)
-        {:noreply, handle_batch_result(state, batch, attempt_no, result)}
-
-      _ ->
-        {:noreply, state}
-    end
+  # A response for a dispatch the window no longer owns (a resend already went
+  # out, or the batch was rewound) is ignored — the same rule as the fresh
+  # handle per dispatch it rests on.
+  def handle_info({:kafka_ex_response, ref, result}, state) do
+    {:noreply, with_dispatch(state, ref, &handle_batch_result(&1, &2, result))}
   end
 
-  def handle_info({:dispatch_timeout, batch_ref}, state) do
-    case state.in_flight do
-      %{ref: ^batch_ref} = batch ->
-        # The send neither returned nor crashed in time (e.g. the shared client
-        # is wedged on a dead socket after a broker restart). Treat the stranded
-        # dispatch as a retriable failure so the batch advances toward
-        # fail_batch / broker refresh instead of stalling the worker forever.
-        state = %{state | dispatch_timer: nil}
-        {:noreply, handle_batch_result(state, batch, batch.attempt, {:error, :dispatch_timeout})}
-
-      _ ->
-        {:noreply, state}
-    end
+  # The send neither returned nor crashed in time (e.g. the shared client is
+  # wedged on a dead socket after a broker restart). Treat the stranded dispatch
+  # as a retriable failure so the batch advances toward fail_batch / broker
+  # refresh instead of stalling the worker forever.
+  def handle_info({:dispatch_timeout, ref}, state) do
+    {:noreply,
+     with_dispatch(state, ref, &handle_batch_result(&1, &2, {:error, :dispatch_timeout}))}
   end
 
-  def handle_info({:retry_batch, batch_ref}, state) do
+  def handle_info({:retry_window, batch_id}, state) do
     state = %{state | retry_timer: nil}
 
-    case state.in_flight do
-      %{ref: ^batch_ref} = batch ->
-        {:noreply, do_send(state, batch, batch.attempt)}
-
-      _ ->
-        {:noreply, state}
+    if Enum.any?(state.in_flight, &(&1.id == batch_id and &1.status == :pending)) do
+      {:noreply, resend_window(state)}
+    else
+      {:noreply, state}
     end
   end
 
-  def handle_info({:topic_create_result, batch_ref, result}, state) do
-    case state.in_flight do
-      %{ref: ^batch_ref} = batch ->
-        {:noreply, handle_topic_create_result(state, batch, result)}
-
-      _ ->
-        {:noreply, state}
-    end
+  def handle_info({:topic_create_result, batch_id, result}, state) do
+    {:noreply, with_batch(state, batch_id, &handle_topic_create_result(&1, &2, result))}
   end
 
-  def handle_info({:metadata_refresh_done, batch_ref, latency_ms, error}, state) do
-    Telemetry.metadata_refresh(latency_ms, %{
-      trigger: :error_recovery,
-      error: error,
-      plugin_id: state.plugin_id,
-      topic: state.topic,
-      partition: state.partition
-    })
+  def handle_info({:metadata_refresh_done, batch_id, latency_ms, error}, state) do
+    Telemetry.metadata_refresh(
+      latency_ms,
+      Map.merge(partition_meta(state), %{trigger: :error_recovery, error: error})
+    )
 
-    case state.in_flight do
-      %{ref: ^batch_ref} = batch ->
-        {:noreply, schedule_retry(state, batch)}
-
-      _ ->
-        {:noreply, state}
-    end
+    {:noreply, with_batch(state, batch_id, &resume_owed/2)}
   end
 
   def handle_info({:kafka_worker_dead, ref, reason}, %{registry_ref: ref} = state) do
     Logger.warning(
-      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+      "#{tag(state)} " <>
         "worker pid #{inspect(state.worker_pid)} died (reason=#{inspect(reason)}); initiating swap"
     )
 
@@ -403,14 +390,12 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
                 in_flight_records: in_flight_count,
                 queue_bytes: state.queue_bytes
               },
-              metadata: %{
-                plugin_id: state.plugin_id,
-                topic: state.topic,
-                partition: state.partition,
-                reason: reason,
-                producer_id_before: state.producer_id,
-                old_worker_pid: state.worker_pid
-              }
+              metadata:
+                Map.merge(partition_meta(state), %{
+                  reason: reason,
+                  producer_id_before: state.producer_id,
+                  old_worker_pid: state.worker_pid
+                })
             }
     }
 
@@ -419,7 +404,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   def handle_info({:kafka_worker_dead, _ref, _reason}, state) do
     Logger.debug(
-      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+      "#{tag(state)} " <>
         "stale {:kafka_worker_dead, ...} for old registry_ref; ignoring"
     )
 
@@ -435,7 +420,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   def handle_info({:EXIT, _pid, _reason}, state) do
     Logger.debug(
-      "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+      "#{tag(state)} " <>
         "received unhandled :EXIT; swap is driven by {:kafka_worker_dead, ...} — ignoring"
     )
 
@@ -502,21 +487,21 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
     if guaranteed? do
       Logger.error(
-        "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+        "#{tag(state)} " <>
           "dropped a delivery-guaranteed record under :queue_overflow = #{strategy}; " <>
           "its outbox cursor will not advance until the entry is re-driven"
       )
     end
 
-    Telemetry.dropped(1, %{
-      plugin_id: state.plugin_id,
-      topic: state.topic,
-      partition: state.partition,
-      queue_depth: state.queue_size,
-      overflow_strategy: strategy,
-      guaranteed: guaranteed?,
-      reason: :overflow
-    })
+    Telemetry.dropped(
+      1,
+      Map.merge(partition_meta(state), %{
+        queue_depth: state.queue_size,
+        overflow_strategy: strategy,
+        guaranteed: guaranteed?,
+        reason: :overflow
+      })
+    )
 
     %{state | dropped_total: state.dropped_total + 1}
   end
@@ -565,16 +550,19 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     {dropped != [], :queue.from_list(kept)}
   end
 
+  # A batch is cut against a free window slot: while the window is full — or
+  # while it is draining for an ordered resend — arrivals accumulate into the
+  # next one instead.
   defp maybe_kick_batch(state) do
     cond do
-      state.in_flight != nil ->
+      not slot_free?(state) or state.queue_size == 0 ->
         state
 
       state.queue_bytes >= state.max_batch_bytes ->
         send(self(), :flush_batch)
         state
 
-      state.linger_timer == nil and state.queue_size > 0 ->
+      state.linger_timer == nil ->
         timer =
           if state.linger_ms == 0 do
             send(self(), :flush_batch)
@@ -590,29 +578,143 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     end
   end
 
-  defp maybe_send_batch(%{in_flight: in_flight} = state) when not is_nil(in_flight), do: state
-
   defp maybe_send_batch(state) do
-    case drain_batch(state, state.max_batch_bytes) do
-      {[], state} ->
-        state
+    if slot_free?(state) do
+      case drain_batch(state, state.max_batch_bytes) do
+        {[], state} ->
+          state
 
-      {records, state} ->
-        ref = make_ref()
-        base_seq = state.sequence
-        next_seq = if state.idempotent, do: state.sequence + length(records), else: 0
+        {records, state} ->
+          batch = new_batch(state, records)
+          next_seq = if state.idempotent, do: state.sequence + length(records), else: 0
 
+          %{state | sequence: next_seq, in_flight: state.in_flight ++ [batch]}
+          |> do_send(batch)
+          |> maybe_kick_batch()
+      end
+    else
+      state
+    end
+  end
+
+  # ------------------------------------------------------------------
+  # The window: the batches outstanding for this partition, oldest first. A
+  # batch carries two identities — `id` is stable across retries and names it
+  # to everything the worker sends itself, `ref` is the client's handle for the
+  # current dispatch and names it to that dispatch's outcome. Clearing `ref` is
+  # how a dispatch is abandoned: a late outcome then names no batch at all.
+  # `status` is about outcomes, not the wire: `:sent` means one is outstanding
+  # (a response, or a topic creation / metadata refresh issued for this batch),
+  # `:pending` means the batch is owed a resend.
+  # ------------------------------------------------------------------
+
+  defp new_batch(state, records) do
+    %{
+      id: make_ref(),
+      ref: nil,
+      records: records,
+      base_sequence: state.sequence,
+      attempt: 0,
+      first_attempt_at: state.now_fn.(),
+      last_error: nil,
+      status: :sent,
+      dispatch_timer: nil
+    }
+  end
+
+  # Nothing new leaves while a batch is owed a resend: the broker must see the
+  # window in its original order, so k goes out again before anything newer.
+  defp slot_free?(state) do
+    length(state.in_flight) < state.max_in_flight and
+      not Enum.any?(state.in_flight, &(&1.status == :pending))
+  end
+
+  defp oldest?(%{in_flight: [%{id: id} | _]}, %{id: id}), do: true
+  defp oldest?(_state, _batch), do: false
+
+  # A resend waits until every batch sent after the failed one has come back:
+  # the wire order must be k, k+1, … again, so nothing goes out mid-window.
+  defp maybe_resend(state) do
+    if Enum.any?(state.in_flight, &(&1.status == :sent)),
+      do: state,
+      else: schedule_retry(state)
+  end
+
+  # Everything still owed goes out again oldest first, under its original
+  # sequence numbers, before anything newer is cut.
+  defp resend_window(state) do
+    state.in_flight
+    |> Enum.filter(&(&1.status == :pending))
+    |> Enum.reduce(state, fn batch, acc -> do_send(acc, batch) end)
+  end
+
+  # A fresh producer session numbers from zero, so every batch still owed is
+  # renumbered in window order and owes another attempt. Whatever was on the
+  # wire under the old session is abandoned: its dispatch handle is dropped, so
+  # a late outcome names no batch.
+  defp realign_window(state) do
+    {batches, sequence} =
+      Enum.map_reduce(state.in_flight, state.sequence, fn batch, seq ->
         batch = %{
-          ref: ref,
-          records: records,
-          base_sequence: base_seq,
-          attempt: 0,
-          first_attempt_at: state.now_fn.(),
-          last_error: nil
+          cancel_dispatch_timer(batch)
+          | base_sequence: seq,
+            attempt: batch.attempt + 1,
+            status: :pending,
+            ref: nil
         }
 
-        do_send(%{state | in_flight: batch, sequence: next_seq}, batch, 0)
+        {batch, seq + length(batch.records)}
+      end)
+
+    %{state | in_flight: batches, sequence: if(state.idempotent, do: sequence, else: 0)}
+  end
+
+  defp in_flight_size(state) do
+    Enum.reduce(state.in_flight, 0, fn batch, n -> n + length(batch.records) end)
+  end
+
+  # Runs `fun` against the batch a dispatch handle names, having first taken the
+  # dispatch off it — the outcome is in hand, so its timer and handle are spent.
+  defp with_dispatch(state, ref, fun) do
+    case Enum.find(state.in_flight, &(&1.ref == ref)) do
+      nil ->
+        state
+
+      batch ->
+        batch = %{cancel_dispatch_timer(batch) | ref: nil}
+        fun.(put_batch(state, batch), batch)
     end
+  end
+
+  defp with_batch(state, batch_id, fun) do
+    case Enum.find(state.in_flight, &(&1.id == batch_id)) do
+      nil -> state
+      batch -> fun.(state, batch)
+    end
+  end
+
+  defp put_batch(state, batch) do
+    %{state | in_flight: Enum.map(state.in_flight, &if(&1.id == batch.id, do: batch, else: &1))}
+  end
+
+  defp drop_batch(state, batch) do
+    %{state | in_flight: Enum.reject(state.in_flight, &(&1.id == batch.id))}
+  end
+
+  # The whole window returns to the head of the queue, oldest batch first, so
+  # the fresh producer session re-sends it in admission order.
+  defp rewind_in_flight(state, reason) do
+    records = Enum.flat_map(state.in_flight, & &1.records)
+    bytes_back = Enum.reduce(records, 0, fn r, n -> n + r.bytes end)
+
+    %{
+      state
+      | queue: :queue.join(:queue.from_list(records), state.queue),
+        queue_size: state.queue_size + length(records),
+        queue_bytes: state.queue_bytes + bytes_back,
+        in_flight: [],
+        last_error: {:worker_died, reason}
+    }
   end
 
   defp drain_batch(state, max_bytes), do: drain(state, max_bytes, [], 0)
@@ -634,35 +736,43 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     end
   end
 
-  defp do_send(state, batch, attempt) do
-    parent = self()
-    # Fresh ref per dispatch: a late result from a prior hung/timed-out send no
-    # longer matches in_flight and is ignored, so a slow send can't double-apply.
-    ref = make_ref()
+  # The client answers by message, so the worker sends from its own process and
+  # the dispatch handle it hands back identifies the batch. A handle is fresh
+  # per dispatch: a late outcome from a prior hung send no longer names a batch
+  # in the window and is ignored, so a slow send can't double-apply.
+  defp do_send(state, batch) do
     request = build_produce_request(state, batch.records, batch.base_sequence)
-    send_fn = state.send_fn
-    worker = state.worker_pid
-    topic = state.topic
-    partition = state.partition
+    selector = NodeSelector.topic_partition(state.topic, state.partition)
 
-    spawn(fn ->
-      # A crash or call timeout in the shared client (e.g. a wedged socket after
-      # a broker restart) must never silently strand the worker: turn it into a
-      # retriable result so in_flight always resolves.
-      result =
-        try do
-          send_fn.(worker, request, NodeSelector.topic_partition(topic, partition))
-        catch
-          :exit, reason -> {:error, {:exit, reason}}
-          kind, reason -> {:error, {:send_crashed, kind, reason}}
-        end
+    # A crash or call timeout in the shared client (e.g. a wedged socket after a
+    # broker restart) must never silently strand the worker: turn it into a
+    # retriable outcome that flows through the one result path, so every batch
+    # in the window resolves and nothing resolves re-entrantly mid-resend.
+    outcome =
+      try do
+        state.send_fn.(state.worker_pid, request, selector)
+      catch
+        :exit, reason -> {:error, {:exit, reason}}
+        kind, reason -> {:error, {:send_crashed, kind, reason}}
+      end
 
-      send(parent, {:batch_result, ref, result, attempt})
-    end)
+    {ref, timer} =
+      case outcome do
+        {:ok, ref} ->
+          {ref, Process.send_after(self(), {:dispatch_timeout, ref}, state.dispatch_timeout_ms)}
 
-    state = cancel_dispatch_timer(state)
-    timer = Process.send_after(self(), {:dispatch_timeout, ref}, state.dispatch_timeout_ms)
-    %{state | in_flight: %{batch | ref: ref, attempt: attempt}, dispatch_timer: timer}
+        {:error, _reason} = error ->
+          ref = make_ref()
+          send(self(), {:kafka_ex_response, ref, error})
+          {ref, nil}
+      end
+
+    put_batch(state, %{
+      cancel_dispatch_timer(batch)
+      | ref: ref,
+        status: :sent,
+        dispatch_timer: timer
+    })
   end
 
   defp build_produce_request(state, records, base_sequence) do
@@ -697,108 +807,121 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     }
   end
 
-  defp handle_batch_result(state, batch, attempt, result) do
+  defp handle_batch_result(state, batch, result) do
     case classify_result(result, state) do
       {:ok, base_offset} ->
-        Telemetry.produce_ok(length(batch.records), elapsed_ms(state, batch), %{
-          plugin_id: state.plugin_id,
-          topic: state.topic,
-          partition: state.partition,
-          base_offset: base_offset,
-          attempt: attempt + 1
-        })
-
-        complete_batch(state, batch, :ok)
-
-      {:retry, reason} ->
-        cond do
-          attempt + 1 > state.retries ->
-            fail_batch(state, batch, reason)
-
-          elapsed_ms(state, batch) >= state.delivery_timeout_ms ->
-            fail_batch(state, batch, reason)
-
-          true ->
-            Telemetry.retry(attempt + 1, retry_backoff_ms(state, attempt + 1), %{
-              plugin_id: state.plugin_id,
-              topic: state.topic,
-              partition: state.partition,
-              reason: reason
-            })
-
-            batch = %{batch | attempt: attempt + 1, last_error: reason}
-            state = %{state | in_flight: batch, last_error: reason}
-
-            cond do
-              reason == :unknown_topic_or_partition and state.auto_create_topic ->
-                issue_create_topic(state, batch)
-                state
-
-              reason == :unknown_topic_or_partition and not state.auto_create_topic ->
-                fail_batch(state, batch, :unknown_topic_or_partition)
-
-              reason in [:not_leader_for_partition, :no_broker] ->
-                issue_metadata_refresh(state, batch)
-                state
-
-              true ->
-                schedule_retry(state, batch)
-            end
-        end
-
-      {:permanent, reason} ->
-        emit_failed_per_record(state, batch, attempt + 1, reason)
-        complete_batch(state, batch, {:error, {:permanent, reason}})
+        deliver_batch(state, batch, base_offset)
 
       {:already_delivered, reason} ->
-        Logger.info(
-          "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
-            "broker reports #{inspect(reason)} — treating as delivered"
-        )
+        Logger.info("#{tag(state)} broker reports #{inspect(reason)} — treating as delivered")
+        deliver_batch(state, batch, -1)
 
-        Telemetry.produce_ok(length(batch.records), elapsed_ms(state, batch), %{
-          plugin_id: state.plugin_id,
-          topic: state.topic,
-          partition: state.partition,
-          base_offset: -1,
-          attempt: attempt + 1
-        })
-
-        complete_batch(state, batch, :ok)
+      {:retry, reason} ->
+        retry_batch(state, batch, reason)
 
       {:fenced, reason} ->
-        # The producer session is fenced and the batch was NOT stored. Re-init
-        # the session on the same (healthy) broker client, realign sequence
-        # numbers, and resend with backoff — never ack a fenced batch. Bounded
-        # by retries / delivery_timeout so a re-fencing broker can't spin; on
-        # exhaustion fail_batch/3 increments consecutive_failures and
-        # maybe_refresh_broker/2 forces a fresh broker client.
-        cond do
-          attempt + 1 > state.retries ->
-            fail_batch(state, batch, reason)
+        fence_batch(state, batch, reason)
 
-          elapsed_ms(state, batch) >= state.delivery_timeout_ms ->
-            fail_batch(state, batch, reason)
-
-          true ->
-            state = rebind_worker(state)
-            base_seq = state.sequence
-            next_seq = state.sequence + length(batch.records)
-            batch = %{batch | base_sequence: base_seq, attempt: attempt + 1, last_error: reason}
-
-            Telemetry.retry(attempt + 1, retry_backoff_ms(state, attempt + 1), %{
-              plugin_id: state.plugin_id,
-              topic: state.topic,
-              partition: state.partition,
-              reason: reason
-            })
-
-            schedule_retry(
-              %{state | sequence: next_seq, in_flight: batch, last_error: reason},
-              batch
-            )
-        end
+      {:permanent, reason} ->
+        emit_failed_per_record(state, batch, reason)
+        complete_batch(state, batch, {:error, {:permanent, reason}})
     end
+  end
+
+  defp deliver_batch(state, batch, base_offset) do
+    Telemetry.produce_ok(
+      length(batch.records),
+      elapsed_ms(state, batch),
+      Map.merge(partition_meta(state), %{base_offset: base_offset, attempt: batch.attempt + 1})
+    )
+
+    complete_batch(state, batch, :ok)
+  end
+
+  defp retry_batch(state, batch, reason) do
+    cond do
+      exhausted?(state, batch) ->
+        fail_batch(state, batch, reason)
+
+      reason == :unknown_topic_or_partition and not state.auto_create_topic ->
+        fail_batch(state, batch, :unknown_topic_or_partition)
+
+      # The recovery action is this batch's outstanding outcome, so the window
+      # keeps waiting on it rather than resending around it.
+      reason == :unknown_topic_or_partition ->
+        {state, batch} = retrying(state, batch, reason, :sent)
+        issue_create_topic(state, batch)
+        state
+
+      reason in [:not_leader_for_partition, :no_broker] ->
+        {state, batch} = retrying(state, batch, reason, :sent)
+        issue_metadata_refresh(state, batch)
+        state
+
+      true ->
+        {state, _batch} = retrying(state, batch, reason, :pending)
+        maybe_resend(state)
+    end
+  end
+
+  # The producer session is fenced and nothing in the window was stored. Re-init
+  # the session on the same (healthy) broker client, renumber every batch still
+  # owed in window order, and resend them in that order with backoff — never ack
+  # a fenced batch. Bounded by retries / delivery_timeout so a re-fencing broker
+  # can't spin; on exhaustion fail_batch/3 increments consecutive_failures and
+  # maybe_refresh_broker/2 forces a fresh broker client.
+  defp fence_batch(state, batch, reason) do
+    cond do
+      # An earlier batch is still unresolved, so the broker rejected this one
+      # for the sequence gap that batch left, not for a fenced session.
+      not oldest?(state, batch) ->
+        {state, _batch} = retrying(state, batch, reason, :pending)
+        maybe_resend(state)
+
+      exhausted?(state, batch) ->
+        fail_batch(state, batch, reason)
+
+      true ->
+        emit_retry(state, batch, reason)
+
+        %{state | last_error: reason}
+        |> restart_producer_session()
+        |> schedule_retry()
+    end
+  end
+
+  defp exhausted?(state, batch) do
+    batch.attempt + 1 > state.retries or elapsed_ms(state, batch) >= state.delivery_timeout_ms
+  end
+
+  # One more attempt is owed. `:sent` parks the batch behind a recovery action
+  # that is still running; `:pending` puts it in the resend queue.
+  defp retrying(state, batch, reason, status) do
+    emit_retry(state, batch, reason)
+
+    batch = %{
+      cancel_dispatch_timer(batch)
+      | attempt: batch.attempt + 1,
+        last_error: reason,
+        status: status,
+        ref: nil
+    }
+
+    {put_batch(%{state | last_error: reason}, batch), batch}
+  end
+
+  defp emit_retry(state, batch, reason) do
+    Telemetry.retry(
+      batch.attempt + 1,
+      retry_backoff_ms(state, batch.attempt + 1),
+      Map.put(partition_meta(state), :reason, reason)
+    )
+  end
+
+  # The recovery action this batch was waiting on is done; it re-joins the
+  # resend queue.
+  defp resume_owed(state, batch) do
+    state |> put_batch(%{batch | status: :pending}) |> maybe_resend()
   end
 
   defp handle_topic_create_result(state, batch, result) do
@@ -813,10 +936,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
           }
         )
 
-        schedule_retry(state, batch)
+        resume_owed(state, batch)
 
       {:error, :topic_already_exists} ->
-        schedule_retry(state, batch)
+        resume_owed(state, batch)
 
       {:error, reason} ->
         fail_batch(state, batch, reason)
@@ -825,7 +948,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp issue_create_topic(state, batch) do
     parent = self()
-    ref = batch.ref
+    id = batch.id
     create_fn = state.create_topic_fn
     worker = state.worker_pid
     topic = state.topic
@@ -840,8 +963,17 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     timeout = state.metadata_refresh_timeout_ms
 
     spawn(fn ->
-      result = create_fn.(worker, topic, opts, timeout)
-      send(parent, {:topic_create_result, ref, result})
+      # A crash here would leave the batch — and, behind it, the whole window —
+      # waiting on an outcome that never arrives.
+      result =
+        try do
+          create_fn.(worker, topic, opts, timeout)
+        catch
+          :exit, reason -> {:error, {:exit, reason}}
+          kind, reason -> {:error, {kind, reason}}
+        end
+
+      send(parent, {:topic_create_result, id, result})
     end)
 
     :ok
@@ -849,7 +981,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp issue_metadata_refresh(state, batch) do
     parent = self()
-    ref = batch.ref
+    id = batch.id
     refresh_fn = state.metadata_refresh_fn
     worker = state.worker_pid
     started = state.now_fn.()
@@ -869,16 +1001,25 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
           :exit, reason -> reason
         end
 
-      send(parent, {:metadata_refresh_done, ref, now_fn.() - started, err})
+      send(parent, {:metadata_refresh_done, id, now_fn.() - started, err})
     end)
 
     :ok
   end
 
-  defp schedule_retry(state, batch) do
-    backoff = retry_backoff_ms(state, batch.attempt)
-    timer = Process.send_after(self(), {:retry_batch, batch.ref}, backoff)
-    %{state | retry_timer: timer}
+  # One timer for the whole resend run: the oldest owed batch sets the backoff
+  # and its arrival resends everything owed behind it.
+  defp schedule_retry(state) do
+    state = cancel_retry_timer(state)
+
+    case Enum.find(state.in_flight, &(&1.status == :pending)) do
+      nil ->
+        state
+
+      batch ->
+        backoff = retry_backoff_ms(state, batch.attempt)
+        %{state | retry_timer: Process.send_after(self(), {:retry_window, batch.id}, backoff)}
+    end
   end
 
   defp retry_backoff_ms(state, attempt) do
@@ -888,7 +1029,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp fail_batch(state, batch, reason) do
-    emit_failed_per_record(state, batch, batch.attempt + 1, reason)
+    emit_failed_per_record(state, batch, reason)
 
     state = %{state | consecutive_failures: state.consecutive_failures + 1}
     state = maybe_refresh_broker(state, reason)
@@ -912,7 +1053,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       # stall counter a low-traffic producer may never reach.
       reason in @client_wedged and force_replace_due?(state) ->
         Logger.warning(
-          "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+          "#{tag(state)} " <>
             "no broker connection (reason=#{inspect(reason)}); forcing fresh broker connection"
         )
 
@@ -920,7 +1061,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
       state.consecutive_failures >= state.stall_threshold ->
         Logger.warning(
-          "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}] " <>
+          "#{tag(state)} " <>
             "#{state.consecutive_failures} consecutive failed batches " <>
             "(last reason=#{inspect(reason)}); forcing fresh broker connection"
         )
@@ -954,7 +1095,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp force_replace_broker(state) do
     case WorkerRegistry.force_replace(state.connection_identity) do
       {:ok, new_pid} when is_pid(new_pid) ->
-        rebind_worker(%{state | worker_pid: new_pid, last_error: nil})
+        restart_producer_session(%{state | worker_pid: new_pid, last_error: nil})
 
       _ ->
         state
@@ -962,32 +1103,31 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   # (Re-)initialise the idempotent producer session: fetch a fresh
-  # producer-id/epoch and reset the sequence so numbering realigns. Used both
-  # after a broker-client swap (the old id is invalid on a fresh client) and on
-  # a producer fence. Non-idempotent producers carry no id.
-  defp rebind_worker(%{idempotent: false} = state), do: state
+  # producer-id/epoch, reset the sequence, and renumber the window against it.
+  # Used both on a producer fence and after a fresh broker client (the old id is
+  # invalid there). Non-idempotent producers carry no id, but their window is
+  # renumbered all the same — every batch still owed has to go out again.
+  defp restart_producer_session(%{idempotent: false} = state), do: realign_window(state)
 
-  defp rebind_worker(state) do
+  defp restart_producer_session(state) do
     case state.init_producer_id_fn.(state.worker_pid, state.metadata_refresh_timeout_ms) do
       {:ok, %{producer_id: pid, producer_epoch: epoch}} ->
-        %{state | producer_id: pid, producer_epoch: epoch, sequence: 0}
+        realign_window(%{state | producer_id: pid, producer_epoch: epoch, sequence: 0})
 
       _ ->
-        %{state | producer_id: nil, producer_epoch: nil, sequence: 0}
+        realign_window(%{state | producer_id: nil, producer_epoch: nil, sequence: 0})
     end
   end
 
-  defp emit_failed_per_record(state, batch, attempts, reason) do
+  defp emit_failed_per_record(state, batch, reason) do
     total_ms = elapsed_ms(state, batch)
 
     Enum.each(batch.records, fn r ->
-      Telemetry.failed(attempts, total_ms, %{
-        plugin_id: state.plugin_id,
-        topic: state.topic,
-        partition: state.partition,
-        last_reason: reason,
-        caller: caller_tag(r)
-      })
+      Telemetry.failed(
+        batch.attempt + 1,
+        total_ms,
+        Map.merge(partition_meta(state), %{last_reason: reason, caller: caller_tag(r)})
+      )
     end)
   end
 
@@ -999,9 +1139,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     settle_outbox(batch, reply)
 
     state = %{
-      state
-      | in_flight: nil,
-        consecutive_failures: if(reply == :ok, do: 0, else: state.consecutive_failures),
+      drop_batch(state, batch)
+      | consecutive_failures: if(reply == :ok, do: 0, else: state.consecutive_failures),
         last_error:
           case reply do
             :ok -> nil
@@ -1009,8 +1148,10 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
           end
     }
 
-    state = process_blocked(state)
-    maybe_kick_batch(state)
+    state
+    |> process_blocked()
+    |> maybe_resend()
+    |> maybe_kick_batch()
   end
 
   defp process_blocked(state) do
@@ -1037,8 +1178,13 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp elapsed_ms(state, batch), do: state.now_fn.() - batch.first_attempt_at
 
-  defp in_flight_size(%{in_flight: nil}), do: 0
-  defp in_flight_size(%{in_flight: %{records: r}}), do: length(r)
+  # The worker's identity, in a log line and in every telemetry event.
+  defp tag(state),
+    do: "[Kafka.ProducerWorker #{state.plugin_id}/#{state.topic}/#{state.partition}]"
+
+  defp partition_meta(state) do
+    %{plugin_id: state.plugin_id, topic: state.topic, partition: state.partition}
+  end
 
   defp build_record(msg, metadata, from, timestamp_ms) do
     {key, dedup_key} = record_identity(metadata)
@@ -1155,7 +1301,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   end
 
   defp default_send(worker_pid, request, node_selector) do
-    KafkaClient.send_request(worker_pid, request, node_selector)
+    KafkaClient.send_request_async(worker_pid, request, node_selector)
   end
 
   defp default_init_producer_id(worker_pid, timeout_ms) do
@@ -1242,30 +1388,18 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
 
   defp cancel_timers(state) do
     if is_reference(state.linger_timer), do: Process.cancel_timer(state.linger_timer)
-    if is_reference(state.retry_timer), do: Process.cancel_timer(state.retry_timer)
-    state = cancel_dispatch_timer(state)
-    %{state | linger_timer: nil, retry_timer: nil}
+    state = cancel_retry_timer(state)
+    %{state | in_flight: Enum.map(state.in_flight, &cancel_dispatch_timer/1), linger_timer: nil}
   end
 
-  defp cancel_dispatch_timer(%{dispatch_timer: t} = state) do
+  defp cancel_retry_timer(%{retry_timer: t} = state) do
     if is_reference(t), do: Process.cancel_timer(t)
-    %{state | dispatch_timer: nil}
+    %{state | retry_timer: nil}
   end
 
-  defp rewind_in_flight(%{in_flight: nil} = state, _reason), do: state
-
-  defp rewind_in_flight(%{in_flight: batch} = state, reason) do
-    requeued = :queue.join(:queue.from_list(batch.records), state.queue)
-    bytes_back = Enum.reduce(batch.records, 0, fn r, n -> n + r.bytes end)
-
-    %{
-      state
-      | queue: requeued,
-        queue_size: state.queue_size + length(batch.records),
-        queue_bytes: state.queue_bytes + bytes_back,
-        in_flight: nil,
-        last_error: {:worker_died, reason}
-    }
+  defp cancel_dispatch_timer(%{dispatch_timer: t} = batch) do
+    if is_reference(t), do: Process.cancel_timer(t)
+    %{batch | dispatch_timer: nil}
   end
 
   defp attempt_swap(state, _reason) do
@@ -1284,7 +1418,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
             producer_id: nil,
             producer_epoch: nil,
             sequence: 0,
-            in_flight: nil,
+            in_flight: [],
             swap_started_at: nil,
             swap_attempt: 0,
             pending_swap_telemetry: pending
@@ -1339,13 +1473,14 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     Enum.each(queued, fn record ->
       reply_to_record(record, {:error, {:delivery_failed, :worker_swap_exhausted}})
 
-      Telemetry.failed(state.swap_attempt + 1, state.delivery_timeout_ms, %{
-        plugin_id: state.plugin_id,
-        topic: state.topic,
-        partition: state.partition,
-        last_reason: {:worker_swap_exhausted, swap_reason},
-        caller: caller_tag(record)
-      })
+      Telemetry.failed(
+        state.swap_attempt + 1,
+        state.delivery_timeout_ms,
+        Map.merge(partition_meta(state), %{
+          last_reason: {:worker_swap_exhausted, swap_reason},
+          caller: caller_tag(record)
+        })
+      )
     end)
 
     {:noreply,
@@ -1354,7 +1489,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
        | queue: :queue.new(),
          queue_size: 0,
          queue_bytes: 0,
-         in_flight: nil,
+         in_flight: [],
          swap_started_at: nil,
          swap_attempt: 0,
          last_error: {:swap_exhausted, swap_reason},

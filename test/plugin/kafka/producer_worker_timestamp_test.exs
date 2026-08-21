@@ -6,6 +6,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
   """
 
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
+  alias FlezhaTest.Kafka.ProducerFakes, as: Fakes
 
   use ExUnit.Case, async: false
   use Mimic
@@ -15,55 +16,11 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
   @topic "ts_topic"
   @partition 0
 
-  defmodule Fakes do
-    def script_send_fn(test_pid, script_pid) do
-      fn worker, request, node_selector ->
-        send(test_pid, {:send_called, request, node_selector})
-        n = Agent.get_and_update(script_pid, fn [head | tail] -> {head, tail} end)
-
-        case n do
-          {:return, value} -> value
-          {:return_fn, fun} -> fun.(worker, request, node_selector)
-        end
-      end
-    end
-
-    def init_producer_id_ok do
-      fn _worker, _timeout ->
-        {:ok, %{producer_id: 1, producer_epoch: 0}}
-      end
-    end
-
-    def metadata_refresh_ok, do: fn _worker, _timeout -> :ok end
-    def create_topic_ok, do: fn _worker, _topic, _opts, _timeout -> :ok end
-
-    def ok_response(topic, partition) do
-      {:ok,
-       %Kayrock.Produce.V5.Response{
-         responses: [
-           %{
-             topic: topic,
-             partition_responses: [
-               %{
-                 partition: partition,
-                 error_code: 0,
-                 base_offset: 0,
-                 log_append_time: -1,
-                 log_start_offset: -1
-               }
-             ]
-           }
-         ],
-         throttle_time_ms: 0
-       }}
-    end
-  end
-
   defp start_worker do
     test_pid = self()
 
     {:ok, script_pid} =
-      Agent.start_link(fn -> [{:return, Fakes.ok_response(@topic, @partition)}] end)
+      Agent.start_link(fn -> [{:return, Fakes.ok_response(@topic, @partition, 0)}] end)
 
     {:ok, pid} =
       GenServer.start_link(ProducerWorker,
@@ -84,7 +41,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTimestampTest do
         auto_create_topic: false,
         metadata_refresh_timeout_ms: 100,
         send_fn: Fakes.script_send_fn(test_pid, script_pid),
-        init_producer_id_fn: Fakes.init_producer_id_ok(),
+        init_producer_id_fn: Fakes.init_producer_id_ok(1, 0),
         metadata_refresh_fn: Fakes.metadata_refresh_ok(),
         create_topic_fn: Fakes.create_topic_ok(),
         jitter_fn: fn _ -> 0 end,

@@ -89,7 +89,7 @@ When `:idempotent` is `true` (default) the producer SHALL:
 2. Maintain a per-`(topic, partition)` 32-bit sequence counter starting from 0.
 3. Include the producer-id and sequence number in every Produce request via `api_version: 5` (or higher) encoding.
 4. On retry, send the SAME producer-id + sequence number (the broker dedupes server-side).
-5. On worker restart (and only then) accept that the producer-id rotates; in-flight unacked messages may produce duplicates equal to the in-flight batch size at restart.
+5. On worker restart (and only then) accept that the producer-id rotates; in-flight unacked messages may produce duplicates bounded by the records of the in-flight window (`:max_in_flight` batches) at restart.
 
 When `:idempotent` is `false` the producer SHALL fall back to `api_version: 3` Produce requests without producer-id state. This mode is for callers who deliberately want at-most-once semantics.
 
@@ -102,10 +102,10 @@ When `:idempotent` is `false` the producer SHALL fall back to `api_version: 3` P
 - **AND** the chain SHALL receive `{:ok, ctx}` exactly once
 
 #### Scenario: Producer-id rotation on worker restart
-- **GIVEN** an idempotent producer with 5 messages in flight (sent, awaiting ack)
+- **GIVEN** an idempotent producer with two batches of 5 messages in flight (sent, awaiting ack)
 - **WHEN** the worker process crashes and is restarted by its supervisor
 - **THEN** the new worker SHALL request a new producer-id via `InitProducerId`
-- **AND** the in-flight messages, if redelivered from a recovered queue, SHALL produce duplicates equal to the in-flight batch (≤5 in this scenario)
+- **AND** the in-flight messages, if redelivered from a recovered queue, SHALL produce duplicates bounded by the in-flight window (≤10 in this scenario)
 - **AND** the duplicate count SHALL be observable via the `[:flezha, :plugin, :kafka, :produce, :ok]` telemetry stream's `attempt: 1` count vs delivered count
 
 #### Scenario: Non-idempotent mode skips InitProducerId
@@ -122,7 +122,7 @@ The producer SHALL accumulate messages destined for the same `(topic, partition)
 - The accumulated wire size has not exceeded `:max_batch_bytes` (default 1 048 576 = 1 MiB), AND
 - Less than `:linger_ms` milliseconds have elapsed since the first un-sent message in the batch.
 
-When either condition is exceeded, the batch SHALL be flushed (sent) immediately. Setting `:linger_ms = 0` disables batching — every message produces a Produce request immediately. Assembling a batch SHALL be linear in the records it drains: the accumulated byte total rides with the accumulator rather than being re-summed per record.
+When either condition is exceeded and a slot of the in-flight window is free, the batch SHALL be flushed (sent) immediately; while the window is full, arriving messages SHALL accumulate into the next batch, bounded by `:max_batch_bytes`, and leave when a slot frees. Setting `:linger_ms = 0` disables the wait — a request leaves as soon as a slot is free carrying everything queued, so at a free window every message produces its own Produce request. Assembling a batch SHALL be linear in the records it drains: the accumulated byte total rides with the accumulator rather than being re-summed per record.
 
 #### Scenario: 50 trades in 10 ms become one Produce request
 - **GIVEN** a producer with `:linger_ms = 10` accepting 50 messages destined for the same partition over 10 ms
@@ -136,11 +136,11 @@ When either condition is exceeded, the batch SHALL be flushed (sent) immediately
 - **WHEN** accumulated messages reach 1 MiB after 50 ms
 - **THEN** the batch SHALL flush at 50 ms without waiting the remaining 950 ms
 
-#### Scenario: linger_ms = 0 disables batching
-- **GIVEN** a producer with `:linger_ms = 0`
+#### Scenario: linger_ms = 0 sends without waiting
+- **GIVEN** a producer with `:linger_ms = 0` and a free window slot
 - **WHEN** a single message arrives
 - **THEN** a single-message Produce request SHALL be issued immediately
-- **AND** subsequent messages SHALL each produce their own Produce request
+- **AND** messages arriving while the window is full SHALL leave together in the next Produce request when a slot frees
 
 ### Requirement: Bounded outbound queue with configurable overflow strategy
 
@@ -194,7 +194,7 @@ Telemetry alone SHALL NOT satisfy this requirement: `stats/1` is the synchronous
 
 ### Requirement: Producer holds at most one shared `KafkaEx.New.Client` worker pid per canonical connection identity
 
-The producer plugin SHALL acquire its `KafkaEx.New.Client` worker pid through `Flezha.Plugin.Provider.Kafka.WorkerRegistry` (the shared, refcounted registry). The registry SHALL key entries on the canonical tuple `{sorted_hosts, phash2(ssl_options), auth fingerprint, lane}`, where `lane` is the provider's `partition mod schedulers_online`: a client answers one request at a time and encodes each batch in its own process, so one client per cluster would serialise every partition's batches behind one core. Sharing is therefore per scheduler per cluster — two plugin instances with the same broker target whose partitions fall in the same lane reuse the same worker, and a cluster's connection count is bounded by the node's cores, never by its plugin or partition count. The registry SHALL monitor the worker process; on DOWN it SHALL clear the entry AND proactively deliver a typed `{:kafka_worker_dead, {key, token}, reason}` message to every caller pid that still holds a live token against the dead entry. The next `acquire/2` for the same identity SHALL start a fresh worker. The registry SHALL expose a `swap(ref, server \\ __MODULE__) :: {:ok, pid(), ref()} | {:error, term()}` API that performs an in-place re-acquire for an existing caller without double-counting refcount or triggering the linger-stop machinery, intended for callers handling the death-notification message.
+The producer plugin SHALL acquire its `KafkaEx.New.Client` worker pid through `Flezha.Plugin.Provider.Kafka.WorkerRegistry` (the shared, refcounted registry). The registry SHALL key entries on the canonical tuple `{sorted_hosts, phash2(ssl_options), auth fingerprint, lane}`, where `lane` is the provider's `partition mod schedulers_online`: a client encodes each request in its own process, so one client per cluster would serialise every partition's encoding behind one core. Sharing is therefore per scheduler per cluster — two plugin instances with the same broker target whose partitions fall in the same lane reuse the same worker, and a cluster's connection count is bounded by the node's cores, never by its plugin or partition count. The registry SHALL monitor the worker process; on DOWN it SHALL clear the entry AND proactively deliver a typed `{:kafka_worker_dead, {key, token}, reason}` message to every caller pid that still holds a live token against the dead entry. The next `acquire/2` for the same identity SHALL start a fresh worker. The registry SHALL expose a `swap(ref, server \\ __MODULE__) :: {:ok, pid(), ref()} | {:error, term()}` API that performs an in-place re-acquire for an existing caller without double-counting refcount or triggering the linger-stop machinery, intended for callers handling the death-notification message.
 
 Linger: a worker with refs = 0 SHALL be stopped after a configurable `:linger_ms` (default 5000 ms) to absorb plugin-restart churn. The linger timer SHALL be cancelled on the next `acquire/2`.
 
@@ -235,24 +235,24 @@ The `release/2` token returned by `acquire/2` SHALL be opaque to callers — the
 
 ### Requirement: Producer survives upstream Kafka worker crashes with zero queued-record loss
 
-When the `KafkaEx.New.Client` worker pid referenced by `state.worker_pid` terminates for any reason (including upstream `Kayrock` parse errors, broker connection loss returning `:einval`, OS-suspend/wake leaving the socket half-dead, or an explicit `KafkaEx.stop_worker/1`), the producer SHALL continue to drain `state.queue`, `state.in_flight`, and `state.blocked` against a freshly-acquired worker for the same canonical connection identity, **without losing any record that was already admitted to those structures** and **without emitting any `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry for records the new worker has not yet positively rejected**.
+When the `KafkaEx.New.Client` worker pid referenced by `state.worker_pid` terminates for any reason (including upstream `Kayrock` parse errors, broker connection loss returning `:einval`, OS-suspend/wake leaving the socket half-dead, or an explicit `KafkaEx.stop_worker/1`), the producer SHALL continue to drain `state.queue`, the in-flight window, and `state.blocked` against a freshly-acquired worker for the same canonical connection identity, **without losing any record that was already admitted to those structures** and **without emitting any `[:flezha, :plugin, :kafka, :produce, :failed]` telemetry for records the new worker has not yet positively rejected**.
 
 The producer SHALL learn of the worker's death through a typed `{:kafka_worker_dead, ref, reason}` message delivered by `Flezha.Plugin.Provider.Kafka.WorkerRegistry` to every caller pid that holds a live token against the dying entry (see the `Modified` requirement on the registry below). The producer SHALL NOT rely on the linked-process `:EXIT` signal to drive recovery, although it SHALL match a defensive `handle_info({:EXIT, _pid, _reason}, state)` clause that logs at `:debug` and returns `{:noreply, state}` so any future linked-process addition cannot regress the producer with `FunctionClauseError`.
 
 On receiving `{:kafka_worker_dead, registry_ref, reason}` whose `registry_ref` matches `state.registry_ref`, the producer SHALL:
 
 1. Cancel `state.linger_timer` and `state.retry_timer` if either is set (`Process.cancel_timer/1`), so no stale `:flush_batch` or `:retry_batch` fires between the swap and the next `maybe_kick_batch/1`.
-2. If `state.in_flight` is not `nil`, move it back to the head of `state.queue` with its `attempt` field incremented by 1 and `last_error` set to `{:worker_died, reason}`. The records of an in-flight batch SHALL NOT be replied to or marked failed.
+2. Move every in-flight batch back to the head of `state.queue`, oldest first and in order, each with its `attempt` field incremented by 1 and `last_error` set to `{:worker_died, reason}`. The records of an in-flight batch SHALL NOT be replied to or marked failed.
 3. Call `WorkerRegistry.swap(state.registry_ref)` to obtain a fresh `{:ok, new_pid, new_ref}` for the same identity. On `{:error, reason}` (the broker is genuinely unreachable), schedule a retry of the swap using the existing `retry_backoff_ms(state, attempt)` curve and leave the queue untouched.
-4. On successful swap, set `state.worker_pid = new_pid`, `state.registry_ref = new_ref`, `state.producer_id = nil`, `state.producer_epoch = nil`, `state.sequence = 0`, `state.in_flight = nil`, and re-enter `handle_continue(:maybe_init_producer_id, state)` so the next batch acquires a fresh idempotent producer-id against the new worker.
-5. Emit exactly one `[:flezha, :plugin, :kafka, :worker, :swapped]` telemetry event with measurements `%{queue_depth: state.queue_size, in_flight_records: prior_in_flight_size, queue_bytes: state.queue_bytes}` and metadata `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after, old_worker_pid, new_worker_pid}`.
+4. On successful swap, set `state.worker_pid = new_pid`, `state.registry_ref = new_ref`, `state.producer_id = nil`, `state.producer_epoch = nil`, `state.sequence = 0`, empty the in-flight window, and re-enter `handle_continue(:maybe_init_producer_id, state)` so the next batch acquires a fresh idempotent producer-id against the new worker.
+5. Emit exactly one `[:flezha, :plugin, :kafka, :worker, :swapped]` telemetry event with measurements `%{queue_depth: state.queue_size, in_flight_records: prior_in_flight_size, queue_bytes: state.queue_bytes}` — `prior_in_flight_size` counting the records of every batch that was in the window — and metadata `%{plugin_id, topic, partition, reason, producer_id_before, producer_id_after, old_worker_pid, new_worker_pid}`.
 
 `state.blocked` callers SHALL remain blocked across the swap. Their existing `:block_timeout` timers continue to fire normally; a swap is not a `:queue_full` condition.
 
-The producer-id rotation introduced by step 4 SHALL be bounded by the existing `kafka-producer-plugin` "Producer-id rotation on worker restart" requirement — i.e. the in-flight batch (now back at the head of the queue) may produce up to `length(in_flight.records)` duplicate writes against the broker, exactly as on supervisor-driven restart.
+The producer-id rotation introduced by step 4 SHALL be bounded by the existing `kafka-producer-plugin` "Producer-id rotation on worker restart" requirement — i.e. the in-flight window (now back at the head of the queue) may produce up to its record count in duplicate writes against the broker, exactly as on supervisor-driven restart.
 
 #### Scenario: KafkaEx worker crashes mid-batch and queued records continue flowing
-- **GIVEN** a `ProducerWorker` is steadily delivering `btc_demo.ohlc.v1` records at 50 msg/sec and has 200 records in `state.queue`, 50 in `state.in_flight`, and 0 in `state.blocked`
+- **GIVEN** a `ProducerWorker` is steadily delivering `btc_demo.ohlc.v1` records at 50 msg/sec and has 200 records in `state.queue`, 50 across the in-flight window, and 0 in `state.blocked`
 - **AND** the operator runs `docker compose -f /home/moon/Code/flezha_market/docker/dev/docker-compose.yml exec -T flezha-controller /flezha/bin/iex --remsh flezha@... -e ':sys.terminate(pid, :forced)'` against the live KafkaEx worker pid for the operative's canonical identity
 - **WHEN** `WorkerRegistry` observes the worker's DOWN
 - **THEN** within 1 second the producer SHALL receive `{:kafka_worker_dead, registry_ref, _reason}`, acquire a new worker via `swap/2`, re-run `InitProducerId`, and resume sending
@@ -264,11 +264,11 @@ The producer-id rotation introduced by step 4 SHALL be bounded by the existing `
 - **GIVEN** the same producer setup as above
 - **WHEN** the KafkaEx worker crashes with `(RuntimeError) Parse error during %Kayrock.Metadata.V5.Request{...} response deserializer` (the exact upstream failure observed in production at 05:25:15) and is restarted by its supervisor
 - **THEN** the producer SHALL NOT crash with `FunctionClauseError no function clause matching in Flezha.Plugin.Provider.Kafka.ProducerWorker.handle_info/2`
-- **AND** the producer's `state.queue`, `state.in_flight`, and `state.blocked` SHALL be observably preserved across the swap (verified via `:sys.get_state/1` snapshots taken before the crash injection and after the swap completes)
+- **AND** the producer's `state.queue`, the in-flight window, and `state.blocked` SHALL be observably preserved across the swap (verified via `:sys.get_state/1` snapshots taken before the crash injection and after the swap completes)
 - **AND** no records SHALL be silently dropped between the crash and the swap (verified by comparing the topic end-offset delta to the number of records admitted during the window)
 
 #### Scenario: Swap fails because the broker is unreachable, queue stays admitted
-- **GIVEN** a producer with 100 records in `state.queue` and 0 in `state.in_flight`
+- **GIVEN** a producer with 100 records in `state.queue` and an empty in-flight window
 - **WHEN** the KafkaEx worker dies AND the registry's `:starter` callback returns `{:error, :no_broker}` for the swap attempt
 - **THEN** the producer SHALL schedule a retry of the swap using the existing exponential backoff (`retry_backoff_ms(state, attempt)`)
 - **AND** all 100 records SHALL remain in `state.queue` with their `from`, `metadata`, `timestamp`, `bytes`, and `key` fields unchanged
@@ -282,13 +282,10 @@ The producer-id rotation introduced by step 4 SHALL be bounded by the existing `
 - **AND** SHALL NOT crash with `FunctionClauseError`
 - **AND** SHALL NOT initiate a worker swap (the swap is driven only by the typed `{:kafka_worker_dead, …}` message from `WorkerRegistry`)
 
-#### Scenario: Worker swap re-issues InitProducerId and resets sequence
-- **GIVEN** an idempotent producer with `state.producer_id = 42`, `state.producer_epoch = 0`, `state.sequence = 1234`
-- **WHEN** the worker dies and the swap acquires a fresh worker pid
-- **THEN** the producer SHALL re-enter `handle_continue(:maybe_init_producer_id, …)` against the new worker
-- **AND** the next outgoing Produce request's `record_batch.producer_id` SHALL be the new `producer_id` returned by `InitProducerId` on the new worker (NOT 42)
-- **AND** `state.sequence` SHALL reset to 0 (the broker treats the new producer-id as a fresh idempotent producer)
-- **AND** the `[:worker, :swapped]` telemetry event's `producer_id_before` SHALL be 42 and its `producer_id_after` SHALL be the new value
+#### Scenario: Worker death rewinds the whole window in order
+- **GIVEN** three batches outstanding when the shared client dies
+- **WHEN** the producer swaps to a fresh client
+- **THEN** the three batches return to the head of `state.queue` oldest first with their attempts incremented, are resent under the new producer id in that order, and the `:swapped` event's `in_flight_records` counts all three batches' records
 
 ### Requirement: Active metadata refresh on error classes
 
@@ -511,4 +508,48 @@ A silently inert option is a correctness hazard: a runner sets it to express a d
 - **GIVEN** `docs/kafka-producer.md` documents a per-message `kafka_msg_partition` metadata override while the partition is fixed from worker state
 - **WHEN** the producer's documented surface is reconciled
 - **THEN** the override SHALL either route the record to the named partition, or be absent from the documentation
+
+### Requirement: A window of Produce requests is in flight per partition
+
+The producer SHALL keep up to `:max_in_flight` Produce requests outstanding per `(topic, partition)` on one broker connection, sent in batch order. `:max_in_flight` SHALL default to `5` when `:idempotent` is `true` and to `1` otherwise, and a value above `1` together with `:idempotent = false` SHALL be rejected at plugin preparation with a typed configuration error naming both options, because only the broker's per-partition sequence check makes a retry inside a window order-preserving. The transport SHALL pipeline: the next request leaves before the previous response returns, responses are matched to requests in connection order by correlation id, and a frame whose correlation id is not the oldest outstanding request's SHALL close the connection and fail every request outstanding on it with a retriable error rather than be delivered to any request. A synchronous request issued on a connection with pipelined requests outstanding SHALL be answered in its turn behind them.
+
+#### Scenario: Five batches leave before the first response
+- **GIVEN** an idempotent producer with `:max_in_flight = 5` and `:linger_ms = 0` fed 5 000 records against a broker with a 2 ms round trip
+- **WHEN** the worker drains its queue
+- **THEN** up to five Produce requests are outstanding at once, each batch's sequence numbers continue the previous batch's, and the broker's log holds the 5 000 records exactly once, in admission order
+
+#### Scenario: Without idempotence the window is one
+- **WHEN** a plugin is prepared with `:idempotent = false` and no `:max_in_flight`
+- **THEN** exactly one Produce request is ever outstanding per partition, as before this change
+
+#### Scenario: A wide window without idempotence is refused
+- **WHEN** a plugin is prepared with `:idempotent = false` and `:max_in_flight = 3`
+- **THEN** preparation fails with a typed error naming `:max_in_flight` and `:idempotent`, and no producer worker starts
+
+#### Scenario: A misordered frame never acknowledges the wrong batch
+- **WHEN** a frame arrives on a pipelined connection whose correlation id is not the oldest outstanding request's
+- **THEN** the connection is closed, every request outstanding on it fails with a retriable error, and no batch is marked delivered by that frame
+
+#### Scenario: A synchronous request waits its turn
+- **WHEN** the worker issues a metadata refresh on a connection with three Produce requests outstanding
+- **THEN** the refresh's response is read after the three Produce responses and each response reaches its own request
+
+### Requirement: A retry inside the window preserves partition order
+
+When a batch fails retriably while later batches are outstanding behind it, the producer SHALL stop issuing new requests, await the outcome of every later outstanding batch, and then resend the failed batch and every batch behind it in their original order with their original sequence numbers before anything newer leaves. A later batch the broker rejected with `out_of_order_sequence_number` while an earlier batch is unresolved SHALL be treated as failed behind that earlier batch, not as a producer fence. A per-batch dispatch timeout SHALL be a retriable failure of that batch under the same rule. A fence on the oldest outstanding batch SHALL re-initialise the producer session and realign the sequence numbers of the whole window in order before resending it in order.
+
+#### Scenario: The head fails, the tail is resent behind it
+- **GIVEN** batches k, k+1 and k+2 outstanding
+- **WHEN** k fails with `:request_timed_out` and the broker answers k+1 and k+2 with `out_of_order_sequence_number`
+- **THEN** the producer resends k, then k+1, then k+2 with their original base sequences, the broker's log receives them once in that order, and no newer batch leaves before k+2 has been resent
+
+#### Scenario: A tail failure does not resend the head
+- **GIVEN** batches k and k+1 outstanding
+- **WHEN** k succeeds and k+1 fails retriably
+- **THEN** only k+1 is resent, with its original sequence numbers, and k's records are confirmed exactly once
+
+#### Scenario: A timed-out head is retried in order
+- **GIVEN** batches k and k+1 outstanding
+- **WHEN** k's dispatch timeout fires before any response
+- **THEN** the producer awaits k+1's outcome, then resends k and k+1 in that order with their original sequence numbers
 

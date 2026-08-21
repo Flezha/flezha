@@ -189,7 +189,8 @@ grows the batches, which is why identity/on out-ran identity/off 73K to 41K on
 an identical path. A 2 ms linger (identity/state 42.9K → 83.4K) is the
 harness's setting; several batches in flight per partition, safe under
 idempotent sequence numbers, is the fix and a spec change
-(`kafka-producer-plugin` pins the singular in-flight batch).
+(`kafka-producer-plugin` pins the singular in-flight batch). That fix landed:
+see `docs/dev_notes/kafka-producer-in-flight-window.md`.
 
 ## Where the keyed tiers stand
 

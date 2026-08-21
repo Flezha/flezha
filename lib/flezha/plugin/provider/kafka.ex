@@ -31,6 +31,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       * `:queue_overflow`                  — `:block` (default), `:drop_oldest`, or `:drop_newest`
       * `:queue_block_timeout_ms`          — int, default `5_000`
       * `:idempotent`                      — bool, default `false` (opt in for exactly-once)
+      * `:max_in_flight`                   — int, default `5` with `:idempotent`, else `1`
       * `:auto_create_topic`               — bool, default `true`
       * `:auto_create_partitions`          — int, default `1`
       * `:auto_create_replication_factor`  — int, default `2`
@@ -68,6 +69,8 @@ defmodule Flezha.Plugin.Provider.Kafka do
                   queue_overflow: :block,
                   queue_block_timeout_ms: 5_000,
                   idempotent: false,
+                  # Unset: the window's width follows `:idempotent` (see below).
+                  max_in_flight: nil,
                   auto_create_topic: true,
                   auto_create_partitions: 1,
                   auto_create_replication_factor: 2,
@@ -109,21 +112,31 @@ defmodule Flezha.Plugin.Provider.Kafka do
 
       worker_opts = producer_opts(opts, identity, topic, partition, plugin_id)
 
-      case ProducerSup.ensure_worker(worker_opts) do
-        {:ok, producer_pid} ->
-          opts =
-            opts
-            |> Map.put(:hosts, hosts)
-            |> Map.put(:topic, topic)
-            |> Map.put(:partition, partition)
-            |> Map.put(:producer_pid, producer_pid)
-            |> Map.put(:plugin_id, plugin_id)
-            |> redact_sasl()
+      with :ok <- validate_window(worker_opts),
+           {:ok, producer_pid} <- ProducerSup.ensure_worker(worker_opts) do
+        opts =
+          opts
+          |> Map.put(:hosts, hosts)
+          |> Map.put(:topic, topic)
+          |> Map.put(:partition, partition)
+          |> Map.put(:producer_pid, producer_pid)
+          |> Map.put(:plugin_id, plugin_id)
+          |> redact_sasl()
 
-          {:ok, opts, producer_pid}
+        {:ok, opts, producer_pid}
+      end
+    end
 
-        {:error, reason} ->
-          {:error, reason}
+    # Only the broker's per-partition sequence check keeps a retry inside the
+    # window ordered, so a window wider than one without idempotence would
+    # trade the plugin's unconditional FIFO guarantee for throughput.
+    defp validate_window(worker_opts) do
+      max_in_flight = Keyword.fetch!(worker_opts, :max_in_flight)
+
+      if max_in_flight > 1 and not Keyword.fetch!(worker_opts, :idempotent) do
+        {:error, {:max_in_flight_requires_idempotent, max_in_flight}}
+      else
+        :ok
       end
     end
 
@@ -216,6 +229,8 @@ defmodule Flezha.Plugin.Provider.Kafka do
     end
 
     defp producer_opts(opts, identity, topic, partition, plugin_id) do
+      idempotent = coerce_bool(Map.get(opts, :idempotent, false))
+
       [
         connection_identity: identity,
         topic: topic,
@@ -231,7 +246,10 @@ defmodule Flezha.Plugin.Provider.Kafka do
         retry_max_backoff_ms: coerce_int(Map.get(opts, :retry_max_backoff_ms, 5_000)),
         delivery_timeout_ms: coerce_int(Map.get(opts, :delivery_timeout_ms, 30_000)),
         required_acks: coerce_int(Map.get(opts, :required_acks, -1)),
-        idempotent: coerce_bool(Map.get(opts, :idempotent, false)),
+        idempotent: idempotent,
+        # 5 is Kafka's own ceiling for ordered idempotent retries; without a
+        # producer session there is nothing to keep a retry in order.
+        max_in_flight: coerce_int(Map.get(opts, :max_in_flight, if(idempotent, do: 5, else: 1))),
         auto_create_topic: coerce_bool(Map.get(opts, :auto_create_topic, true)),
         auto_create_partitions: coerce_int(Map.get(opts, :auto_create_partitions, 1)),
         auto_create_replication_factor:
@@ -363,6 +381,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     defp convert_value(:metadata_refresh_timeout_ms, value),
       do: parse_int(value, "metadata_refresh_timeout_ms")
 
+    defp convert_value(:max_in_flight, value), do: parse_int(value, "max_in_flight")
     defp convert_value(:idempotent, value), do: parse_bool(value, "idempotent")
     defp convert_value(:auto_create_topic, value), do: parse_bool(value, "auto_create_topic")
 

@@ -28,7 +28,11 @@ The plugin SHALL:
   `:auto_create_topic = true` (default), with a shape controlled by
   `:auto_create_partitions` and `:auto_create_replication_factor`.
 * Batch messages per `:linger_ms` window or until `:max_batch_bytes` is
-  reached, whichever comes first.
+  reached, whichever comes first, and cut the batch against a free slot of
+  the in-flight window (see `:max_in_flight`).
+* Keep up to `:max_in_flight` Produce requests outstanding per
+  `(topic, partition)` on one broker connection, resending a failed batch and
+  everything behind it in their original order.
 * Cap in-process buffering at `:queue_max` items, applying the
   `:queue_overflow` strategy when saturated — `:block` by default, so no
   record is dropped unless an operator configured that explicitly.
@@ -100,6 +104,7 @@ re-drives unflushed outputs with *identical* key, header, and partition;
 | `:queue_overflow` | `:block` | atom | `:block` / `:drop_oldest` / `:drop_newest`; a drop strategy is always an explicit choice |
 | `:queue_block_timeout_ms` | `5_000` | `int` | only used when `:queue_overflow = :block` |
 | `:idempotent` | `false` | `bool` | opt-in exactly-once; requires Kafka 0.11+; gracefully falls back to non-idempotent if `InitProducerId` fails |
+| `:max_in_flight` | `5` with `:idempotent`, else `1` | `int` | Produce requests outstanding per partition. A value above `1` without `:idempotent` is refused at preparation |
 | `:auto_create_topic` | `true` | `bool` | issues `CreateTopics` on first `:unknown_topic_or_partition` |
 | `:auto_create_partitions` | `1` | `int` | partition count at auto-create |
 | `:auto_create_replication_factor` | `2` | `int` | RF at auto-create |
@@ -113,6 +118,24 @@ example, a 50 trades/sec/pair stream that should absorb a 60 s leader
 election with 2× headroom: `50 × 60 × 2 = 6000`. The default of `10_000`
 covers most market-data streams; bump it for higher-volume pairs (e.g.
 500 msg/sec → `60_000`).
+
+A batch leaves the queue when it is sent, so the window holds up to
+`:max_in_flight × :max_batch_bytes` beyond `:queue_max` — 5 MiB per partition
+at the defaults. Size the box for both.
+
+### `:max_in_flight`
+
+The broker answers one connection's requests in the order it received them,
+and under idempotence it rejects a batch whose sequence numbers do not
+continue the last one it stored. Those two facts are what let several Produce
+requests be outstanding at once without losing partition order: a batch that
+fails retriably halts new sends, waits for every batch behind it to come back,
+and then goes out again with everything behind it, in the original order and
+under the original sequence numbers.
+
+Nothing preserves that order under retry without idempotence, so
+`:max_in_flight > 1` together with `:idempotent = false` is refused at plugin
+preparation rather than silently trading the FIFO guarantee for throughput.
 
 ### `:queue_overflow` modes
 
@@ -291,24 +314,30 @@ the given plugin id (plugin not running, or already torn down).
   the producer assumes success. Only appropriate when the data is
   cheap-to-replay (e.g. derived ticker stats from a separately-persisted
   trades stream).
+* Producer-id rotation (a worker restart, or a swap onto a fresh broker
+  client) may duplicate the records of the whole in-flight window, not of one
+  batch — up to `:max_in_flight` batches. `:max_in_flight = 1` restores the
+  one-batch bound.
 
 ## Worker sharing
 
 Plugin instances configured against the same `:hosts` (and SSL + auth opts)
 share underlying `KafkaEx.New.Client` connections via
 `Flezha.Plugin.Provider.Kafka.WorkerRegistry`, at most one per scheduler per
-cluster: a client answers one request at a time and encodes each batch in its
-own process, so a single shared client would serialise every partition's
-batches behind one core. Partitions are spread over the clients by
+cluster: a client encodes each batch in its own process, so a single shared
+client would serialise every partition's encoding behind one core. (The
+client itself pipelines — several requests may be outstanding on one
+connection — so the lane buys encode parallelism, not concurrency on the
+wire.) Partitions are spread over the clients by
 `partition mod schedulers`. The registry refcounts owners; a worker is
 stopped 5 s after its last owner releases. This bounds the connection count
 by the node's cores instead of by the plugin count.
 
 Each plugin instance still owns its own per-`(topic, partition)`
 `ProducerWorker` (and therefore its own bounded queue, producer-id, and
-sequence counter). On a producer-worker restart, in-flight unacked
-messages may produce duplicates equal to the in-flight batch size at
-restart — the bounded queue limits this to at most one batch.
+sequence counter). On a producer-worker restart, in-flight unacked messages
+may produce duplicates equal to the records of the in-flight window at
+restart — at most `:max_in_flight` batches.
 
 ## Migration
 

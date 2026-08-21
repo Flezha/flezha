@@ -133,6 +133,17 @@ defmodule FlezhaTest.Plugin.KafkaTest do
     ProducerSup.stop_worker(plugin_id, @topic, 0)
   end
 
+  test "a window wider than one without idempotence is refused at preparation" do
+    plugin_id = "no-idem-#{System.unique_integer([:positive])}"
+
+    assert {:error, {:max_in_flight_requires_idempotent, 3}} =
+             Kafka.Producer.init_provider(
+               build_opts(plugin_id, 0, %{idempotent: false, max_in_flight: 3})
+             )
+
+    assert Registry.lookup(ProducerSup.registry_name(), {plugin_id, @topic, 0}) == []
+  end
+
   describe "build/1 conversion" do
     test "parses integer params from binary CLI input" do
       assert {:ok, %Kafka.Producer{queue_max: 20000, retries: 7, linger_ms: 25}} =
@@ -142,6 +153,15 @@ defmodule FlezhaTest.Plugin.KafkaTest do
                  "queue_max" => "20000",
                  "retries" => "7",
                  "linger_ms" => "25"
+               })
+    end
+
+    test "parses max_in_flight" do
+      assert {:ok, %Kafka.Producer{max_in_flight: 5}} =
+               Kafka.Producer.build(%{
+                 "hosts" => "kafka:9092",
+                 "topic" => "x",
+                 "max_in_flight" => "5"
                })
     end
 

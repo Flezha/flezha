@@ -97,7 +97,7 @@ defmodule Flezha.MixProject do
       # which Mix >= 1.20 rejects; upstream is unresponsive. Pinned to
       # José Valim's fix (bunopnu/fresh PR #5) until it is merged+released.
       {:fresh, github: "josevalim/fresh", ref: "26291bc9b3d869b555785fa8fc790e8670711309"},
-      {:kafka_ex, github: "alfetahe/kafka_ex", ref: "7a6de03b817e4c90e18fb8effc4293a81ae4ce77"},
+      {:kafka_ex, github: "alfetahe/kafka_ex", ref: "0764363353dc2ffc9996bdc8af11b9fe00561a57"},
       # Compiled in unconditionally; active only when the Postgres sink
       # plugin is configured (same posture as :kafka_ex).
       {:postgrex, "~> 0.22"},

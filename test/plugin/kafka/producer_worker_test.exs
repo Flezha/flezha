@@ -1,6 +1,7 @@
 defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   alias Flezha.Plugin.Provider.Kafka.ProducerWorker
   alias Flezha.Plugin.Provider.Kafka.WorkerRegistry
+  alias FlezhaTest.Kafka.ProducerFakes, as: Fakes
 
   use ExUnit.Case, async: false
   use Mimic
@@ -12,82 +13,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   @topic "p_topic"
   @partition 0
 
-  defmodule Fakes do
-    def init_producer_id_ok(producer_id \\ 7777, epoch \\ 0) do
-      fn _worker, _timeout ->
-        {:ok, %{producer_id: producer_id, producer_epoch: epoch}}
-      end
-    end
-
-    def init_producer_id_fail(reason) do
-      fn _worker, _timeout -> {:error, reason} end
-    end
-
-    def metadata_refresh_ok do
-      fn _worker, _timeout -> :ok end
-    end
-
-    def create_topic_ok do
-      fn _worker, _topic, _opts, _timeout -> :ok end
-    end
-
-    def create_topic_already_exists do
-      fn _worker, _topic, _opts, _timeout -> {:error, :topic_already_exists} end
-    end
-
-    def script_send_fn(test_pid, script_pid) do
-      fn worker, request, node_selector ->
-        send(test_pid, {:send_called, request, node_selector})
-        n = Agent.get_and_update(script_pid, fn [head | tail] -> {head, tail} end)
-
-        case n do
-          {:return, value} -> value
-          {:return_fn, fun} -> fun.(worker, request, node_selector)
-        end
-      end
-    end
-
-    def ok_response(topic, partition, base_offset \\ 100) do
-      {:ok,
-       %Kayrock.Produce.V5.Response{
-         responses: [
-           %{
-             topic: topic,
-             partition_responses: [
-               %{
-                 partition: partition,
-                 error_code: 0,
-                 base_offset: base_offset,
-                 log_append_time: -1,
-                 log_start_offset: -1
-               }
-             ]
-           }
-         ],
-         throttle_time_ms: 0
-       }}
-    end
-
-    def err_response(topic, partition, error_code) do
-      {:ok,
-       %Kayrock.Produce.V5.Response{
-         responses: [
-           %{
-             topic: topic,
-             partition_responses: [
-               %{
-                 partition: partition,
-                 error_code: error_code,
-                 base_offset: -1,
-                 log_append_time: -1,
-                 log_start_offset: -1
-               }
-             ]
-           }
-         ],
-         throttle_time_ms: 0
-       }}
-    end
+  defp window_records(state) do
+    Enum.reduce(state.in_flight, 0, fn batch, n -> n + length(batch.records) end)
   end
 
   defp start_worker(opts) do
@@ -110,9 +37,10 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       retry_max_backoff_ms: Keyword.get(opts, :retry_max_backoff_ms, 50),
       delivery_timeout_ms: Keyword.get(opts, :delivery_timeout_ms, 1_000),
       idempotent: Keyword.get(opts, :idempotent, true),
+      max_in_flight: Keyword.get(opts, :max_in_flight, 1),
       auto_create_topic: Keyword.get(opts, :auto_create_topic, true),
       metadata_refresh_timeout_ms: 100,
-      send_fn: Fakes.script_send_fn(test_pid, script_pid),
+      send_fn: Keyword.get(opts, :send_fn) || Fakes.script_send_fn(test_pid, script_pid),
       init_producer_id_fn: Keyword.get(opts, :init_producer_id_fn, Fakes.init_producer_id_ok()),
       metadata_refresh_fn: Keyword.get(opts, :metadata_refresh_fn, Fakes.metadata_refresh_ok()),
       create_topic_fn: Keyword.get(opts, :create_topic_fn, Fakes.create_topic_ok()),
@@ -313,11 +241,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   end
 
   test "drop-oldest evicts head and admits new tail under saturation" do
-    blocking_send = fn _w, _r, _ns ->
-      Process.sleep(150)
-      Fakes.ok_response(@topic, @partition)
-    end
-
     {pid, script_pid} =
       start_worker(
         queue_max: 2,
@@ -327,7 +250,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     Agent.update(script_pid, fn _ ->
       [
-        {:return_fn, blocking_send}
+        {:return, {:delayed, Fakes.ok_response(@topic, @partition), 150}}
         | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
       ]
     end)
@@ -354,11 +277,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   end
 
   test "drop-newest rejects new and replies overflow" do
-    blocking_send = fn _w, _r, _ns ->
-      Process.sleep(150)
-      Fakes.ok_response(@topic, @partition)
-    end
-
     {pid, script_pid} =
       start_worker(
         queue_max: 1,
@@ -368,7 +286,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
     Agent.update(script_pid, fn _ ->
       [
-        {:return_fn, blocking_send}
+        {:return, {:delayed, Fakes.ok_response(@topic, @partition), 150}}
         | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
       ]
     end)
@@ -716,10 +634,8 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   end
 
   test "block mode applies back-pressure with timeout" do
-    # Send_fn never returns — guarantees the in-flight batch is still pending
-    # when the block-timeout fires for the queued enqueue.
-    forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
+    # The dispatch is never answered — the batch is guaranteed to still be in
+    # flight when the block-timeout fires for the queued enqueue.
     {pid, script_pid} =
       start_worker(
         queue_max: 1,
@@ -729,7 +645,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       )
 
     Agent.update(script_pid, fn _ ->
-      List.duplicate({:return_fn, forever_send}, 4)
+      List.duplicate({:return, :never}, 4)
     end)
 
     # Establish in-flight (first) and a queued message (filler).
@@ -744,14 +660,14 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
              ProducerWorker.enqueue(pid, "blocked", %{}, timeout: 1_000)
   end
 
-  test "stale batch_result is ignored after batch completes" do
+  test "an outcome for an unknown dispatch is ignored after its batch completes" do
     {pid, _} =
       start_worker(script: [{:return, Fakes.ok_response(@topic, @partition)}])
 
     assert :ok = ProducerWorker.enqueue(pid, "x", %{})
 
-    # Inject a stale batch_result message — should be a no-op.
-    send(pid, {:batch_result, make_ref(), Fakes.ok_response(@topic, @partition), 0})
+    # Inject an outcome for a dispatch the window never issued — a no-op.
+    send(pid, {:kafka_ex_response, make_ref(), Fakes.ok_response(@topic, @partition)})
     Process.sleep(10)
 
     # Worker still alive and responsive.
@@ -760,8 +676,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
   describe "cast_enqueue/3" do
     test "admission below queue_max returns :ok and queue depth increases" do
-      blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           queue_max: 100,
@@ -769,7 +683,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         )
 
       Agent.update(script_pid, fn _ ->
-        List.duplicate({:return_fn, blocking_send}, 5)
+        List.duplicate({:return, {:delayed, Fakes.ok_response(@topic, @partition), 150}}, 5)
       end)
 
       assert :ok = ProducerWorker.cast_enqueue(pid, "first", %{})
@@ -786,8 +700,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end
 
     test "sustained casts above drain rate trigger drop-oldest telemetry; mailbox stays bounded" do
-      blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           queue_max: 5,
@@ -796,7 +708,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         )
 
       Agent.update(script_pid, fn _ ->
-        [{:return_fn, blocking_send}]
+        [{:return, {:delayed, Fakes.ok_response(@topic, @partition), 150}}]
       end)
 
       attach(:dropped)
@@ -823,8 +735,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end
 
     test "drop-newest under cast emits dropped telemetry without replying" do
-      blocking_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           queue_max: 1,
@@ -833,7 +743,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         )
 
       Agent.update(script_pid, fn _ ->
-        [{:return_fn, blocking_send}]
+        [{:return, {:delayed, Fakes.ok_response(@topic, @partition), 150}}]
       end)
 
       attach(:dropped)
@@ -939,17 +849,12 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
   # slow: the cast never blocks its caller, and nothing is evicted — the
   # records queue behind the in-flight batch and are produced once it drains.
   defp cast_path_waits_for_room(queue_overflow) do
-    blocking_send = fn _w, _r, _ns ->
-      Process.sleep(120)
-      Fakes.ok_response(@topic, @partition)
-    end
-
     {pid, script_pid} =
       start_worker(queue_max: 1, queue_overflow: queue_overflow, linger_ms: 1)
 
     Agent.update(script_pid, fn _ ->
       [
-        {:return_fn, blocking_send}
+        {:return, {:delayed, Fakes.ok_response(@topic, @partition), 150}}
         | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
       ]
     end)
@@ -1097,8 +1002,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         end
       end
 
-      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           init_producer_id_fn: init_producer_id_fn,
@@ -1106,7 +1009,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
           linger_ms: 5
         )
 
-      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 10) end)
+      Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 10) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "a", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "b", %{})
@@ -1136,32 +1039,24 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       assert post.pending_swap_telemetry == nil
 
       # All three records still in-system (queue + in_flight).
-      in_flight_records =
-        case post.in_flight do
-          nil -> 0
-          %{records: r} -> length(r)
-        end
-
-      assert post.queue_size + in_flight_records == 3
+      assert post.queue_size + window_records(post) == 3
     end
 
     test "re-admitted in_flight records retain from/metadata/timestamp/bytes/key (2.7.2)" do
-      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           init_producer_id_fn: Fakes.init_producer_id_ok(),
           linger_ms: 1
         )
 
-      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+      Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 5) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "payload-1", %{"k" => "v"})
       :ok = ProducerWorker.cast_enqueue(pid, "payload-2", %{"flezha.dedup_key" => "abc"})
       Process.sleep(30)
 
       pre = :sys.get_state(pid)
-      in_flight_records = pre.in_flight.records
+      in_flight_records = Enum.flat_map(pre.in_flight, & &1.records)
       assert length(in_flight_records) >= 1
 
       registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
@@ -1180,12 +1075,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       # After the swap, the rewound records may still be in queue OR have
       # been kicked into the new in_flight batch — assert they remain in
       # the producer's bookkeeping with their original fields intact.
-      in_post =
-        :queue.to_list(post.queue) ++
-          case post.in_flight do
-            nil -> []
-            %{records: r} -> r
-          end
+      in_post = :queue.to_list(post.queue) ++ Enum.flat_map(post.in_flight, & &1.records)
 
       preserved = Enum.take(in_post, length(in_flight_records))
 
@@ -1197,15 +1087,13 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end
 
     test "telemetry [:worker, :swapped] fires once with measurements + metadata (2.7.4)" do
-      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           init_producer_id_fn: Fakes.init_producer_id_ok(1234, 0),
           linger_ms: 1
         )
 
-      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+      Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 5) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
@@ -1241,15 +1129,13 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end
 
     test "no :produce :failed events fire for queued records during the swap window (2.7.5)" do
-      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           init_producer_id_fn: Fakes.init_producer_id_ok(),
           linger_ms: 5
         )
 
-      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+      Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 5) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
@@ -1304,8 +1190,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end
 
     test "swap failure schedules retry within delivery_timeout_ms (2.4 happy retry)" do
-      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           init_producer_id_fn: Fakes.init_producer_id_ok(),
@@ -1314,7 +1198,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
           delivery_timeout_ms: 10_000
         )
 
-      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+      Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 5) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
       Process.sleep(20)
@@ -1345,8 +1229,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end
 
     test "swap exhaustion empties the queue, marks :swap_exhausted, keeps the producer alive (2.4 exhaustion)" do
-      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       {pid, script_pid} =
         start_worker(
           init_producer_id_fn: Fakes.init_producer_id_ok(),
@@ -1356,7 +1238,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
           delivery_timeout_ms: 50
         )
 
-      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+      Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 5) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
       :ok = ProducerWorker.cast_enqueue(pid, "y", %{})
@@ -1387,7 +1269,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       state = :sys.get_state(pid)
       assert state.queue_size == 0
-      assert state.in_flight == nil
+      assert state.in_flight == []
       assert state.swap_attempt == 0
       assert state.swap_started_at == nil
       assert state.last_error == {:swap_exhausted, :no_broker}
@@ -1398,8 +1280,6 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     end
 
     test "swap falls back to acquire/2 when registry returns :no_pending_swap" do
-      forever_send = fn _w, _r, _ns -> Process.sleep(:infinity) end
-
       identity = %{hosts: [{"k", 9092}]}
 
       {pid, script_pid} =
@@ -1409,7 +1289,7 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
           extra: [connection_identity: identity]
         )
 
-      Agent.update(script_pid, fn _ -> List.duplicate({:return_fn, forever_send}, 5) end)
+      Agent.update(script_pid, fn _ -> List.duplicate({:return, :never}, 5) end)
 
       :ok = ProducerWorker.cast_enqueue(pid, "x", %{})
       Process.sleep(20)
@@ -1499,17 +1379,12 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     test "with no configured overflow policy a guaranteed record waits instead of evicting", %{
       entity_id: entity_id
     } do
-      blocking_send = fn _w, _r, _ns ->
-        Process.sleep(120)
-        Fakes.ok_response(@topic, @partition)
-      end
-
       {pid, script_pid} =
         start_worker(queue_max: 1, queue_overflow: nil, linger_ms: 1)
 
       Agent.update(script_pid, fn _ ->
         [
-          {:return_fn, blocking_send}
+          {:return, {:delayed, Fakes.ok_response(@topic, @partition), 150}}
           | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
         ]
       end)
@@ -1541,17 +1416,12 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     test "an explicitly configured drop of a guaranteed record is alarm-grade", %{
       entity_id: entity_id
     } do
-      blocking_send = fn _w, _r, _ns ->
-        Process.sleep(150)
-        Fakes.ok_response(@topic, @partition)
-      end
-
       {pid, script_pid} =
         start_worker(queue_max: 1, queue_overflow: :drop_oldest, linger_ms: 1)
 
       Agent.update(script_pid, fn _ ->
         [
-          {:return_fn, blocking_send}
+          {:return, {:delayed, Fakes.ok_response(@topic, @partition), 150}}
           | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
         ]
       end)
@@ -1577,6 +1447,193 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
         end)
 
       assert log =~ "dropped a delivery-guaranteed record"
+    end
+  end
+
+  describe "in-flight window" do
+    # One record per dispatch: the next cast only goes in once the previous
+    # batch is on the wire, so the window fills a batch at a time.
+    defp fill_window(pid, n) do
+      for i <- 1..n do
+        :ok = ProducerWorker.cast_enqueue(pid, "m#{i}", %{})
+        assert_receive {:dispatched, ref, request}, 1_000
+        {ref, base_sequence(request)}
+      end
+    end
+
+    defp base_sequence(request) do
+      [%{data: [%{record_set: record_set} | _]} | _] = request.topic_data
+      record_set.base_sequence
+    end
+
+    defp producer_id(request) do
+      [%{data: [%{record_set: record_set} | _]} | _] = request.topic_data
+      record_set.producer_id
+    end
+
+    defp start_relay_worker(opts) do
+      {pid, _script} =
+        start_worker(
+          opts ++ [send_fn: Fakes.relay_send_fn(self()), linger_ms: 0, max_in_flight: 5]
+        )
+
+      pid
+    end
+
+    test "five batches are outstanding at once with consecutive sequences" do
+      attach(:produce_ok)
+      pid = start_relay_worker([])
+
+      window = fill_window(pid, 5)
+      assert Enum.map(window, &elem(&1, 1)) == [0, 1, 2, 3, 4]
+      assert window_records(:sys.get_state(pid)) == 5
+
+      for {ref, _seq} <- window do
+        Fakes.answer(pid, ref, Fakes.ok_response(@topic, @partition))
+      end
+
+      for _ <- 1..5 do
+        assert_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :ok], m, _}, 1_000
+        assert m.batch_size == 1
+      end
+
+      assert ProducerWorker.stats(pid).in_flight == 0
+    end
+
+    test "without idempotence exactly one batch is outstanding" do
+      pid = start_relay_worker(idempotent: false, max_in_flight: 1)
+
+      :ok = ProducerWorker.cast_enqueue(pid, "a", %{})
+      assert_receive {:dispatched, ref, request}, 1_000
+      assert base_sequence(request) == -1
+
+      :ok = ProducerWorker.cast_enqueue(pid, "b", %{})
+      refute_receive {:dispatched, _, _}, 100
+
+      Fakes.answer(pid, ref, Fakes.ok_response(@topic, @partition))
+      assert_receive {:dispatched, _ref, _request}, 1_000
+    end
+
+    test "a head failure resends the whole tail behind it, in order" do
+      pid = start_relay_worker([])
+
+      [{ref1, 0}, {ref2, 1}, {ref3, 2}] = fill_window(pid, 3)
+
+      Fakes.answer(pid, ref1, Fakes.err_response(@topic, @partition, 7))
+      # k+1 and k+2 are still outstanding, so nothing goes back on the wire yet.
+      refute_receive {:dispatched, _, _}, 100
+
+      Fakes.answer(pid, ref2, Fakes.err_response(@topic, @partition, 45))
+      Fakes.answer(pid, ref3, Fakes.err_response(@topic, @partition, 45))
+
+      assert_receive {:dispatched, _, resent_1}, 1_000
+      assert_receive {:dispatched, _, resent_2}, 1_000
+      assert_receive {:dispatched, _, resent_3}, 1_000
+      assert Enum.map([resent_1, resent_2, resent_3], &base_sequence/1) == [0, 1, 2]
+    end
+
+    test "a tail failure does not resend the head" do
+      pid = start_relay_worker([])
+
+      [{ref1, 0}, {ref2, 1}] = fill_window(pid, 2)
+
+      Fakes.answer(pid, ref1, Fakes.ok_response(@topic, @partition))
+      Fakes.answer(pid, ref2, Fakes.err_response(@topic, @partition, 7))
+
+      assert_receive {:dispatched, _, resent}, 1_000
+      assert base_sequence(resent) == 1
+      refute_receive {:dispatched, _, _}, 100
+    end
+
+    test "a timed-out head waits for the tail's outcome, then both go out in order" do
+      pid = start_relay_worker([])
+
+      [{ref1, 0}, {ref2, 1}] = fill_window(pid, 2)
+
+      send(pid, {:dispatch_timeout, ref1})
+      refute_receive {:dispatched, _, _}, 100
+
+      Fakes.answer(pid, ref2, Fakes.err_response(@topic, @partition, 45))
+
+      assert_receive {:dispatched, _, resent_1}, 1_000
+      assert_receive {:dispatched, _, resent_2}, 1_000
+      assert Enum.map([resent_1, resent_2], &base_sequence/1) == [0, 1]
+    end
+
+    test "a fence on the oldest batch renumbers the whole window and resends it in order" do
+      ids = :counters.new(1, [])
+
+      init_producer_id_fn = fn _w, _t ->
+        :counters.add(ids, 1, 1)
+        {:ok, %{producer_id: 1000 + :counters.get(ids, 1), producer_epoch: 0}}
+      end
+
+      pid = start_relay_worker(init_producer_id_fn: init_producer_id_fn)
+
+      [{ref1, 0}, {_ref2, 1}, {_ref3, 2}] = fill_window(pid, 3)
+
+      Fakes.answer(pid, ref1, Fakes.err_response(@topic, @partition, 45))
+
+      resent =
+        for _ <- 1..3 do
+          assert_receive {:dispatched, _, request}, 1_000
+          request
+        end
+
+      assert Enum.map(resent, &base_sequence/1) == [0, 1, 2]
+      assert Enum.map(resent, &producer_id/1) == [1002, 1002, 1002]
+    end
+
+    test "worker death rewinds the whole window to the head of the queue, oldest first" do
+      attach(:worker_swapped)
+      pid = start_relay_worker([])
+
+      _window = fill_window(pid, 3)
+
+      registry_ref = {{[{"k", 9092}], 0, 0}, make_ref()}
+      :sys.replace_state(pid, fn state -> %{state | registry_ref: registry_ref} end)
+      new_worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      Mimic.expect(WorkerRegistry, :swap, fn ^registry_ref ->
+        {:ok, new_worker_pid, {elem(registry_ref, 0), make_ref()}}
+      end)
+
+      send(pid, {:kafka_worker_dead, registry_ref, :killed})
+
+      assert_receive {:telemetry, [:flezha, :plugin, :kafka, :worker, :swapped], m, _}, 1_000
+      assert m.in_flight_records == 3
+
+      # The rewound records are back at the head of the queue in admission
+      # order, and leave again under the new session.
+      assert_receive {:dispatched, _, resent}, 1_000
+      assert record_values(resent) == ["m1", "m2", "m3"]
+      assert :sys.get_state(pid).queue_size == 0
+    end
+
+    test "a completed batch confirms each of its records exactly once" do
+      rc = "kw_" <> Integer.to_string(System.unique_integer([:positive]))
+      entity_id = {rc, "proc", "k1"}
+      :ok = Flezha.State.TestHelpers.stub_outbox_owner(entity_id)
+
+      pid = start_relay_worker([])
+
+      for seq <- 1..3 do
+        :ok =
+          ProducerWorker.cast_enqueue(
+            pid,
+            "v#{seq}",
+            Flezha.State.TestHelpers.guaranteed_metadata(entity_id, seq)
+          )
+
+        assert_receive {:dispatched, ref, _request}, 1_000
+        Fakes.answer(pid, ref, Fakes.ok_response(@topic, @partition))
+        assert :ok = Flezha.State.TestHelpers.assert_confirmed([{:cursor, seq}], 1_000)
+      end
+    end
+
+    defp record_values(request) do
+      [%{data: [%{record_set: record_set} | _]} | _] = request.topic_data
+      Enum.map(record_set.records, & &1.value)
     end
   end
 end
