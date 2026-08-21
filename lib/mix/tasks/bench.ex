@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Bench do
   use Mix.Task
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
-  alias Flezha.Runner.FleetManager
+  alias Mix.Tasks.Bench.Fleet
 
   @shortdoc "Run performance tests for Flezha operatives"
   @moduledoc """
@@ -93,6 +93,16 @@ defmodule Mix.Tasks.Bench do
 
     Logger.configure(level: :warning)
     Application.put_env(:logger, :level, :warning)
+
+    # A run killed mid-flight (a timeout, Ctrl-C) never reaches the `after`
+    # block, so its operatives stay in the hub's declared set and their state
+    # dirs stay on disk. The convergence loop then spends every later run trying
+    # to restore dead operatives, which slows operative creation and quietly
+    # skews the numbers. `@bench_namespace` is this task's own scratch namespace,
+    # so reset it before the controller boots and can restore anything. The
+    # `default` namespace is left alone — it may hold runners this task reuses.
+    reset_bench_namespace()
+
     Mix.Task.run("app.start")
     Logger.configure(level: :warning)
 
@@ -114,18 +124,27 @@ defmodule Mix.Tasks.Bench do
   # `:dynamic` reuses the same harness with the `dynamic_entity`
   # factory and keyed inputs (see `input_for_shape/3`).
 
+  defp reset_bench_namespace do
+    for dir <- [
+          Path.join(["app_data", "state", @bench_namespace]),
+          Path.join(["app_data", "process_hub", "#{@bench_namespace}_hub"])
+        ] do
+      File.rm_rf!(dir)
+    end
+  end
+
   defp run_default_shape(runtime, num_operatives, messages_per_operative, shape, warmup) do
     namespace =
       cond do
         runtime != :rust ->
-          setup_test_environment(2, [])
+          Fleet.setup(@bench_namespace, 2, [])
           @bench_namespace
 
-        runners_available?(@default_namespace) ->
+        Fleet.runners_available?(@default_namespace) ->
           @default_namespace
 
         true ->
-          setup_test_environment(2, [])
+          Fleet.setup(@bench_namespace, 2, [])
           @bench_namespace
       end
 
@@ -133,7 +152,7 @@ defmodule Mix.Tasks.Bench do
       run_performance_test(namespace, num_operatives, messages_per_operative, shape, warmup)
     after
       if namespace == @bench_namespace do
-        cleanup_test_environment(namespace)
+        Fleet.cleanup(namespace)
       end
     end
   end
@@ -147,7 +166,7 @@ defmodule Mix.Tasks.Bench do
         # Always bring up a fresh bench namespace per pool size — the default
         # namespace's compute engines were started without FLEZHA_WORKER_POOL_SIZE
         # threaded through, so they can't be reused for the per-pool sweep.
-        setup_test_environment(2, [{"FLEZHA_WORKER_POOL_SIZE", pool}])
+        Fleet.setup(@bench_namespace, 2, [{"FLEZHA_WORKER_POOL_SIZE", pool}])
 
         try do
           throughput =
@@ -161,7 +180,7 @@ defmodule Mix.Tasks.Bench do
 
           {pool, throughput}
         after
-          cleanup_test_environment(@bench_namespace)
+          Fleet.cleanup(@bench_namespace)
         end
       end)
 
@@ -189,74 +208,13 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
-  defp runners_available?(namespace) do
-    case FleetManager.active_runners(namespace) do
-      engines when is_list(engines) and length(engines) > 0 -> true
-      _ -> false
-    end
-  end
-
-  defp setup_test_environment(count, extra_env) do
-    IO.puts("Setting up test environment with compute engines...")
-
-    runner_ids = start_runners(@bench_namespace, count, extra_env)
-
-    IO.puts("Started #{length(runner_ids)} compute engines for performance testing")
-
-    Process.put(:bench_runners, runner_ids)
-  end
-
-  defp cleanup_test_environment(namespace) do
-    IO.puts("Cleaning up test environment...")
-
-    OperativeManager.stop_all_operatives(namespace)
-
-    case Process.get(:bench_runners) do
-      engines when is_list(engines) ->
-        Enum.each(engines, fn engine_id ->
-          FleetManager.disconnect_runner(namespace, engine_id)
-        end)
-
-      _ ->
-        :ok
-    end
-
-    FleetManager.stop_namespace(namespace)
-    Process.delete(:bench_runners)
-
-    IO.puts("Test environment cleanup completed")
-  end
-
-  defp start_runners(namespace, count, extra_env) do
-    {:ok, current_path} = :file.get_cwd()
-    runtime = Process.get(:bench_runtime, :rust)
-
-    for i <- 1..count do
-      command = build_command(runtime, current_path, namespace)
-
-      Flezha.Service.EventManager.add_handler(:runner_connected_event)
-
-      Flezha.Service.PortPilot.open_port(command, env: extra_env)
-
-      runner_id =
-        receive do
-          {:runner_connected_event, {^namespace, id}} -> id
-        after
-          5000 -> raise "Performance test compute engine #{i} failed to connect"
-        end
-
-      Flezha.Service.EventManager.rem_handler(:runner_connected_event)
-
-      runner_id
-    end
-  end
-
   defp parse_runtime(nil), do: :rust
   defp parse_runtime("rust"), do: :rust
   defp parse_runtime("java"), do: :java
+  defp parse_runtime("elixir"), do: :elixir
 
   defp parse_runtime(other) do
-    raise "Unknown --runtime value: #{inspect(other)}. Expected \"rust\" or \"java\"."
+    raise "Unknown --runtime value: #{inspect(other)}. Expected \"rust\", \"java\" or \"elixir\"."
   end
 
   defp parse_shape(nil), do: :regression
@@ -306,53 +264,6 @@ defmodule Mix.Tasks.Bench do
     end
 
     {8, 20_000}
-  end
-
-  defp build_command(:rust, current_path, namespace) do
-    candidates = [
-      "#{current_path}/target/release/rust_runner",
-      "#{current_path}/test/apps/rust_runner/target/release/rust_runner",
-      "#{current_path}/target/debug/rust_runner",
-      "#{current_path}/test/apps/rust_runner/target/debug/rust_runner"
-    ]
-
-    case Enum.find(candidates, &File.regular?/1) do
-      nil ->
-        "cargo run --release --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml --target-dir=./target -- #{namespace}"
-
-      path ->
-        if String.contains?(path, "/debug/") do
-          IO.warn(
-            "mix bench is using the DEBUG Rust runner binary at #{path} — " <>
-              "this is ~5× slower than release. Build with " <>
-              "`cargo build -p rust_runner --release` for representative numbers."
-          )
-        end
-
-        "#{path} #{namespace}"
-    end
-  end
-
-  defp build_command(:java, current_path, namespace) do
-    jar_path =
-      Path.join([
-        current_path,
-        "test/apps/java_runner/target/java_runner.jar"
-      ])
-
-    if not File.exists?(jar_path) do
-      raise """
-      Java compute engine jar not found at #{jar_path}.
-
-      Build it first with one of:
-        mix test.java_sdk   # full pipeline: build flz_jni + Maven + run tests
-        mvn -f test/apps/java_runner/pom.xml package
-
-      Then retry: mix bench --runtime java ...
-      """
-    end
-
-    "java -jar #{jar_path} #{namespace}"
   end
 
   defp run_performance_test(namespace, num_operatives, test_messages_per_operative, shape, warmup) do

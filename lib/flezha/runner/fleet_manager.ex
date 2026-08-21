@@ -8,7 +8,6 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Service.HubManager
   alias Flezha.Service.EventManager
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
-  alias Flezha.Transport.Native
   alias Flezha.Convergence.Heal
   alias Flezha.Convergence.SafeCall
 
@@ -872,8 +871,8 @@ defmodule Flezha.Runner.FleetManager do
     control_channel_pid =
       RunnerSupervisor.find_control_channel(runner_id)
 
-    Native.controlling_process(stream_ref, control_channel_pid)
-    Native.set_active(stream_ref)
+    Flezha.Transport.Stream.controlling_process(stream_ref, control_channel_pid)
+    Flezha.Transport.Stream.set_active(stream_ref)
 
     # Send setup commands
     GenServer.call(control_unit, :command_assign_runner_id)

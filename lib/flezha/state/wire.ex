@@ -395,6 +395,37 @@ defmodule Flezha.State.Wire do
   end
 
   @doc """
+  Encode a `ParkBody` to postcard bytes — the exact inverse of
+  `decode_park_body/1`, byte-compatible with the cross-language fixture
+  (`flz_core/src/park.rs`, `test/flezha/state/wire_test.exs`). The map carries
+  the flattened DLQ entry: `park_id`, `origin_offset`, `channel`, `error`,
+  `attempts`, `payload`. Sharing the module's postcard helpers is what keeps the
+  SDK's park frame from drifting from the decoder.
+  """
+  @spec encode_park_body(%{
+          required(:park_id) => binary(),
+          optional(:origin_offset) => non_neg_integer() | nil,
+          required(:channel) => binary(),
+          required(:error) => binary(),
+          required(:attempts) => non_neg_integer(),
+          optional(:payload) => binary() | nil
+        }) :: binary()
+  def encode_park_body(%{park_id: park_id, channel: channel, error: error, attempts: attempts} = body) do
+    entry = %{
+      channel: channel,
+      error: error,
+      attempts: attempts,
+      payload: Map.get(body, :payload)
+    }
+
+    IO.iodata_to_binary([
+      encode_bytes(park_id),
+      encode_option(Map.get(body, :origin_offset), &encode_varint/1),
+      encode_dlq_entry(entry)
+    ])
+  end
+
+  @doc """
   Decode a WAL record as an effect record, or `nil` when it is not one (a plain
   change record, or a body this build cannot read).
 

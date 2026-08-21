@@ -6,7 +6,6 @@ defmodule Flezha.Runner.StreamChannel do
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Wire, as: StateWire
   alias Flezha.Transport.LivenessCounters
-  alias Flezha.Transport.Native
 
   require Logger
 
@@ -46,7 +45,7 @@ defmodule Flezha.Runner.StreamChannel do
     case :persistent_term.get({__MODULE__, channel}, nil) do
       {stream_ref, liveness_ref} when stream_ref != nil ->
         bump_send(liveness_ref)
-        Native.send_frame(stream_ref, operative_id, message, metadata)
+        Flezha.Transport.Stream.send_frame(stream_ref, operative_id, message, metadata)
         :ok
 
       published ->

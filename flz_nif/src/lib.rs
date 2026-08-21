@@ -1,4 +1,5 @@
 mod atoms;
+mod client;
 mod driver_msg;
 mod driver_stats;
 mod frame_buffer;
@@ -12,6 +13,7 @@ mod uds_driver;
 fn load(env: rustler::Env, _info: rustler::Term) -> bool {
     let _ = rustler::resource!(resources::TransportServer, env);
     let _ = rustler::resource!(resources::StreamHandle, env);
+    let _ = rustler::resource!(client::QuicClientConn, env);
     true
 }
 

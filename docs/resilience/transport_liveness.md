@@ -101,7 +101,12 @@ lock-free `AtomicU64`; the
 per-stream snapshot is rebuilt under a `Mutex` once per loop iteration — never on
 the per-frame path. A frozen `loop_iterations` with a stale `last_loop_ms`
 unambiguously means the thread is wedged. QUIC has no equivalent yet —
-`driver_stats/1` returns `:undefined`.
+`driver_stats/1` returns `:undefined`. The **`native`** (in-node) transport has
+no NIF driver at all: `Transport.Server.get_stats(:native)` returns the stats map
+with the `:driver` key ABSENT (the same shape QUIC produces), so the stall
+classifier needs no native-specific branch — a native-only snapshot carries no
+driver stats and classifies exactly as a QUIC one does. Native streams still
+participate in `LivenessCounters` and the 30 s secondary heartbeat check.
 
 **BEAM counters** (`Flezha.Transport.LivenessCounters`): always-on
 `:atomics`-backed `:counters`, one array per channel and per operative, registered in
@@ -114,7 +119,7 @@ per-runner data-stream NIF server refs (`register_driver/3`) so the classifier
 polls the drivers that actually carry operative traffic, not just the control
 channel's.
 
-**Runner dispatch self-report** (Rust SDK): every `data_heartbeat` frame
+**Runner dispatch self-report** (Rust / Java / Elixir SDKs): every `data_heartbeat` frame
 carries `dispatches` (process-global count of payloads dispatched through
 the poll engine's dispatch path) and `blocked_parks` (Block-policy full-mailbox episodes) in
 its metadata. The heartbeat thread outlives a wedged dispatch pool, so without

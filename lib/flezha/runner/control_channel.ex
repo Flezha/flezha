@@ -3,9 +3,8 @@ defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.DurabilityTier
   alias Flezha.Service.Identificator
-  alias Flezha.Service.Payloader
   alias Flezha.Runner.FleetManager
-  alias Flezha.Transport.Native
+  alias Flezha.Transport.Stream, as: TStream
 
   require Logger
 
@@ -30,14 +29,15 @@ defmodule Flezha.Runner.ControlChannel do
     )
   end
 
-  # Test-only constructor: accepts an explicit `write_fun` that the
-  # `RunnerShutdownAck` emit path uses in place of `Native.send_data/2`.
-  # Production callers go through the 3-tuple form; the 4-tuple is here
-  # because `Flezha.Transport.Native` is a NIF and cannot be Mimic-copied
-  # (its `@on_load` triggers under the renamed module name and fails),
-  # so unit tests inject a capturing closure instead.
+  # Test-only constructor: accepts an explicit `write_fun` — `(stream_ref,
+  # payload_id, message, metadata) -> :ok | {:error, term}` — used in place of
+  # the `Flezha.Transport.Stream.send_frame/4` seam. Production callers go
+  # through the 3-tuple form; the 4-tuple is here because
+  # `Flezha.Transport.Native` is a NIF and cannot be Mimic-copied (its
+  # `@on_load` triggers under the renamed module name and fails), so unit tests
+  # inject a capturing closure instead.
   def start_link({namespace, runner_id, stream_ref, write_fun})
-      when is_function(write_fun, 2) do
+      when is_function(write_fun, 4) do
     GenServer.start_link(__MODULE__, {namespace, runner_id, stream_ref, write_fun},
       name: Identificator.control_channel(runner_id)
     )
@@ -61,18 +61,13 @@ defmodule Flezha.Runner.ControlChannel do
           )
 
         {:ok, iodata, _size} = Protox.encode(req)
-
-        payload =
-          Payloader.build_from_bin(
-            "control_command",
-            IO.iodata_to_binary(iodata)
-          )
+        bin = IO.iodata_to_binary(iodata)
 
         # Propagate the transport result instead of always returning {:ok, ref}.
         # A reset/dead stream replies {:error, :no_connection_available}; the
         # caller (ControlUnit) must then surface a clean error to the operative
         # rather than registering a reply ref that will never resolve.
-        case GenServer.call(control_channel, {:send_control, payload}) do
+        case GenServer.call(control_channel, {:send_control, bin}) do
           :ok -> {:ok, ref}
           {:error, reason} -> {:error, reason}
         end
@@ -97,14 +92,9 @@ defmodule Flezha.Runner.ControlChannel do
           )
 
         {:ok, iodata, _size} = Protox.encode(req)
+        bin = IO.iodata_to_binary(iodata)
 
-        payload =
-          Payloader.build_from_bin(
-            "control_command",
-            IO.iodata_to_binary(iodata)
-          )
-
-        GenServer.cast(control_channel, {:send_control_async, payload})
+        GenServer.cast(control_channel, {:send_control_async, bin})
         :ok
     end
   end
@@ -118,7 +108,7 @@ defmodule Flezha.Runner.ControlChannel do
        namespace: namespace,
        runner_id: runner_id,
        stream_ref: stream_ref,
-       write_fun: write_fun || (&Native.send_data/2),
+       write_fun: write_fun || (&TStream.send_frame/4),
        control_unit: Identificator.control_unit(runner_id),
        last_seen: System.monotonic_time(:millisecond)
      }}
@@ -149,14 +139,14 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   @impl true
-  def handle_call({:send_control, payload}, _from, state) do
+  def handle_call({:send_control, bin}, _from, state) do
     res =
       case Map.get(state, :stream_ref, nil) do
         nil ->
           {:error, :no_connection_available}
 
         stream_ref ->
-          Native.send_data(stream_ref, payload)
+          state.write_fun.(stream_ref, "control_command", bin, %{})
       end
 
     {:reply, res, state}
@@ -169,10 +159,10 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   @impl true
-  def handle_cast({:send_control_async, payload}, state) do
+  def handle_cast({:send_control_async, bin}, state) do
     case Map.get(state, :stream_ref, nil) do
       nil -> :ok
-      stream_ref -> Native.send_data(stream_ref, payload)
+      stream_ref -> state.write_fun.(stream_ref, "control_command", bin, %{})
     end
 
     {:noreply, state}
@@ -190,7 +180,7 @@ defmodule Flezha.Runner.ControlChannel do
         :ok
 
       stream_ref ->
-        state.write_fun.(stream_ref, Payloader.build_from_bin("control_ping", message))
+        state.write_fun.(stream_ref, "control_ping", message, %{})
     end
 
     {:noreply, bump_last_seen(state)}
@@ -877,16 +867,14 @@ defmodule Flezha.Runner.ControlChannel do
     }
 
     {:ok, iodata, _size} = Protox.encode(request)
-
-    payload =
-      Payloader.build_from_bin("control_command", IO.iodata_to_binary(iodata))
+    bin = IO.iodata_to_binary(iodata)
 
     case Map.get(state, :stream_ref) do
       nil ->
         :ok
 
       stream_ref ->
-        case state.write_fun.(stream_ref, payload) do
+        case state.write_fun.(stream_ref, "control_command", bin, %{}) do
           :ok ->
             :ok
 

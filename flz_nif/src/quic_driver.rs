@@ -291,7 +291,7 @@ fn driver_loop(
                             let stream_handle = rustler::ResourceArc::new(StreamHandle {
                                 stream_id: nif_id,
                                 cmd_tx: cmd_tx.clone(),
-                                waker: Arc::clone(_waker),
+                                waker: crate::resources::StreamWaker::Mio(Arc::clone(_waker)),
                                 owner: Arc::clone(&owner),
                             });
 

@@ -16,6 +16,28 @@ external_processes =
     System.get_env("FLEZHA_EXTERNAL_PROCESSES", "") |> String.split(",", trim: true)
   end
 
+# Transport whitelist. Kept a local closure — never a project module — because
+# runtime.exs is evaluated before lib/ compiles on a cold checkout. `native` is
+# the in-node BEAM SDK transport; it is accepted here but never a default.
+transport_atom! = fn value ->
+  case value do
+    v when v in ["uds", "quic", "native"] ->
+      String.to_atom(v)
+
+    other ->
+      raise "FLEZHA_TRANSPORT/FLEZHA_TRANSPORTS: unknown transport #{inspect(other)}; " <>
+              "expected \"uds\", \"quic\" or \"native\""
+  end
+end
+
+# Runner-only boot: a standalone SDK node depends on flezha as a library without
+# becoming a controller. Default true — every existing deployment is unchanged.
+controller_enabled? =
+  case System.get_env("FLEZHA_CONTROLLER_ENABLED") do
+    nil -> true
+    val -> String.downcase(val) not in ["false", "0", "no", "off"]
+  end
+
 config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Base cluster configurations.
@@ -115,8 +137,14 @@ config :flezha,
   # ------------------------------------------------------------------------------------------------
   # Transport configurations.
   #
-  # Available options: "uds" (Unix Domain Sockets, default), "quic"
-  transport: System.get_env("FLEZHA_TRANSPORT", "uds") |> String.to_atom(),
+  # Available options: "uds" (Unix Domain Sockets, default), "quic", "native"
+  # (in-node BEAM SDK; opt-in only, never a default). Unknown values are
+  # refused at boot rather than silently turned into an atom.
+  transport: transport_atom!.(System.get_env("FLEZHA_TRANSPORT", "uds")),
+
+  # Runner-only boot gate (see the closure above). When false,
+  # Flezha.Application.start/2 starts no controller supervision tree.
+  controller_enabled: controller_enabled?,
 
   # List of transports to enable simultaneously.
   # In test mode, both UDS and QUIC are enabled by default so all tests run with `mix test`.
@@ -127,10 +155,12 @@ config :flezha,
          [:uds, :quic]
 
        {nil, _} ->
-         [System.get_env("FLEZHA_TRANSPORT", "uds") |> String.to_atom()]
+         [transport_atom!.(System.get_env("FLEZHA_TRANSPORT", "uds"))]
 
        {val, _} ->
-         val |> String.split(",", trim: true) |> Enum.map(&String.to_atom/1)
+         val
+         |> String.split(",", trim: true)
+         |> Enum.map(transport_atom!)
      end),
 
   # QUIC transport settings.

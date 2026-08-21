@@ -76,3 +76,19 @@ docs/remote_durability_tier.md:visible, bounded
 docs/dev_notes/wire-frame-limits.md:slice-bounded
 flz_transport/src/service/payloader.rs:length_bounded_by_enclosing_payload
 openspec/specs/wire-frame-limits/spec.md:Bounded frame allocation
+
+# Plain-English "hold / latency / interval" family — the output-hold posture and
+# assorted capacity phrasings, none a kind name. (Introduced by the
+# effectively-once output-confirmation and durable-path work.)
+*:unbounded output
+*:unbounded hold
+*:hold outputs, unbounded
+*:unbounded amount
+*:latency you add is bounded
+*:Bounded producer queue
+*:visible, bounded
+*:parks \(bounded
+*:bounded upstream
+*:bounded interval
+*:park, bounded
+*:unbounded concurrent

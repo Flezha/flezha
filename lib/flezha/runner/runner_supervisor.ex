@@ -34,14 +34,13 @@ defmodule Flezha.Runner.RunnerSupervisor do
       }
     ]
 
-    # UDS mode: StreamAcceptors start per-stream NIF UDS servers.
-    # QUIC mode: Data streams are routed by Transport.Server (no acceptors needed).
+    # UDS starts per-stream NIF UDS servers (StreamAcceptors). QUIC and native
+    # route/bind data streams through Transport.Server, so they need none. An
+    # unknown atom is a boot bug — fail loudly rather than silently start
+    # acceptors (the former `_uds` catch-all would).
     children =
       case transport do
-        :quic ->
-          children
-
-        _uds ->
+        :uds ->
           children ++
             [
               %{
@@ -53,6 +52,14 @@ defmodule Flezha.Runner.RunnerSupervisor do
                 start: {StreamAcceptor, :start_link, [{runner_id, :secondary}]}
               }
             ]
+
+        t when t in [:quic, :native] ->
+          children
+
+        other ->
+          raise ArgumentError,
+                "RunnerSupervisor: unknown transport #{inspect(other)} " <>
+                  "(expected :uds, :quic or :native)"
       end
 
     Supervisor.init(children, strategy: :one_for_one)

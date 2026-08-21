@@ -44,7 +44,7 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
       namespace: "liveness-watchdog-test-ns",
       runner_id: runner_id,
       stream_ref: :fake_ref,
-      write_fun: fn _ref, _payload -> :ok end,
+      write_fun: fn _ref, _payload_id, _message, _metadata -> :ok end,
       control_unit: nil,
       last_seen: last_seen
     }
@@ -76,7 +76,7 @@ defmodule FlezhaTest.Runner.ControlChannelLivenessTest do
 
   test "an inbound control_ping is the liveness signal — it bumps last_seen" do
     # Drive a real channel so the actual handler clause runs, then read state.
-    write_fun = fn _ref, _payload -> :ok end
+    write_fun = fn _ref, _payload_id, _message, _metadata -> :ok end
     {:ok, pid} = ControlChannel.start_link({"ns_live", "exec_live", :fake_ref, write_fun})
     on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000) end)
 

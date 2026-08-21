@@ -1,7 +1,9 @@
 name: Naming
 
-# Repo-wide naming gate. The two operative kinds are `stream` and `workflow`;
-# this fails a PR that reintroduces `bounded`/`unbounded` as a kind name.
+# Repo-wide naming + boundary gates. The two operative kinds are `stream` and
+# `workflow`; check-kind-naming fails a PR that reintroduces `bounded`/`unbounded`
+# as a kind name. check-sdk-boundary keeps lib/flezha/sdk/ touching the controller
+# only through the named packaging seams (prepares `package-elixir-sdk`).
 # Deliberately unfiltered by path — the invariant covers docs and specs as much
 # as code — and toolchain-free, so it costs nothing next to the Format gate.
 # Local equivalent: `scripts/check-kind-naming.sh`.
@@ -19,3 +21,5 @@ jobs:
       - uses: actions/checkout@v5
       - name: check-kind-naming
         run: scripts/check-kind-naming.sh
+      - name: check-sdk-boundary
+        run: scripts/check-sdk-boundary.sh

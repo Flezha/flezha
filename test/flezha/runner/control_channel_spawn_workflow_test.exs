@@ -25,8 +25,8 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
     runner_id = "spawn_runner_#{System.unique_integer([:positive])}"
     test_pid = self()
 
-    write_fun = fn ref, payload ->
-      send(test_pid, {:written, ref, payload})
+    write_fun = fn ref, _payload_id, message, _metadata ->
+      send(test_pid, {:written, ref, message})
       :ok
     end
 

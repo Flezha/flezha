@@ -76,4 +76,34 @@ defmodule Flezha.Transport.Native do
   can correlate a `{:flz_connection, handle}` with that stream's later frames.
   """
   def stream_id(_stream_ref), do: :erlang.nif_error(:not_loaded)
+
+  # --- Client entry points (standalone SDK deployment) ---
+  #
+  # Thin wrappers over flz_transport's client + payloader; they return the same
+  # StreamHandle resource the server drivers produce, so every per-stream op and
+  # the `Flezha.Transport.Stream` seam covers a client handle with no new code.
+
+  @doc """
+  Connect a UDS client stream to `socket_path`, retrying the connect on a
+  deadline (exponential from 10 ms, cap 500 ms, ~3 s total). Frames arrive at
+  `owner_pid` as `{:flz_data, ...}` / `{:flz_closed, ...}`. Returns
+  `{:ok, stream_handle} | {:error, reason}`.
+  """
+  def client_connect_uds(_socket_path, _owner_pid), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
+  Open a QUIC client connection to `address`, verifying the server against
+  `ca_cert_path` (and presenting the client identity when the cert/key env
+  points at readable files). Returns `{:ok, conn} | {:error, reason}`.
+  """
+  def client_connect_quic(_address, _ca_cert_path), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
+  Open a bidirectional QUIC stream on `conn`. `stream_type` 1/2 writes the 2-byte
+  `[type, index]` preamble the server driver keys `{:flz_stream, ...}` on; 0 means
+  the control stream and writes no preamble. Frames arrive at `owner_pid`.
+  Returns `{:ok, stream_handle}`.
+  """
+  def client_open_stream(_conn, _stream_type, _index, _owner_pid),
+    do: :erlang.nif_error(:not_loaded)
 end

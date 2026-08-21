@@ -17,7 +17,15 @@ contains Entities.**
   mailboxes through the poll core's activation engine. One physical machine
   may run multiple Runners.
 
-- **Cluster directory** — the `:pg`-backed map of which controller nodes hold
+- **Native transport** — the in-node (`:native`) transport an Elixir SDK runner uses
+when it runs in the Controller's own BEAM node: streams are pid-backed
+`Flezha.Transport.Local.Stream` handles (NOT the NIF module `Flezha.Transport.Native`
+— the *mode atom* is `native`, the *handle module* is `Local.Stream`), and frames
+are delivered as `{:flz_data, ...}` terms by message passing. Same-node only,
+opt-in. A *standalone* Elixir runner does not use it — it speaks the binary
+protocol over UDS/QUIC like any Rust runner.
+
+**Cluster directory** — the `:pg`-backed map of which controller nodes hold
   runners for which factories, and which nodes host which namespace hubs
   (`Flezha.Cluster.Directory`). Each node advertises its own fleet truth;
   every node reads it locally, no cluster round. It is what makes every

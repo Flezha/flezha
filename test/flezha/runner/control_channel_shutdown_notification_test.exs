@@ -108,8 +108,8 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
     runner_id = "#{@namespace}_#{suffix}_#{System.unique_integer([:positive])}"
     test_pid = self()
 
-    write_fun = fn ref, payload ->
-      send(test_pid, {:test_writer_called, ref, payload})
+    write_fun = fn ref, _payload_id, message, _metadata ->
+      send(test_pid, {:test_writer_called, ref, message})
       :ok
     end
 

@@ -28,6 +28,8 @@ defmodule Flezha.Transport.Server do
   """
 
   alias Flezha.Transport.Native
+  alias Flezha.Transport.Stream, as: TStream
+  alias Flezha.Transport.Local
   alias Flezha.Runner.FleetManager
   alias Flezha.Runner.StreamSup
   alias Flezha.Socket.Support, as: SocketSupport
@@ -47,6 +49,100 @@ defmodule Flezha.Transport.Server do
 
   def name(:uds), do: :"#{__MODULE__}.Uds"
   def name(:quic), do: :"#{__MODULE__}.Quic"
+  def name(:native), do: :"#{__MODULE__}.Native"
+
+  @doc """
+  Native (in-node) runner connect. The in-BEAM SDK passes its handshake payload
+  as a term (no JSON, no frame) plus the controller-side handle of its control
+  stream, and this dispatches through the same `FleetManager.connect_handler/4`
+  seam the UDS/QUIC `connect_control_channel` path reaches. Rejects a handle
+  owned by another BEAM node (the native transport is same-node only). Returns
+  `{:ok, runner_id}` or `{:error, reason}`; a rejected connect is counted and the
+  handle closed, exactly as the socket path.
+  """
+  @spec connect(map(), Local.Stream.t()) :: {:ok, term()} | {:error, term()}
+  def connect(init_payload, %Local.Stream{pid: pid} = handle) when is_map(init_payload) do
+    if node(pid) != node() do
+      {:error, :remote_node_rejected}
+    else
+      namespace = Map.get(init_payload, "namespace")
+
+      case FleetManager.connect_handler(handle, namespace, init_payload, :native) do
+        {:ok, runner_id} ->
+          {:ok, runner_id}
+
+        {:error, reason} = err ->
+          emit_connect_rejected(reason, :authorization, :native)
+          safe_close(handle)
+          err
+      end
+    end
+  end
+
+  @doc """
+  Bind a data stream (QUIC or native) to the first rebindable channel in the
+  runner's pool, transfer its ownership to that channel and activate it; close it
+  when the pool is full. `stream_type` is the wire constant (1 primary / 2
+  secondary). Returns `{:ok, type, name}` | `{:error, reason}`.
+  """
+  @spec bind_data_stream(term(), non_neg_integer(), TStream.handle()) ::
+          {:ok, :primary | :secondary, term()} | {:error, term()}
+  def bind_data_stream(runner_id, stream_type, handle) do
+    case stream_role(stream_type) do
+      nil ->
+        {:error, :unknown_stream_type}
+
+      type ->
+        stream_ids = StreamSup.stream_ids(runner_id, type)
+
+        case StreamSup.bind_stream_to_first_nil(stream_ids, handle) do
+          {:bound, stream_pid, stream_name} ->
+            TStream.controlling_process(handle, stream_pid)
+            TStream.set_active(handle)
+            {:ok, type, stream_name}
+
+          nil ->
+            TStream.close(handle)
+            {:error, :no_channel}
+        end
+    end
+  end
+
+  @doc """
+  Ensure the `:native` transport server is running (idempotent), so an in-node
+  SDK runner appears in `list_active_transports/0` and answers `get_stats/1` even
+  when `:native` is not in the `:transports` config list.
+  """
+  @spec ensure_started(:native) :: {:ok, pid()} | {:error, term()}
+  def ensure_started(:native) do
+    case Process.whereis(name(:native)) do
+      pid when is_pid(pid) ->
+        {:ok, pid}
+
+      _ ->
+        spec =
+          Supervisor.child_spec({__MODULE__, [transport: :native]}, id: {__MODULE__, :native})
+
+        case Supervisor.start_child(Flezha.Supervisor, spec) do
+          {:ok, pid} ->
+            {:ok, pid}
+
+          {:error, {:already_started, pid}} ->
+            {:ok, pid}
+
+          # A previously terminated spec is still present — restart it in place.
+          {:error, :already_present} ->
+            case Supervisor.restart_child(Flezha.Supervisor, {__MODULE__, :native}) do
+              {:ok, pid} -> {:ok, pid}
+              {:error, :running} -> {:ok, Process.whereis(name(:native))}
+              other -> other
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
+  end
 
   @doc """
   List configured transports that are currently up.
@@ -68,8 +164,8 @@ defmodule Flezha.Transport.Server do
   and `:status` (`:up | :down`). Returns `{:error, :not_running}` if
   the server is not alive.
   """
-  @spec get_stats(:uds | :quic) :: {:ok, map()} | {:error, :not_running}
-  def get_stats(transport) when transport in [:uds, :quic] do
+  @spec get_stats(:uds | :quic | :native) :: {:ok, map()} | {:error, :not_running}
+  def get_stats(transport) when transport in [:uds, :quic, :native] do
     case Process.whereis(name(transport)) do
       pid when is_pid(pid) ->
         try do
@@ -122,6 +218,8 @@ defmodule Flezha.Transport.Server do
   # Merge the NIF driver self-report when available. UDS returns a map; QUIC
   # returns `:undefined` (no per-stream stats yet). A NIF/decode failure must
   # not break the stats call, so tolerate it.
+  defp put_driver_stats(stats, nil), do: stats
+
   defp put_driver_stats(stats, server_ref) do
     case Native.driver_stats(server_ref) do
       driver when is_map(driver) -> Map.put(stats, :driver, driver)
@@ -142,6 +240,14 @@ defmodule Flezha.Transport.Server do
   def init(:quic) do
     warn_if_transport_auth_disabled()
     init_quic()
+  end
+
+  # Native (in-node) transport: no NIF server, no listener, no peer to
+  # authenticate. Streams are pid-backed `Flezha.Transport.Local.Stream` handles
+  # bound directly by the in-node SDK through `bind_data_stream/3`.
+  def init(:native) do
+    Logger.info("[Transport.Server] native (in-node) transport ready")
+    {:ok, %{server_ref: nil, transport: :native, pending_streams: %{}}}
   end
 
   # Secure default posture: peer authentication is required unless the
@@ -230,7 +336,7 @@ defmodule Flezha.Transport.Server do
     # connect_control_channel frame and the close event can be matched back to
     # the exact handle. The handle resource itself is opaque and not comparable
     # to the integer id the data/close messages carry.
-    stream_id = Native.stream_id(stream_ref)
+    stream_id = TStream.stream_id(stream_ref)
 
     # Debug: the kubelet liveness probe opens+closes a connection every 30s,
     # so at info this pair dominates steady-state logs with no signal.
@@ -239,7 +345,7 @@ defmodule Flezha.Transport.Server do
     )
 
     # Activate the stream so we receive the connect_control_channel frame.
-    Native.set_active(stream_ref)
+    TStream.set_active(stream_ref)
 
     pending = Map.put(state.pending_streams, stream_id, stream_ref)
     {:noreply, %{state | pending_streams: pending}}
@@ -348,7 +454,7 @@ defmodule Flezha.Transport.Server do
 
   @impl true
   def terminate(_reason, state) do
-    if Map.has_key?(state, :server_ref) do
+    if state[:server_ref] do
       Native.stop_server(state.server_ref)
     end
 
@@ -404,7 +510,7 @@ defmodule Flezha.Transport.Server do
   # Closing a rejected/already-gone stream must never crash the transport
   # server, so tolerate a NIF decode/close failure here.
   defp safe_close(stream_ref) do
-    Native.close(stream_ref)
+    TStream.close(stream_ref)
   rescue
     e -> Logger.debug("[Transport.Server] close of rejected stream failed: #{inspect(e)}")
   catch
@@ -434,41 +540,26 @@ defmodule Flezha.Transport.Server do
   # index hint is intentionally ignored: any index can map to any channel
   # since outbound routing is by operative_id, not stream index.
   defp route_quic_data_stream(stream_ref, stream_type, index, runner_id, state) do
-    type =
-      case stream_type do
-        @stream_type_primary ->
-          :primary
+    case bind_data_stream(runner_id, stream_type, stream_ref) do
+      {:ok, type, stream_name} ->
+        Logger.debug(
+          "[Transport.Server] QUIC #{type} stream ##{index} → #{inspect(stream_name)}"
+        )
 
-        @stream_type_secondary ->
-          :secondary
+      {:error, :no_channel} ->
+        Logger.warning(
+          "[Transport.Server] No rebindable channel for #{runner_id}; " <>
+            "closing QUIC stream ##{index}"
+        )
 
-        _ ->
-          Logger.warning("[Transport.Server] Unknown stream type: #{stream_type}")
-          nil
-      end
-
-    if type do
-      stream_ids = StreamSup.stream_ids(runner_id, type)
-
-      case StreamSup.bind_stream_to_first_nil(stream_ids, stream_ref) do
-        {:bound, stream_pid, stream_name} ->
-          Native.controlling_process(stream_ref, stream_pid)
-          Native.set_active(stream_ref)
-
-          Logger.debug(
-            "[Transport.Server] QUIC #{type} stream ##{index} → #{inspect(stream_name)}"
-          )
-
-        nil ->
-          Logger.warning(
-            "[Transport.Server] No rebindable #{type} channel for #{runner_id}; " <>
-              "closing QUIC stream ##{index}"
-          )
-
-          Native.close(stream_ref)
-      end
+      {:error, :unknown_stream_type} ->
+        Logger.warning("[Transport.Server] Unknown stream type: #{stream_type}")
     end
 
     {:noreply, state}
   end
+
+  defp stream_role(@stream_type_primary), do: :primary
+  defp stream_role(@stream_type_secondary), do: :secondary
+  defp stream_role(_), do: nil
 end

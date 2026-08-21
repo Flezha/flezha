@@ -9,13 +9,12 @@ defmodule Flezha.Runner.ControlChannelPingTest do
   use ExUnit.Case, async: true
 
   alias Flezha.Runner.ControlChannel
-  alias Flezha.Service.Payloader
 
   test "an inbound control_ping is echoed back verbatim on the control_ping payload" do
     test_pid = self()
 
-    write_fun = fn stream_ref, payload ->
-      send(test_pid, {:wrote, stream_ref, payload})
+    write_fun = fn stream_ref, payload_id, message, _metadata ->
+      send(test_pid, {:wrote, stream_ref, payload_id, message})
       :ok
     end
 
@@ -27,15 +26,16 @@ defmodule Flezha.Runner.ControlChannelPingTest do
     ping_body = "ka-nonce-123"
     send(pid, {:flz_data, 1, "control_ping", ping_body, %{}})
 
-    assert_receive {:wrote, :fake_stream_ref, payload}, 1000
-    assert payload == Payloader.build_from_bin("control_ping", ping_body)
+    assert_receive {:wrote, :fake_stream_ref, payload_id, message}, 1000
+    assert payload_id == "control_ping"
+    assert message == ping_body
 
     GenServer.stop(pid)
   end
 
   test "a control_ping with no bound stream_ref is dropped without crashing" do
     test_pid = self()
-    write_fun = fn _ref, _payload -> send(test_pid, :wrote) end
+    write_fun = fn _ref, _payload_id, _message, _metadata -> send(test_pid, :wrote) end
 
     {:ok, pid} =
       ControlChannel.start_link({"ns_ping2", "exec_ping2", nil, write_fun})

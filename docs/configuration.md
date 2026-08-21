@@ -50,9 +50,10 @@ Defaults shown are the fallback used when the variable is unset.
 | `FLEZHA_SERVER_CERT_PATH` | `"app_data/certs/server.pem"` |
 | `FLEZHA_SERVER_KEY_PATH` | `"app_data/certs/server.key"` |
 | `FLEZHA_SOCKET_FILES_PATH` | `"app_data/sockets/"` |
-| `FLEZHA_TRANSPORT` | `"uds"` |
-| `FLEZHA_TRANSPORTS` | `—` |
+| `FLEZHA_TRANSPORT` | `"uds"` (also `"quic"`; `"native"` = in-node Elixir SDK, opt-in only, refused as a server default) |
+| `FLEZHA_TRANSPORTS` | `—` (comma list; validated against `uds,quic,native` at boot) |
 | `FLEZHA_TRANSPORT_AUTH` | `—` |
+| `FLEZHA_CONTROLLER_ENABLED` | `true` — set `false` for a runner-only node (an SDK library dependency boots flezha with no controller tree) |
 
 #### Cluster & nodes
 
@@ -186,6 +187,20 @@ Defaults shown are the fallback used when the variable is unset.
 |---|---|
 | `FLEZHA_CONCURRENT_CHANNEL_COUNT` | `"0"` |
 | `FLEZHA_FABRIC_503_POLLS` | `"3"` |
+
+### Runner-process environment (SDK-side)
+
+These are read by the SDK runner *process*, not the controller node — a
+standalone Elixir/Rust/Java runner reads them from its own environment. They have
+no controller-side application-env key.
+
+| Variable | Default | Read by |
+|---|---|---|
+| `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | the SDK's durable stable identity (atomic write; degrade-to-fresh + one warn on an unwritable path) |
+| `FLEZHA_MAILBOX_CAPACITY` | `1024` (range `1..1_048_576`) | per-Entity mailbox bound |
+| `FLEZHA_DATA_HEARTBEAT_MS` | `10000` | `data_heartbeat` interval (jittered into `[base/2, base]`) |
+| `FLEZHA_MAX_FRAME_BYTES` | `67108864` (64 MiB) | pre-auth frame-length limit (both frame parsers) |
+| `FLEZHA_MAX_WRITE_BUFFER_BYTES` | `8388608` (8 MiB) | driver send-buffer cap |
 
 ## Layer 2: application env keys
 

@@ -212,6 +212,32 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       namespace
   end
 
+  defp build_command(:elixir, current_path, namespace) do
+    app_dir = Path.join([current_path, "test/apps/elixir_runner"])
+
+    if not File.dir?(Path.join(app_dir, "lib")) do
+      raise "elixir_runner app not found at #{app_dir}"
+    end
+
+    # The spawned app runs in its own cwd, so the controller's relative socket /
+    # cert paths would miss it — pass them ABSOLUTE (resolved against the
+    # controller's cwd). `mix run --no-halt` boots the runner-only app and blocks;
+    # its stdin-EOF watcher halts the VM when the harness closes the port.
+    abs = fn rel ->
+      if String.starts_with?(rel, "/"), do: rel, else: Path.join(current_path, rel)
+    end
+
+    sock = abs.(Application.get_env(:flezha, :socket_files_path, "app_data/sockets/"))
+    ca = abs.(Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem"))
+    cert = abs.(Application.get_env(:flezha, :client_cert_path, "app_data/certs/client.pem"))
+    key = abs.(Application.get_env(:flezha, :client_key_path, "app_data/certs/client.key"))
+
+    env = "FLEZHA_SOCKET_FILES_PATH=#{sock} FLEZHA_CA_CERT_PATH=#{ca} " <>
+            "FLEZHA_QUIC_CLIENT_CERT=#{cert} FLEZHA_QUIC_CLIENT_KEY=#{key}"
+
+    "sh -c 'cd #{app_dir} && #{env} exec mix run --no-halt --no-deps-check -- #{namespace}'"
+  end
+
   defp build_command(:java, current_path, namespace) do
     # The test runner fat jar is *committed* under
     # test/apps/java_runner/dist/ — refresh it locally with

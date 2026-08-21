@@ -9,6 +9,10 @@ defmodule Flezha.MixProject do
       start_permanent: Mix.env() == :prod,
       releases: releases(),
       elixirc_paths: elixirc_paths(Mix.env()),
+      # The nested test/apps/elixir_runner mix project has its own mix.exs and
+      # lib/*.ex; keep `mix test`'s test-file scan from mistaking them for
+      # mis-named test files.
+      test_ignore_filters: [&String.starts_with?(&1, "test/apps/")],
       deps: deps(),
       aliases: aliases()
     ]
@@ -142,7 +146,10 @@ defmodule Flezha.MixProject do
     release
   end
 
+  # Explicit test dirs (not a recursive "test" glob) so a nested mix app under
+  # test/apps/ — e.g. test/apps/elixir_runner — is never compiled into the
+  # controller and cannot collide with the app's own compile.
   defp elixirc_paths(:prod), do: ["lib"]
-  defp elixirc_paths(:test), do: ["lib", "test", "test/support"]
-  defp elixirc_paths(_), do: ["lib", "test"]
+  defp elixirc_paths(:test), do: ["lib", "test/fixtures", "test/helpers", "test/support"]
+  defp elixirc_paths(_), do: ["lib", "test/fixtures", "test/helpers", "test/support"]
 end

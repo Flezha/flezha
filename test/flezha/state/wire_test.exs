@@ -182,6 +182,29 @@ defmodule Flezha.State.WireTest do
       assert park.attempts == 3
       assert park.payload == <<1, 2>>
 
+      # encode is the byte-exact inverse — the SDK's park frame cannot drift.
+      assert fixture ==
+               Wire.encode_park_body(%{
+                 park_id: "s#0",
+                 origin_offset: 7,
+                 channel: "in",
+                 error: "boom",
+                 attempts: 3,
+                 payload: <<1, 2>>
+               })
+
+      assert byteless_fixture = <<0x01, ?x, 0x00, 0x02, ?i, ?n, 0x01, ?e, 0x01, 0x00>>
+
+      assert byteless_fixture ==
+               Wire.encode_park_body(%{
+                 park_id: "x",
+                 origin_offset: nil,
+                 channel: "in",
+                 error: "e",
+                 attempts: 1,
+                 payload: nil
+               })
+
       byteless = <<0x01, ?x, 0x00, 0x02, ?i, ?n, 0x01, ?e, 0x01, 0x00>>
       assert {:ok, park} = Wire.decode_park_body(byteless)
       assert park.origin_offset == nil

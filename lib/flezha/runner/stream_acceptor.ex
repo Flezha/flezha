@@ -6,6 +6,7 @@ defmodule Flezha.Runner.StreamAcceptor do
   """
 
   alias Flezha.Transport.Native
+  alias Flezha.Transport.Stream, as: TStream
   alias Flezha.Socket.Support, as: SocketSupport
   alias Flezha.Runner.StreamSup
 
@@ -49,8 +50,8 @@ defmodule Flezha.Runner.StreamAcceptor do
   def handle_info({:flz_connection, stream_ref}, state) do
     case StreamSup.bind_stream_to_first_nil(state.stream_ids, stream_ref) do
       {:bound, stream_pid, stream_name} ->
-        Native.controlling_process(stream_ref, stream_pid)
-        Native.set_active(stream_ref)
+        TStream.controlling_process(stream_ref, stream_pid)
+        TStream.set_active(stream_ref)
 
         Logger.debug("[StreamAcceptor] Bound #{state.type} stream to #{inspect(stream_name)}")
 
@@ -60,7 +61,7 @@ defmodule Flezha.Runner.StreamAcceptor do
             "#{state.runner_id}; closing new stream"
         )
 
-        Native.close(stream_ref)
+        TStream.close(stream_ref)
     end
 
     {:noreply, state}

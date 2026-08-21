@@ -473,7 +473,7 @@ fn accept_connections(
                 let stream_handle = rustler::ResourceArc::new(StreamHandle {
                     stream_id,
                     cmd_tx: cmd_tx.clone(),
-                    waker: Arc::clone(waker),
+                    waker: crate::resources::StreamWaker::Mio(Arc::clone(waker)),
                     owner: Arc::clone(&owner),
                 });
 

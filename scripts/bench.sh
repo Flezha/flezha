@@ -77,12 +77,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-case "$RUNTIME" in rust|java) ;; *)
-    echo "Error: --runtime must be 'rust' or 'java', got '$RUNTIME'"; exit 1 ;;
+case "$RUNTIME" in rust|java|elixir) ;; *)
+    echo "Error: --runtime must be 'rust', 'java' or 'elixir', got '$RUNTIME'"; exit 1 ;;
 esac
-case "$TRANSPORT" in uds|quic) ;; *)
-    echo "Error: --transport must be 'uds' or 'quic', got '$TRANSPORT'"; exit 1 ;;
+case "$TRANSPORT" in uds|quic|native) ;; *)
+    echo "Error: --transport must be 'uds', 'quic' or 'native', got '$TRANSPORT'"; exit 1 ;;
 esac
+# The native transport is the in-process Elixir SDK; rust/java cannot use it.
+if [[ "$TRANSPORT" == "native" && "$RUNTIME" != "elixir" ]]; then
+    echo "Error: --transport native requires --runtime elixir (it is the in-process SDK)"; exit 1
+fi
 if [[ -n "$SHAPE" ]]; then
     case "$SHAPE" in regression|entity|dynamic) ;; *)
         echo "Error: --shape must be 'regression', 'entity', or 'dynamic', got '$SHAPE'"; exit 1 ;;

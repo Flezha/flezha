@@ -33,9 +33,9 @@ The controller, protocol, and measurement code are identical across runs — onl
 
 | Flag | Values | Effect |
 |---|---|---|
-| `-r` / `--runtime` | `rust` (default), `java` | Picks which SDK runner is launched. `java` requires `test/apps/java_runner/target/java_runner.jar` — build with `mix test.java_sdk` or `mvn -f test/apps/java_runner/pom.xml package`. |
-| `-t` / `--transport` | `uds` (default), `quic` | Sets `FLEZHA_TRANSPORT`. QUIC auto-generates self-signed certs at `app_data/certs/` on first run. |
-| `-s` / `--shape` | `regression` (default), `entity` | Picks the workload. `regression` honors `-n`/`-m`; `entity` is fixed at 8×4×8×20K and honors `--pool-sizes`. |
+| `-r` / `--runtime` | `rust` (default), `java`, `elixir` | Picks which SDK runner is launched. `java` requires `test/apps/java_runner/target/java_runner.jar` — build with `mix test.java_sdk` or `mvn -f test/apps/java_runner/pom.xml package`. `elixir` on `uds`/`quic` spawns `test/apps/elixir_runner` (pre-build it for the target env: `cd test/apps/elixir_runner && MIX_ENV=prod mix compile`); on `native` it starts the SDK in-process (no spawn). |
+| `-t` / `--transport` | `uds` (default), `quic`, `native` | Sets `FLEZHA_TRANSPORT`. QUIC auto-generates self-signed certs at `app_data/certs/` on first run. `native` is the in-process Elixir SDK (in-node message passing, no socket) and requires `--runtime elixir`. |
+| `-s` / `--shape` | `regression` (default), `entity`, `dynamic` | Picks the workload. `regression` honors `-n`/`-m`; `entity` is fixed at 8×4×8×20K and honors `--pool-sizes`; `dynamic` reuses the `regression` harness with the `dynamic_entity` factory and keyed inputs. |
 | `-n` / `--num-operatives` | int (default 100) | Operative count, `regression` shape only. |
 | `-m` / `--messages-per-operative` | int (default 100) | Messages per operative, `regression` shape only. |
 | `--pool-sizes` | comma list (default `1,8`) | Worker-pool sizes to sweep, `entity` shape only. |
@@ -61,6 +61,32 @@ Every shape first drains an untimed warmup (`--warmup`, default 10 msg/operative
 ```sh
 ./scripts/bench.sh --shape entity --pool-sizes 1,8
 ```
+
+### `dynamic` (keyed steady-state)
+
+`regression` harness with the `dynamic_entity` factory and keyed inputs (`k<i>:<n>`);
+each input creates/reaches one Entity per key. Honors `-n`/`-m`.
+
+```sh
+./scripts/bench.sh --shape dynamic -n 100 -m 10000
+```
+
+## Elixir runtime: transport vs runtime axes
+
+The `elixir` runtime runs the `regression`/`entity`/`dynamic` shapes over all three
+transports, which isolates two axes cleanly:
+
+- **elixir × native vs elixir × uds** — a *same-runtime* transport measurement (the
+  headline number the native transport promises: message passing vs the socket
+  stack, no runtime confound).
+- **elixir × uds vs rust × uds** — a *same-transport* runtime measurement (BEAM
+  dispatch vs the Rust engine).
+
+There is **no CI floor gate** for the elixir runtime. Small-scale smoke numbers on
+a developer host (`-n 5 -m 200`, ~1K messages — noisy, setup-dominated, NOT the
+campaign floor): elixir × native ≈ 105K msg/s, elixir × uds ≈ 125K msg/s, rust ×
+uds ≈ 387K msg/s. Run a representative comparison with `-n 100 -m 10000` after
+pre-building the standalone app for the target env.
 
 ### SDK-internal microbenches (no controller, no NIF)
 

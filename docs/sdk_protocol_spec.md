@@ -69,6 +69,17 @@ schema (postcard, version-negotiated at context creation) is specified in
 
 ## 2. Transport Layer
 
+> **In-node (`native`) transport.** An Elixir SDK hosted in the Controller's own
+> BEAM node speaks a third transport, `native`: streams are pid-backed
+> `Flezha.Transport.Local.Stream` handles and frames are delivered as
+> `{:flz_data, ...}` terms by message passing — no framing, no syscalls, binaries
+> by refcount. It is same-node only and opt-in (`native` in `FLEZHA_TRANSPORT(S)`).
+> Everything below the transport seam — the handshake content, the command
+> surface, identity, heartbeats, the retry→park ladder — is identical to UDS/QUIC;
+> a *standalone* Elixir runner node uses the ordinary binary protocol over
+> UDS/QUIC and is indistinguishable from a Rust runner. See `docs/elixir_sdk.md`.
+
+
 Flezha supports two transport types. Multiple transports can be active simultaneously — each runner chooses its transport via the `FLEZHA_TRANSPORT` env var.
 
 ### UDS (Unix Domain Sockets)
@@ -200,10 +211,14 @@ Well-known payload IDs:
 | `data_heartbeat` | Data-channel heartbeat (SDK -> controller; per-channel liveness) |
 | `{operative_id}` | Stream I/O data (both directions) |
 
-The `data_heartbeat` frame carries an empty message and empty metadata. The
-runner writes one on every secondary stream every `FLEZHA_DATA_HEARTBEAT_MS`
-(default 10 s) while connected, so an idle-but-healthy operative keeps the
-controller's per-channel liveness clock fresh without producing real output.
+The `data_heartbeat` frame carries an empty message and per-runner **metadata**
+(no longer empty): the Rust/Java/Elixir SDKs stamp at least `dispatches`
+(completed dispatches — the counter the `runner_pool_wedged` classifier verdict
+reads) and `blocked_parks`; the controller reads `dispatches` and `credit_parked`
+and bumps `hb_count`. The runner writes one on every secondary stream every
+`FLEZHA_DATA_HEARTBEAT_MS` (default 10 s) while connected, so an idle-but-healthy
+operative keeps the controller's per-channel liveness clock fresh without
+producing real output.
 The controller treats any inbound frame (heartbeat or operative output) as
 liveness; a bound channel silent past `:io_stream_liveness_threshold_ms`
 (default 30 s) is flagged as a stall.

@@ -16,6 +16,21 @@ defmodule Flezha.Application do
       _ = LoggerBackends.add({LoggerFileBackend, :file_log})
     end
 
+    # Runner-only boot: a standalone SDK node depends on flezha as a library
+    # without becoming a controller. It starts an EMPTY tree — no transport
+    # servers, no HubManager, no convergence, no state-path migration, no
+    # boot-ready gate — leaving the host app to run SDK processes via
+    # `Flezha.SDK.child_spec/1` under its own supervisor.
+    if Application.get_env(:flezha, :controller_enabled, true) do
+      start_controller()
+    else
+      require Logger
+      Logger.info("[flezha] controller disabled — runner-only boot (no controller tree)")
+      Supervisor.start_link([], strategy: :one_for_one, name: Flezha.Supervisor)
+    end
+  end
+
+  defp start_controller() do
     _ = Flezha.Boot.StatePathMigrator.migrate()
 
     # `[]` unless a remote durability backend is configured. Ahead of
@@ -97,27 +112,36 @@ defmodule Flezha.Application do
 
   @impl true
   def prep_stop(state) do
-    if Application.get_env(:flezha, :graceful_shutdown_enabled, true) do
-      # The Coordinator owns the drain — it dispatches ProcessHub
-      # `cluster_leave` (via HubManager.stop_hub_manager/0) inside its
-      # drain phase and waits for peers to claim our Operatives before
-      # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
-      try do
-        _ = Flezha.Shutdown.Coordinator.shutdown(:prep_stop)
-      catch
-        :exit, reason ->
-          require Logger
-          Logger.warning("[shutdown] coordinator unavailable in prep_stop: #{inspect(reason)}")
-          # Coordinator isn't running (e.g. early-boot crash) — fall
-          # back to the legacy direct call so the BEAM still tears
-          # the hub down before halting.
-          safe_legacy_stop()
-      end
-    else
-      safe_legacy_stop()
+    cond do
+      not Application.get_env(:flezha, :controller_enabled, true) ->
+        state
+
+      Application.get_env(:flezha, :graceful_shutdown_enabled, true) ->
+        drain_on_prep_stop()
+
+      true ->
+        safe_legacy_stop()
     end
 
     state
+  end
+
+  defp drain_on_prep_stop() do
+    # The Coordinator owns the drain — it dispatches ProcessHub
+    # `cluster_leave` (via HubManager.stop_hub_manager/0) inside its
+    # drain phase and waits for peers to claim our Operatives before
+    # finalising. Bounded by `:flezha, :graceful_shutdown_timeout_ms`.
+    try do
+      _ = Flezha.Shutdown.Coordinator.shutdown(:prep_stop)
+    catch
+      :exit, reason ->
+        require Logger
+        Logger.warning("[shutdown] coordinator unavailable in prep_stop: #{inspect(reason)}")
+        # Coordinator isn't running (e.g. early-boot crash) — fall
+        # back to the legacy direct call so the BEAM still tears
+        # the hub down before halting.
+        safe_legacy_stop()
+    end
   end
 
   defp safe_legacy_stop() do
