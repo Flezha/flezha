@@ -3,6 +3,7 @@ defmodule FlezhaQuicTest do
   alias FlezhaTest.Fixtures.OperativeFixture
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.OperativeTestHelper
+  alias FlezhaTest.Helper.MessageTestHelper
   alias FlezhaTest.Helper.NodeTestHelper
 
   use ExUnit.Case
@@ -66,14 +67,13 @@ defmodule FlezhaQuicTest do
       |> OperativeFixture.start(@quic_namespace)
       |> OperativeFixture.attach_output_msg(@quic_namespace)
 
-    OperativeManager.send_io(operative_id, @quic_namespace, "quic_hello", %{})
-
-    receive do
-      {:message_forward, msg} ->
-        assert msg === "quic_hello"
-    after
-      2000 -> flunk("Timeout waiting for message forward over QUIC")
-    end
+    assert OperativeTestHelper.send_sync_io(
+             operative_id,
+             @quic_namespace,
+             "quic_hello",
+             %{},
+             timeout: :quic
+           ) === "quic_hello"
   end
 
   test "operative state retrieval over QUIC" do
@@ -127,11 +127,12 @@ defmodule FlezhaQuicTest do
   # against the trust anchor, so a peer presenting none is refused at the
   # handshake. The connected runners in `setup_all` are the positive control
   # (same server, same CA, valid client identity) — and they warmed the cargo
-  # target dir, so the refused runner below is past `cargo run`'s freshness
-  # check well inside the negative-assertion window.
+  # target dir, so the refused runner below starts without a rebuild.
   test "a QUIC peer without a client certificate is refused" do
     refused_namespace = "quic_refused_namespace"
     Flezha.Service.EventManager.add_handler(:runner_connected_event)
+
+    MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :refused)
 
     {:ok, current_path} = :file.get_cwd()
 
@@ -149,7 +150,12 @@ defmodule FlezhaQuicTest do
       )
 
     try do
-      refute_receive {:runner_connected_event, {^refused_namespace, _}}, 8_000
+      # The refusal itself is the assertion: the server reports every
+      # handshake-stage rejection on `connect_rejected`, so this waits for the
+      # refusal to happen rather than waiting out a window to prove it did not
+      # connect. The runner retries after a refusal, so it is still running here.
+      assert_receive {:refused, %{count: 1}, %{stage: :handshake}}, 15_000
+      refute_receive {:runner_connected_event, {^refused_namespace, _}}, 200
       assert FleetManager.active_runners(refused_namespace) == []
     after
       Flezha.Service.EventManager.rem_handler(:runner_connected_event)

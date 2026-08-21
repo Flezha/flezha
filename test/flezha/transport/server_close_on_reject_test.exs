@@ -17,22 +17,11 @@ defmodule Flezha.Transport.ServerCloseOnRejectTest do
   @moduletag :capture_log
 
   alias Flezha.Runner.FleetManager
+  alias FlezhaTest.Helper.MessageTestHelper
   alias Flezha.Transport.Server
 
   defp attach_rejected_handler() do
-    test_pid = self()
-    handler_id = "connect-rejected-#{System.unique_integer([:positive])}"
-
-    :telemetry.attach(
-      handler_id,
-      [:flezha, :transport, :connect_rejected],
-      fn _event, measurements, metadata, _ ->
-        send(test_pid, {:rejected, measurements, metadata})
-      end,
-      nil
-    )
-
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    MessageTestHelper.forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
   end
 
   defp connect_frame() do

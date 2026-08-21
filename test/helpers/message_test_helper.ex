@@ -1,4 +1,30 @@
 defmodule FlezhaTest.Helper.MessageTestHelper do
+  @doc """
+  Forward every occurrence of `event` to the calling process as
+  `{tag, measurements, metadata}` for the duration of the test, so a telemetry
+  signal can be awaited with `assert_receive` like any other message. The
+  handler is detached on exit.
+
+      forward_telemetry([:flezha, :transport, :connect_rejected], :rejected)
+      assert_receive {:rejected, %{count: 1}, %{stage: :handshake}}, 500
+  """
+  def forward_telemetry(event, tag) do
+    test_pid = self()
+    handler_id = {__MODULE__, tag, System.unique_integer([:positive])}
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        event,
+        fn _event, measurements, metadata, _ ->
+          send(test_pid, {tag, measurements, metadata})
+        end,
+        nil
+      )
+
+    ExUnit.Callbacks.on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
   def recv_num(msg, count) do
     for _i <- 1..count do
       receive do

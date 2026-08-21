@@ -6,6 +6,8 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
   """
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, Quotas}
   alias Flezha.Runner.FleetManager
@@ -98,9 +100,19 @@ defmodule Flezha.AuthZ.QuotaPointsTest do
         )
 
       try do
-        :ok = Flezha.State.Watchdog.sweep_now()
-        assert_receive {:breach, %{bytes: bytes, limit: 100}, %{namespace: "team-alarm"}}, 2_000
-        assert bytes > 100
+        # The alarm is deliberately loud: assert the operator-facing line is the
+        # contract rather than letting it reach the console unasserted.
+        log =
+          capture_log(fn ->
+            :ok = Flezha.State.Watchdog.sweep_now()
+
+            assert_receive {:breach, %{bytes: bytes, limit: 100}, %{namespace: "team-alarm"}},
+                           2_000
+
+            assert bytes > 100
+          end)
+
+        assert log =~ "namespace team-alarm exceeds max_state_bytes"
 
         # Latched: a second sweep with the breach still standing does not
         # re-alarm.

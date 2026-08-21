@@ -1471,15 +1471,24 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
 
       {pid, _} = start_worker(script: [{:return, Fakes.err_response(@topic, @partition, 18)}])
 
-      :ok =
-        ProducerWorker.cast_enqueue(
-          pid,
-          "poison",
-          Flezha.State.TestHelpers.guaranteed_metadata(entity_id, 3)
-        )
+      # The park logs at :error by design. The capture has to span the enqueue as
+      # well as the receive: the worker parks asynchronously, so a capture opened
+      # only around the receive can miss the line it is meant to assert.
+      log =
+        capture_log(fn ->
+          :ok =
+            ProducerWorker.cast_enqueue(
+              pid,
+              "poison",
+              Flezha.State.TestHelpers.guaranteed_metadata(entity_id, 3)
+            )
 
-      # Parked, then the hold is answered so the cursor may pass the parked range.
-      assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 3}}}, 1_000
+          # Parked, then the hold is answered so the cursor may pass the parked range.
+          assert_receive {:"$gen_cast", {:outbox_confirmed, {:cursor, 3}}}, 1_000
+        end)
+
+      assert log =~ "parked undeliverable output"
+      assert log =~ "record_list_too_large"
 
       assert [entry] = Flezha.Dlq.Store.list(rc)
       assert entry["entity_key"] == "k1"

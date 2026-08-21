@@ -87,12 +87,10 @@ defmodule Flezha.Convergence.OutputStallDrillTest do
     assert_receive {:tick, tick}, @budget_ms
     elapsed_us = System.monotonic_time(:microsecond) - started_at
 
-    IO.puts(
-      "\n[drill] output stall → remedy decision: #{Float.round(elapsed_us / 1000, 2)} ms " <>
-        "(tick body #{tick.duration_ms} ms, tick interval #{@tick_ms} ms)"
-    )
-
-    assert elapsed_us < @budget_ms * 1_000
+    assert elapsed_us < @budget_ms * 1_000,
+           "output stall → remedy decision took #{Float.round(elapsed_us / 1000, 2)} ms, " <>
+             "budget #{@budget_ms} ms (tick body #{tick.duration_ms} ms, " <>
+             "tick interval #{@tick_ms} ms)"
 
     # The stall is recorded on the actor, which is what walks the ladder; the
     # sensor keeps no remediation bookkeeping of its own any more.

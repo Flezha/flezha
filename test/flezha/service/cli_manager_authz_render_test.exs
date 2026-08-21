@@ -8,15 +8,7 @@ defmodule Flezha.Service.CliManagerAuthzRenderTest do
 
   import ExUnit.CaptureIO
 
-  alias Flezha.AuthZ.{
-    AuthState,
-    Bootstrap,
-    Config,
-    NamespaceStore,
-    QuotaCounters,
-    RoleStore,
-    TokenStore
-  }
+  alias Flezha.AuthZ.{AuthState, Bootstrap, Config, TokenStore}
 
   alias Flezha.Service.CliManager
 

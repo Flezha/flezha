@@ -10,6 +10,8 @@ defmodule Flezha.State.WalWriterOutboxTest do
   use ExUnit.Case, async: false
   use Mimic
 
+  import ExUnit.CaptureLog
+
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Operative.ClassRegistry
@@ -622,9 +624,17 @@ defmodule Flezha.State.WalWriterOutboxTest do
       settle(md)
     end
 
-    :ok = Outbox.park(md_doomed, "doomed", :broker_gone, 6)
-    :ok = Outbox.confirm(md_fine)
-    :ok = WalWriter.fsync(pid)
+    # Parking an undeliverable output logs at :error by design — assert that
+    # operator-facing line instead of letting it reach the console unasserted.
+    log =
+      capture_log(fn ->
+        :ok = Outbox.park(md_doomed, "doomed", :broker_gone, 6)
+        :ok = Outbox.confirm(md_fine)
+        :ok = WalWriter.fsync(pid)
+      end)
+
+    assert log =~ "parked undeliverable output"
+    assert log =~ "broker_gone"
 
     assert %{outbox_flushed_seq: 1, awaiting: 0} = WalWriter.outbox_status(pid)
 
