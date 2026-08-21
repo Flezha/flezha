@@ -17,6 +17,15 @@ defmodule FlezhaQuicTest do
   @test_store_input_factory "store_input"
 
   setup_all do
+    # This module's operatives carry FIXED ids, so the Entities they persist
+    # outlive the run. On the next run the same identity binds, the bind-time
+    # restore correctly rebuilds it from that WAL, and the state assertions
+    # below see the PREVIOUS run's inputs on top of their own. Clear this
+    # namespace's tree before anything binds. Narrower than
+    # `State.TestHelpers.reset_all_entities/0`, which wipes the whole state
+    # root — nothing here is live yet, so no WalWriter has to be stopped.
+    File.rm_rf(Path.join(Flezha.State.Registry.state_root(), @quic_namespace))
+
     # Start 2 compute engines connected via QUIC for this test module.
     ce_id_1 = NodeTestHelper.start_runner(@quic_namespace, transport: :quic)
     ce_id_2 = NodeTestHelper.start_runner(@quic_namespace, transport: :quic)
