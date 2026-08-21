@@ -537,17 +537,22 @@ impl PollCore {
                         continue;
                     };
                     // Block policy: a saturated mailbox delays the firing
-                    // (and drains the slot inline) rather than dropping it —
-                    // a timer silently lost is a bug the author cannot see.
-                    crate::routing::enqueue(
-                        &slot,
-                        EntityItem::Timer(TimerFire {
-                            kind: TimerKind::ProcessingTime,
-                            scheduled_at: key.due_at_ms,
-                            stream,
-                        }),
-                        OverflowPolicy::Block,
-                    );
+                    // rather than dropping it — a timer silently lost is a
+                    // bug the author cannot see. The promoter is a pool
+                    // thread and may be the only one, so it drains the slot
+                    // inline as an activation would instead of parking on a
+                    // mailbox nobody else is serving.
+                    crate::routing::in_activation(|| {
+                        crate::routing::enqueue(
+                            &slot,
+                            EntityItem::Timer(TimerFire {
+                                kind: TimerKind::ProcessingTime,
+                                scheduled_at: key.due_at_ms,
+                                stream,
+                            }),
+                            OverflowPolicy::Block,
+                        )
+                    });
                 }
             }
         }
