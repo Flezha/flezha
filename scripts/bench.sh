@@ -103,4 +103,8 @@ fi
 
 export FLEZHA_TRANSPORT="$TRANSPORT"
 export MIX_ENV="$MIX_ENV_OVERRIDE"
+# A prod-env controller refuses to boot without an explicit durability decision.
+# A benchmark's state is disposable, so the opt-out is the honest default here;
+# set the variable yourself to measure a real tier's cost.
+export FLEZHA_DURABILITY_BACKEND="${FLEZHA_DURABILITY_BACKEND:-none}"
 exec mix bench "${ARGS[@]}"

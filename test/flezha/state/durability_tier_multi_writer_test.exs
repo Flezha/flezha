@@ -499,10 +499,14 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     Stub.stored_manifest(ref).ranges |> Enum.max_by(& &1.to) |> Map.fetch!(:blob)
   end
 
+  # Scoped to this ref's OWN blobs through the declared inverse of
+  # `blob_key/2`: the stub store is one namespace shared by every case, so
+  # whether some other ref has an unreferenced blob says nothing about this one
+  # — and asserting store-wide made the case fail on test order alone.
   defp only_orphan(ref) do
     referenced = Manifest.blob_keys(Stub.stored_manifest(ref))
-    blobs = Enum.filter(Stub.keys(), &String.starts_with?(&1, "blob/"))
-    [orphan] = blobs -- referenced
+    mine = Enum.filter(Stub.keys(), &(Manifest.ref_of_blob_key(&1) == {:ok, ref}))
+    [orphan] = mine -- referenced
     orphan
   end
 end
