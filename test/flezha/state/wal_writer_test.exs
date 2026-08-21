@@ -102,35 +102,58 @@ defmodule Flezha.State.WalWriterTest do
   end
 
   describe "awaiting baseline (empty-WAL gap)" do
+    @retry_interval_ms 200
+
     setup do
       parent = self()
+      Application.put_env(:flezha, :wal_resync_retry_interval_ms, @retry_interval_ms)
 
+      # The pull fails to dispatch, as a torn control channel would make it.
       Application.put_env(:flezha, :state_resync_fun, fn entity_id, opts ->
         send(parent, {:resync_called, entity_id, opts})
-        {:ok, make_ref()}
+        {:error, :no_control_channel}
       end)
 
-      on_exit(fn -> Application.delete_env(:flezha, :state_resync_fun) end)
+      on_exit(fn ->
+        Application.delete_env(:flezha, :state_resync_fun)
+        Application.delete_env(:flezha, :wal_resync_retry_interval_ms)
+      end)
+
       :ok
     end
 
-    test "sheds, seeds the pull once, and never returns a fatal gap", %{entity_id: pid} do
+    test "a gap flood sheds every frame but pulls at most once per interval", %{entity_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid) |> ok!()
+      header = TestHelpers.stub_header()
+
+      for seq <- 5001..5050 do
+        assert :awaiting_baseline = WalWriter.append(srv, seq, header, "d", "exec-cold")
+      end
+
+      assert_receive {:resync_called, ^pid, opts}, 1_000
+      assert opts[:reason] == :baseline_seed
+      assert opts[:runner_id] == "exec-cold"
+      refute_receive {:resync_called, _, _}, 50
+
+      assert WalWriter.last_persisted_seq(srv) == -1
+      assert Metrics.get(Metrics.for_entity(pid), :wal_shed_total) == 50
+    end
+
+    test "a pull that failed to dispatch is retried once the interval elapses", %{entity_id: pid} do
       {:ok, _} = Supervisor.find_or_start(pid)
       {:ok, srv} = Supervisor.lookup(pid) |> ok!()
       header = TestHelpers.stub_header()
 
       assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
+      assert_receive {:resync_called, ^pid, _}, 1_000
 
+      # Nothing but the pulled snapshot clears the wait, so the next gap frame
+      # after the interval must drive another pull rather than shed forever.
+      Process.sleep(@retry_interval_ms + 20)
+      assert :awaiting_baseline = WalWriter.append(srv, 5002, header, "d2", "exec-cold")
       assert_receive {:resync_called, ^pid, opts}, 1_000
       assert opts[:reason] == :baseline_seed
-      assert opts[:runner_id] == "exec-cold"
-
-      # Further gap frames shed without erroring; the seed fires once per episode.
-      assert :awaiting_baseline = WalWriter.append(srv, 5002, header, "d2", "exec-cold")
-      refute_receive {:resync_called, _, _}, 200
-
-      assert WalWriter.last_persisted_seq(srv) == -1
-      assert Metrics.get(Metrics.for_entity(pid), :wal_shed_total) == 2
     end
 
     test "the pulled snapshot establishes the baseline and appends resume", %{entity_id: pid} do
@@ -139,6 +162,7 @@ defmodule Flezha.State.WalWriterTest do
       header = TestHelpers.stub_header()
 
       assert :awaiting_baseline = WalWriter.append(srv, 5001, header, "d1", "exec-cold")
+      assert_receive {:resync_called, ^pid, _}, 1_000
 
       # The CompactEntity round-trip lands as a snapshot at the runner's seq.
       assert {:ok, _path} = Flezha.State.Snapshot.write_snapshot(pid, 5005, header, "full-state")
@@ -146,6 +170,11 @@ defmodule Flezha.State.WalWriterTest do
       assert WalWriter.last_persisted_seq(srv) == 5005
       assert :ok = WalWriter.append(srv, 5006, header, "d3", "exec-cold")
       assert WalWriter.last_persisted_seq(srv) == 5006
+
+      # A healed Entity stops pulling.
+      Process.sleep(@retry_interval_ms + 20)
+      assert :ok = WalWriter.append(srv, 5007, header, "d4", "exec-cold")
+      refute_receive {:resync_called, _, _}, 50
     end
   end
 

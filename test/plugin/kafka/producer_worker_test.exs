@@ -816,8 +816,10 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
       {:message_queue_len, qlen} = Process.info(pid, :message_queue_len)
       assert qlen <= 5
 
+      # One in flight, five queued, the other 195 evicted — and readable.
       stats = ProducerWorker.stats(pid)
       assert stats.queue_depth == 5
+      assert stats.dropped_total == 195
     end
 
     test "drop-newest under cast emits dropped telemetry without replying" do
@@ -846,49 +848,15 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
                       %{overflow_strategy: :drop_newest}}
 
       assert Process.alive?(pid)
+      assert ProducerWorker.stats(pid).dropped_total == 1
     end
 
     test ":block on the cast path waits for room instead of dropping" do
-      blocking_send = fn _w, _r, _ns ->
-        Process.sleep(120)
-        Fakes.ok_response(@topic, @partition)
-      end
+      cast_path_waits_for_room(:block)
+    end
 
-      {pid, script_pid} =
-        start_worker(
-          queue_max: 1,
-          queue_overflow: :block,
-          linger_ms: 1
-        )
-
-      Agent.update(script_pid, fn _ ->
-        [
-          {:return_fn, blocking_send}
-          | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
-        ]
-      end)
-
-      attach(:dropped)
-
-      for payload <- ["first", "filler", "waits-1", "waits-2"] do
-        :ok = ProducerWorker.cast_enqueue(pid, payload, %{})
-        Process.sleep(10)
-      end
-
-      # The cast never blocks its caller, and nothing is evicted: the records
-      # queue behind the in-flight batch and are produced once it drains.
-      refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}, 50
-
-      sent =
-        for _ <- 1..4, into: MapSet.new() do
-          assert_receive {:send_called, request, _ns}, 2_000
-          [%{data: [%{record_set: rb}]}] = request.topic_data
-          Enum.map(rb.records, & &1.value)
-        end
-        |> Enum.concat()
-        |> MapSet.new()
-
-      assert MapSet.equal?(sent, MapSet.new(["first", "filler", "waits-1", "waits-2"]))
+    test "with no configured overflow policy a plain record waits instead of being dropped" do
+      cast_path_waits_for_room(nil)
     end
 
     test "permanent broker error fires :failed with caller: :async; no GenServer.reply" do
@@ -965,6 +933,47 @@ defmodule FlezhaTest.Plugin.Kafka.ProducerWorkerTest do
     after
       timeout -> []
     end
+  end
+
+  # Four plain records through a `queue_max: 1` worker whose first batch is
+  # slow: the cast never blocks its caller, and nothing is evicted — the
+  # records queue behind the in-flight batch and are produced once it drains.
+  defp cast_path_waits_for_room(queue_overflow) do
+    blocking_send = fn _w, _r, _ns ->
+      Process.sleep(120)
+      Fakes.ok_response(@topic, @partition)
+    end
+
+    {pid, script_pid} =
+      start_worker(queue_max: 1, queue_overflow: queue_overflow, linger_ms: 1)
+
+    Agent.update(script_pid, fn _ ->
+      [
+        {:return_fn, blocking_send}
+        | List.duplicate({:return, Fakes.ok_response(@topic, @partition)}, 10)
+      ]
+    end)
+
+    attach(:dropped)
+
+    for payload <- ["first", "filler", "waits-1", "waits-2"] do
+      :ok = ProducerWorker.cast_enqueue(pid, payload, %{})
+      Process.sleep(10)
+    end
+
+    refute_receive {:telemetry, [:flezha, :plugin, :kafka, :produce, :dropped], _, _}, 50
+
+    sent =
+      for _ <- 1..4, into: MapSet.new() do
+        assert_receive {:send_called, request, _ns}, 2_000
+        [%{data: [%{record_set: rb}]}] = request.topic_data
+        Enum.map(rb.records, & &1.value)
+      end
+      |> Enum.concat()
+      |> MapSet.new()
+
+    assert MapSet.equal?(sent, MapSet.new(["first", "filler", "waits-1", "waits-2"]))
+    assert ProducerWorker.stats(pid).dropped_total == 0
   end
 
   defp attach(tag) do

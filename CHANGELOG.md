@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Changed — nothing drops by default (`close-silent-data-loss-defaults`)
+
+**BREAKING for operatives and producer chains that ran above capacity.** Two
+defaults invert from drop to block, so a saturated pipeline now back-pressures
+its source (visibly slower ingest) instead of silently discarding records with
+every health surface green.
+
+- **Entry channels default to `Block`** in both SDKs (`OverflowPolicy`). An
+  operative that wants to shed under saturation declares it —
+  `.on_full(OverflowPolicy::DropNewest)` / `.onFull(OverflowPolicy.DROP_NEWEST)`
+  — and the loss is a stated intent at the declaration site. The cost: a
+  blocked entry parks the shared wire reader, so siblings on the same
+  connection wait with it. Inter-procedure channels already blocked.
+- **The Kafka producer defaults to `:queue_overflow = :block`** for every
+  record, not only delivery-guaranteed ones. `:drop_oldest` / `:drop_newest`
+  remain available and must be chosen. `Producer.stats/1` now reports
+  `dropped_total`, so a chosen drop is readable synchronously, not only via
+  telemetry.
+- **A cold-takeover baseline pull retries** on the resync interval
+  (`:wal_resync_retry_interval_ms`, default 1 s) instead of latching: a pull
+  that failed to dispatch no longer strands the Entity in permanent shed.
+- **Removed** the producer's inert `:partitioner` option and the documented
+  but unimplemented `kafka_msg_partition` metadata override. One plugin
+  instance serves one `(topic, partition)`.
+
 ### Changed — a production controller must choose a durability posture (`durability-tier-default-on`)
 
 **BREAKING for operators.** `FLEZHA_DURABILITY_BACKEND` no longer defaults to

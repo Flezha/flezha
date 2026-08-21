@@ -653,18 +653,20 @@ it.
 
 | Channel kind   | Default | Why |
 |---|---|---|
-| Entry          | `DropNewest` | The wire reader services every Operative sharing one physical connection; blocking on one Operative's saturation head-of-line-blocks siblings. |
+| Entry          | `Block`      | A wire frame is never discarded unless the Operative said so. Saturation back-pressures the source (visibly slower ingest) instead of shedding (invisibly fewer records). |
 | InterProcedure | `Block`      | Stateful pipelines need ordering preservation; mid-pipeline drops silently corrupt derived state. |
 | PluginBound    | (n/a)        | No SDK-side mailbox sits between the producer Procedure and the wire; backpressure is OS socket buffer + transport flow control. |
 
-A runner who wants strict end-to-end ordering at the entry edge can
-declare `.on_full(OverflowPolicy::Block)` on their entry channel — the
-wire reader then parks on the saturated Operative's mailbox until the poll
-pool pops a slot (briefly delaying sibling Operatives on the same physical
-connection) instead of dropping; it never runs that Operative's procedures
-itself. The default `DropNewest` keeps the reader free of that
-co-tenancy cost and records every drop on the per-Entity
-`drops_newest_total` counter.
+The entry default has a co-tenancy cost: the wire reader services every
+Operative sharing one physical connection, and under `Block` it parks on
+the saturated Operative's mailbox until the poll pool pops a slot — sibling
+Operatives on that connection wait with it. It never runs that Operative's
+procedures itself. An Operative that prefers to shed under saturation — a
+live ticker where a stale price is worthless — declares
+`.on_full(OverflowPolicy::DropNewest)` (or `DropOldest`) on its entry
+channel; the reader then stays free, and every drop is recorded on the
+per-Entity `drops_newest_total` / `drops_oldest_total` counter. The loss
+is then a stated intent at the declaration site, not an accident.
 
 ### Per-Entity counter set
 

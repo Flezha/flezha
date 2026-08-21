@@ -85,8 +85,8 @@ pub enum HostChannelKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostOverflow {
-    Block,
     #[default]
+    Block,
     DropNewest,
     DropOldest,
 }

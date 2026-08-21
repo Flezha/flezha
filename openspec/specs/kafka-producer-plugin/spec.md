@@ -146,14 +146,30 @@ When either condition is exceeded, the batch SHALL be flushed (sent) immediately
 
 Each `(worker, topic, partition)` triple SHALL maintain its own bounded outbound queue. When the queue has reached `:queue_max` (default 10 000) items, the producer SHALL apply the configured `:queue_overflow` strategy:
 
-- `:drop_oldest` (default): pop the head of the queue, push the new message at the tail. Increment the per-`(topic, partition)` `dropped_total` counter.
+- `:block` (default): synchronously block the chain caller until queue space is available, with a hard timeout of `:queue_block_timeout_ms` (default 5000); if the timeout fires, return `{:error, {:queue_full, :timeout}}`.
+- `:drop_oldest`: pop the head of the queue, push the new message at the tail. Increment the per-`(topic, partition)` `dropped_total` counter.
 - `:drop_newest`: reject the new message. Increment `dropped_total`.
-- `:block`: synchronously block the chain caller until queue space is available, with a hard timeout of `:queue_block_timeout_ms` (default 5000); if the timeout fires, return `{:error, {:queue_full, :timeout}}`.
+
+The default SHALL be `:block` for every record, whether or not it serves a delivery-guaranteed outbox. A producer SHALL NOT discard a record by default: dropping output SHALL be a strategy the runner selects explicitly, never one derived from the record's durability class. Back-pressure runs off the emit hot path, so blocking degrades ingest rate rather than silently reducing delivered volume.
 
 The `dropped_total` counter SHALL be exposed via:
 
 - `:telemetry` event `[:flezha, :plugin, :kafka, :produce, :dropped]` per drop event.
 - A function `Flezha.Plugin.Provider.Kafka.Producer.stats(plugin_id) :: %{dropped_total: integer, queue_depth: integer, ...}` for synchronous read.
+
+Telemetry alone SHALL NOT satisfy this requirement: `stats/1` is the synchronous surface a runner polls, and a drop that is invisible there is indistinguishable from no drop at all.
+
+#### Scenario: Default overflow blocks rather than dropping
+- **GIVEN** a producer configured without `:queue_overflow`, serving output that is not delivery-guaranteed
+- **WHEN** the queue reaches `:queue_max` while further messages arrive
+- **THEN** the producer SHALL apply `:block` back-pressure and SHALL NOT discard any message
+- **AND** `dropped_total` SHALL remain 0
+
+#### Scenario: `stats/1` reports drops
+- **GIVEN** a producer with `:queue_overflow = :drop_oldest` that has discarded 100 messages
+- **WHEN** a runner calls `Flezha.Plugin.Provider.Kafka.Producer.stats(plugin_id)`
+- **THEN** the returned map SHALL include a `:dropped_total` key equal to 100
+- **AND** the map SHALL also include `:queue_depth`
 
 #### Scenario: Drop-oldest preserves recency under sustained outage
 - **GIVEN** a producer with `:queue_max = 100` and `:queue_overflow = :drop_oldest`
@@ -326,7 +342,7 @@ The Kafka producer plugin's transform-subscriber callbacks (`on_input/2`, `on_ou
 
 The callback SHALL be implemented as a `GenServer.cast` to the per-(plugin_id, topic, partition) worker, returning immediately after admission. Admission SHALL apply the configured `:queue_overflow` strategy (per the existing "Bounded outbound queue with configurable overflow strategy" requirement). The synchronous `enqueue/4` API is retained for tests, ad-hoc tooling, and explicit-flush call sites; chain-facing callbacks SHALL NOT use it.
 
-The `:block` overflow strategy is not honored for chain-facing callbacks. When a worker is configured with `:queue_overflow = :block` and a chain admission would block, the worker SHALL log a deprecation warning once per process lifetime and treat the admission as `:drop_newest` (i.e., drop the new message and emit telemetry). Sync `enqueue/4` callers continue to honor `:block` exactly as before.
+Under `:block` — the default — a cast-admitted record that finds the queue full SHALL wait inside the worker for room instead of being dropped; the chain caller is never blocked, because the record, not the caller, is what waits. Room SHALL be made only by a drained batch, never by evicting an admitted record. A synchronous `enqueue/4` caller additionally waits out its own `:queue_block_timeout_ms`.
 
 #### Scenario: Chain dispatch returns within a millisecond regardless of broker latency
 - **GIVEN** a producer plugin attached to a chain with a `KafkaEx.Server` configured to delay 30 seconds on Produce
@@ -344,13 +360,12 @@ The `:block` overflow strategy is not honored for chain-facing callbacks. When a
 - **AND** zero `OOM` events SHALL occur
 - **AND** the protobuf `timestamp_ms` (or any caller-provided event timestamp) SHALL NOT diverge from the host process's wall-clock by more than the worker's `:linger_ms + :request_timeout_ms` window
 
-#### Scenario: Block-mode admission from chain logs and drop-newest's
-- **GIVEN** a producer worker with `:queue_overflow = :block`
+#### Scenario: Block-mode admission from the chain holds the record, not the caller
+- **GIVEN** a producer worker with `:queue_overflow` unset (so `:block`)
 - **AND** the worker's queue is at `:queue_max`
 - **WHEN** `on_output/2` admits a new message via cast
-- **THEN** the worker SHALL log a `Logger.warning/1` exactly once per worker process lifetime explaining that block-mode is not supported on the chain admission path
-- **AND** SHALL emit `[:flezha, :plugin, :kafka, :produce, :dropped]` with `overflow_strategy: :block_in_cast_unsupported`
-- **AND** the chain caller SHALL still observe `{:ok, ctx}`
+- **THEN** the chain caller SHALL still observe `{:ok, ctx}` immediately
+- **AND** the record SHALL wait in the worker and be produced once a batch drains, with no `[:flezha, :plugin, :kafka, :produce, :dropped]` event and `dropped_total` unchanged
 - **AND** the synchronous `enqueue/4` call from a test-mode caller SHALL still apply the documented block-mode semantics (block until space or `:queue_block_timeout_ms`)
 
 ### Requirement: Failure surfacing for async-admitted records
@@ -451,15 +466,16 @@ work. The plugin SHALL NOT claim broker-side exactly-once.
 ### Requirement: A delivery-guaranteed outbox is served without silent loss
 
 A producer chain serving an effectively-once (delivery-guaranteed) outbox SHALL
-default the bounded outbound queue's `:queue_overflow` to `:block` —
-back-pressuring the outbox flush, which runs off the ingest hot path — rather
-than `:drop_oldest`. An operator MAY still configure `drop_oldest` or
-`drop_newest` explicitly on such a chain; each resulting drop SHALL emit an
-alarm-grade event, not only the `dropped_total` counter. On permanent failure
-of a batch carrying guaranteed records, the producer SHALL surface the failure
-to the outbox confirmation seam (so the batch parks through the dead-letter
-path) instead of dropping the records with only `:produce, :failed` telemetry.
-Plain (non-guaranteed) chains keep the existing defaults and semantics.
+back-pressure the outbox flush — which runs off the ingest hot path — under the
+`:block` default rather than evict admitted records. An operator MAY still
+configure `drop_oldest` or `drop_newest` explicitly on such a chain; each
+resulting drop SHALL emit an alarm-grade event, not only the `dropped_total`
+counter. On permanent failure of a batch carrying guaranteed records, the
+producer SHALL surface the failure to the outbox confirmation seam (so the batch
+parks through the dead-letter path) instead of dropping the records with only
+`:produce, :failed` telemetry. Plain (non-guaranteed) chains share the `:block`
+default; the alarm-grade drop event and the outbox park path remain specific to
+guaranteed records.
 
 #### Scenario: Overflow back-pressures the flush, not the broker's data
 
@@ -479,3 +495,20 @@ Plain (non-guaranteed) chains keep the existing defaults and semantics.
 - **WHEN** a guaranteed batch exhausts its retry budget with a permanent error
 - **THEN** the records are handed to the outbox's park path with their range,
   and are not dropped from the queue as if delivered
+
+### Requirement: Every documented producer option is implemented
+
+Each option the producer documents — in its `@moduledoc` parameter table, its struct, or `docs/kafka-producer.md` — SHALL be read by the implementation and SHALL affect behaviour as documented. An option that is carried but never read, or documented but absent, SHALL be removed from the documented surface rather than left inert.
+
+A silently inert option is a correctness hazard: a runner sets it to express a durability or routing intent, observes no error, and reasonably concludes the intent took effect.
+
+#### Scenario: A carried-but-unread option is removed or implemented
+- **GIVEN** `:partitioner` is present in the producer's option table and struct but is read nowhere in the produce path
+- **WHEN** the producer's documented surface is reconciled
+- **THEN** `:partitioner` SHALL either select the destination partition as documented, or be absent from both the struct and the documented option table
+
+#### Scenario: A documented metadata override exists or is not documented
+- **GIVEN** `docs/kafka-producer.md` documents a per-message `kafka_msg_partition` metadata override while the partition is fixed from worker state
+- **WHEN** the producer's documented surface is reconciled
+- **THEN** the override SHALL either route the record to the named partition, or be absent from the documentation
+

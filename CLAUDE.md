@@ -11,6 +11,7 @@ Never inline the notes in this file — it must stay small enough to load whole.
 
 ## Per-change notes index
 
+- [Nothing drops by default](docs/dev_notes/close-silent-data-loss-defaults.md) — `Block` is the default for every channel kind in BOTH SDKs and the FFI host, keep them in lockstep; Kafka `:queue_overflow` defaults to `:block` for every record; the baseline pull rides the `:seq_gap` rate limiter (`resync_rate_limited/3`), `shed/3`'s latch stays a latch; `dropped_total` is worker state
 - [Async effectively-once ingest](docs/dev_notes/async-effectively-once-ingest.md) — the host never waits on the input log; the owed set IS the request collection (label = `{reply_to, payload, retries}`); a dead log's `:DOWN` must be checked before the plugin `:DOWN` clause; `receive_response` abandons a request on timeout — probe with `wait_response`
 - [Durable-path throughput](docs/dev_notes/durable-path-throughput.md) — a confirmation refills the outbox window; the InputLog OWNS its watermark (one ETS table was 43% of CPU); the fsync tick casts; the dispatcher's chain run owns its tally; a transport reader never serves inline; profile with `--profile`/`--tprof`, not mailbox peaks
 - [Delivery confirmation gates the outbox cursor](docs/dev_notes/sink-acknowledged-delivery.md) — a cast is not delivery; the cursor moves on the sink's confirm/park; the owner is ALWAYS a `WalWriter` (the journal's, for a workflow); a lost chain run is re-dispatched by the resettle tick; `RecordLog.append` seq race fixed in `WalWriter.append_next/3`

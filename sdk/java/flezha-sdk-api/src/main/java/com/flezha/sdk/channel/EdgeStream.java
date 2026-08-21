@@ -108,12 +108,11 @@ public interface EdgeStream<T> {
     EdgeStream<T> keyBy(@Nonnull Function<T, String> key);
 
     /**
-     * Override the per-kind default {@link OverflowPolicy}. Entry channels
-     * default to {@link OverflowPolicy#DROP_NEWEST} — declare
-     * {@link OverflowPolicy#BLOCK} there only if you accept stalling the shared
-     * wire reader on this operative's saturation. Inter-procedure channels
-     * default to {@link OverflowPolicy#BLOCK}; switch to a drop policy when
-     * ordering can be sacrificed for liveness.
+     * Override the default {@link OverflowPolicy}, which is
+     * {@link OverflowPolicy#BLOCK} for every channel kind. On an entry channel
+     * {@code BLOCK} parks the shared wire reader on this operative's
+     * saturation; declare a drop policy when shedding under saturation is
+     * acceptable and ordering or completeness can be sacrificed for liveness.
      */
     @Nonnull
     EdgeStream<T> onFull(@Nonnull OverflowPolicy policy);

@@ -189,7 +189,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       linger_ms: Keyword.get(opts, :linger_ms, 10),
       max_batch_bytes: Keyword.get(opts, :max_batch_bytes, 1_048_576),
       queue_max: Keyword.get(opts, :queue_max, 10_000),
-      queue_overflow: Keyword.get(opts, :queue_overflow),
+      queue_overflow: Keyword.get(opts, :queue_overflow) || :block,
       queue_block_timeout_ms: Keyword.get(opts, :queue_block_timeout_ms, 5_000),
       retries: Keyword.get(opts, :retries, 5),
       retry_backoff_ms: Keyword.get(opts, :retry_backoff_ms, 100),
@@ -224,6 +224,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       blocked: :queue.new(),
       last_error: nil,
       consecutive_failures: 0,
+      dropped_total: 0,
       stall_threshold: Keyword.get(opts, :stall_threshold, @default_stall_threshold),
       last_force_replace_at: nil,
       swap_started_at: nil,
@@ -277,6 +278,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
      %{
        queue_depth: state.queue_size,
        in_flight: in_flight_size(state),
+       dropped_total: state.dropped_total,
        last_error: state.last_error,
        consecutive_failures: state.consecutive_failures
      }, state}
@@ -454,25 +456,18 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     {:noreply, state}
   end
 
+  # A full queue never discards a record unless the operator chose a drop
+  # strategy: the default is `:block` for every record, guaranteed or not.
   defp admit_record(state, record, from_or_async) do
     if state.queue_size < state.queue_max do
       {:admitted, push(state, record)}
     else
-      overflow(state, record, from_or_async, overflow_strategy(state, record))
+      overflow(state, record, from_or_async, state.queue_overflow)
     end
   end
 
-  # A record carrying an outbox confirmation token is delivery-guaranteed: a
-  # cursor upstream is waiting on it, so dropping it would claim a delivery that
-  # never happened. Such a record blocks by default; an operator who configured
-  # a drop policy explicitly still gets it, loudly.
-  defp overflow_strategy(%{queue_overflow: nil}, record),
-    do: if(Outbox.guaranteed?(record.metadata), do: :block, else: :drop_oldest)
-
-  defp overflow_strategy(%{queue_overflow: strategy}, _record), do: strategy
-
   defp overflow(state, record, from_or_async, :drop_newest) do
-    drop_telemetry(state, record, :drop_newest)
+    state = record_drop(state, record, :drop_newest)
 
     case from_or_async do
       :async -> {:dropped_async, state}
@@ -483,8 +478,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
   defp overflow(state, record, _from_or_async, :drop_oldest) do
     {state, evicted} = pop(state)
     reply_to_record(evicted, {:error, {:queue_full, :evicted}})
-    drop_telemetry(state, evicted, :drop_oldest)
-    {:admitted, push(state, record)}
+    {:admitted, state |> record_drop(evicted, :drop_oldest) |> push(record)}
   end
 
   # Room is made by a drained batch, never by evicting an admitted record. A
@@ -498,10 +492,12 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
     {:blocked, %{state | blocked: :queue.in({from, record}, state.blocked)}}
   end
 
-  # A dropped delivery-guaranteed record is alarm-grade: its outbox cursor stays
-  # where it is, so the loss is visible as an outbox that stops draining rather
-  # than as a counter nobody reads.
-  defp drop_telemetry(state, record, strategy) do
+  # Every drop is counted for `stats/1` — telemetry alone is invisible to a
+  # runner polling the worker. A dropped delivery-guaranteed record is
+  # alarm-grade on top: its outbox cursor stays where it is, so the loss is
+  # visible as an outbox that stops draining rather than as a counter nobody
+  # reads.
+  defp record_drop(state, record, strategy) do
     guaranteed? = record != nil and Outbox.guaranteed?(record.metadata)
 
     if guaranteed? do
@@ -521,6 +517,8 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerWorker do
       guaranteed: guaranteed?,
       reason: :overflow
     })
+
+    %{state | dropped_total: state.dropped_total + 1}
   end
 
   # The outbox confirmation seam: an acked batch confirms every guaranteed

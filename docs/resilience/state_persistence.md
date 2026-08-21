@@ -516,13 +516,19 @@ The pull is data-plane-triggered on cold takeover: the first
 (`last_persisted_seq == -1`), `seq > 0`, and no runner-restart realign
 puts the `WalWriter` into **awaiting-baseline** — the frame is shed
 (counted in `wal_shed_total`, not an error, and the SDK is NOT
-disconnected), `[:flezha, :state, :baseline_seed]` fires once, and one
-`CompactEntity` is dispatched per episode. Further gap frames shed
+disconnected), `[:flezha, :state, :baseline_seed]` fires once per
+episode, and a `CompactEntity` is dispatched. Further gap frames shed
 quietly until the pulled `entity_state_snapshot` lands; its seq becomes
 `last_persisted_seq` (the snapshot encodes the shed deltas' effects) and
-the runner's next delta appends contiguously. A stuck pull is bounded
-by the compaction-timeout sweep. A gap on a *populated* WAL remains a
-protocol violation (`{:error, {:gap, ...}}`).
+the runner's next delta appends contiguously. The pull is **retried** on
+the resync interval (`:wal_resync_retry_interval_ms`, default 1 s) for as
+long as the Entity waits — a pull that failed to dispatch (a torn control
+channel answers `:no_control_channel`) would otherwise strand the Entity
+in permanent shed, because only the pulled snapshot clears the state.
+At most one pull is in flight per Entity per interval, so a per-frame gap
+flood cannot fan out. A stuck pull is bounded by the compaction-timeout
+sweep. A gap on a *populated* WAL remains a protocol violation
+(`{:error, {:gap, ...}}`).
 
 ## What a restore does to input already queued
 

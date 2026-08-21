@@ -30,12 +30,12 @@ class BoundedMailboxTopologyTest {
     }
 
     @Test
-    @DisplayName("default policy: entry channels DROP_NEWEST, inter-procedure BLOCK")
+    @DisplayName("default policy: BLOCK on entry and inter-procedure channels alike")
     void defaultPoliciesByKind() {
         StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new TwoStageStreamOperative());
         // Channel index 0 is the entry channel "input"; index 1 is the
         // inter-procedure channel "mid".
-        assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_NEWEST);
+        assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.BLOCK);
         assertThat(topology.channels().get(1).overflowPolicy()).isEqualTo(OverflowPolicy.BLOCK);
     }
 
@@ -48,10 +48,10 @@ class BoundedMailboxTopologyTest {
     }
 
     @Test
-    @DisplayName("onFull on an entry channel overrides the per-kind default")
+    @DisplayName("onFull(DROP_NEWEST) on an entry channel overrides the default: shedding is declared")
     void onFullOnEntryChannelOverrides() {
-        StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new EntryBlockStreamOperative());
-        assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.BLOCK);
+        StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new EntryDropNewestStreamOperative());
+        assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_NEWEST);
     }
 
     @Test
@@ -150,15 +150,17 @@ class BoundedMailboxTopologyTest {
         }
     }
 
-    public static final class EntryBlockStreamOperative implements StreamOperative {
+    public static final class EntryDropNewestStreamOperative implements StreamOperative {
         @Override
         public String factoryId() {
-            return "entry_block";
+            return "entry_drop_newest";
         }
 
         @Override
         public void channels(ChannelBuilder c) {
-            var sA = c.input(String.class, "input").onFull(OverflowPolicy.BLOCK).into(A.class);
+            var sA = c.input(String.class, "input")
+                    .onFull(OverflowPolicy.DROP_NEWEST)
+                    .into(A.class);
             sA.named("mid").into(B.class);
         }
     }

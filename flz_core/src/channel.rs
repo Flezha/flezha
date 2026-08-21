@@ -132,13 +132,14 @@ pub enum ChannelKind {
 
 /// Per-channel backpressure policy applied at the producer-side push
 /// site when the consumer's bounded mailbox is full. Declared via
-/// `.on_full(...)` on the channel builder; defaults to `DropNewest` for
-/// entry channels and `Block` for inter-procedure channels. Plugin-bound
-/// channels have no SDK-side mailbox and ignore this value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `.on_full(...)` on the channel builder; the default is `Block` for every
+/// kind, so nothing is discarded unless the operative declared it.
+/// Plugin-bound channels have no SDK-side mailbox and ignore this value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OverflowPolicy {
     /// Producer parks until the consumer drains an item, then retries.
     /// Preserves ordering at the cost of producer-thread stall.
+    #[default]
     Block,
     /// Incoming item is discarded; consumer's `drops_newest_total` increments.
     DropNewest,

@@ -11,7 +11,7 @@ Each Entity whose Operative has `persistence_enabled = true` and whose Procedure
 `seq` SHALL be strictly monotonic per Entity and assigned by the SDK. The Controller SHALL accept any incoming Change frame whose `seq == last_persisted_seq + 1` for that Entity; SHALL silently drop (with a `dedup_drops_total` counter increment) any frame whose `seq <= last_persisted_seq`. For a frame whose `seq > last_persisted_seq + 1` the Controller SHALL distinguish two cases:
 
 - **Populated WAL** (`last_persisted_seq >= 0`) and not a runner-restart realign: a genuine protocol violation. The Controller SHALL reject the append (returning `{:error, {:gap, expected, got}}`) and the SDK SHALL treat it as a protocol violation and disconnect.
-- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not a runner-restart realign: a cold-takeover where this Controller holds no baseline for an Entity the runner already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Entity, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive exactly one `CompactEntity` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until an `entity_state_snapshot` establishes the baseline.
+- **Empty WAL** (`last_persisted_seq == -1`) with `seq > 0` and not a runner-restart realign: a cold-takeover where this Controller holds no baseline for an Entity the runner already has state for. The Controller SHALL NOT disconnect. It SHALL enter an **awaiting-baseline** state for the Entity, shed the frame (incrementing a `wal_shed_total`-class counter, not erroring), drive a `CompactEntity` pull (see "Restart restores state via RestoreInitState handshake"), and keep shedding further gap frames without erroring until an `entity_state_snapshot` establishes the baseline. The pull SHALL be retried on a bounded interval for as long as the Entity remains awaiting-baseline: a pull that fails to dispatch (for example a torn control channel answering `:no_control_channel`) MUST NOT strand the Entity, because no snapshot will arrive to clear the awaiting-baseline state and every subsequent frame would be shed indefinitely. Retries SHALL be rate-limited so a per-frame gap flood cannot fan out into unbounded concurrent pulls.
 
 A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run at controller boot before `Flezha.State.Supervisor` starts any per-Entity `WalWriter`. The migrator SHALL walk every directory under `app_data/state/` of the form `{runner_id}/{operative_class}/{procedure_id}/` and atomically move its contents into `{operative_class}/{procedure_id}/`. The migration is idempotent (skips silently if the flat layout already exists) and logs each rename. After all old `{runner_id}/` directories are emptied, they are removed.
 
@@ -46,7 +46,7 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 
 - **GIVEN** a freshly-assigned Controller with no WAL for an Entity (`last_persisted_seq = -1`) whose live runner has been producing changes and next emits `seq = 5001`, and the frame is not a runner-restart realign
 - **WHEN** the agent receives the `entity_state_change` frame
-- **THEN** the agent SHALL NOT reply with a fatal gap error and SHALL NOT disconnect the SDK; the agent SHALL shed the frame (incrementing the shed counter), mark the Entity awaiting-baseline, and dispatch exactly one `CompactEntity` to pull a full-state baseline; further gap frames arriving before the snapshot SHALL be shed without error
+- **THEN** the agent SHALL NOT reply with a fatal gap error and SHALL NOT disconnect the SDK; the agent SHALL shed the frame (incrementing the shed counter), mark the Entity awaiting-baseline, and dispatch a `CompactEntity` to pull a full-state baseline; further gap frames arriving before the snapshot SHALL be shed without error and SHALL NOT each dispatch their own pull
 - **AND** once the pulled `entity_state_snapshot{seq}` lands, `last_persisted_seq` SHALL equal that snapshot's seq and the runner's next new delta SHALL append contiguously
 
 #### Scenario: Crash-safe append via crc
@@ -67,6 +67,13 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 - **GIVEN** a runner restart between WAL writes — first write under `exec-9`, restart yields `exec-12` for the same Operative
 - **WHEN** the migrator runs (one-time, on first boot under new code)
 - **THEN** files from BOTH `exec-9/MarketOperative/btc/` and `exec-12/MarketOperative/btc/` SHALL be merged into the flat path; on collision (same entity_key.wal in both), the migrator SHALL prefer the file with the higher last-record `seq` (read by scanning) and preserve the other as `<key>.wal.preserved-<exec-9>` for forensics
+
+#### Scenario: A baseline pull that fails to dispatch is retried
+
+- **GIVEN** an Entity marked awaiting-baseline whose `CompactEntity` pull failed to dispatch (the control channel answered `:no_control_channel`)
+- **WHEN** further gap frames continue to arrive for that Entity
+- **THEN** the agent SHALL retry the pull once the rate-limit interval has elapsed rather than shedding indefinitely without ever retrying
+- **AND** the retries SHALL be bounded to at most one in-flight pull per Entity per interval, so a sustained gap flood does not fan out
 
 ### Requirement: Snapshot lifecycle with atomic rename and WAL truncation
 

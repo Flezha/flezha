@@ -236,7 +236,7 @@ sequenceDiagram
     Note over CTRL: last_persisted_seq == -1 and the seq is not 0 —<br/>a cold takeover, not a fresh entity
 
     rect rgba(220,252,231,0.5)
-        Note over CTRL: awaiting-baseline — shed the gap frame, count it, signal the Overwatch once
+        Note over CTRL: awaiting-baseline — shed the gap frame, count it, pull (retried on the resync interval until a snapshot lands)
         CTRL->>EX: CompactEntity — PULL a baseline
         EX->>CTRL: entity_state_snapshot @ seq 5001
         CTRL->>CTRL: 💾 baseline established, last_persisted_seq = 5001

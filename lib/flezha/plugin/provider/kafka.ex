@@ -28,9 +28,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
       * `:linger_ms`                       — int, default `10`
       * `:max_batch_bytes`                 — int, default `1_048_576`
       * `:queue_max`                       — int, default `10_000`
-      * `:queue_overflow`                  — `:drop_oldest`, `:drop_newest`, or `:block`.
-        Unset, it is derived per record: `:block` for a delivery-guaranteed
-        output (one an outbox cursor is waiting on), `:drop_oldest` otherwise
+      * `:queue_overflow`                  — `:block` (default), `:drop_oldest`, or `:drop_newest`
       * `:queue_block_timeout_ms`          — int, default `5_000`
       * `:idempotent`                      — bool, default `false` (opt in for exactly-once)
       * `:auto_create_topic`               — bool, default `true`
@@ -38,7 +36,6 @@ defmodule Flezha.Plugin.Provider.Kafka do
       * `:auto_create_replication_factor`  — int, default `2`
       * `:topic_configs`                   — keyword/list of `{name, value}` pairs, default `[]`
       * `:metadata_refresh_timeout_ms`     — int, default `5_000`
-      * `:partitioner`                     — `{module, function}` partitioner, default `nil`
     """
 
     alias Flezha.Plugin.Extension.Ctx
@@ -59,7 +56,6 @@ defmodule Flezha.Plugin.Provider.Kafka do
                   :producer_pid,
                   :plugin_id,
                   :channel,
-                  :partitioner,
                   partition: 0,
                   required_acks: -1,
                   retries: 5,
@@ -69,7 +65,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
                   linger_ms: 10,
                   max_batch_bytes: 1_048_576,
                   queue_max: 10_000,
-                  queue_overflow: nil,
+                  queue_overflow: :block,
                   queue_block_timeout_ms: 5_000,
                   idempotent: false,
                   auto_create_topic: true,
@@ -228,7 +224,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
         linger_ms: coerce_int(Map.get(opts, :linger_ms, 10)),
         max_batch_bytes: coerce_int(Map.get(opts, :max_batch_bytes, 1_048_576)),
         queue_max: coerce_int(Map.get(opts, :queue_max, 10_000)),
-        queue_overflow: coerce_atom(Map.get(opts, :queue_overflow)),
+        queue_overflow: coerce_atom(Map.get(opts, :queue_overflow, :block)),
         queue_block_timeout_ms: coerce_int(Map.get(opts, :queue_block_timeout_ms, 5_000)),
         retries: coerce_int(Map.get(opts, :retries, 5)),
         retry_backoff_ms: coerce_int(Map.get(opts, :retry_backoff_ms, 100)),

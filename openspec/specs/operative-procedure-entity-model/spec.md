@@ -4,7 +4,6 @@
 This capability defines the structural execution model for Operatives: bounded per-Entity mailboxes with a per-channel overflow policy, the `Procedure` stage trait surface (state, change, clock, config, persistence), typed compile-checked channels, and dynamic entity mode (lazy creation, idle-TTL eviction, and soft caps).
 It also names the three-level workload vocabulary itself — Operative → Procedure → Entity — and the rule that every declaration, wire name, and on-disk name is named for the level it describes.
 ## Requirements
-
 ### Requirement: Hierarchy and placement
 The system SHALL realize the role relationship as follows:
 
@@ -113,14 +112,20 @@ The policy SHALL be declared via the channel-builder method `.on_full(OverflowPo
 ### Requirement: Default overflow policy by channel kind
 When a channel does not call `.on_full(...)`, the runtime SHALL apply a default policy determined by the channel's kind:
 
-- Entry channels: `OverflowPolicy::DropNewest`.
+- Entry channels: `OverflowPolicy::Block`.
 - Inter-procedure channels: `OverflowPolicy::Block`.
 - Plugin-bound channels: not applicable (no SDK-side mailbox).
 
+An entry channel SHALL NOT discard a wire frame unless the Operative declared a dropping policy explicitly. Data loss on the ingress path SHALL be a stated intent, never a default: an Operative that wants shedding under saturation declares `.on_full(OverflowPolicy::DropNewest)` or `.on_full(OverflowPolicy::DropOldest)`.
+
 These defaults SHALL be reflected in the `ChannelDescriptor.overflow_policy` field set by `build_topology` for every channel for which the user did not explicitly call `.on_full(...)`.
 
-#### Scenario: Default entry policy is DropNewest
+#### Scenario: Default entry policy is Block
 - **WHEN** a Operative declares `c.input::<Vec<u8>>("trade.raw").into::<ParseProcedure>()` without `.on_full(...)` and a frame arrives while the consumer mailbox is full
+- **THEN** the pushing thread SHALL park until the consumer drains an item and the push SHALL then retry until success; the frame SHALL NOT be discarded and `drops_newest_total` SHALL NOT change
+
+#### Scenario: An entry channel still drops when it says so
+- **WHEN** a Operative declares `c.input::<Vec<u8>>("trade.raw").on_full(OverflowPolicy::DropNewest).into::<ParseProcedure>()` and a frame arrives while the consumer mailbox is full
 - **THEN** the frame SHALL be discarded and `drops_newest_total` SHALL increase by 1
 
 #### Scenario: Default inter-procedure policy is Block
@@ -164,19 +169,6 @@ This requirement is in addition to and does not modify the "Sticky per-entity or
 #### Scenario: FIFO unpark order
 - **WHEN** Producers A, B, C park in that order on the same full consumer mailbox
 - **THEN** the consumer's first three pops SHALL unpark A, B, C respectively (best-effort under MPMC contention; the *intent* is FIFO order via a `VecDeque<Unparker>` implementation)
-
-### Requirement: Mailbox-full handling does not stall sibling Operatives at the entry edge under default policy
-Under the default entry-channel policy (`DropNewest`), the SDK's wire-reader thread (the per-stream loop in `command/streams_connect.rs`) SHALL NOT block on a full mailbox. The frame's typed payload SHALL be discarded; the loop SHALL immediately attempt to read the next frame from the wire.
-
-If a runner opts into `OverflowPolicy::Block` on an entry channel by explicit `.on_full(OverflowPolicy::Block)` declaration, the wire-reader thread MAY park while pushing to that channel's consumer mailbox. The SDK SHALL document this co-tenancy hazard in `docs/operative_architecture.md` and `docs/sdk_protocol_spec.md`. No runtime mechanism prevents a runner from making this choice.
-
-#### Scenario: Default entry policy keeps wire reader running
-- **WHEN** Operative A's entry mailbox is full under default `DropNewest` policy and Operative B (sharing the physical wire connection) has frames pending
-- **THEN** the wire reader SHALL discard the frame addressed to A and continue dispatching the next frame; Operative B's frames SHALL not be delayed by A's saturation
-
-#### Scenario: Opt-in entry Block opts into co-tenancy hazard
-- **WHEN** a Operative declares `c.input::<Vec<u8>>("x").on_full(OverflowPolicy::Block).into::<S>()` and the entry mailbox saturates
-- **THEN** the wire-reader thread SHALL park on the push; Operative B sharing the same connection SHALL NOT receive new frames until the parked push completes (this is documented behavior under explicit opt-in, not a defect)
 
 ### Requirement: Procedure declares Change associated type and apply_change function (Rust SDK)
 The Rust SDK's `Procedure` trait SHALL declare an associated `type Change: flezha_runner::state::Change` with default `flezha_runner::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
@@ -924,3 +916,18 @@ The word "Operator" remains reserved for ProcessHub's ring-node jargon and is un
 #### Scenario: The diagram shows the entity modes
 - **WHEN** the diagram describes a Procedure
 - **THEN** it MUST show that a Procedure resolves to Single, Static, or Dynamic, and state for each how many Entities result and whether they are keyed
+
+### Requirement: Entry-edge mailbox-full handling and the shared wire reader
+
+The SDK's wire-reader thread (the per-stream loop in `command/streams_connect.rs`) services every Operative sharing one physical connection. Under the default entry-channel policy (`Block`), a push into a full consumer mailbox SHALL park the wire-reader thread until the consumer drains an item; the frame SHALL NOT be discarded. While parked, the reader SHALL NOT run the saturated Operative's procedures itself, and sibling Operatives on the same connection SHALL NOT receive new frames until the parked push completes. The SDK SHALL document this co-tenancy cost in `docs/operative_architecture.md` and `docs/sdk_protocol_spec.md`.
+
+Under a declared drop policy (`.on_full(OverflowPolicy::DropNewest)` or `DropOldest`) the wire-reader thread SHALL NOT block on a full mailbox: the frame's typed payload SHALL be discarded (or the oldest item evicted) per the policy, and the loop SHALL immediately attempt to read the next frame from the wire.
+
+#### Scenario: Default entry Block parks the reader and loses nothing
+- **WHEN** Operative A declares `c.input::<Vec<u8>>("x").into::<S>()` without `.on_full(...)`, its entry mailbox saturates, and Operative B shares the physical wire connection
+- **THEN** the wire-reader thread SHALL park on the push and B SHALL NOT receive new frames until the parked push completes; once the pool drains A's mailbox every frame addressed to A and B SHALL land, and A's `drops_newest_total` and `drops_oldest_total` SHALL be unchanged
+
+#### Scenario: A declared drop policy keeps the wire reader running
+- **WHEN** Operative A's entry channel declares `.on_full(OverflowPolicy::DropNewest)`, its mailbox is full, and Operative B (sharing the physical wire connection) has frames pending
+- **THEN** the wire reader SHALL discard the frame addressed to A and continue dispatching the next frame; B's frames SHALL NOT be delayed by A's saturation
+

@@ -487,7 +487,8 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         entry.name = name;
         entry.kind = kind;
         entry.payloadType = payloadType;
-        entry.overflowPolicy = defaultPolicyForKind(kind);
+        // BLOCK for every kind: a channel drops only when the operative declared it.
+        entry.overflowPolicy = OverflowPolicy.BLOCK;
         channels.add(entry);
         return id;
     }
@@ -859,10 +860,6 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
             return;
         }
         entry.retryMaxAttempts = maxAttempts;
-    }
-
-    private static OverflowPolicy defaultPolicyForKind(ChannelKind kind) {
-        return kind == ChannelKind.ENTRY ? OverflowPolicy.DROP_NEWEST : OverflowPolicy.BLOCK;
     }
 
     /** Mutable internal record for a node registration. */

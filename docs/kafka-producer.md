@@ -30,9 +30,8 @@ The plugin SHALL:
 * Batch messages per `:linger_ms` window or until `:max_batch_bytes` is
   reached, whichever comes first.
 * Cap in-process buffering at `:queue_max` items, applying the
-  `:queue_overflow` strategy when saturated — never dropping a record the
-  controller's outbox cursor is waiting on unless an operator configured that
-  explicitly.
+  `:queue_overflow` strategy when saturated — `:block` by default, so no
+  record is dropped unless an operator configured that explicitly.
 * Use idempotent producer semantics (Produce v5+ with per-`(topic, partition)`
   sequence numbers) when `:idempotent = true` (opt-in; default `false`) —
   retries cannot duplicate messages on the broker. On a broker-induced fence
@@ -88,7 +87,7 @@ re-drives unflushed outputs with *identical* key, header, and partition;
 |---|---|---|---|
 | `:hosts` | required | `[{host, port}]` or `"host:port,host:port"` | bootstrap brokers |
 | `:topic` | required | `binary` | destination topic |
-| `:partition` | `0` | `int` | overridden per-message via metadata `"kafka_msg_partition"` |
+| `:partition` | `0` | `int` | one plugin instance serves one `(topic, partition)` |
 | `:channel` | `nil` | `binary` | gate produces by metadata `"channel"` tag |
 | `:required_acks` | **`-1` (was `1`)** | `int` | `-1`/`0`/`1`/`>1`. Idempotence makes `acks=all` safe. |
 | `:retries` | `5` | `int` | per-batch attempt cap |
@@ -98,7 +97,7 @@ re-drives unflushed outputs with *identical* key, header, and partition;
 | `:linger_ms` | `10` | `int` | batch window. `0` disables batching. |
 | `:max_batch_bytes` | `1_048_576` | `int` | flush early at 1 MiB by default |
 | `:queue_max` | `10_000` | `int` | per-`(plugin, topic, partition)` queue depth |
-| `:queue_overflow` | derived | atom | `:drop_oldest` / `:drop_newest` / `:block`; unset, it is `:block` for a delivery-guaranteed record and `:drop_oldest` otherwise |
+| `:queue_overflow` | `:block` | atom | `:block` / `:drop_oldest` / `:drop_newest`; a drop strategy is always an explicit choice |
 | `:queue_block_timeout_ms` | `5_000` | `int` | only used when `:queue_overflow = :block` |
 | `:idempotent` | `false` | `bool` | opt-in exactly-once; requires Kafka 0.11+; gracefully falls back to non-idempotent if `InitProducerId` fails |
 | `:auto_create_topic` | `true` | `bool` | issues `CreateTopics` on first `:unknown_topic_or_partition` |
@@ -117,10 +116,10 @@ covers most market-data streams; bump it for higher-volume pairs (e.g.
 
 ### `:queue_overflow` modes
 
-Left unset, the mode is **derived per record**: a delivery-guaranteed record —
-one carrying the `flz.ack` confirmation token, so an outbox cursor upstream is
-waiting on it — gets `:block`, and everything else gets `:drop_oldest`. Setting
-the option explicitly applies that mode to every record on the chain.
+The default is `:block` for every record, guaranteed or not: a saturated
+queue back-pressures the chain that feeds it (visibly slower ingest) instead
+of discarding output (invisibly fewer records). A drop mode is a stated
+choice, and every drop it causes is counted in `stats/1`'s `dropped_total`.
 
 * **`:drop_oldest`** — preserves *recency*. After an outage the queue holds
   the most-recent N messages; the oldest are dropped first. Right for
@@ -157,15 +156,15 @@ broker latency. They are implemented as `GenServer.cast` to the per-(
 plugin_id, topic, partition) `ProducerWorker` and return immediately
 after handing the message to the worker's mailbox.
 
-This is the missing piece that makes the bounded-queue + drop-oldest
-contract actually work as the back-pressure boundary. With a synchronous
-chain dispatch, the host process (e.g. `Flezha.Operative.Overwatch`)
-blocks on every event for the full broker round-trip; under sustained
-input above the broker drain rate, the host's mailbox grows without
-bound long before the worker's queue ever sees pressure. With cast-based
-admission the host stays drainable; the worker's bounded queue absorbs
-short outages; `drop_oldest` fires during sustained outages instead of
-the BEAM OOM-killing.
+This is what makes the bounded queue the back-pressure boundary. With a
+synchronous chain dispatch, the host process (e.g.
+`Flezha.Operative.Overwatch`) blocks on every event for the full broker
+round-trip; under sustained input above the broker drain rate, the host's
+mailbox grows without bound long before the worker's queue ever sees
+pressure. With cast-based admission the host stays drainable; the worker's
+bounded queue absorbs short outages; during a sustained one the configured
+`:queue_overflow` decides — `:block` holds the record until a batch drains,
+a drop mode sheds — and the BEAM is never OOM-killed either way.
 
 Two API surfaces, two contracts:
 
