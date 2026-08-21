@@ -134,11 +134,14 @@ jobs:
             --target-dir=./target
 
       - name: Run Rust SDK tests
-        # The only place the flezha_runner crate's own unit and integration
-        # tests run in CI.
+        # The only place the flz_core and flezha_runner crates' own unit and
+        # integration tests run in CI. `entity_timers`, `sugar_emit` and
+        # `simple_procedure` require the `testing` feature — without it cargo
+        # skips them silently.
         run: |
+          cargo test --quiet -p flz_core
           cargo test --quiet \
-            -p flezha_runner --features bench-internals \
+            -p flezha_runner --features bench-internals,testing \
             --lib --tests
 
       - name: Run mix test

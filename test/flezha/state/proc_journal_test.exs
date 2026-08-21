@@ -356,6 +356,8 @@ defmodule FlezhaTest.State.ProcJournalTest do
     second = assert_flushed("once", "0.0")
 
     assert first == second
+    # The marker is journaled after the settlement, not with the cast.
+    await_markers(inst, 1)
     assert ProcJournal.pending_entries(inst) == []
   end
 
