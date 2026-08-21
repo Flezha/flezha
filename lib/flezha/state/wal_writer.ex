@@ -29,6 +29,7 @@ defmodule Flezha.State.WalWriter do
     PersistenceResolver,
     Recovery,
     Registry,
+    SeqIndex,
     Wire
   }
 
@@ -88,7 +89,10 @@ defmodule Flezha.State.WalWriter do
     # without draining. It must count only output-bearing records:
     # `outbox_durable_seq` advances on every fsynced record, so an Entity that
     # persists state but emits nothing would read as a frozen outbox forever.
-    :outbox_last_seq
+    :outbox_last_seq,
+    # A `Flezha.State.SeqIndex` over the file: a cut at either end finds its
+    # boundary within one sample span and copies only the kept side.
+    :seq_index
   ]
 
   @type t :: %__MODULE__{
@@ -395,7 +399,8 @@ defmodule Flezha.State.WalWriter do
       outbox_inflight: :queue.new(),
       outbox_inflight_max: outbox_inflight_max(),
       outbox_resettle_ms: outbox_resettle_ms(),
-      outbox_last_seq: -1
+      outbox_last_seq: -1,
+      seq_index: SeqIndex.new()
     }
 
     {:ok, state, {:continue, :open}}
@@ -433,6 +438,7 @@ defmodule Flezha.State.WalWriter do
     state = %{
       state
       | file_handle: file,
+        seq_index: SeqIndex.new(size),
         last_persisted_seq: last_seq,
         oldest_unsnapshotted_at: oldest,
         outbox_flushed_seq: dedup.outbox_flushed_seq,
@@ -516,11 +522,8 @@ defmodule Flezha.State.WalWriter do
   def handle_call(:fsync, _from, state), do: {:reply, :ok, do_fsync(state)}
 
   def handle_call({:rewind_to, seq, epoch}, _from, state) do
-    :ok = :file.close(state.file_handle)
-    new_path = rewrite_keep_seq_lte(state.wal_path, seq)
-    :ok = File.rename(new_path, state.wal_path)
-    {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
-    {:ok, _} = :file.position(file, :eof)
+    {:ok, file, seq_index} =
+      cut_above(state.wal_path, state.file_handle, state.seq_index, seq + 1)
 
     # Only the snapshots ABOVE the boundary die. The ones at or below it are
     # exactly the baselines a restore to `seq` needs — dropping them all, as a
@@ -552,6 +555,7 @@ defmodule Flezha.State.WalWriter do
     state = %{
       state
       | file_handle: file,
+        seq_index: seq_index,
         last_persisted_seq: seq,
         last_advance_at: now,
         pending_bytes: 0,
@@ -568,33 +572,23 @@ defmodule Flezha.State.WalWriter do
      })}
   end
 
+  # Drop the records at or below `seq` (compaction's prefix, a retention
+  # cut). The cut runs in this loop — under the effectively-once tier every
+  # output rides it — so it costs the tail, never the file. A cut with nothing
+  # below it (a retention tick on a writer compaction already cut) answers at
+  # once; only a writer awaiting its baseline still records the seq, which is
+  # what establishes the baseline.
   def handle_call({:truncate_up_to, seq}, _from, state) do
-    :ok = :file.close(state.file_handle)
-    new_path = rewrite_keep_seq_gt(state.wal_path, seq)
-    :ok = File.rename(new_path, state.wal_path)
-    {:ok, file} = :file.open(state.wal_path, [:raw, :read, :write, :binary])
-    {:ok, _} = :file.position(file, :eof)
+    case cut_below(state.wal_path, state.file_handle, state.seq_index, seq + 1) do
+      {:ok, _cut, file, seq_index} ->
+        {:reply, :ok, after_prefix_cut(%{state | file_handle: file, seq_index: seq_index}, seq)}
 
-    size = file_size(state.wal_path)
-    Metrics.put(state.metrics, :wal_size_bytes, size)
+      :none when state.awaiting_baseline? ->
+        {:reply, :ok, persist_dedup(establish_baseline(state, seq))}
 
-    # Surviving tail records post-date the snapshot's baseline by at most the
-    # compaction round-trip, so "now" is a safe age floor for the next trigger.
-    oldest = if size > 0, do: now_ms()
-
-    state = flush_credit_pending(state)
-    state = establish_baseline(state, seq)
-
-    state = %{
-      state
-      | file_handle: file,
-        pending_bytes: 0,
-        pending_since_us: nil,
-        oldest_unsnapshotted_at: oldest
-    }
-
-    # Rotation/compaction is one of the dedup file's advance points.
-    {:reply, :ok, persist_dedup(state)}
+      :none ->
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call(:last_persisted_seq, _from, state) do
@@ -799,6 +793,25 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
+  # The bookkeeping a prefix cut owes once the file is shorter: the rewrite
+  # fsynced the kept tail, so everything pending is durable.
+  defp after_prefix_cut(state, seq) do
+    size = file_size(state.wal_path)
+    Metrics.put(state.metrics, :wal_size_bytes, size)
+
+    # Surviving tail records post-date the snapshot's baseline by at most the
+    # compaction round-trip, so "now" is a safe age floor for the next trigger.
+    oldest = if size > 0, do: now_ms()
+
+    state = flush_credit_pending(state)
+    state = establish_baseline(state, seq)
+
+    state = %{state | pending_bytes: 0, pending_since_us: nil, oldest_unsnapshotted_at: oldest}
+
+    # Rotation/compaction is one of the dedup file's advance points.
+    persist_dedup(state)
+  end
+
   # ---------- Append / realign ----------
 
   defp write_record(state, seq, header, change_bytes, runner_id, now) do
@@ -825,6 +838,7 @@ defmodule Flezha.State.WalWriter do
     new_state = %{
       state
       | last_persisted_seq: seq,
+        seq_index: SeqIndex.note(state.seq_index, seq, size),
         last_advance_at: now,
         owning_runner: runner_id || state.owning_runner,
         pending_bytes: new_pending,
@@ -1509,46 +1523,89 @@ defmodule Flezha.State.WalWriter do
   defp max_offset(nil, offset), do: offset
   defp max_offset(current, offset), do: max(current, offset)
 
-  # Also reused by `Flezha.State.InputLog` for watermark truncation —
-  # the input-log shares this record framing.
-  @doc false
-  def rewrite_keep_seq_gt(wal_path, keep_above_seq) do
-    rewrite_keep(wal_path, &(&1 > keep_above_seq))
+  @doc """
+  Drop the records below `floor` from the record log at `path`, whose live
+  handle is `device` and whose index is `index`. The boundary is found within
+  one sample span, the kept tail is copied as bytes into `<path>.rewriting`,
+  fsynced and renamed into place, and the handle is reopened on the new file
+  at its end. Answers `{:ok, cut_bytes, device, index}` with the index
+  rebased; `:none` when nothing is below the floor; `{:error, reason}` when
+  the file is gone (a cut queued behind its directory's removal), with the
+  caller's handle untouched. Both record logs cut through this, so a cut costs
+  the tail, never the file.
+  """
+  @spec cut_below(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer()) ::
+          {:ok, non_neg_integer(), :file.io_device(), SeqIndex.t()} | :none | {:error, term()}
+  def cut_below(path, device, index, floor) do
+    case SeqIndex.position_of(index, device, floor) do
+      0 ->
+        :none
+
+      cut ->
+        with {:ok, file} <- replace_with_range(path, device, cut, :eof) do
+          {:ok, cut, file, SeqIndex.after_cut(index, floor, cut)}
+        end
+    end
   end
 
-  # Suffix-drop: keep the records at or below `seq`. The mirror image of
-  # `rewrite_keep_seq_gt/2` — compaction drops the prefix a snapshot subsumes,
-  # a correction drops the suffix a rewind invalidates.
-  @doc false
-  def rewrite_keep_seq_lte(wal_path, keep_below_seq) do
-    rewrite_keep(wal_path, &(&1 <= keep_below_seq))
+  @doc """
+  Drop the records at or above `floor` — the mirror of `cut_below/4`: a
+  correction's rewind drops the suffix it invalidated, keeping the prefix as
+  bytes. The samples below the boundary stay valid. Answers `{:ok, device,
+  index}`.
+  """
+  @spec cut_above(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer()) ::
+          {:ok, :file.io_device(), SeqIndex.t()}
+  def cut_above(path, device, index, floor) do
+    bound = SeqIndex.position_of(index, device, floor)
+    {:ok, file} = replace_with_range(path, device, 0, bound)
+    {:ok, file, SeqIndex.cut_above(index, floor, bound)}
   end
 
-  # Copy the records `keep?` accepts into `<path>.rewriting`, fsync, and return
-  # the new path. The caller renames — the two-step is what makes a crash
-  # mid-rewrite leave the original intact (`Registry.scan_dir/1` skips
-  # `.rewriting` residue).
-  defp rewrite_keep(wal_path, keep?) do
-    {:ok, src} = :file.open(wal_path, [:raw, :read, :binary])
-    new_path = wal_path <> ".rewriting"
-    {:ok, dst} = :file.open(new_path, [:raw, :write, :binary])
+  # Copy the bytes `[from, to)` of `path` into `<path>.rewriting`, fsync it,
+  # rename it into place and reopen `device` on it at its end. The two-step is
+  # what makes a crash mid-rewrite leave the original intact
+  # (`Registry.scan_dir/1` skips `.rewriting` residue); the rename happens
+  # before the old handle closes, so a failure before it leaves that handle
+  # valid. Records are self-delimiting and CRC-framed, so a record-aligned
+  # byte range is the same log the records would re-encode to.
+  defp replace_with_range(path, device, from, to) do
+    new_path = path <> ".rewriting"
 
+    with {:ok, src} <- :file.open(path, [:raw, :read, :binary]),
+         {:ok, dst} <- open_or_close(new_path, src),
+         :ok <- copy_range(src, dst, from, to),
+         :ok <- :file.rename(new_path, path),
+         :ok = :file.close(device),
+         {:ok, file} <- :file.open(path, [:raw, :read, :write, :binary]),
+         {:ok, _} <- :file.position(file, :eof) do
+      {:ok, file}
+    end
+  end
+
+  defp copy_range(src, dst, from, to) do
     try do
-      copy_keep(src, dst, keep?)
-      :ok = :file.sync(dst)
+      with {:ok, _} <- :file.position(src, from),
+           {:ok, _} <-
+             if(to == :eof, do: :file.copy(src, dst), else: :file.copy(src, dst, to - from)),
+           :ok <- :file.sync(dst) do
+        :ok
+      end
     after
       _ = :file.close(src)
       _ = :file.close(dst)
     end
-
-    new_path
   end
 
-  defp copy_keep(src, dst, keep?) do
-    fold_records(src, :ok, fn {seq, header, change_bytes}, :ok ->
-      if keep?.(seq), do: :ok = :file.write(dst, encode_record(seq, header, change_bytes))
-      {:cont, :ok}
-    end)
+  defp open_or_close(path, src) do
+    case :file.open(path, [:raw, :write, :binary]) do
+      {:ok, dst} ->
+        {:ok, dst}
+
+      {:error, _} = error ->
+        _ = :file.close(src)
+        error
+    end
   end
 
   # ---------- Hard bound (shed) ----------

@@ -28,11 +28,15 @@ defmodule Flezha.State.Supervisor do
 
   @impl true
   def init(_) do
-    # The class→namespace claims table lives with the state subsystem; path
-    # resolution degrades to the on-disk layout when it is absent (unit tests
-    # that use `Flezha.State.Registry` without this supervisor).
+    # The class→namespace claims, input-log watermark and class registry
+    # tables live with the state subsystem: a named table dies with its owner,
+    # and every one of these is read by the data plane, so no process that can
+    # crash and restart (a sweeper, a writer) may own them. Path resolution
+    # degrades to the on-disk layout when the claims table is absent (unit
+    # tests that use `Flezha.State.Registry` without this supervisor).
     Flezha.State.Registry.ensure_claims_table()
     Flezha.State.InputLog.ensure_watermark_table()
+    Flezha.Operative.ClassRegistry.ensure_table()
     DynamicSupervisor.init(strategy: :one_for_one)
   end
 

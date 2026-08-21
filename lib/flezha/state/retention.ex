@@ -28,7 +28,16 @@ defmodule Flezha.State.Retention do
   use GenServer
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.State.{Completion, Metrics, PersistenceResolver, Registry, Supervisor, WalWriter}
+
+  alias Flezha.State.{
+    Completion,
+    Metrics,
+    PersistenceResolver,
+    Registry,
+    SeqIndex,
+    Supervisor,
+    WalWriter
+  }
 
   defstruct []
 
@@ -50,9 +59,6 @@ defmodule Flezha.State.Retention do
 
   @impl true
   def init(_opts) do
-    # Own the operative_class→kind table: Retention is always-on and is the
-    # process-less consumer that most needs the durable-kind resolution.
-    ClassRegistry.ensure_table()
     schedule_sweep()
     {:ok, %__MODULE__{}}
   end
@@ -197,10 +203,24 @@ defmodule Flezha.State.Retention do
   defp rewrite_offline(entity_id, keep_above_seq) do
     wal_path = Registry.wal_path(entity_id)
 
-    if File.exists?(wal_path) do
-      tmp_path = WalWriter.rewrite_keep_seq_gt(wal_path, keep_above_seq)
-      :ok = File.rename(tmp_path, wal_path)
-      Metrics.put(Metrics.for_entity(entity_id), :wal_size_bytes, file_size(wal_path))
+    case :file.open(wal_path, [:raw, :read, :write, :binary]) do
+      {:ok, device} ->
+        case WalWriter.cut_below(
+               wal_path,
+               device,
+               SeqIndex.new(file_size(wal_path)),
+               keep_above_seq + 1
+             ) do
+          {:ok, _cut, file, _index} ->
+            _ = :file.close(file)
+            Metrics.put(Metrics.for_entity(entity_id), :wal_size_bytes, file_size(wal_path))
+
+          _ ->
+            _ = :file.close(device)
+        end
+
+      {:error, _} ->
+        :ok
     end
 
     :ok

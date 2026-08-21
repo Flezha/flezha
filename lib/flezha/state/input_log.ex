@@ -35,6 +35,7 @@ defmodule Flezha.State.InputLog do
     FsyncBatcher,
     PersistenceResolver,
     Registry,
+    SeqIndex,
     Supervisor,
     WalWriter
   }
@@ -70,6 +71,9 @@ defmodule Flezha.State.InputLog do
   # `consumed` is the log's own copy of its Entities' durable consumed-offsets:
   # the min-watermark that drains source credit is taken from it, so an advance
   # never scans the shared table. The table stays the published view.
+  # `positions` (a `Flezha.State.SeqIndex`) lets a truncation find its floor
+  # within a few records and copy only the tail — the work is the tail, never
+  # the log.
   defstruct [
     :operative_class,
     :path,
@@ -79,7 +83,8 @@ defmodule Flezha.State.InputLog do
     :offset_sizes,
     :waiters,
     :consumed,
-    :syncer
+    :syncer,
+    :positions
   ]
 
   # Cap on how many queued messages of one kind a handler folds into one pass
@@ -291,7 +296,8 @@ defmodule Flezha.State.InputLog do
       ledger: CreditLedger.new("source:" <> operative_class, window, max(div(window, 2), 1)),
       offset_sizes: :queue.new(),
       waiters: :queue.new(),
-      consumed: %{}
+      consumed: %{},
+      positions: SeqIndex.new()
     }
 
     {:ok, state, {:continue, :open}}
@@ -304,18 +310,22 @@ defmodule Flezha.State.InputLog do
 
     # Torn-tail discard + last-offset recovery, shared with the WAL.
     last = WalWriter.scan_for_last_valid_seq(file, state.path)
-    {:ok, _} = :file.position(file, :eof)
+    {:ok, size} = :file.position(file, :eof)
 
     # Offsets reported before this log (re)started are in the published table.
     consumed = Map.new(entity_offsets(state.operative_class))
 
+    # Records written before this (re)start are not indexed: the first
+    # truncation after a restart locates its floor from the start of the file,
+    # once.
     {:noreply,
      %{
        state
        | file_handle: file,
          next_offset: last + 1,
          consumed: consumed,
-         syncer: start_syncer(state.path)
+         syncer: start_syncer(state.path),
+         positions: SeqIndex.new(size)
      }}
   end
 
@@ -345,18 +355,23 @@ defmodule Flezha.State.InputLog do
     {:reply, scan_offset_before(state.file_handle, ts_ms), state}
   end
 
-  def handle_call({:truncate_below, floor}, _from, state) do
-    :ok = :file.close(state.file_handle)
-    new_path = WalWriter.rewrite_keep_seq_gt(state.path, floor - 1)
-    :ok = File.rename(new_path, state.path)
-    {:ok, file} = :file.open(state.path, [:raw, :read, :write, :binary])
-    {:ok, _} = :file.position(file, :eof)
-    # The companion's descriptor still names the file the rename replaced.
-    send(state.syncer, {:reopen, state.path})
-    {:reply, :ok, %{state | file_handle: file}}
+  @impl true
+  # The retention sweep's truncation. It runs in this loop — ingest waits
+  # behind it — so it costs the retained tail, never the log.
+  def handle_cast({:truncate_below, floor}, state) do
+    case WalWriter.cut_below(state.path, state.file_handle, state.positions, floor) do
+      {:ok, _cut, file, positions} ->
+        # The companion's descriptor still names the file the rename replaced.
+        send(state.syncer, {:reopen, state.path})
+        {:noreply, %{state | file_handle: file, positions: positions}}
+
+      # Nothing below the floor, or the file is gone from under a queued
+      # truncation (its class directory removed): either way nothing to cut.
+      _ ->
+        {:noreply, state}
+    end
   end
 
-  @impl true
   # The batcher's tick: the companion syncs while this loop keeps appending.
   def handle_cast(:fsync, state) do
     send(state.syncer, :sync)
@@ -535,12 +550,14 @@ defmodule Flezha.State.InputLog do
   defp encode_append(state, body) do
     offset = state.next_offset
     header = record_header(System.system_time(:millisecond))
+    record = WalWriter.encode_record(offset, header, body)
 
-    {offset, WalWriter.encode_record(offset, header, body),
+    {offset, record,
      %{
        state
        | next_offset: offset + 1,
-         offset_sizes: :queue.in({offset, byte_size(body)}, state.offset_sizes)
+         offset_sizes: :queue.in({offset, byte_size(body)}, state.offset_sizes),
+         positions: SeqIndex.note(state.positions, offset, byte_size(record))
      }}
   end
 
@@ -639,7 +656,10 @@ defmodule Flezha.State.InputLog do
 
     if is_integer(floor) and floor > 0 and advanced? do
       {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
-      :ok = GenServer.call(pid, {:truncate_below, floor})
+      # A cast: the sweeper is housekeeping and must never die because a log is
+      # busy. The log truncates in its turn; the floor remembered below is what
+      # the next sweep compares against.
+      GenServer.cast(pid, {:truncate_below, floor})
     else
       maybe_warn_frozen(operative_class, path, watermark)
     end

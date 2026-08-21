@@ -182,4 +182,75 @@ defmodule Flezha.State.RetentionTest do
   end
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
+
+  describe "a tick with nothing to cut" do
+    test "leaves the WAL file untouched", %{entity_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid)
+      header = TestHelpers.stub_header()
+
+      for n <- 0..6, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+      {:ok, _} = Snapshot.write_snapshot(pid, 4, header, "snap@4")
+      # Compaction already cut the WAL to [5, 6]; a retention tick that keeps
+      # the latest snapshot has nothing below seq 4 left to remove.
+      {:ok, %{inode: inode}} = File.stat(Registry.wal_path(pid))
+
+      :ok = Retention.sweep_entity(pid, 6)
+
+      assert {:ok, %{inode: ^inode}} = File.stat(Registry.wal_path(pid)),
+             "a no-op cut must not rewrite (and re-inode) the file"
+
+      assert WalWriter.last_persisted_seq(srv) == 6
+    end
+  end
+
+  describe "a compaction cut" do
+    test "past the index samples keeps exactly the tail", %{entity_id: pid} do
+      {:ok, _} = Supervisor.find_or_start(pid)
+      {:ok, srv} = Supervisor.lookup(pid)
+      header = TestHelpers.stub_header()
+
+      seqs = fn ->
+        WalWriter.fold_path(Registry.wal_path(pid), [], fn {s, _, _}, acc ->
+          {:cont, [s | acc]}
+        end)
+        |> Enum.reverse()
+      end
+
+      for n <- 0..599, do: :ok = WalWriter.append(srv, n, header, "x" <> Integer.to_string(n))
+      {:ok, _} = Snapshot.write_snapshot(pid, 400, header, "snap@400")
+      assert seqs.() == Enum.to_list(401..599)
+
+      # The second cut works against the rebased index and appends land after it.
+      :ok = WalWriter.append(srv, 600, header, "x600")
+      {:ok, _} = Snapshot.write_snapshot(pid, 550, header, "snap@550")
+      assert seqs.() == Enum.to_list(551..600)
+      assert WalWriter.last_persisted_seq(srv) == 600
+    end
+  end
+
+  describe "the class registry" do
+    alias Flezha.Operative.ClassRegistry
+
+    # The kill below is the point of the test; the supervisor's report of it
+    # is not console noise worth keeping.
+    @tag :capture_log
+    test "outlives a Retention crash" do
+      class = "reg_" <> uniq()
+      :ok = ClassRegistry.put_overwatch(class, self())
+
+      old = Process.whereis(Retention)
+      Process.exit(old, :kill)
+
+      assert Enum.any?(1..200, fn _ ->
+               Process.sleep(5)
+               pid = Process.whereis(Retention)
+               is_pid(pid) and pid != old
+             end),
+             "Retention must be restarted by its supervisor"
+
+      assert ClassRegistry.overwatch_pid(class) == {:ok, self()},
+             "the registry every outbox dispatch resolves through must not die with a sweeper"
+    end
+  end
 end

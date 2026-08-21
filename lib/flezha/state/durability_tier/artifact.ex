@@ -29,7 +29,7 @@ defmodule Flezha.State.DurabilityTier.Artifact do
       writer like the cspec.
 
   Record bundles are read **at ship time** through `WalWriter.fold_path/3` and
-  re-framed with `WalWriter.encode_record/3`, never copied as file byte ranges: compaction (`rewrite_keep_seq_gt`) and correction (`rewind_to`)
+  re-framed with `WalWriter.encode_record/3`, never copied as file byte ranges: compaction (`truncate_up_to`) and correction (`rewind_to`)
   rewrite the live WAL in place, so an offset recorded yesterday addresses
   different records today. A seq range does not move.
   """

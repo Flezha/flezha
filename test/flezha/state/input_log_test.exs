@@ -410,4 +410,43 @@ defmodule Flezha.State.InputLogTest do
     # find_or_start starts a fresh server instead of racing the dead pid.
     assert wait_until(fn -> Supervisor.lookup({class, :input_log}) == :error end, 2_000)
   end
+
+  describe "a truncation costs the tail, not the log" do
+    test "a floor past the index samples keeps exactly the tail", %{class: class} do
+      for i <- 0..599, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      InputLog.record_consumed(class, {class, "proc", "a"}, 400)
+      :ok = InputLog.sweep(class)
+
+      assert InputLog.read_range(class, 0, 599) |> Enum.map(&elem(&1, 0)) ==
+               Enum.to_list(400..599)
+
+      # The second cut works against the rebased index, and appends land at the
+      # right place afterwards.
+      InputLog.record_consumed(class, {class, "proc", "a"}, 550)
+      :ok = InputLog.sweep(class)
+      {:ok, 600} = InputLog.append(class, "m600", %{})
+
+      assert InputLog.read_range(class, 0, 600) |> Enum.map(&elem(&1, 0)) ==
+               Enum.to_list(550..600)
+    end
+
+    test "a restarted log truncates the records it never indexed", %{class: class} do
+      for i <- 0..299, do: {:ok, _} = InputLog.append(class, "m#{i}", %{})
+      {:ok, pid} = Flezha.State.Supervisor.lookup({class, :input_log})
+      :ok = GenServer.stop(pid)
+      # The registry drops the dead pid a moment after the exit; `append/3`
+      # retries a `:noproc` only once, with no delay.
+      assert Enum.any?(1..200, fn _ ->
+               Flezha.State.Supervisor.lookup({class, :input_log}) == :error or
+                 (Process.sleep(5) && false)
+             end)
+
+      {:ok, 300} = InputLog.append(class, "m300", %{})
+      InputLog.record_consumed(class, {class, "proc", "a"}, 290)
+      :ok = InputLog.sweep(class)
+
+      assert InputLog.read_range(class, 0, 300) |> Enum.map(&elem(&1, 0)) ==
+               Enum.to_list(290..300)
+    end
+  end
 end
