@@ -13,25 +13,13 @@ defmodule Flezha.State.InputLogTest do
   alias Flezha.Operative.Ingest
   alias Flezha.Operative.Overwatch
   alias Flezha.Operative.Replay
-  alias Flezha.State.{FsyncBatcher, InputLog, Registry, Supervisor, TestHelpers}
+  alias Flezha.Plugin.Extension.Table
+  alias Flezha.State.{InputLog, Registry, Supervisor, TestHelpers}
 
   setup do
     base = TestHelpers.tmp_app_data_dir()
 
-    case start_supervised({Elixir.Registry, keys: :unique, name: Supervisor.registry_name()}) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
-
-    case start_supervised(Supervisor) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
-
-    case start_supervised(FsyncBatcher) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
+    TestHelpers.start_state_tree()
 
     on_exit(fn ->
       Application.delete_env(:flezha, :state_root)
@@ -183,33 +171,94 @@ defmodule Flezha.State.InputLogTest do
     assert meta.lagging_entity == {class, "proc", "slow"}
   end
 
+  # The Overwatch's state as the ingest and replay paths need it: an empty
+  # extension table, no channel unless given.
+  defp overwatch(class, overrides) do
+    struct!(
+      %Overwatch{
+        id: class,
+        builder: %Flezha.Operative.Builder{id: class, factory_id: "f"},
+        extensions: Table.new(Overwatch.__extensions_catalog__())
+      },
+      overrides
+    )
+  end
+
   test "tier-off operative journals nothing and forwards untouched", %{class: class} do
-    state = %Overwatch{
-      id: class,
-      builder: %Flezha.Operative.Builder{id: class, factory_id: "f"},
-      effectively_once: false
-    }
+    state = overwatch(class, effectively_once: false)
 
     payload = {"message", %{"input_type" => "2"}}
-    assert Ingest.journal_input(state, payload) == payload
-    assert Ingest.journal_input(state, nil) == nil
+    assert Ingest.ingest(state, "message", %{"input_type" => "2"}, :cast) == {payload, state}
     refute File.exists?(Registry.input_log_path(class))
     refute class in InputLog.all_classes()
   end
 
   test "tier-on operative journals before forward and stamps flz.offset", %{class: class} do
-    state = %Overwatch{
-      id: class,
-      builder: %Flezha.Operative.Builder{id: class, factory_id: "f"},
-      effectively_once: true
-    }
+    test_pid = self()
 
-    {message, metadata} = Ingest.journal_input(state, {"message", %{"input_type" => "2"}})
-    assert message == "message"
-    assert metadata["flz.offset"] == "0"
+    stub(Flezha.Runner.StreamChannel, :io_in, fn _channel, ^class, payload ->
+      send(test_pid, {:forwarded, payload})
+      :ok
+    end)
 
+    state = overwatch(class, effectively_once: true)
+
+    # The append is asynchronous: the log answers this process, and handling
+    # that answer is what stamps the offset and forwards — nothing reaches the
+    # channel before the record is journaled.
+    assert {:pending, state} = Ingest.ingest(state, "message", %{"input_type" => "2"}, :cast)
+
+    refute_receive {:forwarded, _}, 50
+    assert_receive reply
+    assert {:ok, %Overwatch{}} = Ingest.journal_reply(state, reply)
+
+    assert_receive {:forwarded, {"message", %{"flz.offset" => "0", "input_type" => "2"}}}
     assert [{0, "message", %{"input_type" => "2"}}] = InputLog.read_range(class, 0, 0)
     assert class in InputLog.all_classes()
+  end
+
+  describe "append_async/5 (the Overwatch's append)" do
+    test "answers through the collection with the offset append/3 would give", %{class: class} do
+      reqids = InputLog.append_async(class, "m0", %{}, :gen_server.reqids_new(), :first)
+
+      assert {{:reply, {:ok, 0}}, :first, reqids} =
+               :gen_server.wait_response(reqids, 1_000, true)
+
+      assert :gen_server.reqids_size(reqids) == 0
+      assert {:ok, 1} = InputLog.append(class, "m1", %{})
+      assert [{0, "m0", %{}}, {1, "m1", %{}}] = InputLog.read_range(class, 0, 1)
+    end
+
+    test "a parked append answers in arrival order once credit mints", %{class: class} do
+      on_exit(TestHelpers.override_env(:source_credit_window_bytes, 32))
+
+      # One record fills the window on its own (an empty ledger admits any
+      # size); the two behind it park, and both fit once it is consumed.
+      {:ok, 0} = InputLog.append(class, String.duplicate("x", 40), %{})
+      reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :m1)
+      reqids = InputLog.append_async(class, "m2", %{}, reqids, :m2)
+      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+
+      InputLog.record_consumed(class, {class, "proc", "a"}, 0)
+      assert {{:reply, {:ok, 1}}, :m1, reqids} = :gen_server.wait_response(reqids, 2_000, true)
+      assert {{:reply, {:ok, 2}}, :m2, _} = :gen_server.wait_response(reqids, 2_000, true)
+    end
+
+    test "a log that exits answers the collection with an error", %{class: class} do
+      on_exit(TestHelpers.override_env(:source_credit_window_bytes, 16))
+      {:ok, 0} = InputLog.append(class, "m0", %{})
+      {:ok, log} = Supervisor.lookup({class, :input_log})
+
+      reqids = InputLog.append_async(class, "m1", %{}, :gen_server.reqids_new(), :parked)
+      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+
+      # The parked append dies with the log: the monitored request reports it
+      # instead of leaving the caller owed forever.
+      :ok = GenServer.stop(log)
+
+      assert {{:error, {:normal, ^log}}, :parked, _} =
+               :gen_server.wait_response(reqids, 1_000, true)
+    end
   end
 
   describe "crash-replay re-forward (§6.1)" do
@@ -232,13 +281,7 @@ defmodule Flezha.State.InputLogTest do
       for i <- 0..4, do: {:ok, _} = InputLog.append(class, "m#{i}", %{"input_type" => "2"})
       InputLog.record_consumed(class, {class, "proc", "a"}, 2)
 
-      state = %Overwatch{
-        id: class,
-        builder: %Flezha.Operative.Builder{id: class, factory_id: "f"},
-        channel: :"chan_#{class}",
-        effectively_once: true
-      }
-
+      state = overwatch(class, channel: :"chan_#{class}", effectively_once: true)
       :ok = Replay.replay_journaled_inputs(state)
 
       assert_receive {:forwarded, ^class, {"m3", md3}}
@@ -250,13 +293,7 @@ defmodule Flezha.State.InputLogTest do
     end
 
     test "no journal file means no re-forward work", %{class: class} do
-      state = %Overwatch{
-        id: class,
-        builder: %Flezha.Operative.Builder{id: class, factory_id: "f"},
-        channel: :"chan_#{class}",
-        effectively_once: true
-      }
-
+      state = overwatch(class, channel: :"chan_#{class}", effectively_once: true)
       :ok = Replay.replay_journaled_inputs(state)
       refute_receive {:forwarded, _, _}, 50
       refute File.exists?(Registry.input_log_path(class))

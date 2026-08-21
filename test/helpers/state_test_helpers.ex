@@ -9,7 +9,31 @@ defmodule Flezha.State.TestHelpers do
   that must not be reachable from a release.
   """
 
-  alias Flezha.State.{Outbox, Registry, Supervisor, WalWriter}
+  alias Flezha.State.{FsyncBatcher, Outbox, Registry, Supervisor, WalWriter}
+
+  @doc """
+  Start the state subsystem's process tree under the test supervisor — the
+  writer registry, `Flezha.State.Supervisor`, the `FsyncBatcher` and any
+  `extra` children — tolerating those the application already runs. Call from
+  a `setup` block.
+  """
+  @spec start_state_tree([Supervisor.child_spec() | module()]) :: :ok
+  def start_state_tree(extra \\ []) do
+    children = [
+      {Elixir.Registry, keys: :unique, name: Supervisor.registry_name()},
+      Supervisor,
+      FsyncBatcher | extra
+    ]
+
+    for child <- children do
+      case ExUnit.Callbacks.start_supervised(child) do
+        {:ok, _} -> :ok
+        {:error, {:already_started, _}} -> :ok
+      end
+    end
+
+    :ok
+  end
 
   @doc """
   Allocates a per-test temporary directory under `System.tmp_dir!/0` and

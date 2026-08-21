@@ -1005,7 +1005,7 @@ observed in the 2026-05-15 live incident.
 ### Ingest entry points
 
 Every inbound payload runs exactly one pre-delivery path — the `:on_input`
-extension chain, then `journal_input/2` (the durable input log for the
+extension chain, then `journal_input/3` (the durable input log for the
 effectively-once tier, the durable inbox for a durable workflow instance). Three
 entry points drive it, differing only in what they report back:
 
@@ -1018,7 +1018,10 @@ entry points drive it, differing only in what they report back:
 The blocking `:io_in` call exists because the effectively-once tier parks
 ingestion at zero source credit, which only back-pressures a source that awaits
 the reply. It reports coarsely: adapters act on "accepted" vs "parked" and
-nothing finer.
+nothing finer. Under the tier both calls are answered when the input log answers
+the append — the Overwatch hands the append over (`InputLog.append_async/5`) and
+keeps serving — so the park lands on the caller and never on the operative's
+host, which is what keeps the output chains that mint the credit running.
 
 The confirming `:ingest` call reports what actually happened, because its caller
 is a retry loop that must distinguish "done" from "try again":

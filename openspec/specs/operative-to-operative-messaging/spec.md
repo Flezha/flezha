@@ -60,14 +60,14 @@ queued items survive source-Overwatch restarts.
 
 The system SHALL provide a synchronous ingest entry point on `Flezha.Operative.Overwatch` that
 runs the same single pre-delivery path as the existing `{:io_in, _, _}` cast — the `:on_input`
-extension chain followed by `journal_input/2` — and returns a verdict describing the outcome
+extension chain followed by `journal_input/3` — and returns a verdict describing the outcome
 instead of discarding it. `Flezha.Service.OperativeManager` SHALL expose this entry point as a
 confirming counterpart to `send_io/4`, resolving the target by `(namespace, operative_id)`.
 
 The verdicts SHALL be:
 
 - `:ok` — the payload was forwarded to the bound runner, or durably journaled
-- `{:ok, :absorbed}` — `ingest/3` answered `nil`: filtered by an `:on_input` plugin, absorbed as
+- `{:ok, :absorbed}` — `ingest/4` answered `nil`: filtered by an `:on_input` plugin, absorbed as
   a duplicate, or refused by the durable log as already consumed
 - `{:ok, :suspended}` — the target is suspended; the payload is durable in its inbox and SHALL
   be delivered when the instance rehydrates
@@ -77,6 +77,11 @@ The verdicts SHALL be:
 
 The existing `{:io_in, _, _}` cast behaviour SHALL be unchanged, including its silent drop for
 an `init_error`-parked operative.
+
+Under the effectively-once tier the verdict SHALL be answered when the durable log answers the
+append — the operative's host does not wait for the log — in call order, so a caller parks
+exactly while the log parks and for no other reason; the host keeps running its output chains
+meanwhile.
 
 For a source holding many inputs at once, `OperativeManager` SHALL expose a many-input form
 of the confirming entry point that keeps up to a caller-chosen window (default 64) of ordinary
@@ -88,7 +93,7 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
 #### Scenario: Durable delivery is confirmed
 - **WHEN** the confirming entry point is invoked against a healthy bound operative
 - **THEN** it SHALL return `:ok` and the payload SHALL have passed through the `:on_input` chain
-  and `journal_input/2`
+  and `journal_input/3`
 
 #### Scenario: A suspended target reports success
 - **WHEN** the confirming entry point is invoked against a suspended durable workflow operative
@@ -101,7 +106,7 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
   Overwatch
 
 #### Scenario: A filtered payload reports absorbed
-- **WHEN** an `:on_input` plugin on the target filters the payload so `ingest/3` answers `nil`
+- **WHEN** an `:on_input` plugin on the target filters the payload so `ingest/4` answers `nil`
 - **THEN** the confirming entry point SHALL return `{:ok, :absorbed}`
 
 #### Scenario: An unresolvable target reports not-found
@@ -112,6 +117,12 @@ unresolvable target SHALL answer `{:error, :not_found}` for every input of the b
 #### Scenario: The existing cast keeps its behaviour
 - **WHEN** `{:io_in, message, metadata}` is cast to an operative whose `init_error` is set
 - **THEN** the message SHALL be silently discarded as before and no verdict SHALL be produced
+
+#### Scenario: A parked log parks the caller and only the caller
+- **WHEN** the confirming entry point is invoked against an effectively-once operative whose
+  source credit is exhausted
+- **THEN** the call stays unanswered until credit mints, while the operative's host keeps
+  answering control calls and delivering outputs; the verdict then answers `:ok` in call order
 
 #### Scenario: A batch keeps a window in flight and answers in order
 - **WHEN** the many-input form is invoked with 200 inputs and a window of 64 against a healthy

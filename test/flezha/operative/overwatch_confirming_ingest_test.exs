@@ -13,7 +13,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
   alias Flezha.Operative.{Builder, Overwatch}
   alias Flezha.Plugin.Extension.Table
-  alias Flezha.State.{ProcInbox, TestHelpers}
+  alias Flezha.State.{InputLog, ProcInbox, Supervisor, TestHelpers}
 
   setup do
     root = TestHelpers.tmp_app_data_dir()
@@ -230,6 +230,114 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
                  "default",
                  [{"a", %{}}, {"b", %{}}]
                )
+    end
+  end
+
+  describe "the effectively-once journal" do
+    setup :set_mimic_global
+
+    # A live process around the struct, because the unit here is the host's
+    # loop: the log answers the host's mailbox, and a parked caller is a call
+    # that has not returned.
+    defmodule Host do
+      use GenServer
+      def start_link(state), do: GenServer.start_link(__MODULE__, state)
+      def init(state), do: {:ok, state}
+      defdelegate handle_call(msg, from, state), to: Overwatch
+      defdelegate handle_cast(msg, state), to: Overwatch
+      defdelegate handle_info(msg, state), to: Overwatch
+    end
+
+    # A 200-byte record overfills the window on its own (an empty ledger admits
+    # any size); the short records behind it park until it is consumed, and
+    # three of them fit once it is.
+    @window 128
+    defp fill(), do: String.duplicate("x", 200)
+    defp entity(inst), do: {inst, "proc", "a"}
+
+    setup do
+      TestHelpers.start_state_tree()
+      on_exit(TestHelpers.override_env(:source_credit_window_bytes, @window))
+      inst = instance_id()
+      state = state(inst, effectively_once: true, channel: fake_channel(:ok))
+      {:ok, host} = start_supervised({Host, state})
+
+      # Fill the window: journaled at offset 0 and forwarded at once.
+      assert :ok = GenServer.call(host, {:ingest, fill(), %{}})
+      assert_receive {:channel_got, ^inst, {_fill, %{"flz.offset" => "0"}}}
+
+      %{inst: inst, host: host}
+    end
+
+    test "zero credit parks the caller's call and nothing else", %{inst: inst, host: host} do
+      parked = Task.async(fn -> GenServer.call(host, {:ingest, "b", %{}}) end)
+      refute Task.yield(parked, 150), "the caller must park at zero source credit"
+
+      # The host runs on: a control call is answered and an `{:io_out}` chain is
+      # run while the caller waits — a cast and then a call from one process are
+      # handled in order, so the answered ping proves the chain ran.
+      assert %Overwatch{} = GenServer.call(host, :get_overwatch_state)
+      GenServer.cast(host, {:io_out, "out", %{}})
+      assert :pong = GenServer.call(host, :ping)
+      refute_receive {:channel_got, _, _}, 50
+
+      # Consuming offset 0 mints the credit: the parked call answers.
+      InputLog.record_consumed(inst, entity(inst), 0)
+      assert :ok = Task.await(parked, 2_000)
+      assert_receive {:channel_got, ^inst, {"b", %{"flz.offset" => "1"}}}
+    end
+
+    test "forward order is offset order and verdicts answer in call order, across a park",
+         %{inst: inst, host: host} do
+      # Issued from one process, so they reach the host — and the log — in order.
+      reqids = :gen_server.reqids_new()
+      reqids = :gen_server.send_request(host, {:ingest, "b", %{}}, :b, reqids)
+      reqids = :gen_server.send_request(host, {:ingest, "c", %{}}, :c, reqids)
+      assert :timeout = :gen_server.wait_response(reqids, 150, true)
+
+      InputLog.record_consumed(inst, entity(inst), 0)
+      assert {{:reply, :ok}, :b, reqids} = :gen_server.wait_response(reqids, 2_000, true)
+      assert {{:reply, :ok}, :c, _} = :gen_server.wait_response(reqids, 2_000, true)
+
+      assert_receive {:channel_got, ^inst, {first, %{"flz.offset" => o1}}}
+      assert_receive {:channel_got, ^inst, {second, %{"flz.offset" => o2}}}
+      assert {[first, second], [o1, o2]} == {["b", "c"], ["1", "2"]}
+    end
+
+    test "casts into a parked operative are held in order and none is dropped",
+         %{inst: inst, host: host} do
+      for m <- ["b", "c", "d"], do: GenServer.cast(host, {:io_in, m, %{}})
+      assert :pong = GenServer.call(host, :ping)
+      refute_receive {:channel_got, _, _}, 50
+
+      InputLog.record_consumed(inst, entity(inst), 0)
+
+      forwarded =
+        for _ <- 1..3 do
+          assert_receive {:channel_got, ^inst, {m, %{"flz.offset" => offset}}}, 2_000
+          {m, offset}
+        end
+
+      assert forwarded == [{"b", "1"}, {"c", "2"}, {"d", "3"}]
+    end
+
+    test "a log that dies mid-append answers refused after one re-issue, forwarding nothing",
+         %{inst: inst, host: host} do
+      test_pid = self()
+      # A log that takes one append to its grave — and keeps being found.
+      log = spawn(fn -> receive(do: (_append -> exit(:boom))) end)
+
+      stub(Supervisor, :find_or_start, fn {^inst, :input_log} ->
+        send(test_pid, :log_looked_up)
+        {:ok, log}
+      end)
+
+      assert {:error, :refused} = GenServer.call(host, {:ingest, "b", %{}})
+
+      assert_receive :log_looked_up
+      assert_receive :log_looked_up
+      refute_receive :log_looked_up, 50
+      refute_receive {:channel_got, _, _}, 50
     end
   end
 

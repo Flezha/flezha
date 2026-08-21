@@ -538,7 +538,7 @@ back:
   durable log the Controller re-forwards, so keeping it would double-apply
   it and, during a correction, re-order it behind the replayed slice.
 * **Every other class** — including a plain stateful stream operative,
-  the default configuration — keeps its queue. `Ingest.journal_input/2`
+  the default configuration — keeps its queue. `Ingest.journal_input/3`
   passes those inputs through un-journaled (see
   `docs/resilience/data_durability.md`), so the mailbox is the only copy
   they have and discarding them is loss with nothing to recover from.

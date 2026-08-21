@@ -138,7 +138,7 @@ re-arms the same head of the queue.
 
 The worker delivers through `Flezha.Service.OperativeManager.send_io_confirming/5`,
 which runs the target's single pre-delivery ingest path — the `:on_input`
-extension chain, then `journal_input/2` — and answers what happened.
+extension chain, then `journal_input/3` — and answers what happened.
 
 | Verdict | Meaning | Worker action |
 |---|---|---|

@@ -29,20 +29,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     base = TestHelpers.tmp_app_data_dir()
     ClassRegistry.ensure_table()
 
-    case start_supervised({Elixir.Registry, keys: :unique, name: Supervisor.registry_name()}) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
-
-    case start_supervised(Supervisor) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
-
-    case start_supervised(FsyncBatcher) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
+    TestHelpers.start_state_tree()
 
     rc = "wo_" <> Integer.to_string(System.unique_integer([:positive]))
     entity_id = {rc, "proc", "k1"}

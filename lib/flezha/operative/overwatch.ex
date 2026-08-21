@@ -20,9 +20,12 @@ defmodule Flezha.Operative.Overwatch do
 
   The one invariant worth stating here: this process is the single owner of its
   operative's input. Every `:io_in` — cast, call, confirming, replayed or seeded
-  — runs `Ingest.ingest/3` and nothing else does. That is what makes the
+  — runs `Ingest.ingest/4` and nothing else does. That is what makes the
   append-before-forward contract hold, and what lets the correction transaction
-  assume no input can be journaled while it runs.
+  assume no input can be journaled while it runs. It never waits on that
+  journal: an effectively-once append is answered by the input log as a message
+  (`Ingest.journal_reply/2`), so a zero-credit park holds the source's call
+  open while this process keeps running the output chains that mint the credit.
   """
 
   alias Flezha.Operative.Handover
@@ -88,6 +91,9 @@ defmodule Flezha.Operative.Overwatch do
     # Effectively-once tier, declared by the SDK in the AddOperative response
     # metadata. Gates the input-log journal + `flz.offset` stamp on `:io_in`.
     effectively_once: false,
+    # Input-log appends in flight (`Ingest.journal_reply/2`): each request's
+    # label carries the reply it owes and the payload to forward.
+    journal_reqids: :gen_server.reqids_new(),
     # Durable workflow class (kind + per-class persistence). Gates the durable
     # inbox on `:io_in` and the suspension lifecycle
     # (`workflow-durable-suspension`).
@@ -124,13 +130,12 @@ defmodule Flezha.Operative.Overwatch do
   @doc """
   Push one payload at the bound stream channel. The single statement of the
   frame shape a delivery takes, shared by a fresh ingest and by both durability
-  tiers' re-forward.
+  tiers' re-forward. An unbound or absent stream answers `{:error, :no_stream}`,
+  counted and emitted by the channel itself so a stall stays observable.
   """
-  @spec deliver(t(), {binary(), map()}) :: :ok
-  def deliver(%__MODULE__{} = state, payload) do
-    _ = Flezha.Runner.StreamChannel.io_in(state.channel, state.id, payload)
-    :ok
-  end
+  @spec deliver(t(), {binary(), map()}) :: :ok | {:error, :no_stream}
+  def deliver(%__MODULE__{} = state, payload),
+    do: Flezha.Runner.StreamChannel.io_in(state.channel, state.id, payload)
 
   @doc """
   Time a known-blocking procedure and surface a `[Overwatch] proc_slow` warning
@@ -245,7 +250,7 @@ defmodule Flezha.Operative.Overwatch do
     payload = Keyword.get(operative.opts, :seed_input)
 
     if is_binary(payload) and is_nil(state.init_error) and fresh_inbox?(state) do
-      {_verdict, state} = Ingest.confirming_ingest(state, payload, %{})
+      {_verdict, state} = Ingest.confirming_ingest(state, payload, %{}, :cast)
       {:noreply, state}
     else
       result
@@ -386,12 +391,6 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, {:error, :startup_failed}, state}
   end
 
-  @impl true
-  def handle_call({:io_in, message, metadata}, _from, state) do
-    {_verdict, state} = Ingest.confirming_ingest(state, message, metadata)
-    {:reply, :ok, state}
-  end
-
   # Confirming ingest (`operative-to-operative-messaging`): the same single
   # pre-delivery path as the `{:io_in, _, _}` cast, answering what happened so a
   # forwarding sink can tell "done" from "retry". The cast keeps its
@@ -402,10 +401,16 @@ defmodule Flezha.Operative.Overwatch do
     {:reply, {:error, :not_ready}, state}
   end
 
+  # Both blocking entry points: the reply is owed until the journal answers, so
+  # a source parked at zero credit is parked on its own call, never on this
+  # process.
   @impl true
-  def handle_call({:ingest, message, metadata}, _from, state) do
-    {verdict, state} = Ingest.confirming_ingest(state, message, metadata)
-    {:reply, verdict, state}
+  def handle_call({entry_point, message, metadata}, from, state)
+      when entry_point in [:io_in, :ingest] do
+    case Ingest.confirming_ingest(state, message, metadata, {entry_point, from}) do
+      {:pending, state} -> {:noreply, state}
+      {reply, state} -> {:reply, reply, state}
+    end
   end
 
   @impl true
@@ -443,13 +448,6 @@ defmodule Flezha.Operative.Overwatch do
   # handle_cast
   # ---------------------------------------------------------------
 
-  # Suspended: the input is durable in the inbox, so it is not lost by not being
-  # forwarded now — the rehydrating bind delivers the whole undelivered tail.
-  @impl true
-  def handle_cast({:io_in, message, metadata}, %__MODULE__{suspended: true} = state) do
-    {:noreply, Ingest.ingest_suspended(state, message, metadata)}
-  end
-
   # Parked: silently drop ingress casts. A sender that needs the payload held
   # rather than dropped uses the confirming entry point, which answers
   # `{:error, :not_ready}` instead.
@@ -459,9 +457,12 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, state}
   end
 
+  # The same path as the calls with nobody to answer. Suspended: the input is
+  # durable in the inbox, so it is not lost by not being forwarded now — the
+  # rehydrating bind delivers the whole undelivered tail.
   @impl true
   def handle_cast({:io_in, message, metadata}, state) do
-    Ingest.forward(state, Ingest.ingest(state, message, metadata))
+    {_verdict, state} = Ingest.confirming_ingest(state, message, metadata, :cast)
     {:noreply, state}
   end
 
@@ -597,15 +598,13 @@ defmodule Flezha.Operative.Overwatch do
     {:noreply, state}
   end
 
+  # A monitored input log that exits with an append in flight reports it as a
+  # `:DOWN` the request collection recognises; every other `:DOWN` is a plugin's.
   @impl true
-  def handle_info({:DOWN, ref, :process, pid, reason}, %__MODULE__{} = state) do
-    case Table.handle_down(state.extensions, ref, pid, reason) do
-      {:ok, table} ->
-        {:noreply, %{state | extensions: table}}
-
-      :ignore ->
-        Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
-        {:noreply, state}
+  def handle_info({:DOWN, ref, :process, pid, reason} = msg, %__MODULE__{} = state) do
+    case Ingest.journal_reply(state, msg) do
+      {:ok, state} -> {:noreply, state}
+      :ignore -> {:noreply, plugin_down(state, ref, pid, reason)}
     end
   end
 
@@ -646,6 +645,31 @@ defmodule Flezha.Operative.Overwatch do
   def handle_info({:flezha_request, handler_key, payload, reply_to, ref}, state) do
     Plugins.handle_request(state, handler_key, payload, reply_to, ref)
     {:noreply, state}
+  end
+
+  # The input log's answer to an append, in the request's own (opaque) message
+  # shape — the one message this process expects without naming.
+  @impl true
+  def handle_info(msg, %__MODULE__{} = state) do
+    case Ingest.journal_reply(state, msg) do
+      {:ok, state} ->
+        {:noreply, state}
+
+      :ignore ->
+        Logger.warning("[Overwatch] #{state.id} dropped an unexpected message: #{inspect(msg)}")
+        {:noreply, state}
+    end
+  end
+
+  defp plugin_down(%__MODULE__{} = state, ref, pid, reason) do
+    case Table.handle_down(state.extensions, ref, pid, reason) do
+      {:ok, table} ->
+        %{state | extensions: table}
+
+      :ignore ->
+        Logger.error("Binding not found for pid #{inspect(pid)} with reason: #{inspect(reason)}")
+        state
+    end
   end
 
   # ---------------------------------------------------------------

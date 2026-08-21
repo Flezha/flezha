@@ -7,20 +7,7 @@ defmodule Flezha.State.WalWriterTest do
     base = TestHelpers.tmp_app_data_dir()
 
     # Bring up the registry + dyn-supervisor that `WalWriter` uses for naming.
-    case start_supervised({Elixir.Registry, keys: :unique, name: Supervisor.registry_name()}) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
-
-    case start_supervised(Supervisor) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
-
-    case start_supervised(Flezha.State.FsyncBatcher) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-    end
+    TestHelpers.start_state_tree()
 
     on_exit(fn ->
       Application.delete_env(:flezha, :state_root)

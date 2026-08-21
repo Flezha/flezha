@@ -66,8 +66,9 @@ defmodule Flezha.State.InputLog do
   # Source-ingestion credit (`credit-grant-flow-control` §source): appends
   # debit the per-Operative ledger; min-watermark advances drain it (batched
   # by the low watermark); at zero credit the append parks via a deferred
-  # reply, which blocks the source adapter's synchronous ingest call — the
-  # websocket stops reading its socket until credit mints.
+  # reply, which the Overwatch holds open on the source's call
+  # (`Flezha.Operative.Ingest`) — the websocket stops reading its socket until
+  # credit mints, while the host keeps running the chains that mint it.
   # `consumed` is the log's own copy of its Entities' durable consumed-offsets:
   # the min-watermark that drains source credit is taken from it, so an advance
   # never scans the shared table. The table stays the published view.
@@ -114,23 +115,50 @@ defmodule Flezha.State.InputLog do
   durability is fsync-batched like the per-Entity WAL. At zero source
   credit the call parks (deferred reply) until the min-watermark advance
   mints credit — the intended source back-pressure, hence `:infinity`.
+
+  The waiting form of `append_async/5`, for a caller with nothing else to do
+  meanwhile; the Overwatch's ingest issues the request and carries on.
   """
   @spec append(binary(), term(), map()) :: {:ok, non_neg_integer()}
   def append(operative_class, message, metadata),
     do: do_append(operative_class, message, metadata, 2)
 
   defp do_append(operative_class, message, metadata, attempts) do
-    {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
-    # Encode here rather than in the server: every source process pays its own
-    # serialization in parallel instead of queueing behind the one journal
-    # process that every operative of this class shares.
-    body = :erlang.term_to_binary({message, metadata})
-    GenServer.call(pid, {:append, body}, :infinity)
-  catch
-    # A restarting log's registry entry can briefly point at the dead pid.
-    :exit, {:noproc, _} when attempts > 1 ->
-      do_append(operative_class, message, metadata, attempts - 1)
+    reqids = append_async(operative_class, message, metadata, :gen_server.reqids_new(), :append)
+
+    case :gen_server.wait_response(reqids, :infinity, true) do
+      {{:reply, reply}, :append, _} ->
+        reply
+
+      # A restarting log's registry entry can briefly point at the dead pid.
+      {{:error, {:noproc, _}}, :append, _} when attempts > 1 ->
+        do_append(operative_class, message, metadata, attempts - 1)
+
+      {{:error, {reason, log}}, :append, _} ->
+        exit({reason, {__MODULE__, :append, [operative_class, log]}})
+    end
   end
+
+  @doc """
+  Journal one inbound payload without waiting: the `{:append, body}` request is
+  issued with `:gen_server.send_request/4` under `label` into the caller's
+  request collection. The answer — `{:ok, offset}`, or the log's exit, which
+  the monitored request reports as `{:error, {reason, log}}` instead of leaving
+  the caller owed — arrives as a message the caller hands to
+  `:gen_server.check_response/3`. A zero-credit park is then the caller's to
+  hold, not its loop's to wait on.
+  """
+  @spec append_async(binary(), term(), map(), :gen_server.request_id_collection(), term()) ::
+          :gen_server.request_id_collection()
+  def append_async(operative_class, message, metadata, reqids, label) do
+    {:ok, pid} = Supervisor.find_or_start({operative_class, :input_log})
+    :gen_server.send_request(pid, {:append, encode_body(message, metadata)}, label, reqids)
+  end
+
+  # Encode in the caller rather than in the server: every ingest process pays
+  # its own serialization in parallel instead of queueing behind the one
+  # journal process that every operative of this class shares.
+  defp encode_body(message, metadata), do: :erlang.term_to_binary({message, metadata})
 
   @doc "Highest journaled offset, `-1` when the log is empty or absent."
   @spec last_offset(binary()) :: integer()
@@ -408,8 +436,8 @@ defmodule Flezha.State.InputLog do
 
   # A second raw handle on the same file, in its own process: fdatasync syncs
   # the inode, not the descriptor, so the ~ms a datasync takes is spent here
-  # while the log's loop keeps answering appends — which the effectively-once
-  # ingest call waits on, one record at a time.
+  # while the log's loop keeps answering appends — which every effectively-once
+  # source is waiting on, one record at a time.
   defp start_syncer(path) do
     spawn_link(fn -> syncer_loop(open_raw(path)) end)
   end

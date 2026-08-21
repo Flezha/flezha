@@ -11,6 +11,7 @@ Never inline the notes in this file — it must stay small enough to load whole.
 
 ## Per-change notes index
 
+- [Async effectively-once ingest](docs/dev_notes/async-effectively-once-ingest.md) — the host never waits on the input log; the owed set IS the request collection (label = `{reply_to, payload, retries}`); a dead log's `:DOWN` must be checked before the plugin `:DOWN` clause; `receive_response` abandons a request on timeout — probe with `wait_response`
 - [Durable-path throughput](docs/dev_notes/durable-path-throughput.md) — a confirmation refills the outbox window; the InputLog OWNS its watermark (one ETS table was 43% of CPU); the fsync tick casts; the dispatcher's chain run owns its tally; a transport reader never serves inline; profile with `--profile`/`--tprof`, not mailbox peaks
 - [Delivery confirmation gates the outbox cursor](docs/dev_notes/sink-acknowledged-delivery.md) — a cast is not delivery; the cursor moves on the sink's confirm/park; the owner is ALWAYS a `WalWriter` (the journal's, for a workflow); a lost chain run is re-dispatched by the resettle tick; `RecordLog.append` seq race fixed in `WalWriter.append_next/3`
 - [Durability posture is a decision](docs/dev_notes/durability-tier-default-on.md) — prod refuses to boot with no `FLEZHA_DURABILITY_BACKEND`; the refusal is `children/0`, NEVER `config/runtime.exs`; artifact classes are one `Manifest.@classes` table; a parked set ships as the WHOLE directory so a drop propagates; authz ships an explicit file list, never `bootstrap.token`

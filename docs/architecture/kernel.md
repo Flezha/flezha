@@ -543,7 +543,7 @@ one drops — deliberately.
 ```mermaid
 flowchart TB
     SRC["🌐 Source (e.g. an exchange websocket)"]:::src
-    G1{{"① SOURCE CREDIT — tier only<br/>out of credit → the ingest call PARKS<br/>the websocket stops reading its socket<br/><b>loss: no</b>"}}:::park
+    G1{{"① SOURCE CREDIT — tier only<br/>out of credit → the SOURCE's ingest call PARKS, the host runs on<br/>the websocket stops reading its socket<br/><b>loss: no</b>"}}:::park
     CTRL["🧠 Controller"]:::ctrl
     G2{{"② SEND BUFFER ≤ 8 MiB — NOT credit, by design<br/>full → drop the newest frame<br/><b>loss: none under the tier</b> (the input log re-drives)"}}:::drop
     EX["⚙️ Runner (user code)"]:::exec
@@ -629,8 +629,17 @@ protocol.
 ### The source→controller credit loop
 
 Under the tier, the input log holds its own credit ledger. An `append` debits it. When the
-ledger is exhausted the caller is **parked** — the ingest call simply does not return — and the
+ledger is exhausted the append is **parked** — the log defers its reply — and the
 minimum-watermark advance is what drains the ledger and unparks the waiters in arrival order.
+
+The Overwatch never waits on that reply. It hands the append to the log
+(`InputLog.append_async/5`), keeps the source's call owed, and forwards the input when the log
+answers (`Ingest.journal_reply/2`) — in offset order, answering the calls in call order. So the
+park lands on the *source's* call and nothing else: the host keeps running its `{:io_out}`
+chains, control calls and timers while credit is exhausted, and it is those chains' sink
+confirmations that advance the watermark and mint the credit. A host parked on its own log
+could never mint the credit it waits for — a sink outage longer than `window / ingest rate`
+would otherwise wedge an operative for good.
 
 This only back-pressures the actual source if the source adapter is *waiting* on that call, so
 under the tier the websocket provider switches from a fire-and-forget cast to a blocking call.

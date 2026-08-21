@@ -186,3 +186,27 @@ truncation after a restart MAY scan from the start of the file once.
 
 - **WHEN** a queued truncation runs after the log's class directory was removed
 - **THEN** the log keeps running and cuts nothing
+
+### Requirement: A parked append parks the source, never the host
+
+The host process of an effectively-once operative SHALL NOT wait on the input log: it SHALL hand each append to the log and forward the input when the log answers, keeping forward order equal to offset order and answering each confirming call in call order. While the log parks appends at zero source credit, the host SHALL keep running its output chains, its control calls and its timers; the park SHALL be observable only as the source's owed call. A log that dies with an append in flight SHALL cause that append to be re-issued once and then answered as refused, never left owed.
+
+#### Scenario: Zero credit parks the source's call and nothing else
+
+- **WHEN** the operative's source credit is exhausted and a source's confirming ingest is in flight
+- **THEN** the source's call stays unanswered, and the host still answers a control call and runs an `{:io_out}` chain dispatched to it meanwhile
+
+#### Scenario: The host's own confirmations free its parked appends
+
+- **WHEN** the appends of an operative are parked and the sink confirms outputs the host's chain delivered while parked
+- **THEN** the resulting watermark advance mints credit, the log answers the parked appends in arrival order, and the host forwards the inputs and answers their verdicts in the same order
+
+#### Scenario: Forward order is offset order
+
+- **WHEN** three inputs are ingested in call order a, b, c
+- **THEN** they are forwarded to the runner in offset order a, b, c and their verdicts answer in that order
+
+#### Scenario: A log that dies mid-append answers refused
+
+- **WHEN** the input log exits while an append is in flight and the re-issued append finds no log
+- **THEN** the confirming call receives `{:error, :refused}` and the input is not forwarded

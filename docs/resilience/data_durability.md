@@ -171,7 +171,11 @@ key + idempotent sink = effectively-once*:
 - **Source back-pressure.** Ingestion debits a per-operative source credit
   ledger; the min-watermark advance mints it back. At zero credit the
   source adapter's ingest call parks (the websocket stops reading its
-  socket), bounding input-log growth against a stalled Entity.
+  socket), bounding input-log growth against a stalled Entity. The park is
+  the source's alone: the operative's host hands each append to the log
+  without waiting and forwards when the log answers, so it keeps delivering
+  the outputs whose confirmations mint the credit — a sink outage longer
+  than `window / ingest rate` delays ingestion, it never wedges it.
 - **Cost-free default.** Operatives without the flag keep every path
   byte-identical — no input-log writes, no outbox, no gating. Slow or
   unreachable sinks back the outbox up on disk (never memory) and delay
