@@ -111,7 +111,7 @@ The system SHALL dispatch `:timer`-kind extensions via scheduled invocations. Wh
 
 ### Requirement: Active-extensions fast path
 
-The system SHALL maintain an `active_mask` integer in `Extension.Table` in which bit N is set if and only if extension at catalog index N has at least one subscriber. `Extension.run/3` MUST check this mask before invoking any dispatch logic; when the mask bit is clear the call MUST return the ctx unchanged (for `:fold` / `:transform`), `:ok` (for `:fanout`), or an empty-key outcome (for `:request`) without invoking user code or allocating list cells.
+The system SHALL maintain an `active_mask` integer in `Extension.Table` in which bit N is set if and only if extension at catalog index N has at least one subscriber. `Extension.run/3` MUST check this mask before invoking any dispatch logic; when the mask bit is clear the call MUST return the ctx unchanged (for `:fold` / `:transform`), `:ok` (for `:fanout`), or an empty-key outcome (for `:request`) without invoking user code or allocating list cells. A host's hot-path transform dispatch (the Overwatch's `:on_input` and `:on_output`) SHALL ask `Extension.active?/2` before building the chain's context: an unsubscribed chain is a passthrough answered before its `Ctx.IO` exists, so the fast path costs no allocation either.
 
 #### Scenario: Extension with no subscribers is zero-cost
 - **WHEN** `Extension.run/3` is called for an extension with zero subscribers
@@ -119,6 +119,10 @@ The system SHALL maintain an `active_mask` integer in `Extension.Table` in which
 
 #### Scenario: Bit flips on first and last subscriber
 - **WHEN** the first subscriber is added to an extension, its mask bit MUST be set; when the last subscriber for that extension is removed, its mask bit MUST be cleared
+
+#### Scenario: Unsubscribed transform chain builds no context
+- **WHEN** an operative with no `:on_output` subscriber flushes an output
+- **THEN** the output passes through unchanged without a `Ctx.IO` being built or `Extension.run/3` being entered
 
 ### Requirement: Dispatch chains are pre-composed at subscribe time
 

@@ -29,13 +29,35 @@ The Rust SDK's `command_add_operative` handler SHALL be idempotent: an `AddOpera
 - **WHEN** the Runner reconnects and opens a new data stream that the acceptor routes to this `runner_id`'s `StreamSupervisor`
 - **THEN** the acceptor SHALL discover the existing `StreamChannel` is nil-ref and call `{:bind, stream_ref_new}` on it
 - **AND** the channel's `stream_ref` SHALL update to `stream_ref_new`
-- **AND** subsequent outbound frames from the channel SHALL be sent on `stream_ref_new`, not silently dropped
+- **AND** subsequent outbound frames sent through the channel's published binding SHALL go out on `stream_ref_new`, not silently dropped
 
 #### Scenario: Idempotent AddOperative reissue does not crash the SDK
 - **GIVEN** the Rust SDK's local registry already contains Operative `r1`
 - **WHEN** the Controller issues `AddOperative{operative_id: "r1", ...}` to the SDK as part of the reissue catch-up
 - **THEN** the SDK SHALL log "AddOperative: operative already registered, skipping" (or similar) and continue without raising
 - **AND** the SDK's local registry SHALL still contain exactly one entry for `r1`
+
+### Requirement: An outbound input frame is sent by its caller from the channel's published binding
+
+`Flezha.Runner.StreamChannel` SHALL publish its bound `stream_ref`, together with its liveness counters, under its registered name — written at init (unbound), on `{:bind, new_ref}` and on `{:flz_closed, ...}` (unbound again), and erased when the channel terminates. A sender — the Overwatch's ingest path and the durable tiers' re-forward — SHALL send through `StreamChannel.io_in/3` with the channel's name: it reads the published binding and pushes the frame to the transport from the calling process, with no round trip through the channel process that every operative on the runner shares. A binding that is unbound, a name that is unknown, or a `nil` channel SHALL answer `{:error, :no_stream}`, bump the channel's `nil_drops` liveness counter where a channel exists, and emit `[:flezha, :stream, :drop]` — so a stall on an unbound stream stays observable to the reconciler, whose probe rebinds it.
+
+#### Scenario: A bound frame leaves from the caller
+- **GIVEN** a `StreamChannel` bound to `stream_ref_1`
+- **WHEN** an Overwatch ingests an input for an operative mapped to that channel
+- **THEN** the frame is pushed on `stream_ref_1` by the Overwatch's own process, the channel's `send_frame_calls` counter advances, and no message is queued at the channel process
+
+#### Scenario: An unbound channel answers no_stream and emits the drop
+- **GIVEN** a `StreamChannel` whose stream closed and has not rebound
+- **WHEN** an Overwatch ingests an input for it
+- **THEN** `io_in/3` answers `{:error, :no_stream}`, the channel's `nil_drops` counter advances, and `[:flezha, :stream, :drop]` fires naming the operative
+
+#### Scenario: A rebind republishes before the channel answers
+- **WHEN** the acceptor's `{:bind, stream_ref_new}` call succeeds on a nil-ref channel
+- **THEN** the next `io_in/3` on that channel's name sends on `stream_ref_new`; a close republishes the binding as unbound before the channel processes anything else
+
+#### Scenario: A terminated channel's binding is gone
+- **WHEN** a `StreamChannel` terminates
+- **THEN** its published binding is erased and a sender using its name answers `{:error, :no_stream}` rather than pushing on a stale ref
 
 ### Requirement: Rust SDK command decode SHALL treat a clean peer close as a transport event, not a panic
 

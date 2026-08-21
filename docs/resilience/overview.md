@@ -82,7 +82,7 @@ fires, so a hard restart restores state from disk rather than losing it.
 | Module | Role |
 |--------|------|
 | `State.WalWriter` | Appends every state change to a per-entity WAL file |
-| `State.FsyncBatcher` | Coalesces all WAL writers' fsync calls into one batch every 5 ms |
+| `State.FsyncBatcher` | Casts one `:fsync` to every dirty WAL writer every 5 ms; the writers sync concurrently |
 | `State.Snapshot` | Crash-safe atomic snapshots: write `.tmp` → fsync → rename |
 | `State.Outbox` | Persists the last-sent seq per entity as a dedup marker |
 | `State.Restore` | Assembles snapshot + tail-WAL bytes to send to a reconnecting runner |

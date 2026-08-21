@@ -70,7 +70,7 @@ A one-time on-disk migration `Flezha.Boot.StatePathMigrator.migrate/0` SHALL run
 
 ### Requirement: Snapshot lifecycle with atomic rename and WAL truncation
 
-When the agent receives an `entity_state_snapshot` frame from the SDK (typically in response to a `CompactEntity` command), the agent SHALL: (1) write the snapshot bytes to `{entity_key}.snap.{seq}.tmp` with `[:raw, :write, :binary]`; (2) `:file.sync/1` the temp file; (3) atomically rename to `{entity_key}.snap.{seq}` via `:file.rename/2`; (4) call `WalWriter.truncate_up_to(seq)` which rewrites the WAL dropping records with `seq' <= seq` and atomically renames the rewritten file into place.
+When the agent receives an `entity_state_snapshot` frame from the SDK (typically in response to a `CompactEntity` command), the agent SHALL: (1) write the snapshot bytes to `{entity_key}.snap.{seq}.tmp` with `[:raw, :write, :binary]`; (2) `:file.sync/1` the temp file; (3) atomically rename to `{entity_key}.snap.{seq}` via `:file.rename/2`; (4) call `WalWriter.truncate_up_to(seq)` which drops the records with `seq' <= seq` and atomically renames the rewritten file into place. The cut SHALL cost the retained tail, not the WAL: the writer keeps a sparse seq-to-position index of its records, finds the boundary within one sample span and copies the tail as bytes, because the cut runs inside the writer's loop. A cut with no record at or below `seq` — a retention tick on a writer compaction already cut — SHALL answer at once without rewriting, because the rewrite runs inside the writer's loop and, under the effectively-once tier, every output rides that loop; only a writer awaiting its baseline runs such a cut, which is what establishes the baseline.
 
 If the agent crashes between steps 3 and 4, the next boot SHALL find both the new snapshot and the un-truncated WAL; `lib/flezha/state/registry.ex::scan_dir/1` SHALL detect the situation, prefer the latest snapshot, and mark the WAL records ≤ `snapshot.seq` as redundant. Replay-from-this-state is correct: applying the snapshot then folding the WAL produces a state where the redundant records' apply_change calls are no-ops (because the snapshot already encodes their effects).
 
@@ -83,6 +83,10 @@ If the agent crashes between steps 3 and 4, the next boot SHALL find both the ne
 
 - **WHEN** a snapshot at `seq = 100` lands and the WAL contains records seqs 1-150
 - **THEN** after `WalWriter.truncate_up_to(100)`, the WAL SHALL contain only records seqs 101-150; the snapshot file SHALL contain the post-fold state at seq 100
+
+#### Scenario: A cut with nothing below it leaves the WAL untouched
+- **WHEN** the WAL holds seqs 101-150 after a compaction at 100 and a retention tick calls `WalWriter.truncate_up_to(100)`
+- **THEN** the writer answers `:ok` without rewriting or renaming the file, and its un-fsynced bytes, credit and tail age are unchanged
 
 #### Scenario: Crash mid-truncate leaves both files; replay is correct
 
@@ -199,7 +203,9 @@ The query SHALL be exposed via the `flz state at <operative/procedure/entity> <s
 
 ### Requirement: Fsync batching at configurable cadence
 
-The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BEAM node. The batcher SHALL maintain a `MapSet` of dirty Entity IDs (Entities whose `WalWriter` has appended bytes since the last fsync). On each tick at interval `agent_fsync_interval_ms` (default 5; configurable via runtime config in range [1, 1000]), the batcher SHALL: (1) iterate the dirty set; (2) cast `:fsync` to each `WalWriter`; (3) reset the set; (4) schedule the next tick via `Process.send_after/3`.
+The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BEAM node. The batcher SHALL maintain a `MapSet` of dirty writer IDs (Entities whose `WalWriter`, or input-logs whose log process, has appended bytes since the last fsync). A writer SHALL mark itself dirty once per fsync window — on the first append after its last sync, not on every append. On each tick at interval `agent_fsync_interval_ms` (default 5; configurable via runtime config in range [1, 1000]), the batcher SHALL: (1) iterate the dirty set; (2) cast `:fsync` to each writer, so the writers sync concurrently in their own processes and a writer busy behind a deep mailbox delays no other writer's durability, credit release or outbox dispatch; (3) reset the set; (4) schedule the next tick via `Process.send_after/3`. `flush_now` and `flush_all` SHALL instead call each dirty writer synchronously, so their callers return with every sync done; a writer that does not confirm a synchronous sync SHALL stay in the dirty set for the next drain.
+
+A (re)started batcher SHALL seed its dirty set with every registered writer: with one mark per window, a dirty set lost with a crashed batcher would otherwise never be rebuilt, and a writer's un-synced tail would wait for its next append.
 
 `WalWriter` SHALL invoke `:file.datasync/1` on its file handle when receiving the `:fsync` message and SHALL update `fsync_durability_lag_ms` to `now - oldest_pending_record_timestamp`.
 
@@ -217,6 +223,21 @@ The agent SHALL run a single shared `Flezha.State.FsyncBatcher` GenServer per BE
 
 - **WHEN** a runner sets `agent_fsync_interval_ms = 1`
 - **THEN** the batcher SHALL tick every 1 ms (1000 Hz); the durability bound SHALL be ~2 ms total at the cost of more frequent fsyncs
+
+#### Scenario: One dirty mark per fsync window
+
+- **WHEN** a `WalWriter` appends N records between two batcher ticks
+- **THEN** it marks itself dirty once, on the first of those appends, and marks again only after the tick has synced it
+
+#### Scenario: A slow writer does not delay its siblings
+
+- **WHEN** one dirty writer's mailbox is deep enough that its sync runs late
+- **THEN** every other dirty writer syncs on the same tick, because the tick casts instead of waiting on each writer in turn
+
+#### Scenario: A restarted batcher syncs every registered writer
+
+- **WHEN** the batcher crashes with marks in its dirty set and restarts
+- **THEN** its first tick syncs every registered writer, so no un-synced tail waits for that writer's next append
 
 ### Requirement: Per-Operative persistence toggle resolution at operative startup
 

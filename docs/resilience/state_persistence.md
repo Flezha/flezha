@@ -165,9 +165,13 @@ unchanged.
 ## fsync batching
 
 `Flezha.State.FsyncBatcher` is one GenServer (`name: __MODULE__`).
-`WalWriter.handle_call({:append, ...})` casts `mark_dirty(entity_id)`
-after each write; the batcher coalesces casts into a single per-tick
-fsync per writer. Tick interval defaults to `5 ms` (≈ 200 Hz),
+A `WalWriter` casts `mark_dirty(entity_id)` on the first write of an
+fsync window (not on every write); each tick casts `:fsync` to every
+dirty writer, so the writers sync concurrently in their own processes
+and a writer stuck behind a deep mailbox delays no sibling's durability.
+`flush_now`/`flush_all` call instead, and a writer that does not confirm
+stays dirty. A (re)started batcher seeds its dirty set from every
+registered writer. Tick interval defaults to `5 ms` (≈ 200 Hz),
 configurable via `:flezha, :agent_fsync_interval_ms`. Legal range
 `[1, 1000]` ms; out-of-range values fail `init/1` loudly.
 

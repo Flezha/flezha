@@ -82,7 +82,7 @@ the **next** occurrence self-localize.
 ```
 Kraken WS plugin
   → Operative.Overwatch.handle_cast/handle_call({:io_in})   [io_in_received, forwarded, filtered_nil]
-  → StreamChannel.handle_cast/handle_call({:io_in})      [io_in_received, send_frame_calls, nil_drops, last_send_ms]
+  → StreamChannel.io_in/3 (runs in the Overwatch's process) [io_in_received, send_frame_calls, nil_drops, last_send_ms]
   → Native.send_frame
   → [crossbeam stream command channel]                [cmd_queue_depth]
   → flz-uds-driver loop (uds_driver.rs)                  [loop_iterations, last_loop_ms]

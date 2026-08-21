@@ -563,3 +563,27 @@ A workload that never starves SHALL observe exactly the base pool.
 - **WHEN** starvation persists with the pool at `FLEZHA_WORKER_POOL_MAX`
 - **THEN** no further threads SHALL be spawned and remaining work SHALL wait
   for a completion, exactly as the whole pool does today at CPU count
+
+### Requirement: Pool workers run activations inside the core's activation scope
+
+A poll worker SHALL run every activation — polled from the core or served
+inline for a consumer it is blocked on — inside `flz_core`'s activation scope,
+so a `Block`-policy push made from user code into a full consumer drains that
+consumer inline instead of parking (see `sdk-poll-core`). The wire-reader
+thread SHALL NOT enter that scope: its pushes park, and the pool drains the
+consumer.
+
+#### Scenario: An inline-served round counts as an activation
+
+- **WHEN** a worker blocked on a full consumer serves that consumer's round
+  inline, and a procedure in that round emits under `Block` into another full
+  consumer
+- **THEN** the nested push also serves inline, because the thread is still
+  inside an activation
+
+#### Scenario: The wire reader never serves
+
+- **WHEN** the stream reader's push into an entry mailbox finds it full under
+  `Block`
+- **THEN** the reader parks on the consumer's parker until the pool pops a
+  slot, and no procedure runs on the reader thread

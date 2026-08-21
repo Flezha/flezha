@@ -122,7 +122,7 @@ The producer SHALL accumulate messages destined for the same `(topic, partition)
 - The accumulated wire size has not exceeded `:max_batch_bytes` (default 1 048 576 = 1 MiB), AND
 - Less than `:linger_ms` milliseconds have elapsed since the first un-sent message in the batch.
 
-When either condition is exceeded, the batch SHALL be flushed (sent) immediately. Setting `:linger_ms = 0` disables batching — every message produces a Produce request immediately.
+When either condition is exceeded, the batch SHALL be flushed (sent) immediately. Setting `:linger_ms = 0` disables batching — every message produces a Produce request immediately. Assembling a batch SHALL be linear in the records it drains: the accumulated byte total rides with the accumulator rather than being re-summed per record.
 
 #### Scenario: 50 trades in 10 ms become one Produce request
 - **GIVEN** a producer with `:linger_ms = 10` accepting 50 messages destined for the same partition over 10 ms
@@ -178,17 +178,22 @@ The `dropped_total` counter SHALL be exposed via:
 
 ### Requirement: Producer holds at most one shared `KafkaEx.New.Client` worker pid per canonical connection identity
 
-The producer plugin SHALL acquire its `KafkaEx.New.Client` worker pid through `Flezha.Plugin.Provider.Kafka.WorkerRegistry` (the shared, refcounted, per-cluster registry). The registry SHALL key entries on the canonical tuple `{sorted_hosts, phash2(ssl_options), phash2(auth)}` so two plugin instances with the same broker target reuse the same worker. The registry SHALL monitor the worker process; on DOWN it SHALL clear the entry AND proactively deliver a typed `{:kafka_worker_dead, {key, token}, reason}` message to every caller pid that still holds a live token against the dead entry. The next `acquire/2` for the same identity SHALL start a fresh worker. The registry SHALL expose a `swap(ref, server \\ __MODULE__) :: {:ok, pid(), ref()} | {:error, term()}` API that performs an in-place re-acquire for an existing caller without double-counting refcount or triggering the linger-stop machinery, intended for callers handling the death-notification message.
+The producer plugin SHALL acquire its `KafkaEx.New.Client` worker pid through `Flezha.Plugin.Provider.Kafka.WorkerRegistry` (the shared, refcounted registry). The registry SHALL key entries on the canonical tuple `{sorted_hosts, phash2(ssl_options), auth fingerprint, lane}`, where `lane` is the provider's `partition mod schedulers_online`: a client answers one request at a time and encodes each batch in its own process, so one client per cluster would serialise every partition's batches behind one core. Sharing is therefore per scheduler per cluster — two plugin instances with the same broker target whose partitions fall in the same lane reuse the same worker, and a cluster's connection count is bounded by the node's cores, never by its plugin or partition count. The registry SHALL monitor the worker process; on DOWN it SHALL clear the entry AND proactively deliver a typed `{:kafka_worker_dead, {key, token}, reason}` message to every caller pid that still holds a live token against the dead entry. The next `acquire/2` for the same identity SHALL start a fresh worker. The registry SHALL expose a `swap(ref, server \\ __MODULE__) :: {:ok, pid(), ref()} | {:error, term()}` API that performs an in-place re-acquire for an existing caller without double-counting refcount or triggering the linger-stop machinery, intended for callers handling the death-notification message.
 
 Linger: a worker with refs = 0 SHALL be stopped after a configurable `:linger_ms` (default 5000 ms) to absorb plugin-restart churn. The linger timer SHALL be cancelled on the next `acquire/2`.
 
 The `release/2` token returned by `acquire/2` SHALL be opaque to callers — they pass it back unchanged. A token issued against a now-dead entry SHALL no-op on `release/2`.
 
 #### Scenario: Two plugins same identity share a worker
-- **GIVEN** plugin A and plugin B configured with the same `:hosts`, `:ssl_options`, `:auth`
+- **GIVEN** plugin A and plugin B configured with the same `:hosts`, `:ssl_options`, `:auth`, producing to partitions in the same lane
 - **WHEN** both call `WorkerRegistry.acquire/2` at boot
 - **THEN** both SHALL receive the same `worker_pid`
 - **AND** the registry entry SHALL show `refs: 2`
+
+#### Scenario: A cluster's partitions spread over one client per scheduler
+- **GIVEN** a node with 8 schedulers and one plugin producing to 16 partitions of one cluster
+- **WHEN** its per-partition workers acquire their clients
+- **THEN** partitions `p` and `p + 8` share a client and the cluster has at most 8 clients, however many plugins or partitions target it
 
 #### Scenario: Worker death notifies every active token holder
 - **GIVEN** plugins A, B, and C have each acquired tokens against the same canonical identity

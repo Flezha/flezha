@@ -188,9 +188,11 @@ Two contracts make runner ↔ controller connections heal automatically across
 either-side restarts:
 
 1. **Stream rebind on `{:flz_closed, ...}`.** `StreamChannel` clears its
-   `stream_ref` to `nil` synchronously inside its close-handler clause, and
-   refuses outbound frames while `stream_ref == nil` (returns
-   `{:error, :no_stream}` on the call path; logs and drops on the cast path).
+   `stream_ref` to `nil` synchronously inside its close-handler clause and
+   republishes its binding as unbound, so `StreamChannel.io_in/3` — which
+   senders call from their own process — answers `{:error, :no_stream}`
+   (counted, and emitted as `[:flezha, :stream, :drop]`) while
+   `stream_ref == nil`.
    On the next incoming data stream for the same `runner_id`,
    `StreamAcceptor` (UDS) and `Transport.Server` (QUIC) walk the existing
    `StreamSup` children and bind the new ref to the first nil-ref channel via

@@ -65,9 +65,9 @@ message and cripple throughput). Instead:
   exactly-once buys, at a real cost). flezha is "durable state + at-least-once output."
 
 **FsyncBatcher and the lag window.** The WAL writer does not fsync after every record.
-`State.FsyncBatcher` coalesces dirty-mark casts from all per-entity `WalWriter`
-processes and issues one `:file.datasync/1` call per writer per cadence tick (default
-5 ms). On a hard kill, records written within the last ~5 ms may not have been
+`State.FsyncBatcher` collects one dirty mark per fsync window from each per-entity
+`WalWriter` and casts one `:fsync` to every dirty writer per cadence tick (default
+5 ms); each writer runs its own `:file.datasync/1`, concurrently with its siblings. On a hard kill, records written within the last ~5 ms may not have been
 fsynced and can be lost. This is the mechanical source of the "async WAL lag" in the
 scenario matrix above. The fsync cadence is configurable via
 `:flezha, :agent_fsync_interval_ms`; lowering it reduces the lag window at the cost

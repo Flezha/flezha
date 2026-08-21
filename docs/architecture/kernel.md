@@ -172,8 +172,10 @@ Dispatch is not delivery. Each flushed output carries an opaque `flz.ack` token
 (`Flezha.State.Outbox`); a delivery-guaranteed sink takes a hold on it and answers when its
 write is durable, while an output no sink held completes as soon as the chain has run it. The
 cursor advances over the leading run of completed entries, so an out-of-order confirmation can
-never carry it past output still in flight, and the number of unconfirmed entries is capped
-(`:outbox_inflight_max`, default 1000) — the flush waits, ingest does not.
+never carry it past output still in flight, and the number of entries inside the chain
+unconfirmed is capped (`:outbox_inflight_max`, default 1000) — the flush waits, ingest does
+not. Every completed confirmation refills that window, so a burst drains at the sink's rate
+rather than one window per retry tick.
 
 ## Snapshots, compaction, and restore
 
@@ -296,6 +298,11 @@ the entity parks the poison payload durably and advances past it.
 The truncation floor is `min(watermark, the newest offset older than the hold window)`. The
 hold window (`:input_log_hold_window_ms`, default `0`) is what a correcting operative needs — it
 is the guarantee that the inputs a correction wants to replay are still on disk.
+
+The cut costs the retained tail, not the log: the input log keeps a sparse offset→position index
+(one sample per 256 appends), finds the floor within one span and copies the bytes above it into
+the replacement file. The sweeper asks for the cut and never waits on it — the log is on the
+effectively-once ingest path, and housekeeping must not hold it, nor die because it is busy.
 
 ## The remote durability tier
 

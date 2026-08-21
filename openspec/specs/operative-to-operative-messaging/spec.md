@@ -78,6 +78,13 @@ The verdicts SHALL be:
 The existing `{:io_in, _, _}` cast behaviour SHALL be unchanged, including its silent drop for
 an `init_error`-parked operative.
 
+For a source holding many inputs at once, `OperativeManager` SHALL expose a many-input form
+of the confirming entry point that keeps up to a caller-chosen window (default 64) of ordinary
+ingest requests in flight against the one target and answers one verdict per input, in input
+order. Every input SHALL run the operative's single ingest path once, in input order — only
+the caller's round trips overlap; there SHALL be no second, batched server-side ingest. An
+unresolvable target SHALL answer `{:error, :not_found}` for every input of the batch.
+
 #### Scenario: Durable delivery is confirmed
 - **WHEN** the confirming entry point is invoked against a healthy bound operative
 - **THEN** it SHALL return `:ok` and the payload SHALL have passed through the `:on_input` chain
@@ -105,6 +112,22 @@ an `init_error`-parked operative.
 #### Scenario: The existing cast keeps its behaviour
 - **WHEN** `{:io_in, message, metadata}` is cast to an operative whose `init_error` is set
 - **THEN** the message SHALL be silently discarded as before and no verdict SHALL be produced
+
+#### Scenario: A batch keeps a window in flight and answers in order
+- **WHEN** the many-input form is invoked with 200 inputs and a window of 64 against a healthy
+  bound operative
+- **THEN** at most 64 ingest requests are outstanding at any time, the operative ingests the
+  200 inputs in the order given, and the caller receives 200 verdicts in that same order
+
+#### Scenario: A batched input keeps its per-input semantics
+- **WHEN** the many-input form delivers inputs to an operative under the effectively-once tier
+- **THEN** each input is journaled before it is forwarded and answers the same verdict a single
+  confirming ingest of it would have
+
+#### Scenario: An unresolvable target answers not-found for every input
+- **WHEN** the many-input form is invoked for an operative id with no registered pid in the
+  namespace
+- **THEN** it SHALL return `{:error, :not_found}` once per input and send nothing
 
 ### Requirement: Retry until confirmed, with bounded queue and back-pressure
 

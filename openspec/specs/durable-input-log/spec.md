@@ -87,3 +87,102 @@ does with no hold window at all.
   window, and every Entity has consumed to offset 4711
 - **THEN** truncation removes every offset below 4711 immediately
 
+### Requirement: The log owns its watermark
+
+The input-log process SHALL keep each Entity's durable consumed-offset itself
+and derive the operative's min-watermark from that map; a consumed-offset
+report SHALL update the log's copy and SHALL NOT scan any shared table. A
+burst of reports SHALL fold into one watermark recompute and one credit drain.
+The published watermark table SHALL be a rebuildable cache for readers outside
+the log — the retention sweep, replay cursors, the CLI — created and owned by
+the state supervisor so it outlives every process that reports into it; a
+(re)started log SHALL seed its own map from that table. Offsets are assigned
+monotonically, so the bytes a watermark advance frees SHALL be taken as a
+prefix of the tracked offsets, costing the number freed rather than the number
+still in flight.
+
+#### Scenario: A restarted log recovers its watermark
+
+- **WHEN** the input-log process restarts while its Entities' last
+  consumed-offsets are in the published table
+- **THEN** the reopened log computes the same min-watermark as before the
+  restart without waiting for a fresh report from every Entity
+
+#### Scenario: The table survives its reporters
+
+- **WHEN** every `WalWriter` that reported a consumed-offset has exited
+- **THEN** the published table and its rows are intact, because the state
+  supervisor owns it
+
+#### Scenario: A burst of advances recomputes once
+
+- **WHEN** N Entities report consumed-offset advances within one scheduling
+  window of the log
+- **THEN** the log recomputes its min-watermark and drains source credit once
+  for the burst, not once per report
+
+### Requirement: An append never waits on a sync
+
+The log SHALL sync on a companion process holding a second handle on the same
+file (a datasync covers the inode, not the handle), driven by the fsync
+batcher's tick, so an append is answered while a datasync is in progress.
+Appends queued behind one another SHALL be folded into one write in arrival
+order, each answered with its own offset; the caller encodes its record before
+the call. The record that first overruns source credit SHALL park, and so
+SHALL every record queued behind it in that batch, so a later record is never
+admitted ahead of an earlier parked one. The synchronous flush (`flush_now`,
+shutdown) SHALL round-trip to the companion, and truncation SHALL reopen the
+companion's handle on the replacement file.
+
+#### Scenario: An append is answered during a datasync
+
+- **WHEN** the companion is inside a datasync when an append arrives
+- **THEN** the append is written and answered without waiting for the sync
+  to return
+
+#### Scenario: A burst of appends is one write, in order
+
+- **WHEN** several appends are queued at the log at once
+- **THEN** they are written with one write call, assigned consecutive offsets
+  in arrival order, and each caller receives its own offset
+
+#### Scenario: A credit overrun parks the whole tail in order
+
+- **WHEN** the second of four queued appends overruns source credit while the
+  third is small enough to fit
+- **THEN** the first is written and the second, third and fourth park in that
+  order; when credit mints, they are admitted in the same order
+
+#### Scenario: Truncation keeps the companion on the live file
+
+- **WHEN** the log truncates below its watermark, replacing the file
+- **THEN** the next sync covers the replacement file, not the unlinked one
+
+### Requirement: A truncation costs the tail and never the sweeper
+
+The log SHALL keep a sparse offset-to-position index of its own records (one
+sample per fixed number of appends), locate a truncation floor within one
+sample's span, and copy only the retained tail into the replacement file, so a
+truncation's work is the retained tail rather than the whole log. The
+retention sweeper SHALL request a truncation without waiting on the log, and a
+truncation whose file has vanished (its class directory removed) SHALL be a
+no-op. Records written before a log restart are not indexed; the first
+truncation after a restart MAY scan from the start of the file once.
+
+#### Scenario: A large consumed prefix is cut in tail time
+
+- **WHEN** the log holds hundreds of thousands of consumed records below the
+  floor and a few thousand above it
+- **THEN** the truncation decodes at most one index span to find the floor,
+  copies the tail as bytes, and appends resume immediately after
+
+#### Scenario: A busy log cannot crash the sweeper
+
+- **WHEN** the retention sweep requests a truncation of a log that is busy
+- **THEN** the sweeper continues with its other work and the log truncates in
+  its turn; no call timeout exists to kill the sweeper
+
+#### Scenario: A vanished file is nothing to truncate
+
+- **WHEN** a queued truncation runs after the log's class directory was removed
+- **THEN** the log keeps running and cuts nothing

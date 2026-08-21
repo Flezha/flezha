@@ -625,15 +625,16 @@ c.input::<Vec<u8>>("trade.raw")
 
 `OverflowPolicy` is one of:
 
-- **`Block`** — the producer first drains the full mailbox inline when no
-  drainer is actively running (the slot's round may exist only as a queued
-  engine round no poll worker has served yet; parking on it self-deadlocks
-  fully-blocked poll workers — the 2026-06-10 production freeze), otherwise
-  parks briefly on the
-  consumer's `BlockParker` and retries. Preserves ordering, loses nothing,
-  and never stalls indefinitely; a producer blocked >5 s logs a
-  `flezha::mailbox` warning naming the consumer procedure. Requires an
-  acyclic procedure graph.
+- **`Block`** — the producer parks briefly on the consumer's `BlockParker`
+  and retries, woken per pop. A producer that is itself a pool thread (an
+  activation, or a poller promoting a due wake) first drains the full
+  mailbox inline when no drainer is actively running: the slot's round may
+  exist only as a queued engine round no poll worker has served yet, and
+  parking on it self-deadlocks fully-blocked poll workers (the 2026-06-10
+  production freeze). Any other producer — the wire reader above all — only
+  parks. Preserves ordering, loses nothing, and never stalls indefinitely; a
+  producer blocked >5 s logs a `flezha::mailbox` warning naming the consumer
+  procedure. Requires an acyclic procedure graph.
 - **`DropNewest`** — incoming item discarded; consumer's
   `drops_newest_total` counter increments by 1.
 - **`DropOldest`** — consumer's mailbox atomically pops its oldest item
@@ -658,9 +659,10 @@ it.
 
 A runner who wants strict end-to-end ordering at the entry edge can
 declare `.on_full(OverflowPolicy::Block)` on their entry channel — the
-wire reader then drains the saturated Operative's mailbox inline (briefly
-delaying sibling Operatives on the same physical connection) instead of
-dropping. The default `DropNewest` keeps the reader free of that
+wire reader then parks on the saturated Operative's mailbox until the poll
+pool pops a slot (briefly delaying sibling Operatives on the same physical
+connection) instead of dropping; it never runs that Operative's procedures
+itself. The default `DropNewest` keeps the reader free of that
 co-tenancy cost and records every drop on the per-Entity
 `drops_newest_total` counter.
 
