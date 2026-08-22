@@ -319,7 +319,9 @@ suspended workflow instance keeps its Overwatch alive but released its
 plugins with the runner, so every declared plugin read as missing: 1 000
 sleepers logged as degraded and a plugin heal issued against instances with
 no binding. A suspended instance is now skipped like an unbound one; the
-rehydrating bind replays the cspec plugin list.
+rehydrating bind replays the cspec plugin list. The same hole existed for a
+parked instance (init failed, plugins prepared but not running — the un-park
+activates them): the plugin diff now runs only for a running operative.
 
 ### 6.11 Boundary compaction at every iteration
 With §6.1 fixed, the 100 × 100 cell dropped from 33.3 to 24.8 turns/s while

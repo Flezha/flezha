@@ -94,8 +94,8 @@ extracted); fixtures `bench_chain_{1,4,16}`, `bench_chain_optout_4`,
   skips `suspended?` instances; before, every declared plugin of a parked
   loop read as missing (its plugins left with the runner), so the loop logged
   a thousand sleepers degraded and healed them; the rehydrating bind replays
-  the cspec plugins anyway. Open question of the same shape: a parked
-  (`init_error`) instance has a pid and no binding too.
+  the cspec plugins anyway; a parked (`init_error`) instance is skipped for
+  the same reason (`Diff.plugins_diffable?/1`) — its un-park activates them.
 - No OpenSpec change carried these fixes, so the base specs were edited
   directly and validate `--strict`: restore re-arm (`operative-state-persistence`),
   CompactEntity on workflow Entities + closed writers (same), the boundary

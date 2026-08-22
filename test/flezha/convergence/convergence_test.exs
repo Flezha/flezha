@@ -225,6 +225,31 @@ defmodule Flezha.ConvergenceTest do
       assert delta.unhealthy_plugins == []
     end
 
+    test "I2: a parked instance's unactivated plugins are not missing" do
+      p = plugin("declared")
+
+      intent = %Intent{
+        operatives: [
+          %{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"declared", p}]}
+        ]
+      }
+
+      # Alive with a failed init: its plugins are prepared, not running, and
+      # the un-park activates them.
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e"])},
+        operatives: %{
+          {:ns, "r"} => %{bound_runner: "e", pid: self(), parked?: true, running_plugins: []}
+        },
+        stalled_operatives: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+
+      assert delta.missing_plugins == []
+      assert delta.extra_plugins == []
+    end
+
     test "I2: no plugin divergence when running set matches declared" do
       p = plugin("p1")
 

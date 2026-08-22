@@ -222,14 +222,22 @@ defmodule Flezha.Convergence.Diff do
     end)
   end
 
+  # A live pid that is not running: a suspended workflow instance released
+  # its plugins with its runner and the rehydrating bind replays them; a
+  # parked one (init failed) activates them on its un-park. Neither has
+  # anything to heal until then.
+  defp plugins_diffable?(observed_operative) do
+    is_pid(Map.get(observed_operative, :pid)) and
+      not Map.get(observed_operative, :suspended?, false) and
+      not Map.get(observed_operative, :parked?, false)
+  end
+
   # I2: a operative's declared plugin set (durable cspec) vs the set actually
   # subscribed in its running extension table, plus each subscribed declared
-  # plugin's provider self-reported health. Only diffed for operatives we
-  # observed with a live pid — a plugin can only be (un)subscribed on a
-  # running operative; unbound operatives are healed by binding first, which
-  # replays the full cspec plugin list. A suspended workflow instance is alive
-  # but released its plugins with its runner: nothing to diff until it wakes,
-  # when the rehydrating bind replays them.
+  # plugin's provider self-reported health. Only diffed for a RUNNING
+  # operative (`plugins_diffable?/1`) — a plugin can only be (un)subscribed on
+  # one; unbound operatives are healed by binding first, which replays the full
+  # cspec plugin list.
   defp plugin_divergence(declared, observed) do
     Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operative_id: rid, plugins: plugins},
                                            {missing_acc, extra_acc, unhealthy_acc} ->
@@ -237,7 +245,7 @@ defmodule Flezha.Convergence.Diff do
       observed_operative = Map.get(observed, ref, %{})
       pid = Map.get(observed_operative, :pid)
 
-      if is_pid(pid) and not Map.get(observed_operative, :suspended?, false) do
+      if plugins_diffable?(observed_operative) do
         running = MapSet.new(Map.get(observed_operative, :running_plugins, []))
         health = Map.get(observed_operative, :plugin_health, %{})
         declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)
