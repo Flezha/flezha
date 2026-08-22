@@ -103,8 +103,14 @@ defmodule Mix.Tasks.Bench.Fleet do
 
     case Process.get(:bench_runners) do
       engines when is_list(engines) ->
+        # A fleet manager still tearing operatives down may not answer in
+        # time; the namespace stop below retires the runners regardless.
         Enum.each(engines, fn engine_id ->
-          FleetManager.disconnect_runner(namespace, engine_id)
+          try do
+            FleetManager.disconnect_runner(namespace, engine_id)
+          catch
+            :exit, _ -> :ok
+          end
         end)
 
       _ ->
@@ -118,6 +124,7 @@ defmodule Mix.Tasks.Bench.Fleet do
 
     FleetManager.stop_namespace(namespace)
     Process.delete(:bench_runners)
+    Process.delete(:bench_ports)
     Process.delete(:bench_native_sdk)
 
     IO.puts("Test environment cleanup completed")
@@ -137,7 +144,15 @@ defmodule Mix.Tasks.Bench.Fleet do
     # Every runner is spawned before the first hand-shake is awaited: the
     # processes boot side by side, and the wait is one connect, not N.
     command = build_command(runtime, current_path, namespace)
-    for _ <- 1..count, do: Flezha.Service.PortPilot.open_port(command, env: extra_env)
+
+    ports =
+      for _ <- 1..count do
+        {port, _command} = Flezha.Service.PortPilot.open_port(command, env: extra_env)
+        port
+      end
+
+    # Kept so a bench can SIGKILL one runner (`Port.info(port, :os_pid)`).
+    Process.put(:bench_ports, ports)
 
     runner_ids =
       for i <- 1..count do
