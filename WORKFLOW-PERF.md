@@ -372,9 +372,16 @@ Open:
    tasks in `openspec/changes/`; validates `--strict`; 0/17 tasks). Every
    storm number in this report is its acceptance bar. This is the one large
    architectural item.
-2. The crash-resume redo-vs-skip failures (`workflow_crash_resume_e2e_test.exs`
-   `:89`/`:125`) — pre-existing and unowned (the 12-failure set at HEAD on
-   2026-08-20), not caused by this campaign; its own session.
+2. ~~The crash-resume redo-vs-skip failures~~ — FIXED. They were a stale test
+   path: `wal_record_count`, `comp_done_count` and the opt-out no-WAL assertion
+   in `workflow_crash_resume_e2e_test.exs` globbed the pre-namespace flat
+   `state_root/<id>/…` path, so after namespace-prefixing (~2026-08-18) they
+   read 0 and the assertions failed ("re-run on resume" was `wal=0 != 1`; the
+   saga's mid-run predicate never saw its comp-done markers). Now they use
+   `Registry.class_dir/1`. Not an engine bug — the journal resume was always
+   correct (`committed_proc_idxs: [0, 1]`). Remaining: a pre-existing
+   java/quic runner-connect flake ("temporary test runner not connected"),
+   unrelated.
 3. Java and Elixir bench fixtures (cross-SDK rule) with the OpenSpec change;
    the kernel fixes are already in `flz_core`, so Java inherits them.
 4. A churn soak at a sustainable wake rate once the barrier path is batched.

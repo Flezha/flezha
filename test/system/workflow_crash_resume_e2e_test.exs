@@ -284,7 +284,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert {:ok, []} = Flezha.State.ProcJournal.read(operative_id)
       refute File.exists?(Flezha.State.Registry.journal_path(operative_id))
 
-      assert [Registry.state_root(), operative_id, "**", "*.wal"]
+      assert [Registry.class_dir(operative_id), "**", "*.wal"]
              |> Path.join()
              |> Path.wildcard() == [],
              "an opted-out class must write no WAL"
@@ -1214,7 +1214,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   # Number of per-Entity compensation-done markers the controller has written
   # for this operative (one per compensated Entity).
   defp comp_done_count(operative_id) do
-    [Registry.state_root(), operative_id, "**", "*.comp_done"]
+    [Registry.class_dir(operative_id), "**", "*.comp_done"]
     |> Path.join()
     |> Path.wildcard()
     |> length()
@@ -1252,7 +1252,7 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
   defp wal_seqs(_, acc), do: acc
 
   defp wal_record_count(operative_id, procedure) do
-    [Registry.state_root(), operative_id, procedure, "*.wal"]
+    [Registry.class_dir(operative_id), procedure, "*.wal"]
     |> Path.join()
     |> Path.wildcard()
     |> Enum.map(fn path -> count_wal_records(File.read!(path), 0) end)
