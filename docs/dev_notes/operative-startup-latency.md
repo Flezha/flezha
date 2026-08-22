@@ -101,6 +101,29 @@ pays and how many starts share one.
   CPU profile only showed `send/2` at 18%, not who or what.
   `scripts/bench.sh -n 1000`: creation 9.1 s → 1.2 s (1.2 ms/operative, the
   in-memory floor); `-n 100`: 235 → ~190 ms.
+* **`PluginManager` claims, the caller enables.** `{:claim, id, plugin}` puts
+  a `{ns, rid, :pending}` entry; the cspec write and subscribe run in the
+  caller (the cspec-first order is unchanged); `{:confirm, id}` turns it into
+  `{ns, rid}`, a failed enable `unregister`s it. A pending entry refuses a
+  concurrent disable and a second enable of the same id, and is hidden from
+  `get_plugins/0` — every existing `{ns, rid}` pattern stays valid.
+* **Null result: starting the Kafka client off the `WorkerRegistry` loop.**
+  Tried (a `Task` per new identity, waiters answered on install) and
+  reverted: an interleaved A/B on the bench's plugin phase showed no
+  difference at p=4 (~10.5 ms both) or p=8 (~18 ms both) — with a warm
+  broker the inline handshake is not the serialisation point. The mechanism
+  depended on `KafkaEx.Client` not trapping exits and needed a replace-race
+  branch; not worth carrying for zero gain.
+* **`PartitionGroup.run_member_starts/6` starts every member at once.** The
+  group-level quota preflight already existed; allocation stays per member.
+  On any failure every member that did start is rolled back and the lowest
+  failing index names the error — so the message counts ALL the members
+  that came up beside the failure (`partition_group_test` asserts 2, not 1),
+  and the fake registry's start log is sorted before it is compared.
+* **Bench:** both bring-up phases run all pipelines concurrently (that is how
+  a partition group starts), runner spawns overlap, the topic-readiness poll
+  is 25 ms, and `Bench.Fleet.preload_code/0` loads the controller's code in
+  `prepare`. `engine_startup` keys are unchanged, so old reports compare.
 * **What is left:** a lone serial start pays 2 DETS syncs (~7 ms); halving
   that means a cheaper durable format than DETS (its sync rewrites free lists
   — 2× a plain append+fsync), proposal-sized. `DistributedSupervisor` keeps a

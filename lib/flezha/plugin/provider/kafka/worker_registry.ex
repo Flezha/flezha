@@ -10,8 +10,6 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
     * `acquire/2` is synchronous, returns `{:ok, worker_pid, ref}`. The `ref`
       is opaque — pass it back to `release/2` from the same plugin lifecycle.
-      A new identity's worker is started off the registry's loop, so clients
-      for different identities connect side by side.
     * The caller process is monitored. If the owner dies without calling
       `release/2`, the registry treats the DOWN as an implicit release.
     * Workers are monitored too. If a worker dies (broker partition restart,
@@ -146,18 +144,28 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
        tokens: %{},
        caller_monitors: %{},
        worker_monitors: %{},
-       pending_refs: %{},
-       starting: %{}
+       pending_refs: %{}
      }}
   end
 
   @impl true
-  def handle_call({:acquire, identity, caller}, from, state) do
+  def handle_call({:acquire, identity, caller}, _from, state) do
     key = canonical_key(identity)
 
     case Map.get(state.entries, key) do
       nil ->
-        {:noreply, start_for_waiter(state, key, identity, {from, caller})}
+        case state.starter.(identity) do
+          {:ok, pid} when is_pid(pid) ->
+            state = install_worker(state, key, identity, pid, 1, MapSet.new())
+            {token, state} = register_owner(state, key, caller)
+            {:reply, {:ok, pid, {key, token}}, state}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+
+          other ->
+            {:reply, {:error, {:unexpected_start_result, other}}, state}
+        end
 
       %{linger: linger_timer} = entry ->
         if linger_timer, do: Process.cancel_timer(linger_timer)
@@ -323,20 +331,6 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     {:reply, summary, state}
   end
 
-  # The task that started a client reports here; its `:normal` exit is ignored
-  # by a linked client that does not trap exits, so the client outlives it.
-  @impl true
-  def handle_info({ref, result}, state) when is_reference(ref) do
-    case pop_starting(state, ref) do
-      nil ->
-        {:noreply, state}
-
-      {key, identity, waiters, state} ->
-        Process.demonitor(ref, [:flush])
-        {:noreply, install_started(state, key, identity, waiters, result)}
-    end
-  end
-
   @impl true
   def handle_info({:linger_expired, key, pid}, state) do
     case Map.get(state.entries, key) do
@@ -365,15 +359,6 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     cond do
-      match?({_, _, _, _}, pop_starting(state, ref)) ->
-        {_key, _identity, waiters, state} = pop_starting(state, ref)
-
-        Enum.each(waiters, fn {from, _caller} ->
-          GenServer.reply(from, {:error, {:start_crashed, reason}})
-        end)
-
-        {:noreply, state}
-
       Map.has_key?(state.caller_monitors, ref) ->
         token = Map.fetch!(state.caller_monitors, ref)
         {state, key} = drop_token(state, token, nil)
@@ -424,89 +409,6 @@ defmodule Flezha.Plugin.Provider.Kafka.WorkerRegistry do
     end)
 
     :ok
-  end
-
-  # A client for a new identity starts off the registry's loop, so clients for
-  # different identities connect side by side and a slow broker never holds
-  # every other acquire; acquires for the same identity queue behind the one
-  # start and are all answered when it lands. A key with `pending_refs` is a
-  # swap in progress and keeps the inline start its refcount hand-over expects.
-  # The registry links the client on install and owns it from there; a registry
-  # crash before that takes the linked task, and with it the client, down.
-  defp start_for_waiter(state, key, identity, {from, caller} = waiter) do
-    cond do
-      Map.has_key?(state.starting, key) ->
-        update_in(state.starting[key], fn {ref, id, waiters} -> {ref, id, [waiter | waiters]} end)
-
-      Map.has_key?(state.pending_refs, key) ->
-        GenServer.reply(from, start_inline(state, key, identity, caller))
-        state
-
-      true ->
-        starter = state.starter
-        %Task{ref: ref} = Task.async(fn -> starter.(identity) end)
-        %{state | starting: Map.put(state.starting, key, {ref, identity, [waiter]})}
-    end
-  end
-
-  defp start_inline(state, key, identity, caller) do
-    case state.starter.(identity) do
-      {:ok, pid} when is_pid(pid) ->
-        state = install_worker(state, key, identity, pid, 1, MapSet.new())
-        {token, _state} = register_owner(state, key, caller)
-        {:ok, pid, {key, token}}
-
-      {:error, reason} ->
-        {:error, reason}
-
-      other ->
-        {:error, {:unexpected_start_result, other}}
-    end
-  end
-
-  defp pop_starting(state, ref) do
-    case Enum.find(state.starting, fn {_key, {r, _identity, _waiters}} -> r == ref end) do
-      nil ->
-        nil
-
-      {key, {_ref, identity, waiters}} ->
-        {key, identity, Enum.reverse(waiters),
-         %{state | starting: Map.delete(state.starting, key)}}
-    end
-  end
-
-  defp install_started(state, key, identity, waiters, {:ok, pid}) when is_pid(pid) do
-    state =
-      case Map.get(state.entries, key) do
-        # A replace landed an entry for this identity meanwhile: keep that
-        # client, the task's one is surplus.
-        %{refs: refs} = entry ->
-          _ = state.stopper.(pid)
-          %{state | entries: Map.put(state.entries, key, %{entry | refs: refs + length(waiters)})}
-
-        nil ->
-          Process.link(pid)
-          install_worker(state, key, identity, pid, length(waiters), MapSet.new())
-      end
-
-    %{pid: pid} = Map.fetch!(state.entries, key)
-
-    Enum.reduce(waiters, state, fn {from, caller}, state ->
-      {token, state} = register_owner(state, key, caller)
-      GenServer.reply(from, {:ok, pid, {key, token}})
-      state
-    end)
-  end
-
-  defp install_started(state, _key, _identity, waiters, result) do
-    error =
-      case result do
-        {:error, reason} -> {:error, reason}
-        other -> {:error, {:unexpected_start_result, other}}
-      end
-
-    Enum.each(waiters, fn {from, _caller} -> GenServer.reply(from, error) end)
-    state
   end
 
   # Monitor a freshly started worker and register its entry under `key`.
