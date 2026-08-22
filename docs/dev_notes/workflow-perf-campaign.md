@@ -35,9 +35,18 @@ extracted); fixtures `bench_chain_{1,4,16}`, `bench_chain_optout_4`,
   `ControlChannel.drain_owed_outputs/1` waits (≤ 60 s, re-driving
   `flush_pending`) until `ProcJournal.pending_entries/1` is empty; before,
   the last proc's post-ack flush raced `stop_operative` and 3/1000 durable
-  chains lost their terminal output with `status: "ok"`. The opted-out
-  class's terminal emit still races the completion on the data stream
-  (open, `WORKFLOW-PERF.md` §6).
+  chains lost their terminal output with `status: "ok"`. An opted-out
+  class's direct outputs are covered by the same wait:
+  `WorkflowCompleted.direct_outputs` (proto 5) is counted where the SDK's
+  coordinator loop writes them (`fast.rs`, in order with the completion),
+  and the Overwatch counts the `:io_out` it has run
+  (`direct_outputs_seen`). A missing count reads as 0 — an older SDK is
+  torn down as before. The gate exposed the real loss: `StreamChannel`
+  dropped a frame silently on an `operative_mapping` miss, and the mapping
+  is seeded by the registry hook AFTER the bind publishes — a 1-proc chain
+  emits before that. `complete_init/4` now calls `ClassRegistry.put_overwatch`
+  before the SDK starts and `StreamChannel.route/2` falls back to it; the
+  only true drop is counted as `[:flezha, :stream, :drop]` `reason: :unrouted`.
 - **A restore re-arms the change seq from the controller's terminal** —
   `RestoreInitState.terminal_seq` (proto field 6, from
   `Restore.assemble_payload/1`'s `terminal_seq_hint`) and

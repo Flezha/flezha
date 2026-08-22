@@ -276,32 +276,9 @@ defmodule Flezha.Runner.StreamChannel do
   end
 
   def handle_info({:flz_data, _stream_id, operative_id, message, metadata}, state) do
-    case Map.get(state.operative_mapping, operative_id, []) do
-      [] ->
-        :ok
-
-      [pid] ->
-        GenServer.cast(pid, {:io_out, message, metadata})
-
-      [first | _] = pids ->
-        # Defensive: `hook_insert_pid/2` seeds one registry row's local-node
-        # pids, so the list is single by construction — but if a regression
-        # slips a longer one through we must NOT fan out frames to
-        # every pid — that is the EVIDENCE1 §2 data-plane drain that
-        # produced 22 frames/s on unchosen runners. Route to the
-        # first pid only and surface the misuse via telemetry.
-        Logger.error(
-          "[stream_channel] fan-out warning for operative=#{inspect(operative_id)}: " <>
-            "expected one pid, got #{length(pids)}: #{inspect(pids)}"
-        )
-
-        :telemetry.execute(
-          [:flezha, :stream, :fanout_warning],
-          %{count: 1, pid_count: length(pids)},
-          %{operative_id: operative_id, runner_id: state.runner_id}
-        )
-
-        GenServer.cast(first, {:io_out, message, metadata})
+    case route(state, operative_id) do
+      {:ok, pid} -> GenServer.cast(pid, {:io_out, message, metadata})
+      :drop -> :ok
     end
 
     {:noreply, mark_seen(state)}
@@ -429,6 +406,53 @@ defmodule Flezha.Runner.StreamChannel do
   # Emit `output_stall` for each mapped operative whose kind runs the output-stall
   # watchdog. A kind without it (a durable workflow operative) legitimately goes
   # silent, so flagging it would spuriously rebind.
+  # The Overwatch a frame is for: the stream's mapping first; on a miss, the
+  # class registry — the mapping is seeded by the registry hook after the
+  # bind publishes, and a chain that emits within its first milliseconds
+  # beats it, while the Overwatch registered itself for its class before the
+  # SDK started. A frame neither knows is the only true drop, and it is counted.
+  defp route(state, operative_id) do
+    case Map.get(state.operative_mapping, operative_id, []) do
+      [] ->
+        case Flezha.Operative.ClassRegistry.overwatch_pid(operative_id) do
+          {:ok, pid} ->
+            {:ok, pid}
+
+          :error ->
+            :telemetry.execute(
+              [:flezha, :stream, :drop],
+              %{count: 1},
+              %{operative_id: operative_id, runner_id: state.runner_id, reason: :unrouted}
+            )
+
+            :drop
+        end
+
+      [pid] ->
+        {:ok, pid}
+
+      [first | _] = pids ->
+        # Defensive: `hook_insert_pid/2` seeds one registry row's local-node
+        # pids, so the list is single by construction — but if a regression
+        # slips a longer one through we must NOT fan out frames to
+        # every pid — that is the EVIDENCE1 §2 data-plane drain that
+        # produced 22 frames/s on unchosen runners. Route to the
+        # first pid only and surface the misuse via telemetry.
+        Logger.error(
+          "[stream_channel] fan-out warning for operative=#{inspect(operative_id)}: " <>
+            "expected one pid, got #{length(pids)}: #{inspect(pids)}"
+        )
+
+        :telemetry.execute(
+          [:flezha, :stream, :fanout_warning],
+          %{count: 1, pid_count: length(pids)},
+          %{operative_id: operative_id, runner_id: state.runner_id}
+        )
+
+        {:ok, first}
+    end
+  end
+
   defp emit_output_stall(operative_mapping) do
     for {operative_id, _} <- operative_mapping,
         ClassRegistry.capable?(operative_id, :output_stall_watch?) do

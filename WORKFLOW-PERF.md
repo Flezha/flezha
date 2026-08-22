@@ -179,7 +179,7 @@ the rehydrating bind replays them; fixed (§6.14).
 | 6.3 | Retained finished-job state reported as a wiped-registry witness | **fixed** (`convergence/loop.ex`) + test |
 | 6.4 | A timed-out ping resets the live control channel | **fixed** (`lifecycle.ex`; spec + docs synced) + tests |
 | 6.5 | A stopped operative's `WalWriter` processes never close | **fixed** (`state/supervisor.ex`, `operative_manager.ex`) + test |
-| 6.6 | The terminal emit races the completion teardown | **fixed for durable classes** (`control_channel.ex` drains the owed outbox, 60 s bound); the opted-out class still races on the data stream — open |
+| 6.6 | The terminal emit races the completion teardown | **fixed** — durable classes: the teardown drains the journaled outbox; opted-out classes: `WorkflowCompleted.direct_outputs` counts the data-stream outputs written before it and the teardown waits until the Overwatch has run them (60 s bound) |
 | 6.7 | The hub reconcile stops live children during a start storm | **fixed in process_hub** (commit `bb49842` on the local `dev` checkout, two-consecutive-rounds rule + test) — push and bump the pin |
 | 6.8 | One fsync per barrier on the control-channel reader; O(history) per turn; ack timeout is terminal; `ControlUnit` crashes on a busy channel | OpenSpec `workflow-durable-path-throughput` |
 | 6.9 | A restore from a snapshot restarts the Entity's change seq; the writer drops the next changes as duplicates | **fixed** (`RestoreInitState.terminal_seq`, `restore.rs`, `commands.ex`; protocol doc) + compaction-proof e2e count |
@@ -260,9 +260,19 @@ until `ProcJournal.pending_entries/1` is empty before `stop_operative`. Under a
 10 s bound expired for 7 of 1 000 (`completed with 1 outbox entries still
 owed; they stay journaled`), so the bound is now 60 s; the retained journal
 keeps the debt in any case. Opted-out class: the emit rides the data stream and
-the completion the control stream; the teardown can overtake the frame
-(24/1000 lost). Open: the class opted out of the outbox, so the fix belongs to
-the SDK's completion ordering.
+the completion the control stream; the teardown could overtake the frame
+(24/1000 lost). The SDK already writes both in order from one coordinator
+loop, so the loss was on the controller — and the count gate built first
+(`WorkflowCompleted.direct_outputs`, proto field 5: the direct outputs written
+before the completion; the Overwatch counts the `:io_out` it has run and the
+teardown waits for the difference) turned it from a silent loss into a
+waiting teardown, which named the real site: the `StreamChannel` dropped a
+frame silently when the operative was not yet in its routing map, which the
+registry hook seeds only after the bind publishes — a 1-proc chain emits
+before that. Fix: the Overwatch registers itself for its class before the
+SDK is started, and a routing miss resolves through that registry; a frame
+neither knows is counted as `[:flezha, :stream, :drop]`. Proof: the same
+burst now delivers 1000/1000 at 467 workflows/s.
 
 ### 6.7 The hub reconcile stops live children during a start storm
 process_hub `Recovery.Round.stop_undeclared/3` terminated every live row marked
@@ -363,7 +373,7 @@ The clean keep/boot re-take (§5.3) is the measurement after the fix.
 3. §6.13 — where per-sleeper memory goes; the resting report names the
    processes.
 4. The single-loop wedge at ~turn 440 (park-independent, reproducible in
-   `turns -n 1 -m 500`); the opted-out class's terminal-emit ordering.
+   `turns -n 1 -m 500`).
 5. Java and Elixir bench fixtures (cross-SDK rule) with the OpenSpec change.
 6. A churn soak at a sustainable wake rate once the barrier path is batched.
 

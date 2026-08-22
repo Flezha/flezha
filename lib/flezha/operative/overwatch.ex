@@ -108,6 +108,9 @@ defmodule Flezha.Operative.Overwatch do
     # state is stale by the time it reports, and the journaled tail still
     # owes a wake.
     parked_in_flight: false,
+    # Plugin-bound outputs this Overwatch has run through `:on_output` off the
+    # data stream — what a completion's `direct_outputs` is waited against.
+    direct_outputs_seen: 0,
     # Late-input correction window (ms), declared by the SDK. `nil` = the class
     # never corrects. Gates lateness handling and the event-time-ordered replay.
     correction_window_ms: nil,
@@ -487,7 +490,7 @@ defmodule Flezha.Operative.Overwatch do
   def handle_cast({:io_out, message, metadata}, state) do
     Plugins.transform_io(state, :on_output, message, metadata)
     Flezha.State.Outbox.settled(metadata)
-    {:noreply, state}
+    {:noreply, %{state | direct_outputs_seen: state.direct_outputs_seen + 1}}
   end
 
   @impl true

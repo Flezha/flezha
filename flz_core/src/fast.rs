@@ -313,6 +313,10 @@ pub fn start(
         // clock fresh without producing real output.
         let _data_heartbeat = control_unit::spawn_data_heartbeat(otx_arc.clone());
 
+        // Direct outputs written per workflow instance, in this loop's order:
+        // the count a completion carries so the controller can wait for them.
+        let mut direct_outputs: HashMap<String, u32> = HashMap::new();
+
         loop {
             // A closed channel means every sender is gone — the owning
             // FlezhaRunner dropped. Exit cleanly so a later runner can start.
@@ -354,7 +358,9 @@ pub fn start(
                     operative_id,
                     payload,
                 } => {
-                    write_workflow_output(&runner.shared_io_streams, &operative_id, &payload);
+                    if write_workflow_output(&runner.shared_io_streams, &operative_id, &payload) {
+                        *direct_outputs.entry(operative_id).or_insert(0) += 1;
+                    }
                 }
                 RunnerMessage::EmitWorkflowCompleted {
                     operative_id,
@@ -369,6 +375,7 @@ pub fn start(
                             status,
                             error,
                             result,
+                            direct_outputs: direct_outputs.remove(&operative_id).unwrap_or(0),
                         }),
                     );
                     if let Err(e) = (&*control_stream).write_all(&frame) {
@@ -415,27 +422,36 @@ pub fn start(
 /// `operative_id` so the controller routes it to the unit's bound plugins. The
 /// controller keys output fan-out on the payload id, so any one secondary
 /// stream suffices; best-effort like the data heartbeat.
+/// `true` when the frame reached the stream: only a written output is one
+/// the controller can be asked to wait for.
 fn write_workflow_output(
     io_streams: &RwLock<HashMap<u32, FlezhaStream>>,
     operative_id: &str,
     payload: &[u8],
-) {
+) -> bool {
     let frame = payloader::build_from_binary(operative_id, payload, HashMap::new());
     let streams = io_streams.read().unwrap();
     match streams.values().next() {
         Some(stream) => {
             let mut w: &FlezhaStream = stream;
-            if let Err(e) = w.write_all(&frame) {
-                eprintln!(
-                    "[flezha] workflow {} output write failed: {}",
-                    operative_id, e
-                );
+            match w.write_all(&frame) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!(
+                        "[flezha] workflow {} output write failed: {}",
+                        operative_id, e
+                    );
+                    false
+                }
             }
         }
-        None => eprintln!(
-            "[flezha] workflow {} output dropped: no secondary stream available",
-            operative_id
-        ),
+        None => {
+            eprintln!(
+                "[flezha] workflow {} output dropped: no secondary stream available",
+                operative_id
+            );
+            false
+        }
     }
 }
 

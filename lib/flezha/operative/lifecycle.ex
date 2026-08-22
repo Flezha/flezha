@@ -180,6 +180,10 @@ defmodule Flezha.Operative.Lifecycle do
   defp complete_init(%Overwatch{} = state, runner_id, operative, owner \\ nil) do
     owner = owner || self()
     state = bind_to_runner(state, operative.id, runner_id)
+    # Before the SDK starts: a fast chain's first output can reach the stream
+    # channel ahead of the registry hook that seeds its routing, and the
+    # channel resolves that miss through this row.
+    _ = ClassRegistry.put_overwatch(Overwatch.operative_class(state), owner)
     plugins = Keyword.get(operative.opts, :plugins, [])
 
     with {:ok, state} <- Plugins.prepare(state, plugins),
@@ -208,8 +212,9 @@ defmodule Flezha.Operative.Lifecycle do
 
       # Record this class's kind so the State subsystem can gate stream-only
       # behaviours (retention/watchdog/dynamic-evict/time-travel) for a durable
-      # workflow operative — plus every SDK declaration and this pid (the
-      # fsync-gated outbox flush dispatches `:on_output` through it).
+      # workflow operative — plus every SDK declaration (the Overwatch pid the
+      # fsync-gated outbox flush dispatches `:on_output` through was recorded
+      # before the SDK started).
       operative_class = Overwatch.operative_class(state)
       _ = ClassRegistry.put(operative_class, state.builder.kind)
       _ = ClassRegistry.put_declarations(operative_class, declarations)
@@ -217,7 +222,6 @@ defmodule Flezha.Operative.Lifecycle do
       # factory: a later `--partitions N` start of a known-keyless class is
       # then refused before a runner is touched.
       _ = ClassRegistry.put_keyless(operative.factory_id, declarations.keyless)
-      _ = ClassRegistry.put_overwatch(operative_class, owner)
       _ = ClassRegistry.put_state_keys(operative.id, operative_class)
 
       # The declaration is durable now, so the retention floors it needs resolve

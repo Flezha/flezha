@@ -124,6 +124,50 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
     refute_receive {:telemetry, [:flezha, :workflow, :failed], _m, _meta}, 200
   end
 
+  test "the teardown waits until the Overwatch has run the completion's direct outputs" do
+    test_pid = self()
+
+    # A stand-in Overwatch: answers `:get_overwatch_state` with how many
+    # direct outputs it has run, bumped on demand.
+    overwatch =
+      spawn_link(fn ->
+        Stream.iterate(0, & &1)
+        |> Enum.reduce_while(0, fn _, seen ->
+          receive do
+            {:"$gen_call", from, :get_overwatch_state} ->
+              GenServer.reply(from, %{direct_outputs_seen: seen})
+              {:cont, seen}
+
+            :output_ran ->
+              {:cont, seen + 1}
+
+            :stop ->
+              {:halt, seen}
+          end
+        end)
+      end)
+
+    OperativeManager
+    |> stub(:get_operative_pid, fn @namespace, "task-direct" -> {:ok, overwatch} end)
+    |> stub(:stop_operative, fn @namespace, operative_id ->
+      send(test_pid, {:stop_operative_called, operative_id})
+      :ok
+    end)
+
+    {control_channel, _stream_ref} = start_control_channel("exec-task-direct")
+    # The instance wrote one output to the data stream before completing.
+    payload = build_workflow_completed_payload("task-direct", "ok", "", "", "ref-direct", 1)
+    send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+
+    # Not torn down while that output is still on its way...
+    refute_receive {:stop_operative_called, "task-direct"}, 300
+
+    # ...and torn down once the Overwatch has run it.
+    send(overwatch, :output_ran)
+    assert_receive {:stop_operative_called, "task-direct"}, 1_000
+    send(overwatch, :stop)
+  end
+
   test "WorkflowCompleted writes a durable completion record for finished-job retention" do
     test_pid = self()
 
@@ -170,7 +214,14 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
     {pid, stream_ref}
   end
 
-  defp build_workflow_completed_payload(operative_id, status, error, result, reference_id) do
+  defp build_workflow_completed_payload(
+         operative_id,
+         status,
+         error,
+         result,
+         reference_id,
+         direct_outputs \\ 0
+       ) do
     request = %RunnerCommands.CommandRequest{
       reference_id: reference_id,
       command:
@@ -179,7 +230,8 @@ defmodule FlezhaTest.Runner.ControlChannelWorkflowCompletedTest do
            operative_id: operative_id,
            status: status,
            error: error,
-           result: result
+           result: result,
+           direct_outputs: direct_outputs
          }}
     }
 

@@ -428,7 +428,8 @@ defmodule Flezha.Runner.ControlChannel do
       operative_id: operative_id,
       status: status,
       error: error,
-      result: result
+      result: result,
+      direct_outputs: direct_outputs
     } = completed
 
     :telemetry.execute(
@@ -474,7 +475,7 @@ defmodule Flezha.Runner.ControlChannel do
     # RemOperative round-trip whose CommandResponse returns on THIS control
     # stream, so calling it inline would deadlock the reader.
     Task.start(fn ->
-      drain_owed_outputs(operative_id)
+      drain_owed_outputs(namespace, operative_id, direct_outputs)
 
       case OperativeManager.stop_operative(namespace, operative_id) do
         :ok ->
@@ -488,37 +489,58 @@ defmodule Flezha.Runner.ControlChannel do
     end)
   end
 
-  # The last proc's outbox is flushed after its commit ack, on this channel;
-  # the completion that follows must not tear the Overwatch down under that
-  # flush. Re-drive and wait until the journal owes nothing (an opted-out
-  # class owes nothing by construction), bounded so a sink that never
-  # confirms cannot hold the teardown — the retained journal keeps the debt.
-  # Under a start storm the flush itself queues behind the channel for tens
-  # of seconds, and the instance is retained either way.
+  # A completion must not tear the Overwatch down under output still on its
+  # way: a durable class's last outbox is flushed after its commit ack on this
+  # channel, and an opted-out class's direct outputs travel the data stream
+  # while the completion travels this one. Wait until the journal owes nothing
+  # and the Overwatch has run the `direct_outputs` the completion counted,
+  # bounded so a sink that never confirms cannot hold the teardown — the
+  # retained journal keeps an outbox debt. Under a start storm the flush
+  # itself queues behind the channel for tens of seconds, and the instance is
+  # retained either way.
   @drain_owed_ms 60_000
 
-  defp drain_owed_outputs(operative_id) do
+  defp drain_owed_outputs(namespace, operative_id, direct_outputs) do
     deadline = System.monotonic_time(:millisecond) + @drain_owed_ms
-    drain_owed_outputs(operative_id, deadline)
+    drain_owed_outputs(namespace, operative_id, direct_outputs, deadline)
   end
 
-  defp drain_owed_outputs(operative_id, deadline) do
-    case Flezha.State.ProcJournal.pending_entries(operative_id) do
-      [] ->
+  defp drain_owed_outputs(namespace, operative_id, direct_outputs, deadline) do
+    pending = Flezha.State.ProcJournal.pending_entries(operative_id)
+
+    owed_direct =
+      case direct_outputs_seen(namespace, operative_id) do
+        :gone -> 0
+        seen -> max(direct_outputs - seen, 0)
+      end
+
+    cond do
+      pending == [] and owed_direct == 0 ->
         :ok
 
-      pending ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          Logger.warning(
-            "[control_channel] workflow operative #{inspect(operative_id)} completed with " <>
-              "#{length(pending)} outbox entries still owed; they stay journaled"
-          )
-        else
-          _ = Flezha.State.ProcJournal.flush_pending(operative_id)
-          Process.sleep(50)
-          drain_owed_outputs(operative_id, deadline)
-        end
+      System.monotonic_time(:millisecond) >= deadline ->
+        Logger.warning(
+          "[control_channel] workflow operative #{inspect(operative_id)} completed with " <>
+            "#{length(pending)} outbox entries and #{owed_direct} direct outputs still owed"
+        )
+
+      true ->
+        if pending != [], do: Flezha.State.ProcJournal.flush_pending(operative_id)
+        Process.sleep(50)
+        drain_owed_outputs(namespace, operative_id, direct_outputs, deadline)
     end
+  end
+
+  # An Overwatch that is already gone has nothing more to run.
+  defp direct_outputs_seen(namespace, operative_id) do
+    with {:ok, pid} <- OperativeManager.get_operative_pid(namespace, operative_id),
+         %{direct_outputs_seen: seen} <- GenServer.call(pid, :get_overwatch_state, 5_000) do
+      seen
+    else
+      _ -> :gone
+    end
+  catch
+    :exit, _ -> :gone
   end
 
   defp emit_runner_shutdown_ack(state, operative_id, reference_id) do

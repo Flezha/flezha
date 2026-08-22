@@ -71,7 +71,7 @@ The SDK SHALL provide a loop construct usable inside a Procedure/`run` that repe
 
 ### Requirement: All exit triggers converge on one terminal teardown
 
-Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last procedure's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled.
+Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last procedure's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled. An opted-out instance's outputs travel the data stream while its completion travels the control stream; the completion SHALL carry the count of outputs written before it and the teardown SHALL wait (bounded) until the Controller has run that many.
 
 #### Scenario: Teardown is identical across triggers
 
@@ -82,6 +82,16 @@ Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown,
 
 - **WHEN** a durable chain completes with its final procedure's outbox journaled but not yet flushed
 - **THEN** the Controller SHALL flush it to the sink before the instance is deregistered
+
+#### Scenario: An opted-out instance's last output is delivered before the teardown
+
+- **WHEN** an opted-out chain writes its final output to the data stream and completes immediately after
+- **THEN** the Controller SHALL run that output's plugin chain before the instance is deregistered, however the two frames interleave on arrival
+
+#### Scenario: An output that beats the stream's routing is still delivered
+
+- **WHEN** a chain emits within its first milliseconds, before the registry hook has seeded the data stream's routing for it
+- **THEN** the stream SHALL route the frame through the Overwatch the class registered before its SDK start; a frame for an operative neither knows SHALL be counted as a drop, never discarded silently
 
 #### Scenario: Completion carries a result/error payload
 

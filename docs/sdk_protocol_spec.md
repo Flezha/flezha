@@ -389,7 +389,15 @@ message WorkflowCompleted {
     string operative_id = 1;
     string status = 2;
     string error = 3;
+    bytes  result = 4;
+    uint32 direct_outputs = 5;   // data-stream outputs written before this completion
 }
+
+`direct_outputs` counts the plugin-bound outputs an opted-out (or `run`-sugar)
+instance wrote straight to the data stream before it completed. The two
+frames travel different sockets; the Controller holds the teardown until its
+Overwatch has run that many, so the last output is never torn down under.
+A durable class's outputs ride the journaled outbox and are not counted.
 
 message MigrationSerialization {
     string operative_id = 1;

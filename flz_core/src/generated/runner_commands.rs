@@ -588,6 +588,11 @@ pub struct WorkflowCompleted {
     pub error: ::prost::alloc::string::String,
     #[prost(bytes = "vec", tag = "4")]
     pub result: ::prost::alloc::vec::Vec<u8>,
+    /// Plugin-bound outputs this instance wrote straight to the data stream
+    /// before this completion; the Controller holds the teardown until it
+    /// has run that many.
+    #[prost(uint32, tag = "5")]
+    pub direct_outputs: u32,
 }
 /// Controller -> SDK. Offers credit-grant flow control for the runner's
 /// state stream. `stream_id` is an opaque credit-session id minted fresh per
