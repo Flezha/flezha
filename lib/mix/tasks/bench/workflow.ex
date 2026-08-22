@@ -359,6 +359,11 @@ defmodule Mix.Tasks.Bench.Workflow do
       t1 = now_ns()
       c1 = commits(counters)
 
+      if st.stalled do
+        diagnose_missing(st, &elem(ids, rem(&1, tuple_size(ids))))
+        diagnose_channels()
+      end
+
       window = max(t1 - t0, 1)
       measured = n * cfg.turns
       missing = total - st.out.seen

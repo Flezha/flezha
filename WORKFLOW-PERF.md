@@ -107,7 +107,7 @@ cut, so the fold is O(turns): quadratic over a session.
 | 200 × 20 at 100/s, every turn a wake | 28 failed | complete fix set: 247 replies of 4 000, **101 failed**, 136 ack timeouts, 444 ping timeouts, 99 `ControlUnit` crash reports, 96 tail forwards dropped at parking drivers and re-delivered by the park — 100 wakes/s over 200 loops is above the channel's limit (§6.8) |
 | 100 × 60 at 200/s, runner SIGKILL at +10 s | no reply after the kill | **first reply 17 ms after the kill**, 0 refusals, 22 reroutes, 122 rehydrations — the migrate fix works; then the 100-wide rebind storm saturates the surviving runner's channel: 42 failed, 22 duplicate replies (the at-least-once re-run of uncommitted turns); complete fix set: 47 reroutes, 0 refusals, 36 ack timeouts (the rebind storm on the surviving runner); the cell was stopped after 10 min of trickling progress |
 | 1000 × 20, unpaced | wedged (see above) | complete fix set: the 1 000 warm-up wakes all answered (65/s, 0 ping failures, 0 drops — §6.4 and §6.12 hold), then the measured turns saturate the channel: 750 replies of 20 000, **850 loops failed terminally** on ack timeouts, 636 `ControlUnit` crash reports, 4 035 turns dropped at drivers already parking (re-delivered by the park only where the loop survived) — §6.8 |
-| 1 loop × 500, park impossible (60 s idle) | — | **wedged at turn 441** as well (441/501, then nothing for 60 s) — the single-loop wedge is not the park; it sits in the unpaced single-loop path after ~440 turns (open, §7) |
+| 1 loop × 500, park impossible (60 s idle) | — | wedged at ~turn 440 unpaced — NOT its own bug: paced at 50/s the same loop completes 500/500 clean (§6.8). The journal is never cut, so each turn folds the whole journal; under an unpaced burst the per-turn latency blows up until one inter-turn gap exceeds the harness stall timeout, and even paced the reply p99 climbs to 21 s by turn 500 |
 | 1 loop × 500, default park | wedged at 440 | wedged at 440 again (reproducible) |
 
 ### 4.3 Churn soak — 100 loops, 20 turns/s, every turn a wake (15 min)
@@ -291,7 +291,7 @@ the push and a `mix.lock` bump.
 
 ### 6.8 The barrier path (OpenSpec `workflow-durable-path-throughput`)
 One fsync per barrier, serialized on the control-channel reader; an inbox append
-that reads the inbox file and folds a never-cut journal; an ack timeout that
+that reads the inbox file and folds a never-cut journal (this is the whole of the "single-loop wedge at ~turn 440": unpaced, the per-turn latency blows up until the harness stall timeout trips; paced, the same loop finishes with reply p99 21 s by turn 500); an ack timeout that
 ends the run; a control channel whose queue under a storm exceeds every other
 command's 5 s call timeout, so the `ControlUnit` crashes and takes its in-flight
 requests with it. The change batches the journal/inbox appends on the
@@ -372,8 +372,8 @@ The clean keep/boot re-take (§5.3) is the measurement after the fix.
 2. Push process-hub `bb49842` and bump the `mix.lock` pin.
 3. §6.13 — where per-sleeper memory goes; the resting report names the
    processes.
-4. The single-loop wedge at ~turn 440 (park-independent, reproducible in
-   `turns -n 1 -m 500`).
+4. (nothing — the single-loop wedge folded into §6.8: it is the
+   O(history)-per-turn cost, not a distinct defect.)
 5. Java and Elixir bench fixtures (cross-SDK rule) with the OpenSpec change.
 6. A churn soak at a sustainable wake rate once the barrier path is batched.
 
