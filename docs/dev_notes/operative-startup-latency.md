@@ -49,6 +49,13 @@ pays and how many starts share one.
   nothing (an error, a no-op expiry) is answered immediately. Sync failures are
   logged, not turned into caller errors (the inline path never surfaced them
   either).
+* **One `ProcessHub.Service.Batch` carries both group commits.** The "queue
+  an item, send the flush message once when the batch opens, answer in
+  arrival order" mechanism is one module; the registry and the declared list
+  keep only what differs (sync dirty tables and reply results / write the
+  manifest and run continuations). `Flezha.Parallel.map/2` is likewise the
+  one "every element in flight, results in order" fan-out for partition
+  members, group plugin enables and the bench.
 * **The Coordinator's declared-list precommit takes the same group commit
   (process_hub, `DeclaredChildren.defer/4` + `flush/1`).** A mutation that
   writes answers `{:pending, manifest}`; the start/stop command (or a

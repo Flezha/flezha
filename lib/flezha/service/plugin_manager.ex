@@ -50,16 +50,20 @@ defmodule Flezha.Service.PluginManager do
   defp do_enable_plugin(plugin_id, plugin) do
     with :ok <- check_operative_target(plugin),
          :claimed <- GenServer.call(__MODULE__, {:claim, plugin_id, plugin}) do
-      with :ok <- write_enable_to_cspec(plugin, plugin_id),
-           {:ok, pid} <- resolve_operative(plugin),
-           :ok <- forward_subscribe(pid, plugin_id, plugin) do
-        GenServer.cast(__MODULE__, {:confirm, plugin_id})
-        {:ok, "plugin enabled"}
-      else
-        err ->
-          unregister_plugin(plugin_id)
-          err
-      end
+      enable_claimed(plugin_id, plugin)
+    end
+  end
+
+  defp enable_claimed(plugin_id, plugin) do
+    with :ok <- write_enable_to_cspec(plugin, plugin_id),
+         {:ok, pid} <- resolve_operative(plugin),
+         :ok <- forward_subscribe(pid, plugin_id, plugin) do
+      GenServer.cast(__MODULE__, {:confirm, plugin_id})
+      {:ok, "plugin enabled"}
+    else
+      err ->
+        unregister_plugin(plugin_id)
+        err
     end
   end
 
