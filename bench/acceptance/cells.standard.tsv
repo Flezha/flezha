@@ -1,0 +1,9 @@
+# Acceptance gate (~15-25 min at --repeat 3): the numbers to baseline.
+# name	runtime	scenario args
+chain_1	default	--scenario chain -n 500 --procs 1 --stall-timeout 120
+chain_4_c50	default	--scenario chain -n 300 --procs 4 -c 50 --stall-timeout 120
+chain_16_c10	default	--scenario chain -n 200 --procs 16 -c 10 --stall-timeout 180
+chain_optout	default	--scenario chain -n 500 --procs 4 --tier optout -c 50 --stall-timeout 120
+chain_4_java	java	--scenario chain -n 100 --procs 4 -c 20 --stall-timeout 180
+turns_100	default	--scenario turns -n 100 -m 50 --rate 500 --stall-timeout 150
+sleep_100	default	--scenario sleep -n 100 --wake-after-ms 10000 --stall-timeout 120

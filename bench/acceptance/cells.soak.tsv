@@ -1,0 +1,5 @@
+# Endurance (~1-2 h at --repeat 1): sustained integrity over time.
+# name	runtime	scenario args
+soak_chain	default	--scenario chain -n 20000 --procs 4 -c 100 --stall-timeout 300 --status-every 60
+soak_turns	default	--scenario turns -n 100 --duration 3600 --rate 30 --park-idle-ms 500 --stall-timeout 180 --status-every 60
+soak_sleep	default	--scenario sleep -n 1000 --wake-rate 20 --stall-timeout 300 --status-every 60

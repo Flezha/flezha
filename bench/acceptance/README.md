@@ -1,0 +1,125 @@
+# Workflow bench acceptance harness
+
+Repeatable, configurable runs of the workflow operative bench
+(`mix bench.workflow`), with progress streamed as each run lands and a
+median summary at the end that flags regressions against a saved baseline.
+
+Everything here drives `mix bench.workflow`; the cells only pick scenarios and
+sizes. Transport, runner count and SDK are run-time flags, so one cell set
+sweeps across configurations without editing.
+
+## Quick start
+
+```bash
+# fast smoke — does every path run clean? (~3 min)
+bench/acceptance/run.sh --profile quick --repeat 1
+
+# the acceptance gate — the numbers to trust (~15–25 min)
+bench/acceptance/run.sh --profile standard
+
+# record the current medians as the baseline to compare future runs against
+bench/acceptance/run.sh --profile standard --save-baseline
+
+# endurance — sustained integrity over time (~1–2 h)
+bench/acceptance/run.sh --profile soak
+```
+
+## Flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--profile quick\|standard\|soak` | `standard` | Which cell set (`cells.<profile>.tsv`) to run. |
+| `--repeat N` | 3 (soak: 1) | Runs per cell. The summary takes the **median**, so odd N ≥ 3 tames the box's ±20 % drift. |
+| `--runners N` | 2 | Runner (SDK) processes the controller drives. |
+| `--transport uds\|quic` | `uds` | Wire transport (sets `FLEZHA_TRANSPORT` for the whole run). QUIC first-connects are slower — the harness widens the connect budget automatically. |
+| `--runtime rust\|java` | `rust` | Default SDK. A cell can pin its own (the `runtime` column); Elixir has no workflow operatives, so it is not an option. |
+| `--save-baseline` | off | Write the run's medians as the new `baseline.<profile>.tsv` instead of comparing. |
+
+Examples:
+
+```bash
+bench/acceptance/run.sh --profile standard --runners 4 --transport quic
+bench/acceptance/run.sh --profile quick --runtime java --repeat 1
+bench/acceptance/run.sh --profile standard --repeat 5 --save-baseline
+```
+
+## What you get
+
+- **While it runs:** one line per run —
+  `[chain_4 2/3 rt=rust] scenario=chain throughput=90.1 unit=workflows/s p50_ms=194 integrity=clean`.
+- **At the end:** a median table (throughput, p50, integrity, vs baseline) printed
+  and written to `summary.<profile>.md`, plus a one-line verdict:
+  `all cells within tolerance` or `REGRESSION / INTEGRITY FAILURE`.
+- **Regression rule:** a cell fails if its median throughput is **>15 % below**
+  the baseline, or its integrity is not `clean`. 5–15 % shows as ⚠, a gain as ✅.
+- **Integrity** is `clean` / `loss` (a missing or duplicated record — always a
+  bug) / `stall` (the cell did not finish). It is not a throughput judgement;
+  a `loss` fails regardless of speed.
+
+Raw per-run rows land in `results.<profile>.tsv` (git-ignored).
+
+## Profiles and how to change them
+
+Each profile is a TSV, one cell per line:
+
+```
+name<TAB>runtime<TAB>scenario args
+chain_4_c50	default	--scenario chain -n 300 --procs 4 -c 50 --stall-timeout 120
+chain_4_java	java	--scenario chain -n 100 --procs 4 -c 20 --stall-timeout 180
+```
+
+- `runtime` is `default` (use `--runtime`) or a pin (`rust` / `java`).
+- The args are passed straight to `mix bench.workflow`; `--runners` and the
+  transport come from the run flags, so don't put them here.
+- Add a cell by adding a line. If you baseline it, re-run `--save-baseline`.
+
+The three profiles:
+
+- **quick** — small cells, one repeat. A smoke that every scenario (chain,
+  turns, sleep) runs clean. Not for numbers.
+- **standard** — the acceptance set: the durable chain at several widths, the
+  opt-out chain, a Java cell, a chat-turn cell, and a sleeper cell. This is what
+  you baseline and gate on.
+- **soak** — long-running (a 20 000-instance chain, an hour of chat turns, a
+  1 000-sleeper wake soak). Endurance and integrity over time, not throughput.
+
+## Scenarios (from `mix bench.workflow`)
+
+- `chain` — spawn N run-once durable chains (`--procs 1|4|16`, `--tier optout`);
+  `-c N` keeps N in flight, `--rate R` spawns R/s. Reports **workflows/s** and
+  **proc commits/s**.
+- `turns` — L loops × T turns (`-n L -m T`, `--rate`); reports **turns/s** and
+  turn→reply latency. `--kill-runner-at S` SIGKILLs a runner mid-run.
+- `sleep` — spawn N loops, park them, then a wake storm; reports the resting
+  cost per sleeper and **wakes/s**. `--wake-rate R` paces the storm;
+  `--keep` + the `sleep-boot` scenario measures a controller restart.
+
+Run `mix bench.workflow` with no matching cell to see the full flag list.
+
+## Limits (read before trusting a number)
+
+- **One controller.** This harness runs a single controller (its own BEAM).
+  Multiple controllers — the multi-node / partition scale-out story — is a
+  different harness (a real cluster); it is the largest untested dimension and
+  is not covered here.
+- **Shared box.** The controller, runners and any Kafka broker share one
+  machine, so numbers drift ±20 %. Always compare **medians** (`--repeat`),
+  never single runs, and keep the box quiet during a gate run.
+- **The barrier ceiling.** Until `workflow-durable-path-throughput` lands, the
+  proc-commit path is one fsync per barrier on the runner's control channel
+  (~350 commits/s on two runners) and the loop journal is never cut, so
+  high-rate `turns` cells can stall on the O(history) per-turn cost. The
+  profiles keep rates modest for that reason; a storm cell is expected to be
+  slow, not a regression, until that change is in.
+- **QUIC** works but first-connects are slower than UDS; the harness gives it a
+  wider connect budget, but a cold run may still need a retry under load.
+
+## Files
+
+| | |
+|---|---|
+| `run.sh` | the runner (flags above) |
+| `summarize.exs` | median + baseline compare + regression verdict |
+| `cells.{quick,standard,soak}.tsv` | the cell sets |
+| `baseline.<profile>.tsv` | saved medians (commit this to gate against it) |
+| `results.<profile>.tsv`, `summary.<profile>.md` | per-run output (git-ignored) |

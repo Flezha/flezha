@@ -138,12 +138,15 @@ defmodule Mix.Tasks.Bench.Fleet do
     # its first `mix run` compiles, so give it a wide connect budget. Pre-build
     # it for the target env (`cd test/apps/elixir_runner && MIX_ENV=prod mix compile`).
     # Java's JVM + Spring/JPA cold start easily exceeds a few seconds; the
-    # Elixir runner compiles a whole flezha on first `mix run`.
+    # Elixir runner compiles a whole flezha on first `mix run`; a QUIC first
+    # connect (handshake) is slower than UDS for any runtime.
+    quic? = Application.get_env(:flezha, :transport, :uds) == :quic
+
     connect_timeout =
       case runtime do
         :elixir -> 120_000
         :java -> 60_000
-        _ -> 5_000
+        _ -> if quic?, do: 20_000, else: 5_000
       end
 
     Flezha.Service.EventManager.add_handler(:runner_connected_event)

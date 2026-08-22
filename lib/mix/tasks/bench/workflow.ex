@@ -326,6 +326,16 @@ defmodule Mix.Tasks.Bench.Workflow do
       #{verdict(st, missing)}
       """)
 
+      emit_result(
+        scenario: :chain,
+        factory: cfg.factory,
+        throughput: rate(cfg.n, whole_window),
+        unit: "workflows/s",
+        p50_ms: p50_ms(st.done),
+        commits_s: rate(c1.proc - c0.proc, whole_window),
+        integrity: integrity(st, missing)
+      )
+
       diagnose_missing(st)
     after
       Fleet.cleanup(@namespace)
@@ -391,6 +401,16 @@ defmodule Mix.Tasks.Bench.Workflow do
       beam:                 #{mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes
       #{verdict(st, missing)}
       """)
+
+      emit_result(
+        scenario: :turns,
+        factory: cfg.factory,
+        throughput: rate(st.out.received, window),
+        unit: "turns/s",
+        p50_ms: p50_ms(st.out),
+        commits_s: rate(c1.proc - c0.proc, window),
+        integrity: integrity(st, missing)
+      )
     after
       Fleet.cleanup(@namespace)
     end
@@ -540,6 +560,16 @@ defmodule Mix.Tasks.Bench.Workflow do
       commits:              #{c1.proc - c0.proc} proc, #{c1.iter - c0.iter} iter
       #{if st.stalled, do: "RESULT: STALLED", else: ""}
     """)
+
+    emit_result(
+      scenario: :sleep,
+      factory: cfg.factory,
+      throughput: rate(n, t1 - t0),
+      unit: "wakes/s",
+      p50_ms: p50_ms(st.out),
+      commits_s: rate(c1.proc - c0.proc, max(t1 - t0, 1)),
+      integrity: integrity(%{st | out: %{st.out | duplicates: st.out.duplicates}}, n - st.out.seen)
+    )
 
     unless st.stalled do
       IO.puts("Waiting for all #{n} to park again...")
@@ -987,6 +1017,23 @@ defmodule Mix.Tasks.Bench.Workflow do
       IO.puts("  #{runner_id} #{kind}: #{inspect(info)}")
     end
   end
+
+  # A single machine-readable summary line the acceptance runner greps:
+  # `BENCH_RESULT k=v ...`. Additive to the human summary above it.
+  defp emit_result(kv) do
+    fields = Enum.map_join(kv, " ", fn {k, v} -> "#{k}=#{fmt_field(v)}" end)
+    IO.puts("BENCH_RESULT #{fields}")
+  end
+
+  defp fmt_field(v) when is_float(v), do: Float.round(v, 2)
+  defp fmt_field(v), do: v
+
+  # `clean` | `loss` (missing or duplicated seqs) | `stall`.
+  defp integrity(%{stalled: true}, _missing), do: :stall
+  defp integrity(%{out: %{duplicates: 0}}, 0), do: :clean
+  defp integrity(_st, _missing), do: :loss
+
+  defp p50_ms(tally), do: Float.round(Tally.percentiles(tally, [0.50])[0.50] / 1_000_000, 2)
 
   # One verdict for a measured phase: stalled, clean, or an integrity failure
   # (a missing or duplicated seq).

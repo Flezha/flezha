@@ -105,3 +105,5 @@ stash/*
 /bench/workflow/reports/
 /bench/flink/reports/
 /bench/flink/job/target/
+/bench/acceptance/results.*.tsv
+/bench/acceptance/summary.*.md
