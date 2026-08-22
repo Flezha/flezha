@@ -359,10 +359,7 @@ defmodule Mix.Tasks.Bench.Workflow do
       t1 = now_ns()
       c1 = commits(counters)
 
-      if st.stalled do
-        diagnose_missing(st, &elem(ids, rem(&1, tuple_size(ids))))
-        diagnose_channels()
-      end
+      if st.stalled, do: diagnose_stall(st, ids)
 
       window = max(t1 - t0, 1)
       measured = n * cfg.turns
@@ -405,7 +402,7 @@ defmodule Mix.Tasks.Bench.Workflow do
           st = collect(st, &(&1.out.seen >= n))
 
           if st.stalled do
-            diagnose_missing(st, &elem(ids, rem(&1, tuple_size(ids))))
+            diagnose_missing(st, id_of(ids))
             raise("warm turn stalled")
           end
 
@@ -423,8 +420,7 @@ defmodule Mix.Tasks.Bench.Workflow do
       st = collect(st, &(&1.suspended >= n), cfg.park_idle_ms + 180_000)
 
       if st.stalled do
-        diagnose_missing(st, &elem(ids, rem(&1, tuple_size(ids))))
-        diagnose_channels()
+        diagnose_stall(st, ids)
         raise("parking stalled at #{st.suspended}/#{n}")
       end
       sleep_report(cfg, mem0, n, c_turn)
@@ -915,6 +911,16 @@ defmodule Mix.Tasks.Bench.Workflow do
   end
 
   defp maybe_status(st), do: st
+
+  # The full stall picture: which loops never answered and where their
+  # control channels sit. `ids` is the loop tuple; a chain uses the default id.
+  defp diagnose_stall(st, ids) do
+    diagnose_missing(st, id_of(ids))
+    diagnose_channels()
+  end
+
+  # The instance id for a turn seq, round-robin over the loop tuple.
+  defp id_of(ids), do: &elem(ids, rem(&1, tuple_size(ids)))
 
   # Name what never arrived — the seqs without an output (and, for a chain,
   # without a completion) — and what the controller knows about each: the
