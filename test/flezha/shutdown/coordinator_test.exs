@@ -4,13 +4,14 @@ defmodule Flezha.Shutdown.CoordinatorTest do
   use ExUnit.Case, async: false
 
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Service.HubManager
   alias Flezha.Shutdown.Coordinator
   alias Flezha.State.FsyncBatcher
   alias Flezha.Transport.Server, as: TransportServer
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
   setup :verify_on_exit!
 
   setup do

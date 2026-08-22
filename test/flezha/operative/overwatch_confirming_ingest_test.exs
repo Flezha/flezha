@@ -10,6 +10,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
   """
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.{Builder, Overwatch}
   alias Flezha.Plugin.Extension.Table
@@ -234,7 +235,7 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
   end
 
   describe "the effectively-once journal" do
-    setup :set_mimic_global
+    setup :set_mimic_global_until_exit
 
     # A live process around the struct, because the unit here is the host's
     # loop: the log answers the host's mailbox, and a parked caller is a call

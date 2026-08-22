@@ -90,6 +90,14 @@ defmodule FlezhaTest.Helper.FakeStartRegistry do
     stub(HubManager, :get_pid, fn _ns, id -> pid_of(registry, id) end)
     stub(HubManager, :operative_rows, fn _ns -> rows(registry) end)
 
+    stub(HubManager, :partition_members, fn _ns, group ->
+      registry
+      |> rows()
+      |> Enum.filter(&(&1.partition != nil and &1.partition.group == group))
+      |> Enum.map(&Map.take(&1, [:id, :partition, :node]))
+      |> Enum.sort_by(& &1.partition.index)
+    end)
+
     stub(ProcessHub, :child_lookup, fn _hub, id ->
       case pid_of(registry, id) do
         {:ok, pid} -> {id, [{node(), pid}]}

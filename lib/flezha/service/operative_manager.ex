@@ -764,6 +764,9 @@ defmodule Flezha.Service.OperativeManager do
         # We will get the errors from the start result.
         disable_logging: true,
         timeout: 15_000,
+        # A partition member's identity is on its row from the first
+        # registration, so `PartitionGroup.members/2` sees it before it binds.
+        metadata: partition_metadata(operative),
         # Declared intent: the start records the child in the hub's declared
         # set BEFORE anything runs, so a whole-cluster cold start restores it
         # and a deliberate stop (hub stop path) removes it for good. Off in
@@ -792,6 +795,13 @@ defmodule Flezha.Service.OperativeManager do
 
       true ->
         finalize_init_operative(namespace, operative, result)
+    end
+  end
+
+  defp partition_metadata(operative) do
+    case Flezha.Partition.identity(operative.opts) do
+      nil -> %{}
+      partition -> %{partition: partition}
     end
   end
 

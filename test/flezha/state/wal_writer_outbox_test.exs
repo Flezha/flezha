@@ -9,6 +9,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
   """
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   import ExUnit.CaptureLog
 
@@ -193,7 +194,7 @@ defmodule Flezha.State.WalWriterOutboxTest do
     # The app-tree FsyncBatcher ticks every 5 ms, so without suppressing the
     # dirty mark the very batch this test is named for can fire mid-append and
     # answer for the append path.
-    set_mimic_global()
+    set_mimic_global_until_exit()
     stub(FsyncBatcher, :mark_dirty, fn _ -> :ok end)
 
     pid = start_writer(entity_id)

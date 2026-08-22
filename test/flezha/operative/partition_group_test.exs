@@ -12,6 +12,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
   """
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Operative.Builder
@@ -26,7 +27,7 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
   @namespace "partition-start-test"
   @factory "ohlc-factory"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     registry = FakeStartRegistry.install()
@@ -49,7 +50,8 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
       assert result.group == "ohlc"
       assert result.members == ["ohlc#p0", "ohlc#p1", "ohlc#p2"]
 
-      members = started_members()
+      # Members start together, so the start log is not in partition order.
+      members = Enum.sort_by(started_members(), &Keyword.get(&1.opts, :partition))
       assert length(members) == 3
 
       for {member, index} <- Enum.with_index(members) do

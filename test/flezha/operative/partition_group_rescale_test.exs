@@ -12,6 +12,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   """
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.AuthZ.Quotas
   alias Flezha.Dlq
@@ -34,7 +35,7 @@ defmodule FlezhaTest.Operative.PartitionGroupRescaleTest do
   @group "ohlc"
   @factory "candles"
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     base = TestHelpers.tmp_app_data_dir()

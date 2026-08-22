@@ -4,10 +4,11 @@ Measured before the change (bench `-p 4`, two runners): ~55 ms per operative
 start and ~30 ms per plugin enable, all serialised, so a four-pipeline bench
 spent ~365 ms bringing the engine up and ~400 ms to its first record out.
 After: ~30 ms for the whole bring-up (15–18 create + 12–14 plugin) and ~37 ms
-to first out; `mix bench -n 100` creates 100 operatives in ~235 ms (was
-~1.0 s) and enables their 200 plugins in ~55 ms (was ~0.9 s). Every number
-here is a laptop SSD (fsync ≈ 1.6 ms); on a slower disk the registry share
-is larger.
+to first out; `mix bench -n 100` creates 100 operatives in ~0.2 s (was
+~1.5 s) and enables their 200 plugins in ~55 ms (was ~0.9 s);
+`scripts/bench.sh -n 1000` creates 1000 in 1.2 s (was 9.1 s) and enables
+their 2000 plugins in 0.24 s (was 57 s). Every number here is a laptop SSD
+(fsync ≈ 1.6 ms); on a slower disk the registry share is larger.
 
 The A/B that locates the cost: the same code with
 `FLEZHA_AUTO_RESTORE_ENABLED=false` (the hub on plain `:ets`, no durable
@@ -65,35 +66,49 @@ pays and how many starts share one.
   the stop before the start has registered; that is the API's pre-existing
   semantics, not the merge. Each request runs against the hub snapshot it was
   dispatched with.
-* **What is left:** one registration sync per *batch* and one precommit sync
-  per batch; a lone serial start still pays 2 DETS syncs (~7 ms). Halving that
-  means a cheaper durable format than DETS (its sync rewrites free lists —
-  2× a plain append+fsync), which is a storage-format change with a migration
-  story, proposal-sized.
-* **`PluginManager` claims, the caller enables.** `{:claim, id, plugin}` puts
-  a `{ns, rid, :pending}` entry; the cspec write and subscribe run in the
-  caller (the cspec-first order is unchanged); `{:confirm, id}` turns it into
-  `{ns, rid}`, a failed enable `unregister`s it. A pending entry refuses a
-  concurrent disable and a second enable of the same id, and is hidden from
-  `get_plugins/0` — every existing `{ns, rid}` pattern stays valid.
-* **`WorkerRegistry` starts a new identity's client in a `Task`.** Acquires
-  for the same key queue as waiters on `state.starting` and are answered
-  together on `{ref, result}`; the registry `Process.link/1`s the client on
-  install. This works because `KafkaEx.Client` does NOT trap exits: the
-  task's `:normal` exit is ignored by the linked client, while a registry
-  crash before install kills the linked task abnormally and the client with
-  it. A key with `pending_refs` (a swap in flight) keeps the inline start —
-  its refcount hand-over expects one. If a `force_replace` installs the key
-  meanwhile, the task's client is stopped and the waiters attach to the
-  replacement.
-* **`PartitionGroup.run_member_starts/6` starts every member at once.** The
-  group-level quota preflight already existed; allocation stays per member.
-  On any failure every member that did start is rolled back and the lowest
-  failing index names the error — so the message now counts ALL the members
-  that came up beside the failure (`partition_group_test` asserts 2, not 1).
-* **Bench:** both bring-up phases run all pipelines concurrently (that is how
-  a partition group starts), runner spawns overlap, the topic-readiness poll
-  is 25 ms. `engine_startup` keys are unchanged, so old reports compare.
+* **The declared manifest is written once per batch (process_hub).** The
+  batch's working manifest lives in `hub.declared_unsynced`; `apply_mutation`
+  builds on it and answers `{:pending, manifest}` without writing, and
+  `flush/1` writes + syncs it once before running the parked commands — a
+  failed write answers every parked caller and runs none. The coordinator
+  flushes before it considers a peer's copy (adopt / version pull / refetch /
+  clear), so an adoption never overwrites a batch in flight. At 1000 children
+  one manifest rewrite cost 6.6 ms, and it used to happen on every start.
+* **Partition membership is an index lookup.** A member's identity is stamped
+  into its registry row's metadata at start (`start_child(..., metadata:)`)
+  and re-derived from the row's own cspec on every bind write
+  (`RegistryUpdate.set_runner_tag/1` → `HubManager.cspec_partition/1`), and
+  `PartitionGroup.members/2` is `HubManager.partition_members/2`: an ETS
+  metadata match (`ProcessHub.metadata_query/2`, the generalised `tag_query`)
+  over rows carrying `:partition`, never a decode of every row. Every start
+  and every plugin enable asks this question; at 1000 operatives it was a
+  full registry decode each time.
+* **An enable in flight is not a degradation.** With concurrent enables the
+  cspec-first window (cspec written, subscribe pending) spans the whole phase,
+  and the convergence loop healed those plugins — a second subscribe racing
+  the real one. `Loop.without_pending_enables/1` drops `missing_plugins` whose
+  id `PluginManager.pending_ids/0` reports. `scripts/bench.sh -n 1000`: plugin
+  setup 57 s → 0.25 s.
+* **The coordinator's state was copied into every request task.** The
+  quadratic term behind `-n 1000` creation (9 s): `delegate_work` handed the
+  WorkerQueue the whole `%Hub{}` — `pending_operations` holds every in-flight
+  operation, so the copy grew with the load — and `Task.async_stream` copied
+  it again into each request task: ~180 KB (max 860 KB) per message, 4 per
+  start at N=300, 1.4 MB of copying per start. `Hub.for_workers/1` blanks the
+  transient bookkeeping (workers read only `hub_id`/`storage`/`procs`/config)
+  and is what the coordinator sends. Found by tracing `:erlang.send/2` with
+  `{:message, {:caller}}` and `:erts_debug.flat_size/1` of the payload — a
+  CPU profile only showed `send/2` at 18%, not who or what.
+  `scripts/bench.sh -n 1000`: creation 9.1 s → 1.2 s (1.2 ms/operative, the
+  in-memory floor); `-n 100`: 235 → ~190 ms.
+* **What is left:** a lone serial start pays 2 DETS syncs (~7 ms); halving
+  that means a cheaper durable format than DETS (its sync rewrites free lists
+  — 2× a plain append+fsync), proposal-sized. `DistributedSupervisor` keeps a
+  `cid → pid` map in its pdict and re-puts it per start (O(N) map, small at
+  1000). NB measuring a start storm: never trace whole modules at N=1000 with
+  an in-heap collector — it OOM-killed the desktop once; trace a dozen seams
+  under `systemd-run --user --scope -p MemoryMax=4G`, and attribute sends by
+  caller + size rather than reading a CPU profile.
 
 ## Cross-repo
 

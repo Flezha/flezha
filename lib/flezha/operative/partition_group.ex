@@ -80,20 +80,13 @@ defmodule Flezha.Operative.PartitionGroup do
 
   @doc """
   The member ids of `group_id` currently registered in `namespace`, in
-  partition order, each with the partition identity read off its cspec opts.
-
-  The one way "who is in this group" is answered — there is no stored group
-  record, so a member that is missing is simply absent here and the coverage
-  check is what makes that visible.
+  partition order, each with its partition identity. The one way "who is in
+  this group" is answered — there is no stored group record, only the identity
+  each member's registry row carries, so a member that is missing is simply
+  absent here and the coverage check is what makes that visible.
   """
   @spec members(String.t(), String.t()) :: [%{id: String.t(), partition: map()}]
-  def members(namespace, group_id) do
-    namespace
-    |> HubManager.operative_rows()
-    |> Enum.filter(&(&1[:partition] != nil and &1.partition.group == group_id))
-    |> Enum.map(&%{id: &1.id, partition: &1.partition, node: &1[:node]})
-    |> Enum.sort_by(& &1.partition.index)
-  end
+  def members(namespace, group_id), do: HubManager.partition_members(namespace, group_id)
 
   defp check_partitionable(namespace, operative, partitions, already_held) do
     cond do

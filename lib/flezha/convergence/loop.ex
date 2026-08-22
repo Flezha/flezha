@@ -264,6 +264,7 @@ defmodule Flezha.Convergence.Loop do
     {streaks, delta} = apply_misbound_streak(state.misbound_streaks, delta)
     state = %{state | misbound_streaks: streaks}
 
+    delta = without_pending_enables(delta)
     plugin_degraded = plugin_degraded_operatives(delta)
     maybe_log_plugin_degraded(plugin_degraded, state.plugin_degraded)
     state = %{state | plugin_degraded: plugin_degraded}
@@ -623,6 +624,26 @@ defmodule Flezha.Convergence.Loop do
       end)
 
     %{state | stalled_operatives: Map.new(kept), backoff: backoff}
+  end
+
+  # An enable in flight has written its cspec and not yet subscribed — that is
+  # the cspec-first order, not a degradation — so its plugin is not healed
+  # (a heal would subscribe it a second time, racing the enable).
+  defp without_pending_enables(%Diff{missing_plugins: []} = delta), do: delta
+
+  defp without_pending_enables(%Diff{} = delta) do
+    pending =
+      if Process.whereis(Flezha.Service.PluginManager),
+        do: Flezha.Service.PluginManager.pending_ids(),
+        else: MapSet.new()
+
+    %{
+      delta
+      | missing_plugins:
+          Enum.reject(delta.missing_plugins, fn {_ref, plugin_id, _plugin} ->
+            MapSet.member?(pending, plugin_id)
+          end)
+    }
   end
 
   # Operatives whose declared plugins diverge from production reality this tick:

@@ -480,6 +480,10 @@ defmodule Flezha.Service.HubManager do
 
   defp cspec_operative(_), do: nil
 
+  @doc "The partition identity a registry entry's cspec carries, or `nil`."
+  @spec cspec_partition(map()) :: map() | nil
+  def cspec_partition(cspec), do: Flezha.Partition.identity(cspec_opts(cspec))
+
   # The builder opts a registry entry's cspec start-args carry, or `[]` — where
   # a partition member's identity is durable.
   defp cspec_opts(cspec) do
@@ -528,6 +532,27 @@ defmodule Flezha.Service.HubManager do
     hub_id = Identificator.hub(namespace)
 
     ProcessHub.tag_query(hub_id, runner_id)
+  end
+
+  @doc """
+  The live partition members of `group_id`, in partition order, each with its
+  identity and node. A metadata match over the registry rows — the identity is
+  stamped on the row at start and at bind — so the question every start and
+  every plugin enable asks never decodes the whole registry.
+  """
+  @spec partition_members(String.t(), String.t()) :: [map()]
+  def partition_members(namespace, group_id) do
+    with_live_hub(namespace, [], fn hub_id ->
+      hub_id
+      |> ProcessHub.metadata_query(:partition)
+      |> Enum.filter(fn {_id, node_pids, partition} ->
+        node_pids != [] and is_map(partition) and partition.group == group_id
+      end)
+      |> Enum.map(fn {id, node_pids, partition} ->
+        %{id: id, partition: partition, node: live_node(node_pids)}
+      end)
+      |> Enum.sort_by(& &1.partition.index)
+    end)
   end
 
   def operative_set_runner(namespace, operative_id, runner_id) do

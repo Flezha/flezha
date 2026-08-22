@@ -13,6 +13,7 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
   """
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Operative.Builder
   alias Flezha.Operative.Overwatch
@@ -20,7 +21,7 @@ defmodule FlezhaTest.Operative.ReplayAdoptionTest do
   alias Flezha.State.TestHelpers
   alias Flezha.State.WalTransfer
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   setup do
     root = TestHelpers.tmp_app_data_dir()

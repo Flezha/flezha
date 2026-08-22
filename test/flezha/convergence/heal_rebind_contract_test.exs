@@ -10,6 +10,7 @@ defmodule Flezha.Convergence.HealRebindContractTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Cluster.Directory
   alias Flezha.Convergence.Heal
@@ -21,7 +22,7 @@ defmodule Flezha.Convergence.HealRebindContractTest do
   alias ProcessHub.Service.Migration
   alias ProcessHub.Service.ProcessRegistry
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   @namespace "heal_rebind_contract_test"
   @dead_runner "runner_that_disconnected"

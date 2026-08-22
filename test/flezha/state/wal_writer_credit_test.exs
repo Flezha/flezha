@@ -7,10 +7,11 @@ defmodule Flezha.State.WalWriterCreditTest do
 
   use ExUnit.Case, async: false
   use Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.State.{Supervisor, TestHelpers, WalWriter}
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   @session "wal-credit-session"
 

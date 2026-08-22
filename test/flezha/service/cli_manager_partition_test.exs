@@ -12,6 +12,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
 
   import ExUnit.CaptureIO
   import Mimic
+  import FlezhaTest.Helper.MimicGlobal
 
   alias Flezha.Partition
   alias Flezha.Service.CliManager
@@ -19,7 +20,7 @@ defmodule Flezha.Service.CliManagerPartitionTest do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
 
-  setup :set_mimic_global
+  setup :set_mimic_global_until_exit
 
   defp member_row(group, index, count, opts \\ []) do
     %{

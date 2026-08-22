@@ -12,11 +12,24 @@ defmodule Flezha.Service.RegistryUpdate do
   alias Flezha.Service.HubManager
   alias Flezha.Plugin
 
-  @doc "Registry transform that re-tags an operative's owning runner."
-  @spec set_runner_tag(String.t()) :: (map(), keyword(), map() -> {map(), keyword(), map()})
+  @doc """
+  Registry transform that re-tags an operative's owning runner. A partition
+  member's identity, read off the row's own cspec, rides the same write, so
+  `HubManager.partition_members/2` stays an index lookup even for a row whose
+  metadata was rebuilt.
+  """
+  @spec set_runner_tag(String.t() | nil) :: (map(), keyword(), map() -> {map(), keyword(), map()})
   def set_runner_tag(runner_id) do
     fn cspec, node_pids, metadata ->
-      {cspec, node_pids, Map.put(metadata, :tag, runner_id)}
+      metadata = Map.put(metadata, :tag, runner_id)
+
+      metadata =
+        case HubManager.cspec_partition(cspec) do
+          nil -> metadata
+          partition -> Map.put(metadata, :partition, partition)
+        end
+
+      {cspec, node_pids, metadata}
     end
   end
 

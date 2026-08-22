@@ -171,6 +171,12 @@ defmodule Flezha.Service.PluginManager do
     GenServer.call(__MODULE__, :get_plugins)
   end
 
+  @doc "The plugin ids whose enable is in flight: claimed, cspec written, not yet subscribed."
+  @spec pending_ids() :: MapSet.t()
+  def pending_ids do
+    GenServer.call(__MODULE__, :pending_ids)
+  end
+
   def start_link(_) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
@@ -187,6 +193,12 @@ defmodule Flezha.Service.PluginManager do
   @impl true
   def handle_call(:get_plugins, _from, state) do
     {:reply, Map.reject(state, fn {_id, entry} -> pending?(entry) end), state}
+  end
+
+  @impl true
+  def handle_call(:pending_ids, _from, state) do
+    pending = for {id, entry} <- state, pending?(entry), into: MapSet.new(), do: id
+    {:reply, pending, state}
   end
 
   @impl true
