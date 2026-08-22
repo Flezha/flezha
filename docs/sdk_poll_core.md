@@ -267,3 +267,7 @@ The authoring surface (Procedure traits, the graph DSL), State and channel
 codecs, the poll loop's integration with the host's concurrency primitives,
 idiomatic errors, and the testing harness — the code that *should* feel
 native, an estimated 3–5k lines per SDK.
+
+Everything in that list changes in lockstep across the SDKs — the rule and the
+per-SDK matrix live in
+[`architecture/runner.md` → "One change, every SDK"](architecture/runner.md#one-change-every-sdk).

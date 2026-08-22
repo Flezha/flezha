@@ -1,6 +1,8 @@
 # Flezha SDK Authoring Contract
 
-**Status:** Normative for every SDK binding (Rust, Java today; Python, Elixir next).
+**Status:** Normative for every SDK binding (Rust, Java and the Elixir v1 subset today;
+Python next). A surface one binding gains, every binding gains in the same change or defers
+by name — [`architecture/runner.md` → "One change, every SDK"](architecture/runner.md#one-change-every-sdk).
 
 This document is the single source of truth for the *authoring sugar* every
 SDK offers on top of the `StreamOperative` / `Procedure` / `Change` / `Channel`

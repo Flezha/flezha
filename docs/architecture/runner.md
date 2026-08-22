@@ -345,6 +345,53 @@ to the C ABI: `TypedBuffer<S>` serializes `S::Change` on the flusher's linger th
 erased entry parsers and edge closures evaluate on the wire-reader/routing thread. Both are the
 documented in-process forms of what the byte boundary removes for FFI hosts.
 
+## One change, every SDK
+
+The kernel has exactly two hosts today: the Rust SDK (the crate) and the Java SDK
+(`flz_core_ffi` over JNI). **The Elixir SDK is the deliberate exception.** It is not a poll
+host ([`../elixir_sdk.md`](../elixir_sdk.md)): it re-expresses dispatch, overflow, the
+retry→park ladder and the partition guard in Elixir and inherits *nothing* from `flz_core`. So
+a change below the seam reaches Rust and Java for free and reaches Elixir only when someone
+writes it; a change above the seam reaches nobody for free.
+
+The rule, normative for every binding:
+
+- **One change, every SDK.** Anything every SDK carries changes in the same change, in every
+  SDK: the authoring and declaration surface (builder, ctx, the `HostClassDecl` keys), the wire
+  protocol and its metadata keys, every default (overflow policy, retry ladder, mailbox
+  capacity, heartbeat keys), and the fixtures that prove them (the regression and round-trip
+  bench factories, the e2e runtime matrix).
+- **Deferred is named, never silent.** An SDK that cannot carry a capability yet is recorded as
+  deferred *by name* — in the change's spec delta and in that SDK's scope matrix
+  ([`../elixir_sdk.md` → "Deferred capabilities"](../elixir_sdk.md#deferred-capabilities-v1-scope))
+  — together with the follow-up that owes it. The crate is the dogfood host (a capability the
+  crate reaches and the C ABI does not is a defect); one level up the same holds: a capability
+  one SDK reaches that another neither reaches nor names as deferred is a defect of the change,
+  not a backlog item.
+- **Measured on one runtime is proven on one runtime.** A performance change is a controller
+  change, a kernel change or a host change — its dev note says which — and a number taken with
+  the Rust runner is not a number for Java or Elixir until the same bench has run on them.
+
+Where each SDK stands (Rust and Java share the kernel, so every row below the seam is one
+implementation; Elixir is v1):
+
+| Surface | Rust | Java | Elixir |
+|---|---|---|---|
+| Runner-as-handle, `UpdateFactories`, stable identity, reconnect as a binding swap | ✓ | ✓ | ✓ |
+| Graph builder: `input`/`into`/`sink`, `map`/`filter`/`flat_map`/`key_by`, fan-out, fan-in | ✓ | ✓ | ✓ |
+| Overflow default `Block`, retry→park ladder, partition guard, heartbeats, `ctx.now` | ✓ | ✓ | ✓ |
+| State persistence, restore, compaction, credit windows | ✓ | ✓ | deferred |
+| Effectively-once tier; `checkpoint_ack` / `checkpoint_every` / `outputs_at_checkpoint` | ✓ | ✓ | deferred |
+| Entity timers, correction windows, `ctx.stable_id` | ✓ | ✓ | deferred |
+| Keyed channels, `merge`, `route_latest`, `branch`, `codec` | ✓ | ✓ | deferred |
+| Workflow kind | ✓ | ✓ | deferred |
+| Entry-idle observer, dynamic-Entity eviction | ✓ | ✓ | deferred |
+| Regression bench fixtures (`mix bench`) | ✓ | ✓ | ✓ |
+| Round-trip bench fixtures (`mix bench.roundtrip`) | ✓ | — | — |
+| Checkpoint-outputs e2e (`test/system/checkpoint_batched_outputs_e2e_test.exs`) | ✓ | — | n/a |
+
+A `—` is a gap this rule forbids; the two above are closed by `cross-sdk-perf-parity`.
+
 ---
 
 ## Where to go next

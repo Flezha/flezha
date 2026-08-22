@@ -9,6 +9,16 @@ Maintenance rule: when a change lands, write its notes to
 `docs/dev_notes/<change-id>.md` and add ONE index line here (newest first).
 Never inline the notes in this file — it must stay small enough to load whole.
 
+Cross-SDK rule: there is no such thing as a Rust-only SDK change. Any surface
+every SDK carries — the authoring/declaration surface, the `HostClassDecl`
+keys, the wire protocol, a default (overflow, retry ladder, mailbox, heartbeat
+keys), a bench or e2e fixture — changes in Rust, Java AND Elixir in the same
+change, or the change names the SDK it defers and the follow-up that owes it.
+`flz_core` is shared by Rust and Java (JNI) only; the Elixir SDK is its own
+core and inherits NOTHING from it. A perf number measured on one runtime is
+proven on one runtime. Normative text and the per-SDK matrix:
+`docs/architecture/runner.md` → "One change, every SDK".
+
 ## Per-change notes index
 
 - [Elixir SDK + native BEAM transport](docs/dev_notes/elixir-sdk-native-transport.md) — ONE Elixir SDK core, TWO deployment modes (in-node `:native` message-passing + standalone UDS/QUIC binary protocol, zero controller changes); `Transport.Stream` is a per-HANDLE dispatch seam (native `Local.Stream` vs NIF resource — the standalone client NIFs return the SAME `StreamHandle` so they take the NIF arm free); control channel frames ONCE in Rust now (send_data deleted from the seam); `StreamHandle.waker` is a `StreamWaker` enum so one handle serves the mio server drivers AND the channel-driven client; `:block` overflow default in lockstep with Rust/Java/FFI (the Entity room-case MUST reply, not noreply); Ctx emits ride the pdict (immutable struct can't thread); control_ping is SDK-INITIATED (controller echoes, do not re-echo); `RUSTLER_SKIP_COMPILATION=true` stubs the NIF so socket-mode tests need a real `mix compile --force`; runner-only boot gates the WHOLE controller tree; `elixirc_paths` narrowed so `test/apps/elixir_runner` never compiles into the controller; boundary gate `scripts/check-sdk-boundary.sh`
