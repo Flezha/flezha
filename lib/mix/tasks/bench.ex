@@ -272,7 +272,7 @@ defmodule Mix.Tasks.Bench do
 
     {operative_creation_time, operative_infos} =
       :timer.tc(fn ->
-        Fleet.parallel_map(1..num_operatives, fn i ->
+        Flezha.Parallel.map(1..num_operatives, fn i ->
           operative_id = "flow_test_#{i}"
 
           operative = %Flezha.Operative.Builder{
@@ -300,7 +300,7 @@ defmodule Mix.Tasks.Bench do
 
     {plugin_setup_time, _} =
       :timer.tc(fn ->
-        Fleet.parallel_map(operative_infos, fn {operative_id, _info} ->
+        Flezha.Parallel.map(operative_infos, fn {operative_id, _info} ->
           PluginManager.enable_plugin(
             operative_id <> "_beam_msg_forward",
             %Flezha.Plugin{

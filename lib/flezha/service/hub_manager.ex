@@ -436,7 +436,7 @@ defmodule Flezha.Service.HubManager do
           health: Snapshot.operative_health(namespace, operative_id),
           runner: Map.get(metadata, :tag),
           factory: builder && Map.get(builder, :factory_id),
-          partition: Flezha.Partition.identity(cspec_opts(cspec)),
+          partition: cspec_partition(cspec),
           node: live_node(node_pids)
         }
       end)

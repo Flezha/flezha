@@ -152,21 +152,6 @@ defmodule Mix.Tasks.Bench.Fleet do
     runner_ids
   end
 
-  @doc """
-  `Enum.map/2` with every element in flight at once, results in input order.
-  The bench's bring-up is N independent operatives and N independent plugins,
-  which is how a partition group starts them too.
-  """
-  def parallel_map(enum, fun) do
-    enum
-    |> Task.async_stream(fun,
-      ordered: true,
-      timeout: :infinity,
-      max_concurrency: max(Enum.count(enum), 1)
-    )
-    |> Enum.map(fn {:ok, value} -> value end)
-  end
-
   @doc "Shell command that launches one runner of `runtime` against `namespace`."
   def build_command(:rust, current_path, namespace) do
     candidates = [

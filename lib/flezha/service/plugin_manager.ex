@@ -70,17 +70,10 @@ defmodule Flezha.Service.PluginManager do
   # is a real state and must never read as success.
   defp enable_across_group(plugin_id, plugin, members) do
     results =
-      members
-      |> Task.async_stream(
-        fn %{id: member_id, partition: partition} ->
-          member_plugin = Plugin.for_partition(%{plugin | id: plugin_id}, member_id, partition)
-          {member_id, do_enable_plugin(member_plugin.id, member_plugin)}
-        end,
-        ordered: true,
-        timeout: :infinity,
-        max_concurrency: max(length(members), 1)
-      )
-      |> Enum.map(fn {:ok, result} -> result end)
+      Flezha.Parallel.map(members, fn %{id: member_id, partition: partition} ->
+        member_plugin = Plugin.for_partition(%{plugin | id: plugin_id}, member_id, partition)
+        {member_id, do_enable_plugin(member_plugin.id, member_plugin)}
+      end)
 
     case Enum.reject(results, &match?({_id, {:ok, _}}, &1)) do
       [] ->
@@ -217,7 +210,7 @@ defmodule Flezha.Service.PluginManager do
          Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id, :pending})}
 
       entry ->
-        {ns, rid} = {elem(entry, 0), elem(entry, 1)}
+        {ns, rid} = target(entry)
         {:reply, {:error, "plugin id #{plugin_id} is already registered for #{ns}/#{rid}"}, state}
     end
   end
@@ -333,6 +326,9 @@ defmodule Flezha.Service.PluginManager do
 
   defp pending?({_ns, _rid, :pending}), do: true
   defp pending?(_entry), do: false
+
+  defp target({ns, rid}), do: {ns, rid}
+  defp target({ns, rid, :pending}), do: {ns, rid}
 
   # `id` is `base` with a partition suffix — `ohlc_ws#p2` for base `ohlc_ws`.
   defp fanned_out_from?(id, base),

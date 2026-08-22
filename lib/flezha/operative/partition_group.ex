@@ -216,16 +216,9 @@ defmodule Flezha.Operative.PartitionGroup do
   # existence is by id-shape a member of this same group.
   defp run_member_starts(namespace, operative, indexed_ranges, count, plugins_fun, on_duplicate) do
     outcomes =
-      indexed_ranges
-      |> Task.async_stream(
-        fn {range, index} ->
-          {index, start_member(namespace, operative, index, count, range, plugins_fun)}
-        end,
-        ordered: true,
-        timeout: :infinity,
-        max_concurrency: max(length(indexed_ranges), 1)
-      )
-      |> Enum.map(fn {:ok, outcome} -> outcome end)
+      Flezha.Parallel.map(indexed_ranges, fn {range, index} ->
+        {index, start_member(namespace, operative, index, count, range, plugins_fun)}
+      end)
 
     started = for {_index, {:ok, member_id}} <- outcomes, do: member_id
 
