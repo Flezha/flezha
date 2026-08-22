@@ -72,6 +72,9 @@ pub struct WorkflowInstance {
     pub cancel: Arc<AtomicBool>,
     /// Inbox feeder; the driver owns the matching `Receiver`.
     inbox_tx: Sender<InboxItem>,
+    /// Inbox items the controller forwards after this bind; the loop does not
+    /// park before they have arrived (`AddOperative.inbox_tail_count`).
+    pub owed_inbox: u32,
     /// Pre-built Entities per chain stage (empty for run-sugar). Shared with the
     /// driver; the restore handler rebuilds a slot's state in place before the
     /// gate releases the driver to read it.
@@ -174,6 +177,7 @@ impl WorkflowInstance {
         factory_id: Arc<str>,
         stage_entities: Vec<Vec<Arc<EntitySlot>>>,
         expected: usize,
+        owed_inbox: u32,
         proc_journal: Option<JournalResume>,
     ) -> (Arc<Self>, Receiver<InboxItem>) {
         let (inbox_tx, inbox_rx) = unbounded();
@@ -184,6 +188,7 @@ impl WorkflowInstance {
             inbox_tx,
             stage_entities,
             expected,
+            owed_inbox,
             restored: Mutex::new(0),
             restored_cv: Condvar::new(),
             compensation_intents: Mutex::new(HashSet::new()),
@@ -304,6 +309,7 @@ mod tests {
             Arc::from("gate-factory"),
             Vec::new(),
             expected,
+            0,
             None,
         )
         .0

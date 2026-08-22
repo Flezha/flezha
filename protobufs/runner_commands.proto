@@ -97,6 +97,11 @@ message AddOperative {
     // change. The SDK refuses a key hashing outside this range.
     uint32 key_group_from = 9;
     uint32 key_group_to = 10;
+    // Inbox items the Controller forwards after this bind (the journaled,
+    // undelivered tail of a durable loop). The loop's park-idle clock starts
+    // only once they have arrived: forwarded after the bind under load, they
+    // would otherwise reach a driver that has already parked and be dropped.
+    uint32 inbox_tail_count = 11;
 }
 
 // SDK -> Controller, as the CommandResponse raw_data of AddOperative.
@@ -361,6 +366,12 @@ message RestoreInitState {
     // stream operative or a workflow one that never compensated.
     bool has_compensation_intent = 4;
     bool has_compensation_done = 5;
+    // The highest seq the shipped state already covers — the snapshot's seq
+    // when the change log is empty. The SDK re-arms the Entity's change seq
+    // to `terminal_seq + 1`; deriving it from the change log alone restarted
+    // a snapshot-only restore at 1 and the writer dropped the next changes
+    // as duplicates.
+    uint64 terminal_seq = 6;
 }
 
 // SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`

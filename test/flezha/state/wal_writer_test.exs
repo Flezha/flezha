@@ -345,4 +345,19 @@ defmodule Flezha.State.WalWriterTest do
   defp ok!({:ok, x}), do: {:ok, x}
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
+
+  describe "close_writers/1" do
+    test "stops every live writer of the class and leaves its files", %{entity_id: entity_id} do
+      {class, _, _} = entity_id
+      {:ok, pid} = Supervisor.find_or_start(entity_id)
+      :ok = WalWriter.append_next(pid, TestHelpers.stub_header(), "one") |> then(fn {:ok, _} -> :ok end)
+      assert pid in Supervisor.live_writers(class)
+
+      :ok = Supervisor.close_writers(class)
+
+      refute Process.alive?(pid)
+      assert Supervisor.live_writers(class) == []
+      assert File.exists?(Registry.wal_path(entity_id))
+    end
+  end
 end

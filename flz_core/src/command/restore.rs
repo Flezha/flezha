@@ -62,7 +62,7 @@ impl CommandAction for RestoreInitState {
                     }
                 }
             }
-            terminal
+            terminal.max(self.terminal_seq)
         };
 
         let response = RestoreInitStateResponse {
@@ -100,6 +100,9 @@ fn restore_into_slot(
         };
         match terminal {
             Some(t) => {
+                // The change log alone undercounts a snapshot-only restore:
+                // the controller's terminal covers the snapshot too.
+                let t = t.max(cmd.terminal_seq);
                 reseat_restored(slot, t, &cmd.change_log_bytes);
                 t
             }

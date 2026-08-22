@@ -475,6 +475,9 @@ defmodule Flezha.Service.OperativeManager do
   # source-side and redistribution-away preserve files so the
   # destination (or next host) can pull them via WAL-follows-operative.
   defp delete_operative_state_dir(operative_id) do
+    # Retained or deleted, the writer processes go with the operative.
+    Flezha.State.Supervisor.close_writers(operative_id)
+
     if Flezha.State.Completion.exists?(operative_id) do
       # Finished workflow operative: retain its state + completion record for the
       # retention window so the outcome stays inspectable; `Flezha.State.Retention`

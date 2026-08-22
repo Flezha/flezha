@@ -104,6 +104,10 @@ defmodule Flezha.Operative.Overwatch do
     suspended: false,
     # Timer ref for the journaled wake deadline while suspended.
     wake_timer: nil,
+    # A park that landed while an un-park task was binding: the task's bound
+    # state is stale by the time it reports, and the journaled tail still
+    # owes a wake.
+    parked_in_flight: false,
     # Late-input correction window (ms), declared by the SDK. `nil` = the class
     # never corrects. Gates lateness handling and the event-time-ordered replay.
     correction_window_ms: nil,
@@ -233,7 +237,8 @@ defmodule Flezha.Operative.Overwatch do
     # loses their suspension (`workflow-durable-suspension`). An instance with
     # undelivered input is not suspended any more — it binds and consumes it.
     if state.durable_workflow and Lifecycle.suspended_on_disk?(operative.id) do
-      {:noreply, Lifecycle.enter_suspended(state, ProcJournal.restore_state(operative.id))}
+      {:noreply, Lifecycle.enter_suspended(state, ProcJournal.restore_state(operative.id)),
+       :hibernate}
     else
       Lifecycle.bind(state, stale_runner_id, operative)
     end
@@ -496,8 +501,11 @@ defmodule Flezha.Operative.Overwatch do
   end
 
   @impl true
+  # A sleeper hibernates: the bind's restore frames and plugin setup leave
+  # megabytes of garbage on a heap that otherwise sits uncollected until the
+  # next wake (2.5 MiB → 5 KiB per sleeper measured).
   def handle_cast({:suspend, iter, wake_deadline_ms}, %__MODULE__{} = state) do
-    {:noreply, Lifecycle.suspend_at(state, iter, wake_deadline_ms)}
+    {:noreply, Lifecycle.suspend_at(state, iter, wake_deadline_ms), :hibernate}
   end
 
   # Replaces `state.snapshot` with a binary supplied out-of-band by the SDK
@@ -584,7 +592,7 @@ defmodule Flezha.Operative.Overwatch do
         {:DOWN, ref, :process, _pid, _reason},
         %__MODULE__{migrate_task: %{ref: ref}} = state
       ) do
-    {:noreply, %{state | migrate_task: nil}}
+    {:noreply, Lifecycle.rehydrate_if_pending(%{state | migrate_task: nil})}
   end
 
   # Task.Supervisor.async_nolink also sends `{ref, return_value}` from the task

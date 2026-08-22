@@ -363,6 +363,7 @@ message AddOperative {
     string kind = 4; // operative kind; empty/absent ⇒ "stream"
     uint32 resume_entity_count = 5;        // see "Per-Entity State Persistence"
     ProcJournalState proc_journal = 6;     // see the workflow proc-journal section
+    uint32 inbox_tail_count = 11;      // journaled inbox items forwarded after the bind
     // Partitioned operatives. A partition_count below 2 is unpartitioned —
     // every bind that predates partitioning, and every --partitions 1 start —
     // and proto3 omits all four zero-valued scalars, so such a frame is
@@ -1400,8 +1401,16 @@ message RestoreInitState {
     bytes change_log_bytes       = 3;
     bool  has_compensation_intent = 4;  // saga crash-resume markers
     bool  has_compensation_done   = 5;
+    uint64 terminal_seq           = 6;  // highest seq the shipped state covers
 }
 ```
+
+`terminal_seq` is the controller's `max(snapshot_seq, last WAL seq shipped)`.
+The SDK re-arms the Entity's change seq to `max(change-log terminal,
+terminal_seq) + 1`: a snapshot-only restore (the WAL tail is empty after a
+compaction) carries no change-log record to derive the seq from, and a seq
+re-armed below the snapshot's would have its next Changes dropped by the
+writer as duplicates.
 
 The proc-journal is **not** here — it is instance-scoped and rides
 `AddOperative.proc_journal` (below). A durable workflow class with no

@@ -62,6 +62,11 @@ pub(super) const CANCEL_POLL_CHUNK: Duration = Duration::from_millis(200);
 const PARK_IDLE_DEFAULT_MS: u64 = 5_000;
 const ENV_PARK_IDLE_MS: &str = "FLEZHA_WORKFLOW_PARK_IDLE_MS";
 
+/// How long a rehydrated loop waits for the inbox tail the controller owes it
+/// before it parks regardless (a lost forward must not wedge the loop: the
+/// park's `rehydrate_if_pending` forwards it again).
+const OWED_INBOX_WAIT: Duration = Duration::from_secs(60);
+
 /// Stack size for a driver thread, in KiB; unset keeps the platform default.
 /// An **address-space** lever only: a blocked driver's stack is not resident,
 /// so shrinking it is measured to free virtual size and no resident byte
@@ -106,6 +111,9 @@ pub(super) struct ChainCtx<'a> {
     /// Per-entity retry ladder applied inside a stage (`workflow-entity-retry`).
     pub(super) retry: RetryPolicy,
     persistence_enabled: bool,
+    /// Inbox items still owed by the controller for this bind, counted down
+    /// as they arrive; the park-idle clock starts at zero.
+    owed_inbox: std::cell::Cell<u32>,
 }
 
 impl ChainCtx<'_> {
@@ -344,6 +352,7 @@ fn run_structured(
         inbox,
         retry: spec.retry,
         persistence_enabled: spec.persistence_enabled,
+        owed_inbox: std::cell::Cell::new(instance.owed_inbox),
     };
     drive_chain(&ctx, args, &instance.cancel)
 }
@@ -823,13 +832,24 @@ fn seed_or_fail(seeded: Result<Vec<Value>, String>, consumed: Option<u64>) -> It
 /// the hysteresis window (the caller then parks). Sleeps while idle; the
 /// ≤200 ms wake granularity observes cancellation promptly.
 fn wait_for_input(ctx: &ChainCtx, cancel: &AtomicBool) -> Option<InboxItem> {
-    let deadline = Instant::now() + park_idle();
+    // The controller forwards a rehydrated loop's journaled tail after the
+    // bind; while any of it is still owed the wait is the owed-tail bound,
+    // not the park idle — a park here would drop the tail at the socket.
+    let idle = if ctx.owed_inbox.get() > 0 {
+        OWED_INBOX_WAIT
+    } else {
+        park_idle()
+    };
+    let deadline = Instant::now() + idle;
     loop {
         if cancel.load(Ordering::Acquire) {
             return None;
         }
         match ctx.inbox.recv_timeout(CANCEL_POLL_CHUNK) {
-            Ok(item) => return Some(item),
+            Ok(item) => {
+                ctx.owed_inbox.set(ctx.owed_inbox.get().saturating_sub(1));
+                return Some(item);
+            }
             Err(RecvTimeoutError::Timeout) => {
                 if ctx.journaling() && Instant::now() >= deadline {
                     return None;

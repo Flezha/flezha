@@ -474,6 +474,8 @@ defmodule Flezha.Runner.ControlChannel do
     # RemOperative round-trip whose CommandResponse returns on THIS control
     # stream, so calling it inline would deadlock the reader.
     Task.start(fn ->
+      drain_owed_outputs(operative_id)
+
       case OperativeManager.stop_operative(namespace, operative_id) do
         :ok ->
           :ok
@@ -484,6 +486,39 @@ defmodule Flezha.Runner.ControlChannel do
           )
       end
     end)
+  end
+
+  # The last proc's outbox is flushed after its commit ack, on this channel;
+  # the completion that follows must not tear the Overwatch down under that
+  # flush. Re-drive and wait until the journal owes nothing (an opted-out
+  # class owes nothing by construction), bounded so a sink that never
+  # confirms cannot hold the teardown — the retained journal keeps the debt.
+  # Under a start storm the flush itself queues behind the channel for tens
+  # of seconds, and the instance is retained either way.
+  @drain_owed_ms 60_000
+
+  defp drain_owed_outputs(operative_id) do
+    deadline = System.monotonic_time(:millisecond) + @drain_owed_ms
+    drain_owed_outputs(operative_id, deadline)
+  end
+
+  defp drain_owed_outputs(operative_id, deadline) do
+    case Flezha.State.ProcJournal.pending_entries(operative_id) do
+      [] ->
+        :ok
+
+      pending ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          Logger.warning(
+            "[control_channel] workflow operative #{inspect(operative_id)} completed with " <>
+              "#{length(pending)} outbox entries still owed; they stay journaled"
+          )
+        else
+          _ = Flezha.State.ProcJournal.flush_pending(operative_id)
+          Process.sleep(50)
+          drain_owed_outputs(operative_id, deadline)
+        end
+    end
   end
 
   defp emit_runner_shutdown_ack(state, operative_id, reference_id) do

@@ -104,11 +104,16 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
       builder: %Builder{
         id: "ohlc#p1",
         factory_id: "candles",
+        kind: :workflow,
         opts: [{:plugins, []} | Partition.member_opts("ohlc", 1, 3, range)]
       }
     }
 
     migrated = Flezha.Operative.Lifecycle.migrate_operative(state)
+
+    # The kind travels with the migrate: a workflow instance re-added as a
+    # stream class is refused by the runner and never heals.
+    assert migrated.kind == :workflow
 
     assert Partition.identity(migrated.opts) == %{
              group: "ohlc",

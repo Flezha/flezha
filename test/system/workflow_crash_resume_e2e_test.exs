@@ -593,6 +593,13 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert consumed_offsets(operative_id) == [1, 2]
       assert ProcInbox.undelivered(operative_id) == []
 
+      # The iteration boundary compacts every Entity of the instance: the
+      # controller's CompactEntity must resolve a WORKFLOW Entity (not only a
+      # stream one), so a snapshot lands beside the turn WAL.
+      assert wait_until(fn -> snapshot_count(operative_id, "chat_turn") > 0 end, 20_000),
+             "no boundary snapshot for chat_turn after two committed iterations; dir holds " <>
+               inspect(File.ls(Path.join(Registry.class_dir(operative_id), "chat_turn")))
+
       assert wait_until(fn -> ProcJournal.restore_state(operative_id).parked end, 20_000),
              "the idle loop never parked at its committed boundary"
 
@@ -657,9 +664,9 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
              ]
 
       # The committed turns did not re-run: `chat_turn` commits one keyed Change
-      # per DISTINCT turn, so a re-run of iteration 0-2 would leave extra WAL
-      # records behind. Four turns ran in total, exactly once each.
-      assert wal_record_count(operative_id, "chat_turn") == 4,
+      # per DISTINCT turn, so a re-run of iteration 0-2 would add a Change.
+      # Counted compaction-proof — the boundary snapshots fold the early ones.
+      assert change_count(operative_id, "chat_turn") == 4,
              "a committed iteration re-ran on resume (resume-at-iteration broken)"
 
       # --- operator surface ---
@@ -677,7 +684,10 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       # journal keeps the offsets, the inbox keeps no payloads.
       assert ProcJournal.consumed_offset(operative_id) == 4
       assert ProcInbox.undelivered(operative_id) == []
-      assert ProcInbox.read(operative_id) == []
+
+      # The file cut is post-ack cleanup behind the reply the test waited on.
+      assert wait_until(fn -> ProcInbox.read(operative_id) == [] end, 10_000),
+             "the consumed inbox prefix was never released: #{inspect(ProcInbox.read(operative_id))}"
     end
 
     # Suspension is durable STATE, not a live process: a controller-side restart
@@ -1212,6 +1222,35 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
 
   # Count change-log records in a procedure's retained WAL file(s). The WAL is
   # a stream of `<seq::64><len::32><body::len><crc::32>` records.
+  defp snapshot_count(operative_id, procedure),
+    do: length(Registry.snapshot_paths({operative_id, procedure, ""}))
+
+  # Distinct Changes applied to the keyless Entity: the seqs still in its WAL
+  # plus everything its latest snapshot folded (seq 0..snapshot_seq).
+  defp change_count(operative_id, procedure) do
+    folded =
+      case Registry.snapshot_paths({operative_id, procedure, ""}) do
+        [] -> MapSet.new()
+        snaps -> snaps |> List.last() |> elem(0) |> then(&MapSet.new(0..&1//1))
+      end
+
+    [Registry.class_dir(operative_id), procedure, "*.wal"]
+    |> Path.join()
+    |> Path.wildcard()
+    |> Enum.flat_map(fn path -> wal_seqs(File.read!(path), []) end)
+    |> MapSet.new()
+    |> MapSet.union(folded)
+    |> MapSet.size()
+  end
+
+  defp wal_seqs(
+         <<seq::64-big, len::32-big, _body::binary-size(len), _crc::32-big, rest::binary>>,
+         acc
+       ),
+       do: wal_seqs(rest, [seq | acc])
+
+  defp wal_seqs(_, acc), do: acc
+
   defp wal_record_count(operative_id, procedure) do
     [Registry.state_root(), operative_id, procedure, "*.wal"]
     |> Path.join()

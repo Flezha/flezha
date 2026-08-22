@@ -82,3 +82,22 @@ inbox). Concurrent wake sources SHALL resolve to exactly one rehydration.
 
 - **WHEN** an inbox append and a timer deadline fire for the same suspended instance concurrently
 - **THEN** exactly one rehydration SHALL occur
+
+### Requirement: A rehydrated loop waits for the inbox tail it is owed before it parks
+
+The controller SHALL tell a rehydrating bind how many journaled, undelivered
+inbox items it will forward after the bind (`AddOperative.inbox_tail_count`),
+and the SDK loop SHALL NOT start its park-idle clock until that many items have
+arrived (bounded by an owed-tail wait of 60 s, after which it parks and the
+controller's rehydrate-if-pending forwards the tail again). A tail forwarded
+after the bind under load would otherwise reach a driver that has already
+parked and be dropped at the socket.
+
+#### Scenario: The tail arrives after the park idle would have expired
+- **WHEN** a suspended loop with one undelivered inbox item is rehydrated and the controller's forward of that item reaches the runner later than the park idle after the bind
+- **THEN** the loop SHALL still be waiting, consume the item, run the iteration and reply, and SHALL NOT have parked in between
+
+#### Scenario: Nothing owed
+- **WHEN** a loop binds with `inbox_tail_count = 0`
+- **THEN** its park-idle clock runs from the bind as before
+

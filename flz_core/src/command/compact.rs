@@ -32,7 +32,16 @@ impl CommandAction for CompactEntity {
         let mut snapshot_seq = 0u64;
         let mut snapshot_bytes_size = 0u64;
 
-        match crate::command::restore::find_entity_slot(runner, &self.entity_id) {
+        // A stream Entity lives in the stream registry; a workflow Entity in
+        // its instance's stage slots — the same two places a restore looks.
+        let slot =
+            crate::command::restore::find_entity_slot(runner, &self.entity_id).or_else(|| {
+                runner
+                    .find_workflow_entity(&self.entity_id)
+                    .map(|(_, slot)| slot)
+            });
+
+        match slot {
             Some(slot) => {
                 // The snapshot runs under the entity's handout exclusivity
                 // (no activation interleaves). A host-run Entity crosses a

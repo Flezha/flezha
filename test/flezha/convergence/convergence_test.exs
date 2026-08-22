@@ -1030,6 +1030,22 @@ defmodule Flezha.ConvergenceTest do
       assert {["eth_kraken"], _} = Loop.intent_mismatch(intent_for(["btc_kraken"]), cache)
     end
 
+    test "a finished workflow retained for inspection is not evidence", %{root: root} do
+      seed_entity(root, "btc_kraken", "op", "k1")
+      seed_entity(root, "done_workflow", "op", "k1")
+
+      :ok =
+        Flezha.State.Completion.write("done_workflow", %{
+          namespace: "ns",
+          status: "ok",
+          error: "",
+          result: "",
+          finished_at: 0
+        })
+
+      assert {["btc_kraken"], _} = Loop.intent_mismatch(intent_for([]), nil)
+    end
+
     test "durable-registry rows without live intent also count as evidence" do
       stub(HubManager, :durable_operative_ids, fn -> MapSet.new(["ghost_operative"]) end)
 

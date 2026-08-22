@@ -970,11 +970,16 @@ Each retry attempt issues a `Ping` control-channel round-trip via
 `Flezha.Runner.ControlUnit.ping_runner/2` before `AddOperative`. The
 ping traverses the same `ControlChannel → SDK → ControlChannel` path
 `AddOperative` uses, so a successful round-trip proves the channel is
-bound and the SDK reply path is intact. On timeout the Overwatch
-invokes `Flezha.Runner.FleetManager.reset_control_channel/1` to
-clear the `ControlChannel`'s `stream_ref` — the SDK's next data
-stream then claims it via the existing rebind path in
-`runner-controller-connection-healing`.
+bound and the SDK reply path is intact. A ping failure that reports a
+dead transport — and the retry ladder's LAST attempt, whatever its
+reason — makes the Overwatch invoke
+`Flezha.Runner.FleetManager.reset_control_channel/1` to clear the
+`ControlChannel`'s `stream_ref`, so the SDK's next data stream claims it
+via the existing rebind path in `runner-controller-connection-healing`.
+A ping that merely timed out on an earlier attempt does not reset: the
+runner is busy (a spawn storm, a commit burst), the channel is live and
+carries every other instance on that runner, and one instance's timeout
+must not cut it for all of them.
 
 The ping is gated by `:overwatch_ping_enabled` (default `true`); SDKs
 that haven't picked up the `Ping` handler can be accommodated by

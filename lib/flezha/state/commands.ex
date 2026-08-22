@@ -89,7 +89,10 @@ defmodule Flezha.State.Commands do
             snapshot_bytes: payload.snapshot_bytes,
             change_log_bytes: payload.change_log_bytes,
             has_compensation_intent: markers.intent,
-            has_compensation_done: markers.done
+            has_compensation_done: markers.done,
+            # A snapshot-only restore has no change-log record to re-arm
+            # the SDK's seq from; the hint covers the snapshot.
+            terminal_seq: max(payload.terminal_seq_hint, 0)
           }}}
     end
   end

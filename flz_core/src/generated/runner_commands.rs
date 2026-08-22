@@ -149,6 +149,11 @@ pub struct AddOperative {
     pub key_group_from: u32,
     #[prost(uint32, tag = "10")]
     pub key_group_to: u32,
+    /// Inbox items the Controller forwards after this bind (the journaled,
+    /// undelivered tail of a durable loop). The loop's park-idle clock starts
+    /// only once they have arrived.
+    #[prost(uint32, tag = "11")]
+    pub inbox_tail_count: u32,
 }
 /// SDK -> Controller, as the CommandResponse raw_data of AddOperative.
 /// Carries the operative class's SDK-side declarations (operative metadata)
@@ -472,6 +477,13 @@ pub struct RestoreInitState {
     pub has_compensation_intent: bool,
     #[prost(bool, tag = "5")]
     pub has_compensation_done: bool,
+    /// The highest seq the shipped state already covers — the snapshot's seq
+    /// when the change log is empty. The SDK re-arms the Entity's change seq
+    /// to `terminal_seq + 1`; deriving it from the change log alone restarted
+    /// a snapshot-only restore at 1 and the writer dropped the next changes
+    /// as duplicates.
+    #[prost(uint64, tag = "6")]
+    pub terminal_seq: u64,
 }
 /// SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
 /// is the highest WAL seq folded into State; the Controller expects the next

@@ -102,7 +102,7 @@ impl RunnerNode {
     /// stop), and converges on a single `WorkflowCompleted` teardown. Returns
     /// `false` when no workflow class is registered.
     pub fn start_workflow(&self, factory_id: String, instance_id: String, args: String) -> bool {
-        self.start_workflow_resumable(factory_id, instance_id, args, 0, None)
+        self.start_workflow_resumable(factory_id, instance_id, args, 0, 0, None)
     }
 
     /// Spawn a workflow unit that may be **resuming** after a crash: a durable
@@ -119,6 +119,7 @@ impl RunnerNode {
         instance_id: String,
         args: String,
         resume_entity_count: u32,
+        inbox_tail_count: u32,
         proc_journal: Option<crate::workflow::instance::JournalResume>,
     ) -> bool {
         if self.operative_registry.contains(&instance_id) {
@@ -144,6 +145,7 @@ impl RunnerNode {
             Arc::from(factory_id.as_str()),
             stage_entities,
             resume_entity_count as usize,
+            inbox_tail_count,
             proc_journal,
         );
         self.operative_registry

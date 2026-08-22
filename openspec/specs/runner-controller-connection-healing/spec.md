@@ -247,7 +247,7 @@ The SDK's `connect_control_channel` init write SHALL NOT panic the reader thread
 
 When the Controller restarts and `Flezha.Operative.Overwatch` GenServers come up from durable registry replay, each Overwatch SHALL probe the resolved Runner's end-to-end control-channel health via a `:ping_runner` round-trip BEFORE issuing `{:start_operative, …}` to the Runner's `ControlUnit`. The ping SHALL traverse the same `ControlChannel → SDK → ControlChannel` path that `AddOperative` uses, so a successful round-trip proves the channel is bound, the SDK is listening, and the reply path is intact.
 
-The ping SHALL use a default 2 s timeout (configurable via `:overwatch_ping_timeout_ms`, env `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`). On `:pong` the Overwatch SHALL proceed to `start_operative_sdk/2`. On timeout or `{:error, _}` the Overwatch SHALL invoke `Flezha.Runner.FleetManager.reset_control_channel/1` (clearing the `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it via the existing rebind path) and SHALL retry the whole sequence under the bounded-retry governor (see "Overwatch bounded retry + parked-error state").
+The ping SHALL use a default 2 s timeout (configurable via `:overwatch_ping_timeout_ms`, env `FLEZHA_OVERWATCH_PING_TIMEOUT_MS`). On `:pong` the Overwatch SHALL proceed to `start_operative_sdk/2`. On a ping error that reports a dead transport, and on the bounded-retry governor's LAST attempt whatever the reason, the Overwatch SHALL invoke `Flezha.Runner.FleetManager.reset_control_channel/1` (clearing the `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it via the existing rebind path). A ping that merely timed out on an earlier attempt SHALL NOT reset the channel: it is live and carries every other instance bound to that runner, and a busy runner is retried, not cut. Every failed attempt SHALL retry the whole sequence under the bounded-retry governor (see "Overwatch bounded retry + parked-error state").
 
 The new `:ping_runner` command and its `PingResponse` SHALL be carried by the existing `CommandRequest` / `CommandResponse` envelopes on the `"control_command"` payload_id; SDKs without the handler SHALL log and ignore (existing Protox unknown-field behaviour).
 
@@ -259,14 +259,18 @@ The new `:ping_runner` command and its `PingResponse` SHALL be carried by the ex
 - **AND** the Overwatch SHALL invoke `start_operative_sdk("e1", r1)` immediately afterwards
 - **AND** `reset_control_channel/1` SHALL NOT be invoked
 
-#### Scenario: Stale control channel causes ping timeout, channel reset, retry
+#### Scenario: Stale control channel causes ping failures, channel reset on the last attempt, retry
 - **GIVEN** a operative `r1` whose Overwatch has just resolved runner `e1`
 - **AND** `e1`'s `ControlChannel` GenServer is registered but its `stream_ref` points to a closed/stale transport (the SDK has reconnected since the last `AddOperative`)
-- **WHEN** the Overwatch issues `ping_runner("e1", timeout_ms: 2_000)`
-- **THEN** the call SHALL return `{:error, :timeout}`
-- **AND** the Overwatch SHALL call `FleetManager.reset_control_channel("e1")` which sets the channel's `stream_ref` to `nil`
-- **AND** the Overwatch SHALL NOT issue `start_operative_sdk/2` on the failed attempt
-- **AND** the Overwatch SHALL re-resolve the live runner and retry the ping under the bounded-retry governor's next backoff delay
+- **WHEN** the Overwatch issues `ping_runner("e1", timeout_ms: 2_000)` and it fails on every attempt of the bounded-retry governor
+- **THEN** the Overwatch SHALL NOT issue `start_operative_sdk/2` on any failed attempt
+- **AND** the Overwatch SHALL re-resolve the live runner and retry the ping under the governor's backoff delays
+- **AND** on the last attempt the Overwatch SHALL call `FleetManager.reset_control_channel("e1")` which sets the channel's `stream_ref` to `nil`
+
+#### Scenario: A busy runner's timed-out ping does not cut the live channel
+- **GIVEN** runner `e1` is bound to a hundred instances and its control channel is saturated by their starts
+- **WHEN** one Overwatch's first ping attempt returns `{:error, :timeout}` and a later attempt returns `{:ok, :pong}`
+- **THEN** `reset_control_channel("e1")` SHALL NOT have been invoked and no other instance on `e1` SHALL have seen `{:error, :no_connection_available}`
 
 ### Requirement: Overwatch bounded retry + parked-error state
 

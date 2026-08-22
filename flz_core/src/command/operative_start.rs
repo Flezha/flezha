@@ -43,6 +43,7 @@ impl CommandAction for AddOperative {
                     instance_id.clone(),
                     self.init_values.clone(),
                     self.resume_entity_count,
+                    self.inbox_tail_count,
                     self.proc_journal.as_ref().map(Into::into),
                 ) {
                     errors.push(format!(

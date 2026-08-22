@@ -129,7 +129,8 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     assert {:error, %{reason: reason}} = OperativeManager.start_operative(@namespace, operative)
     assert match?({:ping_failed, :timeout}, reason)
 
-    # Every failed attempt MUST reset the control channel.
+    # An exhausted ladder resets the control channel (the last attempt's
+    # timeout is taken as a dead transport).
     assert_receive :channel_reset, 1_000
     assert_receive :ping_called, 1_000
   end
@@ -151,7 +152,10 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
       end
     end)
 
-    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _ -> :ok end)
+    Application.put_env(:flezha, :overwatch_reset_channel_fn, fn _runner_id ->
+      send(test_pid, :channel_reset)
+      :ok
+    end)
 
     plugin = %Plugin{
       id: "transient_plugin",
@@ -172,6 +176,10 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
     assert_receive {:ping_attempt, 2}, 1_000
     assert_receive {:ping_attempt, 3}, 1_000
     assert_receive :activated, 2_000
+
+    # A timed-out ping within the ladder is a busy runner, not a dead
+    # transport: the live channel must not have been reset.
+    refute_received :channel_reset
 
     # 5.6: phase transitions :prepared → :running exactly once.
     state = GenServer.call(pid, :get_overwatch_state)

@@ -115,6 +115,15 @@ defmodule Flezha.State.Supervisor do
     ])
   end
 
+  @doc """
+  Stop every live writer of `operative_class`; the files stay. What a stopped
+  operative owes whether its state is deleted or retained for inspection.
+  """
+  @spec close_writers(String.t()) :: :ok
+  def close_writers(operative_class) do
+    Enum.each(live_writers(operative_class), &WalWriter.close/1)
+  end
+
   @doc "Every registered writer id — Entity writers and input logs alike."
   @spec registered_ids() :: [tuple()]
   def registered_ids() do

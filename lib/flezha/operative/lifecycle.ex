@@ -273,6 +273,10 @@ defmodule Flezha.Operative.Lifecycle do
         :proc_journal,
         if(kind == :workflow, do: Commands.proc_journal_state(operative_class))
       )
+      |> Keyword.put(
+        :inbox_tail_count,
+        if(kind == :workflow, do: length(ProcInbox.undelivered(operative_class)), else: 0)
+      )
 
     %{operative | opts: opts}
   end
@@ -295,7 +299,7 @@ defmodule Flezha.Operative.Lifecycle do
 
     state = %Overwatch{state | runner_id: runner_id}
 
-    case attempt_ping_and_start(operative, runner_id) do
+    case attempt_ping_and_start(operative, runner_id, last_attempt?: rest == []) do
       {:ok, raw_data} ->
         {:ok, runner_id, raw_data, state}
 
@@ -313,12 +317,15 @@ defmodule Flezha.Operative.Lifecycle do
     end
   end
 
-  # On ping failure, reset the underlying `ControlChannel`'s `stream_ref`
-  # so the SDK's next data stream can claim it via the existing rebind
-  # path (`runner-controller-connection-healing`). `:start_operative` is
-  # only issued AFTER the ping confirms the round-trip works.
+  # `:start_operative` is only issued AFTER the ping confirms the round trip
+  # works. A ping failure that says the transport is dead resets the
+  # `ControlChannel`'s `stream_ref` so the SDK's next data stream can claim it
+  # via the rebind path (`runner-controller-connection-healing`). A ping that
+  # merely TIMED OUT is a busy runner until the retry ladder says otherwise:
+  # the channel it would reset is live and carries every other instance on
+  # that runner, so only the ladder's last attempt may reset on a timeout.
   @doc false
-  def attempt_ping_and_start(operative, runner_id) do
+  def attempt_ping_and_start(operative, runner_id, opts \\ []) do
     case ping_runner(runner_id) do
       :ok ->
         case start_operative_sdk(runner_id, operative) do
@@ -327,10 +334,24 @@ defmodule Flezha.Operative.Lifecycle do
         end
 
       {:error, reason} ->
-        _ = reset_control_channel(runner_id)
+        if reset_on_ping_failure?(reason, Keyword.get(opts, :last_attempt?, false)) do
+          _ = reset_control_channel(runner_id)
+        end
+
         {:error, {:ping_failed, reason}}
     end
   end
+
+  defp reset_on_ping_failure?(reason, last_attempt?),
+    do: last_attempt? or not timeout_class?(reason)
+
+  # A busy runner shows up as a timeout in three shapes: the ping's own, the
+  # ControlUnit's call into a channel that is busy, and the ControlUnit
+  # having exited on such a call. None of them says the transport is dead.
+  defp timeout_class?(:timeout), do: true
+  defp timeout_class?({:control_unit_exit, {{:timeout, _}, _}}), do: true
+  defp timeout_class?({:control_unit_exit, {:timeout, _}}), do: true
+  defp timeout_class?(_), do: false
 
   # `:overwatch_ping_fn` / `:overwatch_reset_channel_fn` are test-only
   # function-injection hooks (Mimic cannot stub across the dist_sup-spawned
@@ -419,6 +440,7 @@ defmodule Flezha.Operative.Lifecycle do
     %Flezha.Operative.Builder{
       id: state.id,
       factory_id: state.factory_id,
+      kind: state.builder.kind,
       init_values: init_values,
       opts: Keyword.take(state.builder.opts, Flezha.Partition.opt_keys())
     }
@@ -553,7 +575,11 @@ defmodule Flezha.Operative.Lifecycle do
   # undelivered input is never left suspended. Applied wherever suspension is
   # entered — at the park, and at boot from durable state.
   @spec rehydrate_if_pending(Overwatch.t()) :: Overwatch.t()
-  defp rehydrate_if_pending(%Overwatch{} = state) do
+  @doc "Rehydrate a suspended instance that still owes an undelivered inbox tail."
+  @spec rehydrate_if_pending(Overwatch.t()) :: Overwatch.t()
+  def rehydrate_if_pending(%Overwatch{suspended: false} = state), do: state
+
+  def rehydrate_if_pending(%Overwatch{} = state) do
     if ProcInbox.undelivered(state.id) == [], do: state, else: rehydrate(state)
   end
 
@@ -687,6 +713,10 @@ defmodule Flezha.Operative.Lifecycle do
     # arrives. The park/rehydrate cycle costs a bind; stranding the turn would
     # cost correctness. `RemOperative` is already enqueued on the control
     # stream, so the rehydrating `AddOperative` cannot overtake it.
+    # Parked while an un-park was still binding: the task's result must not
+    # resurrect a binding the runner has just torn down.
+    state = %Overwatch{state | parked_in_flight: state.migrate_task != nil}
+
     state
     |> enter_suspended(%{iter: iter, wake_deadline_ms: wake_deadline_ms, parked: true})
     |> rehydrate_if_pending()
@@ -769,6 +799,13 @@ defmodule Flezha.Operative.Lifecycle do
   funnels through, `rehydrate/1` included.
   """
   @spec apply_migrate_result(Overwatch.t(), tuple()) :: Overwatch.t()
+  def apply_migrate_result(%Overwatch{parked_in_flight: true} = state, {:unparked, _recovered}) do
+    # The driver found its inbox empty and parked before this bind reported,
+    # so the bound state is stale; the suspension stands and the tail that
+    # was journaled meanwhile wakes it again.
+    rehydrate_if_pending(%Overwatch{state | migrate_task: nil, parked_in_flight: false})
+  end
+
   def apply_migrate_result(state, {:unparked, recovered}) do
     Logger.info("[Overwatch] operative #{state.id} un-parked onto runner #{recovered.runner_id}")
 
@@ -778,7 +815,7 @@ defmodule Flezha.Operative.Lifecycle do
   end
 
   def apply_migrate_result(_state, {:park, parked, err}) do
-    %{park(parked, err) | migrate_task: nil}
+    %{park(parked, err) | migrate_task: nil, parked_in_flight: false}
   end
 
   # ---------------------------------------------------------------

@@ -526,7 +526,15 @@ defmodule Flezha.Convergence.Loop do
     {dirs, cache} = state_root_dirs(cache)
     evidence = MapSet.union(MapSet.new(dirs), HubManager.durable_operative_ids())
 
-    {evidence |> MapSet.difference(live) |> Enum.sort(), cache}
+    # A finished workflow's state is retained for inspection on purpose
+    # (`Flezha.State.Completion`): intent fulfilled, not intent lost.
+    mismatch =
+      evidence
+      |> MapSet.difference(live)
+      |> Enum.reject(&Flezha.State.Completion.exists?/1)
+      |> Enum.sort()
+
+    {mismatch, cache}
   end
 
   @doc false

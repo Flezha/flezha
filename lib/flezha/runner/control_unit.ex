@@ -285,6 +285,7 @@ defmodule Flezha.Runner.ControlUnit do
       # until this many Entity restores land (crash-resume). `proc_journal` is
       # `nil` unless the instance has a journal to resume from.
       resume_entity_count: Keyword.get(operative.opts, :resume_entity_count, 0),
+      inbox_tail_count: Keyword.get(operative.opts, :inbox_tail_count, 0),
       proc_journal: Keyword.get(operative.opts, :proc_journal)
     }
 
