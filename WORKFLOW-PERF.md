@@ -366,16 +366,23 @@ The clean keep/boot re-take (§5.3) is the measurement after the fix.
 
 ## 7. Follow-ups
 
+Open:
+
 1. Implement `workflow-durable-path-throughput` (proposal, design, specs,
-   tasks in `openspec/changes/`; validates `--strict`). Every storm number in
-   this report is its acceptance bar.
-2. Push process-hub `bb49842` and bump the `mix.lock` pin.
-3. §6.13 — where per-sleeper memory goes; the resting report names the
-   processes.
-4. (nothing — the single-loop wedge folded into §6.8: it is the
-   O(history)-per-turn cost, not a distinct defect.)
-5. Java and Elixir bench fixtures (cross-SDK rule) with the OpenSpec change.
-6. A churn soak at a sustainable wake rate once the barrier path is batched.
+   tasks in `openspec/changes/`; validates `--strict`; 0/17 tasks). Every
+   storm number in this report is its acceptance bar. This is the one large
+   architectural item.
+2. The crash-resume redo-vs-skip failures (`workflow_crash_resume_e2e_test.exs`
+   `:89`/`:125`) — pre-existing and unowned (the 12-failure set at HEAD on
+   2026-08-20), not caused by this campaign; its own session.
+3. Java and Elixir bench fixtures (cross-SDK rule) with the OpenSpec change;
+   the kernel fixes are already in `flz_core`, so Java inherits them.
+4. A churn soak at a sustainable wake rate once the barrier path is batched.
+
+Done this campaign (were follow-ups): process-hub `bb49842`/`8e60760`/`a95a222`
+pushed and the pin bumped (`d097029b`); §6.13 (hibernating sleepers, `2f8ea418`
+era); the opted-out terminal emit (§6.6, `33c13fe9`); the single-loop "wedge"
+was diagnosed as §6.8, not a distinct defect.
 
 ## 8. Where things are
 
