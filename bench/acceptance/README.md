@@ -47,9 +47,18 @@ bench/acceptance/run.sh --profile standard --repeat 5 --save-baseline
 
 - **While it runs:** one line per run —
   `[chain_4 2/3 rt=rust] scenario=chain throughput=90.1 unit=workflows/s p50_ms=194 integrity=clean`.
-- **At the end:** a median table (throughput, p50, integrity, vs baseline) printed
-  and written to `summary.<profile>.md`, plus a one-line verdict:
-  `all cells within tolerance` or `REGRESSION / INTEGRITY FAILURE`.
+- **At the end:** a median table (throughput, p50, **peak MiB**, **fsync p99
+  ms**, integrity, vs baseline) printed and written to `summary.<profile>.md`,
+  plus a one-line verdict: `all cells within tolerance` or
+  `REGRESSION / INTEGRITY FAILURE`.
+- **Resource columns are context, not a gate.** `peak MiB` is the controller
+  BEAM's peak memory during the run (a tiny 250 ms sampler process — no
+  `/proc`, no observer effect), the real capacity signal; `fsync p99 ms` is
+  the slowest Entity's WAL fsync p99 — it tells you when the **disk**, not the
+  engine, is the ceiling. Only throughput and integrity gate a regression;
+  peak and fsync are reported so you can watch their variance before deciding
+  to gate them. Neither covers the runner processes' RAM or any CPU — see the
+  limits below.
 - **Regression rule:** a cell fails if its median throughput is **>15 % below**
   the baseline, or its integrity is not `clean`. 5–15 % shows as ⚠, a gain as ✅.
 - **Integrity** is `clean` / `loss` (a missing or duplicated record — always a
@@ -113,6 +122,11 @@ Run `mix bench.workflow` with no matching cell to see the full flag list.
   slow, not a regression, until that change is in.
 - **QUIC** works but first-connects are slower than UDS; the harness gives it a
   wider connect budget, but a cold run may still need a retry under load.
+- **Resources are partial.** `peak MiB` is the controller BEAM only (not the
+  Rust/Java runner processes' RSS), and there is **no CPU** metric — both were
+  deliberate: runner RSS and CPU on a shared box are noisy and would need a
+  `/proc` sampler with an observer effect. Peak BEAM memory and fsync p99 are
+  in-VM, stable, and near-free, so they were worth adding; the rest was not.
 
 ## Files
 

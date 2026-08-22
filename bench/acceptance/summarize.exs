@@ -29,10 +29,18 @@ rows =
         num = fn v -> case v && Float.parse(v) do {n, _} -> n; _ -> nil end end
         tp = num.(Map.get(f, "throughput")) || 0.0
         p50 = num.(Map.get(f, "p50_ms"))
+        peak = num.(Map.get(f, "peak_mb"))
+        fsync = num.(Map.get(f, "fsync_p99_ms"))
         integ = Map.get(f, "integrity", "stall")
-        Map.update(acc, name, %{runtime: runtime, tp: [tp], p50: (p50 && [p50]) || [], integ: [integ]}, fn e ->
-          %{e | tp: [tp | e.tp], p50: (p50 && [p50 | e.p50]) || e.p50, integ: [integ | e.integ]}
-        end)
+        upd = fn l, v -> if(v, do: [v | l], else: l) end
+        Map.update(
+          acc,
+          name,
+          %{runtime: runtime, tp: [tp], p50: upd.([], p50), peak: upd.([], peak), fsync: upd.([], fsync), integ: [integ]},
+          fn e ->
+            %{e | tp: [tp | e.tp], p50: upd.(e.p50, p50), peak: upd.(e.peak, peak), fsync: upd.(e.fsync, fsync), integ: [integ | e.integ]}
+          end
+        )
 
       _ ->
         acc
@@ -55,13 +63,14 @@ order =
 
 meds =
   Enum.map(order, fn name ->
-    e = Map.get(rows, name, %{runtime: "?", tp: [0.0], p50: [], integ: ["stall"]})
+    e = Map.get(rows, name, %{runtime: "?", tp: [0.0], p50: [], peak: [], fsync: [], integ: ["stall"]})
     worst_integ = cond do
       "stall" in e.integ -> "stall"
       "loss" in e.integ -> "loss"
       true -> "clean"
     end
-    {name, e.runtime, median.(e.tp), (e.p50 != [] && median.(e.p50)) || nil, worst_integ, length(e.tp)}
+    med = fn xs -> if(xs == [], do: nil, else: median.(xs)) end
+    {name, e.runtime, median.(e.tp), med.(e.p50), med.(e.peak), med.(e.fsync), worst_integ, length(e.tp)}
   end)
 
 baseline =
@@ -94,13 +103,13 @@ verdict = fn name, tp, integ ->
   end
 end
 
-header = "| cell | runtime | median throughput | p50 ms | integrity | n | vs baseline |\n|---|---|---|---|---|---|---|\n"
+header = "| cell | runtime | median throughput | p50 ms | peak MiB | fsync p99 ms | integrity | n | vs baseline |\n|---|---|---|---|---|---|---|---|---|\n"
 body =
-  Enum.map_join(meds, "\n", fn {name, rt, tp, p50, integ, n} ->
-    "| #{name} | #{rt} | #{Float.round(tp, 1)} | #{p50 || "—"} | #{integ} | #{n} | #{verdict.(name, tp, integ)} |"
+  Enum.map_join(meds, "\n", fn {name, rt, tp, p50, peak, fsync, integ, n} ->
+    "| #{name} | #{rt} | #{Float.round(tp, 1)} | #{p50 || "—"} | #{(peak && round(peak)) || "—"} | #{fsync || "—"} | #{integ} | #{n} | #{verdict.(name, tp, integ)} |"
   end)
 
-any_fail = Enum.any?(meds, fn {name, _rt, tp, _p50, integ, _n} ->
+any_fail = Enum.any?(meds, fn {name, _rt, tp, _p50, _peak, _fsync, integ, _n} ->
   integ != "clean" or (Map.has_key?(baseline, name) and baseline[name] > 0 and (baseline[name] - tp) / baseline[name] * 100 > 15)
 end)
 
@@ -112,7 +121,7 @@ IO.puts(header <> body)
 IO.puts("")
 
 if save? do
-  File.write!(baseline_path, Enum.map_join(meds, "\n", fn {n, _rt, tp, _p50, _i, _c} -> "#{n}\t#{Float.round(tp, 2)}" end) <> "\n")
+  File.write!(baseline_path, Enum.map_join(meds, "\n", fn {n, _rt, tp, _p50, _pk, _fs, _i, _c} -> "#{n}\t#{Float.round(tp, 2)}" end) <> "\n")
   IO.puts("Baseline saved to #{baseline_path} (#{length(meds)} cells).")
 else
   IO.puts(if(any_fail, do: "RESULT: REGRESSION / INTEGRITY FAILURE", else: "RESULT: all cells within tolerance"))

@@ -104,12 +104,48 @@ defmodule Mix.Tasks.Bench.Workflow do
     Process.put(:bench_runtime, runtime)
 
     print_header(cfg)
+    start_mem_sampler()
 
-    case cfg.scenario do
-      :chain -> run_chain(cfg, counters)
-      :turns -> run_turns(cfg, counters)
-      :sleep -> run_sleep(cfg, counters)
-      :sleep_boot -> run_sleep_boot(cfg, counters, boot_t0)
+    try do
+      case cfg.scenario do
+        :chain -> run_chain(cfg, counters)
+        :turns -> run_turns(cfg, counters)
+        :sleep -> run_sleep(cfg, counters)
+        :sleep_boot -> run_sleep_boot(cfg, counters, boot_t0)
+      end
+    after
+      stop_mem_sampler()
+    end
+  end
+
+  # Peak BEAM memory across the run, tracked by a tiny sampler process (a
+  # 250 ms tick, ~4 reads/s — off the collector's hot path, so it captures a
+  # mid-run spike a busy receive loop would miss and adds no measurable load).
+  # The max lives in an :atomics cell; the run's summary reads it at the end.
+  defp start_mem_sampler do
+    ref = :atomics.new(1, [])
+    Process.put(:mem_peak_ref, ref)
+    Process.put(:mem_peak_pid, spawn_link(fn -> mem_sample_loop(ref) end))
+  end
+
+  defp mem_sample_loop(ref) do
+    cur = :erlang.memory(:total)
+    if cur > :atomics.get(ref, 1), do: :atomics.put(ref, 1, cur)
+    Process.sleep(250)
+    mem_sample_loop(ref)
+  end
+
+  defp stop_mem_sampler do
+    case Process.get(:mem_peak_pid) do
+      pid when is_pid(pid) -> Process.unlink(pid); Process.exit(pid, :kill)
+      _ -> :ok
+    end
+  end
+
+  defp mem_peak_mb do
+    case Process.get(:mem_peak_ref) do
+      ref when not is_nil(ref) -> div(max(:atomics.get(ref, 1), :erlang.memory(:total)), 1_048_576)
+      _ -> mib(:erlang.memory(:total))
     end
   end
 
@@ -1021,6 +1057,10 @@ defmodule Mix.Tasks.Bench.Workflow do
   # A single machine-readable summary line the acceptance runner greps:
   # `BENCH_RESULT k=v ...`. Additive to the human summary above it.
   defp emit_result(kv) do
+    # Peak memory (capacity signal) and fsync p99 (is the disk the ceiling?)
+    # ride every result — both read from in-VM state already computed, so no
+    # sampler, no /proc, no observer effect.
+    kv = kv ++ [peak_mb: mem_peak_mb(), fsync_p99_ms: Tally.fsync_p99_ms()]
     fields = Enum.map_join(kv, " ", fn {k, v} -> "#{k}=#{fmt_field(v)}" end)
     IO.puts("BENCH_RESULT #{fields}")
   end
