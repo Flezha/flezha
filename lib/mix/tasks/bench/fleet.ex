@@ -137,7 +137,14 @@ defmodule Mix.Tasks.Bench.Fleet do
     # The elixir_runner app boots a whole flezha + SDK; if it is not pre-built
     # its first `mix run` compiles, so give it a wide connect budget. Pre-build
     # it for the target env (`cd test/apps/elixir_runner && MIX_ENV=prod mix compile`).
-    connect_timeout = if runtime == :elixir, do: 120_000, else: 5_000
+    # Java's JVM + Spring/JPA cold start easily exceeds a few seconds; the
+    # Elixir runner compiles a whole flezha on first `mix run`.
+    connect_timeout =
+      case runtime do
+        :elixir -> 120_000
+        :java -> 60_000
+        _ -> 5_000
+      end
 
     Flezha.Service.EventManager.add_handler(:runner_connected_event)
 

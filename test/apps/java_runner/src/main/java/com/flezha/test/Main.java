@@ -33,6 +33,11 @@ public final class Main {
                 .defineWorkflow(CommitBlockWorkflowOperative.class)
                 .defineWorkflow(SagaBlockWorkflowOperative.class)
                 .defineWorkflow(DiamondWorkflowOperative.class)
+                .defineWorkflow(BenchChain1WorkflowOperative.class)
+                .defineWorkflow(BenchChain4WorkflowOperative.class)
+                .defineWorkflow(BenchChain16WorkflowOperative.class)
+                .defineWorkflow(BenchChainOptOut4WorkflowOperative.class)
+                .defineWorkflow(BenchLoopWorkflowOperative.class)
                 .run();
     }
 

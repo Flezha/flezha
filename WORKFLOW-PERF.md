@@ -31,7 +31,7 @@ are indicative, not publishable.
 | Harness | `mix bench.workflow` (`lib/mix/tasks/bench/workflow.ex`) on the shared `Mix.Tasks.Bench.Fleet`; the roundtrip tally (bit per seq for loss/dup + 10 µs histogram) extracted into `Mix.Tasks.Bench.Tally` and used by both benches; `Fleet.start_runners` keeps the runner ports so a cell can SIGKILL one |
 | Fixtures | `test/apps/rust_runner/src/main.rs`: `bench_chain_{1,4,16}` (durable K-proc chains of the e2e's `durable_step!`, every edge codec'd, sink at the end), `bench_chain_optout_4` (persistence off), `bench_loop_workflow` (the `chat_loop_workflow` shape — BenchTurn → ChatReply, `PerInput`, bounded state, 24 h backstop, `wake_after` from `FLEZHA_BENCH_WAKE_AFTER_MS`) |
 | Measurement | seq + send timestamp in the payload (spawn args for a chain, the turn for a loop); `BeamMsgForward` sink into the bench process; telemetry for `completed` / `suspended` / `rehydrating` / `proc_commit` / `iter_commit`; every cell reports loss, duplicates, state dir, BEAM memory, process kinds; a stalled cell prints the journal / inbox / Overwatch state of the instances that never answered and the control processes' queues |
-| SDKs | Rust only. The cross-SDK rule owes Java and Elixir fixtures to the follow-up that lands `workflow-durable-path-throughput`; the kernel fixes (§6.1, §6.9, §6.12) are in `flz_core` and serve Java through it |
+| SDKs | Rust and **Java** (`--runtime rust\|java`): the same five fixtures exist in the Java runner (`bench_chain_{1,4,16}`, `bench_chain_optout_4`, `bench_loop_workflow`), verified end to end (4-proc chain 285 commits/s, loop 19 turns/s, zero loss). The Elixir SDK defers workflow operatives entirely (persistence/workflow are v1 non-goals), so `--runtime elixir` is refused — there is nothing to port. The kernel fixes (§6.1, §6.9, §6.12) are in `flz_core`, so Java inherits them |
 
 Scenarios: `chain` (spawn N run-once chains: burst / closed loop `-c` / open loop
 `--rate`), `turns` (L loops × T turns, paced or unpaced under an in-flight cap,
@@ -382,9 +382,12 @@ Open:
    correct (`committed_proc_idxs: [0, 1]`). Remaining: a pre-existing
    java/quic runner-connect flake ("temporary test runner not connected"),
    unrelated.
-3. Java and Elixir bench fixtures (cross-SDK rule) with the OpenSpec change;
-   the kernel fixes are already in `flz_core`, so Java inherits them.
-4. A churn soak at a sustainable wake rate once the barrier path is batched.
+3. A churn soak at a sustainable wake rate once the barrier path is batched.
+
+Done this campaign (were follow-ups): Java bench fixtures — `mix bench.workflow
+--runtime java` runs `bench_chain_{1,4,16}`, `bench_chain_optout_4`,
+`bench_loop_workflow` on the Java runner (Elixir is N/A: its SDK has no
+workflow operatives).
 
 Done this campaign (were follow-ups): process-hub `bb49842`/`8e60760`/`a95a222`
 pushed and the pin bumped (`d097029b`); §6.13 (hibernating sleepers, `2f8ea418`

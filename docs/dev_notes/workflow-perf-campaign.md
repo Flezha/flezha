@@ -115,4 +115,12 @@ extracted); fixtures `bench_chain_{1,4,16}`, `bench_chain_optout_4`,
   (`workflow-operative-lifecycle`), the ping reset rule
   (`runner-controller-connection-healing`); process-hub's
   `registry-convergence` (two-rounds undeclared stop, round measurements).
+- `mix bench.workflow --runtime java` runs the workflow bench on the Java
+  runner (`test/apps/java_runner`): the five fixtures mirror the Rust ones,
+  the durable chain steps are `BenchSteps.S0..S15` (PUBLIC static nested —
+  the SDK reflects on them, a package-private class fails topology validation),
+  and `BenchSteps.chain(c, procs)` builds `in -> S0 -> ... -> sink`. Elixir is
+  N/A (SDK defers workflows). Fleet's Java connect budget is 60 s (JVM/Spring
+  cold start > the rust 5 s). Build the jar with `mvn -f
+  test/apps/java_runner/pom.xml package` before `--runtime java`.
 

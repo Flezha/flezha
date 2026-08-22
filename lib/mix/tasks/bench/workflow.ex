@@ -67,7 +67,8 @@ defmodule Mix.Tasks.Bench.Workflow do
     spawn_concurrency: :integer,
     wake_rate: :integer,
     warm_turn: :boolean,
-    no_wake: :boolean
+    no_wake: :boolean,
+    runtime: :string
   ]
 
   def run(args) do
@@ -80,6 +81,7 @@ defmodule Mix.Tasks.Bench.Workflow do
     if invalid != [], do: raise("unknown options: #{inspect(invalid)}")
 
     cfg = config(opts)
+    runtime = parse_runtime(opts[:runtime])
 
     log_level = String.to_atom(System.get_env("BENCH_LOG_LEVEL", "warning"))
     Logger.configure(level: log_level)
@@ -99,7 +101,7 @@ defmodule Mix.Tasks.Bench.Workflow do
     Mix.Task.run("app.start")
     Logger.configure(level: log_level)
     Fleet.preload_code()
-    Process.put(:bench_runtime, :rust)
+    Process.put(:bench_runtime, runtime)
 
     print_header(cfg)
 
@@ -110,6 +112,17 @@ defmodule Mix.Tasks.Bench.Workflow do
       :sleep_boot -> run_sleep_boot(cfg, counters, boot_t0)
     end
   end
+
+  # The Elixir SDK defers workflow operatives (persistence/workflow are v1
+  # non-goals), so this bench runs the Rust and Java runners only.
+  defp parse_runtime(nil), do: :rust
+  defp parse_runtime("rust"), do: :rust
+  defp parse_runtime("java"), do: :java
+
+  defp parse_runtime("elixir"),
+    do: raise("the Elixir SDK has no workflow operatives; --runtime rust|java")
+
+  defp parse_runtime(other), do: raise("unknown --runtime #{inspect(other)}; expected rust|java")
 
   # ---------------------------------------------------------------- config --
 
@@ -178,6 +191,7 @@ defmodule Mix.Tasks.Bench.Workflow do
       turns/inst:   #{if cfg.scenario == :turns, do: cfg.turns, else: "-"}
       concurrency:  #{if cfg.concurrency > 0, do: cfg.concurrency, else: "burst (≤#{cfg.spawn_concurrency} starts in flight)"}
       rate:         #{if cfg.rate == 0, do: "unpaced", else: "#{cfg.rate}/s"}
+      runtime:      #{Process.get(:bench_runtime, :rust)}
       runners:      #{cfg.runners}
       park idle:    #{cfg.park_idle_ms} ms#{if cfg.wake_after_ms, do: ", wake after #{cfg.wake_after_ms} ms", else: ""}
     """)
