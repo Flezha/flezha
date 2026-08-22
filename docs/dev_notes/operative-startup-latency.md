@@ -72,7 +72,11 @@ pays and how many starts share one.
   `start_child` of the same id reports `:not_found` — the Coordinator composes
   the stop before the start has registered; that is the API's pre-existing
   semantics, not the merge. Each request runs against the hub snapshot it was
-  dispatched with.
+  dispatched with. Kept on evidence: with the pre-merge WorkerQueue swapped
+  back in, 1000 operatives take 4.0–4.2 s instead of 1.0–1.1 s and a `-p 4`
+  create 100 ms instead of 20 — once the other serialisation points are
+  gone, this is the only thing stopping registrations from paying one sync
+  each.
 * **The declared manifest is written once per batch (process_hub).** The
   batch's working manifest lives in `hub.declared_unsynced`; `apply_mutation`
   builds on it and answers `{:pending, manifest}` without writing, and
