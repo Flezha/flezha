@@ -96,4 +96,14 @@ extracted); fixtures `bench_chain_{1,4,16}`, `bench_chain_optout_4`,
   a thousand sleepers degraded and healed them; the rehydrating bind replays
   the cspec plugins anyway. Open question of the same shape: a parked
   (`init_error`) instance has a pid and no binding too.
+- No OpenSpec change carried these fixes, so the base specs were edited
+  directly and validate `--strict`: restore re-arm (`operative-state-persistence`),
+  CompactEntity on workflow Entities + closed writers (same), the boundary
+  snapshot scenario (`workflow-durable-loop`), retained completions, suspended
+  plugin diff and the migrate kind (`convergence-self-healing`), hibernate,
+  the park-during-un-park rule and the inbox-tail gate
+  (`workflow-durable-suspension`), the teardown drain
+  (`workflow-operative-lifecycle`), the ping reset rule
+  (`runner-controller-connection-healing`); process-hub's
+  `registry-convergence` (two-rounds undeclared stop, round measurements).
 

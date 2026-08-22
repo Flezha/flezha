@@ -71,12 +71,17 @@ The SDK SHALL provide a loop construct usable inside a Procedure/`run` that repe
 
 ### Requirement: All exit triggers converge on one terminal teardown
 
-Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative.
+Every exit trigger SHALL drive the single existing `WorkflowCompleted` teardown, in order: cancel in-flight work → run compensation if terminating abnormally (see `workflow-operative-saga`) → emit completion (status `ok | error | cancelled` plus result/error payload) → deregister, disable plugins, release quota, and start the finished-job retention timer (see `workflow-operative-durability`). There SHALL NOT be a second teardown codepath, and convergence SHALL never restart or rebind a terminal workflow operative. Before a durable instance is deregistered, the teardown SHALL re-drive and wait (bounded) for every outbox entry its journal still owes, so the last procedure's output — flushed after its commit ack — is never torn down under; an entry still owed past the bound stays journaled.
 
 #### Scenario: Teardown is identical across triggers
 
 - **WHEN** a workflow operative terminates by chain completion, `ctx.complete`, loop exit, duration, or external stop
 - **THEN** the Controller SHALL run the same teardown and convergence SHALL NOT act on it
+
+#### Scenario: The last output is delivered before the teardown
+
+- **WHEN** a durable chain completes with its final procedure's outbox journaled but not yet flushed
+- **THEN** the Controller SHALL flush it to the sink before the instance is deregistered
 
 #### Scenario: Completion carries a result/error payload
 

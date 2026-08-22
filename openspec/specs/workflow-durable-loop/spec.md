@@ -23,6 +23,11 @@ carry `iter = N`. Loop termination semantics (terminal predicate, cancellation,
 - **WHEN** a looping workflow operative finishes iteration N
 - **THEN** the journal SHALL hold `iter_committed(N)` with the consumed inbox offset, the entities SHALL have a boundary snapshot requested, and iteration N's outbox SHALL be flushed
 
+#### Scenario: The boundary snapshot lands for a workflow Entity
+
+- **WHEN** two iterations have committed for a looping instance whose procedure holds Entity state
+- **THEN** a snapshot file SHALL exist for that Entity and the WAL SHALL hold only the records above it
+
 #### Scenario: Snapshot failure does not lose the commit
 
 - **WHEN** the boundary snapshot compaction fails after `iter_committed(N)` is durable

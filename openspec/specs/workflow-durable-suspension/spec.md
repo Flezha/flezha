@@ -43,6 +43,14 @@ occur at a committed iteration boundary; a mid-iteration `recv` SHALL block in
 memory as today. An eviction-hysteresis knob SHALL avoid park/rehydrate thrash
 under trickling input.
 
+The suspended Overwatch SHALL hibernate: a sleeper holds nothing of its bind on
+its heap (the restore frames and plugin setup are garbage once it parks).
+
+#### Scenario: A sleeper costs the controller a minimal heap
+
+- **WHEN** an instance parks
+- **THEN** its Overwatch SHALL be hibernated, and a resting population SHALL cost the controller on the order of tens of KiB per sleeper, not the bind's working set
+
 #### Scenario: Idle chat operative frees the runner
 
 - **WHEN** a looping instance commits iteration N and its inbox stays empty past the idle threshold
@@ -77,6 +85,11 @@ inbox). Concurrent wake sources SHALL resolve to exactly one rehydration.
 
 - **WHEN** an instance parked with a wake deadline reaches that deadline with no input
 - **THEN** it SHALL be rehydrated and the loop SHALL observe a timer wake (not an input item)
+
+#### Scenario: A park landing during an un-park keeps the suspension
+
+- **WHEN** the rehydrated driver parks again before the un-park task has reported its bound state
+- **THEN** the Overwatch SHALL stay suspended (the runner has already torn the instance down) and SHALL rehydrate again only if the inbox still owes undelivered input — the task's stale bound state SHALL NOT be adopted
 
 #### Scenario: Racing wake sources rehydrate once
 

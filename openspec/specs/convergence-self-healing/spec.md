@@ -130,7 +130,7 @@ All marker reads SHALL be off-path at the convergence tick cadence, reusing coun
 
 ### Requirement: An empty intended set with durable evidence of intent is never vacuously healthy
 
-On each tick the convergence snapshot SHALL compare the live intended set against durable evidence of prior intent (per-Operative state directories under the state root and durable-registry entries). Any operative with durable evidence but absent from the live intended set SHALL be listed as `intent_mismatch`. When the mismatch list is non-empty — including the case where the live intended set is entirely empty — `/healthz` SHALL report `200 degraded` with `reason: intent_mismatch` naming the operatives, and SHALL NOT report `200 healthy`. The condition SHALL NOT produce `503 unhealthy` (a kubelet restart cannot repair missing intent). Deleting the operative's durable state (`flz state delete`, `flz reset`) clears the mismatch.
+On each tick the convergence snapshot SHALL compare the live intended set against durable evidence of prior intent (per-Operative state directories under the state root and durable-registry entries). Any operative with durable evidence but absent from the live intended set SHALL be listed as `intent_mismatch`. When the mismatch list is non-empty — including the case where the live intended set is entirely empty — `/healthz` SHALL report `200 degraded` with `reason: intent_mismatch` naming the operatives, and SHALL NOT report `200 healthy`. The condition SHALL NOT produce `503 unhealthy` (a kubelet restart cannot repair missing intent). Deleting the operative's durable state (`flz state delete`, `flz reset`) clears the mismatch. A state directory that carries a finished-job `Completion` record is retained for inspection on purpose and SHALL NOT count as evidence of lost intent.
 
 #### Scenario: Registry wipe degrades health instead of reporting healthy
 
@@ -141,6 +141,11 @@ On each tick the convergence snapshot SHALL compare the live intended set agains
 
 - **WHEN** an operator stops an operative and deletes its durable state
 - **THEN** the operative no longer appears in `intent_mismatch` and health returns to `200 healthy`
+
+#### Scenario: A retained finished workflow is not a mismatch
+
+- **WHEN** a workflow operative completes and its state directory is retained with its `Completion` record while it is no longer intended
+- **THEN** it SHALL NOT appear in `intent_mismatch` and health SHALL NOT degrade for it
 
 #### Scenario: Fresh install with no evidence is healthy
 
@@ -285,12 +290,17 @@ The convergence loop SHALL judge production liveness of a operative's plugins by
 
 ### Requirement: Plugin-degraded operatives surface on /healthz and telemetry
 
-A operative with at least one declared plugin that is missing or self-reported unhealthy SHALL be published to the convergence snapshot as plugin-degraded. While any operative is plugin-degraded, `/healthz` SHALL report `degraded` with HTTP 200 and a `plugin_unhealthy` reason — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (degraded set becomes non-empty, changes membership, or clears), not steady-state.
+A operative with at least one declared plugin that is missing or self-reported unhealthy SHALL be published to the convergence snapshot as plugin-degraded. While any operative is plugin-degraded, `/healthz` SHALL report `degraded` with HTTP 200 and a `plugin_unhealthy` reason — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (degraded set becomes non-empty, changes membership, or clears), not steady-state. A suspended workflow instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
 
 #### Scenario: pluginless running operative is degraded, not healthy
 - **GIVEN** a running operative whose declared cspec lists plugins that are not subscribed
 - **WHEN** `/healthz` is queried before the heal completes
 - **THEN** the response is HTTP 200 with status `degraded` and reason `plugin_unhealthy`.
+
+#### Scenario: a suspended instance is not degraded
+- **GIVEN** a parked workflow instance whose cspec declares plugins and whose extension table runs none
+- **WHEN** the Loop ticks
+- **THEN** no `missing_plugins` entry, no heal op and no degraded verdict SHALL be produced for it
 
 #### Scenario: verdict clears after heal
 - **GIVEN** a plugin-degraded operative
@@ -406,6 +416,11 @@ eligible for the next convergence tick.
 - **THEN** the durable registry binding is not switched to the new runner, and
   the operative remains routable on its current runner until a migrate
   succeeds
+
+#### Scenario: A workflow instance migrates as a workflow
+
+- **WHEN** a `runner_migrate` re-adds a workflow operative on its new runner
+- **THEN** the `AddOperative` SHALL carry the operative's kind (and its resume state), so the runner starts it as a workflow instead of refusing it as an unregistered stream class
 
 #### Scenario: Reroute picks by placement, not at random
 

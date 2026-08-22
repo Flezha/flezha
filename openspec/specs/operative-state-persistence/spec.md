@@ -149,6 +149,12 @@ Restore SHALL be:
 1. **Unconditional on every Overwatch bind** — driven by `Flezha.State.Recovery.resync_for_overwatch/2` (not a class→runner lookup that fails on cold boot). When the operative arrived via HotSwap handover, the in-band state is authoritative and the `{:kick_restore}` path SHALL skip to avoid double-applying.
 2. **Keyed by operative instance id, not factory id** — the Entity wire identity is `[rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]` keyed by the operative *instance*, so two operatives of the same factory class never collide on one WAL.
 3. **Inclusive of seq 0** — an empty WAL initialises `last_persisted_seq = -1` (not `0`) and the "no snapshot" restore sentinel is `-1`, so the 0-based first change is never dedup-dropped. After fold, the SDK re-arms `change_seq = terminal_seq + 1` so the next produced frame is contiguous.
+4. **Re-armed from the controller's terminal** — `RestoreInitState.terminal_seq` SHALL carry the controller's `max(snapshot seq, last WAL seq shipped)`, and the SDK SHALL re-arm `change_seq = max(change-log terminal, terminal_seq) + 1`. A snapshot-only restore — the WAL tail is empty after a compaction — carries no change-log record to derive the seq from; re-armed below the snapshot's seq, its next Changes would be dropped by the writer as duplicates.
+
+#### Scenario: a snapshot-only restore keeps the change seq contiguous
+- **GIVEN** an Entity compacted at seq 1 (snapshot present, WAL tail empty)
+- **WHEN** it is restored on a rebind and produces its next Change
+- **THEN** that Change SHALL carry seq 2 and SHALL be persisted, not dedup-dropped
 
 #### Scenario: a stateful operative resumes its accumulated state after both runners restart
 - **GIVEN** a `resume_probe` operative has accumulated a running total of 100 in persisted state
@@ -654,6 +660,34 @@ Each completed sweep SHALL stamp its own freshness into `Flezha.Convergence.Snap
 - **GIVEN** the staleness sweep stops completing passes without the process crashing
 - **WHEN** `/healthz` is queried once the stamp exceeds 3× the sweep interval
 - **THEN** it SHALL report `200 degraded` with `reason: sensor_stale` naming the watchdog
+
+### Requirement: CompactEntity resolves a workflow Entity
+
+The SDK SHALL resolve the Entity a `CompactEntity` addresses in the same two
+places a `RestoreInitState` looks: the stream instance registry and a workflow
+instance's stage slots. A workflow Entity SHALL therefore be compactable by the
+iteration-boundary snapshot and by the Watchdog's size/age triggers exactly
+like a stream Entity.
+
+#### Scenario: A looped workflow Entity gets its boundary snapshot
+- **GIVEN** a durable looping workflow instance whose procedure holds Entity state
+- **WHEN** an iteration commits and the Controller ships `CompactEntity` for that Entity
+- **THEN** the SDK SHALL answer with the Entity's `entity_state_snapshot` (not "no live entity matches the addressed entity_id") and the Controller SHALL write the snapshot and truncate the WAL behind it
+
+### Requirement: A stopped operative's WAL writers are closed
+
+When an operative is stopped, the Controller SHALL close every live `WalWriter`
+of its class — whether its state directory is deleted or retained for the
+finished-job window. The files decide inspectability; the processes go with
+the operative.
+
+#### Scenario: A finished workflow retains its files, not its writers
+- **WHEN** a durable workflow completes and its state is retained for `workflow_completed_retention_hours`
+- **THEN** its WAL and journal files SHALL stay on disk and no `WalWriter` process SHALL remain registered for its entities
+
+#### Scenario: A deleted state directory has no writer under it
+- **WHEN** an operative is stopped and its state is deleted
+- **THEN** its writers SHALL be closed before the files are removed
 
 ### Requirement: Compaction handshake is bounded and cannot wedge persistence
 
