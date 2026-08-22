@@ -227,7 +227,9 @@ defmodule Flezha.Convergence.Diff do
   # plugin's provider self-reported health. Only diffed for operatives we
   # observed with a live pid — a plugin can only be (un)subscribed on a
   # running operative; unbound operatives are healed by binding first, which
-  # replays the full cspec plugin list.
+  # replays the full cspec plugin list. A suspended workflow instance is alive
+  # but released its plugins with its runner: nothing to diff until it wakes,
+  # when the rehydrating bind replays them.
   defp plugin_divergence(declared, observed) do
     Enum.reduce(declared, {[], [], []}, fn %{namespace: ns, operative_id: rid, plugins: plugins},
                                            {missing_acc, extra_acc, unhealthy_acc} ->
@@ -235,7 +237,7 @@ defmodule Flezha.Convergence.Diff do
       observed_operative = Map.get(observed, ref, %{})
       pid = Map.get(observed_operative, :pid)
 
-      if is_pid(pid) do
+      if is_pid(pid) and not Map.get(observed_operative, :suspended?, false) do
         running = MapSet.new(Map.get(observed_operative, :running_plugins, []))
         health = Map.get(observed_operative, :plugin_health, %{})
         declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)

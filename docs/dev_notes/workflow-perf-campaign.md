@@ -90,4 +90,10 @@ extracted); fixtures `bench_chain_{1,4,16}`, `bench_chain_optout_4`,
   letting it crash was tried and REVERTED: a wedged channel then serialized
   every caller at 5 s each (37 parks in 3 min). The crash is bad; the
   serialization is worse; the cure is the OpenSpec change.
+- **A suspended instance is not plugin-diffed** — `Diff.plugin_divergence/2`
+  skips `suspended?` instances; before, every declared plugin of a parked
+  loop read as missing (its plugins left with the runner), so the loop logged
+  a thousand sleepers degraded and healed them; the rehydrating bind replays
+  the cspec plugins anyway. Open question of the same shape: a parked
+  (`init_error`) instance has a pid and no binding too.
 

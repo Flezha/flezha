@@ -5,7 +5,7 @@ through one long-lived operative; a workflow pays per **instance lifecycle**
 and per **durable barrier**. This campaign built a bench for those paths —
 spawn → chain → completion, the `ProcCommit` barrier, the chat turn
 (`IterCommit`), suspension and the wake paths — measured them, found thirteen
-defects, fixed ten in this tree (one of them in the `process_hub` checkout),
+defects (plus one found on the boot re-take), fixed eleven in this tree (one of them in the `process_hub` checkout),
 re-measured, and wrote the remaining architectural item up as the OpenSpec
 change `workflow-durable-path-throughput`. One 8-core developer box; numbers
 are indicative, not publishable.
@@ -166,9 +166,9 @@ connected** (runners connected 0.6 s after app start) — ~22 restores/s
 through the hub's recovery replay; after the boot the population costs
 +181 KiB per sleeper in total BEAM (processes heap +34 KiB, journal writers
 not yet started: 1.07 processes per sleeper), convergence tick 210–630 ms.
-The convergence loop logs every restored sleeper as "plugin-degraded" — a
-suspended instance has no running plugins by design, so the probe's verdict
-is noise there (open, cosmetic).
+The convergence loop logged every restored sleeper as "plugin-degraded" and
+healed it — a suspended instance released its plugins with its runner, and
+the rehydrating bind replays them; fixed (§6.14).
 
 ## 6. Defects
 
@@ -187,6 +187,7 @@ is noise there (open, cosmetic).
 | 6.11 | Boundary compaction at every iteration costs ~25 % of turn throughput | policy question in the OpenSpec design |
 | 6.12 | A rehydrated loop parks before the controller's inbox-tail forward arrives; the tail is dropped | **fixed** (`AddOperative.inbox_tail_count`, `WorkflowInstance.owed_inbox`, `wait_for_input`; spec `workflow-durable-suspension`) |
 | 6.13 | Per-sleeper controller memory grows with the population (69 KiB → 598 KiB per sleeper from 100 to 10 000) | **fixed** — uncollected garbage on never-hibernating Overwatches (2.5 MiB → 5 KiB after GC); suspended Overwatches now hibernate |
+| 6.14 | The convergence loop diffs a suspended instance's plugins, finds every declared one "missing", logs it degraded and heals it | **fixed** (`convergence/diff.ex`: a suspended instance is not diffed — the rehydrating bind replays its plugins) + test |
 
 ### 6.1 A workflow Entity is never compacted
 `compact.rs` resolved the addressed Entity with `restore::find_entity_slot`,
@@ -311,6 +312,14 @@ task reported, the controller ended up believing an instance the runner had
 torn down was bound; the journaled turn waited forever. Fix: `suspend_at/3`
 marks `parked_in_flight` while a task is binding, and the result handler keeps
 the suspension and re-runs `rehydrate_if_pending/1` (the task `:DOWN` path too).
+
+### 6.14 Suspended instances reported plugin-degraded
+`Diff.plugin_divergence/2` diffed every declared operative with a live pid. A
+suspended workflow instance keeps its Overwatch alive but released its
+plugins with the runner, so every declared plugin read as missing: 1 000
+sleepers logged as degraded and a plugin heal issued against instances with
+no binding. A suspended instance is now skipped like an unbound one; the
+rehydrating bind replays the cspec plugin list.
 
 ### 6.11 Boundary compaction at every iteration
 With §6.1 fixed, the 100 × 100 cell dropped from 33.3 to 24.8 turns/s while

@@ -199,6 +199,32 @@ defmodule Flezha.ConvergenceTest do
       assert delta.extra_plugins == [{{:ns, "r"}, "stray", self()}]
     end
 
+    test "I2: a suspended instance's released plugins are not missing" do
+      p = plugin("declared")
+
+      intent = %Intent{
+        operatives: [
+          %{namespace: :ns, operative_id: "r", factory_id: nil, plugins: [{"declared", p}]}
+        ]
+      }
+
+      # Alive (the Overwatch stays), unbound, nothing subscribed: a parked
+      # workflow loop. The rehydrating bind replays its plugins.
+      reality = %{
+        active_runners: %{ns: MapSet.new(["e"])},
+        operatives: %{
+          {:ns, "r"} => %{bound_runner: nil, pid: self(), suspended?: true, running_plugins: []}
+        },
+        stalled_operatives: MapSet.new()
+      }
+
+      delta = Diff.compute(intent, reality)
+
+      assert delta.missing_plugins == []
+      assert delta.extra_plugins == []
+      assert delta.unhealthy_plugins == []
+    end
+
     test "I2: no plugin divergence when running set matches declared" do
       p = plugin("p1")
 
