@@ -216,38 +216,52 @@ defmodule Flezha.Operative.PartitionGroup do
     end
   end
 
-  # The one member-start loop. `:refuse` is the fresh-group policy — a taken
-  # id is a failure that rolls back this run's starts; `:skip` is converge's —
-  # a member racing into existence is by id-shape a member of this same group.
+  # The one member-start loop. Every member starts at once — a group comes up
+  # in one member's time, not N — and the lowest failing index names the error.
+  # `:refuse` is the fresh-group policy — a taken id is a failure that rolls
+  # back this run's starts; `:skip` is converge's — a member racing into
+  # existence is by id-shape a member of this same group.
   defp run_member_starts(namespace, operative, indexed_ranges, count, plugins_fun, on_duplicate) do
-    indexed_ranges
-    |> Enum.reduce_while({[], []}, fn {range, index}, {started, skipped} ->
-      case start_member(namespace, operative, index, count, range, plugins_fun) do
-        {:ok, member_id} ->
-          {:cont, {[member_id | started], skipped}}
+    outcomes =
+      indexed_ranges
+      |> Task.async_stream(
+        fn {range, index} ->
+          {index, start_member(namespace, operative, index, count, range, plugins_fun)}
+        end,
+        ordered: true,
+        timeout: :infinity,
+        max_concurrency: max(length(indexed_ranges), 1)
+      )
+      |> Enum.map(fn {:ok, outcome} -> outcome end)
 
-        {:duplicate, member_id} when on_duplicate == :skip ->
-          {:cont, {started, [member_id | skipped]}}
+    started = for {_index, {:ok, member_id}} <- outcomes, do: member_id
 
-        {:duplicate, member_id} ->
-          {:halt,
-           rollback_group(
-             namespace,
-             started,
-             operative.id,
-             index,
-             "#{member_id}: #{Validator.id_in_use()}"
-           )}
+    skipped =
+      for {_index, {:duplicate, member_id}} <- outcomes, on_duplicate == :skip, do: member_id
 
-        {:error, reason} ->
-          {:halt, rollback_group(namespace, started, operative.id, index, reason)}
-      end
-    end)
+    outcomes
+    |> Enum.find(fn {_index, outcome} -> member_failure(outcome, on_duplicate) end)
     |> case do
-      {:error, _} = err -> err
-      {started, skipped} -> {:ok, Enum.reverse(started), Enum.reverse(skipped)}
+      nil ->
+        {:ok, started, skipped}
+
+      {index, outcome} ->
+        rollback_group(
+          namespace,
+          started,
+          operative.id,
+          index,
+          member_failure(outcome, on_duplicate)
+        )
     end
   end
+
+  defp member_failure({:error, reason}, _on_duplicate), do: reason
+
+  defp member_failure({:duplicate, member_id}, :refuse),
+    do: "#{member_id}: #{Validator.id_in_use()}"
+
+  defp member_failure(_outcome, _on_duplicate), do: nil
 
   defp start_member(namespace, operative, index, count, range, plugins_fun) do
     member_id = Partition.member_id(operative.id, index)

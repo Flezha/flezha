@@ -43,10 +43,23 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
+  # The manager serialises the id claim, never the enable itself: the cspec
+  # write and the subscribe run here, in the caller, so enables of different
+  # plugins overlap and their registry writes share one durable sync. A claim
+  # whose enable fails is released, so a failed enable leaves no entry behind.
   defp do_enable_plugin(plugin_id, plugin) do
-    case GenServer.call(__MODULE__, {:enable_plugin, plugin_id, plugin}) do
-      {:ok, msg} -> {:ok, msg}
-      {:error, reason} -> {:error, reason}
+    with :ok <- check_operative_target(plugin),
+         :claimed <- GenServer.call(__MODULE__, {:claim, plugin_id, plugin}) do
+      with :ok <- write_enable_to_cspec(plugin, plugin_id),
+           {:ok, pid} <- resolve_operative(plugin),
+           :ok <- forward_subscribe(pid, plugin_id, plugin) do
+        GenServer.cast(__MODULE__, {:confirm, plugin_id})
+        {:ok, "plugin enabled"}
+      else
+        err ->
+          unregister_plugin(plugin_id)
+          err
+      end
     end
   end
 
@@ -57,10 +70,17 @@ defmodule Flezha.Service.PluginManager do
   # is a real state and must never read as success.
   defp enable_across_group(plugin_id, plugin, members) do
     results =
-      Enum.map(members, fn %{id: member_id, partition: partition} ->
-        member_plugin = Plugin.for_partition(%{plugin | id: plugin_id}, member_id, partition)
-        {member_id, do_enable_plugin(member_plugin.id, member_plugin)}
-      end)
+      members
+      |> Task.async_stream(
+        fn %{id: member_id, partition: partition} ->
+          member_plugin = Plugin.for_partition(%{plugin | id: plugin_id}, member_id, partition)
+          {member_id, do_enable_plugin(member_plugin.id, member_plugin)}
+        end,
+        ordered: true,
+        timeout: :infinity,
+        max_concurrency: max(length(members), 1)
+      )
+      |> Enum.map(fn {:ok, result} -> result end)
 
     case Enum.reject(results, &match?({_id, {:ok, _}}, &1)) do
       [] ->
@@ -162,36 +182,32 @@ defmodule Flezha.Service.PluginManager do
     {:ok, %{}}
   end
 
+  # An entry is `{namespace, operative_id}` once enabled and
+  # `{namespace, operative_id, :pending}` while its enable is in flight.
   @impl true
   def handle_call(:get_plugins, _from, state) do
-    {:reply, state, state}
+    {:reply, Map.reject(state, fn {_id, entry} -> pending?(entry) end), state}
   end
 
   @impl true
-  def handle_call({:enable_plugin, plugin_id, %Plugin{} = plugin}, _from, state) do
-    {reply, new_state} =
-      case Map.get(state, plugin_id) do
-        # Idempotent re-enable: a presence check, not config convergence — the
-        # live instance, its workers and its cspec row are all left untouched.
-        {ns, rid} when ns == plugin.namespace and rid == plugin.operative_id ->
-          {{:ok, :already_enabled}, state}
+  def handle_call({:claim, plugin_id, %Plugin{} = plugin}, _from, state) do
+    case Map.get(state, plugin_id) do
+      # Idempotent re-enable: a presence check, not config convergence — the
+      # live instance, its workers and its cspec row are all left untouched.
+      {ns, rid} when ns == plugin.namespace and rid == plugin.operative_id ->
+        {:reply, {:ok, :already_enabled}, state}
 
-        {ns, rid} ->
-          {{:error, "plugin id #{plugin_id} is already registered for #{ns}/#{rid}"}, state}
+      {ns, rid, :pending} when ns == plugin.namespace and rid == plugin.operative_id ->
+        {:reply, {:error, "plugin #{plugin_id} is already being enabled"}, state}
 
-        nil ->
-          with :ok <- check_operative_target(plugin),
-               :ok <- write_enable_to_cspec(plugin, plugin_id),
-               {:ok, pid} <- resolve_operative(plugin),
-               :ok <- forward_subscribe(pid, plugin_id, plugin) do
-            {{:ok, "plugin enabled"},
-             Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id})}
-          else
-            err -> {err, state}
-          end
-      end
+      nil ->
+        {:reply, :claimed,
+         Map.put(state, plugin_id, {plugin.namespace, plugin.operative_id, :pending})}
 
-    {:reply, reply, new_state}
+      entry ->
+        {ns, rid} = {elem(entry, 0), elem(entry, 1)}
+        {:reply, {:error, "plugin id #{plugin_id} is already registered for #{ns}/#{rid}"}, state}
+    end
   end
 
   def handle_call({:fanned_out_ids, plugin_id}, _from, state) do
@@ -212,6 +228,9 @@ defmodule Flezha.Service.PluginManager do
     case Map.get(state, plugin_id) do
       nil ->
         {:reply, {:error, "plugin not found"}, state}
+
+      {_ns, _rid, :pending} ->
+        {:reply, {:error, "plugin #{plugin_id} is still being enabled"}, state}
 
       {namespace, operative_id} ->
         case write_disable_to_cspec(namespace, operative_id, plugin_id) do
@@ -285,11 +304,23 @@ defmodule Flezha.Service.PluginManager do
   end
 
   @impl true
+  def handle_cast({:confirm, plugin_id}, state) do
+    {:noreply,
+     Map.update(state, plugin_id, nil, fn
+       {ns, rid, :pending} -> {ns, rid}
+       entry -> entry
+     end)}
+  end
+
+  @impl true
   def handle_cast({:unregister_plugin, plugin_id}, state) do
     {:noreply, Map.delete(state, plugin_id)}
   end
 
   ## Private
+
+  defp pending?({_ns, _rid, :pending}), do: true
+  defp pending?(_entry), do: false
 
   # `id` is `base` with a partition suffix — `ohlc_ws#p2` for base `ohlc_ws`.
   defp fanned_out_from?(id, base),

@@ -272,7 +272,7 @@ defmodule Mix.Tasks.Bench do
 
     {operative_creation_time, operative_infos} =
       :timer.tc(fn ->
-        for i <- 1..num_operatives do
+        Fleet.parallel_map(1..num_operatives, fn i ->
           operative_id = "flow_test_#{i}"
 
           operative = %Flezha.Operative.Builder{
@@ -288,7 +288,7 @@ defmodule Mix.Tasks.Bench do
               IO.puts("Failed to start operative #{operative_id}: #{inspect(error)}")
               nil
           end
-        end
+        end)
         |> Enum.filter(&(&1 != nil))
       end)
 
@@ -296,9 +296,11 @@ defmodule Mix.Tasks.Bench do
       "Operative creation took: #{operative_creation_time / 1000} ms for #{length(operative_infos)} operatives"
     )
 
+    recv_pid = self()
+
     {plugin_setup_time, _} =
       :timer.tc(fn ->
-        Enum.each(operative_infos, fn {operative_id, _info} ->
+        Fleet.parallel_map(operative_infos, fn {operative_id, _info} ->
           PluginManager.enable_plugin(
             operative_id <> "_beam_msg_forward",
             %Flezha.Plugin{
@@ -306,7 +308,7 @@ defmodule Mix.Tasks.Bench do
               namespace: namespace,
               operative_id: operative_id,
               provider: Flezha.Plugin.Provider.BeamMsgForward,
-              opts: %{recv_pid: self()},
+              opts: %{recv_pid: recv_pid},
               subscriptions: [{:on_output, []}]
             }
           )

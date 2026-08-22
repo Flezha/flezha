@@ -142,10 +142,11 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
 
       assert message =~ "partition 1 of group ohlc failed to start"
       assert message =~ "ohlc#p1"
-      assert message =~ "1 already-started member(s) were stopped"
+      assert message =~ "2 already-started member(s) were stopped"
 
-      # p0 started and was rolled back; p2 was never attempted.
-      assert Enum.map(started_members(), & &1.id) == ["ohlc#p0"]
+      # Members start together: p0 and p2 came up beside the failing p1 and
+      # were both rolled back.
+      assert Enum.sort(Enum.map(started_members(), & &1.id)) == ["ohlc#p0", "ohlc#p2"]
     end
   end
 

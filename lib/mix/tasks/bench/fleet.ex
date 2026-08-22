@@ -79,6 +79,22 @@ defmodule Mix.Tasks.Bench.Fleet do
     end
   end
 
+  @doc """
+  Load every module of the controller and the libraries its start path runs
+  through. A release boots with its code loaded; under `mix` the VM loads
+  lazily, so without this the first operative of a run pays tens of
+  milliseconds of code loading that no deployed controller pays.
+  """
+  def preload_code do
+    modules =
+      for app <- [:flezha, :process_hub, :kafka_ex, :kayrock],
+          module <- Application.spec(app, :modules) || [],
+          do: module
+
+    :code.ensure_modules_loaded(modules)
+    :ok
+  end
+
   @doc "Stop every operative in `namespace`, disconnect its runners, drop the namespace."
   def cleanup(namespace) do
     IO.puts("Cleaning up test environment...")
@@ -116,24 +132,39 @@ defmodule Mix.Tasks.Bench.Fleet do
     # it for the target env (`cd test/apps/elixir_runner && MIX_ENV=prod mix compile`).
     connect_timeout = if runtime == :elixir, do: 120_000, else: 5_000
 
-    for i <- 1..count do
-      command = build_command(runtime, current_path, namespace)
+    Flezha.Service.EventManager.add_handler(:runner_connected_event)
 
-      Flezha.Service.EventManager.add_handler(:runner_connected_event)
+    # Every runner is spawned before the first hand-shake is awaited: the
+    # processes boot side by side, and the wait is one connect, not N.
+    command = build_command(runtime, current_path, namespace)
+    for _ <- 1..count, do: Flezha.Service.PortPilot.open_port(command, env: extra_env)
 
-      Flezha.Service.PortPilot.open_port(command, env: extra_env)
-
-      runner_id =
+    runner_ids =
+      for i <- 1..count do
         receive do
           {:runner_connected_event, {^namespace, id}} -> id
         after
           connect_timeout -> raise "Performance test compute engine #{i} failed to connect"
         end
+      end
 
-      Flezha.Service.EventManager.rem_handler(:runner_connected_event)
+    Flezha.Service.EventManager.rem_handler(:runner_connected_event)
+    runner_ids
+  end
 
-      runner_id
-    end
+  @doc """
+  `Enum.map/2` with every element in flight at once, results in input order.
+  The bench's bring-up is N independent operatives and N independent plugins,
+  which is how a partition group starts them too.
+  """
+  def parallel_map(enum, fun) do
+    enum
+    |> Task.async_stream(fun,
+      ordered: true,
+      timeout: :infinity,
+      max_concurrency: max(Enum.count(enum), 1)
+    )
+    |> Enum.map(fn {:ok, value} -> value end)
   end
 
   @doc "Shell command that launches one runner of `runtime` against `namespace`."
