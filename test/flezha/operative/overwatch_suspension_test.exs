@@ -99,7 +99,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       :ok
     end)
 
-    {:noreply, suspended} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
 
     # Zero live runner resources; the registry entry (and this process) stay.
     assert_receive :evicted
@@ -123,7 +123,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     {:ok, 2} = ProcInbox.append(inst, "in-flight", %{})
     :ok = ProcJournal.append_iter_committed(inst, 0, 1, [])
 
-    {:noreply, after_park} = Overwatch.handle_cast({:suspend, 0, nil}, state(inst))
+    {:noreply, after_park, :hibernate} = Overwatch.handle_cast({:suspend, 0, nil}, state(inst))
 
     assert after_park.migrate_task != nil,
            "an instance with undelivered input must rehydrate, not sit suspended " <>
@@ -131,7 +131,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     # With nothing pending, the same park suspends and stays there.
     :ok = ProcJournal.append_iter_committed(inst, 1, 2, [])
-    {:noreply, idle} = Overwatch.handle_cast({:suspend, 1, nil}, state(inst))
+    {:noreply, idle, :hibernate} = Overwatch.handle_cast({:suspend, 1, nil}, state(inst))
     assert idle.suspended
     assert idle.migrate_task == nil
   end
@@ -142,7 +142,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
 
     deadline = System.system_time(:millisecond) + 50_000
-    {:noreply, suspended} = Overwatch.handle_cast({:suspend, 1, deadline}, state(inst))
+    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 1, deadline}, state(inst))
 
     assert is_reference(suspended.wake_timer)
     assert Process.read_timer(suspended.wake_timer) > 40_000
@@ -217,7 +217,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
       builder: builder
     }
 
-    {:noreply, booted} =
+    {:noreply, booted, :hibernate} =
       Overwatch.handle_continue({:bind_runner, "stale-runner", builder}, fresh)
 
     assert booted.suspended, "the boot never binds a suspended instance to a runner"
@@ -392,7 +392,7 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
         {:error, :not_deferred}
       end)
 
-      {:noreply, suspended} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
+      {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 2, nil}, state(inst))
 
       assert_receive {:migration_ready, hub_id, ^inst}
       assert hub_id == Flezha.Service.Identificator.hub("default")
