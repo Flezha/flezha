@@ -10,9 +10,13 @@
 # and neither overwrites the other.
 #
 # A prod build additionally publishes the immutable version tag taken from
-# mix.exs (`:<version>-<arch>` + the `:<version>` manifest). That is the tag
-# kubernetes/flezha-daemonset.yaml pins — `:latest` is for convenience only and
-# must never be what a cluster runs.
+# mix.exs (`:<version>-<arch>` + the `:<version>` manifest). That is the tag a
+# cluster pins — `:latest` is for convenience only and must never be what a
+# cluster runs. Immutable means it: a prod publish refuses to overwrite a
+# per-arch version tag that already exists on Docker Hub, so "changed the
+# controller, forgot to bump mix.exs" fails here in seconds instead of
+# silently redirecting a pinned tag. REPUBLISH=1 overrides it to repair a
+# broken push.
 #
 # process_hub is fetched from its GitHub `dev` branch at build time
 # (mix.exs default), so a plain git checkout is all the build context needs.
@@ -21,6 +25,7 @@
 #   scripts/publish-image.sh            # prod (default): :<version> + :latest manifests
 #   scripts/publish-image.sh --prod     # same as default
 #   scripts/publish-image.sh --dev      # dev: :latest-dev-<arch> + :latest-dev manifest
+#   REPUBLISH=1 scripts/publish-image.sh  # overwrite an already-published version tag
 #
 # Caching: layer cache + the Dockerfile's `--mount=type=cache` mounts (fast
 # incremental Rust/Elixir) and `--pull` to refresh base images. Pass NO_CACHE=1
@@ -64,6 +69,15 @@ fi
 [ -f "$dockerfile" ] || { echo "ERROR: $dockerfile not found (run from the flezha repo)" >&2; exit 1; }
 
 build_tag="$IMAGE:${families[0]}-$arch"
+
+# Per-arch, not the manifest list: the first arm64 publish after an amd64 one
+# must still go through. Checked before the build so the refusal is cheap.
+if [ "$mode" = "prod" ] && [ "${REPUBLISH:-0}" != "1" ] \
+   && docker manifest inspect "$build_tag" >/dev/null 2>&1; then
+  echo "ERROR: $build_tag is already published — version tags are immutable." >&2
+  echo "       Bump 'version:' in mix.exs, or REPUBLISH=1 to overwrite a broken push." >&2
+  exit 1
+fi
 
 echo "==> Building $build_tag ($mode, native $arch)"
 DOCKER_BUILDKIT=1 docker build --pull --provenance=false --sbom=false ${NO_CACHE:+--no-cache} -f "$dockerfile" -t "$build_tag" .

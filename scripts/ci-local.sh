@@ -83,6 +83,9 @@ run_elixir() {
   require_cmd mix "install Elixir 1.17+ via mise/asdf"
   require_cmd cargo "install Rust stable"
 
+  bold ">>> scripts/publish-image-test.sh (immutable version tags)"
+  scripts/publish-image-test.sh
+
   bold ">>> mix deps.get"
   mix deps.get
 
