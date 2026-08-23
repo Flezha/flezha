@@ -37,7 +37,15 @@ defmodule Flezha.State.Supervisor do
     Flezha.State.Registry.ensure_claims_table()
     Flezha.State.InputLog.ensure_watermark_table()
     Flezha.Operative.ClassRegistry.ensure_table()
-    DynamicSupervisor.init(strategy: :one_for_one)
+    # Every per-Entity writer and input log on the node hangs here, and they
+    # fail independently — a bad payload, a disk fault, a killed run. The
+    # DynamicSupervisor default (3 restarts in 5 s) is a budget for ONE
+    # supervised subsystem, not for a fleet: four unrelated writers crashing in
+    # the same five seconds would take this supervisor down, and with it every
+    # other operative's writer AND the three ETS tables owned above, which the
+    # data plane reads. The intensity is therefore sized for independent
+    # children; a genuine restart storm still trips it, just not a burst.
+    DynamicSupervisor.init(strategy: :one_for_one, max_restarts: 100, max_seconds: 5)
   end
 
   @doc """
