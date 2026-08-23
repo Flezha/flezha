@@ -36,6 +36,6 @@
   `workflow_driver_scenarios` (gating + resume-skip + codec validation),
   e2e `test/system/workflow_crash_resume_e2e_test.exs` (proc A NOT re-run on
   rust; opted-out `optout_commit_block` re-runs from top).
-- **Docs**: `docs/sdk_protocol_spec.md` `ProcCommit`/`ProcCommitResponse`,
+- **Docs**: `docs/sdk/protocol_spec.md` `ProcCommit`/`ProcCommitResponse`,
   `docs/resilience/workflow_operative.md` "Durability" section.
 

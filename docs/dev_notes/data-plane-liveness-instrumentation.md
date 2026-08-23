@@ -45,5 +45,5 @@
 - **Procs fallback** (docs, not built): sample
   `/proc/<beam_pid>/task/*/` for `flz-uds-driver` threads in `D`/frozen
   `utime` (`bin/flzvm pid`).
-- **Detailed notes**: `docs/resilience/transport_liveness.md`.
+- **Detailed notes**: `docs/internals/transport_liveness.md`.
 

@@ -8,7 +8,7 @@ negotiated context, class declaration as JSON, blocking `poll`,
 durability, retries, timers and reconnection. The Java layer is the
 authoring surface, the Kryo codecs, and a pure `ActivationDispatcher`
 that turns activations into user-code invocations — it reimplements no
-kernel mechanism. See `docs/sdk_poll_core.md`.
+kernel mechanism. See `docs/sdk/poll_core.md`.
 
 Functionally at parity with the Rust SDK (`sdk/rust/`) — every operative shape,
 durability tier, and delivery guarantee available there is available here.
@@ -72,7 +72,7 @@ try (FlezhaRunner runner = Flezha.createRunner(ns).defineStream(EchoOperative.cl
 
 At most one runner runs per JVM: a second `start()` throws
 `IllegalStateException` naming the running namespace (see
-`docs/sdk_naming_conventions.md` for the lifecycle vocabulary).
+`docs/sdk/naming_conventions.md` for the lifecycle vocabulary).
 
 ## Authoring a topology
 
@@ -303,7 +303,7 @@ The default path is `/var/lib/flezha-runner/id`, which a non-root JVM usually
 cannot write. That degrades quietly: the runner still starts, but mints a fresh
 id every boot and logs one `warn`, so its old bindings age out instead of being
 reclaimed. Point it somewhere writable on any runner you intend to restart.
-Full model: [`docs/resilience/runner_identity.md`](../../docs/resilience/runner_identity.md).
+Full model: [`docs/internals/runner_identity.md`](../../docs/internals/runner_identity.md).
 
 ## The rule that matters most
 
@@ -394,6 +394,11 @@ mix test.java_sdk                               # from repo root: full Java matr
 ## Further reading
 
 - [`flezha-sdk-examples/`](flezha-sdk-examples/README.md) — the seven examples.
-- `docs/sdk_protocol_spec.md` — wire protocol, framing, output identity stamps.
+- `docs/sdk/protocol_spec.md` — wire protocol, framing, output identity stamps.
 - `docs/resilience/data_durability.md` — where state and output are lost vs not.
-- `docs/java_state_persistence.md` — Kryo registration and the Change machinery.
+- `docs/sdk/state_persistence.md` — Kryo registration and the Change machinery.
+
+## License
+
+Apache-2.0 — [`LICENSES/Apache-2.0.txt`](../../LICENSES/Apache-2.0.txt). The
+per-path map for the whole repository is [`REUSE.toml`](../../REUSE.toml).

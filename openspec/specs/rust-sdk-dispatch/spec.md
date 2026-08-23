@@ -29,7 +29,7 @@ On the regression bench (`100 operatives × 1 procedure × 1 entity × 10K msg`,
 
 The literal floor value SHALL be recorded in this requirement at merge time as a literal number, replacing the placeholder `<RECORDED_AT_MERGE>`. The floor recorded by `operative-bench-harness` (480_000 msg/s) SHALL NOT be carried forward without measurement; this change adds a per-push success-counter atomic proc and may shift the floor by single-digit percent. The CI gate SHALL track the new value.
 
-The literal floor value SHALL be recorded in `docs/benchmarking.md` and updated only in tandem with this requirement: when a future change intentionally raises or lowers the floor, the spec line and the doc value SHALL be updated in the same PR. CI SHALL verify spec/doc agreement on every build (`mix bench.floor` prints the recorded number; the `bench-regression` GitHub Actions job parses both the spec line and the doc value, fails the build if they disagree).
+The literal floor value SHALL be recorded in `docs/operations/benchmarking.md` and updated only in tandem with this requirement: when a future change intentionally raises or lowers the floor, the spec line and the doc value SHALL be updated in the same PR. CI SHALL verify spec/doc agreement on every build (`mix bench.floor` prints the recorded number; the `bench-regression` GitHub Actions job parses both the spec line and the doc value, fails the build if they disagree).
 
 The CI gate SHALL fail the build when measured throughput on the `bench-regression` job is below `0.9 × BENCH_FLOOR_MSG_PER_SEC` (10% tolerance band absorbs runner-image variance). Below `0.9 × BENCH_FLOOR_MSG_PER_SEC` is treated as a regression even if no individual code change in the PR is the obvious culprit; investigate before merging.
 
@@ -41,14 +41,14 @@ The umbrella's prior 350,000 msg/s floor (from before the cutover) SHALL NOT be 
 
 #### Scenario: CI gate fails on a 15% regression
 - **WHEN** a PR's `bench-regression` job measures throughput at `0.85 × BENCH_FLOOR_MSG_PER_SEC` (15% below the recorded floor)
-- **THEN** the CI job SHALL fail with a message naming the recorded floor, the measured throughput, the percentage shortfall, and a pointer to `docs/benchmarking.md` for triage instructions
+- **THEN** the CI job SHALL fail with a message naming the recorded floor, the measured throughput, the percentage shortfall, and a pointer to `docs/operations/benchmarking.md` for triage instructions
 
 #### Scenario: CI gate passes within tolerance
 - **WHEN** a PR's `bench-regression` job measures throughput at `0.92 × BENCH_FLOOR_MSG_PER_SEC` (8% below the recorded floor — within the 10% tolerance band)
 - **THEN** the CI job SHALL pass with a warning logged to the job output noting the proximity to the gate
 
 #### Scenario: Spec/doc floor sync check fails when the two diverge
-- **WHEN** a contributor edits the `BENCH_FLOOR_MSG_PER_SEC` value in `docs/benchmarking.md` without updating the literal in this requirement
+- **WHEN** a contributor edits the `BENCH_FLOOR_MSG_PER_SEC` value in `docs/operations/benchmarking.md` without updating the literal in this requirement
 - **THEN** the `bench-regression` CI job's pre-bench sync check SHALL fail with a message identifying the divergence and pointing at both files
 
 #### Scenario: Entity-stress bench scales with worker pool size
@@ -66,12 +66,12 @@ The budget rises from 3 to 4 procs compared with the prior unbounded-mailbox sha
 
 For static-mode procedures, the additional per-input cost of entity fan-out (HashMap lookup per entity key, one mailbox enqueue + one counter increment + one inflight CAS per target entity) is intrinsic to the workload and counted separately — it is not part of the per-message budget. The fan-out formula updates from `3 + N × 2` to `4 + N × 3` where N is the entity fan-out width.
 
-The 4-op invariant is an analytical bound enforced by code review, consistent with the convention in `sdk/rust/benches/correctness.rs:13-19`. The microbench reports raw msg/s for diagnostic comparison against the recorded `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` value in `docs/benchmarking.md`; it does not assert the sync-op count programmatically.
+The 4-op invariant is an analytical bound enforced by code review, consistent with the convention in `sdk/rust/benches/correctness.rs:13-19`. The microbench reports raw msg/s for diagnostic comparison against the recorded `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` value in `docs/operations/benchmarking.md`; it does not assert the sync-op count programmatically.
 
 #### Scenario: Single-entity microbench confirms the budget
 - **WHEN** the `throughput_single_entity` Criterion bench function in `sdk/rust/benches/correctness.rs` runs with contention pinned to one thread, single-entity Procedure, no fan-out (invoked via `cargo bench --bench correctness -- throughput_single_entity`)
 - **THEN** the analytical sync-op count per message SHALL be ≤ 4 procedures on the hot path (registry lookup, mailbox enqueue, success counter, inflight CAS)
-- **AND** the bench SHALL emit a `Throughput:` line in its Criterion output that callers can compare against the recorded `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` value in `docs/benchmarking.md`
+- **AND** the bench SHALL emit a `Throughput:` line in its Criterion output that callers can compare against the recorded `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` value in `docs/operations/benchmarking.md`
 
 #### Scenario: Static-mode entity fan-out cost is proportional to entity count
 - **WHEN** the `throughput_static_fanout` Criterion bench function in `sdk/rust/benches/correctness.rs` is run against a Procedure with `entity_keys()` of length 4 and `entities_for` returning all four keys per input (invoked via `cargo bench --bench correctness -- throughput_static_fanout`)
@@ -118,7 +118,7 @@ Across a control-channel reconnect the Rust SDK SHALL preserve its `operative_re
 
 Every `CommandRequest` variant that survives the cutover (`AssignRunnerId`, `ConnectSocket`, `AddOperative`, `RemOperative`, `RunnerDisconnect`) SHALL produce a `CommandResponse` byte-for-byte identical to the pre-change implementation for every input that exercised a given path before the change. New error paths MAY be introduced only if pre-change code hit them via panics; otherwise these command responses MUST NOT change.
 
-`EntityState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operative-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<procedure_name>": <state>}` (or, for static-mode procedures, `{"<procedure_name>": {"<entity_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk_protocol_spec.md`.
+`EntityState` and `MigrationSerialization` are EXCLUDED from this byte-identical guarantee per `operative-mvp-rust/design.md` Decision 10: their on-the-wire JSON state-blob shape changes from `<state>` to `{"<procedure_name>": <state>}` (or, for static-mode procedures, `{"<procedure_name>": {"<entity_key>": <state>, ...}, ...}`). This is acceptable because (a) state migration is umbrella Non-Goal 2 and tracked in `operative-state-migration`, (b) the umbrella's hard-cutover policy means no production scenario crosses old-SDK and new-SDK state blobs, and (c) the new shape is documented in `docs/sdk/protocol_spec.md`.
 
 `OperativeMessage` and `OperativeMessageResponse` continue to exist on the wire and the agent side; the SDK side responds with a canonical "unsupported" error for every request until `operative-message-handlers` adds per-Procedure `handle_message` (see `operative-mvp-rust/design.md` Decision 9). This is byte-equivalent to today's behavior for any operative that did not implement the optional `handle_message` callback.
 
@@ -339,7 +339,7 @@ On a fresh process start (not a reconnect) the SDK SHALL load its node-local per
 
 ### Requirement: Rust SDK Entry Point
 
-The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) -> Result<FlezhaRunner, FlezhaError>` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start(&self)` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2 carrying the runner's currently-declared factory set (possibly empty), wait for `AssignRunnerId`, and return `Ok(&Self)` for chaining. The started runner SHALL expose `namespace()` (replacing `id()` — the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is never the handle's identity) and `operatives()`. `.run(&self)` SHALL be sugar for `.start()` followed by `await_termination()`, never an independent implementation. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical.
+The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) -> Result<FlezhaRunner, FlezhaError>` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start(&self)` MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory set (possibly empty), wait for `AssignRunnerId`, and return `Ok(&Self)` for chaining. The started runner SHALL expose `namespace()` (replacing `id()` — the controller-assigned per-session token lives on the runner thread and rotates across reconnects, so it is never the handle's identity) and `operatives()`. `.run(&self)` SHALL be sugar for `.start()` followed by `await_termination()`, never an independent implementation. This requirement mirrors `java-sdk`'s "Java SDK Entry Point" requirement — the two SDKs' entry-point behavior is intentionally identical.
 
 #### Scenario: Successful connection returns a live handle
 - **WHEN** an SDK user calls `Flezha::create_runner("my_app")?.define_stream::<MarketOperative>()?.start()` (binding the runner with `let`) with the controller running

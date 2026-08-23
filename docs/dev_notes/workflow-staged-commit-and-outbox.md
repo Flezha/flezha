@@ -41,7 +41,7 @@
   `control_channel_proc_commit_test.exs` (sync on `:sys.get_state(channel)` —
   the marker append lands after the `:io_out` cast).
 - **Java SDK**: AT PARITY (`java-sdk-parity`) — staged commit + `ProcCommit` outbox.
-- **Docs**: `docs/sdk_protocol_spec.md` `ProcCommit`/`ProcCommitResponse`,
+- **Docs**: `docs/sdk/protocol_spec.md` `ProcCommit`/`ProcCommitResponse`,
   `docs/resilience/data_durability.md` "Workflow operatives: staged commit
   and the transactional outbox".
 

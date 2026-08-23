@@ -45,7 +45,7 @@ import java.util.Optional;
  * Entity's own change log, so a crash-resume owes exactly the deadline it owed
  * before, and a firing's Change and the timer's removal are one durable record.
  *
- * @see <a href="../../../../../../../docs/entity_timers.md">docs/entity_timers.md</a>
+ * @see <a href="../../../../../../../docs/sdk/entity_timers.md">docs/sdk/entity_timers.md</a>
  */
 public final class E12_SessionTimeout {
 

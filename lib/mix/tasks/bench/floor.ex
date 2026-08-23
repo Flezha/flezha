@@ -1,10 +1,10 @@
 defmodule Mix.Tasks.Bench.Floor do
   use Mix.Task
 
-  @shortdoc "Print the recorded BENCH_FLOOR_MSG_PER_SEC from docs/benchmarking.md"
+  @shortdoc "Print the recorded BENCH_FLOOR_MSG_PER_SEC from docs/operations/benchmarking.md"
   @moduledoc """
   Prints the `BENCH_FLOOR_MSG_PER_SEC` value recorded in
-  `docs/benchmarking.md` to stdout. Used by the `bench-regression` CI job
+  `docs/operations/benchmarking.md` to stdout. Used by the `bench-regression` CI job
   per `operative-bench-harness/design.md` Decision 6 to fetch the floor at
   runtime instead of hard-coding it in workflow YAML.
 
@@ -15,7 +15,7 @@ defmodule Mix.Tasks.Bench.Floor do
       300000
   """
 
-  @doc_path "docs/benchmarking.md"
+  @doc_path "docs/operations/benchmarking.md"
   # Matches `BENCH_FLOOR_MSG_PER_SEC = 300_000` or `… = 300000` in the doc,
   # with optional spacing and underscores in the numeric literal.
   @floor_re ~r/BENCH_FLOOR_MSG_PER_SEC\s*=\s*([0-9_]+)/

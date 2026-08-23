@@ -97,8 +97,8 @@
   `tests/ui/procedure_entity_key_removed.rs` +
   `entry_stream_has_no_plugin_sink.rs`, e2e
   `test/system/dynamic_entity_e2e_test.exs` on BOTH runtimes.
-- **Docs/examples**: `docs/stream_transforms.md` (the proposal named
+- **Docs/examples**: `docs/sdk/stream_transforms.md` (the proposal named
   `docs/sdk_graph_authoring.md`, which does not exist — the graph surface is
-  documented in `docs/operative_architecture.md`),
+  documented in `docs/sdk/rust_operative_architecture.md`),
   `sdk/rust/examples/stream_transforms.rs`, Java `E10_StreamTransforms`.
 

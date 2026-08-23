@@ -50,7 +50,7 @@
   Rust `procedure::tests::spawn`, Java `SpawnHandleTest` + `CoreSpawnRequesterTest`.
   GOTCHA: the Rust coordinator trigger is process-global — every test that
   installs one takes `runner::env_test_guard()`.
-- **Docs**: `docs/procedure_requested_spawn.md`, `docs/sdk_protocol_spec.md`,
+- **Docs**: `docs/sdk/procedure_requested_spawn.md`, `docs/sdk/protocol_spec.md`,
   `docs/resilience/workflow_operative.md`. Examples:
   `sdk/rust/examples/spawn_workflow_worker.rs`, Java `E08_SpawnWorkflowWorker`.
 

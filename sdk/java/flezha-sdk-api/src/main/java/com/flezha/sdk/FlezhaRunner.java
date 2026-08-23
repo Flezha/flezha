@@ -38,7 +38,7 @@ import javax.annotation.Nonnull;
  * {@code close()} call.
  *
  * <p>Method names and lifecycle verbs follow
- * {@code docs/sdk_naming_conventions.md} (repository root), mirrored 1:1 with
+ * {@code docs/sdk/naming_conventions.md} (repository root), mirrored 1:1 with
  * the Rust SDK's {@code FlezhaRunner}.
  */
 public final class FlezhaRunner implements AutoCloseable {

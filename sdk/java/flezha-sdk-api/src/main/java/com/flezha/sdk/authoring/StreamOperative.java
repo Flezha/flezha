@@ -14,7 +14,7 @@ import java.lang.annotation.Target;
  * {@code GeneratedStreamOperatives.defineAll(FlezhaRunner)} aggregator, so
  * the author makes one startup call instead of N
  * {@code runner.defineStream} calls. The author's topology is preserved
- * verbatim. See {@code docs/sdk_authoring_contract.md} §5.
+ * verbatim. See {@code docs/sdk/authoring_contract.md} §5.
  */
 @Retention(RetentionPolicy.SOURCE)
 @Target(ElementType.TYPE)

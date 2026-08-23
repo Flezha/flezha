@@ -12,8 +12,8 @@ Everything on the [kernel](kernel.md), [stream](stream_profile.md) and
 [workflow](workflow_profile.md) pages is the same regardless of which host SDK is running, and
 that is precisely because those mechanisms sit below this seam.
 
-Mechanism-level detail: [`../sdk_poll_core.md`](../sdk_poll_core.md). The authoring surface
-itself: [`../operative_architecture.md`](../operative_architecture.md).
+Mechanism-level detail: [`../sdk_poll_core.md`](../sdk/poll_core.md). The authoring surface
+itself: [`../operative_architecture.md`](../sdk/rust_operative_architecture.md).
 
 ---
 
@@ -349,7 +349,7 @@ documented in-process forms of what the byte boundary removes for FFI hosts.
 
 The kernel has exactly two hosts today: the Rust SDK (the crate) and the Java SDK
 (`flz_core_ffi` over JNI). **The Elixir SDK is the deliberate exception.** It is not a poll
-host ([`../elixir_sdk.md`](../elixir_sdk.md)): it re-expresses dispatch, overflow, the
+host ([`../elixir_sdk.md`](../sdk/elixir_sdk.md)): it re-expresses dispatch, overflow, the
 retry→park ladder and the partition guard in Elixir and inherits *nothing* from `flz_core`. So
 a change below the seam reaches Rust and Java for free and reaches Elixir only when someone
 writes it; a change above the seam reaches nobody for free.
@@ -363,7 +363,7 @@ The rule, normative for every binding:
   bench factories, the e2e runtime matrix).
 - **Deferred is named, never silent.** An SDK that cannot carry a capability yet is recorded as
   deferred *by name* — in the change's spec delta and in that SDK's scope matrix
-  ([`../elixir_sdk.md` → "Deferred capabilities"](../elixir_sdk.md#deferred-capabilities-v1-scope))
+  ([`../elixir_sdk.md` → "Deferred capabilities"](../sdk/elixir_sdk.md#deferred-capabilities-v1-scope))
   — together with the follow-up that owes it. The crate is the dogfood host (a capability the
   crate reaches and the C ABI does not is a defect); one level up the same holds: a capability
   one SDK reaches that another neither reaches nor names as deferred is a defect of the change,
@@ -396,8 +396,8 @@ A `—` is a gap this rule forbids; the two above are closed by `cross-sdk-perf-
 
 ## Where to go next
 
-- The poll boundary in mechanism detail → [`../sdk_poll_core.md`](../sdk_poll_core.md)
-- Authoring an operative → [`../operative_architecture.md`](../operative_architecture.md)
+- The poll boundary in mechanism detail → [`../sdk_poll_core.md`](../sdk/poll_core.md)
+- Authoring an operative → [`../operative_architecture.md`](../sdk/rust_operative_architecture.md)
 - What the runner ships to the controller → [`kernel.md`](kernel.md)
-- The wire protocol → [`../sdk_protocol_spec.md`](../sdk_protocol_spec.md)
-- Naming rules for a new SDK → [`../sdk_naming_conventions.md`](../sdk_naming_conventions.md)
+- The wire protocol → [`../sdk_protocol_spec.md`](../sdk/protocol_spec.md)
+- Naming rules for a new SDK → [`../sdk_naming_conventions.md`](../sdk/naming_conventions.md)

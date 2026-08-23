@@ -11,7 +11,7 @@ an observer that reports silence against an application-supplied threshold.
 The split is the point: the *signal* (when a frame last arrived) is SDK
 knowledge, the *policy* (what gap is anomalous, and what to do about it) is
 domain knowledge, so the SDK ships no default threshold and no default action.
-See `docs/entry_input_observability.md`.
+See `docs/sdk/entry_input_idle.md`.
 
 ## Requirements
 ### Requirement: Per-entry-channel last-delivery instant is tracked and readable

@@ -390,4 +390,4 @@ A hot *single* key is still bounded by one machine — inherent to per-key order
 identical); the documented answer is two-stage aggregation. Partition spread across runners is
 statistical (HRW) for now. The full contract — preflight, id budget, quota, coverage
 validation, `flz state get <group>/...` resolution:
-[`../partitioned_operatives.md`](../partitioned_operatives.md).
+[`../partitioned_operatives.md`](../sdk/partitioned_operatives.md).

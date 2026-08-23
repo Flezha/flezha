@@ -117,6 +117,6 @@
   (`sdk/rust/README.md` "Public API workflow"). It is human-curated commentary,
   not `cargo public-api` output, so it is hand-edited — and a CHANGED signature
   (here `ChannelDescriptor::consumers`) must be recorded, not just additions.
-- **Docs/examples**: `docs/multi_input_procedures.md`, `docs/glossary.md`
+- **Docs/examples**: `docs/sdk/multi_input_procedures.md`, `docs/glossary.md`
   ("Merge"), `sdk/rust/examples/merged_input.rs`, Java `E09_MergedInput`.
 

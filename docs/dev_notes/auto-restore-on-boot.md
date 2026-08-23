@@ -91,5 +91,5 @@
   `Flezha.Reconciler.Supervisor` (top-level); `FLEZHA_RECONCILER_ENABLED`,
   `FLEZHA_LEADERSHIP_ENABLED`, `FLEZHA_RECONCILE_*` env vars.
   (`Flezha.State.Outbox` was NOT removed — it still exists and is live.)
-- **Detailed notes**: `docs/resilience/auto_restore_on_boot.md`.
+- **Detailed notes**: `docs/operations/auto_restore_on_boot.md`.
 

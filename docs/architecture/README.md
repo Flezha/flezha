@@ -8,7 +8,7 @@ its work resumes elsewhere from the last durable point.
 This directory is the **architectural map** — the model, the invariants, and the diagrams. It
 tells you how the pieces compose. For the mechanism-level detail behind any box, follow the
 links; the deep docs live in [`../resilience/`](../resilience/) and
-[`../sdk_protocol_spec.md`](../sdk_protocol_spec.md).
+[`../sdk_protocol_spec.md`](../sdk/protocol_spec.md).
 
 | Document | What it covers |
 | --- | --- |
@@ -136,7 +136,7 @@ flowchart TB
   name cold-starts fresh. Workflow operatives refuse dynamic mode.
 
 Full vocabulary: [`../glossary.md`](../glossary.md). The SDK authoring surface:
-[`../operative_architecture.md`](../operative_architecture.md).
+[`../operative_architecture.md`](../sdk/rust_operative_architecture.md).
 
 ---
 
@@ -417,7 +417,7 @@ an empty map and the controller keeps every default. `keyed` is declared only wh
 refuse a repeat partitioned start without touching a runner); `durability=sync_remote` is a
 workflow class asking the [remote durability tier](kernel.md#the-remote-durability-tier) to
 gate its barrier acks on the remote ship. Wire detail:
-[`../sdk_protocol_spec.md`](../sdk_protocol_spec.md).
+[`../sdk_protocol_spec.md`](../sdk/protocol_spec.md).
 
 ---
 
@@ -558,5 +558,5 @@ The full scenario matrix and the operator playbook are in
 - Jobs, sagas, and agent sessions → [`workflow_profile.md`](workflow_profile.md)
 - Inside a runner, and writing a new SDK → [`runner.md`](runner.md)
 - Fault-tolerance mechanisms in depth → [`../resilience/overview.md`](../resilience/overview.md)
-- The wire protocol → [`../sdk_protocol_spec.md`](../sdk_protocol_spec.md)
-- Authoring an operative → [`../operative_architecture.md`](../operative_architecture.md)
+- The wire protocol → [`../sdk_protocol_spec.md`](../sdk/protocol_spec.md)
+- Authoring an operative → [`../operative_architecture.md`](../sdk/rust_operative_architecture.md)

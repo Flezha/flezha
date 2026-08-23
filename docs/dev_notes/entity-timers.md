@@ -125,9 +125,9 @@
   `late_input_correction_e2e`, `effectively_once_checkpoint_e2e` and the
   workflow branching resume. It now goes through `ControlUnit.send_control_await/3`,
   which is the ONE awaited-round-trip seam and owns the reply-ref bookkeeping.
-- **Docs/examples**: `docs/entity_timers.md`, plus sections in
-  `docs/sdk_authoring_contract.md` (3.4), `docs/operative_architecture.md`,
-  `docs/resilience/data_durability.md`, `docs/sdk_protocol_spec.md`,
+- **Docs/examples**: `docs/sdk/entity_timers.md`, plus sections in
+  `docs/sdk/authoring_contract.md` (3.4), `docs/sdk/rust_operative_architecture.md`,
+  `docs/resilience/data_durability.md`, `docs/sdk/protocol_spec.md`,
   `docs/glossary.md`; `sdk/rust/examples/session_timeout.rs`, Java
   `E12_SessionTimeout`; `sdk/rust/public-api.txt` updated.
 

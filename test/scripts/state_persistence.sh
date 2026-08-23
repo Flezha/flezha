@@ -2,7 +2,7 @@
 # Per-Entity state-persistence smoke test (engagement-only).
 #
 # Verifies the data-plane half of the `operative-state-persistence`
-# contract (see `docs/controller_state_persistence.md`): with a operative
+# contract (see `docs/internals/state_persistence.md`): with a operative
 # running, plugins attached, and inputs flowing, the controller writes
 # WAL files under `app_data/state/<runner_id>/<operative_class>/...`
 # and `flz state list <class>` surfaces the live entity.

@@ -8,8 +8,8 @@ defmodule Flezha do
   in Rust, Java, and others. It supports clustered operatives with hot-swap
   migration and a single auto-restore-on-boot mechanism — ProcessHub's
   durable registry persists operative specs, and per-Entity WAL/snapshot
-  files persist progress (see `docs/auto_restore_on_boot.md` and
-  `docs/controller_state_persistence.md`).
+  files persist progress (see `docs/operations/auto_restore_on_boot.md` and
+  `docs/internals/state_persistence.md`).
   """
 
   defdelegate start_operative(namespace, operative), to: OperativeManager

@@ -28,5 +28,5 @@
 - **Test config**: `config/test.exs` sets
   `:graceful_shutdown_enabled` to `false` so `Application.stop/1`
   teardown remains fast.
-- **Detailed notes**: `docs/resilience/graceful_shutdown.md`.
+- **Detailed notes**: `docs/operations/graceful_shutdown.md`.
 

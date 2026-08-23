@@ -49,5 +49,5 @@
 - **Bench**: `mix flezha.bench.observability [iterations]` boots
   just the observability supervisor (no Controller / runners) and
   reports nanoseconds per emit against zero sinks.
-- **Detailed notes**: `docs/observability_foundation.md`.
+- **Detailed notes**: `docs/operations/observability.md`.
 

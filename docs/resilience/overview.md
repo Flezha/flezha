@@ -1,390 +1,140 @@
-# Fault Tolerance, Self-Healing & Recovery — Overview
-
-This document maps every mechanism in Flezha that prevents data loss, detects
-failures, and restores the system to a healthy state. It is the entry point;
-each section links to the dedicated doc for its subsystem.
-
-For the architectural model these mechanisms compose into — the durable-compute
-kernel, the two profiles, and the diagrams — start at
-[`../architecture/`](../architecture/README.md).
-
-The system has three layers:
-
-- **Prevention** — bound mailboxes, WAL durability, graceful drain
-- **Detection** — watchdog sweeps, control-channel liveness, seq-gap detection,
-  convergence probes
-- **Recovery** — convergence loop resync/rebind/plugin-restart/evict, Overwatch
-  retry, SDK reconnect, ProcessHub cold-boot recovery, entity resync, and the
-  opt-in remote durability tier (rehydrate a controller that lost its disk)
-
----
-
-## 1. Convergence Loop (primary self-healer)
-
-`lib/flezha/convergence/`
-
-The controller's single self-healing engine. Every 5 s (and immediately on
-declared events) it runs a declarative pipeline:
-
-```
-Intent → Probe → Diff → Planner → Heal
-```
-
-| Module | Role |
-|--------|------|
-| `Convergence.Loop` | GenServer driving the tick; owns misbound-streak state and event subscriptions |
-| `Convergence.Intent` | Reads the ProcessHub registry to know what operatives and plugins _should_ exist |
-| `Convergence.Probe` | Reads live reality (active runners, operative states, hub recovery); pure observer |
-| `Convergence.Diff` | Pure function comparing intent vs reality vs this tick's sensor signals → delta (unbound/misbound/stalled operatives, missing/extra plugins, data-plane wedge) |
-| `Convergence.Planner` | Turns the delta into an ordered, backoff-filtered list of procs (cap: 20/tick) |
-| `Convergence.Heal` | Executes procs via six idempotent primitives: `rebind_operative`, `resync_runner`, `start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner` |
-| `Convergence.Backoff` | Per-`{primitive, target}` exponential cooldown: 5 s → 30 s → 60 s → 300 s |
-| `Convergence.Snapshot` | ETS table holding the latest published health summary; read by `/healthz`, CLI, and telemetry |
-| `Convergence.RecoveryGate` | Classifies which namespaces are ready for healing based on per-hub recovery state; `:timeout` hubs are included rather than blocking all healing |
-| `Convergence.SafeCall` | Bounded `GenServer.call` that returns `{:error, reason}` instead of crashing when a process is wedged or gone |
-
-**Stability guarantees built into the loop:**
-
-- An operative must be misbound for **≥ 2 consecutive ticks** before a rebind is
-  issued — a single blip cannot trigger a full-namespace migration.
-- The entire tick body is wrapped in `try/rescue`; an uncaught error becomes a
-  skipped tick, not a Loop crash.
-- If `active_runners` returns `:unknown` (a read failure), the diff suppresses
-  destructive procs for that namespace — it is not treated as "all runners gone."
-- Tick events (`:output_stall`, `:runner_connected`) shorten detection latency
-  by triggering an immediate tick; they do not bypass the pipeline.
-
-See [`convergence_loop.md`](convergence_loop.md) for the full architecture and
-configuration reference.
-
----
-
-## 2. Per-Operative Overwatch
-
-`lib/flezha/operative/overwatch.ex`
-
-A per-operative GenServer that does the actual bind work: ping a runner,
-negotiate operative start, install plugins, and ship persisted WAL state on
-attach. On any failure it retries with jittered exponential backoff
-(`200 ms → 500 ms → 1 s → 2 s → 5 s → 10 s`). The convergence loop's
-`rebind_operative` primitive calls into Overwatch; Overwatch never calls back
-into the loop.
-
----
-
-## 3. State Persistence — WAL + Snapshots
-
-`lib/flezha/state/`
-
-Every operative state change is durable before the runner's output plugin
-fires, so a hard restart restores state from disk rather than losing it.
-
-| Module | Role |
-|--------|------|
-| `State.WalWriter` | Appends every state change to a per-entity WAL file |
-| `State.FsyncBatcher` | Casts one `:fsync` to every dirty WAL writer every 5 ms; the writers sync concurrently |
-| `State.Snapshot` | Crash-safe atomic snapshots: write `.tmp` → fsync → rename |
-| `State.Outbox` | Persists the last-sent seq per entity as a dedup marker |
-| `State.Restore` | Assembles snapshot + tail-WAL bytes to send to a reconnecting runner |
-| `State.Recovery` | Re-runs the `RestoreInitState` handshake when an entity is detected as desync'd |
-| `State.Retention` | Sweeper pruning old snapshots and WAL records beyond the retention window |
-| `State.TimeTravel` | Point-in-time query: replay WAL up to a target seq or timestamp |
-| `State.Watchdog` | Detects an entity still receiving changes but whose seq stopped advancing |
-| `State.PersistenceResolver` | Resolves per-operative persistence config from runner override → operative metadata → global default |
-| `State.DurabilityTier` (+ `Shipper` / `Hydrator` / `Manifest` / `Backend`) | Opt-in remote artifact shipping — snapshots, WAL record ranges, journal/inbox suffixes, the registry cspec — and hydration back on a fresh node. Off by default (`backend: none`); see [`../remote_durability_tier.md`](../remote_durability_tier.md) |
-
-**Back-pressure:** when a WAL writer's pending bytes exceed the high-watermark
-(default 16 MiB), it sends an `EntityMailboxStatus{status: "full"}` command to
-the SDK. The SDK's overflow policy (block/drop/replace) activates until the
-low-watermark is crossed.
-
-See [`state_persistence.md`](state_persistence.md) for the WAL record format,
-snapshot lifecycle, crash-recovery semantics, and all configuration knobs.
-
-An operative may upgrade this to **effectively-once** delivery — a durable input
-log, one atomic record per invocation, and an fsync-gated outbox flush. That tier
-and the two mechanisms it unlocks (the dead-letter queue and late-input
-correction) are covered in §14.
-
----
-
-## 4. Output-Stall Detection
-
-`lib/flezha/state/watchdog.ex`
-
-Sweeps every 10 s. For each persistence-enabled entity it checks:
-
-1. **Output staleness** — still receiving changes but seq has not advanced within
-   `output_stall_timeout_ms` (default 60 s) → emits
-   `[:flezha, :state, :output_stall]` and **nothing else**. The remedy is the
-   convergence loop's output-stall ladder; the Watchdog is a sensor. A
-   genuinely idle entity (no changes arriving) is never flagged.
-2. **Compaction timeout** — a `CompactEntity` whose snapshot has not arrived
-   within `compaction_timeout_ms` (default 30 s) → emits
-   `[:flezha, :state, :compaction_timeout]` and triggers resync.
-3. **RPO breach** (remote durability tier only) — local durable progress that
-   has gone unshipped past `rpo_target_ms` → emits the alarm-grade
-   `[:flezha, :state, :rpo_exceeded]`; surfaced by `/healthz` as
-   `degraded, reason: durability_rpo_exceeded`.
-
-The convergence loop subscribes to `[:flezha, :state, :output_stall]` and fires
-an immediate tick on the FIRST flag for an instance; a re-flag while the stall
-is already recorded only refreshes its timestamp, so a frozen entity re-flagged
-every sweep drives one tick, not one per sweep.
-
-Each completed sweep stamps `Convergence.Snapshot.observe_sensor/3`. A Watchdog
-that wedges without crashing stops stamping, and `/healthz` reports
-`sensor_stale` within one poll instead of silently losing detection.
-
----
-
-## 5. Seq-Gap Self-Heal
-
-`lib/flezha/state/wal_writer.ex`
-
-When a `WalWriter` receives a change frame with
-`seq > last_persisted_seq + 1`, it emits `[:flezha, :state, :seq_gap]` and
-calls `State.Recovery.resync/2` so the SDK rewinds and resends from
-`terminal_seq + 1`. This is silent and automatic — no operator action required.
-
----
-
-## 6. Boot Recovery
-
-`lib/flezha/boot/`
-
-| Module | Role |
-|--------|------|
-| `Boot.StatePathMigrator` | One-shot, idempotent rename of legacy runner-keyed WAL paths to the flat layout; runs before any WalWriter opens |
-| `Boot.RecoveryHooks` | Installs telemetry forwarders for ProcessHub's `pre_recovery_replay` / `post_recovery_replay` lifecycle events |
-| `BootLoader` | Runs pre-boot hooks (sockets, certs) and gates hub creation on cluster readiness |
-
-When a remote durability backend is configured, one step precedes all of this:
-`DurabilityTier.Hydrator.hydrate_cspecs_on_boot/0` runs as a one-shot child
-ahead of `HubManager`, so a fresh node rebuilds the registry cspec from the
-remote store *before* any hub opens `registry.dets` — otherwise the orphan
-reconcile below could never see the restored operatives.
-
-**ProcessHub recovery gate:** `HubManager` starts each namespace hub with a
-durable registry backend and an orphan reconcile. Every node periodically
-starts the difference between its durable registry and what the cluster is
-observed to hold: on a fully-downed cluster that difference is the whole
-operative list, so it restores itself with no operator step; joining a live
-cluster the difference is empty, so it starts nothing. The durable copy is
-never wiped to force either outcome. See
-[`process_hub_recovery_model.md`](process_hub_recovery_model.md).
-
-**Workflow-kind operatives (durable crash-resume).** A `:workflow` operative is
-**durable by default** (opt-out per class) and crash-resumes on the shared WAL
-substrate: on a runner/controller restart it restores its committed
-per-Entity state via the bind-time restore path and **re-runs its procedure
-chain** (Model A idempotent re-run — a step may repeat, so steps are idempotent
-by author contract; the `run`-sugar form re-runs from the top). A restore-before-run
-gate (`AddOperative.resume_entity_count`) holds the first procedure until the
-persisted Entities are restored, so it never runs on empty state. Saga
-compensation is likewise crash-safe — compensation-intent / -done markers ride
-the restore, so a crash mid-rollback resumes the remaining hooks and skips the
-already-done ones. A completed operative is deregistered, but its final state + a
-completion record are **retained for a window** (default 3 days) for post-hoc
-inspection via `flz operative info`. Execution is **at-least-once**: a
-non-idempotent fire-and-forget job should opt out of durability so a crash
-re-runs from a clean slate rather than a partial one. See
-[`workflow_operative.md`](workflow_operative.md). (A near-instant workflow operative
-completing during the start RPC's confirmation window is handled — a clean exit
-there is reported as a successful start.)
-
----
-
-## 7. Graceful Shutdown & Drain
-
-`lib/flezha/shutdown/`
-
-| Module | Role |
-|--------|------|
-| `Shutdown.Coordinator` | Three-phase shutdown: quiesce (block new operatives/connections) → drain (wait for operatives to migrate to peers) → finalise (flush WAL, close transports) |
-| `Shutdown.SignalHandler` | Installs SIGTERM/SIGINT OS handlers in every BEAM run mode; third signal triggers `erlang.halt(143)` |
-
-The drain phase polls peer registry dumps until every locally-hosted operative is
-visible on at least one peer. Solo nodes skip the wait. On graceful stop the SDK
-ships final operative state before exiting, so the WAL is consistent at the next
-boot.
-
-See [`graceful_shutdown.md`](graceful_shutdown.md).
-
----
-
-## 8. Health Endpoint
-
-`lib/flezha/healthz/server.ex`
-
-HTTP `/healthz` listener (opt-in, `FLEZHA_HEALTHZ_ENABLED=true`). Reads only
-`Convergence.Snapshot.current/0` — holds no state of its own.
-
-| Status | HTTP | Condition |
-|--------|------|-----------|
-| `healthy` | 200 | All hubs `:normal` and `producing_operatives == bound_operatives` |
-| `degraded` | 200 | Operatives output-stalled or STUCK, `intent_mismatch`, a data-plane wedge the convergence pipeline owns (`data_plane_wedged`), a periodic sensor that stopped completing passes (`sensor_stale`), or remote-ship lag past the RPO target (`durability_rpo_exceeded`). Kubelet must not restart — the loop is healing, or an operator decision is owed |
-| `recovering` | 200 | Any hub in `:recovery_pending \| :recovering` |
-| `unhealthy` | 503 | Convergence loop itself is wedged (`tick_stale \| recovery_failed`), or the controller's own data-plane fabric is (`data_plane_fabric_wedged`: `driver_loop_frozen` / `nif_queue_backing_up` sustained for `FLEZHA_FABRIC_503_POLLS` classifier polls, default 3, `0` disables) |
-
-The 503 set is exactly "nothing this controller can do reaches it". A wedged
-NIF driver thread qualifies because every heal the pipeline could issue travels
-through that thread; a wedged *runner* does not, because the pipeline evicts and
-rebinds it. See `docs/resilience/convergence_loop.md` and
-`docs/resilience/transport_liveness.md`.
-
----
-
-## 9. Cluster Formation & Reconnect
-
-`lib/flezha/cluster/orchestrator.ex`
-
-Keeps the BEAM cluster connected: discovers peers on startup, reconnects with
-jittered backoff on disconnect, and gates namespace hub creation on
-`cluster_ready?/0`. A single-node deployment degrades to solo once the workflow
-formation timeout elapses, so it still boots without hanging.
-
----
-
-## 10. Runner Connection Resilience
-
-`lib/flezha/runner/`
-
-| Module | Role |
-|--------|------|
-| `FleetManager` | Accepts new runner connections, mints a per-connection **session token**, runs the reconnect **binding swap** keyed on the runner's durable **stable identity**, rejects connects during shutdown, and dispatches `:runner_connected_event` (immediate convergence tick) |
-| `StreamChannel` | Per-stream GenServer forwarding operative output to the runner socket; detects seq gaps and triggers entity resync |
-| `ControlChannel` | Reads protobuf commands from the runner's control socket; stamps `last_seen` on every inbound frame and runs the **control-plane session-liveness watchdog** (sustained silence → connection close) |
-
-Runner identity is two layers — a durable, SDK-owned **stable identity** (the
-binding key) and an ephemeral controller-minted **session token** (the
-routing/Registry key). Reconnect re-points the stable identity's operatives onto
-the new session token rather than minting-and-evicting, giving binding continuity
-across restart. See [`runner_identity.md`](runner_identity.md) and the
-control-plane watchdog in [`transport_liveness.md`](transport_liveness.md).
-
----
-
-## 11. Rust SDK Resilience
-
-`sdk/rust/src/`
-
-| Module | Role |
-|--------|------|
-| `shutdown.rs` | On SIGTERM/drop, serializes every running operative's final state and sends it to the controller so the next runner starts from the true last state |
-| `flz_core/src/control_unit.rs` | Opens the control channel with full-jitter exponential backoff retry (cap 30 s) and reconnects automatically on disconnect or ack-timeout |
-| `flz_core/src/persistent_id.rs` | Creates + persists the runner's durable **stable identity** (`<namespace>-<profile_hash8>-<rand6>`) so a restarted process re-presents it and the controller swaps its bindings onto the new session; degrades to a fresh per-boot id when the path is unwritable |
-| `flz_core/src/flusher.rs` | Background thread draining each entity's change buffer on a 5 ms linger and sending framed WAL records to the controller |
-| `flz_core/src/restore.rs` + the typed fold in `sdk/rust/src/entity/restore.rs` | Applies a `RestoreInitPayload` (snapshot + change-log) so a reconnected entity resumes from exactly its last state |
-| `flz_core/src/mailbox.rs` | Bounded lock-free per-operative mailbox with configurable overflow policy (block/drop/replace) so a slow operative cannot back-pressure the whole runner |
-
-**Control-channel liveness** (`flz_transport/src/transport/liveness.rs`, shared
-by Rust and Java SDKs):
-
-- **First-frame ack deadline** (`FLEZHA_CONTROL_ACK_TIMEOUT_MS`, default 10 s):
-  a freshly opened channel that never gets an ack (controller mid-shutdown)
-  reconnects instead of hanging forever.
-- **Steady-state idle timeout** (`FLEZHA_CONTROL_IDLE_TIMEOUT_MS`, default 45 s):
-  a half-open / wedged controller is detected and reconnected.
-- **Keepalive ping** (`FLEZHA_CONTROL_KEEPALIVE_MS`, default 15 s): jittered
-  round-trip prevents the idle timeout from firing on a healthy-but-quiet channel.
-
-**Data-channel heartbeat** (`FLEZHA_DATA_HEARTBEAT_MS`, default 10 s, shared by
-Rust and Java SDKs): the runner writes a bare `data_heartbeat` frame on every
-secondary stream while connected. The control channel staying alive does not
-prove the data plane is — the data plane is what froze in the 21 h candle
-incident — so liveness rides the data channel directly. The controller's
-`StreamChannel` treats any inbound frame (heartbeat or operative output) as
-liveness and flags `[:flezha, :state, :output_stall]` only when a bound channel
-is silent past `:io_stream_liveness_threshold_ms` (default 30 s, ≈3 beats). An
-idle-but-healthy operative is therefore never mistaken for a stall.
-
----
-
-## 12. Observability Feeding into Healing
-
-| Module | Role |
-|--------|------|
-| `State.Watchdog` | Emits `[:flezha, :state, :output_stall]` telemetry consumed by the convergence loop, and stamps its own sweep freshness into `Convergence.Snapshot` |
-| `Observability.TelemetryBridge` | Lifts all `[:flezha, ...]` telemetry onto the observability bus for Prometheus/OTLP/ring-buffer sinks |
-| `Observability.Bus` | Fan-out dispatcher; a broken sink never crashes the producer |
-
----
-
-## 13. Data-Plane Liveness Instrumentation (stall localization)
-
-`flz_nif/src/driver_stats.rs`, `lib/flezha/transport/liveness_counters.ex`,
-`lib/flezha/convergence/stall_classifier.ex`
-
-Instrumentation that localizes a silent `io_in`/output stall to the exact layer
-that wedged. The output-stall watchdog (§4) tells you a stream went silent; this
-tells you **why** — was it the operative, the channel, the NIF command queue, the
-driver thread, the socket, or the runner? It adds **zero** data-plane behaviour,
-and its verdict has exactly one consumer per layer: a convergence heal primitive
-where a BEAM-level remedy exists, a `/healthz` 503 where only a process restart
-does. See
-[`transport_liveness.md`](transport_liveness.md) for the full signal set,
-verdict decision tree, and the zero-code `/proc` fallback. Production
-data-freeze incidents are tracked one-entry-per-occurrence in
-`incident_log.md` at the repo root (local-only, gitignored).
-
----
-
-## 14. Delivery Semantics, Dead-Letter Queue, and Correction
-
-`lib/flezha/state/input_log.ex`, `lib/flezha/dlq/store.ex`
-
-The default is **at-least-once**: output leaves as it is produced, and a
-crash-replay can re-emit it. An operative declaring `effectively_once()` gets a
-durable input log (every inbound payload journaled with an offset *before* it is
-forwarded), one **atomic effect record** per invocation carrying `{state changes,
-outputs, consumed offset, dead-letter entry, event time}` under one fsync, and an
-**fsync-gated** outbox flush stamped with a replay-stable identity — so a
-conforming sink (the built-in Postgres and Kafka bindings) deduplicates the
-repeats a crash produces.
-
-| Mechanism | Role |
-|--------|------|
-| Durable input log | Offset-addressable journal per operative class. Retention truncates below the minimum durable consumed-offset across its Entities. |
-| `Flezha.Dlq.Store` | A payload that fails every retry is **parked durably** and its Entity advances — the minimum watermark keeps moving, and nothing is silently dropped. `flz dlq list \| show \| replay \| drop`. |
-| Late-input correction | An event arriving behind the high-water mark but inside a declared window rewinds the Entity to a baseline, replays the slice in event-time order, and republishes under a bumped epoch — the keyed sink overwrites the stale rows. |
-| Checkpoint ack-granularity | An operative that folds many inputs into one coherent state push acknowledges at `ctx.checkpoint()` rather than per input. |
-
-Workflow operatives do not use the DLQ — their escape is AbortAll + saga
-compensation (§6).
-
-The same machinery carries **operative-to-operative** delivery
-(`lib/flezha/plugin/provider/operative_forward.ex`), which adds no new identity
-scheme, dedup store, or durable ledger. The sender's outbox already stamps
-identity; the plugin's worker retries until the target confirms; the target's
-`journal_input/2` already absorbs duplicates. The guarantee is therefore
-**derived, not configured** — a source with a transactional outbox gets
-effectively-once across the hop, one without gets at-least-once — and there is
-deliberately no delivery-mode option to misconfigure. In-flight queued items do
-not survive a controller restart, identically to the Kafka and Postgres sink
-buffers; see `data_durability.md` "Operative to operative".
-
-See [`data_durability.md`](data_durability.md) for the semantics and the operator
-playbook, and [`../architecture/stream_profile.md`](../architecture/stream_profile.md)
-for the model and diagrams.
-
----
+# Resilience Overview
+
+A map of every mechanism in Flezha that prevents data loss, detects failure and restores a
+healthy system, for operators and contributors who need to know **which guarantee lives
+where**. Each entry says what the mechanism guarantees and links to the document that owns
+it; the model they compose into is in [`../architecture/`](../architecture/README.md).
+
+## Detection and self-healing
+
+**Convergence loop** — `lib/flezha/convergence/`. The controller's single self-healer runs
+`Intent → Probe → Diff → Planner → Heal` every 5 s and immediately on a declared event, through
+seven idempotent primitives (`rebind_operative`, `replace_operative`, `resync_runner`,
+`start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`), at most 20 procs per tick,
+each `{primitive, target}` backed off 5 s → 30 s → 60 s → 300 s. A rebind needs two consecutive
+misbound ticks, a failed read is `:unknown` rather than "gone", and an uncaught error is a
+skipped tick, never a crashed loop.
+Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md); model:
+[`../architecture/kernel.md` "Health and liveness"](../architecture/kernel.md#health-and-liveness).
+
+**Per-operative Overwatch** — `lib/flezha/operative/`. Does the bind work the loop asks for and
+retries on failure with jittered backoff 200 ms → 500 ms → 1 s → 2 s → 5 s → 10 s. The loop
+calls Overwatch; Overwatch never calls back.
+Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).
+
+**Output-stall watchdog** — `lib/flezha/state/watchdog.ex`. Sweeps every 10 s; an Entity still
+receiving changes whose seq has not advanced in `output_stall_timeout_ms` (60 s) emits
+`[:flezha, :state, :output_stall]` and nothing else — the remedy is the loop's. A `CompactEntity`
+unanswered past `compaction_timeout_ms` (30 s) triggers a resync. A sweep that stops completing
+reads `sensor_stale` on `/healthz`.
+Owner: [`../internals/state_persistence.md`](../internals/state_persistence.md).
+
+**Stall localization** — `flz_nif/src/driver_stats.rs`, `lib/flezha/convergence/stall_classifier.ex`.
+Names the layer that wedged (operative, channel, NIF queue, driver thread, socket, runner) and
+hands each verdict to exactly one consumer: a heal primitive where the BEAM has a remedy, a
+`/healthz` 503 where only a process restart does.
+Owner: [`../internals/transport_liveness.md`](../internals/transport_liveness.md).
+
+**Control- and data-channel liveness** — `flz_transport/src/transport/liveness.rs`, shared by
+the Rust and Java SDKs. A fresh control channel reconnects with no ack inside
+`FLEZHA_CONTROL_ACK_TIMEOUT_MS` (10 s), a quiet one after `FLEZHA_CONTROL_IDLE_TIMEOUT_MS`
+(45 s); `FLEZHA_CONTROL_KEEPALIVE_MS` (15 s) keeps a healthy channel from tripping it. The data
+plane proves itself separately — a `data_heartbeat` every `FLEZHA_DATA_HEARTBEAT_MS` (10 s) —
+and a bound stream silent past `:io_stream_liveness_threshold_ms` (30 s) is an output stall.
+Owner: [`../internals/transport_liveness.md`](../internals/transport_liveness.md).
+
+**Seq-gap self-heal** — `lib/flezha/state/wal_writer.ex`. A change frame with
+`seq > last_persisted_seq + 1` emits `[:flezha, :state, :seq_gap]` and drives a rate-limited
+resync; an empty WAL pulls a baseline snapshot instead. Silent and automatic.
+Owner: [`../internals/state_persistence.md`](../internals/state_persistence.md).
+
+**Health endpoint** — `lib/flezha/healthz/server.ex`, opt-in via `FLEZHA_HEALTHZ_ENABLED`; reads
+only the published convergence snapshot. `degraded` means the loop is healing or an operator
+decision is owed; 503 is reserved for a wedged convergence loop or a wedged controller-fabric
+driver thread (`FLEZHA_FABRIC_503_POLLS`, default 3, `0` disables).
+Owner: [`../architecture/kernel.md` "The `/healthz` contract"](../architecture/kernel.md#the-healthz-contract).
+
+## Durability
+
+**Per-Entity state: WAL + snapshots** — `lib/flezha/state/`. Every change is appended to a
+per-Entity WAL and made durable by the `FsyncBatcher` tick (`:agent_fsync_interval_ms`, 5 ms);
+snapshots are written atomically; restore ships snapshot + WAL tail to the reconnecting runner.
+A graceful stop loses nothing; a hard kill can lose the records inside the last fsync window.
+Owner: [`../internals/state_persistence.md`](../internals/state_persistence.md).
+
+**Flow control** — credit windows on both loops: the runner→controller window
+(`:wal_high_watermark_bytes`, 16 MiB) is minted back only on WAL fsync, the source→controller
+window (`:source_credit_window_bytes`, same default) only on the consumed-offset advance. An
+exhausted window parks the sender; nothing is shed. `Block` is the default overflow policy for
+every channel kind in both SDKs and the FFI host.
+Owner: [`../architecture/kernel.md` "Flow control: the three loops"](../architecture/kernel.md#flow-control-the-three-loops).
+
+**Delivery semantics** — at-least-once by default with replay-stable identity stamps; the
+opt-in effectively-once tier adds a durable input log, one atomic effect record per invocation
+and a confirmation-gated outbox. The dead-letter queue and late-input correction ride the tier.
+Owner: [`data_durability.md`](data_durability.md).
+
+**Workflow operatives** — durable by default: a crash restores committed Entity state and
+resumes at the first un-journaled procedure, output is staged and flushed only after the
+barrier is durable, and post-start input is journaled before it is forwarded.
+Owner: [`workflow_operative.md`](workflow_operative.md).
+
+**Per-Entity timers** — folded state in the Entity's own change log, so the pending set is
+rebuilt by the ordinary restore and nothing new has to be made crash-consistent.
+Owner: [`../sdk/entity_timers.md`](../sdk/entity_timers.md).
+
+**Remote durability tier** — a production boot must choose `FLEZHA_DURABILITY_BACKEND`; when
+enabled, immutable artifacts ship at existing boundaries so a controller that dies with its
+disk is rehydrated on a fresh node.
+Owner: [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md).
+
+## Placement, identity and lifecycle
+
+**Orphan reconcile at boot** — `lib/flezha/service/hub_manager.ex`. Every node starts the
+difference between its durable registry (`registry.dets`) and what the cluster holds: on a
+cold cluster that is the whole operative list, joining a live cluster it is empty. The durable
+copy is never wiped to force either outcome; with a remote backend the registry cspec is
+hydrated before any hub opens.
+Owner: [`../operations/auto_restore_on_boot.md`](../operations/auto_restore_on_boot.md),
+[`../internals/process_hub.md`](../internals/process_hub.md).
+
+**Runner identity and reconnect** — `lib/flezha/runner/`, `flz_core/src/persistent_id.rs`. A
+durable SDK-owned stable identity is the binding key, a controller-minted session token the
+routing key; a reconnecting runner has its bindings swapped onto the new session instead of
+being evicted and re-placed.
+Owner: [`../internals/runner_identity.md`](../internals/runner_identity.md); fencing:
+[`../architecture/kernel.md` "Ownership and fencing"](../architecture/kernel.md#ownership-and-fencing).
+
+**Graceful shutdown** — `lib/flezha/shutdown/`, `flz_core/src/shutdown.rs`. The controller
+quiesces, drains operatives to peers and finalises (a third signal escapes with
+`:erlang.halt(143)`); the SDK ships every operative's final state and waits for
+`RunnerShutdownAck` (2 s per operative, in parallel) before exiting.
+Owner: [`../operations/graceful_shutdown.md`](../operations/graceful_shutdown.md).
+
+**Observability feeding healing** — every `[:flezha, ...]` telemetry event is lifted onto the
+observability bus; a broken sink never crashes the producer. Owner: [`../operations/observability.md`](../operations/observability.md).
 
 ## Durability guarantee summary
 
 | Scenario | State loss | Output |
-|----------|-----------|--------|
-| Graceful runner stop (SIGTERM / `disconnect()`) | None — SDK ships final state | At-least-once |
-| Runner SIGKILL | Best-effort (async WAL lag) | At-least-once |
-| Controller graceful restart with live peer | None — peer sync | At-least-once |
-| Controller recovery-mode restart, sole instance | None — DETS replay | At-least-once |
-| Whole cluster cold boot | Recovered from DETS | n/a |
-| Workflow operative runner SIGKILL (durable) | None past last WAL fsync — restores + re-runs the chain | At-least-once |
+| --- | --- | --- |
+| Graceful runner stop (SIGTERM / `disconnect()`) | None — the SDK ships final state and waits for the ack | At-least-once |
+| Runner SIGKILL / OOM / node death | Best-effort: records inside the last fsync window (5 ms default) | At-least-once |
+| Controller graceful restart with a live peer | None — peer sync, runners stay connected | At-least-once |
+| Controller plain restart, sole instance | None — the orphan reconcile replays the durable registry; `/healthz` reads `recovering` meanwhile | At-least-once |
+| Whole cluster cold boot | Recovered from the durable registry | n/a |
+| Controller dies with its disk | Full, unless the remote tier is on: then at most one `ship_interval_ms` (30 s) of stream work or the last unshipped workflow barrier | n/a |
+| Effectively-once stream, any crash | None past the last fsynced effect record | Effectively-once at a conforming sink — re-driven under identical identity |
+| Workflow operative runner SIGKILL (durable, the default) | None past the last fsync — restores and resumes at the first un-journaled procedure | At-least-once |
 | Workflow operative runner SIGKILL (persistence opted out) | Full — re-runs from the top | At-least-once |
 | Operative-to-operative hop, target down or parked | None — retained and retried until confirmed | Effectively-once if the source has an outbox, else at-least-once |
-| Operative-to-operative hop, controller dies mid-queue | n/a | Queued-but-unconfirmed items lost (same as the Kafka / Postgres sink buffers) |
+| Operative-to-operative hop, controller dies mid-delivery | None for an outbox source — unconfirmed entries are re-driven on restart; a plain stream's in-flight items are lost | As above |
+| Poison payload (fails every retry) | None — parked durably to the DLQ, the Entity advances | Entity continues |
 
-For the full scenario matrix and operator playbook see
-[`data_durability.md`](data_durability.md); for the workflow operative model
-(structure, lifecycle, saga, crash-resume, retention) see
-[`workflow_operative.md`](workflow_operative.md).
+## See also
+
+- [`data_durability.md`](data_durability.md) — the scenario matrix, delivery semantics and the operator playbook
+- [`workflow_operative.md`](workflow_operative.md) — structure, lifecycle, saga, crash-resume, retention
+- [`../architecture/kernel.md`](../architecture/kernel.md) — the durable-compute kernel these mechanisms implement
+- [`../internals/convergence_loop.md`](../internals/convergence_loop.md) — the self-healer in full
+- [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md) — surviving the loss of a disk

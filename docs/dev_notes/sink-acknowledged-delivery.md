@@ -98,4 +98,4 @@
   `Flezha.State.TestHelpers.stub_outbox_owner/1` + `guaranteed_metadata/3` are
   the shared fixtures for a sink suite with no persistence subsystem behind it.
 - **Docs**: `docs/resilience/data_durability.md`, `docs/architecture/kernel.md`,
-  `docs/resilience/state_persistence.md`, `docs/kafka-producer.md`.
+  `docs/internals/state_persistence.md`, `docs/plugins/kafka_producer.md`.

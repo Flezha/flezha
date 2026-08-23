@@ -847,7 +847,7 @@ pub fn build_quic_server_config(
     // Explicit idle timeout aligned to the control-liveness window so a wedged
     // peer is declared dead in the same window on QUIC as on UDS, instead of
     // inheriting the quinn default. keep_alive (5s) << this. See
-    // docs/resilience/transport_liveness.md.
+    // docs/internals/transport_liveness.md.
     if let Ok(idle) =
         IdleTimeout::try_from(flz_transport::transport::liveness::control_idle_timeout())
     {

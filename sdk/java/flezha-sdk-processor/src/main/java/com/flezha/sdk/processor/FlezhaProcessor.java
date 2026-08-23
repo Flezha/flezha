@@ -36,7 +36,7 @@ import javax.tools.Diagnostic;
 /**
  * Generates {@code Procedure} / {@code StreamOperative} implementations from the
  * {@code @Procedure} / {@code @State} / {@code @StreamOperative} authoring annotations,
- * mirroring the Rust SDK macros. See {@code docs/sdk_authoring_contract.md}.
+ * mirroring the Rust SDK macros. See {@code docs/sdk/authoring_contract.md}.
  *
  * <p>Per round: {@code @State} classes generate a {@code <Name>Change}
  * (field-granular variants + {@code apply} + {@code kryoTypes}); {@code @Procedure}

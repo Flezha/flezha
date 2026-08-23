@@ -8,7 +8,7 @@ defmodule Flezha.State.DurabilityTier.Manifest do
   parked failures, the ProcessHub registry cspec, or a control-plane store — as
   of one shipped cut. It is written **last**
   in every ship, so a crash mid-upload leaves the previous entry authoritative
-  and the half-uploaded blobs invisible (`docs/remote_durability_tier.md`).
+  and the half-uploaded blobs invisible (`docs/operations/remote_durability_tier.md`).
 
   The algebra here is pure and is the whole recovery contract:
 

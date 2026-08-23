@@ -1,378 +1,298 @@
 # Flezha Glossary
 
-End-state mental model: **A Controller orchestrates Operatives across Runners.
-Each Runner runs Operatives; each Operative contains Procedures; each Procedure
-contains Entities.**
+The vocabulary every other document assumes, for operative authors, operators and contributors.
+In one sentence: **a Controller orchestrates Operatives across Runners; each Operative contains
+Procedures; each Procedure contains Entities.** Entries are short and point at the document that
+owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins.
 
 ## Roles
 
-- **Controller** — the Elixir control plane (`lib/flezha/`). Owns placement,
-  WAL persistence, migrations, the CLI/UI surface, and ProcessHub coordination.
-  One Controller node serves one or more namespaces; multiple Controller nodes
-  serving the same namespace cluster via Erlang distribution + ProcessHub.
+- **Controller** — the Elixir control plane (`lib/flezha/`) and the source of truth: it owns the
+  durable store, routes input, places every operative and heals the fleet. Nodes cluster over
+  Erlang distribution, with one ProcessHub hub per namespace (`Flezha.Service.HubManager`).
+- **Runner** — the SDK process (Rust, Java or Elixir) where user code runs. It dials the
+  controller, never the reverse, and is disposable because every state change is mirrored to the
+  controller. A process holds one **runner slot**, claimed at `start()` by compare-and-set.
+  See [`architecture/runner.md`](architecture/runner.md).
+- **Stable identity vs session token** — the SDK persists a **stable identity**
+  (`FLEZHA_RUNNER_ID_PATH`, default `/var/lib/flezha-runner/id`) that survives restarts; the
+  controller mints a **session token** per connection (`AssignRunnerId`) and keys routing and the
+  WAL owner on it, so a reconnect is a binding swap. See [`internals/runner_identity.md`](internals/runner_identity.md).
+- **Namespace** — the hard tenancy boundary: every operative, procedure, state path, audit record
+  and signal carries one (`Flezha.AuthZ.Namespace`); `_system` is the singleton compatibility
+  namespace. A runner connects into one namespace; the CLI selects one with `--namespace`.
+- **Cluster directory** — the `:pg`-backed map of which nodes hold runners for which factories and
+  which node hosts each namespace hub (`Flezha.Cluster.Directory`), read locally on every node.
+  A request landing on the wrong node is forwarded once, so every node is a valid entry point.
+- **Native transport** — the in-node `:native` mode of the Elixir SDK: pid-backed
+  `Flezha.Transport.Local.Stream` handles and `{:flz_data, ...}` messages instead of a socket. A
+  standalone Elixir runner speaks the binary protocol over UDS/QUIC. See [`sdk/elixir_sdk.md`](sdk/elixir_sdk.md).
+- **Source adapter / sink adapter** — where input comes from and where output goes. Both are
+  plugins at the edge (a websocket, an HTTP endpoint, Kafka, Postgres), never core components.
 
-- **Runner** — the SDK process (Rust or Java) that connects to a Controller
-  and runs user-defined Operatives. Started by the user; opens a control channel +
-  data streams to the Controller; its poll workers drain the per-Entity
-  mailboxes through the poll core's activation engine. One physical machine
-  may run multiple Runners.
+## Workload model
 
-- **Native transport** — the in-node (`:native`) transport an Elixir SDK runner uses
-when it runs in the Controller's own BEAM node: streams are pid-backed
-`Flezha.Transport.Local.Stream` handles (NOT the NIF module `Flezha.Transport.Native`
-— the *mode atom* is `native`, the *handle module* is `Local.Stream`), and frames
-are delivered as `{:flz_data, ...}` terms by message passing. Same-node only,
-opt-in. A *standalone* Elixir runner does not use it — it speaks the binary
-protocol over UDS/QUIC like any Rust runner.
+- **Operative** — the unit you start and stop (`flz operative start|stop|list|info`), registered
+  under a **factory id** (`factory_id()` on both Rust traits, `factoryId()` on Java's `Computation`),
+  with a **kind** frozen at start: `stream` (default) or `workflow` (`Flezha.Operative.Kind`).
+- **Stream operative** — the always-on kind: an endless input, no barrier, per-entity recovery.
+  Implements `StreamOperative`. See [`architecture/stream_profile.md`](architecture/stream_profile.md).
+- **Workflow operative** — the terminating kind: a DAG of procedures run level by level behind a
+  commit barrier, with an inbox, saga compensation, a durable loop and suspension. Implements
+  `WorkflowOperative`; ends on chain completion, `ctx.complete`, a loop's terminal predicate,
+  `max_duration` or `flz operative stop`. `run(ctx, args)` is single-procedure, single-entity
+  sugar. See [`architecture/workflow_profile.md`](architecture/workflow_profile.md).
+- **Procedure** — a typed stage inside an operative, declaring `Input`, `Output`, `State`,
+  `Change` and `Clock` types. A procedure has exactly one output channel.
+- **Entity** — the per-key state-bearing slice of a procedure and the unit of durability (one WAL,
+  one snapshot lineage, one outbox cursor), identified by `(operative_class, procedure_id,
+  entity_key)` and stored under `<state_root>/<namespace>/<class>/<procedure_id>/<entity_key>.*`.
+- **Entity mode** — **single** (one unkeyed entity, the default), **static** (a fixed keyset from
+  `entity_keys()`, one input fanning out via `entities_for`) or **dynamic** (one entity per key on
+  a keyed edge, created lazily, evicted after `entity_idle_ttl()`). Workflows refuse dynamic.
+- **Channel** — the typed edge between stages: **entry** (input from outside), **inter-procedure**,
+  or **plugin-bound** (output to a sink, declared with `.sink(name)`). Terminality is derived from
+  the wiring, never declared.
+- **Edge transform** — a `map` / `filter` / `flat_map` on a stream handle between two `.into`
+  calls; everything before the closing `.into` fuses into one closure on that consumer edge and
+  costs no procedure, entity, mailbox or hop. See [`sdk/stream_transforms.md`](sdk/stream_transforms.md).
+- **Edge keying (`key_by`)** — the entity key function, declared on the consumer edge rather than
+  on the procedure. A procedure reached by a keyed edge is dynamic-mode; discard inputs with
+  `filter`, never with a keyless return.
+- **Merge** — two or more channels subscribed to one procedure, each with a pure mapping into its
+  sum-type `Input`. Per-source FIFO is kept, nothing is ordered across sources, and mappings run
+  identically on live delivery and replay. See [`sdk/multi_input_procedures.md`](sdk/multi_input_procedures.md).
+- **`route_latest`** — delivers an operative-wide document to each keyed entity on that key's own
+  traffic, never as a remembered-set fan-out.
+- **Partition** — one member of a partitioned stream operative: an ordinary instance `<id>#pK`
+  with its own Overwatch, registry row, binding, input log, state tree, plugins and DLQ identity.
+  `flz operative start <id> <factory> --partitions N` starts N; `flz operative scale <group> M`
+  rescales. See [`sdk/partitioned_operatives.md`](sdk/partitioned_operatives.md).
+- **Key group** — one of 256 buckets a routing key hashes into, `fnv1a128(key) mod 256`
+  (`flz_core/src/util.rs`, identical in every SDK). A partition owns a contiguous range carried on
+  `AddOperative`; the SDK **key-group guard** parks the first frame whose key falls outside it.
+- **Group** — the logical operative N partitions make up, named by the base id. No group record is
+  stored: the single `flz operative list` row and `info`'s coverage check derive from the members.
+- **Timer (per-entity)** — a deadline a procedure registers on its own entity. An **event-time**
+  timer fires when the entity's event-time high-water crosses it, a **processing-time** timer from
+  the deferred-wake list. `on_timer` receives the scheduled timestamp; the pending set is folded
+  state, so a crash-resume owes exactly the timers it owed. See [`sdk/entity_timers.md`](sdk/entity_timers.md).
+- **Plugin** — a `%Flezha.Plugin{}` binding a **provider** module to one or more **extension
+  points** on a host such as the Overwatch (`:on_input`, `:on_output`, `:on_message`, ...); installed
+  from a `.fpz` (`flz plugin install`), attached per operative (`flz plugin enable|disable`).
+  See [`plugins/lifecycle.md`](plugins/lifecycle.md).
+- **Operative-to-operative messaging** — one operative's output delivered into another's input
+  stream by the `OperativeForward` plugin on the source (same namespace, no self-targeting),
+  retried until the target confirms. The guarantee is derived: a transactional-outbox source gets
+  effectively-once across the hop, any other at-least-once. See [`plugins/operative_forward.md`](plugins/operative_forward.md).
+- **`:on_message`** — the synchronous request/reply extension point (`OperativeMessage` /
+  `OperativeMessageResponse` on the control channel, `flz operative send`), as opposed to data
+  flow into the input stream. See [`plugins/message_handlers.md`](plugins/message_handlers.md).
+- **First-party source plugins** — `HttpPoll` feeds an entry channel from a URL, injecting the
+  body only when its SHA-256 changes plus one seed per (re)start, so consumers must be idempotent
+  ([`plugins/http_poll.md`](plugins/http_poll.md)); `Websocket` re-subscribes a live socket
+  without reconnecting by diffing a polled item set, committing each delta only on an ack carrying
+  its `req_id` ([`plugins/websocket_subscription.md`](plugins/websocket_subscription.md)).
 
-**Cluster directory** — the `:pg`-backed map of which controller nodes hold
-  runners for which factories, and which nodes host which namespace hubs
-  (`Flezha.Cluster.Directory`). Each node advertises its own fleet truth;
-  every node reads it locally, no cluster round. It is what makes every
-  controller node a valid entry point: a start or command submitted on a node
-  without the namespace's runner/hub is forwarded once to a capable node,
-  which re-validates against live truth (staleness costs at most one failed
-  forward). Eventually consistent; membership is cleaned by `:pg`'s monitors
-  on process or node death.
+## Durability vocabulary
 
-## Workload abstractions
+- **WAL** — the per-entity append-only change log of framed, CRC-protected records, owned by one
+  `Flezha.State.WalWriter`; the input log, proc journal and durable inbox share the record
+  format. See [`architecture/kernel.md`](architecture/kernel.md).
+- **Snapshot / compaction** — on WAL size or age the controller asks the runner for a full state
+  snapshot (`CompactEntity`) and truncates the log beneath it; a restore (`RestoreInitState`)
+  ships the latest snapshot plus the whole WAL tail.
+- **Effect record** — under the effectively-once tier, the one WAL record an invocation produces:
+  `{changes, outputs, consumed_offset, dlq, event_time}`, appended and fsynced as a unit so
+  state, output, progress and a park can never tear apart.
+- **Input log** — the offset-addressable durable log every source is normalised into under the
+  tier (`Flezha.State.InputLog`): append before forward, and each entity recovers from its own
+  consumed offset.
+- **At-least-once / effectively-once** — the default tier adds no latency and permits a duplicate
+  output on replay; `effectively_once()` on the channel builder turns on the input log, the
+  effect record and the outbox and forces every plugin-bound channel to be `.keyed()`. It is
+  at-least-once delivery + a deterministic key + an idempotent sink, never exactly-once effects.
+- **Checkpoint ack-granularity** — `checkpoint_ack()` moves the acknowledgement from per input to
+  `ctx.checkpoint()`; the **interval** is the retention floor, the recovery work and the credit
+  cadence. A park closes the interval, a restore discards the open one, and
+  `outputs_at_checkpoint(max_delay_ms)` holds the interval's outputs with its changes.
+- **Outbox** — the per-entity record of which outputs are durable and which a sink has confirmed
+  (`Flezha.State.Outbox`, the `<key>.outbox.dedup` side-file): `outbox_durable_seq` gates the
+  flush, `outbox_flushed_seq` advances on the sink's confirmation of the `flz.ack` token,
+  `outbox_epoch` names the lineage. A restart re-drives what was durable but unconfirmed.
+- **Output identity** — the replay-stable stamps on a keyed output: `flz.entity`, `flz.seq`,
+  `flz.key`, and under the tier `flz.epoch`. `flz.` is reserved; a user emit carrying one is rejected.
+- **Epoch** — the lineage counter in the outbox identity. An accident (crash retry, takeover,
+  re-drive, `flz dlq replay`) **keeps** it so the sink swallows the repeat; a deliberate correction
+  (late-input correction, `flz operative replay`, a rewind) **bumps** it so the new output passes
+  dedup and overwrites by natural key.
+- **Owner / fence / realign** — exactly one runner session writes an entity's WAL. A takeover is
+  newest-wins and unbinds the old session first: its stream channels flip `fenced?`, and the WAL
+  writer refuses an append from a superseded session token before any realign decision.
+  **Realign** is the writer adopting a current runner's non-contiguous sequence and bumping the epoch.
+- **Minimum watermark** — `min(consumed offset)` across an operative's entities, advanced only
+  from the post-fsync path. It is the input-log retention floor and what mints source credit, so
+  a permanently-failing payload must never freeze it.
+- **Credit / credit grant** — byte-credit flow control (`Flezha.State.CreditLedger`): the
+  runner→controller window is minted on fsync and returned in batches (`CreditGrant`), the
+  source→controller ledger by the watermark, and a sender out of credit **parks**. The
+  controller→runner direction is deliberately not credit: past 8 MiB it drops the newest frame,
+  which the input log re-drives.
+- **Park** — four senses, all "hold, never drop": a **DLQ park** ships a retry-exhausted payload
+  durably to the controller (`park_payload` / `ParkPayloadAck`, or inside the effect record)
+  before the entity advances; a **credit park** waits for a grant; a **key-group park** refuses a
+  mis-routed key; an **`IterPark`** suspends a workflow loop.
+- **Dead-letter queue (DLQ)** — the controller's durable store for poison payloads
+  (`Flezha.Dlq.Store`, `app_data/dlq/<operative_class>/<procedure_id>/`): retry, park durably,
+  advance. Entries are idempotent on their origin, retention is 30 days and 4 GiB, the surface is
+  `flz dlq list|show|replay|drop`; workflows abort-and-compensate instead. See [`resilience/data_durability.md`](resilience/data_durability.md).
+- **Late-input correction** — a declared `correction_window()` lets an event behind the event-time
+  high-water mark rewind the entity to a baseline, replay the retained slice in event-time order
+  and republish under a bumped epoch. Requires the tier, an `EventTimeFrom` clock and keyed plugin
+  channels; the window raises the input-log hold window and the snapshot age floor to meet itself.
+- **Live read vs time-travel read** — `flz state get <operative/procedure[/entity_key]>` asks the
+  runner holding the entity for its in-memory value (possibly ahead of what is durable, stamped
+  with its `change_seq`) and refuses when nothing holds it; `flz state at <operative/procedure/
+  entity_key> <seq|timestamp>` answers from the controller's WAL. See [`internals/state_persistence.md`](internals/state_persistence.md).
+- **Remote durability tier** — shipping durable artifacts to Postgres or S3 so a controller that
+  dies with its disk is recoverable (`Flezha.State.DurabilityTier`); a production boot must choose
+  a backend (`FLEZHA_DURABILITY_BACKEND`; `none` is local-only); local files stay authoritative.
+  An **artifact** is one immutable shipped blob; the per-reference **manifest** naming a cut's
+  artifacts is written last, so a torn upload is invisible. See [`operations/remote_durability_tier.md`](operations/remote_durability_tier.md).
+- **Synchronous durability** — a workflow class declaring `SYNC_DURABILITY` / `syncDurability()`
+  has each commit barrier's ack gated on the remote ship (RPO 0). Stream classes are refused it.
+- **RPO breach** — local progress unshipped past `rpo_target_ms` (default 120 s): alarm-grade
+  `[:flezha, :state, :rpo_exceeded]`, shown by `flz controller status` and `/healthz`. A
+  **supersession** (`[:flezha, :state, :claim_superseded]`) is routine on every migration, not a breach.
+- **Declared set (durable operator intent)** — what should be running, as ProcessHub's declared
+  children per namespace hub (`Flezha.Convergence.Intent`, via `HubManager.declared_operatives/1`).
+  A wiped runtime registry does not empty it; a deliberate `flz operative stop` removes its entry.
+- **Orphan reconcile / start authority** — ProcessHub's round converging running children toward
+  the declared set through the one idempotent start authority (the registry claim in ProcessHub's
+  `Distributor`, reached identically by the reconcile and by `OperativeManager.start_operative/3`).
+  The loser answers `:duplicate` after checking the winner is live; `[:flezha, :boot,
+  :reconcile_duplicate]` outside a partition recovery means a start bypassed the claim. See [`internals/process_hub.md`](internals/process_hub.md).
 
-- **Operative** — the user-facing unit of work; the thing you start and stop.
-  An Operative is registered with a factory id; many instances of the same class
-  can run across the cluster. Every Operative has a **kind**:
+## Workflow vocabulary
 
-  - **Stream Operative** (kind `stream`, the default) — a long-running,
-    always-on streaming unit. Implements the `StreamOperative` trait/interface
-    and declares its Channels. This is the original Flezha workload.
+- **Proc journal** — the per-instance append-only journal of workflow progress
+  (`<state_root>/<instance_id>/<instance_id>/proc.journal`, `Flezha.State.ProcJournal`) on the WAL
+  substrate under a reserved entity key. Its entries (`proc_committed`, `outbox_flushed`,
+  `iter_committed`, `parked`, `compensated`, `rewound`) are folded, never truncated.
+- **Level barrier / `ProcCommit`** — every entity of every procedure in a level joins before the
+  SDK ships one `ProcCommit` per procedure `{entities_ran, handoff, staged outbox}`; the controller
+  journals it and acks, and only then are the children runnable. A committed procedure is never re-run.
+- **Transactional outbox** — inside a structured procedure `ctx.emit` stages rather than sends; the
+  staged outbox rides the `ProcCommit` and is flushed after the journal fsync, stamped
+  `flz.seq = <proc_idx>.<seq_in_proc>`. The journal, not memory, decides what is owed.
+- **Saga compensation** — on an abnormal exit, committed procedures' `compensate` hooks run in
+  reverse-topological order, each journaled with its undo outbox. `RollbackMode::AllOrNothing`
+  (default) unwinds every committed iteration, `KeepProgress` only the in-flight one; a hookless
+  procedure is skipped, and an undo handle must live in entity state.
+- **Durable loop** — `LoopMode::Once` (default), `PerInput` (one iteration per inbox item) or
+  `Chained` (iteration N+1 seeded by N's terminal output). The **iteration boundary**
+  (`IterCommit`) is where suspension, the keep-progress unit and rewind attach.
+- **Durable inbox** — a workflow instance's input, journaled to `inbox.wal` (`Flezha.State.ProcInbox`)
+  before it is forwarded and deduplicated by message id or payload hash within the undelivered window.
+- **Suspension / rehydrate** — between iterations the instance is evicted from its runner entirely
+  (`IterPark`, journaled first) while the Overwatch and registry entry remain; a new message or a
+  durable wake timer rehydrates it through the ordinary bind path.
+- **Rewind** — `flz operative rewind <instance> --to-iteration N` appends a `rewound` marker at
+  epoch + 1, compensates the procedures above N in reverse and resumes waiting. It is
+  undo-and-continue: inputs are not replayed, and a procedure that staged output without a
+  `compensate` hook refuses it. See [`resilience/workflow_operative.md`](resilience/workflow_operative.md).
 
-  - **Workflow Operative** (kind `workflow`) — an on-demand, terminating,
-    possibly-interactive process. Implements the `WorkflowOperative`
-    trait/interface. It authors the same Procedures/Channels/Entities a stream
-    operative does but runs them **sequentially** (a linear chain with a per-procedure
-    count-based barrier; entities within a procedure still run in parallel), can
-    **receive input after it starts** (an inbox), and terminates on the first exit
-    trigger — chain quiescence, `ctx.complete`, a loop's terminal predicate, a
-    `max_duration`, or an external `flz operative stop`. It may declare **saga
-    compensation** hooks (reverse-order, per-entity undo on failure) and is
-    **durable by default** (opt-out per class): it crash-resumes from the WAL and
-    its finished state is retained for a window. `run(ctx, args)` is sugar for a
-    single-Procedure, single-Entity workflow operative. Both kinds share the
-    `Computation` base trait/interface (whose only shared member is `factory_id()`).
-    See [`resilience/workflow_operative.md`](resilience/workflow_operative.md).
+## Runner internals
 
-  <!-- kind-naming-record:begin -->
-  **Why `stream` and `workflow`, not `unbounded` and `bounded`.** Flink uses
-  those two words for a property of the *data* — is the input finite — while
-  Flezha's distinction is the *execution model*: does one run terminate. The
-  words survive here only as adjectives for the **run**, where they are true: a
-  workflow operative runs a *bounded* iteration to a terminal state, and a
-  stream operative folds an *unbounded* input forever. The caveat that settles
-  the question: a durable `PerInput` workflow operative's *input* is unbounded —
-  it consumes an inbox for the life of a chat session — and only its *iteration*
-  is bounded, so the old kind name was not merely unfamiliar but false. The
-  words also remain correct for unrelated capacity concepts such as a bounded mailbox;
-  `scripts/kind-naming-allowlist.txt` enumerates every surviving use
-  and `scripts/check-kind-naming.sh` fails a kind-sense reintroduction.
-  <!-- kind-naming-record:end -->
-
-- **Procedure** — a typed stage inside an Operative that processes inputs from a
-  Channel. Implements the `Procedure` trait/interface and declares its `Input`,
-  `Output`, `State`, `Change`, and `Clock` types.
-
-- **Entity** — the per-key state-bearing slice of a Procedure. State (WAL,
-  snapshot, outbox dedup) lives at the Entity level on disk:
-  `app_data/state/{operative_class}/{procedure_id}/{entity_key}.*`.
-
-- **Partition** — one member of a partitioned stream Operative: an *ordinary*
-  operative instance named `<id>#pK`, with its own Overwatch, registry row,
-  runner binding, input log, state tree, plugins and DLQ identity. `flz
-  operative start <id> --partitions N` starts N of them. Nothing in placement,
-  convergence, migration or recovery treats a partition specially — that is
-  what makes machine scale-out cost no second lifecycle.
-
-- **Key group** — one of the 256 buckets a routing key hashes into,
-  `fnv1a128(key) mod 256`, using the constants frozen by `StableId`. Each
-  partition owns a contiguous *range* of key groups, carried explicitly in its
-  cspec opts and on its `AddOperative` — never re-derived from
-  `(partition, partitions)`, so a rescale's recomputed ranges need no format
-  change. Key groups are what make a rescale move whole slices instead of
-  rehoming nearly every key the way `hash mod N` would.
-
-- **Group** — the logical operative N partitions make up, named by the base id.
-  It is a *derived* view: each member's opts carry `group`, `partition`,
-  `partitions` and its range, and every group-level answer (the single `flz
-  operative list` row, `info`'s "all 256 key groups owned exactly once"
-  coverage check, a forward's routing table) is recomputed from the member rows
-  at read time. There is deliberately no stored group record to drift from the
-  registry. See [`partitioned_operatives.md`](partitioned_operatives.md).
-
-- **Live read vs time-travel read** — two different questions about one Entity's
-  state. A **live read** (`flz state get <operative/procedure[/key]>`) asks the
-  runner holding the Entity for its current in-memory value: the freshest value
-  there is, possibly *ahead* of what is durable (it includes changes not yet
-  flushed), stamped with the `change_seq` it was serialized at. It refuses —
-  naming why — when nothing holds the Entity. A **time-travel read**
-  (`flz state at <operative/procedure/key> <seq|timestamp>`) asks the
-  controller's own WAL for the value at a past point, and needs no runner. Live
-  reads are for "what is it now"; time-travel reads are for "what was it then".
-  See [`entity_state_live_query.md`](entity_state_live_query.md).
-
-- **Channel** — a typed input/output edge of an Operative. Channels can be entry
-  points (input from outside), internal (Procedure → Procedure), or sink (output
-  back to the Controller / pipe to another Operative).
-
-- **Edge transform** — a `map` / `filter` / `flat_map` declared on a stream
-  handle between two `.into` calls. It costs no Procedure, Entity, mailbox or
-  dispatch hop: every transform before the closing `.into` composes into ONE
-  closure stored on that consumer edge and evaluated at the routing seam.
-  Fusion is therefore structural — `.into` IS the boundary, so there is no
-  optimizer and no way to disable chaining. See `docs/stream_transforms.md`.
-
-- **Edge keying (`key_by` / `keyBy`)** — the Entity key function, declared on
-  the consumer edge rather than on the Procedure, so a reader of `channels()`
-  can see where work fans out. A Procedure reached by a keyed edge is
-  dynamic-mode. Total by signature: discard inputs with `filter`, never with a
-  keyless return.
-
-- **Merge** — a subscription of two or more Channels to ONE Procedure, each
-  supplying a pure mapping from its payload into the Procedure's declared sum
-  type `Input` (`c.merge::<I>().from(a, map_a).from(b, map_b).into::<Proc>()`).
-  On a stream Operative, entry and inter-procedure Channels are both valid
-  sources; a **workflow** Operative merges its procedures' output streams only —
-  its spawn-args seed names no Channel, so an entry Channel there is refused at
-  definition time. Per-source FIFO is preserved and nothing is ordered across
-  sources; `entities_for` is evaluated on the mapped value; mappings run
-  identically on live delivery and WAL replay.
-  Purely a subscription-time construct — the `Procedure` itself, the journal
-  format, and the Controller are all unchanged. See
-  [`multi_input_procedures.md`](multi_input_procedures.md).
-
-- **Operative-to-operative messaging** — one Operative's output delivered into
-  another Operative's **input stream**, configured as the first-party
-  `OperativeForward` plugin on the source (same namespace only; self-targeting
-  refused, longer cycles allowed). Delivery is asynchronous and retried until the
-  target confirms, so no Overwatch ever blocks on another. The guarantee is
-  *derived, never configured*: a source with a transactional outbox gets
-  effectively-once across the hop, one without gets at-least-once. Distinct from
-  **`:on_message`**, which is synchronous request/reply into the SDK factory's
-  `handle_message` callback rather than data flow into the input stream. See
-  [`operative_forward_plugin.md`](operative_forward_plugin.md).
-
-- **HTTP poll source** — feeding an Operative's **entry channel** from an HTTP
-  resource, configured as the first-party `HttpPoll` plugin. The response body is
-  injected as an ordinary journaled entry frame only when its SHA-256 changes,
-  plus one unconditional *seed* on every (re)start — which is what converges a
-  restarted or handed-over Operative onto current content within one interval,
-  and why consumers of a polled channel must be idempotent. See
-  [`http_poll_plugin.md`](http_poll_plugin.md).
-
-- **Websocket subscription source** — changing what a live websocket is
-  subscribed to *without reconnecting*, by pointing the `Websocket` plugin at a
-  URL publishing the desired item set. The provider polls it, diffs it against
-  the set it has applied, and sends operator-supplied subscribe/unsubscribe
-  templates for the difference on the connection it already holds. A delta
-  commits only on an acknowledgement bearing its `req_id`, so retry is nothing
-  but re-deriving the same diff next cycle; the applied set is persisted to the
-  plugin cspec, so connect and both watchdog tiers re-assert what the socket
-  actually holds rather than the boot-time `post_connect`. See
-  [`websocket_subscription_source.md`](websocket_subscription_source.md).
-
-- **Dead-letter queue (DLQ)** — the Controller's durable store for poison
-  payloads: inputs a Stream Procedure failed on every retry
-  (`app_data/dlq/{operative_class}/{procedure_id}/`). A payload is parked
-  durably *before* its Entity advances, keeping the min-watermark moving
-  without ever silently dropping data; operators inspect/replay/drop entries
-  via `flz dlq`. Workflow operatives don't use it — their escape is AbortAll +
-  saga compensation. See
-  [`resilience/data_durability.md`](resilience/data_durability.md)
-  "Dead-letter queue".
-
-- **Timer (per-Entity)** — a deadline a **Procedure** registers on its own
-  **Entity**, so it can act because time passed rather than because an input
-  arrived. Two kinds: an **event-time** timer fires when that Entity's
-  event-time high-water crosses it (so an Entity nothing arrives at never fires
-  one), and a **processing-time** timer fires off the poll core's shared
-  deferred-wake list onto the Entity's own mailbox (so it *is* the answer to
-  "nothing has arrived"). `on_timer` receives the **scheduled** timestamp, never the wall
-  clock at firing, which is what keeps it inside the determinism contract. The
-  pending set is folded state — registration, cancellation and firing are each
-  durable records in the Entity's change log — so a crash-resume owes exactly
-  the timers it owed before. See [`entity_timers.md`](entity_timers.md).
-
-- **Remote durability tier** — the opt-in shipping of an operative's durable
-  artifacts (Entity WALs and snapshots, proc-journal, durable inbox, input log,
-  registry cspec) to a Postgres or S3-compatible backend, so a controller that
-  dies **with its disk** is recoverable. Off by default; the local write path is
-  untouched and local files stay authoritative. Not a pluggable WAL: the
-  backend stores opaque blobs and never learns WAL semantics. See
-  [`remote_durability_tier.md`](remote_durability_tier.md).
-
-- **Artifact vs manifest** — an **artifact** is one immutable shipped blob: a
-  snapshot file, or a **seq-addressed record bundle** (the records with seq in
-  `(last_shipped, cut]`, read from the WAL *at ship time* — never a file byte
-  range, because compaction and correction rewrite the live WAL in place). A
-  **manifest** is the per-reference entry naming the artifacts that make up one
-  cut, written **last**. Artifact names are content-addressed, so two
-  controllers holding one reference address different keys and neither can
-  overwrite the other's bytes. Recovery reads only the manifest, so a torn
-  upload is invisible; unreferenced blobs are orphans the tier's garbage
-  collection reclaims, never sooner than the collection grace.
-
-- **Synchronous durability** — a workflow class declaring `SYNC_DURABILITY` /
-  `syncDurability()`: the controller completes the remote ship of a commit
-  barrier before acking it, so the acknowledgement the driver blocks on implies
-  the commit survives losing the controller's disk (RPO 0). Stream classes are
-  refused it — they acknowledge at input rates, where a remote round trip per
-  ack is not a guarantee anyone can keep.
-
-- **Claim counter** — the monotone per-reference counter, held only in the
-  remote manifest, that decides which controller may write a lineage. The owner
-  extends at the claim it holds; anyone else bids strictly above it, which makes
-  the conditional write a compare-and-set. It exists remotely *because* it must
-  not travel with the state: the WAL epoch does travel — copied by
-  `WalTransfer`, restored by hydration — and therefore cannot separate two
-  writers. Bidding requires an **adoption** (the node actually runs the
-  operative), or the source of a migration would take its lineage straight back.
-
-- **RPO breach** — local durable progress that has gone unshipped past
-  `rpo_target_ms`. Alarm-grade (`[:flezha, :state, :rpo_exceeded]`), surfaced in
-  `flz controller status` and `/healthz`. Distinct from a *supersession*
-  (`[:flezha, :state, :claim_superseded]`), which means another controller took
-  that reference's lineage over — routine, since every migration produces one,
-  and explicitly not a breach: the superseded reference stops being counted as
-  pending, or every handover would latch a permanent alarm.
-
-## Control-plane liveness vocabulary
-
-- **Chain of custody** — the rule that decides which module may act on a
-  failure signal: sensors sense, exactly one actor acts, `/healthz` reads the
-  actor's snapshot, the orchestrator restarts on `/healthz`. Each level watches
-  the level below. `State.Watchdog`, `StallClassifier`, `LivenessCounters` and
-  `RecoveryTracker` are sensors — they emit facts and invoke no remedy;
-  `Convergence.Loop` is the only actor. A sensor that also heals (as the
-  Watchdog once did, calling `Recovery.resync/2` on an output stall) is two
-  uncoordinated remediation paths for one signal, with no shared backoff.
-
-- **Fabric wedge** — a data-plane stall inside the *controller's own* NIF
-  driver thread (`driver_loop_frozen`, `nif_queue_backing_up`). Distinguished
-  from every other classifier verdict by remedy, not by severity: no BEAM-level
-  heal reaches it, because every heal the convergence pipeline could issue
-  travels through that same thread. Sustained past `FLEZHA_FABRIC_503_POLLS`
-  consecutive polls it becomes `/healthz` `503 data_plane_fabric_wedged`, which
-  makes the orchestrator's restart the remedy. A wedged *runner* is not a
-  fabric wedge — the pipeline evicts and rebinds it, and it stays `200
-  degraded`.
-
-- **Sensor freshness** — a periodic sensor's own stamp of its last *completed*
-  pass, written into `Convergence.Snapshot` (`observe_sensor/3`). A sensor
-  older than 3× its own cadence is `/healthz` `200 degraded, reason:
-  sensor_stale`. The point is to catch a sensor that wedges **without
-  crashing**, which a supervisor cannot see; the mark is written by the sensor
-  rather than polled from it, so reading it never blocks on the wedged process.
-  Never stamped ≠ stale (boot is not a wedge).
-
-- **Idle episode** — one stretch of silence on an entry channel, from the
-  moment the gap since its last delivered frame first exceeds an
-  application-registered threshold until a frame arrives. The SDK reports an
-  episode **once**, not once per tick, and never before the channel's first
-  frame ever (a cold start is not an episode). Distinct from every liveness
-  verdict above by who asks: those are the controller localizing a wedge for an
-  operator; this is the application's own signal, because the SDK owns the IO
-  threads and app code never sees the data stream. The SDK supplies the
-  *signal* (when a frame last arrived), the application supplies the *policy*
-  (what gap is anomalous) — see
-  [`entry_input_observability.md`](entry_input_observability.md).
-
-- **Start authority** — the single id claim every operative start resolves
-  through (`Distributor.init_registry_check/3`, reached identically by the
-  ProcessHub orphan reconcile and by `OperativeManager.start_operative/3`). The
-  loser of a claim answers `:duplicate` after verifying the winner is live and
-  does nothing to it. `reconcile_duplicate` firing outside a cross-node
-  partition recovery means a start bypassed the claim.
-
-## Poll core vocabulary
-
-- **Poll core (`flz_core`)** — the language-agnostic runner kernel: entity
-  slots, mailboxes and drain gates, the flusher, credit, the DLQ ladder,
-  timers, routing, commands, the workflow driver and the transport loop, in
-  one Rust crate. Host SDKs drive it exclusively through
-  `poll() → Activation` / `complete(ActivationResult)`; the Rust SDK's typed
-  layer is the first host (as a crate), non-Rust SDKs consume the C ABI
-  (`flz_core_ffi`). See `docs/sdk_poll_core.md`.
+- **Poll core (`flz_core`)** — the one Rust kernel every host SDK drives through
+  `poll() → Activation` / `complete(ActivationResult)`: transport, per-entity ordering, effect
+  records, the retry→park ladder, timers, credit, routing and the workflow driver. Rust consumes
+  it as a crate, Java through the C ABI (`flz_core_ffi`); the Elixir SDK is its own core and
+  inherits nothing from it. See [`sdk/poll_core.md`](sdk/poll_core.md).
 - **Host class** — an operative class declared through the C ABI as data
-  (`flz_core_declare_class` JSON): the core owns its kernel behavior; its
-  user code runs host-side, reached only through activations. The Java SDK's
-  classes are host classes; typed Rust classes are not.
-- **Prepare crossing** — the batched `KeyRequest` activation asking a host
-  for routing keys and/or event times the core cannot derive from bytes,
-  resolved before any mailbox enqueue.
-- **Workflow session calls** — `flz_core_workflow_emit/recv/cancelled`: the
-  ABI surface a live run-sugar workflow body uses mid-activation (emit
-  output, drain the inbox, observe cancellation).
-- **Activation** — one unit of work the core hands a host: a per-entity
-  batch of inputs and validated timer firings, or one of the five
-  host-participating command kinds (restore fold, snapshot request, live
-  state read, apply-state, migration serialize). Exclusive per entity: the
-  core never hands out two activations for the same entity concurrently.
-- **ActivationResult** — the host's completion: per-item effect records
-  (host-encoded change bytes, outputs, consumed offset, timer ops,
-  checkpoint flag) plus a verdict (`ok | retryable_error |
-  non_retryable_error`) that drives the core's retry→park ladder.
+  (`flz_core_declare_class`, JSON, unknown fields refused); its user code runs host-side and is
+  reached only through activations. Java classes are host classes; typed Rust classes are not.
+- **Activation / ActivationResult** — one unit of work the core hands a host, never two at once
+  for the same entity (**per-entity exclusivity**, why user code needs no locks): an input batch
+  with timer firings, one of five host-participating commands (restore fold, snapshot, live read,
+  apply-state, migration serialize), a **prepare crossing** (`KeyRequest`, batched keying) or a
+  workflow step. The result carries change bytes, outputs, consumed offset, timer ops and a
+  verdict (`ok | retryable_error | non_retryable_error`).
+- **Deferred wake** — the one ordered list in the poll core holding retry backoffs and
+  processing-time timer deadlines; it owns no thread, and a due entry is promoted by the next
+  thread that enters or wakes inside `poll`.
+- **Retry→park ladder** — a `retryable_error` re-hands the same item after `base × 2^(n-1)` ± 50 %
+  jitter (capped); a `non_retryable_error` or a failing final attempt parks it. A panic stays retryable.
+- **Control channel vs data streams** — a runner session holds one **control channel**
+  (`Flezha.Runner.ControlChannel`: commands, commits, `control_ping`) and N pairs of **data
+  streams** (`Flezha.Runner.StreamChannel`: primary `0x01` carries input to the runner, secondary
+  `0x02` carries state changes, outputs and the data heartbeat back). See [`sdk/protocol_spec.md`](sdk/protocol_spec.md).
 
-## Authentication and authorization vocabulary
+## Control-plane liveness
 
-- **Enforcement posture** — the three-way state of
-  `Flezha.AuthZ.enforcement_posture/0`: `:open` (the explicit
-  `FLEZHA_AUTHZ_ENABLED=false` opt-out, warned every boot),
-  `:bootstrap_pending` (configured on, `admin@_system` not yet claimed:
-  operator verbs refuse naming `flz auth bootstrap` while dataflow
-  continues), `:enforced` (claimed; full policy checks). Enforcement is
-  the production default.
+- **Overwatch** — `Flezha.Operative.Overwatch`, the controller-side process owning one operative
+  instance: it binds a runner, owns the plugins, journals every input and receives every output
+  on its way to a sink.
+- **Convergence loop** — `Flezha.Convergence.Loop`, the controller's only self-healer. Every 5 s
+  and on declared events it runs `Intent → Probe → Diff → Planner → Heal` and publishes a
+  `Convergence.Snapshot` that `/healthz` and the CLI read. See [`internals/convergence_loop.md`](internals/convergence_loop.md).
+- **Chain of custody** — sensors sense, exactly one actor acts, `/healthz` reads the actor's
+  snapshot, the orchestrator restarts on `/healthz`. `State.Watchdog`, `StallClassifier` and
+  `LivenessCounters` emit facts and invoke no remedy; `Convergence.Loop` is the actor.
+- **Producing-liveness** — health asks "is work flowing" with an *is it being fed?* precondition:
+  an idle entity is healthy, a fed-but-flat one is stuck (`wal_frozen`, `watermark_frozen`,
+  `outbox_flat`; the deepest wins). An **intent mismatch** (state on disk for an operative absent
+  from the declared set) is `200 degraded`, never `503`: a restart cannot heal a wiped registry.
+- **Stall localization** — `StallClassifier` compares two counter snapshots and returns the deepest
+  wedged layer (`driver_loop_frozen` → `nif_queue_backing_up` → `socket_write_blocked` →
+  `runner_not_consuming` → `runner_pool_wedged` → `channel_not_sending` → `operative_not_forwarding`),
+  emitting `[:flezha, :data_plane, :stall_localized]` on a change. See [`internals/transport_liveness.md`](internals/transport_liveness.md).
+- **Fabric wedge** — a stall inside the controller's own NIF driver thread (`driver_loop_frozen`,
+  `nif_queue_backing_up`) that no BEAM-level heal reaches; sustained for `FLEZHA_FABRIC_503_POLLS`
+  polls (default 3, `0` disables) it is `/healthz` `503 data_plane_fabric_wedged`. A wedged
+  *runner* is evicted and rebound instead.
+- **Sensor freshness** — a periodic sensor stamps its last completed pass into the snapshot
+  (`Convergence.Snapshot.observe_sensor/3`); older than 3× its cadence reads as
+  `200 degraded, sensor_stale`. Never stamped is not stale: boot is not a wedge.
+- **Idle episode** — one stretch of silence on an entry channel, reported once by the SDK
+  (`on_entry_idle`) when the gap since the last frame first exceeds an application-registered
+  threshold, never before the first frame. See [`sdk/entry_input_idle.md`](sdk/entry_input_idle.md).
+- **`/healthz`** — opt-in (`FLEZHA_HEALTHZ_ENABLED`, port 9569): `healthy`, `recovering` and
+  `degraded` are `200`; `unhealthy` `503` is reserved for a stopped convergence loop or a sustained
+  fabric wedge, the two things only a process restart fixes.
 
-- **Transport-bound principal** — an identity minted from the
-  authenticated connection rather than any caller-supplied value: a
-  verified token for CLI callers (`flz --token` / `FLEZHA_TOKEN`),
-  `runner@<namespace>` (role `runner`) from the connect handshake for
-  runner connections. `source: :internal` is reachable only from inside
-  the controller BEAM (gated by the provisioned distribution cookie).
+## Authentication and authorization
 
-- **Namespace claim** — the `Flezha.State.Registry` record that one
-  Operative class's durable state belongs to one namespace
-  (`<state_root>/<namespace>/<class>/`). Recorded at bind, derivable
-  from the disk layout, refused on conflict; a class under the `_system`
-  compatibility namespace is adopted by the first real namespace that
-  claims it.
-
-- **Break-glass (rebootstrap)** — the offline recovery for a lost
-  `admin@_system`: with the controller stopped, `flz auth rebootstrap`
-  writes an `app_data/auth/REBOOTSTRAP` marker; the next boot unbinds
-  the stale admin, revokes its `_system` admin tokens, and re-enters the
-  ordinary bootstrap flow, emitting an auditable `:rebootstrap_recovery`
-  event. See `docs/operations/authn_authz.md`.
+- **Enforcement posture** — `Flezha.AuthZ.enforcement_posture/0`: `:open` (the explicit
+  `FLEZHA_AUTHZ_ENABLED=false` opt-out, warned every boot), `:bootstrap_pending` (`admin@_system`
+  not yet claimed; operator verbs refuse naming `flz auth bootstrap` while dataflow continues) or
+  `:enforced`. Enforcement is the production default.
+- **Principal / role / token** — a **principal** is a verified identity string
+  (`Flezha.AuthZ.Principal`); a **role** is one of `viewer`, `operator`, `admin`, `runner`
+  (`flz role bind|unbind|list`); a **token** is a scoped credential (`flz token issue|revoke|list`)
+  presented as `--token` or `FLEZHA_TOKEN`. See [`operations/authn_authz.md`](operations/authn_authz.md).
+- **Transport-bound principal** — identity minted from the authenticated connection, never from a
+  caller-supplied value: the verified token for CLI callers, `runner@<namespace>` (role `runner`)
+  for runner connections. `source: :internal` is reachable only from inside the controller BEAM.
+- **Namespace claim** — the `Flezha.State.Registry` record that one operative class's durable
+  state belongs to one namespace (`<state_root>/<namespace>/<class>/`): recorded at bind,
+  derivable from disk, refused on conflict; a class under `_system` is adopted by the first claimant.
+- **Break-glass (emergency rebootstrap)** — with the controller stopped, `flz auth rebootstrap`
+  writes `app_data/auth/REBOOTSTRAP`; the next boot unbinds the stale `admin@_system`, revokes
+  its tokens, re-enters the bootstrap flow and emits an auditable `:rebootstrap_recovery` event.
+- **Audit log** — the durable JSONL record of every authorized control-plane action
+  (`Flezha.Service.AuditLog`, `flz audit list|read|tail|stats|rotate`). See [`operations/audit_log.md`](operations/audit_log.md).
 
 ## Disambiguating "Operator"
 
-The word "Operator" used to mean "the SDK process" in older Flezha code and
-docs. After the rename, that meaning is dropped: **the SDK process is now an
-Runner**. The word "Operator" survives only as **ProcessHub-internal
-ring-node jargon** — a node in ProcessHub's distribution ring. ProcessHub is a
-third-party library; its terminology is not user-facing in Flezha. When the
-word appears in `docs/process_hub_architecture.md` or in a doc comment whose
-context is ProcessHub, it refers to that internal abstraction, not to the
-Runner.
+In Flezha an **operator** is a person running the controller — the audience of the `operations/`
+documents, the subject of "operator verbs" and "operator replay", and the `operator` AuthZ role.
+It never means the SDK process: that is a **Runner**. "Operator intervention" means the human.
 
 ## See also
 
-- `docs/architecture/` — The architectural map: the durable-compute kernel, the
-  two profiles, and the diagrams.
-- `docs/operative_architecture.md` — Operative/Procedure/Entity deep dive.
-- `docs/stream_transforms.md` — edge transforms + edge keying (`key_by`).
-- `docs/partitioned_operatives.md` — running one stream Operative across N
-  machines: key groups, the routing contract, rescale.
-- `docs/sdk_protocol_spec.md` — Wire protocol between Runners and the
-  Controller.
-- `docs/process_hub_architecture.md` — Two-level distribution (ProcessHub picks
-  a Controller node; the Controller picks a Runner).
-- `docs/entity_state_live_query.md` — reading one Entity's current value
-  (`flz state get`), its freshness contract and its refusals.
-- `docs/resilience/state_persistence.md` — Per-Entity WAL/snapshot/retention.
+- [`architecture/README.md`](architecture/README.md) — roles, the workload model, the eight kernel invariants.
+- [`sdk/rust_operative_architecture.md`](sdk/rust_operative_architecture.md) — Operative/Procedure/Entity authoring.
+- [`sdk/protocol_spec.md`](sdk/protocol_spec.md) — the wire protocol between Runners and the Controller.
+- [`internals/process_hub.md`](internals/process_hub.md) — ProcessHub picks a node, the node picks a Runner.
+- [`resilience/overview.md`](resilience/overview.md) — what survives what.

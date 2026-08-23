@@ -22,7 +22,7 @@ import javax.annotation.Nonnull;
  * namespace; after {@link FlezhaRunner#close()} a new runner may be started.
  *
  * <p>Method names and lifecycle verbs follow
- * {@code docs/sdk_naming_conventions.md} (repository root), mirrored 1:1 with
+ * {@code docs/sdk/naming_conventions.md} (repository root), mirrored 1:1 with
  * the Rust SDK's {@code Flezha}.
  */
 public final class Flezha {

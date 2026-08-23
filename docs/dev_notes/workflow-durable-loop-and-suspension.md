@@ -65,7 +65,7 @@
   timer/redeploy).
 - **Docs**: `docs/resilience/workflow_operative.md` "Durable loop and
   suspension", `docs/resilience/data_durability.md` "the durable inbox",
-  `docs/sdk_protocol_spec.md` `IterCommit`/`IterCommitResponse`/`IterPark`
+  `docs/sdk/protocol_spec.md` `IterCommit`/`IterCommitResponse`/`IterPark`
   + `flz.inbox_offset`.
 - **Unblocks**: `operative-rewind-and-correction` → `workflow-loop-rewind`.
 

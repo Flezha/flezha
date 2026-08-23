@@ -83,10 +83,10 @@
   `test/flezha/plugin/provider/operative_forward_test.exs` (refusals, cycle,
   reuse, saturation, retry-until-delivered, identity stamps, disable-stops-worker,
   telemetry). `Mimic.copy(Flezha.State.ProcInbox)` added to `test_helper.exs`.
-- **Docs**: `docs/operative_forward_plugin.md` (new),
+- **Docs**: `docs/plugins/operative_forward.md` (new),
   `docs/resilience/data_durability.md` "Operative to operative",
-  `docs/glossary.md`, `docs/plugin_lifecycle.md`,
-  `docs/operative_message_handlers.md`. `sdk_protocol_spec.md` needs NO change —
+  `docs/glossary.md`, `docs/plugins/lifecycle.md`,
+  `docs/plugins/message_handlers.md`. `sdk_protocol_spec.md` needs NO change —
   both ends are controller-side and the payload reaches the target's runner on
   the ordinary `:io_in` frame.
 

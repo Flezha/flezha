@@ -424,7 +424,7 @@ state WAL.
 | `IterCommitResponse` | 31 | controller → SDK, after the journal fsync |
 | `IterPark` | 32 | SDK → controller, on suspension (fire and forget) |
 
-Field-level detail: [`../sdk_protocol_spec.md`](../sdk_protocol_spec.md).
+Field-level detail: [`../sdk_protocol_spec.md`](../sdk/protocol_spec.md).
 
 ## Operator surface
 
@@ -445,7 +445,7 @@ poll and answered at the barrier the core already owns. Rust runs a step on a po
 Java on a virtual thread; neither owns the chain's position, so there is no per-host resume or
 compensation semantics to compare.
 
-Details of that split: [`../sdk_poll_core.md`](../sdk_poll_core.md).
+Details of that split: [`../sdk_poll_core.md`](../sdk/poll_core.md).
 
 Mechanism-level detail for everything on this page:
 [`../resilience/workflow_operative.md`](../resilience/workflow_operative.md).

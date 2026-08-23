@@ -10,7 +10,7 @@
   start is LEGAL (the controller always accepted an empty factory list).
   `run()` = `start()` + `awaitTermination()` — never independent. Naming rules
   (incl. `create*` over `new*`, `remove*` as `define*`'s inverse, prefer
-  Beam/Spark/Kafka-Streams vocabulary) live in `docs/sdk_naming_conventions.md`.
+  Beam/Spark/Kafka-Streams vocabulary) live in `docs/sdk/naming_conventions.md`.
 - **The declared factory set is PER-RUNNER and starts EMPTY each generation**
   (gen 2 must re-define; inventory harvest merges at every `start()`). The
   process-global class registries are overwrite-on-insert + `unregister_class`

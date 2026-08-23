@@ -26,7 +26,7 @@ defmodule Flezha.State.DurabilityTier do
   unset `FLEZHA_DURABILITY_BACKEND` to `:unset`, and `children/0` refuses to
   start on it. Local-only durability is available, but only by asking for it.
 
-  See `docs/remote_durability_tier.md`.
+  See `docs/operations/remote_durability_tier.md`.
   """
 
   alias Flezha.Operative.ClassRegistry
@@ -222,7 +222,7 @@ defmodule Flezha.State.DurabilityTier do
       FLEZHA_DURABILITY_BACKEND=none       # explicit opt-out: the local disk is
                                            # the only copy, and that is accepted
 
-    See docs/remote_durability_tier.md for backend provisioning.
+    See docs/operations/remote_durability_tier.md for backend provisioning.
     """
 
     # Printed as well as raised. The refusal reaches the operator as an

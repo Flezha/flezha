@@ -11,11 +11,11 @@ kernel, the two operative profiles, and the diagrams. Vocabulary:
 ## Features
 - Clustered, hot-swap-migratable operatives
 - SDK runtimes for Rust, Java, and others over a UDS or QUIC transport
-- Per-Entity durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/resilience/state_persistence.md`](docs/resilience/state_persistence.md))
+- Per-Entity durable state — WAL + snapshot, crash-resume, point-in-time query ([`docs/internals/state_persistence.md`](docs/internals/state_persistence.md))
 - Opt-in effectively-once delivery — durable input log, atomic effect record, fsync-gated outbox ([`docs/architecture/kernel.md`](docs/architecture/kernel.md))
 - Workflow operatives — a procedure tree with saga compensation, a durable loop, and suspension ([`docs/architecture/workflow_profile.md`](docs/architecture/workflow_profile.md))
-- Installable plugin subsystem ([`docs/plugin_installation.md`](docs/plugin_installation.md))
-- First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/kafka-producer.md`](docs/kafka-producer.md))
+- Installable plugin subsystem ([`docs/plugins/installation.md`](docs/plugins/installation.md))
+- First-party Kafka producer with retries, idempotence, batching, and bounded queueing ([`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md))
 - Transactional Postgres sink — upsert + progress watermark in one transaction ([`docs/resilience/data_durability.md`](docs/resilience/data_durability.md))
 
 ## Image size and supported architectures
@@ -110,7 +110,7 @@ direct-stop behaviour.
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`  | `60000` | Coordinator drain timeout             |
 
 Full operator playbook (run modes, telemetry, exit-code semantics,
-the third-SIGTERM escape hatch): [`docs/resilience/graceful_shutdown.md`](docs/resilience/graceful_shutdown.md).
+the third-SIGTERM escape hatch): [`docs/operations/graceful_shutdown.md`](docs/operations/graceful_shutdown.md).
 
 ## Wiping runtime data
 
@@ -190,13 +190,13 @@ _build/dev/rel/flezha/bin/flz operative stop my_operative
 ### Installable plugins
 ```bash
 # Full lifecycle reference (install / upgrade / uninstall / enable / disable)
-# lives in docs/plugin_installation.md — including package layout, manifest
+# lives in docs/plugins/installation.md — including package layout, manifest
 # schema, checksum generation, and Ed25519 signing.
 _build/dev/rel/flezha/bin/flz plugin install /path/to/my_plugin-1.0.0.fpz
 _build/dev/rel/flezha/bin/flz plugin enable my_plugin
 ```
 
-See [`docs/plugin_installation.md`](docs/plugin_installation.md) for the
+See [`docs/plugins/installation.md`](docs/plugins/installation.md) for the
 full authoring guide and [`examples/plugins/hello_world/`](examples/plugins/hello_world/)
 for a minimal copy-paste starting point.
 
@@ -241,7 +241,7 @@ runtime (`rust`/`java`), transport (`uds`/`quic`), shape (`regression`/`entity`)
 ```
 
 Full reference (flags, shapes, CI gates, floors, triage):
-[`docs/benchmarking.md`](docs/benchmarking.md).
+[`docs/operations/benchmarking.md`](docs/operations/benchmarking.md).
 
 ### Restart survival
 
@@ -278,7 +278,7 @@ Disable the auto-replay state machine (registry mutations still
 persist) with `FLEZHA_AUTO_RESTORE_ENABLED=false`. The single tolerated
 data-loss case: cluster shut down, then only a strict subset of nodes
 returns — rows held only on the missing nodes are lost. See
-[`docs/resilience/auto_restore_on_boot.md`](docs/resilience/auto_restore_on_boot.md)
+[`docs/operations/auto_restore_on_boot.md`](docs/operations/auto_restore_on_boot.md)
 for the full safety table.
 
 ### Development
@@ -312,3 +312,31 @@ On hardened containers where `/tmp` is mounted `noexec`, set
 `FLEZHA_NATIVE_LIB_DIR=/path/to/writable` so `NativeLibraryLoader` can
 extract `libflz_transport` somewhere it can be loaded. See
 `sdk/java/README.md` for the full env-var reference.
+## License, trademark and warranty
+
+| Path | License |
+|---|---|
+| Everything not listed below — the controller (`lib/`), `cli/`, `flz_nif/`, `config/`, `rel/`, `docker/`, `kubernetes/`, `test/`, `docs/`, `scripts/`, `bench/` | [MPL-2.0](LICENSE) |
+| The SDK side — `sdk/`, `flz_core/`, `flz_core_ffi/`, `flz_transport/`, `flezha-macros/`, `lib/flezha/sdk/`, `protobufs/` | [Apache-2.0](LICENSES/Apache-2.0.txt) |
+
+The per-path map is machine-readable in [`REUSE.toml`](REUSE.toml) and checked
+by CI (`reuse lint`). In short: build on the SDKs freely; if you modify and
+distribute the controller's files, publish those modifications. Your own files
+never inherit either license.
+
+**Status and warranty.** Flezha is pre-1.0 software provided "AS IS", without
+warranty of any kind; liability is disclaimed to the extent the licenses allow
+(MPL-2.0 §6–7, Apache-2.0 §7–8). It is not certified for any regulated use.
+Every durability and delivery default is documented in
+[`docs/configuration.md`](docs/configuration.md) and
+[`docs/resilience/data_durability.md`](docs/resilience/data_durability.md) —
+read them before trusting the system with data.
+
+**Name.** "Flezha" names this project and its releases. The licenses grant no
+trademark rights (MPL-2.0 §2.3, Apache-2.0 §6): a fork, derived work or hosted
+service must not use the name or a confusingly similar one.
+
+Third-party components bundled in binary distributions are listed in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Contributions:
+[`CONTRIBUTING.md`](CONTRIBUTING.md) (CLA required). Security reports:
+[`SECURITY.md`](SECURITY.md).

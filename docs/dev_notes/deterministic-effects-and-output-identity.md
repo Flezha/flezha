@@ -33,6 +33,6 @@
   and the Kafka producer using `flz.key` as the record key (the dedup
   identity moved to the `flezha.dedup_key` header). Still out-of-repo:
   the flezha_market migration to the ctx APIs.
-- **Docs**: `docs/sdk_protocol_spec.md` "Output identity stamps",
+- **Docs**: `docs/sdk/protocol_spec.md` "Output identity stamps",
   `docs/resilience/data_durability.md` "Output identity".
 

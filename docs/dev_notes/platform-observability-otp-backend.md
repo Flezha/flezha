@@ -26,5 +26,5 @@
   `flz observe disable <source>` — implemented in
   `cli/src/observe.rs` and
   `Flezha.Service.CliManager.observability_render_*`.
-- **Detailed notes**: `docs/observability_otp_backend.md`.
+- **Detailed notes**: `docs/operations/observability.md`.
 

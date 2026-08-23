@@ -155,7 +155,7 @@ but no local number argues for it.
 The default stays 5 (Kafka's own ceiling for ordered idempotent retries): no
 measured cost, and the width is only reachable under idempotence. The one real
 price is the duplicate bound on producer-id rotation, which grows from one batch
-to five — `docs/kafka-producer.md` says so beside `:max_in_flight`, and
+to five — `docs/plugins/kafka_producer.md` says so beside `:max_in_flight`, and
 `:max_in_flight = 1` restores the old bound.
 
 Integrity across the 91 sweep runs: zero duplicates and zero lost records at

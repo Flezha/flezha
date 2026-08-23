@@ -5,7 +5,7 @@ defmodule Flezha.Observability.Signal do
 
   One struct, four kinds — sinks pattern-match on `:kind` when they
   care and ignore it when they don't. See the rationale in
-  `docs/observability_foundation.md` (decision D1).
+  `docs/operations/observability.md`.
 
   ## Fields
 

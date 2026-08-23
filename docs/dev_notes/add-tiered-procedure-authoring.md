@@ -74,9 +74,9 @@
   refusals), `StreamOperativeTopologyBuilderTest.unresolvedTypeTokenRejected`.
   E2E: `test/java_sdk/matrix_test.exs` (28) + `compaction_e2e_test.exs` run
   against the rebuilt, ceremony-stripped runner app.
-- **Docs**: `docs/sdk_authoring_contract.md` §2.1 (the context shape) and §2.2
-  (the three tiers), `docs/java_state_persistence.md`, both READMEs,
+- **Docs**: `docs/sdk/authoring_contract.md` §2.1 (the context shape) and §2.2
+  (the three tiers), `docs/sdk/state_persistence.md`, both READMEs,
   `sdk/rust/public-api.txt`, root + `sdk/rust/CHANGELOG.md`.
-  `docs/operative_architecture.md`'s Java sample was left alone — it is already
+  `docs/sdk/rust_operative_architecture.md`'s Java sample was left alone — it is already
   stale in a larger, unrelated way (3 type parameters instead of 6).
 

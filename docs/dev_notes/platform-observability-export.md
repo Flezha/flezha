@@ -36,5 +36,5 @@
   lets exporters register a sink whose pid is owned by a different
   supervisor — required because `Export.Supervisor` owns the
   Prometheus and OTLP sinks, not the foundation `SinkSupervisor`.
-- **Detailed notes**: `docs/observability_export.md`.
+- **Detailed notes**: `docs/operations/observability.md`.
 

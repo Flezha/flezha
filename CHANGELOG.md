@@ -58,7 +58,7 @@ prints the two valid moves; dev and test are unchanged.
   rather than a directory scan: the one-shot plaintext secret beside the authz
   DETS is excluded by construction, along with the break-glass `REBOOTSTRAP`
   marker and the TLS material.
-- **Every durable store is now accounted for.** `docs/remote_durability_tier.md`
+- **Every durable store is now accounted for.** `docs/operations/remote_durability_tier.md`
   carries the shipped set and the accepted-exclusions table (the audit log,
   delegated to external log shipping, plus the four non-stores above). A store
   on neither list is a defect.
@@ -548,7 +548,7 @@ as before.
   application's. The stamp itself lives in the shared core, written on the one
   entry-delivery seam, so the Java SDK — a poll host over that core — reads the
   same fact through the C ABI rather than keeping a second copy in step.
-  `docs/entry_input_observability.md`.
+  `docs/sdk/entry_input_idle.md`.
 
 - **The authoring sugar can now feed a `.keyed()` channel.** A keyed output
   channel accepts only `emit_keyed`, but `#[flezha::procedure]` / `@Procedure`
@@ -626,7 +626,7 @@ as before.
 
   `--partitions 1` (the default) is byte-identical to before; all proto fields
   are additive with zero values meaning "unpartitioned". See
-  `docs/partitioned_operatives.md`.
+  `docs/sdk/partitioned_operatives.md`.
 
 - **A controller can now survive dying with its disk**
   (`add-remote-durability-tier`). Every durable byte flezha owned lived on the
@@ -666,7 +666,7 @@ as before.
 
   Rollback is `backend: none` — local state is authoritative throughout, so
   disabling the tier alters nothing on disk. See
-  [`docs/remote_durability_tier.md`](docs/remote_durability_tier.md).
+  [`docs/operations/remote_durability_tier.md`](docs/operations/remote_durability_tier.md).
 
 - **Every controller node is a valid entry point for every namespace command**
   (`schedule-spawn-without-runner`). A new cluster directory
@@ -712,7 +712,7 @@ as before.
   (creation-time schema negotiation, any-thread poll/complete, shutdown
   wake), with a CI scenario driving connect → inputs → timer → shutdown
   entirely through the ABI. No wire, controller, or WAL format change.
-  See `docs/sdk_poll_core.md`.
+  See `docs/sdk/poll_core.md`.
 
 - **A live websocket's subscription set can change without reconnecting**
   (`add-websocket-subscription-source`). `Plugin.Provider.Websocket` accepts an
@@ -749,7 +749,7 @@ as before.
   and last error; each reconcile that sent a frame emits
   `[:flezha, :ws, :reconcile]`. Fully backwards compatible — with no
   `subscription_url` there is no poll timer, no applied set, and no subscription
-  state on the per-frame path. See `docs/websocket_subscription_source.md`.
+  state on the per-frame path. See `docs/plugins/websocket_subscription.md`.
 
 - **An Entity's current value is readable without a serving tier**
   (`entity-state-live-query`). `flz state get <operative/procedure[/entity_key]>`
@@ -781,7 +781,7 @@ as before.
   byte-identically, so the migration/handover caller is untouched. Dynamic-mode
   Entities are covered on both runtimes, closing a gap in the serialization
   requirement. Authorized as `:"state.get"` (viewer). Docs:
-  `docs/entity_state_live_query.md`; examples:
+  `docs/internals/state_persistence.md`; examples:
   `sdk/rust/examples/live_state_read.rs`, Java `E11_LiveStateRead`.
 
 - **An operative can be fed from an HTTP resource**
@@ -815,7 +815,7 @@ as before.
   the path a `--plugins` spec actually takes.
 
   **Controller-only**: no SDK, wire, or journal change. See
-  `docs/http_poll_plugin.md`.
+  `docs/plugins/http_poll.md`.
 
 - **A procedure can consume more than one channel**
   (`add-multi-input-procedures`). `c.merge::<I>()` (Rust) / `c.merge(I.class)`
@@ -838,7 +838,7 @@ as before.
   **No wire change and no controller change**: the merge is a subscription-time
   construct in the SDK, frames are still journaled per source channel, and the
   controller has no model of a channel's consumers. See
-  `docs/multi_input_procedures.md`.
+  `docs/sdk/multi_input_procedures.md`.
 
 - **A procedure can ask for a workflow operative**
   (`add-procedure-requested-spawn`). `ctx.spawn_workflow` (Rust) /
@@ -853,7 +853,7 @@ as before.
   effect: a replayed invocation issues nothing. Until now a workflow operative
   could only be started from outside the cluster, so every pipeline that needed
   one grew its own external dispatcher. See
-  `docs/procedure_requested_spawn.md`.
+  `docs/sdk/procedure_requested_spawn.md`.
 
   **Wire**: two additive `CommandRequest` variants, `SpawnWorkflowRequest`
   (tag 34, SDK → controller) and `SpawnWorkflowResponse` (tag 35,
@@ -931,7 +931,7 @@ as before.
   `RunnerStartError`/`RunnerError`; the per-issue topology enum is
   `TopologyIssue`. Java's annotation processor generates
   `GeneratedStreamOperatives.defineAll(FlezhaRunner)`.
-  Naming rules for future SDK surface: `docs/sdk_naming_conventions.md`.
+  Naming rules for future SDK surface: `docs/sdk/naming_conventions.md`.
 
 ### Fixed
 
@@ -1092,7 +1092,7 @@ as before.
   `[:flezha, :plugin, :kafka, _, _]` prefix surface every state
   transition. Synchronous counters available via
   `Flezha.Plugin.Provider.Kafka.Producer.stats/1`. Full runner-facing
-  contract in [`docs/kafka-producer.md`](docs/kafka-producer.md).
+  contract in [`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md).
 
 ### Changed (BREAKING)
 
@@ -1103,7 +1103,7 @@ as before.
   steady state on clusters with `min.insync.replicas = 1`. Callers that
   depended on the old fast-but-lossy single-broker-ack latency profile
   should explicitly set `required_acks: 1, idempotent: false` per the
-  migration table in [`docs/kafka-producer.md`](docs/kafka-producer.md).
+  migration table in [`docs/plugins/kafka_producer.md`](docs/plugins/kafka_producer.md).
 - `Flezha.Plugin.Provider.Kafka.Producer.init_provider/1` now returns
   `{:ok, opts, producer_pid}` where `producer_pid` is the
   `ProducerWorker` GenServer (was the kafka_ex worker pid). The

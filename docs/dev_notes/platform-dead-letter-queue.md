@@ -49,5 +49,5 @@
   with `scripts/build-dist.sh` after SDK changes!) / `tier_store` value
   `"poison"`.
 - **Docs**: `docs/resilience/data_durability.md` "Dead-letter queue",
-  `docs/sdk_protocol_spec.md` `park_payload`/`ParkPayloadAck`, glossary.
+  `docs/sdk/protocol_spec.md` `park_payload`/`ParkPayloadAck`, glossary.
 

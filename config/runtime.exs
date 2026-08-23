@@ -193,7 +193,7 @@ config :flezha,
 
   # ------------------------------------------------------------------------------------------------
   # Installable plugin subsystem — staged rollout lever. See
-  # `docs/plugin_installation.md` for the full design.
+  # `docs/plugins/installation.md` for the full design.
   #
   # - `FLEZHA_PLUGIN_INSTALLER_ENABLED=true` flips the feature on in this
   #   environment without a code change — used by staging to validate the
@@ -232,7 +232,7 @@ config :flezha,
   # missed ping or a brief GC/contention pause never evicts a healthy runner.
   # Pair `window_ms` with the QUIC `max_idle_timeout` (FLEZHA_CONTROL_IDLE_TIMEOUT_MS)
   # so both transports declare death in the same window. See
-  # `docs/resilience/transport_liveness.md`.
+  # `docs/internals/transport_liveness.md`.
   control_liveness_window_ms:
     System.get_env("FLEZHA_CONTROL_LIVENESS_WINDOW_MS", "45000") |> String.to_integer(),
   control_liveness_interval_ms:
@@ -279,7 +279,7 @@ config :flezha,
   # `enabled` is the master flag — when false the supervisor starts no
   # children (no sinks, no logger handler, no telemetry bridge). The
   # service API returns `{:error, :observability_disabled}` in that
-  # mode. See `docs/observability_foundation.md`.
+  # mode. See `docs/operations/observability.md`.
   observability: [
     enabled:
       case System.get_env("FLEZHA_OBSERVABILITY_ENABLED") do
@@ -416,7 +416,7 @@ config :flezha,
   # subscribes to a configurable allow-list of `(source, name)` pairs
   # on the foundation bus and writes one JSON Lines record per
   # accepted signal to `:dir/audit-current.jsonl`. See
-  # `docs/audit_log.md` for the on-disk layout, rotation/retention
+  # `docs/operations/audit_log.md` for the on-disk layout, rotation/retention
   # policies, and CLI verbs.
   audit_log: [
     enabled:
@@ -462,7 +462,7 @@ config :flezha,
   # verbs refused", never to open. `FLEZHA_AUTHZ_ENABLED=false` is the
   # explicit opt-out and emits a `warn` on every boot; dev/test carry the
   # opt-out in their config for ergonomics, equally warned.
-  # See `docs/platform_authn_authz.md`.
+  # See `docs/operations/authn_authz.md`.
   authn_authz: [
     enabled:
       case System.get_env("FLEZHA_AUTHZ_ENABLED") do
@@ -496,7 +496,7 @@ config :flezha,
 # and exporters from `config/test.exs`. Both exporters are OFF by
 # default in prod; turning OTLP on adopts the :block overflow policy
 # (producer back-pressure during OTLP outages, bounded by the
-# configured retry window). See `docs/observability_export.md`.
+# configured retry window). See `docs/operations/observability.md`.
 if config_env() != :test do
   config :flezha, :observability,
     otp_backend_enabled: true,

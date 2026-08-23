@@ -59,8 +59,8 @@
   `OldApiNotImportableTest` gained in-process javac cases for the removed
   spellings — with a POSITIVE CONTROL, because a classpath that resolved
   nothing would make every refusal vacuously true.
-- **Docs**: `docs/sdk_naming_conventions.md` §9 (rule + migration table),
-  `docs/operative_architecture.md` "Plugin egress: `sink`, hybrid and terminal"
-  (renamed section — `docs/sdk_protocol_spec.md` links it by name), both
+- **Docs**: `docs/sdk/naming_conventions.md` §9 (rule + migration table),
+  `docs/sdk/rust_operative_architecture.md` "Plugin egress: `sink`, hybrid and terminal"
+  (renamed section — `docs/sdk/protocol_spec.md` links it by name), both
   READMEs, `sdk/rust/public-api.txt`, root + `sdk/rust/CHANGELOG.md`.
 

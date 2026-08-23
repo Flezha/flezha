@@ -10,7 +10,7 @@ import java.lang.annotation.Target;
  * {@link com.flezha.sdk.procedure.Procedure} implementation by the Flezha annotation
  * processor. The annotation processor generates {@code <ClassName>Procedure}
  * implementing the trait surface, inferring the associated types from the
- * {@code run} signature per {@code docs/sdk_authoring_contract.md} §2.
+ * {@code run} signature per {@code docs/sdk/authoring_contract.md} §2.
  *
  * <p>Supported {@code run} shapes:
  * <ul>

@@ -43,7 +43,7 @@ accepts `:transient` specs for durable children, `e0f112d` exposes
   so declared-entry plugins go stale the moment an operator touches them. A
   restore that has ONLY the declared set (rows lost) replays the start-time
   plugin manifest — accepted RPO for that catastrophe; documented in
-  `docs/resilience/process_hub_recovery_model.md`.
+  `docs/internals/process_hub.md`.
 - **Diff skips declared-but-unobserved refs.** Starting an absent declared
   child is the hub reconcile's job; a heal op needs a live Overwatch pid and
   would churn `:error` under Backoff forever. `/healthz` still reports the

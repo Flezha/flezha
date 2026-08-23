@@ -48,8 +48,8 @@
   at 5 s. Post-close signals are dropped with a per-sink
   counter increment.
 - **Runtime config knobs**: `:audit_log` map (see
-  `docs/audit_log.md` for the full list). Env-var overrides:
+  `docs/operations/audit_log.md` for the full list). Env-var overrides:
   `FLEZHA_AUDIT_ENABLED`, `FLEZHA_AUDIT_DIR`,
   `FLEZHA_AUDIT_RETENTION_DAYS`.
-- **Detailed notes**: `docs/audit_log.md`.
+- **Detailed notes**: `docs/operations/audit_log.md`.
 

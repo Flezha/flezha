@@ -55,6 +55,6 @@
   private types: 5 spec scenarios + `replay_equals`/`replay_emits_equal` +
   expansion + both refusals), Java `RouteLatestRouterTest` (delivery contract)
   and `RouteLatestExpansionTest` (topology, kryo registration, refusals).
-- **Docs**: `docs/sdk_authoring_contract.md` §4.1, both READMEs, root +
+- **Docs**: `docs/sdk/authoring_contract.md` §4.1, both READMEs, root +
   `sdk/rust/CHANGELOG.md`, `sdk/rust/public-api.txt`.
 

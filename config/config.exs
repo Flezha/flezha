@@ -32,7 +32,7 @@ config :flezha,
 
   # ------------------------------------------------------------------------------------------------
   # Installable plugin subsystem (Jenkins-style runtime plugin lifecycle).
-  # See `lib/flezha/plugin/installer/` and `docs/plugin_installation.md`.
+  # See `lib/flezha/plugin/installer/` and `docs/plugins/installation.md`.
   #
   # - `plugin_installer_enabled`: master feature flag. When `false`, the
   #   `Flezha.Plugin.Installer.Supervisor` subtree is not started and the

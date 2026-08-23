@@ -13,7 +13,7 @@ defmodule Flezha.State.DurabilityTier.Backend do
   store a fencing arbiter: a manifest write carries a claim counter and is
   refused when another writer holds the lineage. A refusal means this node no
   longer owns the reference — it stops shipping rather than retrying
-  (`docs/remote_durability_tier.md`).
+  (`docs/operations/remote_durability_tier.md`).
 
   The counter is stored by the backend and read by nobody else, which is the
   whole point: it is the one fact about a reference that never travels with the

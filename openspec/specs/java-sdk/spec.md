@@ -2,11 +2,11 @@
 
 ## Purpose
 
-Defines the Java SDK for Flezha compute engines: the public authoring API and the Operative / Procedure / Entity runtime, hosted on the shared poll core through the `FlzCore` JNI binding over `flz_core_ffi`. Conforms to `docs/sdk_protocol_spec.md` and `docs/sdk_poll_core.md`.
+Defines the Java SDK for Flezha compute engines: the public authoring API and the Operative / Procedure / Entity runtime, hosted on the shared poll core through the `FlzCore` JNI binding over `flz_core_ffi`. Conforms to `docs/sdk/protocol_spec.md` and `docs/sdk/poll_core.md`.
 ## Requirements
 ### Requirement: Java SDK Entry Point
 
-The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk_protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getOperatives()` (a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
+The Java SDK SHALL provide `com.flezha.sdk.Flezha.createRunner(String namespace)` as the single entry point, returning a concrete `FlezhaRunner` directly — there SHALL be no separate `RunnerBuilder` type. Creating a runner SHALL NOT connect, claim the process singleton slot, or spawn any thread. Calling `.start()` on the runner MUST connect to the controller's control socket, send the handshake init message per `docs/sdk/protocol_spec.md` §5.2 carrying the runner's currently-declared factory ids (possibly empty), wait for `AssignRunnerId`, and return `this` for chaining. The started runner SHALL expose `getNamespace()` (replacing `getId()`) and `getOperatives()` (a snapshot of currently-spawned Operative instances keyed by what the wire calls `operative_id`). `.run()` SHALL be sugar for `.start()` followed by `awaitTermination()`, never an independent implementation.
 
 #### Scenario: Successful connection on a created runner
 - **WHEN** an SDK user calls `Flezha.createRunner("my_app").defineStream(MarketOperative.class).start()` with the controller running
@@ -836,7 +836,7 @@ Today `StreamOperativeInstance` builds one Procedure per `ProcedureDispatcher` a
 
 The Java SDK SHALL describe the state-mutation enforcement it actually provides, and SHALL document its asymmetry with Rust the way it already documents its other Rust asymmetries.
 
-`StateHandle.get()` returns the live State object, so `state.get().field = x` compiles, runs, and is never journaled as a Change. The Rust SDK forecloses this structurally by implementing `Deref` and deliberately not `DerefMut`. The Java class javadoc and `docs/java_state_persistence.md` both assert that Java's lack of a setter is "the structural enforcement" — which it is not, because `get()` hands back the object.
+`StateHandle.get()` returns the live State object, so `state.get().field = x` compiles, runs, and is never journaled as a Change. The Rust SDK forecloses this structurally by implementing `Deref` and deliberately not `DerefMut`. The Java class javadoc and `docs/sdk/state_persistence.md` both assert that Java's lack of a setter is "the structural enforcement" — which it is not, because `get()` hands back the object.
 
 #### Scenario: Documentation does not claim enforcement that does not exist
 

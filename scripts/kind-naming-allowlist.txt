@@ -72,7 +72,7 @@ sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.jav
 *:(grow(s|ing)?|count is) unbounded
 openspec/specs/runner-controller-connection-healing/spec.md:bounded `:start_operative` retry
 
-docs/remote_durability_tier.md:visible, bounded
+docs/operations/remote_durability_tier.md:visible, bounded
 docs/dev_notes/wire-frame-limits.md:slice-bounded
 flz_transport/src/service/payloader.rs:length_bounded_by_enclosing_payload
 openspec/specs/wire-frame-limits/spec.md:Bounded frame allocation

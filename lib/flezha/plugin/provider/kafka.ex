@@ -7,7 +7,7 @@ defmodule Flezha.Plugin.Provider.Kafka do
     to a Kafka topic with retries, idempotence, batching, bounded queueing,
     and active metadata refresh on transient broker errors.
 
-    See `docs/kafka-producer.md` for the full runner-facing contract,
+    See `docs/plugins/kafka_producer.md` for the full runner-facing contract,
     parameter table, and telemetry events. The plugin defaults are tuned
     for streaming market data at 50–500 msg/sec/partition; `:linger_ms`,
     `:queue_max`, and `:retries` are the knobs runners most commonly tune

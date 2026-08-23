@@ -8,7 +8,7 @@
 - **Wire payload-ids**: `entity_state_change`, `entity_state_snapshot`,
   `delete_entity_state` (data stream); `RestoreInitState`, `RestoreInitStateResponse`,
   `CompactEntity`, `CompactEntityResponse`, `EntityMailboxStatus`
-  (control channel). See `docs/sdk_protocol_spec.md` "Per-Entity
+  (control channel). See `docs/sdk/protocol_spec.md` "Per-Entity
   State Persistence".
 - **Dynamic entity mode**: `flz_core/src/dynamic.rs`
   (`DynamicEntityRegistry` + reaper; re-exported as
@@ -60,5 +60,5 @@
   `flz state rotate <operative/procedure/key>`, `flz state retention <operative> <hours>`,
   `flz state delete <operative/procedure/key>`. Implemented in `cli/src/state.rs`;
   RPCs into `Flezha.Service.CliManager.state_*/N`.
-- **Detailed notes**: `docs/resilience/state_persistence.md`.
+- **Detailed notes**: `docs/internals/state_persistence.md`.
 

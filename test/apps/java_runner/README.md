@@ -20,7 +20,7 @@ It also carries authoring-sugar twins (`@Procedure` / `@State` / `@StreamOperati
 by `flezha-sdk-processor`): `SugarDoNothing`, `SugarStore`, and the 2-procedure
 `SugarEntry` → `SugarDownstream` reference operative (`SugarStaticEntityStreamOperative`).
 `SugarTwinTest` asserts they register and process input identically to the
-hand-written equivalents. See `docs/sdk_authoring_contract.md`.
+hand-written equivalents. See `docs/sdk/authoring_contract.md`.
 
 ## Build
 

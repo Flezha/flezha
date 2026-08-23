@@ -17,7 +17,7 @@ on:
       - "lib/mix/tasks/bench**"
       - "protobufs/**"
       - "test/apps/rust_runner/**"
-      - "docs/benchmarking.md"
+      - "docs/operations/benchmarking.md"
       - "openspec/changes/operative-bench-harness/specs/rust-sdk-dispatch/spec.md"
       - ".github/workflows/bench.yml"
   workflow_dispatch:
@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           SPEC=openspec/changes/operative-bench-harness/specs/rust-sdk-dispatch/spec.md
-          DOC=docs/benchmarking.md
+          DOC=docs/operations/benchmarking.md
           # Spec literal: the first standalone integer (with optional
           # underscores) in the "at least **N messages/second**" clause.
           SPEC_FLOOR=$(grep -oE 'at least \*\*[0-9_]+ messages/second\*\*' "$SPEC" \
@@ -142,7 +142,7 @@ jobs:
           PCT=$(awk -v m="$MEASURED" -v f="$FLOOR" \
             'BEGIN { print (1.0 - m / f) * 100 }')
           if [[ "$PASS" == "bad" ]]; then
-            echo "::error::Bench regression: measured $MEASURED msg/s < ${THRESH} msg/s (${PCT}% below floor of $FLOOR). See docs/benchmarking.md § Triage when bench-regression fails."
+            echo "::error::Bench regression: measured $MEASURED msg/s < ${THRESH} msg/s (${PCT}% below floor of $FLOOR). See docs/operations/benchmarking.md § Triage when bench-regression fails."
             exit 1
           fi
           # Within-band warning if measured falls below the floor itself.

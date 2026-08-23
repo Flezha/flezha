@@ -15,7 +15,7 @@ import java.util.function.BiConsumer;
  * cannot, because {@code get()} must return a readable object. The detection
  * available in place of enforcement is
  * {@code ProcedureTestHarness.replayEquals()} — an opt-in determinism gate meant
- * to run in CI. See {@code docs/java_state_persistence.md}.
+ * to run in CI. See {@code docs/sdk/state_persistence.md}.
  */
 public final class StateHandle<State, ChangeT extends Change> {
 

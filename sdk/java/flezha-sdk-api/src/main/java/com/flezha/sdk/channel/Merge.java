@@ -42,7 +42,7 @@ import javax.annotation.Nonnull;
  * (stream) or turned into a terminal chain error the saga compensates
  * (workflow). The one unguarded seam is a stream entry-channel source, where
  * the mapping runs on the wire-reader path — the same exposure the entry parser
- * there already carries. {@code docs/multi_input_procedures.md} tabulates it.
+ * there already carries. {@code docs/sdk/multi_input_procedures.md} tabulates it.
  *
  * <p>Fewer than two sources, the same channel subscribed twice, a source whose
  * edge into this procedure is already wired, or a merged type that is not the

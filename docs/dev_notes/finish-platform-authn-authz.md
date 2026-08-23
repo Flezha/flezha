@@ -118,9 +118,9 @@
 - **Docs**: `docs/operations/authn_authz.md` (operator runbook: cookie Secret,
   cert mounts, bootstrap, break-glass; flezha_market needs its ConfigMap/
   DaemonSet updated in that repo before its next deploy),
-  `docs/platform_authn_authz.md` (posture + quota table),
-  `docs/sdk_protocol_spec.md` (QUIC client-auth table),
-  `docs/resilience/state_persistence.md` (namespaced layout), glossary,
+  `docs/operations/authn_authz.md` (posture + quota table),
+  `docs/sdk/protocol_spec.md` (QUIC client-auth table),
+  `docs/internals/state_persistence.md` (namespaced layout), glossary,
   CHANGELOG. Upgrade is BREAKING for operators (certs/cookie/bootstrap);
   rollback = `FLEZHA_AUTHZ_ENABLED=false` + previous release (auth stores are
   additive DETS).

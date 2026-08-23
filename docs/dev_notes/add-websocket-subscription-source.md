@@ -72,6 +72,6 @@
   origin; asserts exactly ONE TCP connection accepted across an add and a
   remove — that is what pins "no reconnect"). Six mutations were run against the
   guards to confirm the tests bite.
-- **Docs**: `docs/websocket_subscription_source.md`, `docs/glossary.md`,
-  `docs/plugin_lifecycle.md`, root `CHANGELOG.md`.
+- **Docs**: `docs/plugins/websocket_subscription.md`, `docs/glossary.md`,
+  `docs/plugins/lifecycle.md`, root `CHANGELOG.md`.
 

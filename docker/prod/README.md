@@ -39,7 +39,7 @@ The image's CMD is `/usr/local/bin/controller-entrypoint.sh` (under tini). The
 script starts `bin/flzvm start`, optionally runs `flz cluster restore` if
 a snapshot file is present, traps SIGTERM/SIGINT to write a snapshot via
 `/usr/local/bin/snapshot-on-stop.sh`, then `wait`s. All behaviour is
-configured via env vars — see `docs/deployment.md` for the contract. To
+configured via env vars — see `docs/operations/deployment.md` for the contract. To
 run the controller without the snapshot lifecycle, set
 `FLEZHA_SNAPSHOT_ENABLED=false`.
 

@@ -10,7 +10,7 @@ import java.lang.annotation.Target;
  * {@code #[journal(...)]} field attribute. The {@code @State} processor
  * generates named per-key mutators, matching {@code Change} variants, and the
  * {@code applyChange} arms that replay them. See
- * {@code docs/sdk_authoring_contract.md} §3.
+ * {@code docs/sdk/authoring_contract.md} §3.
  *
  * <ul>
  *   <li>{@link Mode#MAP_SET} on {@code Map<K, V>} → {@code set<Field>(key, V)}.</li>

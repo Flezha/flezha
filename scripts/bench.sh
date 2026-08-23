@@ -22,7 +22,7 @@
 #   - java runtime: run `mix test.java_sdk` once to build the test jar
 #   - quic transport: certs auto-generated at app_data/certs/ on first run
 #
-# Full reference: docs/benchmarking.md
+# Full reference: docs/operations/benchmarking.md
 set -e
 
 RUNTIME="rust"

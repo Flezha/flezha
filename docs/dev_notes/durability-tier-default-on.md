@@ -88,7 +88,7 @@ anything it cannot open — the same path a crash already takes.
 The spec names DLQ and authz, then requires every other durable store to be in
 scope or on a documented exclusion list whose stated content is "the audit log".
 `schedules.dets` is neither re-derivable nor externally shipped, so it ships.
-The exclusion list in `docs/remote_durability_tier.md` is therefore exactly the
+The exclusion list in `docs/operations/remote_durability_tier.md` is therefore exactly the
 audit log plus four non-stores (bootstrap token, rebootstrap marker, TLS
 material, installed plugin artifacts).
 

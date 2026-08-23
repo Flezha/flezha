@@ -269,7 +269,7 @@ the controller can never push an empty restore that would rebuild a live entity 
 `init_state`.
 
 Deeper detail, including the WAL record format and every configuration knob:
-[`../resilience/state_persistence.md`](../resilience/state_persistence.md).
+[`../resilience/state_persistence.md`](../internals/state_persistence.md).
 
 ## The minimum watermark and retention
 
@@ -378,7 +378,7 @@ The backend contract is four blob operations — `put / get / list / put_if` —
 bytes and never re-implement WAL semantics. Boot ordering matters exactly once: on a fresh node
 the registry cspec is hydrated **before** the hub opens `registry.dets`, so the orphan reconcile
 can see the restored operatives; entity state then hydrates through the ordinary bind. Full
-detail: [`../remote_durability_tier.md`](../remote_durability_tier.md).
+detail: [`../remote_durability_tier.md`](../operations/remote_durability_tier.md).
 
 ---
 
@@ -428,7 +428,7 @@ on, so declaring the tier over one is refused at build time.
 the checkpoint interval are built by the shared runner core, so a Java runner and a Rust
 runner earn the same guarantee. What a host supplies is its own change bytes and the context
 surface the determinism contract needs — `ctx.now()`, `ctx.stable_id()`, `ctx.checkpoint()`,
-keyed emit — which both SDKs have. See [`../sdk_poll_core.md`](../sdk_poll_core.md).
+keyed emit — which both SDKs have. See [`../sdk_poll_core.md`](../sdk/poll_core.md).
 
 ## Determinism
 
@@ -707,7 +707,7 @@ There are **two** fence layers, and the second is a per-write check:
 Realign itself is the legitimate version of the same event: a *different, current* runner
 emitting a non-contiguous sequence is the signature of a runner pod restart, and the writer
 adopts its lineage and bumps the epoch. Full detail:
-[`../resilience/runner_identity.md`](../resilience/runner_identity.md).
+[`../resilience/runner_identity.md`](../internals/runner_identity.md).
 
 ---
 
@@ -741,7 +741,7 @@ diff skips it; and every `{primitive, target}` pair carries an exponential coold
 **5 s → 30 s → 60 s → 300 s**. The whole tick body is wrapped — an uncaught error is a skipped
 tick, never a crashed loop.
 
-Full architecture: [`../resilience/convergence_loop.md`](../resilience/convergence_loop.md).
+Full architecture: [`../resilience/convergence_loop.md`](../internals/convergence_loop.md).
 
 ### Producing-liveness: fed, and advancing
 
@@ -832,7 +832,7 @@ verdict, and every verdict has exactly one consumer: a heal primitive where a BE
 exists (wedged runner → evict, wedged connection → resync, wedged operative → rebind), and a
 `/healthz` 503 where only a process restart does. Signals, the scope table, the `/proc` fallback,
 and the counter set:
-[`../resilience/transport_liveness.md`](../resilience/transport_liveness.md).
+[`../resilience/transport_liveness.md`](../internals/transport_liveness.md).
 
 ### The `/healthz` contract
 
