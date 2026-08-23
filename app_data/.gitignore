@@ -1,8 +1,18 @@
-# App data — locally generated, never tracked.
-state/*
-sockets/*
-recovery/*
-certs/*
-auth/*
-process_hub/*
-schedules/*
+# Runtime data. Nothing in this directory is tracked except this file.
+#
+# Everything here is written by a running controller: per-machine, usually
+# per-boot, and some of it is secret — `auth/bootstrap.token`, the TLS keys in
+# `certs/`, and whole input payloads in `dlq/`. None of it is a fixture, and
+# every directory is recreated on demand (`File.mkdir_p!`), so losing the lot
+# costs nothing but a restart. `docs/operations/reset.md` covers wiping it.
+#
+# Deny by default, on purpose. The previous rule listed the subdirectories one
+# by one, which meant a subsystem that started writing here was tracked until
+# somebody noticed — `dlq/` sat untracked in `git status` for exactly that
+# reason, and it holds parked payloads. A new subsystem is now covered the day
+# it appears.
+#
+# If something here ever does need tracking, add an explicit `!` line for that
+# path and say why — but prefer somewhere outside the runtime data directory.
+*
+!.gitignore
