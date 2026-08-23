@@ -376,43 +376,18 @@ defmodule Flezha.Runner.FleetManager do
       ) do
     # runner_connect/3 mints a fresh per-connection SESSION TOKEN (the
     # Registry/StreamChannel naming + routing key) and brings up its supervision
-    # tree. It always returns {:ok, ...} — no controller-level error path exists.
-    # If one is added, re-introduce the {:error, reason} branch.
-    {:ok, namespace, session_token} =
-      runner_connect(stream_ref, namespace, transport)
+    # tree. That tree can fail to come up for reasons that belong to this runner
+    # alone — an acceptor whose socket the kernel refuses, for one — and this
+    # manager serves every other runner on the node, so the connect is refused
+    # rather than allowed to take the manager (and the transport server linked
+    # to it) down.
+    case catch_runner_connect(stream_ref, namespace, transport) do
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
 
-    timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
-
-    state =
-      case Map.get(state.runner_namespaces, namespace, nil) do
-        nil -> put_in(state, [:runner_namespaces, namespace], %{})
-        _ -> state
-      end
-
-    state =
-      put_in(
-        state,
-        [:runner_namespaces, namespace, session_token],
-        {:active, timestamp}
-      )
-
-    state = store_factories(state, namespace, session_token, factories)
-
-    # Resolve the runner's durable STABLE IDENTITY: on a reconnect (or a
-    # newest-wins takeover) re-point the prior session's operative bindings onto
-    # this fresh session token and close the old session. A first connect just
-    # records the mapping; a degraded runner (no stable id) connects fresh.
-    state = resolve_stable_identity(state, namespace, stable_id, session_token)
-
-    # The convergence Loop subscribes to this and runs an immediate tick as a
-    # safety net; the binding swap above is the synchronous primary path.
-    EventManager.dispatch(
-      :runner_connected_event,
-      {namespace, session_token},
-      %{members: :local}
-    )
-
-    {:reply, {:ok, {namespace, session_token}}, sync_directory(state)}
+      {:ok, namespace, session_token} ->
+        finish_runner_connect(state, namespace, session_token, factories, stable_id)
+    end
   end
 
   @impl true
@@ -875,9 +850,22 @@ defmodule Flezha.Runner.FleetManager do
 
     FleetSupervisor.start_runner_sup(namespace, runner_id, stream_ref, transport)
 
-    # Transfer ownership of the stream to the ControlChannel process
+    # Transfer ownership of the stream to the ControlChannel process. A runner
+    # whose tree did not come up is refused rather than allowed to crash this
+    # manager, which serves every other runner on the node.
     control_channel_pid =
-      RunnerSupervisor.find_control_channel(runner_id)
+      case RunnerSupervisor.find_control_channel(runner_id) do
+        {:ok, pid} ->
+          pid
+
+        {:error, reason} ->
+          Logger.error(
+            "runner #{runner_id} on #{namespace} has no control channel " <>
+              "(#{inspect(reason)}); refusing the connect"
+          )
+
+          throw({:runner_connect_failed, reason})
+      end
 
     Flezha.Transport.Stream.controlling_process(stream_ref, control_channel_pid)
     Flezha.Transport.Stream.set_active(stream_ref)
@@ -1040,5 +1028,46 @@ defmodule Flezha.Runner.FleetManager do
     |> Map.get(factory_id, %{ce_ids: MapSet.new()})
     |> Map.get(:ce_ids)
     |> MapSet.intersection(active_ids)
+  end
+
+  defp catch_runner_connect(stream_ref, namespace, transport) do
+    runner_connect(stream_ref, namespace, transport)
+  catch
+    {:runner_connect_failed, reason} -> {:error, reason}
+  end
+
+  defp finish_runner_connect(state, namespace, session_token, factories, stable_id) do
+    timestamp = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+
+    state =
+      case Map.get(state.runner_namespaces, namespace, nil) do
+        nil -> put_in(state, [:runner_namespaces, namespace], %{})
+        _ -> state
+      end
+
+    state =
+      put_in(
+        state,
+        [:runner_namespaces, namespace, session_token],
+        {:active, timestamp}
+      )
+
+    state = store_factories(state, namespace, session_token, factories)
+
+    # Resolve the runner's durable STABLE IDENTITY: on a reconnect (or a
+    # newest-wins takeover) re-point the prior session's operative bindings onto
+    # this fresh session token and close the old session. A first connect just
+    # records the mapping; a degraded runner (no stable id) connects fresh.
+    state = resolve_stable_identity(state, namespace, stable_id, session_token)
+
+    # The convergence Loop subscribes to this and runs an immediate tick as a
+    # safety net; the binding swap above is the synchronous primary path.
+    EventManager.dispatch(
+      :runner_connected_event,
+      {namespace, session_token},
+      %{members: :local}
+    )
+
+    {:reply, {:ok, {namespace, session_token}}, sync_directory(state)}
   end
 end

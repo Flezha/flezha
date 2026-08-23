@@ -69,10 +69,25 @@ defmodule Flezha.Runner.RunnerSupervisor do
     Supervisor.init(children, strategy: :one_for_one)
   end
 
+  @doc """
+  The runner's `ControlChannel` pid, or `{:error, reason}` when its supervisor
+  is not there to ask.
+
+  A runner's own supervision tree can fail to come up — an acceptor whose
+  socket the kernel refuses, for one — and that is this runner's problem, not
+  the fleet's: the caller runs inside `FleetManager`, so an exit here would
+  take the manager down and every other runner with it.
+  """
   def find_control_channel(runner_id) do
     Identificator.unit_sup(runner_id)
     |> Supervisor.which_children()
     |> Enum.find(fn {id, _, _, _} -> id === ControlChannel end)
-    |> elem(1)
+    |> case do
+      {_id, pid, _type, _mods} when is_pid(pid) -> {:ok, pid}
+      nil -> {:error, :no_control_channel}
+      {_id, other, _type, _mods} -> {:error, {:control_channel_not_running, other}}
+    end
+  catch
+    :exit, reason -> {:error, {:runner_supervisor_down, reason}}
   end
 end
