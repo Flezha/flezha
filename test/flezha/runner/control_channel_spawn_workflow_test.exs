@@ -34,7 +34,7 @@ defmodule FlezhaTest.Runner.ControlChannelSpawnWorkflowTest do
 
     on_exit(fn ->
       try do
-        if Process.alive?(channel), do: GenServer.stop(channel, :normal, 1_000)
+        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(channel, :normal, 1_000)
       catch
         :exit, _ -> :ok
       end

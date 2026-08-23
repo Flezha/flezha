@@ -117,7 +117,7 @@ defmodule FlezhaTest.Runner.ControlChannelShutdownNotificationTest do
       ControlChannel.start_link({@namespace, runner_id, stream_ref, write_fun})
 
     on_exit(fn ->
-      if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+      FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
     end)
 
     {pid, stream_ref}

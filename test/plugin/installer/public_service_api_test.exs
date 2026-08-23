@@ -34,7 +34,7 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
       try do
         case Process.whereis(mod) do
           nil -> :ok
-          pid -> if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+          pid -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
         end
       catch
         :exit, _ -> :ok
@@ -50,7 +50,7 @@ defmodule Flezha.Plugin.Installer.PublicServiceAPITest do
         try do
           case Process.whereis(mod) do
             nil -> :ok
-            pid -> if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+            pid -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
           end
         catch
           :exit, _ -> :ok

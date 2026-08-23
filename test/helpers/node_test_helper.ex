@@ -224,7 +224,13 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   ]
 
   # The surface every SDK carries; a manifest cannot defer these.
-  @required_capabilities [:runner_lifecycle, :graph_builder, :liveness, :retry_ladder, :partitioned]
+  @required_capabilities [
+    :runner_lifecycle,
+    :graph_builder,
+    :liveness,
+    :retry_ladder,
+    :partitioned
+  ]
 
   def capabilities, do: @capabilities
   def required_capabilities, do: @required_capabilities
@@ -349,6 +355,25 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
       truthy ->
         truthy
     end
+  end
+
+  @doc """
+  Stop `pid` if it is still alive, tolerating the race that makes
+  `FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)` flaky: the process can exit
+  — or its supervisor can take it down — between the check and the stop, and
+  `GenServer.stop/3` then exits the *caller* with that reason. A teardown has
+  nothing to assert, so it swallows the exit. Idempotent.
+  """
+  def ensure_stopped(pid, reason \\ :normal, timeout \\ :infinity) do
+    if is_pid(pid) and Process.alive?(pid) do
+      try do
+        GenServer.stop(pid, reason, timeout)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    :ok
   end
 
   @doc "Close a spawned runner/mock port if it is still open. Idempotent."

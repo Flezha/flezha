@@ -25,9 +25,26 @@ defmodule FlezhaTest.State.ProcInboxTest do
 
   defp instance_id(), do: "inbox_inst_#{System.unique_integer([:positive])}"
 
+  # `WalWriter.close/1` returns before the writer has finished exiting, and the
+  # next append resolves the writer through the registry — so without waiting
+  # for it to be gone the append reaches a dying pid and exits with `:noproc`.
   defp close_inbox_writer(inst) do
-    {:ok, pid} = Flezha.State.Supervisor.find_or_start(Registry.inbox_id(inst))
+    id = Registry.inbox_id(inst)
+    {:ok, pid} = Flezha.State.Supervisor.find_or_start(id)
+    ref = Process.monitor(pid)
     WalWriter.close(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+    after
+      5_000 -> flunk("the inbox writer never closed")
+    end
+
+    assert FlezhaTest.Helper.NodeTestHelper.wait_until(
+             fn -> Flezha.State.Supervisor.lookup(id) == :error end,
+             5_000
+           ),
+           "the closed inbox writer stayed in the registry"
   end
 
   test "inbox path lives with the instance's state files" do

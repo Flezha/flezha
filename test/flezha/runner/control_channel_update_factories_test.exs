@@ -36,7 +36,7 @@ defmodule FlezhaTest.Runner.ControlChannelUpdateFactoriesTest do
 
     on_exit(fn ->
       try do
-        if Process.alive?(control_channel), do: GenServer.stop(control_channel, :normal, 1_000)
+        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(control_channel, :normal, 1_000)
       catch
         :exit, _ -> :ok
       end

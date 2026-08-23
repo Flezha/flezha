@@ -80,7 +80,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     name = :"sc_credit_#{uniq}"
 
     {:ok, channel} = StreamChannel.start_link({runner_id, name, :secondary})
-    on_exit(fn -> if Process.alive?(channel), do: GenServer.stop(channel) end)
+    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(channel) end)
 
     %{channel: channel, runner_id: runner_id, class: class, name: name}
   end
@@ -88,7 +88,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
   defp start_stub_control_unit(runner_id, mode) do
     name = Identificator.control_unit(runner_id)
     {:ok, pid} = StubControlUnit.start_link({name, mode, self()})
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
     pid
   end
 
@@ -109,7 +109,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
     start_stub_control_unit(ctx.runner_id, :ack)
     :ok = push_frame(ctx.channel, state_change_frame(ctx.class, "k1", 0, "handshake-trigger"))
     assert_receive {:init_offered, init}, 2_000
-    await(fn -> counters_row(ctx.runner_id, ctx.name).credit_active == 1 end)
+    await(fn -> counter(ctx.runner_id, ctx.name, :credit_active) == 1 end)
     init
   end
 
@@ -208,7 +208,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       refute_receive {:ctl_async, _, {:credit_grant, _}}, 200
 
       await(fn ->
-        counters_row(ctx.runner_id, ctx.name).credit_ledger_level == 16 * 1024 * 1024
+        counter(ctx.runner_id, ctx.name, :credit_ledger_level) == 16 * 1024 * 1024
       end)
     end
 
@@ -307,7 +307,7 @@ defmodule FlezhaTest.Runner.StreamChannelCreditTest do
       :ok = push_frame(ctx.channel, state_change_frame(ctx.class, "k1", 2, "post-reconnect"))
       assert_receive {:init_offered, init2}, 2_000
       assert init2.stream_id != init1.stream_id
-      await(fn -> counters_row(ctx.runner_id, ctx.name).credit_active == 1 end)
+      await(fn -> counter(ctx.runner_id, ctx.name, :credit_active) == 1 end)
 
       level = counters_row(ctx.runner_id, ctx.name).credit_ledger_level
 

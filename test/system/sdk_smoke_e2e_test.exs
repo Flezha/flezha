@@ -97,10 +97,10 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                    opts: [plugins: [sink(ctx.namespace, operative_id)]]
                  })
 
-        OperativeManager.send_io(operative_id, ctx.namespace, "hello", %{"input_type" => "2"})
+        assert {:ok, payload, _md} =
+                 send_until_forwarded(ctx.namespace, operative_id, "hello"),
+               "the input never reached the sink"
 
-        # `BeamMsgForward` forwards a 2-tuple unless it is asked for metadata.
-        assert_receive {:message_forward, payload}, 30_000
         assert to_string(payload) == "hello"
       end
 
@@ -250,12 +250,12 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
                  opts: [plugins: [sink(ctx.namespace, operative_id, include_metadata: true)]]
                })
 
-      OperativeManager.send_io(operative_id, ctx.namespace, "k1:one", %{
-        "channel" => "in",
-        "input_type" => "2"
-      })
-
-      assert_receive {:message_forward, _msg, metadata}, 30_000
+      assert {:ok, _payload, metadata} =
+               send_until_forwarded(ctx.namespace, operative_id, "k1:one", %{
+                 "channel" => "in",
+                 "input_type" => "2"
+               }),
+             "the keyed input never reached the sink"
 
       stamps =
         metadata
@@ -332,6 +332,27 @@ defmodule FlezhaTest.System.SdkSmokeE2ETest do
         File.write!(path, Jason.encode!(actual, pretty: true) <> "\n")
         actual
     end
+  end
+
+  # `send_io` is fire-and-forget by contract: an input that reaches the runner
+  # before its Entity is live is dropped, and nothing re-drives it. Sending once
+  # therefore races the bind — invisibly on an idle box, and as a 30 s timeout
+  # on a loaded one. Re-send until the sink reports, so the scenario proves the
+  # data path rather than the timing of the first frame.
+  defp send_until_forwarded(namespace, operative_id, input, metadata \\ %{"input_type" => "2"}) do
+    NodeTestHelper.wait_until(
+      fn ->
+        OperativeManager.send_io(operative_id, namespace, input, metadata)
+
+        receive do
+          {:message_forward, payload} -> {:ok, payload, %{}}
+          {:message_forward, payload, md} -> {:ok, payload, md}
+        after
+          500 -> false
+        end
+      end,
+      30_000
+    )
   end
 
   # Subscribed to every output channel, so it needs no channel name — only an

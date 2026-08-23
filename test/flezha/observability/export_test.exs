@@ -311,7 +311,7 @@ defmodule Flezha.Observability.ExportTest do
 
       {:ok, _client} = Flezha.Observability.Export.OtlpClient.start_link([])
       {:ok, sink} = OtlpSink.start_link([])
-      on_exit(fn -> if Process.alive?(sink), do: GenServer.stop(sink) end)
+      on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(sink) end)
       {:ok, sink: sink}
     end
 

@@ -217,7 +217,7 @@ defmodule FlezhaTest.Operative.OverwatchRetryTest do
 
     on_exit(fn ->
       try do
-        if Process.alive?(pid), do: GenServer.stop(pid)
+        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)
       catch
         :exit, _ -> :ok
       end

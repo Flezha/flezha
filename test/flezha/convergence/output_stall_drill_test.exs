@@ -54,6 +54,13 @@ defmodule Flezha.Convergence.OutputStallDrillTest do
 
     start_supervised!({Loop, tick_ms: @tick_ms})
 
+    # `Loop.init/1` schedules its first tick immediately, so with a tick
+    # interval this long there is still exactly one in flight. Drain it with a
+    # synchronous call — a message queued before the call is handled before the
+    # reply — or a loaded box delivers it inside a later assertion window and
+    # the drill reads it as a tick its own sweep caused.
+    _ = :sys.get_state(Loop)
+
     %{header: TestHelpers.stub_header()}
   end
 

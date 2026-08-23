@@ -447,7 +447,7 @@ defmodule Flezha.State.DurabilityTierMultiWriterTest do
     _ = :sys.get_state(pid)
     System.delete_env("FLEZHA_DURABILITY_WRITER_ID")
     Application.put_env(:flezha, :state_root, own_root)
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
     pid
   end
 

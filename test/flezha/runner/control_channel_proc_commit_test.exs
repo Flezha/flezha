@@ -466,7 +466,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   # Linked to the (now exiting) test process, so it may already be on its way
   # down — stopping it is best-effort cleanup, not an assertion.
   defp stop_quietly(pid) do
-    if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+    FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
   catch
     :exit, _ -> :ok
   end

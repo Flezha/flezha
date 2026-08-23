@@ -26,6 +26,22 @@ defmodule FlezhaTest.Helper.CreditTestHelper do
     |> Enum.find(fn c -> c.runner_id == runner_id and c.name == name end)
   end
 
+  @doc """
+  One counter off `runner_id`'s channel `name`, or `nil` when the row has not
+  appeared yet.
+
+  The row is published asynchronously, so a poll closure that writes
+  `counters_row(...).field` raises out of `wait_until/2` the one time the row is
+  late instead of reading as "not yet" and retrying — which is a flake on a
+  loaded box, not a failure.
+  """
+  def counter(runner_id, name, field) do
+    case counters_row(runner_id, name) do
+      nil -> nil
+      row -> Map.fetch!(row, field)
+    end
+  end
+
   @doc "First credit-active channel row for `runner_id`, or nil."
   def active_credit_row(runner_id) do
     LivenessCounters.snapshot_all().channels

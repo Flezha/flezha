@@ -20,7 +20,7 @@ defmodule Flezha.Plugin.Provider.Kafka.ProducerHealthTest do
 
   defp stub(stats) do
     {:ok, pid} = StatsStub.start(stats)
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
     pid
   end
 

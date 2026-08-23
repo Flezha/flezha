@@ -27,7 +27,7 @@ defmodule FlezhaTest.Runner.IoStreamStaleRefReproTest do
       |> String.to_atom()
 
     {:ok, pid} = StreamChannel.start_link({"ce_repro", name, :primary})
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
     %{pid: pid, name: name}
   end
 

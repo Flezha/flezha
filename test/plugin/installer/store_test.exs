@@ -194,7 +194,7 @@ defmodule Flezha.Plugin.Installer.StoreTest do
     try do
       case Process.whereis(mod) do
         nil -> :ok
-        pid -> if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+        pid -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       end
     catch
       :exit, _ -> :ok
@@ -204,7 +204,7 @@ defmodule Flezha.Plugin.Installer.StoreTest do
   defp on_exit_stop(pid) do
     on_exit(fn ->
       try do
-        if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+        FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000)
       catch
         :exit, _ -> :ok
       end

@@ -25,7 +25,7 @@ defmodule FlezhaTest.Operative.OverwatchIoDropTest do
 
     chan = :"ow_drop_chan_#{System.unique_integer([:positive])}"
     {:ok, channel} = StreamChannel.start_link({"ce", chan, :primary})
-    on_exit(fn -> if Process.alive?(channel), do: GenServer.stop(channel) end)
+    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(channel) end)
     assert GenServer.call(chan, :stream_ref_status) == nil
 
     # An empty catalog makes run_io fall through to the message-passthrough

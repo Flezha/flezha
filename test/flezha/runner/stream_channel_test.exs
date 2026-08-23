@@ -12,7 +12,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
 
     on_exit(fn ->
-      if Process.alive?(pid), do: GenServer.stop(pid)
+      FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid)
     end)
 
     %{pid: pid, name: name}
@@ -153,7 +153,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       # Heartbeats only arrive on secondary streams; the check is gated to them.
       sec_name = :"#{name}_secondary"
       {:ok, pid} = StreamChannel.start_link({"ce_test", sec_name, :secondary})
-      on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+      on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
 
       %{pid: pid, name: sec_name}
     end
@@ -198,7 +198,7 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
     test "primary (send-only) stream is never flagged even when bound and silent" do
       name = :"sc_primary_#{System.unique_integer([:positive])}"
       {:ok, pid} = StreamChannel.start_link({"ce_test", name, :primary})
-      on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+      on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid) end)
 
       :ok = GenServer.call(pid, {:operative_pid_update, "operative_a", [self()]})
       :ok = GenServer.call(pid, {:bind, :ref_x})

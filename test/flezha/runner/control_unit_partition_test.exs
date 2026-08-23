@@ -31,7 +31,7 @@ defmodule FlezhaTest.Runner.ControlUnitPartitionTest do
     end)
 
     {:ok, pid} = ControlUnit.start_link({@namespace, runner_id})
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000) end)
+    on_exit(fn -> FlezhaTest.Helper.NodeTestHelper.ensure_stopped(pid, :normal, 1_000) end)
 
     %{runner_id: runner_id}
   end
