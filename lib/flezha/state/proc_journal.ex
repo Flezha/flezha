@@ -9,12 +9,17 @@ defmodule Flezha.State.ProcJournal do
   existing `WalWriter` framing + `FsyncBatcher` path under the reserved
   identity `Registry.journal_id/1` — no parallel persistence machinery. Each
   WAL record's change-bytes carry one typed journal entry, and its 16-byte
-  record header carries the instance epoch:
+  record header carries the instance epoch and the entry's identity:
 
   ```
-  header: [epoch: u32 BE][0: 96 bits]
+  header: [epoch: u32 BE][type: u8][proc_idx: u16 BE][iter: u32 BE][0: 40 bits]
   body:   [type: u8][proc_idx: u16 BE][iter: u32 BE][payload]
   ```
+
+  The header is what the writer dedups a commit barrier on: a re-sent
+  `proc_committed` / `iter_committed` / `compensated` for an identity the
+  journal already holds is answered from the existing entry, never appended
+  twice.
 
   Entry types: `1 = proc_committed` (the entities that ran, the serialized
   inter-proc handoff, and the procedure's staged outbox — ONE durable write),
@@ -59,12 +64,32 @@ defmodule Flezha.State.ProcJournal do
   iteration is journaled before it and its re-run after it.
 
   So a rewound iteration is not merely skipped on resume: its unflushed outbox
-  ceases to be owed (`pending_entries/1` folds the same way) and the inbox items
-  it consumed become undelivered again (`consumed_offset/1` folds the same way,
-  and `ProcInbox.undelivered/1` is a pure function of it). The marker carries
-  `current_epoch + 1`, and since `current_epoch/1` reads the last record's
-  header, every post-rewind append inherits the bumped epoch — which is what
-  makes a re-run's output supersede the unwound run's at a guarded sink.
+  ceases to be owed (`pending_entries/1` folds the same way) and
+  `consumed_offset/1` moves back with the resume point. The inbox items it
+  consumed are NOT re-delivered: the inbox released them when they committed
+  (`released_offset/1`, which no rewind lowers, is `ProcInbox.undelivered/1`'s
+  floor), so a rewind is undo-and-continue — the next input is the first turn
+  after the rewound-to iteration. The marker carries `current_epoch + 1`, and
+  since `current_epoch/1` reads the last record's header, every post-rewind
+  append inherits the bumped epoch — which is what makes a re-run's output
+  supersede the unwound run's at a guarded sink.
+
+  ## Durability
+
+  A barrier is written through the writer and made durable by the
+  `FsyncBatcher` tick like an Entity change, and its answer follows the sync:
+  every barrier that lands in one tick shares one fsync. The control channel's
+  commit worker issues them without waiting (`append_async/4`) and acks each
+  as its answer arrives. Only a rewind syncs inline — it is rare, and it must be
+  durable before the eviction that follows it.
+
+  ## Cut
+
+  A loop's journal is cut at every iteration commit (`cut/1`): once
+  `iter_committed(N)` is durable, everything below the oldest entry the fold
+  still needs is dropped, so the journal a loop keeps is bounded by one
+  iteration. A class with compensable procedures keeps its history — the saga
+  and a rewind replan from it.
 
   ## Flush
 
@@ -145,11 +170,21 @@ defmodule Flezha.State.ProcJournal do
           entities_ran: [binary()]
         }
 
+  @typedoc """
+  A commit barrier as the control channel receives it — what `append_async/4`
+  journals and what the synchronous `append_*` forms wrap.
+  """
+  @type barrier ::
+          {:proc_committed, non_neg_integer(), non_neg_integer(), [binary()], [handoff_item()],
+           [outbox_entry()]}
+          | {:compensated, non_neg_integer(), non_neg_integer(), [outbox_entry()]}
+          | {:iter_committed, non_neg_integer(), non_neg_integer(), [handoff_item()]}
+
   @doc """
   Append one `proc_committed` entry — entities ran, inter-proc handoff, and the
-  procedure's staged outbox in ONE record — and make it durable (fsync) before
-  returning; the caller replies `ProcCommitResponse` only on `:ok`. An entry whose
-  encoded body exceeds `max_entry_bytes/0` is refused with
+  procedure's staged outbox in ONE record — durable before returning; the caller
+  replies `ProcCommitResponse` only on `:ok`. An entry whose encoded body
+  exceeds `max_entry_bytes/0` is refused with
   `{:error, {:oversized_handoff, size, max}}` (keep bulk data in Entity state,
   which is already WAL-durable, and hand off references).
   """
@@ -163,13 +198,7 @@ defmodule Flezha.State.ProcJournal do
         ) :: :ok | {:error, term()}
   def append_proc_committed(instance_id, proc_idx, iter, entities_ran, handoff, outbox \\ [])
       when is_binary(instance_id) and is_integer(proc_idx) and proc_idx >= 0 do
-    append(
-      instance_id,
-      @type_proc_committed,
-      proc_idx,
-      iter,
-      [encode_committed_payload(entities_ran, handoff), encode_outbox(outbox)]
-    )
+    append_barrier(instance_id, {:proc_committed, proc_idx, iter, entities_ran, handoff, outbox})
   end
 
   @doc """
@@ -182,10 +211,7 @@ defmodule Flezha.State.ProcJournal do
           :ok | {:error, term()}
   def append_iter_committed(instance_id, iter, consumed_offset, handoff)
       when is_binary(instance_id) and is_integer(iter) and iter >= 0 do
-    append(instance_id, @type_iter_committed, 0, iter, [
-      <<consumed_offset::64-big>>,
-      encode_handoff(handoff)
-    ])
+    append_barrier(instance_id, {:iter_committed, iter, consumed_offset, handoff})
   end
 
   @doc """
@@ -209,7 +235,56 @@ defmodule Flezha.State.ProcJournal do
   @spec append_compensated(binary(), non_neg_integer(), non_neg_integer(), [outbox_entry()]) ::
           :ok | {:error, term()}
   def append_compensated(instance_id, proc_idx, iter, outbox) when is_binary(instance_id) do
-    append(instance_id, @type_compensated, proc_idx, iter, encode_outbox(outbox))
+    append_barrier(instance_id, {:compensated, proc_idx, iter, outbox})
+  end
+
+  @doc """
+  Journal one commit barrier without waiting: the append is issued with
+  `:gen_server.send_request/4` under `label` into `reqids`, and its answer —
+  `{:ok, seq}` or `{:duplicate, seq}` once the batch holding the record has
+  synced, or the writer's exit — comes back as a message for
+  `:gen_server.check_response/3`. A barrier the journal already holds under the
+  same identity is answered from the existing entry, never appended twice. An
+  entry over `max_entry_bytes/0` is refused here, before anything is issued.
+  """
+  @spec append_async(binary(), barrier(), :gen_server.request_id_collection(), term()) ::
+          {:ok, :gen_server.request_id_collection()} | {:error, term()}
+  def append_async(instance_id, barrier, reqids, label) when is_binary(instance_id) do
+    {type, proc_idx, iter, payload} = barrier_record(barrier)
+
+    with {:ok, header, body} <- encode(instance_id, type, proc_idx, iter, payload, nil) do
+      log_id = Registry.journal_id(instance_id)
+      {:ok, RecordLog.append_async(log_id, header, body, append_opts(type), reqids, label)}
+    end
+  end
+
+  @doc """
+  Drop the journal's settled prefix: everything below the oldest entry the fold
+  still needs — the latest live `iter_committed` (the resume point, its consumed
+  offset and the epoch), every entry whose outbox is still owed, and the latest
+  `rewound` marker with the unwound commits it still names. Driven once an
+  iteration commit is durable, so a loop's journal is bounded by one iteration
+  plus a settled prefix below `PersistenceResolver.record_log_cut_after_bytes/0`
+  — never by its history; `restore_state/1` folds the cut journal to the state
+  the full one gave. The cut itself is the writer's to run: this answers once
+  it is asked.
+
+  Only a class with no compensable procedure is cut: the saga's all-or-nothing
+  rollback and a rewind both replan from the committed history, which a cut
+  would silently shorten. A class that declared nothing is not known to be safe
+  and keeps its history too.
+  """
+  @spec cut(binary()) :: :ok
+  def cut(instance_id) when is_binary(instance_id) do
+    with [] <- ClassRegistry.compensable_procs(instance_id),
+         {:ok, raw} <- read(instance_id),
+         floor when is_integer(floor) and floor > 0 <- cut_floor(raw),
+         {:ok, writer} <- Supervisor.find_or_start(Registry.journal_id(instance_id)) do
+      min_bytes = PersistenceResolver.record_log_cut_after_bytes()
+      WalWriter.truncate_up_to_async(writer, floor - 1, min_bytes: min_bytes)
+    end
+
+    :ok
   end
 
   @doc """
@@ -267,9 +342,10 @@ defmodule Flezha.State.ProcJournal do
   pending, and a rewound entry's outbox is no longer owed at all.
   """
   @spec pending_entries(binary()) :: [entry()]
-  def pending_entries(instance_id) when is_binary(instance_id) do
-    entries = live(instance_id)
+  def pending_entries(instance_id) when is_binary(instance_id),
+    do: instance_id |> live() |> pending_of()
 
+  defp pending_of(entries) do
     flushed =
       for %{type: :outbox_flushed, proc_idx: proc_idx, iter: iter, payload: %{for_type: for_type}} <-
             entries,
@@ -381,6 +457,24 @@ defmodule Flezha.State.ProcJournal do
   end
 
   @doc """
+  The highest inbox offset any iteration ever consumed — what the inbox has
+  released, whether or not its file has been rewritten yet. Unlike
+  `consumed_offset/1` a rewind does not move it back: the rewound iterations'
+  inputs were released when they committed, and a rewind is undo-and-continue,
+  never a replay. The delivery set (`ProcInbox.undelivered/1`) is everything
+  above it.
+  """
+  @spec released_offset(binary()) :: non_neg_integer()
+  def released_offset(instance_id) when is_binary(instance_id) do
+    {:ok, raw} = read(instance_id)
+
+    raw
+    |> Enum.filter(&(&1.type == :iter_committed))
+    |> Enum.map(&consumed_offset_of/1)
+    |> Enum.max(fn -> 0 end)
+  end
+
+  @doc """
   Whether the instance's in-flight iteration has committed every **leaf**
   procedure of its tree — the completion rule of a branching workflow operative
   (`workflow-branching`), derived from the journal alone.
@@ -461,8 +555,10 @@ defmodule Flezha.State.ProcJournal do
   # (proc_idx, iter) appended after this commit" — which stays right across a
   # re-run (the re-run's commit is newer than the old undo) and across a second
   # rewind (the first rewind's undo records are not re-planned).
-  defp rewind_undo(raw) do
-    case raw |> Enum.filter(&(&1.type == :rewound)) |> List.last() do
+  defp rewind_undo(raw), do: Enum.map(rewind_undo_entries(raw), &committed_proc/1)
+
+  defp rewind_undo_entries(raw) do
+    case latest_rewound(raw) do
       nil ->
         []
 
@@ -474,7 +570,29 @@ defmodule Flezha.State.ProcJournal do
             not Enum.any?(undone, fn {proc, iter, seq} ->
               proc == e.proc_idx and iter == e.iter and seq > e.seq
             end),
-            do: committed_proc(e)
+            do: e
+    end
+  end
+
+  defp latest_rewound(raw), do: raw |> Enum.filter(&(&1.type == :rewound)) |> List.last()
+
+  # The seq below which nothing is live, or `nil` before the first iteration
+  # commit. The head and the owed entries come from the fold's view; the rewind
+  # marker — needed only while a commit it unwound is still uncompensated — and
+  # those commits from the raw one.
+  defp cut_floor(raw) do
+    entries = live_entries(raw)
+
+    with %{seq: head} <- latest_iter_committed(entries) do
+      owed = for %{seq: seq} <- pending_of(entries), do: seq
+
+      unwound =
+        case rewind_undo_entries(raw) do
+          [] -> []
+          undo -> [latest_rewound(raw).seq | Enum.map(undo, & &1.seq)]
+        end
+
+      Enum.min([head | owed ++ unwound])
     end
   end
 
@@ -538,85 +656,109 @@ defmodule Flezha.State.ProcJournal do
 
   # ---------- Append ----------
 
+  @barrier_types [@type_proc_committed, @type_iter_committed, @type_compensated]
+
+  defp append_barrier(instance_id, barrier) do
+    {type, proc_idx, iter, payload} = barrier_record(barrier)
+    append(instance_id, type, proc_idx, iter, payload)
+  end
+
+  defp barrier_record({:proc_committed, proc_idx, iter, entities_ran, handoff, outbox}),
+    do:
+      {@type_proc_committed, proc_idx, iter,
+       [encode_committed_payload(entities_ran, handoff), encode_outbox(outbox)]}
+
+  defp barrier_record({:compensated, proc_idx, iter, outbox}),
+    do: {@type_compensated, proc_idx, iter, encode_outbox(outbox)}
+
+  defp barrier_record({:iter_committed, iter, consumed_offset, handoff}),
+    do: {@type_iter_committed, 0, iter, [<<consumed_offset::64-big>>, encode_handoff(handoff)]}
+
   # `epoch` defaults to the instance's current one (a journal read); a caller
   # already holding the entry it is marking passes that entry's epoch instead,
-  # which both saves the read and pins the marker to the epoch it flushed.
+  # which both saves the read and pins the marker to the epoch it flushed. An
+  # entry the journal already holds (a re-sent barrier) is `:ok` — it is durable.
   defp append(instance_id, type, proc_idx, iter, payload, epoch \\ nil) do
+    with {:ok, header, body} <- encode(instance_id, type, proc_idx, iter, payload, epoch),
+         {:ok, _seq} <-
+           RecordLog.append(Registry.journal_id(instance_id), header, body, append_opts(type)) do
+      :ok
+    else
+      {:duplicate, _seq} -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  defp encode(instance_id, type, proc_idx, iter, payload, epoch) do
     body = encode_entry(type, proc_idx, iter, payload)
     max = max_entry_bytes()
 
     if byte_size(body) > max do
       {:error, {:oversized_handoff, byte_size(body), max}}
     else
-      # The epoch rides every record's header, so it survives compaction of any
-      # single entry and is readable without interpreting a payload.
-      header = <<epoch || current_epoch(instance_id)::32-big, 0::96>>
-
-      case RecordLog.append(Registry.journal_id(instance_id), header, body) do
-        {:ok, _seq} -> :ok
-        {:error, _} = err -> err
-      end
+      {:ok, encode_header(epoch || current_epoch(instance_id), type, proc_idx, iter), body}
     end
   end
+
+  # The epoch rides every record's header, so it survives compaction of any
+  # single entry and is readable without interpreting a payload; the entry's
+  # identity rides beside it, which is what lets the writer refuse a re-send.
+  defp encode_header(epoch, type, proc_idx, iter),
+    do: <<epoch::32-big, type::8, proc_idx::16-big, iter::32-big, 0::40>>
+
+  # A barrier is batched and idempotent by identity; a marker and the park are
+  # batched; a rewind syncs inline — rare, and durable before the eviction.
+  defp append_opts(@type_rewound), do: [sync: :sync]
+  defp append_opts(type) when type in @barrier_types, do: [sync: :batched, dedup: true]
+  defp append_opts(_type), do: [sync: :batched]
 
   # ---------- Flush ----------
 
   # Deliver one journaled entry's outbox through the operative's `:on_output`
   # chain — the same fan-out `StreamChannel` uses for live workflow output and
-  # `WalWriter` uses for the stream effectively-once outbox. Delivery is owed
-  # to the instance's journal writer first: it appends the `outbox_flushed`
-  # marker once the sinks confirm, and it is what tells a re-entered flush that
-  # this entry is already with the chain.
+  # `WalWriter` uses for the stream effectively-once outbox. The instance's
+  # journal writer delivers: it owns the entry until the sinks confirm (then
+  # appends the `outbox_flushed` marker), and it is what keeps a re-entered
+  # flush from handing the chain an entry it already has. A writer that cannot
+  # start delivers nothing; the journal still owes the entry to the next flush.
   defp flush_entry(instance_id, pid, entry) do
     comp? = entry.type == :compensated
     for_type = entry_type_code(entry.type)
     key = {:marker, for_type, entry.proc_idx, entry.iter, entry.epoch}
+    owner = Registry.journal_id(instance_id)
 
-    case await_outbox(instance_id, key, length(entry.payload.outbox)) do
-      :already_awaiting ->
-        :ok
+    outputs =
+      Enum.map(entry.payload.outbox, fn item ->
+        # An undo output's seq carries a trailing `.1` — the compensation
+        # marker — so it can never collide with the forward output it
+        # reverses while staying a numeric dotted sequence a keyed sink can
+        # order.
+        seq = "#{entry.proc_idx}.#{item.seq_in_proc}"
 
-      :ok ->
-        owner = Registry.journal_id(instance_id)
+        Outbox.stamp(item.payload, %{
+          owner: owner,
+          entry: key,
+          entity: item.entity_id,
+          seq: if(comp?, do: seq <> ".1", else: seq),
+          epoch: entry.epoch,
+          channel: item.channel
+        })
+      end)
 
-        outputs =
-          Enum.map(entry.payload.outbox, fn item ->
-            # An undo output's seq carries a trailing `.1` — the compensation
-            # marker — so it can never collide with the forward output it
-            # reverses while staying a numeric dotted sequence a keyed sink can
-            # order.
-            seq = "#{entry.proc_idx}.#{item.seq_in_proc}"
+    telemetry =
+      {[:flezha, :state, :proc_outbox_flush], %{count: 1, entries: length(outputs)},
+       %{
+         operative_id: instance_id,
+         proc_idx: entry.proc_idx,
+         epoch: entry.epoch,
+         compensating: comp?
+       }}
 
-            Outbox.stamp(item.payload, %{
-              owner: owner,
-              entry: key,
-              entity: item.entity_id,
-              seq: if(comp?, do: seq <> ".1", else: seq),
-              epoch: entry.epoch,
-              channel: item.channel
-            })
-          end)
-
-        Outbox.dispatch(pid, outputs)
-
-        :telemetry.execute(
-          [:flezha, :state, :proc_outbox_flush],
-          %{count: 1, entries: length(entry.payload.outbox)},
-          %{
-            operative_id: instance_id,
-            proc_idx: entry.proc_idx,
-            epoch: entry.epoch,
-            compensating: comp?
-          }
-        )
+    with {:ok, writer} <- Supervisor.find_or_start(owner) do
+      WalWriter.flush_outbox(writer, key, outputs, pid, telemetry)
     end
-  end
 
-  defp await_outbox(instance_id, key, outputs) do
-    case Supervisor.find_or_start(Registry.journal_id(instance_id)) do
-      {:ok, writer} -> WalWriter.await_outbox(writer, key, outputs)
-      {:error, _} -> :already_awaiting
-    end
+    :ok
   end
 
   @doc """

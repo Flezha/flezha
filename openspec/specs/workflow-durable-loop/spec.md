@@ -14,19 +14,50 @@ runs the chain under the existing per-proc commit gating, and ends with an
 iteration commit — the controller SHALL append `iter_committed(N,
 consumed_inbox_offset)` to the proc-journal, trigger boundary snapshot compaction
 for the instance's entities (existing CompactEntity machinery), and flush the
-iteration's staged outbox. Per-proc journal entries within iteration N SHALL
-carry `iter = N`. Loop termination semantics (terminal predicate, cancellation,
-`complete`) SHALL be preserved from the existing loop contract.
+iteration's staged outbox. The `iter_committed` append SHALL be made durable
+by the `FsyncBatcher` tick like a proc commit, and its ack SHALL follow the
+sync. Once `iter_committed(N)` is durable the controller SHALL cut the
+proc-journal below the oldest entry its fold still needs — the pending outbox
+entries, the latest `rewound` marker with the commits it has yet to undo, and
+the latest `iter_committed` that carries the resume point and the epoch — so
+the journal a loop keeps is bounded by one iteration plus a settled prefix
+below the cut threshold (64 KiB by default), never by its history. The cut
+SHALL be the journal writer's own work, off the process that acks, and a
+class whose procedures declare compensation SHALL keep its history (the saga
+and a rewind replan from it). The durable inbox append that precedes a turn
+SHALL NOT re-read the inbox file or fold the journal: the inbox writer SHALL
+keep the dedup window in memory — the entries still in the file, rebuilt from
+the file when the writer opens and released at every truncate — and the
+inbox release at an iteration commit SHALL rewrite the file only once the
+released prefix exceeds the cut threshold. Per-proc journal entries within
+iteration N SHALL carry `iter = N`. Loop termination semantics (terminal
+predicate, cancellation, `complete`) SHALL be preserved from the existing
+loop contract.
 
 #### Scenario: Turn ends with journal + snapshot + flush
 
 - **WHEN** a looping workflow operative finishes iteration N
 - **THEN** the journal SHALL hold `iter_committed(N)` with the consumed inbox offset, the entities SHALL have a boundary snapshot requested, and iteration N's outbox SHALL be flushed
 
-#### Scenario: The boundary snapshot lands for a workflow Entity
+#### Scenario: The journal does not grow with the turns
 
-- **WHEN** two iterations have committed for a looping instance whose procedure holds Entity state
-- **THEN** a snapshot file SHALL exist for that Entity and the WAL SHALL hold only the records above it
+- **WHEN** a looping workflow operative with no compensable procedure has committed 1 000 iterations whose outboxes were all flushed
+- **THEN** its proc-journal SHALL hold the entries of the current iteration plus at most the cut threshold of settled prefix, and a rehydrate SHALL restore from them the resume point, consumed offset, handoff and epoch a full history would have given
+
+#### Scenario: A class with compensable procedures keeps its history
+
+- **WHEN** a looping workflow operative whose procedures declare `compensate` commits an iteration
+- **THEN** its proc-journal SHALL NOT be cut, so an all-or-nothing rollback and a rewind still replan from every committed iteration
+
+#### Scenario: The inbox append costs the same at turn 1 and turn 10 000
+
+- **WHEN** a turn is ingested for a loop that has consumed 10 000 turns
+- **THEN** the append SHALL consult the writer's dedup window and SHALL NOT read the inbox file or fold the journal, and the ingest SHALL be answered only once the append's batch has synced
+
+#### Scenario: A re-sent message is absorbed across a writer restart
+
+- **WHEN** the inbox writer is reopened and a message already in the undelivered window is sent again
+- **THEN** the append SHALL answer the existing entry's offset from the window rebuilt off the file, and the operative SHALL receive the message once
 
 #### Scenario: Snapshot failure does not lose the commit
 

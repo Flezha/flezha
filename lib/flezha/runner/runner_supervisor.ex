@@ -21,6 +21,10 @@ defmodule Flezha.Runner.RunnerSupervisor do
         start: {ControlUnit, :start_link, [{namespace, runner_id}]}
       },
       %{
+        id: ControlChannel.Commits,
+        start: {ControlChannel.Commits, :start_link, [{namespace, runner_id}]}
+      },
+      %{
         id: ControlChannel,
         start: {ControlChannel, :start_link, [{namespace, runner_id, stream_ref}]}
       },

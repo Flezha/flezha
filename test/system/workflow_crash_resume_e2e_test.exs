@@ -681,13 +681,12 @@ defmodule FlezhaTest.System.WorkflowCrashResumeE2ETest do
       assert journal =~ "proc_committed proc_idx=0 iter=3"
 
       # Every turn is consumed now, so the inbox has released all of them: the
-      # journal keeps the offsets, the inbox keeps no payloads.
+      # journal keeps the offsets, the inbox delivers none. The file itself is
+      # rewritten once the released prefix is worth its fsync (the cut
+      # threshold); a few tiny turns stay on disk, never re-delivered.
       assert ProcJournal.consumed_offset(operative_id) == 4
+      assert ProcJournal.released_offset(operative_id) == 4
       assert ProcInbox.undelivered(operative_id) == []
-
-      # The file cut is post-ack cleanup behind the reply the test waited on.
-      assert wait_until(fn -> ProcInbox.read(operative_id) == [] end, 10_000),
-             "the consumed inbox prefix was never released: #{inspect(ProcInbox.read(operative_id))}"
     end
 
     # Suspension is durable STATE, not a live process: a controller-side restart

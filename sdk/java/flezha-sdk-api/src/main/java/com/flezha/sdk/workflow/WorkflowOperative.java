@@ -151,6 +151,19 @@ public interface WorkflowOperative extends Computation {
     }
 
     /**
+     * Sends of one commit barrier ({@code ProcCommit} / {@code IterCommit}, the
+     * first send included) before an ack that never arrives fails the run
+     * (default 3; {@code 0} or {@code 1} is the single wait). A re-send carries
+     * the same reference id and the controller journals a barrier once by its
+     * identity, so a transient control-channel stall delays the chain instead
+     * of ending it. The re-sends wait out {@link #retryBackoff()} between
+     * attempts.
+     */
+    default int barrierRetryAttempts() {
+        return 3;
+    }
+
+    /**
      * Saga rollback scope, applied when the operative terminates abnormally
      * after partial progress. Default {@link RollbackMode#ALL_OR_NOTHING} undoes
      * every completed procedure in reverse, back to the start;

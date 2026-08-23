@@ -7,10 +7,11 @@ defmodule Flezha.State.RecordLog do
   (`Flezha.State.ProcInbox`). Both are WAL-framed record streams written through
   the existing `WalWriter` + `FsyncBatcher` path under a reserved
   `Flezha.State.Registry` identity, and both need exactly two procedures from
-  that substrate: a **durable append** (assign the next seq, write, fsync before
-  the caller proceeds) and a **torn-tail-tolerant read**. Those live here, so
-  neither log owns a copy of the substrate protocol and the next per-instance
-  log gets both for free.
+  that substrate: a **durable append** (assign the next seq, write, answer once
+  the record is synced — by the caller's own fsync or by the batch that holds
+  it) and a **torn-tail-tolerant read**. Those live here, so neither log owns a
+  copy of the substrate protocol and the next per-instance log gets both for
+  free.
 
   A log is not an Entity: its reserved identity carries no effect records and no
   dedup side-file (`WalWriter` skips it), and `Registry.scan_dir/1` never
@@ -26,20 +27,44 @@ defmodule Flezha.State.RecordLog do
   @type decoder :: (non_neg_integer(), binary(), binary() -> {:ok, term()} | {:error, term()})
 
   @doc """
-  Append one record and make it durable (fsync) before returning, answering the
-  seq it was assigned. The seq comes from the log's own tail, so callers never
-  track it.
+  Append one record and answer the seq it was assigned once it is durable. The
+  seq comes from the log's own tail, so callers never track it. `opts` are
+  `WalWriter.append_next/4`'s: `sync: :batched` answers when the batch holding
+  the record has synced, `dedup: true` answers `{:duplicate, seq}` for a record
+  whose header is already in the log.
   """
-  @spec append(Registry.entity_id(), binary(), binary()) ::
-          {:ok, non_neg_integer()} | {:error, term()}
-  def append(log_id, header, body) when is_binary(header) and is_binary(body) do
+  @spec append(Registry.entity_id(), binary(), binary(), keyword()) ::
+          {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
+  def append(log_id, header, body, opts \\ []) when is_binary(header) and is_binary(body) do
     with {:ok, pid} <- Supervisor.find_or_start(log_id),
-         {:ok, seq} <- WalWriter.append_next(pid, header, body) do
+         {:ok, seq} <- WalWriter.append_next(pid, header, body, opts) do
       {:ok, seq}
     else
+      {:duplicate, _seq} = duplicate -> duplicate
       {:error, _} = err -> err
       other -> {:error, {:record_append_failed, other}}
     end
+  end
+
+  @doc """
+  `append/4` without waiting: issued with `:gen_server.send_request/4` under
+  `label` into the caller's request collection, whose answer — the same reply
+  as `append/4`, or the writer's exit — the caller collects with
+  `:gen_server.check_response/3`. With `sync: :batched` the answer arrives when
+  the record's batch has synced, never before.
+  """
+  @spec append_async(
+          Registry.entity_id(),
+          binary(),
+          binary(),
+          keyword(),
+          :gen_server.request_id_collection(),
+          term()
+        ) :: :gen_server.request_id_collection()
+  def append_async(log_id, header, body, opts, reqids, label)
+      when is_binary(header) and is_binary(body) do
+    {:ok, pid} = Supervisor.find_or_start(log_id)
+    WalWriter.append_next_async(pid, header, body, opts, reqids, label)
   end
 
   @doc """

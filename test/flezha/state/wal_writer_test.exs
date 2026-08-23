@@ -1,6 +1,8 @@
 defmodule Flezha.State.WalWriterTest do
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+
   alias Flezha.State.{Metrics, Registry, Supervisor, TestHelpers, WalWriter}
 
   setup do
@@ -342,6 +344,136 @@ defmodule Flezha.State.WalWriterTest do
     end
   end
 
+  describe "batched append" do
+    # The writer marks the application's batcher dirty, so every case freezes it
+    # (`in_one_window`) to hold the records un-synced for as long as it needs.
+    test "appends landing in one window share one fsync and answer only after it",
+         %{entity_id: id} do
+      {:ok, srv} = Supervisor.find_or_start(id)
+      header = TestHelpers.stub_header()
+      before = Metrics.get(Metrics.for_entity(id), :fsync_total)
+
+      reqids =
+        TestHelpers.in_one_window(fn ->
+          reqids =
+            Enum.reduce(0..9, :gen_server.reqids_new(), fn i, reqids ->
+              WalWriter.append_next_async(srv, header, "r#{i}", [sync: :batched], reqids, i)
+            end)
+
+          # Written, and nobody is answered before the sync.
+          assert WalWriter.last_persisted_seq(srv) == 9
+          assert :timeout = :gen_server.wait_response(reqids, 50, true)
+          reqids
+        end)
+
+      assert Enum.sort(collect(reqids)) == for(i <- 0..9, do: {i, {:ok, i}})
+      assert Metrics.get(Metrics.for_entity(id), :fsync_total) == before + 1
+    end
+
+    test "a prefix cut answers the appends it made durable", %{entity_id: id} do
+      {:ok, srv} = Supervisor.find_or_start(id)
+      header = TestHelpers.stub_header()
+
+      TestHelpers.in_one_window(fn ->
+        reqids =
+          WalWriter.append_next_async(
+            srv,
+            header,
+            "a",
+            [sync: :batched],
+            :gen_server.reqids_new(),
+            :a
+          )
+
+        assert :timeout = :gen_server.wait_response(reqids, 20, true)
+        :ok = WalWriter.truncate_up_to(srv, 0)
+        assert {{:reply, {:ok, 0}}, :a, _} = :gen_server.wait_response(reqids, 1_000, true)
+      end)
+    end
+
+    test "a clean close answers the appends it holds", %{entity_id: id} do
+      {:ok, srv} = Supervisor.find_or_start(id)
+      header = TestHelpers.stub_header()
+
+      TestHelpers.in_one_window(fn ->
+        reqids =
+          WalWriter.append_next_async(
+            srv,
+            header,
+            "a",
+            [sync: :batched],
+            :gen_server.reqids_new(),
+            :a
+          )
+
+        assert :timeout = :gen_server.wait_response(reqids, 20, true)
+        :ok = WalWriter.close(srv)
+        assert {{:reply, {:ok, 0}}, :a, _} = :gen_server.wait_response(reqids, 1_000, true)
+      end)
+    end
+
+    # The kill leaves a supervisor crash report; captured, and the transient
+    # restart it announces is awaited so the report lands inside the capture.
+    @tag capture_log: true
+    test "a writer that dies before the sync fails the waiter", %{entity_id: id} do
+      {:ok, srv} = Supervisor.find_or_start(id)
+      header = TestHelpers.stub_header()
+
+      TestHelpers.in_one_window(fn ->
+        reqids =
+          WalWriter.append_next_async(
+            srv,
+            header,
+            "a",
+            [sync: :batched],
+            :gen_server.reqids_new(),
+            :a
+          )
+
+        assert :timeout = :gen_server.wait_response(reqids, 20, true)
+        Process.exit(srv, :kill)
+        assert {{:error, {:killed, ^srv}}, :a, _} = :gen_server.wait_response(reqids, 1_000, true)
+      end)
+
+      assert wait_until(
+               fn -> match?({:ok, pid} when pid != srv, Supervisor.lookup(id)) end,
+               1_000
+             ),
+             "a crashed writer is restarted"
+    end
+
+    defp collect(reqids) do
+      case :gen_server.wait_response(reqids, 2_000, true) do
+        :no_request -> []
+        {{:reply, reply}, label, reqids} -> [{label, reply} | collect(reqids)]
+      end
+    end
+  end
+
+  describe "header dedup" do
+    test "a keyed append refuses a header still in the file, until a cut releases it",
+         %{entity_id: id} do
+      {:ok, srv} = Supervisor.find_or_start(id)
+      h1 = <<1::128>>
+      h2 = <<2::128>>
+
+      assert {:ok, 0} = WalWriter.append_next(srv, h1, "a", dedup: true)
+      assert {:duplicate, 0} = WalWriter.append_next(srv, h1, "a again", dedup: true)
+      assert {:ok, 1} = WalWriter.append_next(srv, h2, "b", dedup: true)
+      assert WalWriter.last_persisted_seq(srv) == 1
+
+      # The index is rebuilt from the file by a reopened writer.
+      TestHelpers.close_and_await(srv, id)
+      {:ok, srv} = Supervisor.find_or_start(id)
+      assert {:duplicate, 1} = WalWriter.append_next(srv, h2, "b again", dedup: true)
+
+      # The file is the window: a cut releases the header.
+      :ok = WalWriter.truncate_up_to(srv, 0)
+      assert {:ok, 2} = WalWriter.append_next(srv, h1, "a anew", dedup: true)
+      assert {:duplicate, 1} = WalWriter.append_next(srv, h2, "b still", dedup: true)
+    end
+  end
+
   defp ok!({:ok, x}), do: {:ok, x}
 
   defp uniq(), do: Integer.to_string(System.unique_integer([:positive]))
@@ -350,7 +482,11 @@ defmodule Flezha.State.WalWriterTest do
     test "stops every live writer of the class and leaves its files", %{entity_id: entity_id} do
       {class, _, _} = entity_id
       {:ok, pid} = Supervisor.find_or_start(entity_id)
-      :ok = WalWriter.append_next(pid, TestHelpers.stub_header(), "one") |> then(fn {:ok, _} -> :ok end)
+
+      :ok =
+        WalWriter.append_next(pid, TestHelpers.stub_header(), "one")
+        |> then(fn {:ok, _} -> :ok end)
+
       assert pid in Supervisor.live_writers(class)
 
       :ok = Supervisor.close_writers(class)

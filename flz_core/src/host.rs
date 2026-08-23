@@ -225,6 +225,9 @@ pub struct HostWorkflowDecl {
     pub retry_attempts: u32,
     #[serde(default = "default_workflow_retry_backoff_ms")]
     pub retry_backoff_ms: u64,
+    /// Sends of one commit barrier before an unacked commit fails the run.
+    #[serde(default = "default_barrier_retry_attempts")]
+    pub barrier_retry_attempts: u32,
     #[serde(default)]
     pub max_duration_ms: Option<u64>,
     /// Durable wake deadline armed when a `per_input` loop parks.
@@ -254,6 +257,9 @@ fn default_workflow_retry_attempts() -> u32 {
 }
 fn default_workflow_retry_backoff_ms() -> u64 {
     500
+}
+fn default_barrier_retry_attempts() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
@@ -378,6 +384,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
                         max_attempts: workflow.retry_attempts,
                         backoff_base_ms: workflow.retry_backoff_ms,
                     },
+                    barrier_retry_attempts: workflow.barrier_retry_attempts,
                     persistence_enabled: decl.persistent,
                     sync_durability: decl.sync_durability,
                     host: true,
@@ -763,6 +770,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
                         max_attempts: workflow.retry_attempts,
                         backoff_base_ms: workflow.retry_backoff_ms,
                     },
+                    barrier_retry_attempts: workflow.barrier_retry_attempts,
                     persistence_enabled: persistent,
                     sync_durability,
                     host: true,

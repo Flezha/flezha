@@ -15,7 +15,8 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
   alias Flezha.Operative.ClassRegistry
-  alias Flezha.Runner.ControlChannel
+  alias Flezha.Runner.{ControlChannel, ControlUnit}
+  alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.State.DurabilityTier.Manifest
   alias Flezha.State.{Outbox, ProcInbox, ProcJournal, Registry, TestHelpers, Wire}
 
@@ -78,6 +79,85 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
 
     assert error =~ "oversized_handoff"
     assert {:ok, []} = ProcJournal.read(inst)
+  end
+
+  test "a re-sent barrier under the same reference_id is acked again from the one entry" do
+    inst = "opc_resend_#{System.unique_integer([:positive])}"
+    {control_channel, stream_ref} = start_control_channel("resend")
+
+    seg = Wire.encode_entity_id(inst, "ProcA", "s0")
+    commit = build_proc_commit_payload(inst, 1, [seg], [{4, "handoff"}], "ref-opc-resend")
+    iter = build_iter_commit_payload(inst, 0, 0, [], "ref-iter-resend")
+
+    # The SDK's wait expired and it re-sent both barriers; the controller had
+    # journaled each the first time.
+    for payload <- [commit, commit, iter, iter] do
+      send(control_channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+    end
+
+    replies =
+      for _ <- 1..4 do
+        assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
+        response = decode_reply(reply)
+
+        case response.command do
+          {:proc_commit_response, %RunnerCommands.ProcCommitResponse{error: error}} ->
+            {response.reference_id, error}
+
+          {:iter_commit_response, %RunnerCommands.IterCommitResponse{error: error}} ->
+            {response.reference_id, error}
+        end
+      end
+
+    assert Enum.sort(replies) ==
+             [
+               {"ref-iter-resend", ""},
+               {"ref-iter-resend", ""},
+               {"ref-opc-resend", ""},
+               {"ref-opc-resend", ""}
+             ]
+
+    assert {:ok, [%{type: :proc_committed, proc_idx: 1}, %{type: :iter_committed, iter: 0}]} =
+             ProcJournal.read(inst)
+  end
+
+  test "a hundred barriers in flight do not delay a ping on the same channel" do
+    %{channel: channel, stream_ref: stream_ref, runner_id: runner_id} = start_runner("storm")
+    {:ok, unit} = ControlUnit.start_link({@namespace, runner_id})
+    on_exit(fn -> stop_quietly(unit) end)
+
+    # With the batcher frozen every barrier below stays in flight, unacked.
+    pong =
+      TestHelpers.in_one_window(fn ->
+        for i <- 1..100 do
+          inst = "storm_#{i}_#{System.unique_integer([:positive])}"
+          payload = build_proc_commit_payload(inst, 0, [], [{1, "h"}], "ref-storm-#{i}")
+          send(channel, {:flz_data, :stream_id, "control_command", payload, %{}})
+        end
+
+        ping = Task.async(fn -> ControlUnit.ping_runner(runner_id, timeout_ms: 2_000) end)
+        answer_ping(channel, stream_ref)
+        Task.await(ping, 3_000)
+      end)
+
+    assert pong == {:ok, :pong}
+
+    # The hundred acks follow the sync.
+    for _ <- 1..100 do
+      assert_receive {:test_writer_called, ^stream_ref, reply}, 2_000
+      assert {:proc_commit_response, %{error: ""}} = decode_reply(reply).command
+    end
+  end
+
+  # Stand in for the SDK: answer the one ping the channel wrote.
+  defp answer_ping(channel, stream_ref) do
+    assert_receive {:test_writer_called, ^stream_ref, frame}, 1_000
+    %{reference_id: ref, command: {:ping, %RunnerCommands.Ping{}}} = decode_reply(frame)
+
+    {:ok, iodata, _} =
+      Protox.encode(%RunnerCommands.CommandResponse{reference_id: ref, status: "success"})
+
+    send(channel, {:flz_data, :stream_id, "control_command", IO.iodata_to_binary(iodata), %{}})
   end
 
   # The marker is appended by the instance's journal writer once the delivery is
@@ -271,6 +351,7 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   end
 
   test "IterCommit journals the boundary, acks, then releases the consumed inbox" do
+    on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
     inst = "iter_inst_#{System.unique_integer([:positive])}"
     {control_channel, stream_ref} = start_control_channel("iter")
     ClassRegistry.put_overwatch(inst, self())
@@ -296,10 +377,8 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
     assert entry.payload.handoff == [{4, "carry"}]
     assert ProcJournal.consumed_offset(inst) == 1
 
-    # Post-ack cleanup runs on the ControlChannel, so a sync call means it landed.
-    _ = :sys.get_state(control_channel)
-
-    assert Enum.map(ProcInbox.read(inst), & &1.offset) == [2],
+    # Post-ack cleanup runs on the commit worker after the ack.
+    assert wait_until(fn -> Enum.map(ProcInbox.read(inst), & &1.offset) == [2] end, 2_000),
            "the consumed turn is released; the undelivered one is kept"
 
     assert Enum.map(ProcInbox.undelivered(inst), & &1.message) == ["turn-2"]
@@ -358,6 +437,12 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
   end
 
   defp start_control_channel(suffix) do
+    %{channel: channel, stream_ref: stream_ref} = start_runner(suffix)
+    {channel, stream_ref}
+  end
+
+  # The channel and its commit worker, as the runner supervisor pairs them.
+  defp start_runner(suffix) do
     stream_ref = make_ref()
     runner_id = "#{@namespace}_#{suffix}_#{System.unique_integer([:positive])}"
     test_pid = self()
@@ -367,20 +452,23 @@ defmodule FlezhaTest.Runner.ControlChannelProcCommitTest do
       :ok
     end
 
+    {:ok, worker} = Commits.start_link({@namespace, runner_id})
     {:ok, pid} = ControlChannel.start_link({@namespace, runner_id, stream_ref, write_fun})
 
     on_exit(fn ->
-      # The channel is linked to the (now exiting) test process, so it may
-      # already be on its way down — stopping it is best-effort cleanup, not an
-      # assertion.
-      try do
-        if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
-      catch
-        :exit, _ -> :ok
-      end
+      stop_quietly(pid)
+      stop_quietly(worker)
     end)
 
-    {pid, stream_ref}
+    %{channel: pid, stream_ref: stream_ref, runner_id: runner_id}
+  end
+
+  # Linked to the (now exiting) test process, so it may already be on its way
+  # down — stopping it is best-effort cleanup, not an assertion.
+  defp stop_quietly(pid) do
+    if Process.alive?(pid), do: GenServer.stop(pid, :normal, 1_000)
+  catch
+    :exit, _ -> :ok
   end
 
   defp build_proc_commit_payload(

@@ -10,11 +10,13 @@ defmodule Flezha.Operative.Ingest do
   what makes the append-before-forward contract hold and what lets the
   correction transaction assume no input can be journaled while it runs.
 
-  Under the effectively-once tier the durable append is asynchronous: the
-  payload is handed to the input log, the entry point's reply stays owed, and
-  the log's answer (`journal_reply/2`) forwards the input and settles the reply.
-  So a zero-credit park lands on the source's call — the Overwatch keeps
-  running the output chains whose confirmations mint the credit.
+  A durable append — the effectively-once input log, the durable workflow's
+  inbox — is asynchronous: the payload is handed to the log, the entry point's
+  reply stays owed, and the log's answer (`journal_reply/2`), which arrives
+  once the record is synced, forwards the input and settles the reply. So a
+  zero-credit park lands on the source's call — the Overwatch keeps running the
+  output chains whose confirmations mint the credit — and the batch sync every
+  record waits on is never waited on here.
 
   Runs in the `Flezha.Operative.Overwatch` process. The only state it moves is
   the in-flight request collection and the suspension a delivery wakes, which
@@ -74,10 +76,14 @@ defmodule Flezha.Operative.Ingest do
   @spec confirming_ingest(Overwatch.t(), binary(), map(), reply_to()) ::
           {term() | :pending, Overwatch.t()}
   # Suspended: the forward is deferred to the rehydrating bind, which delivers
-  # the whole undelivered inbox tail.
+  # the whole undelivered inbox tail; the journal's answer reports the
+  # suspension and wakes the instance (`settle/3`). An input a plugin filtered
+  # journals nothing, and is answered — and wakes — at once.
   def confirming_ingest(%Overwatch{suspended: true} = state, message, metadata, reply_to) do
-    {_payload, state} = ingest(state, message, metadata, :cast)
-    {told(reply_to, {:ok, :suspended}), Lifecycle.rehydrate(state)}
+    case ingest(state, message, metadata, reply_to) do
+      {:pending, state} -> {:pending, state}
+      {_filtered, state} -> {told(reply_to, {:ok, :suspended}), Lifecycle.rehydrate(state)}
+    end
   end
 
   def confirming_ingest(%Overwatch{} = state, message, metadata, reply_to) do
@@ -99,9 +105,9 @@ defmodule Flezha.Operative.Ingest do
   @spec journal_reply(Overwatch.t(), term()) :: {:ok, Overwatch.t()} | :ignore
   def journal_reply(%Overwatch{} = state, msg) do
     case :gen_server.check_response(msg, state.journal_reqids, true) do
-      {{:reply, {:ok, offset}}, {reply_to, {message, metadata}, _retries}, reqids} ->
-        payload = {message, Map.put(metadata, "flz.offset", Integer.to_string(offset))}
-        {:ok, settle(%{state | journal_reqids: reqids}, reply_to, payload)}
+      {{:reply, reply}, {reply_to, payload, _retries}, reqids} ->
+        state = %{state | journal_reqids: reqids}
+        {:ok, settle(state, reply_to, journaled(state, payload, reply))}
 
       # The log went away under the append. Re-issue once — a restarting log's
       # registry entry can briefly name the dead pid — then refuse, so the
@@ -118,11 +124,11 @@ defmodule Flezha.Operative.Ingest do
   end
 
   # Durable ingest point — the one place an inbound payload is made durable
-  # BEFORE it is forwarded, for both durability tiers:
+  # BEFORE it is forwarded, for both durability tiers, asynchronously:
   #
   #   * effectively-once (`durable-input-log`): appended to the operative's
-  #     input log, asynchronously; the answer stamps `flz.offset`, which the
-  #     SDK threads into the effect record;
+  #     input log; the answer stamps `flz.offset`, which the SDK threads into
+  #     the effect record;
   #   * durable workflow (`workflow-durable-suspension`): appended to the
   #     instance's `inbox.wal` and stamped `flz.inbox_offset`, which the SDK
   #     threads into the iteration commit as the consumed offset. A duplicate
@@ -134,63 +140,80 @@ defmodule Flezha.Operative.Ingest do
   # Every other operative passes through untouched (cost-free default).
   defp journal_input(state, nil, _reply_to), do: {nil, state}
 
-  defp journal_input(%Overwatch{effectively_once: true} = state, payload, reply_to),
-    do: {:pending, append_async(state, payload, reply_to, 1)}
-
-  defp journal_input(%Overwatch{durable_workflow: true} = state, {message, metadata}, _reply_to)
-       when is_binary(message) do
-    case ProcInbox.append(state.id, message, metadata) do
-      {:ok, offset} ->
-        {{message, Map.put(metadata, "flz.inbox_offset", Integer.to_string(offset))}, state}
-
-      {:duplicate, offset} ->
-        :telemetry.execute(
-          [:flezha, :state, :inbox_duplicate],
-          %{count: 1},
-          %{operative_id: state.id, offset: offset}
-        )
-
-        {nil, state}
-
-      {:error, reason} ->
-        Logger.error(
-          "[Overwatch] durable-inbox append failed for #{state.id}: #{inspect(reason)} — " <>
-            "input NOT forwarded (append-before-forward)"
-        )
-
-        {:refused, state}
-    end
+  defp journal_input(%Overwatch{} = state, payload, reply_to) do
+    if durable_input?(state),
+      do: {:pending, append_async(state, payload, reply_to, 1)},
+      else: {payload, state}
   end
-
-  defp journal_input(state, payload, _reply_to), do: {payload, state}
 
   # Hand the payload to the log without waiting. The request's label carries
   # everything its answer needs — who is owed, what to forward, how many
   # re-issues remain — so the in-flight collection IS the owed set.
   defp append_async(%Overwatch{} = state, {message, metadata} = payload, reply_to, retries) do
+    label = {reply_to, payload, retries}
+    reqids = state.journal_reqids
+
     reqids =
-      InputLog.append_async(
-        Overwatch.operative_class(state),
-        message,
-        metadata,
-        state.journal_reqids,
-        {reply_to, payload, retries}
-      )
+      if state.effectively_once,
+        do:
+          InputLog.append_async(
+            Overwatch.operative_class(state),
+            message,
+            metadata,
+            reqids,
+            label
+          ),
+        else: ProcInbox.append_async(state.id, message, metadata, reqids, label)
 
     %{state | journal_reqids: reqids}
   end
 
+  # What the log's answer makes of the payload: forwardable and stamped with
+  # its durable offset, `nil` for a duplicate the inbox absorbed, `:refused`
+  # for an append the log rejected.
+  defp journaled(%Overwatch{effectively_once: true}, {message, metadata}, {:ok, offset}),
+    do: {message, stamp(metadata, "flz.offset", offset)}
+
+  defp journaled(%Overwatch{}, {message, metadata}, {:ok, seq}),
+    do: {message, stamp(metadata, "flz.inbox_offset", ProcInbox.offset(seq))}
+
+  defp journaled(%Overwatch{} = state, _payload, {:duplicate, seq}) do
+    :telemetry.execute(
+      [:flezha, :state, :inbox_duplicate],
+      %{count: 1},
+      %{operative_id: state.id, offset: ProcInbox.offset(seq)}
+    )
+
+    nil
+  end
+
+  defp journaled(%Overwatch{} = state, _payload, {:error, reason}) do
+    Logger.error(
+      "[Overwatch] durable-inbox append failed for #{state.id}: #{inspect(reason)} — " <>
+        "input NOT forwarded (append-before-forward)"
+    )
+
+    :refused
+  end
+
+  defp stamp(metadata, key, offset), do: Map.put(metadata, key, Integer.to_string(offset))
+
   # A journaled payload's forward and the reply it owed, once the log answered.
+  # A suspended instance forwards nothing: the payload waits in the inbox for the
+  # rehydrating bind, which is what the reply reports and what the append wakes.
+  defp settle(%Overwatch{suspended: true} = state, reply_to, payload)
+       when payload != :refused do
+    reply(reply_to, told(reply_to, {:ok, :suspended}))
+    Lifecycle.rehydrate(state)
+  end
+
   defp settle(%Overwatch{} = state, reply_to, payload) do
-    reply = told(reply_to, verdict(state, payload))
-
-    case reply_to do
-      :cast -> :ok
-      {_entry_point, from} -> GenServer.reply(from, reply)
-    end
-
+    reply(reply_to, told(reply_to, verdict(state, payload)))
     state
   end
+
+  defp reply(:cast, _reply), do: :ok
+  defp reply({_entry_point, from}, reply), do: GenServer.reply(from, reply)
 
   defp told({:io_in, _from}, _verdict), do: :ok
   defp told(_reply_to, verdict), do: verdict

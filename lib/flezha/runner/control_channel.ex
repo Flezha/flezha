@@ -1,8 +1,8 @@
 defmodule Flezha.Runner.ControlChannel do
   alias Flezha.Service.HubManager
   alias Flezha.Service.OperativeManager
-  alias Flezha.State.DurabilityTier
   alias Flezha.Service.Identificator
+  alias Flezha.Runner.ControlChannel.Commits
   alias Flezha.Runner.FleetManager
   alias Flezha.Transport.Stream, as: TStream
 
@@ -18,10 +18,6 @@ defmodule Flezha.Runner.ControlChannel do
   # last_seen/threshold watchdog.
   @control_liveness_window_ms 45_000
   @control_liveness_interval_ms 15_000
-
-  # Re-attempt cadence for a journaled outbox whose operative is not bound yet
-  # (mirrors the stream outbox's `:outbox_retry` in `Flezha.State.WalWriter`).
-  @proc_outbox_retry_ms 1_000
 
   def start_link({namespace, runner_id, stream_ref}) do
     GenServer.start_link(__MODULE__, {namespace, runner_id, stream_ref, nil},
@@ -53,28 +49,23 @@ defmodule Flezha.Runner.ControlChannel do
       _ ->
         ref = gen_ref()
 
-        req =
-          struct(
-            RunnerCommands.CommandRequest,
-            reference_id: ref,
-            command: command
-          )
-
-        {:ok, iodata, _size} = Protox.encode(req)
-        bin = IO.iodata_to_binary(iodata)
-
         # Propagate the transport result instead of always returning {:ok, ref}.
         # A reset/dead stream replies {:error, :no_connection_available}; the
         # caller (ControlUnit) must then surface a clean error to the operative
         # rather than registering a reply ref that will never resolve.
-        case GenServer.call(control_channel, {:send_control, bin}) do
+        case GenServer.call(control_channel, {:send_control, encode_request(ref, command)}) do
           :ok -> {:ok, ref}
           {:error, reason} -> {:error, reason}
         end
     end
   end
 
-  def send_control_async(runner_id, command) do
+  @doc """
+  Write a `CommandRequest` without waiting for the transport. `reference_id`
+  defaults to a fresh one; a reply to an SDK-initiated request passes the
+  request's own, which is what the SDK wakes its waiter on.
+  """
+  def send_control_async(runner_id, command, reference_id \\ nil) do
     control_channel = Identificator.control_channel(runner_id)
 
     case GenServer.whereis(control_channel) do
@@ -82,21 +73,16 @@ defmodule Flezha.Runner.ControlChannel do
         :ok
 
       _ ->
-        ref = gen_ref()
-
-        req =
-          struct(
-            RunnerCommands.CommandRequest,
-            reference_id: ref,
-            command: command
-          )
-
-        {:ok, iodata, _size} = Protox.encode(req)
-        bin = IO.iodata_to_binary(iodata)
-
+        bin = encode_request(reference_id || gen_ref(), command)
         GenServer.cast(control_channel, {:send_control_async, bin})
         :ok
     end
+  end
+
+  defp encode_request(reference_id, command) do
+    request = %RunnerCommands.CommandRequest{reference_id: reference_id, command: command}
+    {:ok, iodata, _size} = Protox.encode(request)
+    IO.iodata_to_binary(iodata)
   end
 
   @impl true
@@ -141,12 +127,9 @@ defmodule Flezha.Runner.ControlChannel do
   @impl true
   def handle_call({:send_control, bin}, _from, state) do
     res =
-      case Map.get(state, :stream_ref, nil) do
-        nil ->
-          {:error, :no_connection_available}
-
-        stream_ref ->
-          state.write_fun.(stream_ref, "control_command", bin, %{})
+      case write_control(state, bin) do
+        :unbound -> {:error, :no_connection_available}
+        result -> result
       end
 
     {:reply, res, state}
@@ -160,13 +143,17 @@ defmodule Flezha.Runner.ControlChannel do
 
   @impl true
   def handle_cast({:send_control_async, bin}, state) do
-    case Map.get(state, :stream_ref, nil) do
-      nil -> :ok
-      stream_ref -> state.write_fun.(stream_ref, "control_command", bin, %{})
-    end
-
+    _ = write_control(state, bin)
     {:noreply, state}
   end
+
+  # Every control frame leaves through this process, on its stream. `:unbound`
+  # while the stream is reset: the caller decides whether that is an error.
+  defp write_control(state, bin, payload_id \\ "control_command")
+  defp write_control(%{stream_ref: nil}, _bin, _payload_id), do: :unbound
+
+  defp write_control(state, bin, payload_id),
+    do: state.write_fun.(state.stream_ref, payload_id, bin, %{})
 
   # Steady-state control-channel keepalive from the SDK (see flz_transport
   # liveness). Echoed back verbatim on the same dedicated `control_ping`
@@ -175,14 +162,7 @@ defmodule Flezha.Runner.ControlChannel do
   # runner's watchdog drives reconnect.
   @impl true
   def handle_info({:flz_data, _stream_id, "control_ping", message, _metadata}, state) do
-    case Map.get(state, :stream_ref) do
-      nil ->
-        :ok
-
-      stream_ref ->
-        state.write_fun.(stream_ref, "control_ping", message, %{})
-    end
-
+    _ = write_control(state, message, "control_ping")
     {:noreply, bump_last_seen(state)}
   end
 
@@ -198,6 +178,10 @@ defmodule Flezha.Runner.ControlChannel do
   # `CommandRequest` decode first; if the message has a recognised
   # SDK-initiated command, dispatch it here and skip the `ControlUnit`
   # handover.
+  #
+  # This process does no disk I/O: a durability barrier is handed to the
+  # runner's commit worker, so a commit storm never delays the ping, stop, park
+  # or compaction queued behind it.
   @impl true
   def handle_info({:flz_data, _stream_id, _payload_id, message, metadata}, state) do
     state = bump_last_seen(state)
@@ -211,12 +195,8 @@ defmodule Flezha.Runner.ControlChannel do
         handle_workflow_completed(state, completed)
         {:noreply, state}
 
-      {:proc_commit, %{} = commit, reference_id} ->
-        handle_proc_commit(state, commit, reference_id)
-        {:noreply, state}
-
-      {:iter_commit, %{} = commit, reference_id} ->
-        handle_iter_commit(state, commit, reference_id)
+      {barrier, %{} = commit, reference_id} when barrier in [:proc_commit, :iter_commit] ->
+        Commits.commit(state.runner_id, reference_id, commit)
         {:noreply, state}
 
       {:iter_park, %{} = park, _reference_id} ->
@@ -255,25 +235,6 @@ defmodule Flezha.Runner.ControlChannel do
       "spawn-workflow response #{outcome}"
     )
 
-    {:noreply, state}
-  end
-
-  # A synchronous-durability barrier finished its remote ship; write the ack
-  # here, where control frames are written. A failed ship rides back in the
-  # ack's `error` field and the SDK aborts the run — the class asked for RPO 0,
-  # so a barrier that is not remotely durable must not be reported as committed.
-  @impl true
-  def handle_info({:commit_shipped, reference_id, label, response_fun, post_fun, ship}, state) do
-    if journal_then_ack(state, reference_id, ship, label, response_fun), do: post_fun.()
-    {:noreply, state}
-  end
-
-  # Retry a journaled outbox whose operative was not bound when the flush was
-  # first attempted. The journal is the source of truth, so the retry simply
-  # re-runs the same flush; it stops when nothing is owed.
-  @impl true
-  def handle_info({:proc_outbox_retry, operative_id}, state) do
-    flush_proc_outbox(operative_id)
     {:noreply, state}
   end
 
@@ -552,226 +513,6 @@ defmodule Flezha.Runner.ControlChannel do
     )
   end
 
-  # Proc-boundary commit (workflow-proc-journal + workflow-transactional-outbox):
-  # append the `proc_committed` entry — entities ran, handoff, AND the procedure's
-  # staged outbox in ONE record — and fsync BEFORE replying. The ack IS the
-  # durable point the driver gates the next procedure on, and the point past
-  # which the staged output may finally be delivered. A failed append (disk
-  # error, oversized payload) rides back in `error` and terminates the run
-  # abnormally on the SDK side. The append + fsync run in the journal's
-  # WalWriter process; proc boundaries are coarse, so blocking this channel for
-  # one fsync round-trip is acceptable (same posture as the awaited restore).
-  #
-  # `compensating` marks the undo twin: the same handshake carrying a
-  # compensation hook's staged undo output, journaled as a `compensated` entry.
-  defp handle_proc_commit(state, commit, reference_id) do
-    %RunnerCommands.ProcCommit{
-      operative_id: operative_id,
-      proc_idx: proc_idx,
-      iter: iter,
-      entities_ran: entities_ran,
-      handoff: handoff,
-      outbox: outbox,
-      compensating: compensating
-    } = commit
-
-    outbox =
-      Enum.map(outbox, fn %RunnerCommands.ProcOutboxItem{} = item ->
-        %{
-          entity_id: item.entity_id,
-          seq_in_proc: item.seq_in_proc,
-          channel: item.channel,
-          payload: item.payload
-        }
-      end)
-
-    result =
-      if compensating do
-        Flezha.State.ProcJournal.append_compensated(operative_id, proc_idx, iter, outbox)
-      else
-        Flezha.State.ProcJournal.append_proc_committed(
-          operative_id,
-          proc_idx,
-          iter,
-          entities_ran,
-          Enum.map(handoff, fn %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes} ->
-            {cid, bytes}
-          end),
-          outbox
-        )
-      end
-
-    :telemetry.execute(
-      [:flezha, :state, :proc_commit],
-      %{count: 1, handoff_items: length(handoff), outbox_items: length(outbox)},
-      %{
-        namespace: state.namespace,
-        operative_id: operative_id,
-        proc_idx: proc_idx,
-        compensating: compensating,
-        status: commit_status(result)
-      }
-    )
-
-    commit_then_ack(
-      state,
-      reference_id,
-      operative_id,
-      result,
-      "proc-journal commit operative=#{inspect(operative_id)} proc_idx=#{proc_idx}",
-      &{:proc_commit_response,
-       %RunnerCommands.ProcCommitResponse{
-         operative_id: operative_id,
-         proc_idx: proc_idx,
-         error: &1
-       }},
-      # Flush AFTER the ack (the durable point has passed, so the output may
-      # now be seen). The next procedure is free to run while this lands — the
-      # chain hands data forward through the handoff, never through the sink.
-      fn -> flush_proc_outbox(operative_id) end
-    )
-  end
-
-  # The durability gate around `journal_then_ack/5`. A class that declared
-  # synchronous remote durability must have its barrier on the remote store
-  # BEFORE the ack, so the ack the SDK observes implies remote durability
-  # (RPO 0). The ship runs in a task and replies through this process, which is
-  # the one allowed to write control frames — the same off-process shape the
-  # spawn-workflow resolution uses, and for the same reason.
-  #
-  # Every other class acks on local fsync exactly as before and reaches the
-  # remote store asynchronously, off this path.
-  defp commit_then_ack(state, reference_id, operative_id, result, label, response_fun, post_fun) do
-    if result == :ok and DurabilityTier.sync_class?(operative_id) do
-      channel = self()
-
-      Task.start(fn ->
-        send(
-          channel,
-          {:commit_shipped, reference_id, label, response_fun, post_fun,
-           DurabilityTier.commit_sync(operative_id)}
-        )
-      end)
-    else
-      if journal_then_ack(state, reference_id, result, label, response_fun) do
-        post_fun.()
-        DurabilityTier.on_workflow_commit(operative_id)
-      end
-    end
-  end
-
-  # The protocol's core invariant, in one place: the reply to a durability
-  # handshake is emitted only AFTER the journal append returned, carries the
-  # append's outcome in its `error` field (empty = durable), and gates whatever
-  # post-ack work the caller owes. Answers whether the record is durable.
-  defp journal_then_ack(state, reference_id, result, label, response_fun) do
-    error =
-      case result do
-        :ok -> ""
-        {:error, reason} -> inspect(reason)
-      end
-
-    if error != "" do
-      Logger.warning("[control_channel] #{label} failed: #{error}")
-    end
-
-    emit_control_request(state, reference_id, response_fun.(error), label)
-    error == ""
-  end
-
-  defp commit_status(:ok), do: :ok
-  defp commit_status({:error, _}), do: :error
-
-  # Iteration boundary of a durable structured loop (`workflow-durable-loop`):
-  # ONE durable `iter_committed(iter, consumed_offset)` record — with the
-  # iteration's terminal handoff, so a crash can re-seed the next iteration —
-  # then the ack. Everything after the ack is cleanup the commit does not depend
-  # on: the boundary snapshot (so a rehydrate loads iteration-N state instead of
-  # replaying the WAL tail), the iteration's staged outbox, and the release of
-  # the inbox prefix it consumed. A failure in any of them costs work, never
-  # correctness — the iteration is already committed.
-  defp handle_iter_commit(state, commit, reference_id) do
-    %RunnerCommands.IterCommit{
-      operative_id: operative_id,
-      iter: iter,
-      consumed_offset: consumed_offset,
-      handoff: handoff
-    } = commit
-
-    result =
-      Flezha.State.ProcJournal.append_iter_committed(
-        operative_id,
-        iter,
-        consumed_offset,
-        Enum.map(handoff, fn %RunnerCommands.ProcHandoffItem{channel_id: cid, payload: bytes} ->
-          {cid, bytes}
-        end)
-      )
-
-    :telemetry.execute(
-      [:flezha, :state, :iter_commit],
-      %{count: 1, consumed_offset: consumed_offset},
-      %{
-        namespace: state.namespace,
-        operative_id: operative_id,
-        iter: iter,
-        status: commit_status(result)
-      }
-    )
-
-    runner_id = state.runner_id
-
-    commit_then_ack(
-      state,
-      reference_id,
-      operative_id,
-      result,
-      "proc-journal iteration commit operative=#{inspect(operative_id)} iter=#{iter}",
-      &{:iter_commit_response,
-       %RunnerCommands.IterCommitResponse{
-         operative_id: operative_id,
-         iter: iter,
-         error: &1
-       }},
-      fn ->
-        snapshot_iteration_boundary(runner_id, operative_id)
-        flush_proc_outbox(operative_id)
-        if consumed_offset > 0, do: Flezha.State.ProcInbox.truncate(operative_id, consumed_offset)
-      end
-    )
-  end
-
-  # Boundary snapshot: ask the SDK to compact every Entity of the instance, so a
-  # rehydrate restores iteration-N state from a snapshot instead of replaying the
-  # whole WAL.
-  #
-  # Off this process: `CompactEntity` is dispatched through `send_control`,
-  # which is a call INTO this very channel — issuing it inline would be the
-  # channel calling itself (same reason the workflow-completed teardown runs in a
-  # task). Best-effort besides: a failed or dropped compaction only means the
-  # restore falls back to WAL replay, which the Watchdog's own size/age triggers
-  # will re-attempt.
-  defp snapshot_iteration_boundary(runner_id, operative_id) do
-    entities =
-      Flezha.State.Registry.all_entities()
-      |> Enum.filter(fn {class, _, _} -> class == operative_id end)
-
-    Task.start(fn ->
-      Enum.each(entities, fn entity_id ->
-        case Flezha.State.Commands.dispatch_compact_entity(runner_id, entity_id) do
-          {:ok, _ref} ->
-            :ok
-
-          {:error, reason} ->
-            Logger.debug(
-              "[control_channel] boundary snapshot skipped for #{inspect(entity_id)}: " <>
-                "#{inspect(reason)} — rehydrate falls back to WAL replay"
-            )
-        end
-      end)
-    end)
-  end
-
   # The SDK's loop found its inbox empty at a committed iteration boundary and
   # tore its run down WITHOUT a completion (`workflow-durable-suspension`). Journal
   # the park record — durable BEFORE the eviction, so a controller crash in
@@ -898,48 +639,19 @@ defmodule Flezha.Runner.ControlChannel do
     )
   end
 
-  # Journal-driven flush: everything this instance owes, in journal order, with
-  # the `outbox_flushed` marker written per entry after delivery. An unbound
-  # operative (cold-boot re-drive before the bind lands) retries on a timer;
-  # the journal still owes the entries, so nothing is dropped either way.
-  defp flush_proc_outbox(operative_id) do
-    case Flezha.State.ProcJournal.flush_pending(operative_id) do
-      :ok ->
-        :ok
-
-      {:error, :no_overwatch} ->
-        Process.send_after(self(), {:proc_outbox_retry, operative_id}, @proc_outbox_retry_ms)
-        :ok
-    end
-  end
-
   # Reply to an SDK-initiated CommandRequest with a controller-emitted
   # CommandRequest carrying the SAME reference_id (the SDK wakes its pending
   # waiter on it). Best-effort: a dead stream is logged, never raised — the
   # SDK side owns the timeout.
   defp emit_control_request(state, reference_id, command, log_label) do
-    request = %RunnerCommands.CommandRequest{
-      reference_id: reference_id,
-      command: command
-    }
+    case write_control(state, encode_request(reference_id, command)) do
+      {:error, reason} ->
+        Logger.warning("[control_channel] failed to emit #{log_label}: #{inspect(reason)}")
 
-    {:ok, iodata, _size} = Protox.encode(request)
-    bin = IO.iodata_to_binary(iodata)
-
-    case Map.get(state, :stream_ref) do
-      nil ->
+      _ok_or_unbound ->
         :ok
-
-      stream_ref ->
-        case state.write_fun.(stream_ref, "control_command", bin, %{}) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning("[control_channel] failed to emit #{log_label}: #{inspect(reason)}")
-
-            :ok
-        end
     end
+
+    :ok
   end
 end

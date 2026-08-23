@@ -39,6 +39,10 @@ defmodule Flezha.State.PersistenceResolver do
        Byte window offered in `CreditWindowInit` for a state stream whose
        first Change belongs to that class. Global default
        `:wal_high_watermark_bytes` (16 MiB).
+    * `:record_log_cut_after_bytes` — global; how many released bytes a
+       workflow instance's proc-journal or inbox accumulates before its
+       prefix cut rewrites the file. Default `64 * 1024`; `0` rewrites at
+       every release.
   """
 
   alias Flezha.Operative.ClassRegistry
@@ -51,6 +55,7 @@ defmodule Flezha.State.PersistenceResolver do
   @default_compaction_timeout_ms 30_000
   @default_compact_after_age_ms 300_000
   @default_workflow_completed_retention_hours 72
+  @default_record_log_cut_after_bytes 64 * 1024
 
   @spec persistence_enabled?(binary(), map()) :: boolean()
   def persistence_enabled?(operative_class, metadata \\ %{}) when is_binary(operative_class) do
@@ -279,6 +284,17 @@ defmodule Flezha.State.PersistenceResolver do
       default: fn -> global_non_neg(:compact_after_age_ms, @default_compact_after_age_ms) end
     )
   end
+
+  @doc """
+  How many released bytes a per-instance record log accumulates before a
+  prefix cut rewrites it (`:record_log_cut_after_bytes`). A cut is asked for at
+  every iteration commit; the rewrite — a copy, an fsync and a rename — is paid
+  once per this many bytes, so a loop's logs stay bounded without a rewrite
+  per turn.
+  """
+  @spec record_log_cut_after_bytes() :: non_neg_integer()
+  def record_log_cut_after_bytes(),
+    do: global_non_neg(:record_log_cut_after_bytes, @default_record_log_cut_after_bytes)
 
   # Global (non-per-Operative) knob: app env if a valid non-negative
   # integer, else the compile-time default.

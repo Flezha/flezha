@@ -9,6 +9,7 @@ defmodule FlezhaTest.State.ProcJournalTest do
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
 
+  alias Flezha.Operative.ClassRegistry
   alias Flezha.State.{Commands, Outbox, ProcJournal, Registry, TestHelpers, WalWriter, Wire}
 
   import Flezha.State.TestHelpers,
@@ -589,6 +590,138 @@ defmodule FlezhaTest.State.ProcJournalTest do
     :ok = ProcJournal.append_rewound(inst, 0)
     assert [%{proc_idx: 0, iter: 1}] = ProcJournal.restore_state(inst).rewind_undo
     assert ProcJournal.current_epoch(inst) == 2
+  end
+
+  # ---------- workflow-durable-path-throughput: the cut ----------
+
+  defp seqs(inst) do
+    {:ok, entries} = ProcJournal.read(inst)
+    Enum.map(entries, & &1.seq)
+  end
+
+  # The cut is the writer's to run, off the caller; every release rewrites at
+  # once here so the file can be read.
+  defp cuttable(inst) do
+    on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
+    ClassRegistry.put_compensable_ops(inst, [])
+  end
+
+  defp cut_and_await(inst, expected) do
+    :ok = ProcJournal.cut(inst)
+
+    assert wait_until(fn -> seqs(inst) == expected end, 2_000),
+           "journal holds #{inspect(seqs(inst))}"
+  end
+
+  # Two procs and the boundary per iteration, nothing staged: seqs 3i..3i+2.
+  defp commit_iterations(inst, seg, range) do
+    for iter <- range do
+      :ok = ProcJournal.append_proc_committed(inst, 0, iter, [seg], [{1, "h#{iter}"}])
+      :ok = ProcJournal.append_proc_committed(inst, 1, iter, [], [])
+      :ok = ProcJournal.append_iter_committed(inst, iter, iter + 1, [{2, "carry#{iter}"}])
+    end
+  end
+
+  test "a cut journal restores the state the full history gave" do
+    inst = instance_id()
+    cuttable(inst)
+    seg = seg_identity(inst, "ProcA", "s0")
+
+    commit_iterations(inst, seg, 0..2)
+    # Iteration 3 has one proc in before the cut.
+    :ok = ProcJournal.append_proc_committed(inst, 0, 3, [seg], [{1, "h3"}])
+    assert seqs(inst) == Enum.to_list(0..9)
+    full = ProcJournal.restore_state(inst)
+
+    # Only the head — iteration 2's commit — and what followed it remain.
+    cut_and_await(inst, [8, 9])
+    cut = ProcJournal.restore_state(inst)
+    assert Map.drop(cut, [:committed_procs]) == Map.drop(full, [:committed_procs])
+    assert cut.committed_procs == Enum.filter(full.committed_procs, &(&1.iter > 2))
+
+    assert %{iter: 3, consumed_offset: 3, handoff: [{2, "carry2"}], committed_proc_idxs: [0]} =
+             cut
+
+    assert ProcJournal.consumed_offset(inst) == 3
+    assert ProcJournal.current_epoch(inst) == 0
+
+    # Nothing below the head is left to cut.
+    cut_and_await(inst, [8, 9])
+  end
+
+  test "a pending outbox entry holds the cut, and goes with its flush" do
+    inst = instance_id()
+    cuttable(inst)
+    seg = seg_identity(inst, "ProcA", "s0")
+
+    :ok = ProcJournal.append_proc_committed(inst, 0, 0, [seg], [], [outbox_item(seg, 0, "owed")])
+    :ok = ProcJournal.append_iter_committed(inst, 0, 1, [])
+    :ok = ProcJournal.append_proc_committed(inst, 0, 1, [seg], [])
+    :ok = ProcJournal.append_iter_committed(inst, 1, 2, [])
+
+    # An owed outbox holds the cut at its entry.
+    cut_and_await(inst, [0, 1, 2, 3])
+    assert [%{seq: 0}] = ProcJournal.pending_entries(inst)
+
+    assert :ok = ProcJournal.flush_pending(inst, self())
+    assert_flushed("owed", "0.0")
+    await_markers(inst, 1)
+
+    # The head and the marker after it.
+    cut_and_await(inst, [3, 4])
+    assert ProcJournal.pending_entries(inst) == []
+    assert %{iter: 2, consumed_offset: 2} = ProcJournal.restore_state(inst)
+  end
+
+  test "a rewind marker and its unwound commits survive the cut until they are compensated" do
+    inst = instance_id()
+    cuttable(inst)
+    seg = seg_identity(inst, "ProcA", "s0")
+
+    for iter <- 0..2 do
+      :ok = ProcJournal.append_proc_committed(inst, 0, iter, [seg], [])
+      :ok = ProcJournal.append_iter_committed(inst, iter, iter + 1, [{1, "carry#{iter}"}])
+    end
+
+    :ok = ProcJournal.append_rewound(inst, 0)
+
+    # The head is iteration 0's commit; everything the rewind still has to undo
+    # lies above it and stays.
+    cut_and_await(inst, [1, 2, 3, 4, 5, 6])
+    assert [%{iter: 1}, %{iter: 2}] = ProcJournal.restore_state(inst).rewind_undo
+    assert ProcJournal.current_epoch(inst) == 1
+
+    :ok = ProcJournal.append_compensated(inst, 0, 2, [])
+    :ok = ProcJournal.append_compensated(inst, 0, 1, [])
+    # Iteration 1 re-runs under the bumped epoch and commits: the new head.
+    :ok = ProcJournal.append_proc_committed(inst, 0, 1, [seg], [])
+    :ok = ProcJournal.append_iter_committed(inst, 1, 2, [{1, "redone"}])
+
+    cut_and_await(inst, [10])
+
+    assert %{
+             iter: 2,
+             consumed_offset: 2,
+             handoff: [{1, "redone"}],
+             rewind_undo: [],
+             parked: false
+           } =
+             ProcJournal.restore_state(inst)
+
+    assert ProcJournal.current_epoch(inst) == 1
+    assert ProcJournal.committed_iterations(inst) == [1]
+  end
+
+  test "a class with compensable procedures, or one that declared nothing, keeps its history" do
+    compensable = instance_id()
+    ClassRegistry.put_compensable_ops(compensable, [0])
+    undeclared = instance_id()
+
+    for inst <- [compensable, undeclared] do
+      commit_iterations(inst, seg_identity(inst, "ProcA", "s0"), 0..1)
+      :ok = ProcJournal.cut(inst)
+      assert seqs(inst) == Enum.to_list(0..5)
+    end
   end
 
   test "the outbox_flushed marker waits for the sink, and a re-entered flush does not re-deliver" do

@@ -35,6 +35,7 @@ public final class WorkflowSpec {
     private final boolean syncDurability;
     private final com.flezha.sdk.workflow.LoopMode loopMode;
     private final com.flezha.sdk.channel.RetryPolicy retry;
+    private final int barrierRetryAttempts;
     private final Optional<Duration> wakeAfter;
 
     private WorkflowSpec(
@@ -48,8 +49,10 @@ public final class WorkflowSpec {
             boolean syncDurability,
             com.flezha.sdk.workflow.LoopMode loopMode,
             Optional<Duration> wakeAfter,
-            com.flezha.sdk.channel.RetryPolicy retry) {
+            com.flezha.sdk.channel.RetryPolicy retry,
+            int barrierRetryAttempts) {
         this.retry = retry;
+        this.barrierRetryAttempts = barrierRetryAttempts;
         this.loopMode = loopMode;
         this.wakeAfter = wakeAfter;
         this.factoryId = factoryId;
@@ -104,6 +107,11 @@ public final class WorkflowSpec {
     @Nonnull
     public com.flezha.sdk.channel.RetryPolicy retry() {
         return retry;
+    }
+
+    /** Sends of one commit barrier before an unacked commit fails the run (at least 1). */
+    public int barrierRetryAttempts() {
+        return barrierRetryAttempts;
     }
 
     /** How many times this class runs its chain. */
@@ -199,7 +207,8 @@ public final class WorkflowSpec {
                     probe.syncDurability(),
                     com.flezha.sdk.workflow.LoopMode.ONCE,
                     java.util.Optional.empty(),
-                    resolveRetry(factoryId, probe));
+                    resolveRetry(factoryId, probe),
+                    Math.max(1, probe.barrierRetryAttempts()));
         }
 
         List<Integer> chain = topologicalOrder(factoryId, topology);
@@ -243,7 +252,8 @@ public final class WorkflowSpec {
                 probe.syncDurability(),
                 probe.loopMode(),
                 probe.wakeAfter(),
-                resolveRetry(factoryId, probe));
+                resolveRetry(factoryId, probe),
+                Math.max(1, probe.barrierRetryAttempts()));
     }
 
     /** Resolve the retry ladder, rejecting a hot-spinning zero backoff. */

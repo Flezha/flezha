@@ -128,6 +128,7 @@ public final class HostClassDeclaration {
                 });
         workflow.put("retry_attempts", spec.retry().maxAttempts());
         workflow.put("retry_backoff_ms", spec.retry().backoffBaseMs());
+        workflow.put("barrier_retry_attempts", spec.barrierRetryAttempts());
         spec.maxDuration().ifPresent(d -> workflow.put("max_duration_ms", d.toMillis()));
         spec.wakeAfter().ifPresent(d -> workflow.put("wake_after_ms", d.toMillis()));
         decl.put("workflow", workflow);

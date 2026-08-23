@@ -12,7 +12,7 @@ defmodule Flezha.State.ProcInbox do
   delivered on rehydrate instead of being dropped.
 
   ```
-  header: [0: 128 bits]
+  header: [sha256(dedup_id)[0..16]]
   body:   [dedup_len: u16 BE][dedup_id][meta_len: u32 BE][meta][payload]
   ```
 
@@ -26,24 +26,37 @@ defmodule Flezha.State.ProcInbox do
   ## Dedup and truncation
 
   `dedup_id` is the sender-supplied message id (`flz.msg_id` metadata) when
-  present, else a SHA-256 of the payload. An append whose dedup id already
-  exists in the **undelivered window** — the entries above the consumed offset
-  the proc-journal's latest `iter_committed` recorded — is dropped and answers
-  with the existing entry's offset, so a re-sent message is absorbed rather
-  than delivered twice.
+  present, else a SHA-256 of the payload. Its digest is the record header, and
+  the inbox writer keeps the headers of everything still in the file
+  (`WalWriter` `dedup: true` — rebuilt from the file when the writer opens,
+  trimmed by every truncate): an append whose header is already there is
+  dropped and answers with the existing entry's offset, so a re-sent message is
+  absorbed rather than delivered twice, and the append reads no file and folds
+  no journal. The window is therefore the file above its last truncate — the
+  undelivered tail, plus, after a truncate that never landed, the consumed turns
+  the next truncate releases.
 
   Iteration commit truncates everything at or below the consumed offset
   (`truncate/2` → `WalWriter.truncate_up_to/2`, which preserves the surviving
-  records' seqs). Truncation is advisory cleanup: a lost truncate costs disk,
-  never correctness, because delivery is filtered by the same consumed offset
-  (`undelivered/1`).
+  records' seqs). Truncation is advisory cleanup: a lost truncate costs disk and
+  a wider dedup window, never correctness, because delivery is filtered by the
+  journal's consumed offset (`undelivered/1`).
+
+  Durability is batched: an append is made durable by the `FsyncBatcher` tick
+  and answered after it, never before (`append_async/5` is the ingest's form —
+  the Overwatch carries on and the answer settles the reply it owes).
   """
 
-  alias Flezha.State.{ProcJournal, RecordLog, Registry, Supervisor, WalWriter}
+  alias Flezha.State.{
+    PersistenceResolver,
+    ProcJournal,
+    RecordLog,
+    Registry,
+    Supervisor,
+    WalWriter
+  }
 
-  # Inbox records carry no wire header; the 16 zero bytes keep the WalWriter
-  # record framing (and its scan/rewrite helpers) reusable as-is.
-  @zero_header <<0::unit(8)-size(16)>>
+  @append_opts [sync: :batched, dedup: true]
 
   @msg_id_key "flz.msg_id"
 
@@ -55,8 +68,8 @@ defmodule Flezha.State.ProcInbox do
         }
 
   @doc """
-  Append one post-start input, durable (fsync) before returning, and answer its
-  offset. A duplicate dedup id in the undelivered window is dropped and answers
+  Append one post-start input, durable before returning, and answer its offset.
+  A duplicate dedup id in the undelivered window is dropped and answers
   `{:duplicate, existing_offset}` — exactly one entry exists and the operative
   receives the message once.
   """
@@ -64,30 +77,57 @@ defmodule Flezha.State.ProcInbox do
           {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
   def append(instance_id, message, metadata)
       when is_binary(instance_id) and is_binary(message) and is_map(metadata) do
-    dedup_id = dedup_id(message, metadata)
+    {header, body} = encode(message, metadata)
 
-    case Enum.find(undelivered(instance_id), &(&1.dedup_id == dedup_id)) do
-      %{offset: offset} ->
-        {:duplicate, offset}
-
-      nil ->
-        body = encode_entry(dedup_id, message, metadata)
-
-        case RecordLog.append(Registry.inbox_id(instance_id), @zero_header, body) do
-          {:ok, seq} -> {:ok, offset(seq)}
-          {:error, _} = err -> err
-        end
+    case RecordLog.append(Registry.inbox_id(instance_id), header, body, @append_opts) do
+      {:ok, seq} -> {:ok, offset(seq)}
+      {:duplicate, seq} -> {:duplicate, offset(seq)}
+      {:error, _} = err -> err
     end
   end
 
   @doc """
+  `append/3` without waiting: issued with `:gen_server.send_request/4` under
+  `label` into `reqids`. The answer — `{:ok, seq}` or `{:duplicate, seq}` in the
+  writer's seq space (`offset/1` maps it), or the writer's exit — comes back as
+  a message for `:gen_server.check_response/3`, once the batch holding the
+  record has synced.
+  """
+  @spec append_async(binary(), binary(), map(), :gen_server.request_id_collection(), term()) ::
+          :gen_server.request_id_collection()
+  def append_async(instance_id, message, metadata, reqids, label)
+      when is_binary(instance_id) and is_binary(message) and is_map(metadata) do
+    {header, body} = encode(message, metadata)
+
+    RecordLog.append_async(
+      Registry.inbox_id(instance_id),
+      header,
+      body,
+      @append_opts,
+      reqids,
+      label
+    )
+  end
+
+  defp encode(message, metadata) do
+    dedup_id = dedup_id(message, metadata)
+    {header(dedup_id), encode_entry(dedup_id, message, metadata)}
+  end
+
+  # The record header is the dedup id's digest, so the writer refuses a
+  # duplicate — and rebuilds its window — from headers alone.
+  defp header(dedup_id), do: binary_part(:crypto.hash(:sha256, dedup_id), 0, 16)
+
+  @doc """
   The entries the instance has not consumed yet, in offset order: everything
-  above the consumed offset the proc-journal's latest `iter_committed` recorded.
-  This is both the dedup window and the delivery set a rehydrate re-forwards.
+  above the offset the proc-journal has released (`ProcJournal.released_offset/1`
+  — the highest any iteration ever consumed, which a rewind does not lower and
+  which a deferred file rewrite does not move). The delivery set a rehydrate
+  re-forwards.
   """
   @spec undelivered(binary()) :: [entry()]
   def undelivered(instance_id) when is_binary(instance_id) do
-    floor = ProcJournal.consumed_offset(instance_id)
+    floor = ProcJournal.released_offset(instance_id)
     Enum.filter(read(instance_id), &(&1.offset > floor))
   end
 
@@ -113,25 +153,33 @@ defmodule Flezha.State.ProcInbox do
   end
 
   @doc """
-  Release every entry at or below `offset` (iteration commit). Idempotent, and
-  a no-op when the instance has no inbox — an instance that never received
-  post-start input never starts an inbox writer.
+  Release every entry at or below `offset` (iteration commit): the dedup window
+  drops them at once, the file once
+  `PersistenceResolver.record_log_cut_after_bytes/0` of released entries have
+  accumulated. The cut is the inbox writer's to run — this answers once it is
+  asked. Idempotent, and a no-op when the instance has no inbox: an instance
+  that never received post-start input never starts an inbox writer.
   """
   @spec truncate(binary(), non_neg_integer()) :: :ok
   def truncate(instance_id, offset) when is_binary(instance_id) and offset >= 0 do
     if File.exists?(Registry.inbox_path(instance_id)) do
       with {:ok, pid} <- Supervisor.find_or_start(Registry.inbox_id(instance_id)) do
-        WalWriter.truncate_up_to(pid, seq(offset))
+        min_bytes = PersistenceResolver.record_log_cut_after_bytes()
+        WalWriter.truncate_up_to_async(pid, seq(offset), min_bytes: min_bytes)
       end
     end
 
     :ok
   end
 
-  # Offset ⇄ WAL seq. The substrate requires the first record to carry seq 0
-  # (an empty WAL receiving any other seq sheds the frame and pulls a
-  # baseline), while the offset space must reserve 0 as its "none" value.
-  defp offset(seq), do: seq + 1
+  @doc """
+  Offset ⇄ WAL seq. The substrate requires the first record to carry seq 0
+  (an empty WAL receiving any other seq sheds the frame and pulls a
+  baseline), while the offset space must reserve 0 as its "none" value.
+  """
+  @spec offset(non_neg_integer()) :: pos_integer()
+  def offset(seq), do: seq + 1
+
   defp seq(offset), do: offset - 1
 
   # ---------- Entry codec ----------

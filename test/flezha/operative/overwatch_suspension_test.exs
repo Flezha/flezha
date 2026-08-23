@@ -142,7 +142,9 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     stub(Flezha.Service.HubManager, :operative_set_runner, fn _, _, _ -> :ok end)
 
     deadline = System.system_time(:millisecond) + 50_000
-    {:noreply, suspended, :hibernate} = Overwatch.handle_cast({:suspend, 1, deadline}, state(inst))
+
+    {:noreply, suspended, :hibernate} =
+      Overwatch.handle_cast({:suspend, 1, deadline}, state(inst))
 
     assert is_reference(suspended.wake_timer)
     assert Process.read_timer(suspended.wake_timer) > 40_000
@@ -154,8 +156,11 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
 
-    {:noreply, rehydrating} =
+    {:noreply, journaling} =
       Overwatch.handle_cast({:io_in, "hello", %{"channel" => "chat"}}, suspended)
+
+    assert journaling.migrate_task == nil, "nothing wakes before the input is durable"
+    rehydrating = settle_journal(journaling)
 
     # Durable first: the input is in the inbox before anything else happens, so a
     # crash mid-rehydrate cannot lose it.
@@ -166,7 +171,8 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
 
     # Racing wake sources resolve to exactly one rehydration: a second input
     # while the first is still in flight journals, and reuses the same bind.
-    {:noreply, still_one} = Overwatch.handle_cast({:io_in, "second", %{}}, rehydrating)
+    {:noreply, journaling} = Overwatch.handle_cast({:io_in, "second", %{}}, rehydrating)
+    still_one = settle_journal(journaling)
 
     assert still_one.migrate_task == rehydrating.migrate_task,
            "a second wake source does not start a second rehydration"
@@ -194,11 +200,20 @@ defmodule FlezhaTest.Operative.OverwatchSuspensionTest do
     stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> nil end)
 
     suspended = state(inst, suspended: true, runner_id: nil, channel: nil)
-    {:noreply, still} = Overwatch.handle_cast({:io_in, "hi", %{}}, suspended)
+    {:noreply, journaling} = Overwatch.handle_cast({:io_in, "hi", %{}}, suspended)
+    still = settle_journal(journaling)
 
     assert still.suspended
     assert still.migrate_task == nil
     assert [%{message: "hi"}] = ProcInbox.undelivered(inst), "the input is not lost"
+  end
+
+  # The inbox writer's answer to the append a cast issued — the host acts on it
+  # when it reaches its mailbox, which this test process stands in for.
+  defp settle_journal(state) do
+    assert_receive {[:alias | _], _} = reply, 2_000
+    {:noreply, state} = Overwatch.handle_info(reply, state)
+    state
   end
 
   test "a suspended instance is rediscovered from durable state after a redeploy" do

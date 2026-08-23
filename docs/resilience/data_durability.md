@@ -282,8 +282,11 @@ escape before that procedure is durable.
 - **One durable write.** At the barrier the staged outbox travels to the
   controller inside the `ProcCommit` request and is journaled with the
   procedure's completion in ONE `proc_committed` record in the instance's
-  `proc.journal` (fsynced before the ack). Progress and output cannot tear
-  apart.
+  `proc.journal` (fsynced before the ack — by the `FsyncBatcher` tick, so
+  every barrier that lands in one tick shares one fsync and is acked after
+  it). Progress and output cannot tear apart. A barrier whose ack is lost is
+  re-sent by the SDK under the same reference id and answered from the
+  existing entry, never journaled twice.
 - **Flush after the durable point.** Only once that fsync lands does the
   controller deliver the entries — in journal order, through the same
   plugin fan-out live workflow output uses. The `outbox_flushed` entry is
@@ -352,11 +355,24 @@ forwarded to the runner:
   else a payload hash; a duplicate inside the **undelivered window** is absorbed
   at append, so an at-least-once sender cannot produce a duplicate turn. Two
   legitimately identical payloads sent inside that window need a sender id.
+  The window is kept by the inbox writer in memory (the dedup ids of
+  everything still in the file, rebuilt from the file when the writer opens
+  and trimmed by every truncate), so an append reads no file and folds no
+  journal whatever the turn count.
+- **Batched durability.** The append is made durable by the `FsyncBatcher`
+  tick like an Entity change, and the ingest is answered after that sync,
+  never before — the Overwatch carries on meanwhile.
 - **Truncation.** `iter_committed` records the offset the iteration consumed and
-  the inbox releases everything at or below it. Truncation is advisory cleanup:
-  delivery is filtered by the *same* consumed offset, so a lost truncate costs
-  disk, never correctness. Message payloads live only in `inbox.wal`, never in
-  `proc.journal` — the two files have deliberately different retention.
+  the inbox releases everything at or below it — from the dedup window at once,
+  from the file once the released prefix is worth an fsync'd rewrite (the
+  `:record_log_cut_after_bytes` threshold, 64 KiB). Truncation is advisory
+  cleanup: delivery is filtered by the journal's *released* offset — the
+  highest any iteration ever consumed, which a rewind does not lower — so a
+  deferred or lost rewrite costs disk and a wider dedup window until the next
+  one, never a re-delivery. Message payloads live only in `inbox.wal`, never in
+  `proc.journal` — the two files have deliberately different retention, and
+  the journal of a loop is itself cut, on the same threshold, to the entries
+  its fold still needs.
 
 **Guarantee.** Input sent to a suspended, crashed, or migrating durable workflow
 instance is **never lost**: it is durable before it is forwarded and delivered

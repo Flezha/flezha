@@ -364,14 +364,66 @@ heap until the next wake. Fix: both entries into the suspended state
 (`handle_cast({:suspend, …})`, the boot-restore continue) return `:hibernate`.
 The clean keep/boot re-take (§5.3) is the measurement after the fix.
 
+## 6b. The barrier path, implemented (`workflow-durable-path-throughput`, 2026-08-23)
+
+The change landed: a barrier (`ProcCommit` / `IterCommit`, the inbox append)
+is written through its writer and made durable by the `FsyncBatcher` tick, the
+ack follows that sync (a deferred reply — the `send_request` id is the token),
+a per-runner commit worker journals and acks so the control-channel reader
+never touches the disk, a re-sent barrier (same `reference_id`, up to
+`barrier_retry_attempts()` = 3 on a wait timeout) is answered from the existing
+journal entry, the inbox dedups on the writer's in-memory window, and a loop's
+journal is cut at every iteration commit (classes with no compensable
+procedure; below a 64 KiB settled prefix the rewrite is deferred). Same box,
+same cells, logs `bench/workflow/reports/after*_*.log`:
+
+| Cell | Before (§3–§4) | After |
+|---|---|---|
+| 4-proc, 100 in flight, n=2000 | 81–88 workflows/s, 324–351 commits/s, p50 1.04 s | **93.4 workflows/s, 374 commits/s**, p50 1.06 s, clean — parity: this cell was never commit-bound (below) |
+| 1 loop × 100 turns, serial | 13 turns/s | **14.3 turns/s** — the floor is now the boundary snapshot round trip, the barrier waits are one tick each |
+| 100 × 20, unpaced | — | **229 turns/s**, 459 commits/s, clean |
+| 100 × 100, unpaced | 24.8–33 turns/s, `125 control replies unacked` at cleanup | **72 turns/s**, 144 commits/s, 0 parked, clean |
+| 1000 × 20, unpaced | wedged: 750 of 20 000 replies, **850 loops failed** on ack timeouts, 636 `ControlUnit` crash reports | **175.7 turns/s**, 351 commits/s, 20 000/20 000 replies, **0 failed, 0 ack timeouts, 0 `ControlUnit` crashes**, clean |
+
+Three findings changed the picture the campaign had drawn:
+
+- **The "~350 commits/s, flat across concurrency" ceiling of §3 was never the
+  barrier.** The same cell's `start_operative` call was p50 943 ms of a
+  991 ms seed→completed before the change and is p50 1.04 s of 1.06 s after
+  it: the closed-loop chain cell measures the spawn path (~90 starts/s at 100
+  in flight), and "commits/s" is four times that. The barrier's own cost is
+  one tick per commit (the worker's per-barrier wait is p50 5.6 ms) and shows
+  only in the loop cells, where it went 5–7×. The start path is the next
+  item (§7).
+- **Nothing on the commit worker may touch the disk or wait on a writer.**
+  The first build ran the inbox truncate and the journal cut inline after the
+  iteration ack — two fsync'd rewrites, 40–97 ms — and `Registry.all_entities()`
+  (a walk of the whole state root, p50 138 ms) to find the instance's
+  Entities for the boundary snapshot, exactly as the old channel did: under
+  100 loops the worker saturated, acks waited p50 391 ms and the cell ran at
+  12.9 turns/s. Cuts are now the writers' own casts (deferred below 64 KiB),
+  the snapshot scans one class dir, and the outbox flush registration is a
+  cast the writer dispatches from — 229 turns/s on the same cell.
+- **What remains is the disk's per-file fsync fan-out:** every instance
+  journals in its own file, so N instances' barriers in one tick are N
+  datasyncs on the ten dirty IO schedulers (fsync p99 5 ms at one loop,
+  25–35 ms at 100, 101 ms at 1 000). The 100 × 100 cell's 72 turns/s against
+  100 × 20's 229 is that queue growing with the snapshot and WAL files the
+  longer run accumulates. A shared commit log per runner would be the true
+  group commit — a layout change, not this one.
+
 ## 7. Follow-ups
 
 Open:
 
-1. Implement `workflow-durable-path-throughput` (proposal, design, specs,
-   tasks in `openspec/changes/`; validates `--strict`; 0/17 tasks). Every
-   storm number in this report is its acceptance bar. This is the one large
-   architectural item.
+1. ~~Implement `workflow-durable-path-throughput`~~ — DONE (§6b). What it
+   left: the per-file fsync fan-out (a shared per-runner commit log), the
+   boundary-snapshot policy (every iteration costs a snapshot file and a WAL
+   cut per Entity per turn — every N iterations or on the Watchdog's
+   triggers, the design's open question), and the start path: a closed-loop
+   4-proc chain spends ~1 s of its 1.06 s in `start_operative` at 100 in
+   flight (~90 starts/s), which is now the workflow ceiling this report's
+   chain cells measure.
 2. ~~The crash-resume redo-vs-skip failures~~ — FIXED. They were a stale test
    path: `wal_record_count`, `comp_done_count` and the opt-out no-WAL assertion
    in `workflow_crash_resume_e2e_test.exs` globbed the pre-namespace flat
@@ -409,6 +461,7 @@ was diagnosed as §6.8, not a distinct defect.
 
 | Suite | Result |
 |---|---|
+| `mix test` (after `workflow-durable-path-throughput`) | see `docs/dev_notes/workflow-durable-path-throughput.md`; the pre-change line follows |
 | `mix test` | 1651/1652 passed while two other suites and a bench cell ran; the one failure passes alone (`mix test --failed`: 1 passed) |
 | `cargo test -p flz_core` | 110 passed |
 | `cargo test -p flezha_runner --features bench-internals,testing --lib --tests` | all green (130 lib + feature suites) |

@@ -13,9 +13,10 @@ defmodule Flezha.State.Metrics do
     6. `:fsync_durability_lag_ms` — gauge
 
   Plus `:dedup_drops_total`, `:wal_seq` (gauge for last persisted seq),
-  `:wal_shed_total` (appends dropped past the hard in-memory bound), and
+  `:wal_shed_total` (appends dropped past the hard in-memory bound),
   `:stale_writer_refused_total` (frames refused from a takeover-superseded
-  session), for a total of 10. Allocations are lazy and stored in a
+  session) and `:fsync_total` (syncs the writer ran — what a batch of appends
+  shares), for a total of 11. Allocations are lazy and stored in a
   module-level `:ets` table keyed by `entity_id`.
   """
 
@@ -33,7 +34,8 @@ defmodule Flezha.State.Metrics do
     :dedup_drops_total,
     :wal_seq,
     :wal_shed_total,
-    :stale_writer_refused_total
+    :stale_writer_refused_total,
+    :fsync_total
   ]
 
   @counter_indices @counters |> Enum.with_index(1) |> Enum.into(%{})

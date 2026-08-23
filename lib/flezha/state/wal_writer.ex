@@ -88,7 +88,14 @@ defmodule Flezha.State.WalWriter do
     :outbox_last_seq,
     # A `Flezha.State.SeqIndex` over the file: a cut at either end finds its
     # boundary within one sample span and copies only the kept side.
-    :seq_index
+    :seq_index,
+    # Batched appends owed their reply: `{from, reply}` newest first, answered
+    # in append order once the records are synced.
+    :sync_waiters,
+    # `header => seq` of every record still in the file, for a log whose
+    # appends dedup on their header (a record log's barrier or inbox entry).
+    # Built from the file on the first keyed append, never for a stream WAL.
+    :header_index
   ]
 
   @type t :: %__MODULE__{
@@ -199,18 +206,63 @@ defmodule Flezha.State.WalWriter do
   def fsync_async(server), do: GenServer.cast(server, :fsync)
 
   @doc """
-  Append one record at the log's own next seq and fsync it, answering the seq it
-  was assigned. Seq assignment, write and fsync are one call because they are
-  one decision: two processes appending to the same log would otherwise read the
-  same tail and collide, and the loser's record would be refused as a duplicate.
-  """
-  @spec append_next(GenServer.server(), binary(), binary()) ::
-          {:ok, non_neg_integer()} | {:error, term()}
-  def append_next(server, header, body),
-    do: GenServer.call(server, {:append_next, header, body})
+  Append one record at the log's own next seq, answering the seq it was
+  assigned once it is durable. Seq assignment and write are one call because
+  they are one decision: two processes appending to the same log would
+  otherwise read the same tail and collide, and the loser's record would be
+  refused as a duplicate.
 
-  @spec truncate_up_to(GenServer.server(), non_neg_integer()) :: :ok
-  def truncate_up_to(server, seq), do: GenServer.call(server, {:truncate_up_to, seq})
+  `sync: :sync` (the default) fsyncs before answering. `sync: :batched` marks
+  the writer dirty and answers when the batch that holds the record has synced
+  — the `FsyncBatcher` tick, a prefix cut, or a clean close — so every append
+  that lands in one tick shares one fsync, and the reply is never earlier than
+  the sync. A writer that dies in between never answers, which fails the
+  caller's call (or its `send_request`, see `append_next_async/6`).
+
+  `dedup: true` refuses a record whose 16-byte header matches one still in the
+  file, answering `{:duplicate, seq}` with the existing record's seq — the
+  idempotency a re-sent barrier or a re-sent inbox message needs. The index is
+  built from the file on the first keyed append and trimmed by every prefix
+  cut, so a log that never dedups pays nothing.
+  """
+  @spec append_next(GenServer.server(), binary(), binary(), keyword()) ::
+          {:ok, non_neg_integer()} | {:duplicate, non_neg_integer()} | {:error, term()}
+  def append_next(server, header, body, opts \\ []),
+    do: GenServer.call(server, {:append_next, header, body, opts})
+
+  @doc """
+  `append_next/4` issued with `:gen_server.send_request/4` under `label` into
+  `reqids`: the caller carries on and collects the answer — the same reply, or
+  the writer's exit — with `:gen_server.check_response/3`. With
+  `sync: :batched` the answer IS the durability token: it arrives when the
+  batch has synced, never before.
+  """
+  @spec append_next_async(
+          GenServer.server(),
+          binary(),
+          binary(),
+          keyword(),
+          :gen_server.request_id_collection(),
+          term()
+        ) :: :gen_server.request_id_collection()
+  def append_next_async(server, header, body, opts, reqids, label),
+    do: :gen_server.send_request(server, {:append_next, header, body, opts}, label, reqids)
+
+  @doc """
+  Drop the records at or below `seq`. `min_bytes: n` defers the file rewrite
+  while fewer than `n` bytes lie below the cut — the records stay on disk until
+  a later request finds enough of them, so a log cut at every turn pays its
+  fsync'd rewrite once per `n` bytes rather than once per turn. A keyed log's
+  dedup window releases the records either way.
+  """
+  @spec truncate_up_to(GenServer.server(), non_neg_integer(), keyword()) :: :ok
+  def truncate_up_to(server, seq, opts \\ []),
+    do: GenServer.call(server, {:truncate_up_to, seq, opts})
+
+  @doc "Fire-and-forget `truncate_up_to/3`, for a cut whose caller has no use for the answer."
+  @spec truncate_up_to_async(GenServer.server(), non_neg_integer(), keyword()) :: :ok
+  def truncate_up_to_async(server, seq, opts \\ []),
+    do: GenServer.cast(server, {:truncate_up_to, seq, opts})
 
   @doc """
   Rewind the Entity to `seq` under `epoch`: keep the records at or below it,
@@ -267,15 +319,19 @@ defmodule Flezha.State.WalWriter do
   def last_persisted_seq(server), do: GenServer.call(server, :last_persisted_seq)
 
   @doc """
-  Register one workflow transactional-outbox entry as owed to the sinks, so its
-  `outbox_flushed` marker is appended once they confirm. `:already_awaiting`
-  means a previous flush already handed this entry to the chain and the caller
-  must not deliver it again.
+  Deliver one workflow transactional-outbox entry — its stamped `outputs`, to
+  `overwatch` — under `key`, registering the entry as owed to the sinks so its
+  `outbox_flushed` marker is appended once they confirm; `telemetry` is the
+  `{event, measurements, metadata}` emitted with the delivery. An entry a
+  previous flush already handed to the chain is not delivered again: the
+  writer owns the awaiting set, so the check and the dispatch are one step in
+  its loop. Fire-and-forget — the flush is journal-driven and re-entrant, so
+  a caller never waits on this writer's sync.
   """
-  @spec await_outbox(GenServer.server(), Outbox.key(), pos_integer()) ::
-          :ok | :already_awaiting
-  def await_outbox(server, key, outputs),
-    do: GenServer.call(server, {:outbox_await, key, outputs})
+  @spec flush_outbox(GenServer.server(), Outbox.key(), [term()], pid(), {[atom()], map(), map()}) ::
+          :ok
+  def flush_outbox(server, key, outputs, overwatch, telemetry),
+    do: GenServer.cast(server, {:outbox_flush, key, outputs, overwatch, telemetry})
 
   @doc "Live effectively-once outbox status (`flz state outbox`)."
   @spec outbox_status(GenServer.server(), timeout()) :: map()
@@ -396,7 +452,9 @@ defmodule Flezha.State.WalWriter do
       outbox_inflight_max: outbox_inflight_max(),
       outbox_resettle_ms: outbox_resettle_ms(),
       outbox_last_seq: -1,
-      seq_index: SeqIndex.new()
+      seq_index: SeqIndex.new(),
+      sync_waiters: [],
+      header_index: nil
     }
 
     {:ok, state, {:continue, :open}}
@@ -503,15 +561,21 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
-  def handle_call({:append_next, header, body}, from, state) do
-    seq = state.last_persisted_seq + 1
+  def handle_call({:append_next, header, body, opts}, from, state) do
+    dedup? = Keyword.get(opts, :dedup, false)
+    state = if dedup?, do: ensure_header_index(state), else: state
 
-    case handle_call({:append, seq, header, body, nil}, from, state) do
-      {:reply, :ok, state} ->
-        {:reply, {:ok, seq}, do_fsync(state)}
+    case dedup? and Map.fetch(state.header_index, header) do
+      {:ok, seq} ->
+        answer(state, from, {:duplicate, seq}, opts)
 
-      {:reply, error, state} ->
-        {:reply, error, state}
+      _ ->
+        seq = state.last_persisted_seq + 1
+
+        case handle_call({:append, seq, header, body, nil}, from, state) do
+          {:reply, :ok, state} -> answer(state, from, {:ok, seq}, opts)
+          {:reply, error, state} -> {:reply, error, state}
+        end
     end
   end
 
@@ -552,6 +616,7 @@ defmodule Flezha.State.WalWriter do
       state
       | file_handle: file,
         seq_index: seq_index,
+        header_index: nil,
         last_persisted_seq: seq,
         last_advance_at: now,
         pending_bytes: 0,
@@ -571,11 +636,15 @@ defmodule Flezha.State.WalWriter do
   # Drop the records at or below `seq` (compaction's prefix, a retention
   # cut). The cut runs in this loop — under the effectively-once tier every
   # output rides it — so it costs the tail, never the file. A cut with nothing
-  # below it (a retention tick on a writer compaction already cut) answers at
-  # once; only a writer awaiting its baseline still records the seq, which is
-  # what establishes the baseline.
-  def handle_call({:truncate_up_to, seq}, _from, state) do
-    case cut_below(state.wal_path, state.file_handle, state.seq_index, seq + 1) do
+  # below it (a retention tick on a writer compaction already cut), or with too
+  # little below it to be worth a rewrite yet, answers at once; only a writer
+  # awaiting its baseline still records the seq, which is what establishes the
+  # baseline. The dedup window releases the records in every case.
+  def handle_call({:truncate_up_to, seq, opts}, _from, state) do
+    min_bytes = Keyword.get(opts, :min_bytes, 0)
+    state = trim_header_index(state, seq)
+
+    case cut_below(state.wal_path, state.file_handle, state.seq_index, seq + 1, min_bytes) do
       {:ok, _cut, file, seq_index} ->
         {:reply, :ok, after_prefix_cut(%{state | file_handle: file, seq_index: seq_index}, seq)}
 
@@ -601,18 +670,6 @@ defmodule Flezha.State.WalWriter do
 
   def handle_call({:consumed_offset_at, seq}, _from, state) do
     {:reply, scan_consumed_at(state.file_handle, seq), state}
-  end
-
-  # The workflow flush registers its entry here rather than inline (a stream
-  # writer registers its own as it dispatches). `:already_awaiting` is what
-  # keeps a re-entered journal flush from re-delivering an entry whose marker is
-  # merely waiting on the sinks.
-  def handle_call({:outbox_await, key, outputs}, _from, state) do
-    if Map.has_key?(state.outbox_awaiting, key) do
-      {:reply, :already_awaiting, state}
-    else
-      {:reply, :ok, register_entry(state, key, outputs, nil)}
-    end
   end
 
   def handle_call(:outbox_status, _from, state) do
@@ -643,6 +700,17 @@ defmodule Flezha.State.WalWriter do
     {:reply, status, state}
   end
 
+  # The append's reply under its sync mode. Synchronous: fsync now. Batched: owed
+  # until the next sync — unless nothing is un-synced (a duplicate against a
+  # clean writer), in which case the record it names is durable already.
+  defp answer(state, from, reply, opts) do
+    case Keyword.get(opts, :sync, :sync) do
+      :sync -> {:reply, reply, do_fsync(state)}
+      :batched when state.pending_since_us == nil -> {:reply, reply, state}
+      :batched -> {:noreply, %{state | sync_waiters: [{from, reply} | state.sync_waiters]}}
+    end
+  end
+
   @impl true
   def handle_cast({:append_async, seq, header, change_bytes, runner_id, credit_opts}, state) do
     state = %{state | credit_active?: Map.has_key?(credit_opts, :channel)}
@@ -662,9 +730,30 @@ defmodule Flezha.State.WalWriter do
     end
   end
 
+  def handle_cast(:fsync, state), do: {:noreply, do_fsync(state)}
+
+  def handle_cast({:truncate_up_to, seq, opts}, state) do
+    {:reply, :ok, state} = handle_call({:truncate_up_to, seq, opts}, nil, state)
+    {:noreply, state}
+  end
+
+  # The workflow flush: the entry is registered here, in the writer that owns
+  # the awaiting set, and dispatched from here (a stream writer registers its
+  # own as it dispatches). An entry already awaiting is one a previous flush
+  # handed to the chain and whose marker is merely waiting on the sinks.
+  def handle_cast({:outbox_flush, key, outputs, overwatch, {event, measurements, meta}}, state) do
+    if Map.has_key?(state.outbox_awaiting, key) do
+      {:noreply, state}
+    else
+      state = register_entry(state, key, length(outputs), nil)
+      Outbox.dispatch(overwatch, outputs)
+      :telemetry.execute(event, measurements, meta)
+      {:noreply, state}
+    end
+  end
+
   # Delivery confirmation (`Flezha.State.Outbox`): sinks report against the entry
   # the flush registered, whichever flush registered it.
-  def handle_cast(:fsync, state), do: {:noreply, do_fsync(state)}
 
   def handle_cast({:outbox_hold, key}, state),
     do: {:noreply, tally(state, key, &%{&1 | holds: &1.holds + 1})}
@@ -716,12 +805,15 @@ defmodule Flezha.State.WalWriter do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
+  # A clean close syncs what it holds and answers the batched appends it owes;
+  # a crash answers nobody, so a waiter fails instead of reading as durable.
   @impl true
-  def terminate(_reason, %{file_handle: file} = state) when not is_nil(file) do
-    _ = :file.datasync(file)
+  def terminate(reason, %{file_handle: file} = state) when not is_nil(file) do
+    synced = :file.datasync(file)
     _ = :file.close(file)
     _ = flush_credit_pending(state)
     _ = persist_dedup(state)
+    if synced == :ok and clean_exit?(reason), do: reply_synced(state)
     :ok
   end
 
@@ -730,10 +822,13 @@ defmodule Flezha.State.WalWriter do
     :ok
   end
 
+  defp clean_exit?(reason), do: reason in [:normal, :shutdown] or match?({:shutdown, _}, reason)
+
   defp do_fsync(state) do
     t0 = System.monotonic_time(:microsecond)
     :ok = :file.datasync(state.file_handle)
     t1 = System.monotonic_time(:microsecond)
+    Metrics.add(state.metrics, :fsync_total, 1)
 
     record_latency_sample(state.metrics, state.latency_reservoir, div(t1 - t0, 1000))
     |> case do
@@ -764,9 +859,47 @@ defmodule Flezha.State.WalWriter do
         # batch (never per record).
         new_state = %{new_state | outbox_durable_seq: new_state.last_persisted_seq}
         new_state = try_dispatch_outbox(new_state)
-        persist_dedup(new_state)
+        new_state |> persist_dedup() |> reply_synced()
     end
   end
+
+  # Everything appended is durable: answer the batched appends, oldest first.
+  defp reply_synced(%{sync_waiters: []} = state), do: state
+
+  defp reply_synced(state) do
+    state.sync_waiters
+    |> Enum.reverse()
+    |> Enum.each(fn {from, reply} -> GenServer.reply(from, reply) end)
+
+    %{state | sync_waiters: []}
+  end
+
+  # ---------- Header dedup ----------
+
+  # `header => seq` for every record in the file, built once per writer
+  # lifetime by the first keyed append. The file is the set a keyed log dedups
+  # against: a prefix cut trims it, a rewrite of the lineage drops it for a
+  # rebuild.
+  defp ensure_header_index(%{header_index: nil} = state) do
+    index =
+      fold_records(state.file_handle, %{}, fn {seq, header, _body}, acc ->
+        {:cont, Map.put(acc, header, seq)}
+      end)
+
+    %{state | header_index: index}
+  end
+
+  defp ensure_header_index(state), do: state
+
+  defp note_header(%{header_index: nil} = state, _header, _seq), do: state
+
+  defp note_header(state, header, seq),
+    do: %{state | header_index: Map.put(state.header_index, header, seq)}
+
+  defp trim_header_index(%{header_index: nil} = state, _seq), do: state
+
+  defp trim_header_index(state, seq),
+    do: %{state | header_index: Map.reject(state.header_index, fn {_, s} -> s <= seq end)}
 
   # The bookkeeping a prefix cut owes once the file is shorter: the rewrite
   # fsynced the kept tail, so everything pending is durable.
@@ -784,7 +917,7 @@ defmodule Flezha.State.WalWriter do
     state = %{state | pending_bytes: 0, pending_since_us: nil, oldest_unsnapshotted_at: oldest}
 
     # Rotation/compaction is one of the dedup file's advance points.
-    persist_dedup(state)
+    state |> persist_dedup() |> reply_synced()
   end
 
   # ---------- Append / realign ----------
@@ -811,7 +944,7 @@ defmodule Flezha.State.WalWriter do
     new_pending = state.pending_bytes + size
 
     new_state = %{
-      state
+      note_header(state, header, seq)
       | last_persisted_seq: seq,
         seq_index: SeqIndex.note(state.seq_index, seq, size),
         last_advance_at: now,
@@ -1032,10 +1165,10 @@ defmodule Flezha.State.WalWriter do
   # which is what keeps a chain with no delivery-guaranteed sink behaving as it
   # always did.
   #
-  # Registration always precedes the reports (a stream writer registers inside
-  # the handler that casts, the journal flush registers with a call), so a report
-  # against an unknown entry is one a resettle superseded — dropped, because the
-  # live registration owns the entry now. `entry` is retained for exactly that
+  # Registration always precedes the reports (both the stream dispatch and the
+  # journal flush register inside the handler that casts), so a report against
+  # an unknown entry is one a resettle superseded — dropped, because the live
+  # registration owns the entry now. `entry` is retained for exactly that
   # resettle; the journal flush keeps `nil` and re-drives from its own journal.
   defp register_entry(state, key, outputs, entry) do
     tally = %{pending: outputs, holds: 0, confirms: 0, done?: false, entry: entry, at: now_ms()}
@@ -1271,7 +1404,8 @@ defmodule Flezha.State.WalWriter do
         owning_runner: runner_id,
         pending_bytes: 0,
         pending_since_us: nil,
-        oldest_unsnapshotted_at: nil
+        oldest_unsnapshotted_at: nil,
+        header_index: nil
     }
 
     # A realign discards the whole lineage, so nothing in the new one has been
@@ -1561,16 +1695,17 @@ defmodule Flezha.State.WalWriter do
   one sample span, the kept tail is copied as bytes into `<path>.rewriting`,
   fsynced and renamed into place, and the handle is reopened on the new file
   at its end. Answers `{:ok, cut_bytes, device, index}` with the index
-  rebased; `:none` when nothing is below the floor; `{:error, reason}` when
-  the file is gone (a cut queued behind its directory's removal), with the
+  rebased; `:none` when nothing is below the floor, or fewer than `min_bytes`
+  are (the rewrite is not worth its fsync yet); `{:error, reason}` when the
+  file is gone (a cut queued behind its directory's removal), with the
   caller's handle untouched. Both record logs cut through this, so a cut costs
   the tail, never the file.
   """
-  @spec cut_below(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer()) ::
+  @spec cut_below(Path.t(), :file.io_device(), SeqIndex.t(), non_neg_integer(), non_neg_integer()) ::
           {:ok, non_neg_integer(), :file.io_device(), SeqIndex.t()} | :none | {:error, term()}
-  def cut_below(path, device, index, floor) do
+  def cut_below(path, device, index, floor, min_bytes \\ 0) do
     case SeqIndex.position_of(index, device, floor) do
-      0 ->
+      cut when cut == 0 or cut < min_bytes ->
         :none
 
       cut ->

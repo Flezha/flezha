@@ -103,6 +103,7 @@ class HostClassDeclarationTest {
         assertThat(workflow.get("rollback_mode").asText()).isEqualTo("all_or_nothing");
         assertThat(workflow.get("retry_attempts").asInt()).isEqualTo(3);
         assertThat(workflow.get("retry_backoff_ms").asLong()).isEqualTo(500);
+        assertThat(workflow.get("barrier_retry_attempts").asInt()).isEqualTo(3);
         assertThat(workflow.get("max_duration_ms").asLong()).isEqualTo(30_000);
         assertThat(workflow.has("wake_after_ms")).isFalse();
         assertThat(decl.has("sync_durability"))
@@ -137,8 +138,7 @@ class HostClassDeclarationTest {
     @DisplayName("the checkpoint interval options ride the declaration only when declared")
     void checkpointIntervalOptions() throws Exception {
         StreamOperativeClassRegistry.registerClass(BatchedOutputsOperative.class);
-        StreamOperativeTopology topology =
-                StreamOperativeClassRegistry.getTopology("decl_batched_op");
+        StreamOperativeTopology topology = StreamOperativeClassRegistry.getTopology("decl_batched_op");
         JsonNode decl = JSON.readTree(HostClassDeclaration.forStream(topology));
 
         assertThat(decl.get("ack_granularity").asText()).isEqualTo("checkpoint");
@@ -150,8 +150,7 @@ class HostClassDeclarationTest {
     @Test
     @DisplayName("an interval option without the tier is refused, naming the missing tier")
     void checkpointOptionsWithoutTier() {
-        assertThatThrownBy(
-                        () -> StreamOperativeClassRegistry.registerClass(NoTierBatchedOperative.class))
+        assertThatThrownBy(() -> StreamOperativeClassRegistry.registerClass(NoTierBatchedOperative.class))
                 .hasMessageContaining("CheckpointAckWithoutTier");
     }
 

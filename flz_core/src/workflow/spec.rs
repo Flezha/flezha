@@ -77,6 +77,10 @@ pub struct WorkflowSpec {
     /// (`workflow-entity-retry`), on the same policy type the stream
     /// retry-then-park loop uses.
     pub retry: RetryPolicy,
+    /// Sends of one commit barrier (first send included) before an unacked
+    /// `ProcCommit` / `IterCommit` fails the run; the re-sends wait out
+    /// `retry`'s backoff.
+    pub barrier_retry_attempts: u32,
     /// Class-level persistence toggle; when true, a structured workflow's
     /// per-Entity Changes are flushed to the WAL as they apply.
     pub persistence_enabled: bool,
@@ -102,6 +106,7 @@ impl std::fmt::Debug for WorkflowSpec {
             .field("rollback_mode", &self.rollback_mode)
             .field("loop_mode", &self.loop_mode)
             .field("retry", &self.retry)
+            .field("barrier_retry_attempts", &self.barrier_retry_attempts)
             .field("persistence_enabled", &self.persistence_enabled)
             .field("sync_durability", &self.sync_durability)
             .finish()

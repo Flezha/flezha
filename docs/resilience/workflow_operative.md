@@ -150,7 +150,12 @@ A structured class declares its chain a loop with `loop_mode()`:
 | `Chained` | the previous iteration's terminal handoff (refinement) | an iteration releases an empty batch |
 
 **Iteration = a durable boundary.** Each iteration runs the whole chain under
-the existing per-procedure `ProcCommit` gating and ends with an `IterCommit`: the
+the existing per-procedure `ProcCommit` gating and ends with an `IterCommit` (batched
+and re-sent like a `ProcCommit`; once durable, the controller cuts the journal
+below the oldest entry its fold still needs, so a loop's journal is bounded by one
+iteration plus a settled prefix below the 64 KiB cut threshold — a class with
+compensable procedures keeps its history, which the saga and a rewind replan
+from): the
 controller journals `iter_committed(N, consumed_inbox_offset)` with the
 iteration's terminal handoff, snapshots the instance's entities at the boundary,
 flushes what the iteration staged, and releases the consumed inbox prefix. A
@@ -377,7 +382,18 @@ resumes **at the first procedure not recorded in the proc-journal**
 (`workflow-proc-journal`): at every procedure barrier the Rust driver ships
 `ProcCommit` (proc index, entities that ran, the inter-proc handoff serialized through
 the channel's byte codec) and blocks until the controller has fsynced the
-`proc_committed` entry into the instance's `proc.journal`. A class declaring
+`proc_committed` entry into the instance's `proc.journal`. That fsync is
+**batched**: the entry is written through the journal's writer and made
+durable by the controller's `FsyncBatcher` tick, and every barrier that landed
+in the tick — across every instance on the runner — is acked after that one
+sync, never before. The control-channel reader does no disk I/O; a per-runner
+commit worker journals and acks, so a commit storm never delays a ping, a
+stop, a park or a compaction on the same channel. An ack that misses the
+driver's wait (30 s) is **re-sent** under the same `reference_id` — the
+controller journals a barrier once by its identity and answers the re-send
+from the existing entry — up to `barrier_retry_attempts()` /
+`barrierRetryAttempts()` sends (default 3, the class's retry backoff between
+them); only the exhausted ladder is a terminal error. A class declaring
 `SYNC_DURABILITY = true` (`durability: :sync_remote` on the wire) additionally
 has the controller ship the journal suffix to the
 [remote durability tier](../remote_durability_tier.md) and await the backend

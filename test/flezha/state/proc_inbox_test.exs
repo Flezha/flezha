@@ -6,10 +6,14 @@ defmodule FlezhaTest.State.ProcInboxTest do
   """
   use ExUnit.Case, async: false
 
+  import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
+
   alias Flezha.State.{ProcInbox, ProcJournal, Registry, TestHelpers, WalWriter}
 
   setup do
     root = TestHelpers.tmp_app_data_dir()
+    # Every release rewrites the file at once, so the cases can read it.
+    on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 0))
 
     on_exit(fn ->
       Application.delete_env(:flezha, :state_root)
@@ -75,14 +79,60 @@ defmodule FlezhaTest.State.ProcInboxTest do
 
     assert Enum.map(ProcInbox.undelivered(inst), & &1.offset) == [1, 2, 3]
 
-    # Iteration 0 commits, having consumed through offset 2.
+    # Iteration 0 commits, having consumed through offset 2, and releases it.
     :ok = ProcJournal.append_iter_committed(inst, 0, 2, [])
-
     assert Enum.map(ProcInbox.undelivered(inst), & &1.offset) == [3]
+    :ok = ProcInbox.truncate(inst, 2)
 
     # A payload identical to a CONSUMED one is a new message: the dedup window
     # only covers what the operative has not seen yet.
     assert {:ok, 4} = ProcInbox.append(inst, "a", %{})
+    # … while an undelivered one is still absorbed.
+    assert {:duplicate, 3} = ProcInbox.append(inst, "c", %{})
+    assert Enum.map(ProcInbox.undelivered(inst), & &1.offset) == [3, 4]
+  end
+
+  test "a release below the cut threshold defers the rewrite but not the window" do
+    on_exit(TestHelpers.override_env(:record_log_cut_after_bytes, 65_536))
+    inst = instance_id()
+
+    for n <- 1..3, do: {:ok, ^n} = ProcInbox.append(inst, "m#{n}", %{})
+    :ok = ProcInbox.truncate(inst, 2)
+
+    assert Enum.map(ProcInbox.read(inst), & &1.offset) == [1, 2, 3],
+           "a few hundred bytes are not worth an fsync'd rewrite yet"
+
+    # Released is released: a consumed payload is a new message.
+    assert {:ok, 4} = ProcInbox.append(inst, "m1", %{})
+    assert {:duplicate, 3} = ProcInbox.append(inst, "m3", %{})
+  end
+
+  test "a duplicate is absorbed across a writer restart" do
+    inst = instance_id()
+    meta = %{"flz.msg_id" => "m-9"}
+
+    assert {:ok, 1} = ProcInbox.append(inst, "hello", meta)
+    close_inbox_writer(inst)
+
+    # The reopened writer rebuilds its window from the file — no journal fold,
+    # no second copy of the fact.
+    assert {:duplicate, 1} = ProcInbox.append(inst, "hello", meta)
+    assert {:ok, 2} = ProcInbox.append(inst, "other", %{})
+  end
+
+  test "the ingest's append answers once the batch has synced, in seq space" do
+    inst = instance_id()
+
+    reqids = ProcInbox.append_async(inst, "one", %{}, :gen_server.reqids_new(), :one)
+    reqids = ProcInbox.append_async(inst, "one", %{}, reqids, :dup)
+
+    assert {{:reply, {:ok, seq}}, :one, reqids} = :gen_server.wait_response(reqids, 2_000, true)
+    assert ProcInbox.offset(seq) == 1
+
+    assert {{:reply, {:duplicate, ^seq}}, :dup, _} =
+             :gen_server.wait_response(reqids, 2_000, true)
+
+    assert [%{offset: 1, message: "one"}] = ProcInbox.read(inst)
   end
 
   test "truncation releases consumed entries and preserves the offsets above it" do
@@ -93,7 +143,8 @@ defmodule FlezhaTest.State.ProcInboxTest do
     :ok = ProcJournal.append_iter_committed(inst, 0, 2, [])
     :ok = ProcInbox.truncate(inst, 2)
 
-    assert Enum.map(ProcInbox.read(inst), & &1.offset) == [3, 4],
+    # The cut is the writer's to run, behind the call.
+    assert wait_until(fn -> Enum.map(ProcInbox.read(inst), & &1.offset) == [3, 4] end, 2_000),
            "offsets survive truncation — they are the durable delivery cursor"
 
     assert Enum.map(ProcInbox.undelivered(inst), & &1.offset) == [3, 4]

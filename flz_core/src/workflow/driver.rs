@@ -45,11 +45,15 @@ use crate::state_sink::{COMPENSATION_DONE_PAYLOAD_ID, COMPENSATION_INTENT_PAYLOA
 /// Type-erased value moving between workflow stages.
 pub(super) type Value = Arc<dyn Any + Send + Sync>;
 
-/// Upper bound on the wait for the controller's `ProcCommitResponse` /
-/// `IterCommitResponse` before the run terminates abnormally — the same posture
-/// as any mid-run channel loss (the un-acked proc/iteration re-runs on resume,
-/// at-least-once).
-const PROC_COMMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+/// Upper bound on one wait for the controller's `ProcCommitResponse` /
+/// `IterCommitResponse`. A wait that expires re-sends the same frame under the
+/// same `reference_id` (the controller's journal is idempotent by barrier
+/// identity) up to the class's `barrier_retry_attempts`, and only the exhausted
+/// ladder terminates the run abnormally — the same posture as any mid-run
+/// channel loss (the un-acked proc/iteration re-runs on resume,
+/// at-least-once). Overridable with `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`.
+const PROC_COMMIT_ACK_TIMEOUT_DEFAULT_MS: u64 = 30_000;
+const ENV_ACK_TIMEOUT_MS: &str = "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS";
 /// How often a blocked driver re-checks for a cooperative stop: the commit-ack
 /// wait, the inbox wait, and a stage's retry backoff all wake at this cadence
 /// (mirrors the restore gate's `RESUME_WAIT_CHUNK`).
@@ -110,6 +114,8 @@ pub(super) struct ChainCtx<'a> {
     inbox: &'a Receiver<InboxItem>,
     /// Per-entity retry ladder applied inside a stage (`workflow-entity-retry`).
     pub(super) retry: RetryPolicy,
+    /// Sends of one barrier before an unacked commit fails the run.
+    barrier_retry_attempts: u32,
     persistence_enabled: bool,
     /// Inbox items still owed by the controller for this bind, counted down
     /// as they arrive; the park-idle clock starts at zero.
@@ -351,6 +357,7 @@ fn run_structured(
         wake_after: spec.wake_after,
         inbox,
         retry: spec.retry,
+        barrier_retry_attempts: spec.barrier_retry_attempts,
         persistence_enabled: spec.persistence_enabled,
         owed_inbox: std::cell::Cell::new(instance.owed_inbox),
     };
@@ -1190,11 +1197,19 @@ fn outbox_items(slot: &Arc<EntitySlot>, staged: &[StagedOutput]) -> Vec<crate::p
 /// until the controller's durable ack. All three are "journal this, then tell me
 /// it is durable" round-trips over the same reference-id-keyed reply path.
 ///
+/// A wait that expires is not yet a failure: the same frame is re-sent under
+/// the same `reference_id` — the controller journals a barrier once by its
+/// identity and acks a re-send from the existing entry — after the class's
+/// retry backoff, up to its `barrier_retry_attempts`; a transient control
+/// channel stall therefore delays the chain instead of ending it. The waiter
+/// stays registered across the ladder, so a late ack to an earlier send
+/// continues the chain too.
+///
 /// `abort_on_cancel` aborts the wait early on a cooperative cancel, which the
 /// caller maps to the `cancelled` terminal status. The compensation undo record
 /// passes `false`: rollback IS the response to that cancel, and abandoning the
 /// record because the token is set would drop the undo output it carries — it
-/// waits out the full ack deadline instead.
+/// waits out the full ladder instead.
 fn ship_and_await(
     ctx: &ChainCtx,
     idx: usize,
@@ -1209,35 +1224,86 @@ fn ship_and_await(
         crate::util::nonce_suffix()
     );
     let rx = crate::shutdown::register_pending_ack(reference_id.clone());
-    crate::runner::emit_control_request(reference_id.clone(), command);
+    let attempts = ctx.barrier_retry_attempts.max(1);
+    let policy = RetryPolicy {
+        max_attempts: attempts,
+        backoff_base_ms: ctx.retry.backoff_base_ms,
+    };
+    let timeout = ack_timeout();
 
-    // Chunked wait so a cooperative cancel is observed promptly.
-    let deadline = Instant::now() + PROC_COMMIT_ACK_TIMEOUT;
-    loop {
-        match rx.recv_timeout(CANCEL_POLL_CHUNK) {
-            Ok(Ok(_)) => return Ok(()),
-            Ok(Err(e)) => {
-                return Err(format!("{what} {idx} refused by controller: {e}"));
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if abort_on_cancel && ctx.instance.cancel.load(Ordering::Acquire) {
-                    crate::shutdown::drop_pending_ack(&reference_id);
-                    return Err(format!("{what} {idx} interrupted by stop"));
-                }
-                if Instant::now() >= deadline {
-                    crate::shutdown::drop_pending_ack(&reference_id);
-                    return Err(format!(
-                        "{what} {idx} ack timed out after {}s",
-                        PROC_COMMIT_ACK_TIMEOUT.as_secs()
-                    ));
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                crate::shutdown::drop_pending_ack(&reference_id);
-                return Err(format!("{what} {idx} waiter dropped"));
+    for attempt in 1..=attempts {
+        crate::runner::emit_control_request(reference_id.clone(), command.clone());
+
+        let mut outcome = await_ack(ctx, &rx, timeout, abort_on_cancel);
+        if matches!(outcome, AckWait::TimedOut) && attempt < attempts {
+            // The backoff is one more wait on the same receiver: a late ack to
+            // this send ends the ladder instead of costing a re-send.
+            let delay = crate::retry::note_failed_attempt(
+                &format!("workflow {} {what} {idx}", ctx.instance_id),
+                attempt,
+                policy,
+                &"ack timed out",
+            );
+            outcome = await_ack(ctx, &rx, delay, abort_on_cancel);
+            if matches!(outcome, AckWait::TimedOut) {
+                continue;
             }
         }
+        let error = match outcome {
+            AckWait::Acked => return Ok(()),
+            AckWait::Refused(e) => format!("{what} {idx} refused by controller: {e}"),
+            AckWait::Interrupted => format!("{what} {idx} interrupted by stop"),
+            AckWait::Dropped => format!("{what} {idx} waiter dropped"),
+            AckWait::TimedOut => format!(
+                "{what} {idx} ack timed out after {attempts} attempt(s) of {}s",
+                timeout.as_secs()
+            ),
+        };
+        crate::shutdown::drop_pending_ack(&reference_id);
+        return Err(error);
     }
+    unreachable!("the ladder returns from its last attempt")
+}
+
+/// How one ack wait ended.
+enum AckWait {
+    Acked,
+    Refused(String),
+    Interrupted,
+    Dropped,
+    TimedOut,
+}
+
+/// One wait for the ack, chunked so a cooperative cancel is observed promptly.
+fn await_ack(
+    ctx: &ChainCtx,
+    rx: &mpsc::Receiver<crate::shutdown::AckResult>,
+    timeout: Duration,
+    abort_on_cancel: bool,
+) -> AckWait {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match rx.recv_timeout(CANCEL_POLL_CHUNK) {
+            Ok(Ok(_)) => return AckWait::Acked,
+            Ok(Err(e)) => return AckWait::Refused(e),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if abort_on_cancel && ctx.instance.cancel.load(Ordering::Acquire) {
+                    return AckWait::Interrupted;
+                }
+                if Instant::now() >= deadline {
+                    return AckWait::TimedOut;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return AckWait::Dropped,
+        }
+    }
+}
+
+fn ack_timeout() -> Duration {
+    Duration::from_millis(crate::util::env_parse(
+        ENV_ACK_TIMEOUT_MS,
+        PROC_COMMIT_ACK_TIMEOUT_DEFAULT_MS,
+    ))
 }
 
 /// Roll back an abnormally-terminated chain. The in-flight iteration's completed

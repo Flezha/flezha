@@ -24,6 +24,18 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
   defp instance_id(), do: "confirm_#{System.unique_integer([:positive])}"
 
+  # A live process around the struct, for the cases whose unit is the host's
+  # loop: a durable log answers the host's mailbox, and a parked caller is a
+  # call that has not returned.
+  defmodule Host do
+    use GenServer
+    def start_link(state), do: GenServer.start_link(__MODULE__, state)
+    def init(state), do: {:ok, state}
+    defdelegate handle_call(msg, from, state), to: Overwatch
+    defdelegate handle_cast(msg, state), to: Overwatch
+    defdelegate handle_info(msg, state), to: Overwatch
+  end
+
   # Stand-in stream: the forward lands through `StreamChannel.io_in/3`, so the
   # test answers it and records what reached it. Returns an inert channel name.
   defp fake_channel(reply) do
@@ -75,27 +87,6 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
     assert_receive {:channel_got, ^inst, {"hello", _md}}
   end
 
-  test "a suspended target confirms {:ok, :suspended} after a durable append" do
-    inst = instance_id()
-    test_pid = self()
-
-    stub(ProcInbox, :append, fn ^inst, msg, _md ->
-      send(test_pid, {:appended, msg})
-      {:ok, 7}
-    end)
-
-    # No runner to rehydrate onto: the instance stays suspended and the payload
-    # waits in the inbox, which is exactly the guarantee the verdict reports.
-    stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, _ -> nil end)
-
-    state = state(inst, durable_workflow: true, suspended: true, channel: nil)
-
-    assert {:reply, {:ok, :suspended}, _state} =
-             Overwatch.handle_call({:ingest, "turn", %{}}, self(), state)
-
-    assert_receive {:appended, "turn"}
-  end
-
   test "a parked target reports not-ready instead of dropping" do
     state = state(instance_id(), init_error: :sdk_start_failed)
 
@@ -110,49 +101,84 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
              Overwatch.handle_call({:ingest, "drop-me now", %{}}, self(), state)
   end
 
-  test "a duplicate absorbed by the durable inbox reports absorbed" do
-    inst = instance_id()
-    stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:duplicate, 3} end)
+  describe "the durable inbox" do
+    setup :set_mimic_global_until_exit
 
-    state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
+    setup do
+      TestHelpers.start_state_tree()
+      :ok
+    end
 
-    assert {:reply, {:ok, :absorbed}, _state} =
-             Overwatch.handle_call({:ingest, "again", %{}}, self(), state)
+    # A writer that refuses every append.
+    defmodule RefusingWriter do
+      use GenServer
+      def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+      def init(nil), do: {:ok, nil}
+      def handle_call(_append, _from, state), do: {:reply, {:error, :enospc}, state}
+    end
 
-    refute_receive {:channel_got, _, _}, 50
-  end
+    test "a suspended target confirms {:ok, :suspended} once the append is durable, and wakes" do
+      inst = instance_id()
+      test_pid = self()
 
-  test "a durable-log refusal reports refused so the sender retries" do
-    inst = instance_id()
-    stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:error, :enospc} end)
-
-    state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
-
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        assert {:reply, {:error, :refused}, _state} =
-                 Overwatch.handle_call({:ingest, "doomed", %{}}, self(), state)
+      # No runner to rehydrate onto: the instance stays suspended and the payload
+      # waits in the inbox, which is exactly the guarantee the verdict reports.
+      stub(Flezha.Service.OperativeManager, :assign_runner, fn _, _, ^inst ->
+        send(test_pid, :rehydrate_asked)
+        nil
       end)
 
-    # append-before-forward: the refusal is loud, and names why nothing moved.
-    assert log =~ "durable-inbox append failed for #{inst}"
-    assert log =~ ":enospc"
-    assert log =~ "input NOT forwarded"
+      state = state(inst, durable_workflow: true, suspended: true, channel: nil)
+      {:ok, host} = start_supervised({Host, state})
 
-    refute_receive {:channel_got, _, _}, 50
-  end
+      assert {:ok, :suspended} = GenServer.call(host, {:ingest, "turn", %{}})
+      assert [%{offset: 1, message: "turn"}] = ProcInbox.undelivered(inst)
+      assert_receive :rehydrate_asked
+    end
 
-  test "an unbound stream is not-ready for a non-durable target, :ok for a durable one" do
-    inst = instance_id()
+    test "a duplicate absorbed by the durable inbox reports absorbed" do
+      inst = instance_id()
+      state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
+      {:ok, host} = start_supervised({Host, state})
 
-    assert {:reply, {:error, :not_ready}, _} =
-             Overwatch.handle_call({:ingest, "x", %{}}, self(), state(inst, channel: nil))
+      assert :ok = GenServer.call(host, {:ingest, "again", %{}})
+      assert_receive {:channel_got, ^inst, {"again", %{"flz.inbox_offset" => "1"}}}
 
-    stub(ProcInbox, :append, fn ^inst, _msg, _md -> {:ok, 1} end)
+      assert {:ok, :absorbed} = GenServer.call(host, {:ingest, "again", %{}})
+      refute_receive {:channel_got, _, _}, 50
+    end
 
-    durable = state(inst, durable_workflow: true, channel: nil)
+    test "a durable-log refusal reports refused so the sender retries" do
+      inst = instance_id()
+      {:ok, writer} = start_supervised(RefusingWriter)
+      stub(Supervisor, :find_or_start, fn {^inst, ^inst, _key} -> {:ok, writer} end)
 
-    assert {:reply, :ok, _} = Overwatch.handle_call({:ingest, "x", %{}}, self(), durable)
+      state = state(inst, durable_workflow: true, channel: fake_channel(:ok))
+      {:ok, host} = start_supervised({Host, state})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, :refused} = GenServer.call(host, {:ingest, "doomed", %{}})
+        end)
+
+      # append-before-forward: the refusal is loud, and names why nothing moved.
+      assert log =~ "durable-inbox append failed for #{inst}"
+      assert log =~ ":enospc"
+      assert log =~ "input NOT forwarded"
+
+      refute_receive {:channel_got, _, _}, 50
+    end
+
+    test "an unbound stream is not-ready for a non-durable target, :ok for a durable one" do
+      inst = instance_id()
+
+      assert {:reply, {:error, :not_ready}, _} =
+               Overwatch.handle_call({:ingest, "x", %{}}, self(), state(inst, channel: nil))
+
+      {:ok, host} = start_supervised({Host, state(inst, durable_workflow: true, channel: nil)})
+      assert :ok = GenServer.call(host, {:ingest, "x", %{}})
+      assert [%{message: "x"}] = ProcInbox.undelivered(inst)
+    end
   end
 
   test "an unresolvable target is not-found" do
@@ -236,18 +262,6 @@ defmodule FlezhaTest.Operative.OverwatchConfirmingIngestTest do
 
   describe "the effectively-once journal" do
     setup :set_mimic_global_until_exit
-
-    # A live process around the struct, because the unit here is the host's
-    # loop: the log answers the host's mailbox, and a parked caller is a call
-    # that has not returned.
-    defmodule Host do
-      use GenServer
-      def start_link(state), do: GenServer.start_link(__MODULE__, state)
-      def init(state), do: {:ok, state}
-      defdelegate handle_call(msg, from, state), to: Overwatch
-      defdelegate handle_cast(msg, state), to: Overwatch
-      defdelegate handle_info(msg, state), to: Overwatch
-    end
 
     # A 200-byte record overfills the window on its own (an empty ledger admits
     # any size); the short records behind it park until it is consumed, and

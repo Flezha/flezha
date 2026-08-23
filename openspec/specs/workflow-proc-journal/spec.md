@@ -38,17 +38,41 @@ torn trailing frame SHALL be truncated on open. An opted-out class
 The SDK SHALL send, at each procedure barrier of a durable structured workflow
 operative, a `ProcCommit` control-channel request carrying the procedure index,
 the set of entities that ran, and the serialized inter-proc handoff batch. The
-controller SHALL append the `proc_committed` entry, make it durable (fsync), and
-only then reply `ProcCommitResponse`. The driver SHALL NOT start the next
-procedure before receiving the successful response. A failed journal write SHALL
-be reported in the response and SHALL terminate the run abnormally (existing
-terminal-error path, including compensation). Opted-out classes SHALL skip the
-handshake entirely.
+controller SHALL append the `proc_committed` entry, make it durable, and only
+then reply `ProcCommitResponse`. Durability SHALL be batched: the append
+marks the journal writer dirty and the `FsyncBatcher` tick syncs every dirty
+writer with one fsync per file, after which the acks of every barrier that
+landed in the tick are released together. The control-channel reader process
+SHALL NOT perform the append, the fsync or the wait itself; a per-runner
+commit worker SHALL, so that pings, stops, parks and compactions on the same
+channel are never queued behind disk I/O. The driver SHALL NOT start the next
+procedure before receiving the successful response. A failed journal write
+SHALL be reported in the response and SHALL terminate the run abnormally
+(existing terminal-error path, including compensation). A barrier whose
+response does not arrive within the driver's wait SHALL be re-sent under the
+same `reference_id` up to a bounded number of attempts before the run fails;
+the controller SHALL treat a re-sent barrier whose entry is already journaled
+as acked. Opted-out classes SHALL skip the handshake entirely.
 
 #### Scenario: Next procedure waits for the durable ack
 
 - **WHEN** procedure A's entities all quiesce at the barrier
 - **THEN** procedure B SHALL start only after the controller has durably journaled `proc_committed(A)` and acked it
+
+#### Scenario: Barriers landing in one tick share one fsync
+
+- **WHEN** ten instances on one runner reach a barrier within one `FsyncBatcher` tick
+- **THEN** their ten `proc_committed` entries SHALL be made durable by that tick's sync and all ten `ProcCommitResponse`s SHALL be sent after it, none before
+
+#### Scenario: A commit storm does not delay the control channel's other commands
+
+- **WHEN** a runner has hundreds of barriers in flight
+- **THEN** a `:ping_runner` round trip on that runner's control channel SHALL complete within its timeout, because the reader forwards commits to the commit worker instead of journaling them inline
+
+#### Scenario: An unacked barrier is re-sent, not failed
+
+- **WHEN** a `ProcCommitResponse` does not arrive within the driver's wait
+- **THEN** the driver SHALL re-send the same `ProcCommit` under the same `reference_id`, and a controller that had already journaled the entry SHALL ack it without a second append
 
 #### Scenario: Journal write failure is a terminal run error
 

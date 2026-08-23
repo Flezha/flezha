@@ -1681,12 +1681,28 @@ message ProcCommitResponse {
 
 Reply to `ProcCommit` under the request's `reference_id`, emitted only
 AFTER the `proc_committed` entry is fsynced in the instance's
-`proc.journal` (journal-then-ack). A non-empty `error` (journal write
-failure, oversized handoff past the WAL-watermark-scale frame bound)
-terminates the run abnormally through the existing terminal-error path,
-including saga compensation. A timed-out ack (30 s) is treated as
-mid-run channel loss: the run terminates and crash-resume re-drives
-from the last committed proc (the un-acked proc re-runs — at-least-once).
+`proc.journal` (journal-then-ack). The fsync is batched: the entry is
+written through the journal's writer and made durable by the
+controller's `FsyncBatcher` tick, and the acks of every barrier that
+landed in the tick — across every instance on the runner — are released
+after that one sync, never before. The controller's control-channel
+reader does not journal: it hands the frame to a per-runner commit
+worker, so a commit storm never queues a ping, stop, park or compaction
+behind disk I/O. A non-empty `error` (journal write failure, oversized
+handoff past the WAL-watermark-scale frame bound) terminates the run
+abnormally through the existing terminal-error path, including saga
+compensation.
+
+An ack that does not arrive within the driver's wait (30 s,
+`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`) is **re-sent**: the SDK emits the same
+`ProcCommit` again under the **same `reference_id`**, after the class's
+retry backoff, up to `barrier_retry_attempts()` /
+`barrierRetryAttempts()` sends (default 3). The controller journals a
+barrier once by its identity `{proc_idx, iter, epoch}` and answers a
+re-send from the existing entry, so the re-send is idempotent. Only the
+exhausted ladder is treated as mid-run channel loss: the run terminates
+and crash-resume re-drives from the last committed proc (the un-acked
+proc re-runs — at-least-once).
 
 On crash-resume the journal state ships back on
 `AddOperative.proc_journal` (`ProcJournalState`): committed procedures
@@ -1780,10 +1796,23 @@ message IterCommitResponse {
 ```
 
 Reply under the request's `reference_id`, emitted only after the
-`iter_committed` entry is fsynced. Same terminal-error and 30 s-timeout
-contract as `ProcCommitResponse`. The driver enters iteration `iter + 1`
-only on success, so a crash re-runs at most the whole in-flight
-iteration — never a committed one.
+`iter_committed` entry is fsynced — batched, by the same tick and the
+same commit worker as `ProcCommitResponse`, with the same terminal-error
+contract and the same bounded re-send under the same `reference_id`
+(a re-sent `IterCommit` is journaled once by `{iter, epoch}`). The
+driver enters iteration `iter + 1` only on success, so a crash re-runs
+at most the whole in-flight iteration — never a committed one.
+
+Once `iter_committed` is durable the controller also **cuts** the
+proc-journal below the oldest entry its fold still needs — the latest
+`iter_committed`, the entries whose outbox is still owed, the latest
+`rewound` marker with the commits it still has to undo — so a loop's
+journal is bounded by one iteration (plus a settled prefix below the cut
+threshold, 64 KiB by default, which is what one fsync'd rewrite is worth)
+rather than by its history. The cut and the inbox release are the
+writers' own work, off the acking process. A class whose procedures
+declare `compensate` keeps its history: the saga's all-or-nothing
+rollback and a rewind replan from it.
 
 On crash-resume `AddOperative.proc_journal` carries `iter` (the
 iteration to resume at: the one after the highest journaled

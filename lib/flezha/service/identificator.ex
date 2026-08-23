@@ -43,6 +43,10 @@ defmodule Flezha.Service.Identificator do
     gen_via(runner_id, "cc")
   end
 
+  def commits(runner_id) do
+    gen_via(runner_id, "cmt")
+  end
+
   def hub(namespace) do
     gen_id(namespace, "hub") |> String.to_atom()
   end
