@@ -2,6 +2,9 @@
 name = "flz_core"
 version = "0.1.0"
 edition = "2021"
+description = "Flezha SDK kernel — poll-based dispatch, durable state, retries, timers and transport shared by the Rust and Java SDKs"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

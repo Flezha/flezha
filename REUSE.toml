@@ -1,0 +1,25 @@
+version = 1
+SPDX-PackageName = "Flezha"
+SPDX-PackageSupplier = "Anuar Alfetahe"
+SPDX-PackageDownloadLocation = "https://github.com/alfetahe/flezha"
+
+# Default: the controller, CLI, NIF, tests, docs and operations tooling.
+[[annotations]]
+path = ["**"]
+SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
+SPDX-License-Identifier = "MPL-2.0"
+
+# The SDK side, including the Elixir SDK that compiles into the controller app
+# and the wire contract every SDK implements. A later table wins for its paths.
+[[annotations]]
+path = [
+  "sdk/**",
+  "flz_core/**",
+  "flz_core_ffi/**",
+  "flz_transport/**",
+  "flezha-macros/**",
+  "lib/flezha/sdk/**",
+  "protobufs/**",
+]
+SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
+SPDX-License-Identifier = "Apache-2.0"

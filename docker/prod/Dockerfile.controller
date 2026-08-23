@@ -84,6 +84,8 @@ COPY config ./config
 COPY rel ./rel
 COPY protobufs ./protobufs
 COPY lib ./lib
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
+COPY LICENSES ./LICENSES
 
 RUN mkdir -p priv/native target/release
 COPY --from=rust-build /artifacts/flz_nif.so ./priv/native/flz_nif.so
@@ -98,6 +100,9 @@ RUN --mount=type=cache,target=/root/.hex \
 # only needs basic shared libs and tini. Runners attach via
 # `bin/flzvm remote` (the dist-node rsh shipped inside the release).
 FROM debian:bookworm-slim AS runtime
+
+LABEL org.opencontainers.image.licenses="MPL-2.0" \
+      org.opencontainers.image.source="https://github.com/alfetahe/flezha"
 
 WORKDIR /flezha
 

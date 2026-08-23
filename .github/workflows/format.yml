@@ -1,8 +1,9 @@
 name: Format
 
 # Source-shape gate. Runs `cargo fmt --check`, `mix format --check-formatted`,
-# and `mvn spotless:check` against every PR and `push: main`. Failure blocks
-# merge. The matching local script is `scripts/format-check.sh`; auto-fix
+# `mvn spotless:check`, `reuse lint` (the per-path license map) and a freshness
+# diff of the generated THIRD_PARTY_NOTICES.md against every PR and
+# `push: main`. Failure blocks merge. The matching local script is `scripts/format-check.sh`; auto-fix
 # with `scripts/format-apply.sh`.
 
 on:
@@ -28,6 +29,12 @@ on:
       - "rust-toolchain.toml"
       - ".formatter.exs"
       - ".github/workflows/format.yml"
+      - "REUSE.toml"
+      - "LICENSES/**"
+      - "NOTICE"
+      - "about.toml"
+      - "about.hbs"
+      - "THIRD_PARTY_NOTICES.md"
   push:
     branches: [main]
     paths:
@@ -51,6 +58,12 @@ on:
       - "rust-toolchain.toml"
       - ".formatter.exs"
       - ".github/workflows/format.yml"
+      - "REUSE.toml"
+      - "LICENSES/**"
+      - "NOTICE"
+      - "about.toml"
+      - "about.hbs"
+      - "THIRD_PARTY_NOTICES.md"
 
 env:
   CARGO_TERM_COLOR: always
@@ -106,3 +119,16 @@ jobs:
 
       - name: mvn spotless:check
         run: mvn -B -f sdk/java/pom.xml -DskipTests spotless:check
+
+      - name: reuse lint
+        uses: fsfe/reuse-action@v5
+
+      - name: Install cargo-about
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+
+      - name: THIRD_PARTY_NOTICES.md is fresh
+        run: |
+          cargo about generate about.hbs -o "${RUNNER_TEMP}/third_party_notices.md"
+          diff -u THIRD_PARTY_NOTICES.md "${RUNNER_TEMP}/third_party_notices.md"

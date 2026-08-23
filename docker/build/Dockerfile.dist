@@ -48,6 +48,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         aarch64-apple-darwin \
         x86_64-pc-windows-gnu \
     && cargo install cargo-zigbuild --locked \
+    && cargo install cargo-about --locked --features cli \
     && chmod -R a+rwx /usr/local/cargo /usr/local/rustup
 
 # ── Zig (via the ziglang Python wheel, same approach as host fallback) ──────

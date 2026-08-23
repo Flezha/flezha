@@ -9,7 +9,7 @@
     "start": "node --env-file-if-exists=../../../.env dist/index.js"
   },
   "author": "Anuar Alfetahe",
-  "license": "ISC",
+  "license": "MPL-2.0",
   "dependencies": {
     "@types/ws": "^8.5.13",
     "typescript": "^5.7.2",

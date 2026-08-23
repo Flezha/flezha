@@ -11,6 +11,28 @@
 
     <name>Flezha SDK Parent</name>
     <description>Java 21 SDK for authoring Flezha runners.</description>
+    <url>https://flezha.com</url>
+
+    <licenses>
+        <license>
+            <name>Apache-2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Anuar Alfetahe</name>
+            <url>https://github.com/alfetahe</url>
+        </developer>
+    </developers>
+
+    <scm>
+        <url>https://github.com/alfetahe/flezha</url>
+        <connection>scm:git:https://github.com/alfetahe/flezha.git</connection>
+        <developerConnection>scm:git:git@github.com:alfetahe/flezha.git</developerConnection>
+    </scm>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

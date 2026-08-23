@@ -11,6 +11,10 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/alfetahe/flezha"
+
 # Debug artifacts are dominated by DWARF: without these, dependency debuginfo is
 # re-embedded in full into every test and example binary in the workspace.
 [profile.dev]

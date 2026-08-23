@@ -2,6 +2,9 @@
 name = "flz_nif"
 version = "0.1.0"
 edition = "2021"
+license = "MPL-2.0"
+repository.workspace = true
+publish = false
 description = "Rustler NIF wrapping flz_transport for the Elixir controller"
 
 [lib]

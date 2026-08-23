@@ -2,6 +2,9 @@
 name = "flz_core_ffi"
 version = "0.1.0"
 edition = "2021"
+description = "C ABI and JNI bindings over flz_core for non-Rust Flezha SDK hosts"
+license.workspace = true
+repository.workspace = true
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]

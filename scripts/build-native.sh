@@ -113,6 +113,11 @@ esac
 
 command -v cargo  >/dev/null 2>&1 || { echo "cargo not found on PATH" >&2; exit 1; }
 command -v rustup >/dev/null 2>&1 || { echo "rustup not found on PATH" >&2; exit 1; }
+command -v cargo-about >/dev/null 2>&1 || {
+  echo "cargo-about required to regenerate THIRD_PARTY_NOTICES.md." >&2
+  echo "  cargo install cargo-about --locked --features cli" >&2
+  exit 1
+}
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -165,6 +170,11 @@ for triple in "${TRIPLES[@]}"; do
     echo "    -> ${DST}"
   done
 done
+
+# The binaries statically link their Rust dependencies; the attribution file
+# travels with them and CI diffs it against a fresh run.
+(cd "${REPO_ROOT}" && cargo about generate about.hbs -o THIRD_PARTY_NOTICES.md)
+echo "    -> ${REPO_ROOT}/THIRD_PARTY_NOTICES.md"
 
 echo "Done. Binaries staged under: ${OUTPUT_DIR}"
 echo "Remember to 'git add' the updated binaries so CI can package them."

@@ -2,6 +2,8 @@
 name = "flz_transport"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
+repository.workspace = true
 description = "Flezha shared transport library — QUIC, UDS, binary framing, protobuf"
 
 [lib]

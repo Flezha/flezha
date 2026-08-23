@@ -6,6 +6,12 @@ defmodule Flezha.MixProject do
       app: :flezha,
       version: "0.1.0",
       elixir: "~> 1.17",
+      description: "Distributed stateful operatives — durable stream and workflow compute",
+      source_url: "https://github.com/alfetahe/flezha",
+      package: [
+        licenses: ["MPL-2.0", "Apache-2.0"],
+        links: %{"GitHub" => "https://github.com/alfetahe/flezha"}
+      ],
       start_permanent: Mix.env() == :prod,
       releases: releases(),
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -83,7 +89,7 @@ defmodule Flezha.MixProject do
         include_executables_for: [:unix],
         include_erts: true,
         application: [:flezha],
-        steps: [:assemble, &copy_cli_commands/1]
+        steps: [:assemble, &copy_release_extras/1]
       ]
     ]
   end
@@ -133,7 +139,7 @@ defmodule Flezha.MixProject do
   end
 
   # TODO: Also copy windows binaries
-  defp copy_cli_commands(release) do
+  defp copy_release_extras(release) do
     env =
       case Mix.env() do
         :prod -> "release"
@@ -142,6 +148,11 @@ defmodule Flezha.MixProject do
 
     File.cp!("target/#{env}/flz", Path.join(release.path, "bin/flz"))
     File.rename!(Path.join(release.path, "bin/flezha"), Path.join(release.path, "bin/flzvm"))
+
+    for file <- ~w(LICENSE NOTICE THIRD_PARTY_NOTICES.md),
+        do: File.cp!(file, Path.join(release.path, file))
+
+    File.cp_r!("LICENSES", Path.join(release.path, "LICENSES"))
 
     release
   end
