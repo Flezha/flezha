@@ -65,33 +65,31 @@ and zero duplicates asserted per run.
 ## Numbers
 
 Round-trip median rec/s, `-p 2 -m 3000`, arms interleaved inside each round,
-release binaries, one power state, same box, same broker. Three rounds at
-`off`, two at the tiered durabilities, one for Elixir. Zero loss and zero
-duplicates on every run. `PERF-TEST.md` holds the campaign's own Rust
-baselines; these are a same-session comparison, not a re-measurement of those.
+release binaries, one power state, idle box, three rounds (five for
+`keyed`/`off`). Zero loss and zero duplicates on every run — the
+`keyed`/`on` arm reports 6000 sent, 6000 received. `PERF-TEST.md` holds the
+campaign's own Rust baselines; these are a same-session comparison.
 
 | Tier | Rust | Java | Elixir |
 |---|---|---|---|
-| `identity` / `off` | 53.5k | 32.4k (-39%) | 34.5k (-35%) |
-| `keyed` / `off` | 51.2k | 23.3k (-55%) | 42.2k (-18%) |
-| `keyed` / `state` | 36.3k | 20.5k (-43%) | deferred |
-| `keyed` / `on` | 20.9k | 15.3k (-27%) | deferred |
+| `identity` / `off` | 64.5k | 43.7k (-32%) | 48.9k (-24%) |
+| `keyed` / `off` | 52.3k | 23.1k (-56%) | 57.2k (+9%) |
+| `keyed` / `state` | 41.7k | 23.1k (-45%) | deferred |
+| `keyed` / `on` | 20.9k | 15.7k (-25%) | deferred |
 
-The box was under load from concurrent builds throughout, and the run-to-run
-spread is wide (Rust `keyed`/`off` ranged 42.0k–58.1k across three rounds), so
-read the percentages as a direction, not a figure.
+Run-to-run spread stays wide even idle (Rust `keyed`/`off` 40.9k–55.9k across
+five rounds), so read the percentages as a direction, not a figure. The
+regression bench (`mix bench -n 50 -m 200`, medians of three) puts Rust at
+282k msg/s, Elixir at 184k (-35%) and Java at 112k (-61%).
 
-**Java is more than 15% under Rust on every tier measured.** Per this change's
-own rule that is named, not fixed here:
+**Java is 25–55% under Rust on every tier measured.** Per this change's own rule
+that is named, not fixed here:
 
-- `identity`/`off` and `keyed`/`state`, ~-35% to -50%: the suspected layer is
-  the host, not the kernel or the controller — the JVM host runs one virtual
-  thread per activation where the Rust pool drains inline, and this bench's
-  per-record path is exactly where that shows. Follow-up: `java-host-dispatch-cost`.
-- `keyed`/`off`, ~-55%: the widest gap and the one least explained by the
-  above, because the same kernel serves both. Worth a profile before a fix is
-  designed; the same follow-up owns it.
-- `keyed`/`on` (the effectively-once tier), ~-27%: the narrowest gap, which is
+- `identity`/`off` and `keyed`/`off`, ~-35% to -55%: the suspected layer is the
+  host, not the kernel or the controller — the JVM host runs one virtual thread
+  per activation where the Rust pool drains inline, and a per-record path is
+  where that shows. Follow-up: `java-host-dispatch-cost`.
+- `keyed`/`on` (the effectively-once tier), ~-25%: the narrowest gap, which is
   what the audit predicts — that tier's cost is dominated by the controller's
   fsync and outbox path, which both runtimes share.
 
