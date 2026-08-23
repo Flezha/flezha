@@ -57,7 +57,11 @@ grep -vE '^\s*#|^\s*$' "$CELLS" | while IFS=$'\t' read -r name cell_rt args; do
       echo "NO RESULT (stall/crash)"
       printf '%s\t%s\tthroughput=0\tintegrity=stall\n' "$name" "$rt" >> "$RESULTS"
     else
-      echo "${line#BENCH_RESULT }"
+      echo "${line#BENCH_RESULT }" | awk '{
+        for (i=1; i<=NF; i++) { split($i, a, "="); v[a[1]] = a[2] }
+        printf "%s %s · p50 %s ms · peak %s MiB · fsync %s ms · %s\n",
+               v["throughput"], v["unit"], v["p50_ms"], v["peak_mb"], v["fsync_p99_ms"], v["integrity"]
+      }'
       printf '%s\t%s\t%s\n' "$name" "$rt" "${line#BENCH_RESULT }" >> "$RESULTS"
     fi
   done
@@ -65,4 +69,4 @@ done
 
 echo
 echo "== summary (profile=$PROFILE) =="
-mix run "$A/summarize.exs" "$RESULTS" "$A/cells.$PROFILE.tsv" "$A/baseline.$PROFILE.tsv" "$SAVE"
+elixir "$A/summarize.exs" "$RESULTS" "$A/cells.$PROFILE.tsv" "$A/baseline.$PROFILE.tsv" "$SAVE"

@@ -45,8 +45,8 @@ bench/acceptance/run.sh --profile standard --repeat 5 --save-baseline
 
 ## What you get
 
-- **While it runs:** one line per run —
-  `[chain_4 2/3 rt=rust] scenario=chain throughput=90.1 unit=workflows/s p50_ms=194 integrity=clean`.
+- **While it runs:** one readable line per run —
+  `[chain_4 2/3 rust] 90.1 workflows/s · p50 194 ms · peak 267 MiB · fsync 17 ms · clean`.
 - **At the end:** a median table (throughput, p50, **peak MiB**, **fsync p99
   ms**, integrity, vs baseline) printed and written to `summary.<profile>.md`,
   plus a one-line verdict: `all cells within tolerance` or
