@@ -3,16 +3,12 @@ package com.flezha.test;
 import com.flezha.sdk.channel.ChannelBuilder;
 import com.flezha.sdk.channel.Stream;
 import com.flezha.sdk.procedure.Procedure;
-import com.flezha.sdk.procedure.ProcedureCtx;
-import com.flezha.sdk.procedure.ProcedureException;
-import com.flezha.sdk.state.NoChange;
-import com.flezha.sdk.state.StateHandle;
 import java.util.List;
 
 /**
  * Step classes for the {@code mix bench.workflow} Java fixtures — the mirror of
- * the Rust test app's {@code BenchS0..BenchS15} / {@code BenchTurn} /
- * {@code ChatReply}. Each chain position needs a distinct {@link Procedure}
+ * the Rust test app's {@code BenchS0..BenchS15} and {@code BenchTurn}. Each
+ * chain position needs a distinct {@link Procedure}
  * class, so the durable pass-through steps are enumerated; every one is the
  * plain {@link DurableStep} (one idempotent {@code Insert} per run, input
  * passed on), differing only in {@link #name()}. Public static nested classes
@@ -33,7 +29,7 @@ public final class BenchSteps {
     public static void chain(ChannelBuilder c, int procs) {
         Stream<String> s = c.input(String.class, "in").into(CHAIN.get(0));
         for (int i = 1; i < procs; i++) {
-            s = s.named("edge_" + i).codec().into(CHAIN.get(i));
+            s = s.named("edge_BenchS" + i).codec().into(CHAIN.get(i));
         }
         s.named("out").sink("bench_sink");
     }
@@ -57,18 +53,4 @@ public final class BenchSteps {
 
     /** The loop's durable first step: bounded state, input passed on. */
     public static final class Turn extends DurableStep { public String name() { return "bench_turn"; } }
-
-    /** The loop's stateless terminal step: emits {@code reply:<input>}. */
-    public static final class Reply extends StatelessStep {
-        @Override
-        public String name() {
-            return "chat_reply";
-        }
-
-        @Override
-        public void run(String input, StateHandle<State, NoChange> state, ProcedureCtx ctx)
-                throws ProcedureException {
-            ctx.emit("reply:" + input);
-        }
-    }
 }

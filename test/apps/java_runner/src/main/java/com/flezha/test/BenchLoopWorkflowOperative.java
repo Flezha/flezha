@@ -33,12 +33,17 @@ public final class BenchLoopWorkflowOperative implements WorkflowOperative {
     }
 
     @Override
+    public Optional<Duration> wakeAfter() {
+        return TestEnv.optLong("FLEZHA_BENCH_WAKE_AFTER_MS").map(Duration::ofMillis);
+    }
+
+    @Override
     public void procedures(ChannelBuilder c) {
         c.input(String.class, "in")
                 .into(BenchSteps.Turn.class)
                 .named("mid")
                 .codec()
-                .into(BenchSteps.Reply.class)
+                .into(ChatSteps.Reply.class)
                 .named("out")
                 .sink("bench_sink");
     }

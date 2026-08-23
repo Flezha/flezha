@@ -9,7 +9,7 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   `mix test --include system test/system/multi_tenant_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :runner_lifecycle
 
   alias Flezha.AuthZ
   alias Flezha.AuthZ.{NamespaceStore, QuotaCounters, RoleStore, Scope, TokenStore}
@@ -18,8 +18,6 @@ defmodule FlezhaTest.System.MultiTenantE2ETest do
   alias Flezha.Service.CliManager
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
-
-  @moduletag :system
 
   @ns_a "tenant-alpha"
   @ns_b "tenant-beta"

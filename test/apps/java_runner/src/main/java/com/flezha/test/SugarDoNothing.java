@@ -9,7 +9,7 @@ import java.nio.charset.StandardCharsets;
  * {@code SugarDoNothingStreamOperative} and adds the operative to
  * {@code GeneratedStreamOperatives}.
  */
-@Procedure(id = "java_sugar_do_nothing", sink = "java_sugar_echo")
+@Procedure(id = "sugar_do_nothing", sink = "sugar_do_nothing_echo")
 public class SugarDoNothing {
     public byte[] run(String input) {
         return input.getBytes(StandardCharsets.UTF_8);

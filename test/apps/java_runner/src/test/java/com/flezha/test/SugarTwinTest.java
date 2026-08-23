@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
  * Asserts the {@code @Procedure} / {@code @State} / {@code @StreamOperative}-generated
  * operatives register and process input identically to the hand-written equivalents, and
  * that the 2-procedure reference operative matches the cross-SDK authoring contract
- * (see {@code docs/sdk_authoring_contract.md} §6).
+ * (see {@code docs/sdk/authoring_contract.md} §6).
  */
 class SugarTwinTest {
 
@@ -65,7 +65,7 @@ class SugarTwinTest {
     void generatedStreamOperativesDefine() {
         GeneratedStreamOperatives.defineAll(com.flezha.sdk.Flezha.createRunner("sugar_twin_ns"));
         assertThat(com.flezha.sdk.runtime.operative.StreamOperativeClassRegistry.factoryIds())
-                .contains("java_sugar_do_nothing", "java_sugar_store", "java_sugar_static_entity");
+                .contains("sugar_do_nothing", "sugar_store_input", "sugar_static_entity");
     }
 
     /**

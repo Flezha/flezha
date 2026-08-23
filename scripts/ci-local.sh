@@ -14,7 +14,7 @@
 #           the flezha_runner crate, mix test, and the uncaptured-error-log
 #           gate (matches elixir.yml)
 #   java    mvn verify with -P coverage,native-verify on the SDK reactor,
-#           then mix test.java_sdk for the integration matrix
+#           then the shared smoke tier under FLEZHA_E2E_RUNTIME=java
 #           (matches java-sdk.yml's two jobs)
 #
 # Distribution artifacts (5× native binaries + SDK fat jar + test
@@ -155,8 +155,8 @@ run_java() {
     --manifest-path=test/apps/rust_runner/Cargo.toml \
     --target-dir=./target
 
-  bold ">>> mix test.java_sdk"
-  mix test.java_sdk
+  bold ">>> FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke"
+  FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke
 }
 
 # ---------------------------------------------------------------------------

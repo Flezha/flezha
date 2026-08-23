@@ -198,7 +198,7 @@ Modules under the SDK namespace SHALL reference controller-application modules o
 - **THEN** every controller-application reference resolves to one of the named seams, and any new stray reference fails the audit
 
 ### Requirement: Bench harness covers the elixir runtime on all three transports
-`mix bench --runtime elixir` SHALL run the `regression`, `entity`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `entity_stress`, and `dynamic_entity` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement).
+`mix bench --runtime elixir` SHALL run the `regression`, `entity`, and `dynamic` shapes over the `native` transport (in-process SDK start; one runner, because the runner slot is process-wide) and over `uds`/`quic` (spawning the `test/apps/elixir_runner` app via the same fleet mechanism as the rust/java runners), registering factories `do_nothing`, `entity_stress`, and `dynamic_entity` with the rust_runner topologies, producing the same `Throughput: <n> messages/second` output measured by the unchanged controller-side code. The transport SHALL be selected exactly as today — `scripts/bench.sh -t native|uds|quic` exporting `FLEZHA_TRANSPORT`, read by `mix bench` from the application env — with no new `mix bench` flag. The harness SHALL reject `--runtime rust|java` with the native transport; `scripts/bench.sh -t` SHALL accept `native`. The recorded results SHALL include the same-runtime uds-vs-native comparison (the transport measurement) and the elixir-vs-rust comparison on uds (the runtime measurement). `mix bench.roundtrip --runtime elixir` SHALL run the `identity` and `keyed` workloads at durability `off` through the same fleet mechanism, registering `bench_echo` and `bench_keyed_nopersist` as twins of the rust_runner fixtures (same factory ids, sink names, output bytes and key function), over `uds`, `quic` and `native`; a round-trip run combining `--runtime elixir` with a durability other than `off` SHALL be refused at the task with an error naming the deferred persistence capability, before any runner starts.
 
 #### Scenario: Comparable bench run in-process
 - **WHEN** `mix bench --runtime elixir -n 100 -m 1000` runs with the native transport configured
@@ -211,4 +211,12 @@ Modules under the SDK namespace SHALL reference controller-application modules o
 #### Scenario: Invalid axis combination rejected
 - **WHEN** `mix bench --runtime rust` runs with the native transport configured
 - **THEN** the task exits with an error explaining the combination is invalid
+
+#### Scenario: Round-trip tier-off run on the elixir runtime
+- **WHEN** `mix bench.roundtrip --runtime elixir --workload keyed --durability off` runs with the uds transport configured
+- **THEN** the elixir runner serves `bench_keyed_nopersist`, every record is received exactly once, and the report carries the same throughput and latency columns the rust runtime produces
+
+#### Scenario: Round-trip tiered durability refused by name
+- **WHEN** `mix bench.roundtrip --runtime elixir --durability on` runs
+- **THEN** the task exits before starting a runner with an error naming the deferred persistence capability and the Elixir SDK guide
 

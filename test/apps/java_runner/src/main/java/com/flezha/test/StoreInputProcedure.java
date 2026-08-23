@@ -37,6 +37,7 @@ public final class StoreInputProcedure
     public void run(String input, StateHandle<State, StoreInputChange> state, ProcedureCtx ctx)
             throws ProcedureException {
         state.apply(new StoreInputChange(input));
+        ctx.emit(input);
     }
 
     public record State(List<byte[]> binaryInputs, List<String> textInputs) {

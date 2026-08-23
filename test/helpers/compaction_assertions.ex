@@ -1,7 +1,7 @@
 defmodule FlezhaTest.Helper.CompactionAssertions do
   @moduledoc """
   Shared observable-durable-state helpers for the compaction e2e tests
-  (`test/system/compaction_e2e_test.exs`, `test/java_sdk/compaction_e2e_test.exs`):
+  (`test/system/compaction_e2e_test.exs`, any SDK runtime):
   measure an Entity's on-disk WAL bytes and snapshot files, and wait for the
   compaction outcome (a snapshot file appears, the WAL shrinks). Runtime-agnostic
   — the controller-side durable state is identical whichever SDK ships the frame.

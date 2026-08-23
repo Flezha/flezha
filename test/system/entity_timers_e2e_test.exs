@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.EntityTimersE2ETest do
   @moduledoc """
   End-to-end proof for per-Entity timers (`entity-timers`) against a live
-  runner, on BOTH runtimes: an input arms an idle deadline, the quiet period
+  runner: an input arms an idle deadline, the quiet period
   elapses, the Operative's timer wheel fires it, and `on_timer`'s Change shows
   up in the Entity's state — with no further input to carry it.
 
@@ -15,11 +15,10 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   closes — on a fresh SDK-side instance, from a timer nobody re-registered.
 
   Tagged `:system` (boots a real subprocess); the Java arm additionally needs
-  `:java_sdk` and the committed jar. Run with
-  `mix test --include system --include java_sdk test/system/entity_timers_e2e_test.exs`.
+  Run with `mix test --include system test/system/entity_timers_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :entity_timers
 
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
@@ -27,7 +26,7 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.TierE2EHarness
 
-  @moduletag :system
+  @factory "session_timeout"
   @procedure "session_timeout_procedure"
 
   # Short enough that the test waits on it, long enough that the crash case can
@@ -35,38 +34,24 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   @timeout_ms "600"
 
   @tag :entity_timers_e2e
-  test "a quiet session is closed by its own idle timer (rust)" do
-    run_fires_case(:rust, "session_timeout")
+  test "a quiet session is closed by its own idle timer" do
+    run_fires_case()
   end
 
   @tag :entity_timers_e2e
-  @tag :java_sdk
-  test "a quiet session is closed by its own idle timer (java)" do
-    require_jar!()
-    run_fires_case(:java, "java_session_timeout")
-  end
-
-  @tag :entity_timers_e2e
-  test "a pending timer survives a re-seat from disk and still fires (rust)" do
-    run_crash_case(:rust, "session_timeout")
-  end
-
-  @tag :entity_timers_e2e
-  @tag :java_sdk
-  test "a pending timer survives a re-seat from disk and still fires (java)" do
-    require_jar!()
-    run_crash_case(:java, "java_session_timeout")
+  test "a pending timer survives a re-seat from disk and still fires" do
+    run_crash_case()
   end
 
   # One input, then silence. The only thing that can produce a `closed_at` is
   # the wheel firing `on_timer`.
-  defp run_fires_case(runtime, factory) do
-    namespace = "timers_fire_#{runtime}"
-    {port, ce_id} = start_runner(namespace, runtime)
+  defp run_fires_case do
+    namespace = "timers_fire"
+    {port, ce_id} = start_runner(namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     operative_id = "timer_e2e_#{System.unique_integer([:positive])}"
-    assert {:ok, info} = start_operative(namespace, operative_id, factory)
+    assert {:ok, info} = start_operative(namespace, operative_id)
     assert info.runner_id == ce_id
     await_readable(namespace, operative_id)
 
@@ -89,13 +74,13 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
   # which rebuilds the SDK-side instance — new slots, new wheel, no in-memory
   # pending set — and then `RestoreInitState`. So the only thing that can still
   # close the session is a timer folded back out of the change log.
-  defp run_crash_case(runtime, factory) do
-    namespace = "timers_crash_#{runtime}"
-    {port, _ce_id} = start_runner(namespace, runtime)
+  defp run_crash_case do
+    namespace = "timers_crash"
+    {port, _ce_id} = start_runner(namespace)
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
     operative_id = "timer_crash_e2e_#{System.unique_integer([:positive])}"
-    assert {:ok, _info} = start_operative(namespace, operative_id, factory)
+    assert {:ok, _info} = start_operative(namespace, operative_id)
     await_readable(namespace, operative_id)
 
     OperativeManager.send_io(operative_id, namespace, "hello", %{"input_type" => "2"})
@@ -120,15 +105,7 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
            "the Entity must be live before an input is sent at it"
   end
 
-  defp require_jar! do
-    jar = Path.join(File.cwd!(), "test/apps/java_runner/dist/java_runner.jar")
-
-    if not File.exists?(jar) do
-      flunk("committed java_runner.jar missing — run scripts/build-dist.sh")
-    end
-  end
-
-  defp start_runner(namespace, runtime) do
+  defp start_runner(namespace) do
     on_exit(fn ->
       try do
         OperativeManager.stop_all_operatives(namespace)
@@ -139,16 +116,14 @@ defmodule FlezhaTest.System.EntityTimersE2ETest do
     end)
 
     NodeTestHelper.start_runner_port(namespace,
-      runtime: runtime,
-      connect_timeout: 120_000,
       env: [{"TIMER_TEST_TIMEOUT_MS", @timeout_ms}]
     )
   end
 
-  defp start_operative(namespace, operative_id, factory) do
+  defp start_operative(namespace, operative_id) do
     OperativeManager.start_operative(namespace, %Builder{
       id: operative_id,
-      factory_id: factory,
+      factory_id: @factory,
       init_values: %{},
       opts: []
     })

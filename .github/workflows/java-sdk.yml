@@ -13,7 +13,7 @@ on:
       - "lib/flezha/service/operative_manager.ex"
       - "test/apps/java_runner/**"
       - "test/helpers/node_test_helper.ex"
-      - "test/java_sdk/**"
+      - "test/system/sdk_smoke_e2e_test.exs"
       - ".github/workflows/java-sdk.yml"
   push:
     branches: [main]
@@ -28,7 +28,7 @@ on:
       - "lib/flezha/service/operative_manager.ex"
       - "test/apps/java_runner/**"
       - "test/helpers/node_test_helper.ex"
-      - "test/java_sdk/**"
+      - "test/system/sdk_smoke_e2e_test.exs"
       - ".github/workflows/java-sdk.yml"
 
 env:
@@ -152,11 +152,14 @@ jobs:
       - name: Install Flezha Java SDK into local Maven repo
         # The test java runner (test/apps/java_runner) depends on
         # `com.flezha:flezha-sdk` + `flezha-sdk-testing` as Maven
-        # artifacts. Its Maven build runs from inside `mix test.java_sdk`
-        # and resolves dependencies against the runner's `~/.m2`, which
-        # is per-job. `-DskipTests` skips unit tests + jacoco; the
+        # artifacts, resolved against the runner's per-job `~/.m2`. `-DskipTests` skips unit tests + jacoco; the
         # parallel `java-unit-tests` job covers those.
         run: mvn -B -DskipTests -f sdk/java/pom.xml install
 
-      - name: Run Java SDK integration matrix
-        run: mix test.java_sdk
+      - name: Run the shared smoke tier against the Java runtime
+        env:
+          FLEZHA_E2E_RUNTIME: java
+        run: |
+          mix test --include sdk_smoke \
+            --formatter FlezhaTest.Helper.TimingFormatter \
+            --formatter ExUnit.CLIFormatter

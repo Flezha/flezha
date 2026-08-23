@@ -18,7 +18,7 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   `mix test --include system test/system/late_input_correction_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :correction_window
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
@@ -26,7 +26,6 @@ defmodule FlezhaTest.System.LateInputCorrectionE2ETest do
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
 
-  @moduletag :system
   @moduletag :correction_e2e
   @moduletag timeout: 300_000
 

@@ -373,7 +373,7 @@ native cross-build.
 ```bash
 mvn -f sdk/java/pom.xml test                    # unit suite, no controller needed
 mvn -f sdk/java/pom.xml -P coverage verify      # + JaCoCo
-mix test.java_sdk                               # from repo root: full Java matrix vs a live controller
+FLEZHA_E2E_RUNTIME=java mix test --include system   # from repo root: the shared conformance suite
 ```
 
 ## Environment

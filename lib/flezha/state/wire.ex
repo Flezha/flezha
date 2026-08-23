@@ -206,6 +206,20 @@ defmodule Flezha.State.Wire do
 
   defp put_stamp(stamps, _key, _value), do: stamps
 
+
+  @doc """
+  Assemble a durable frame: the Entity identity, its seq, the 16-byte record
+  header and the body under its CRC. The inverse of `decode_frame/1` and the
+  byte-for-byte twin of the runner core's `build_entity_frame`, so one
+  controller handler serves every SDK.
+  """
+  @spec encode_frame(binary(), non_neg_integer(), binary(), binary()) :: binary()
+  def encode_frame(entity_id, seq, header, body)
+      when byte_size(header) == @header_size do
+    <<byte_size(entity_id)::16-big, entity_id::binary, seq::64-big, header::binary,
+      byte_size(body)::32-big, body::binary, :erlang.crc32(body)::32-big>>
+  end
+
   @doc """
   Decode an inbound `entity_state_change` / `entity_state_snapshot`
   frame.

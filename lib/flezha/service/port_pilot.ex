@@ -53,6 +53,126 @@ defmodule Flezha.Service.PortPilot do
     {port, command}
   end
 
+  # ---------- SDK test-app manifests ----------
+  #
+  # `test/apps/<runtime>_runner/conformance.json` declares how a runtime's test
+  # app is launched. The e2e harness (`:test` profile) and the bench fleet
+  # (`:bench` profile) both render their launch line from it, so neither
+  # carries a per-runtime clause.
+
+  @apps_root "test/apps"
+  @manifest_file "conformance.json"
+
+  @doc "Every runtime with a test-app manifest, as atoms."
+  @spec runtimes() :: [atom()]
+  def runtimes do
+    Path.wildcard(Path.join([@apps_root, "*_runner", @manifest_file]))
+    |> Enum.map(fn path ->
+      path
+      |> Path.dirname()
+      |> Path.basename()
+      |> String.trim_trailing("_runner")
+      |> String.to_atom()
+    end)
+    |> Enum.sort()
+  end
+
+  @doc "Manifest path of `runtime`'s test app, relative to the repo root."
+  @spec manifest_path(atom()) :: Path.t()
+  def manifest_path(runtime), do: Path.join([@apps_root, "#{runtime}_runner", @manifest_file])
+
+  @doc "The decoded manifest of `runtime`, read once per process."
+  @spec manifest(atom()) :: map()
+  def manifest(runtime) do
+    key = {__MODULE__, :manifest, runtime}
+
+    case Process.get(key) do
+      nil ->
+        path = manifest_path(runtime)
+
+        if not File.exists?(path) do
+          raise ArgumentError,
+                "no SDK test app for runtime #{inspect(runtime)}: #{path} is missing " <>
+                  "(manifests exist for #{inspect(runtimes())})"
+        end
+
+        manifest = path |> File.read!() |> Jason.decode!()
+        Process.put(key, manifest)
+        manifest
+
+      manifest ->
+        manifest
+    end
+  end
+
+  @doc """
+  The shell line that launches `runtime`'s test app for `profile` (`:test` or
+  `:bench`) into `namespace`, rendered from the manifest's command template.
+
+  `{artifact}` is the first path of the profile's `artifacts` list that exists
+  (a later one is used with a warning); none existing raises naming the
+  profile's `build` command. `{socket_dir}`, `{ca_cert}`, `{client_cert}` and
+  `{client_key}` are absolute, because the app runs in its own cwd.
+
+  `{socket_dir_rel}` is the same directory relative to `{app_dir}`, for a
+  template that `cd`s there: a UDS path must fit in `SUN_LEN` (108 bytes), and
+  the absolute form does not in a deep checkout — which is why the app that
+  keeps the controller's own relative path connects and the one that resolves
+  it against `/` does not.
+  """
+  @spec launch_command(atom(), :test | :bench, String.t()) :: String.t()
+  def launch_command(runtime, profile, namespace) when profile in [:test, :bench] do
+    manifest = manifest(runtime)
+    profile_key = Atom.to_string(profile)
+    repo = File.cwd!()
+    app_dir = Path.join([repo, @apps_root, "#{runtime}_runner"])
+
+    socket_dir = absolute(Application.get_env(:flezha, :socket_files_path, "app_data/sockets/"))
+
+    vars = %{
+      "artifact" => resolve_artifact(runtime, profile_key, app_dir, manifest),
+      "app_dir" => app_dir,
+      "repo" => repo,
+      "namespace" => namespace,
+      "socket_dir" => socket_dir,
+      "socket_dir_rel" => Path.relative_to(socket_dir, app_dir, force: true),
+      "ca_cert" => absolute(Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")),
+      "client_cert" =>
+        absolute(Application.get_env(:flezha, :client_cert_path, "app_data/certs/client.pem")),
+      "client_key" =>
+        absolute(Application.get_env(:flezha, :client_key_path, "app_data/certs/client.key"))
+    }
+
+    Regex.replace(~r/\{(\w+)\}/, manifest["command"][profile_key], fn whole, name ->
+      Map.get(vars, name) ||
+        raise ArgumentError,
+              "#{manifest_path(runtime)}: unknown placeholder #{whole} in the #{profile} command"
+    end)
+  end
+
+  defp resolve_artifact(runtime, profile, app_dir, manifest) do
+    candidates = Enum.map(manifest["artifacts"][profile], &Path.expand(&1, app_dir))
+
+    case Enum.find_index(candidates, &File.exists?/1) do
+      nil ->
+        raise "no #{profile} artifact for the #{runtime} test app (none of " <>
+                "#{inspect(candidates)} exists); build it with `#{manifest["build"][profile]}`"
+
+      0 ->
+        hd(candidates)
+
+      index ->
+        Logger.warning(
+          "the #{runtime} #{profile} runner is #{Enum.at(candidates, index)} because " <>
+            "#{hd(candidates)} does not exist; build it with `#{manifest["build"][profile]}`"
+        )
+
+        Enum.at(candidates, index)
+    end
+  end
+
+  defp absolute(path), do: Path.expand(path, File.cwd!())
+
   @impl true
   def init(_) do
     ports = initialize_ports()

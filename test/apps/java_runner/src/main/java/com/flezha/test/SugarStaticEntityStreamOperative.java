@@ -14,13 +14,15 @@ public class SugarStaticEntityStreamOperative implements com.flezha.sdk.operativ
 
     @Override
     public String factoryId() {
-        return "java_sugar_static_entity";
+        return "sugar_static_entity";
     }
 
     @Override
     public void channels(ChannelBuilder c) {
-        var sSugarEntryProcedure = c.input(String.class, "input").into(SugarEntryProcedure.class);
-        var sSugarDownstreamProcedure = sSugarEntryProcedure.named("hop").into(SugarDownstreamProcedure.class);
-        sSugarDownstreamProcedure.named("kafka").sink("test_kafka");
+        c.input(String.class, "input")
+                .into(SugarEntryProcedure.class)
+                .into(SugarDownstreamProcedure.class)
+                .named("test_kafka")
+                .sink("test_kafka");
     }
 }

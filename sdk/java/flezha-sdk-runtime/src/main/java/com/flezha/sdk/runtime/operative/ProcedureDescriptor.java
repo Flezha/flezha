@@ -37,6 +37,8 @@ public final class ProcedureDescriptor {
     private final boolean compensateOverridden;
     private final java.util.Optional<java.time.Duration> entityIdleTtl;
 
+    private final java.util.OptionalLong maxEntities;
+
     public ProcedureDescriptor(
             @Nonnull String name,
             @Nonnull Class<? extends Procedure<?, ?, ?, ?, ?, ?>> procedureClass,
@@ -56,8 +58,10 @@ public final class ProcedureDescriptor {
             int mailboxCapacity,
             boolean mailboxCapacityOverridden,
             boolean compensateOverridden,
-            @Nonnull java.util.Optional<java.time.Duration> entityIdleTtl) {
+            @Nonnull java.util.Optional<java.time.Duration> entityIdleTtl,
+            @Nonnull java.util.OptionalLong maxEntities) {
         this.entityIdleTtl = entityIdleTtl;
+        this.maxEntities = maxEntities;
         this.compensateOverridden = compensateOverridden;
         this.name = name;
         this.procedureClass = procedureClass;
@@ -139,6 +143,11 @@ public final class ProcedureDescriptor {
     @Nonnull
     public java.util.Optional<java.time.Duration> entityIdleTtl() {
         return entityIdleTtl;
+    }
+
+    /** The declared dynamic-mode Entity cap, absent when the class takes the default. */
+    public java.util.OptionalLong maxEntities() {
+        return maxEntities;
     }
 
     /**

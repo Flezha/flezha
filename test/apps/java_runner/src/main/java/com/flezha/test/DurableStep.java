@@ -23,7 +23,7 @@ public abstract class DurableStep
     // A durable operative must register its Change type for the Kryo codec.
     @Override
     public List<Class<?>> kryoTypes() {
-        return List.of(Insert.class);
+        return List.of(Insert.class, SeenState.class);
     }
 
     @Override

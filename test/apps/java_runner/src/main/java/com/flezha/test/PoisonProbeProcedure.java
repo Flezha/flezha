@@ -22,7 +22,7 @@ public final class PoisonProbeProcedure implements Procedure<String, Object, Str
 
     @Override
     public String name() {
-        return "java_poison_probe_procedure";
+        return "poison_probe_procedure";
     }
 
     @Override

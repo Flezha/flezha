@@ -14,7 +14,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
   `mix test --include system test/system/partitioned_operatives_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :partitioned
 
   import ExUnit.CaptureIO
 
@@ -27,7 +27,6 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
   alias Flezha.State.Registry
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @moduletag :system
 
   @relay_procedure "partition_relay_procedure"
   @dynamic_procedure "dynamic_entity_procedure"
@@ -40,8 +39,7 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
   defp start_fleet(namespace, count) do
     runners =
       for _ <- 1..count do
-        {port, runner_id} =
-          NodeTestHelper.start_runner_port(namespace, runtime: :rust, connect_timeout: 120_000)
+        {port, runner_id} = NodeTestHelper.start_runner_port(namespace)
 
         on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
         runner_id
@@ -78,6 +76,10 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
 
   defp wait_until(fun, timeout_ms \\ 20_000), do: NodeTestHelper.wait_until(fun, timeout_ms)
 
+  # Durable per-member state is what proves the split, so this scenario needs
+  # persistence on top of partitioning.
+  @tag capability: :state_persistence,
+       skip: FlezhaTest.SystemCase.deferral(:state_persistence)
   test "a group splits its key space across runners, refuses a mis-route, and rescales" do
     namespace = "partitioned_e2e"
     runners = start_fleet(namespace, 2)
@@ -204,6 +206,10 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
            "the moved Entity must continue from its pre-rescale state, not restart empty"
   end
 
+  # The forward resolves the downstream member from the output's key, so this
+  # scenario needs keyed channels on top of partitioning.
+  @tag capability: :keyed_channels,
+       skip: FlezhaTest.SystemCase.deferral(:keyed_channels)
   test "a keyed output forwards to the partition of the target group that owns its key" do
     namespace = "partitioned_forward_e2e"
     start_fleet(namespace, 2)

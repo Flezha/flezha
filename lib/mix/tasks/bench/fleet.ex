@@ -8,11 +8,14 @@ defmodule Mix.Tasks.Bench.Fleet do
   the workload.
 
   The runtime (`:rust` / `:java` / `:elixir`) is read from the `:bench_runtime` process key,
-  which the calling task sets once before any fleet call.
+  which the calling task sets once before any fleet call. A runner is launched
+  from its test app's manifest (`test/apps/<runtime>_runner/conformance.json`,
+  `bench` profile) — the same line the e2e harness renders for its `test` profile.
   """
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
+  alias Flezha.Service.PortPilot
 
   @doc "True when `namespace` already has at least one connected runner."
   def runners_available?(namespace) do
@@ -132,32 +135,18 @@ defmodule Mix.Tasks.Bench.Fleet do
 
   @doc "Spawn `count` runner processes and return their connected runner ids."
   def start_runners(namespace, count, extra_env) do
-    {:ok, current_path} = :file.get_cwd()
     runtime = Process.get(:bench_runtime, :rust)
-    # The elixir_runner app boots a whole flezha + SDK; if it is not pre-built
-    # its first `mix run` compiles, so give it a wide connect budget. Pre-build
-    # it for the target env (`cd test/apps/elixir_runner && MIX_ENV=prod mix compile`).
-    # Java's JVM + Spring/JPA cold start easily exceeds a few seconds; the
-    # Elixir runner compiles a whole flezha on first `mix run`; a QUIC first
-    # connect (handshake) is slower than UDS for any runtime.
-    quic? = Application.get_env(:flezha, :transport, :uds) == :quic
-
-    connect_timeout =
-      case runtime do
-        :elixir -> 120_000
-        :java -> 60_000
-        _ -> if quic?, do: 20_000, else: 5_000
-      end
+    connect_timeout = PortPilot.manifest(runtime)["connect_timeout_ms"]
 
     Flezha.Service.EventManager.add_handler(:runner_connected_event)
 
     # Every runner is spawned before the first hand-shake is awaited: the
     # processes boot side by side, and the wait is one connect, not N.
-    command = build_command(runtime, current_path, namespace)
+    command = PortPilot.launch_command(runtime, :bench, namespace)
 
     ports =
       for _ <- 1..count do
-        {port, _command} = Flezha.Service.PortPilot.open_port(command, env: extra_env)
+        {port, _command} = PortPilot.open_port(command, env: extra_env)
         port
       end
 
@@ -175,79 +164,5 @@ defmodule Mix.Tasks.Bench.Fleet do
 
     Flezha.Service.EventManager.rem_handler(:runner_connected_event)
     runner_ids
-  end
-
-  @doc "Shell command that launches one runner of `runtime` against `namespace`."
-  def build_command(:rust, current_path, namespace) do
-    candidates = [
-      "#{current_path}/target/release/rust_runner",
-      "#{current_path}/test/apps/rust_runner/target/release/rust_runner",
-      "#{current_path}/target/debug/rust_runner",
-      "#{current_path}/test/apps/rust_runner/target/debug/rust_runner"
-    ]
-
-    case Enum.find(candidates, &File.regular?/1) do
-      nil ->
-        "cargo run --release --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml --target-dir=./target -- #{namespace}"
-
-      path ->
-        if String.contains?(path, "/debug/") do
-          IO.warn(
-            "mix bench is using the DEBUG Rust runner binary at #{path} — " <>
-              "this is ~5× slower than release. Build with " <>
-              "`cargo build -p rust_runner --release` for representative numbers."
-          )
-        end
-
-        "#{path} #{namespace}"
-    end
-  end
-
-  def build_command(:elixir, current_path, namespace) do
-    app_dir = Path.join([current_path, "test/apps/elixir_runner"])
-
-    if not File.dir?(Path.join(app_dir, "lib")) do
-      raise "elixir_runner app not found at #{app_dir}"
-    end
-
-    # The spawned app runs in its own cwd, so the controller's relative socket /
-    # cert paths would miss it — pass them ABSOLUTE (resolved against the
-    # controller's cwd). `mix run --no-halt` boots the runner-only app and blocks;
-    # its stdin-EOF watcher halts the VM when the harness closes the port.
-    abs = fn rel ->
-      if String.starts_with?(rel, "/"), do: rel, else: Path.join(current_path, rel)
-    end
-
-    sock = abs.(Application.get_env(:flezha, :socket_files_path, "app_data/sockets/"))
-    ca = abs.(Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem"))
-    cert = abs.(Application.get_env(:flezha, :client_cert_path, "app_data/certs/client.pem"))
-    key = abs.(Application.get_env(:flezha, :client_key_path, "app_data/certs/client.key"))
-
-    env = "FLEZHA_SOCKET_FILES_PATH=#{sock} FLEZHA_CA_CERT_PATH=#{ca} " <>
-            "FLEZHA_QUIC_CLIENT_CERT=#{cert} FLEZHA_QUIC_CLIENT_KEY=#{key}"
-
-    "sh -c 'cd #{app_dir} && #{env} exec mix run --no-halt --no-deps-check -- #{namespace}'"
-  end
-
-  def build_command(:java, current_path, namespace) do
-    jar_path =
-      Path.join([
-        current_path,
-        "test/apps/java_runner/target/java_runner.jar"
-      ])
-
-    if not File.exists?(jar_path) do
-      raise """
-      Java compute engine jar not found at #{jar_path}.
-
-      Build it first with one of:
-        mix test.java_sdk   # full pipeline: build flz_jni + Maven + run tests
-        mvn -f test/apps/java_runner/pom.xml package
-
-      Then retry: mix bench --runtime java ...
-      """
-    end
-
-    "java -jar #{jar_path} #{namespace}"
   end
 end

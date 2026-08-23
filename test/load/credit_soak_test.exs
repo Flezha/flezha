@@ -114,9 +114,7 @@ defmodule Flezha.Load.CreditSoakTest do
     # (park, never drop) instead of overflowing the input edge.
     {exec_port, ce_id} =
       NodeTestHelper.start_runner_port(@namespace,
-        runtime: :rust,
         transport: :uds,
-        connect_timeout: 120_000,
         env: [
           {~c"FLEZHA_MAILBOX_CAPACITY", ~c"20000"},
           {~c"FLEZHA_DATA_HEARTBEAT_MS", ~c"1000"}

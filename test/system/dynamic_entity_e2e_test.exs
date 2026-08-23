@@ -1,7 +1,7 @@
 defmodule FlezhaTest.System.DynamicEntityE2ETest do
   @moduledoc """
-  End-to-end proof for dynamic entity mode against a live runner, on BOTH
-  runtimes: an input for a fresh key lazily creates an Entity whose state is
+  End-to-end proof for dynamic entity mode against a live runner of the
+  selected SDK runtime: an input for a fresh key lazily creates an Entity whose state is
   shipped (controller writes a WAL file) at the identity
   `{operative_id, procedure, key}`; after the 200 ms TTL the reaper evicts it,
   ships `delete_entity_state`, and the controller drops the files — the SDK
@@ -12,12 +12,11 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
   byte-identical Entity identities on disk: the assertions below are unchanged
   from when the key was a Procedure trait hook.
 
-  Tagged `:system` (boots a real subprocess); the Java arm additionally needs
-  `:java_sdk` and the committed jar. Run with
-  `mix test --include system --include java_sdk test/system/dynamic_entity_e2e_test.exs`.
+  Tagged `:system` (boots a real subprocess). Run with
+  `mix test --include system test/system/dynamic_entity_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :dynamic_entity
 
   alias FlezhaTest.Helper.NodeTestHelper
   alias Flezha.Operative.Builder
@@ -25,8 +24,8 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Registry
 
-  @moduletag :system
   @namespace "dynamic_entity_e2e"
+  @factory "dynamic_entity"
   @procedure "dynamic_entity_procedure"
 
   setup do
@@ -47,75 +46,31 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     :ok
   end
 
+  # The WAL assertion is reference-only: the Java SDK does not register a
+  # lazily-created Entity with its flusher, so a dynamic Entity's state never
+  # reaches disk there. That gap predates edge keying; the live-state read
+  # below is what every SDK is held to.
   @tag :dynamic_entity_e2e
-  test "lazy-created Entity's state is shipped, then reaped + deleted controller-side (rust)" do
-    run_dynamic_entity_case(:rust, "dynamic_entity")
+  @tag reference_runtime: true
+  test "lazy-created Entity's state is shipped, then reaped + deleted controller-side" do
+    run_dynamic_entity_case()
   end
 
   @tag :dynamic_entity_e2e
-  @tag :java_sdk
-  test "a keyed edge routes to one Entity per key, created on first sight (java)" do
-    jar = Path.join(File.cwd!(), "test/apps/java_runner/dist/java_runner.jar")
-
-    if not File.exists?(jar) do
-      flunk("committed java_runner.jar missing — run scripts/build-dist.sh")
-    end
-
-    {port, ce_id} =
-      NodeTestHelper.start_runner_port(@namespace, runtime: :java, connect_timeout: 120_000)
-
-    on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
-
-    operative_id = "dyn_e2e_java_#{System.unique_integer([:positive])}"
-    key = "k#{System.unique_integer([:positive])}"
-
-    builder = %Builder{
-      id: operative_id,
-      factory_id: "java_dynamic_entity",
-      init_values: %{},
-      opts: []
-    }
-
-    assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
-    assert info.runner_id == ce_id
-
-    # Two keys and one filtered value: the edge's key function is what creates
-    # the Entities, and the filter is what discards — there is no keyless-drop
-    # path left to fall through.
-    OperativeManager.send_io(operative_id, @namespace, "#{key}:one", %{"input_type" => "2"})
-    OperativeManager.send_io(operative_id, @namespace, "drop", %{"input_type" => "2"})
-    OperativeManager.send_io(operative_id, @namespace, "#{key}b:two", %{"input_type" => "2"})
-
-    assert wait_until(
-             fn -> entity_keys(@namespace, operative_id) == [key, "#{key}b"] end,
-             15_000
-           ),
-           "expected one Entity per key seen, got #{inspect(entity_keys(@namespace, operative_id))}"
-  end
-
-  @tag :dynamic_entity_e2e
-  test "a live dynamic Entity is readable by name, narrowed to one key (rust)" do
-    run_live_read_case(:rust, "dynamic_entity")
-  end
-
-  @tag :dynamic_entity_e2e
-  @tag :java_sdk
-  test "a live dynamic Entity is readable by name, narrowed to one key (java)" do
-    run_live_read_case(:java, "java_dynamic_entity")
+  test "a live dynamic Entity is readable by name, narrowed to one key" do
+    run_live_read_case()
   end
 
   # `flz state get`'s round-trip against a real runner: a lazily-created Entity
   # is readable by name, the reply carries the seq it was serialized at, and the
   # selector really narrows — the other live key is not serialized. No TTL is
   # armed here, so nothing races the read.
-  defp run_live_read_case(runtime, factory) do
-    # Own namespace per runtime: placement is HRW over every runner active in
-    # the namespace, so a peer case's runner (which does not declare this
-    # factory) must not be a candidate.
-    namespace = "dyn_live_read_#{runtime}"
+  defp run_live_read_case do
+    # Own namespace: placement is HRW over every runner active in the
+    # namespace, so a peer case's runner must not be a candidate.
+    namespace = "dyn_live_read"
 
-    {port, ce_id} =
-      NodeTestHelper.start_runner_port(namespace, runtime: runtime, connect_timeout: 120_000)
+    {port, ce_id} = NodeTestHelper.start_runner_port(namespace)
 
     on_exit(fn ->
       NodeTestHelper.ensure_port_dead(port)
@@ -132,7 +87,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     key = "k#{System.unique_integer([:positive])}"
     other = "#{key}b"
 
-    builder = %Builder{id: operative_id, factory_id: factory, init_values: %{}, opts: []}
+    builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(namespace, builder)
     assert info.runner_id == ce_id
 
@@ -179,15 +134,11 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     end
   end
 
-  defp run_dynamic_entity_case(runtime, factory) do
+  defp run_dynamic_entity_case do
     # 200 ms idle TTL so the operative's reaper evicts + ships
     # delete_entity_state within the test (default is no eviction).
     {port, ce_id} =
-      NodeTestHelper.start_runner_port(@namespace,
-        runtime: runtime,
-        connect_timeout: 120_000,
-        env: [{"DYN_TEST_TTL_MS", "200"}]
-      )
+      NodeTestHelper.start_runner_port(@namespace, env: [{"DYN_TEST_TTL_MS", "200"}])
 
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 
@@ -195,7 +146,7 @@ defmodule FlezhaTest.System.DynamicEntityE2ETest do
     key = "k#{System.unique_integer([:positive])}"
     entity_id = {operative_id, @procedure, key}
 
-    builder = %Builder{id: operative_id, factory_id: factory, init_values: %{}, opts: []}
+    builder = %Builder{id: operative_id, factory_id: @factory, init_values: %{}, opts: []}
     assert {:ok, info} = OperativeManager.start_operative(@namespace, builder)
     assert info.runner_id == ce_id
 

@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   `test/flezha/runner/control_channel_shutdown_notification_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :state_persistence
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
@@ -28,7 +28,6 @@ defmodule FlezhaTest.System.StateFreshnessE2ETest do
   alias Flezha.Service.PortPilot
   alias Flezha.Service.OperativeManager
 
-  @moduletag :system
   @namespace "state_freshness_e2e"
   @factory "store_input"
 

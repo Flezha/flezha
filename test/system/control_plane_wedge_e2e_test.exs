@@ -23,7 +23,7 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   `mix test --include system test/system/control_plane_wedge_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :liveness
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness, only: [boot_runner: 3, peek_outputs: 0]
@@ -33,7 +33,6 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.{HubManager, OperativeManager}
 
-  @moduletag :system
   @factory "wedge_probe"
 
   # Above the runner's heartbeat cadence below, so every classifier poll sees
@@ -62,6 +61,9 @@ defmodule FlezhaTest.System.ControlPlaneWedgeE2ETest do
     %{namespace: namespace}
   end
 
+  # Wedging user code stops dispatch only where dispatch is a shared pool; an
+  # SDK that runs a process per Entity cannot produce the signature at all.
+  @tag capability: :pool_wedge, skip: FlezhaTest.SystemCase.deferral(:pool_wedge)
   @tag timeout: 300_000
   test "a wedged runner is localized, evicted, and its operative produces again elsewhere",
        %{namespace: namespace} do

@@ -38,15 +38,15 @@ The `flezha-sdk-native` module SHALL include dedicated JNI bridge tests that exe
 
 ### Requirement: Reference Java Compute Engine Test App
 
-The Java reference test app at `test/apps/java_runner/` SHALL implement three reference Operative classes (`DoNothingOperative`, `StoreInputOperative`, `CompareFilterOperative`) using the Java SDK's `StreamOperative` / `Procedure` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior. The factory ids registered by these Operative classes (via `StreamOperative::factoryId`) SHALL be `"do_nothing"`, `"store_input"`, `"compare_filter"` — exactly the surviving subset that `test/apps/rust_runner/` exposes. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Procedure `handleMessage`.
+The Java reference test app at `test/apps/java_runner/` SHALL implement its fixtures using the Java SDK's `StreamOperative` / `WorkflowOperative` / `Procedure` API. The built jar MUST accept the namespace as its first command-line argument and keep the process alive until stdin closes, matching `rust_runner`'s behavior and the shared test-app contract. The factory ids it registers SHALL be exactly the union of the `fixtures` in `test/apps/java_runner/conformance.json`, and for every capability that manifest does not defer the ids SHALL equal the Rust reference manifest's for that capability — the same id, sink channel names, output bytes and declared options. No registered id SHALL carry a `java_` prefix and no id SHALL be absent from the reference. The legacy `EchoMessageOperative` (and any other `operative-message-handlers`-driven factory) SHALL NOT be present; its inclusion is deferred until `operative-message-handlers` ships per-Procedure `handleMessage`.
 
 #### Scenario: Java test app builds and runs
-- **WHEN** `mvn -f test/apps/java_runner/pom.xml package` produces `target/java_runner.jar` and `java -jar target/java_runner.jar my_namespace` is run while the agent is up
-- **THEN** the process SHALL register its three Operative classes via `Flezha.registerStream(...)`, connect to the agent, and receive an `AssignRunnerId` without errors
+- **WHEN** `scripts/build-dist.sh` produces `dist/java_runner.jar` and `java -jar dist/java_runner.jar my_namespace` is run while the agent is up
+- **THEN** the process SHALL register its fixtures, connect to the agent, and receive an `AssignRunnerId` without errors
 
-#### Scenario: Java test app mirrors Rust test app factory set
-- **WHEN** the list of factory ids registered by the Java test app is compared to those registered by `test/apps/rust_runner/`
-- **THEN** the two lists SHALL be equal sets (`"do_nothing"`, `"store_input"`, `"compare_filter"`); message-handler factories SHALL be absent from both
+#### Scenario: Java test app mirrors the reference fixture set
+- **WHEN** the factory ids the controller lists for a connected Java runner are compared to the union of the Java manifest's `fixtures`
+- **THEN** the two SHALL be equal sets, and for every non-deferred capability the Java manifest's ids SHALL equal the Rust manifest's
 
 #### Scenario: Java test app uses the new Procedure / ProcedureCtx API exclusively
 - **WHEN** the Java test app's source files are scanned for `import com.flezha.sdk.OperativeHandler`, `com.flezha.sdk.FactoryRegistry`, `com.flezha.sdk.OperativeSettings`, `com.flezha.sdk.OperativeResult`, `com.flezha.sdk.OperativeRunner`, `com.flezha.sdk.InputTransformer`, or `com.flezha.sdk.OutputTransformer`
@@ -54,58 +54,46 @@ The Java reference test app at `test/apps/java_runner/` SHALL implement three re
 
 ### Requirement: Elixir Integration Harness Supports Java Runtime
 
-`test/helpers/node_test_helper.ex` SHALL accept a `:runtime` option (`:rust | :java`, default `:rust`) in `start_runner/2`. When `:java` is passed, the helper MUST launch `java -jar test/apps/java_runner/target/java_runner.jar <namespace>` via `Flezha.Service.PortPilot` with the same event handling and timeout behavior used for the Rust path. All existing callers that pass no runtime option MUST continue to work unchanged.
+`test/helpers/node_test_helper.ex` SHALL accept a `:runtime` option in `start_runner/2` and `start_runner_port/2` whose default is the runtime `FLEZHA_E2E_RUNTIME` selects (`rust` when unset). When the resolved runtime is `java`, the helper MUST launch the Java test app by rendering `test/apps/java_runner/conformance.json`'s `command` with the `test` artifact profile via `Flezha.Service.PortPilot`, with the same event handling and timeout behavior used for every other runtime. The helper SHALL carry no Java-specific launch clause. All existing callers that pass no runtime option MUST continue to work unchanged under the default.
 
 #### Scenario: Default runtime remains Rust
-- **WHEN** existing tests call `start_runner("my_app")` with no runtime option
+- **WHEN** existing tests call `start_runner("my_app")` with no runtime option and `FLEZHA_E2E_RUNTIME` unset
 - **THEN** the helper SHALL launch the Rust test app exactly as it does today, and those tests SHALL continue to pass
 
-#### Scenario: Passing :java launches the Java test app
-- **WHEN** a test calls `start_runner("my_app", runtime: :java, transport: :uds)`
-- **THEN** the helper SHALL invoke the `java -jar ...` command and return the assigned `runner_id` after the `:runner_connected_event` fires
+#### Scenario: The environment selects the Java test app
+- **WHEN** `FLEZHA_E2E_RUNTIME=java` is set and a test calls `start_runner("my_app")`
+- **THEN** the helper SHALL invoke the command rendered from the Java manifest and return the assigned `runner_id` after the `:runner_connected_event` fires
 
 #### Scenario: Java runtime works over both transports
-- **WHEN** tests call `start_runner(ns, runtime: :java, transport: :uds)` and `start_runner(ns, runtime: :java, transport: :quic)`
+- **WHEN** tests call `start_runner(ns, transport: :uds)` and `start_runner(ns, transport: :quic)` under `FLEZHA_E2E_RUNTIME=java`
 - **THEN** both calls SHALL succeed and return valid compute engine ids, exercising the full handshake, `AssignRunnerId`, and `ConnectSocket` flow on each transport
 
 ### Requirement: Integration Test Matrix
 
-At least one ExUnit integration suite SHALL exercise the Java SDK against the unchanged Elixir agent across every combination of `{runtime: [:rust, :java]} × {transport: [:uds, :quic]}`. The matrix SHALL cover: handshake + `AssignRunnerId`, `ConnectSocket`, add-remove operative lifecycle, end-to-end data flow through an operative (`PipeToAgent`), `PipeToOperative` routing, migration (serialize + deserialize on a second node), and unexpected-disconnect auto-reconnect.
+The shared smoke tier `test/system/sdk_smoke_e2e_test.exs` SHALL exercise the selected runtime against the unchanged Elixir agent across every transport its manifest lists. The tier SHALL cover: handshake + `AssignRunnerId`, `ConnectSocket`, add-remove operative lifecycle, end-to-end data flow through an operative (`PipeToAgent`), `PipeToOperative` routing, migration (serialize + deserialize on a second node), unexpected-disconnect auto-reconnect, the live-factory-set assertion and the golden declaration snapshots. There SHALL be no Java-specific matrix file and no `:java_sdk` tag.
 
-#### Scenario: Matrix suite runs under mix test
-- **WHEN** a developer runs `mix test --only java_sdk`
-- **THEN** all four combinations of the runtime×transport matrix SHALL run, and each matrix point SHALL assert that operative output received by the agent matches the expected value
+#### Scenario: Smoke tier runs under mix test for the Java runtime
+- **WHEN** a developer runs `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke`
+- **THEN** every transport cell in the Java manifest SHALL run, and each SHALL assert that operative output received by the agent matches the expected value
 
 #### Scenario: Java-runtime reconnect under agent restart
-- **WHEN** the integration test restarts the agent while a Java test compute engine is running
+- **WHEN** the smoke tier restarts the agent while a Java test compute engine is running
 - **THEN** the Java SDK SHALL reconnect automatically, receive a fresh compute engine id, be re-issued operative add commands, and resume correct stream I/O
 
 #### Scenario: Java-runtime migration preserves operative state
-- **WHEN** an operative holding non-trivial state is migrated between two compute engines via `MigrationSerialization` + `MigrationDeserialization`
-- **THEN** the operative's JSON-serialized state on the destination SHALL be bytewise equal to the serialized state on the source
-
-### Requirement: One-Command Local Test Entry Point
-
-The repository SHALL expose a single Mix alias `mix test.java_sdk` that (a) builds the `flz_transport` host-triple native binary, (b) builds the Java SDK and the Java test compute engine via Maven, (c) runs `mix test --only java_sdk` to execute the integration matrix. A developer SHOULD NOT need to run Maven manually before `mix test`.
-
-#### Scenario: Single command from a clean clone runs the Java integration tests
-- **WHEN** a developer with Java 21 and a Rust toolchain installed runs `mix test.java_sdk` on a fresh clone
-- **THEN** the command SHALL build the native binary, build both the Java SDK and the test jar via Maven, and run the Java integration test matrix to completion
-
-#### Scenario: Stale Java test jar is rebuilt before tests
-- **WHEN** a developer edits a Java source file in `test/apps/java_runner/` and then runs `mix test.java_sdk`
-- **THEN** Maven SHALL rebuild the test jar before `mix test --only java_sdk` launches any compute engine
+- **WHEN** an operative holding non-trivial state is migrated between two Java compute engines via `MigrationSerialization` + `MigrationDeserialization`
+- **THEN** the operative's serialized state on the destination SHALL be bytewise equal to the serialized state on the source
 
 ### Requirement: CI Enforces the Full Java SDK Test Suite
 
-The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the full Java-runtime integration matrix on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`. Failures in any of these SHALL block the PR. After this change merges, every CI matrix entry, integration test, and `mix test --only java_sdk` invocation previously tagged `OPERATIVE_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operative-mvp-java/design.md` Decision 11). Tests tagged `OPERATIVE_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operative-message-handlers` ships.
+The project CI workflow SHALL run the Java SDK unit tests, the JNI bridge tests, and the shared smoke tier under `FLEZHA_E2E_RUNTIME=java` on every pull request that touches `sdk/java/**`, `flz_transport/**`, `test/apps/java_runner/**`, or `test/helpers/node_test_helper.ex`; the nightly end-to-end workflow SHALL run the full `:system` suite under `FLEZHA_E2E_RUNTIME=java` as its own matrix job. Failures in any of these SHALL block the PR or mark the nightly job red. After this change merges, every CI matrix entry, integration test, and smoke-tier invocation previously tagged `OPERATIVE_MVP_JAVA_PENDING` SHALL be re-enabled (the tag is grep-and-untagged in one pass; see `operative-mvp-java/design.md` Decision 11). Tests tagged `OPERATIVE_MESSAGE_HANDLERS_PENDING` SHALL remain disabled until `operative-message-handlers` ships.
 
 #### Scenario: PR touching flz_transport runs the full Java suite
 - **WHEN** a pull request modifies a file under `flz_transport/src/`
-- **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + integration matrix) — neither suite SHALL be skipped on the basis of `OPERATIVE_MVP_JAVA_PENDING`
+- **THEN** CI SHALL run both the Rust SDK tests and the full Java SDK test suite (unit + JNI + the smoke tier under `FLEZHA_E2E_RUNTIME=java`) — neither suite SHALL be skipped on the basis of `OPERATIVE_MVP_JAVA_PENDING`
 
 #### Scenario: Failing Java integration test blocks merge
-- **WHEN** any integration scenario under `--only java_sdk` fails
+- **WHEN** any scenario of the smoke tier fails under `FLEZHA_E2E_RUNTIME=java`
 - **THEN** the CI check for that workflow SHALL report a failure and the PR merge SHALL be blocked until the scenario passes
 
 #### Scenario: No OPERATIVE_MVP_JAVA_PENDING tags remain post-merge
@@ -330,4 +318,29 @@ The harness's `EmitRecord` SHALL expose the emit's key (empty for an emit carryi
 
 - **WHEN** a Procedure calls `ctx.emitWithMeta(value, Map.of("flz.seq", "1.0"))` under the harness
 - **THEN** the harness ctx SHALL throw `ProcedureException.ReservedMetadataKey`, matching the runtime's behaviour
+
+### Requirement: The reference Java runner carries the round-trip bench fixtures
+The reference Java test app SHALL register the round-trip bench fixtures `bench_echo`, `bench_keyed_nopersist`, `bench_keyed`, `tier_store` and `bench_checkpoint` as twins of the `test/apps/rust_runner` fixtures of the same ids — same sink channel names, same output bytes, same key function, same overflow declaration — and SHALL read the same `FLEZHA_BENCH_CHECKPOINT_EVERY`, `FLEZHA_BENCH_CHECKPOINT_OUTPUTS` and `FLEZHA_BENCH_CHECKPOINT_DELAY_MS` environment as the Rust fixtures, so `mix bench.roundtrip --runtime java` selects a factory by id with no per-runtime branch. `bench_checkpoint` SHALL declare `checkpointAck()` and `checkpointEvery(n)`, and `outputsAtCheckpoint(maxDelayMs)` only when `FLEZHA_BENCH_CHECKPOINT_OUTPUTS=at_checkpoint`.
+
+#### Scenario: Every round-trip tier runs on the Java runtime
+- **WHEN** `mix bench.roundtrip --runtime java` runs the identity and keyed workloads at durabilities `off`, `state`, `on` and `checkpoint`
+- **THEN** each run selects the Java fixture of the same id the Rust run selects, receives every record exactly once, and reports the same columns
+
+#### Scenario: The held-outputs declaration reaches the kernel from Java
+- **WHEN** `mix bench.roundtrip --runtime java --durability checkpoint --checkpoint-outputs at_checkpoint --checkpoint-delay-ms 2000` runs
+- **THEN** the first output arrives roughly two seconds after the first input, as it does for the Rust runtime
+
+### Requirement: A cross-SDK end-to-end proof enumerates every runtime that carries the capability
+A `:system` end-to-end test that proves a capability carried by more than one SDK SHALL enumerate every runtime that carries it (`for runtime <- [:rust, :java]` today), launching each through the shared e2e fleet mechanism; a runtime that does not carry the capability SHALL be absent from the enumeration by a named deferral in that SDK's spec, never by omission.
+
+#### Scenario: The checkpoint-outputs proof runs on Java
+- **WHEN** `test/system/checkpoint_batched_outputs_e2e_test.exs` runs under `--include system`
+- **THEN** the three declared behaviours (no output before the checkpoint, one ordered batch at the close, the quiet-Entity delay) pass against a live Java runner as well as a live Rust runner
+
+### Requirement: The declaration key set is pinned for the core and the Java SDK
+A pinned fixture SHALL list every `HostClassDecl` key; a `flz_core` test SHALL assert that a fully populated declaration serialises to exactly that key set, and a Java unit test SHALL assert that a fully populated `HostClassDeclaration` emits every key in the fixture while a bare `checkpointAck()` emits none of the optional ones, so a key the core accepts that the Java SDK cannot spell fails the Java build.
+
+#### Scenario: A new core key without a Java spelling fails CI
+- **WHEN** a key is added to `HostClassDecl` and the fixture, and `HostClassDeclaration` is not taught to emit it
+- **THEN** `HostClassDeclarationTest` fails naming the missing key
 

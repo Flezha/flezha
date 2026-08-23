@@ -18,13 +18,25 @@ defmodule FlezhaTest.Helper.TimingFormatter do
   Async modules overlap, so their wall times include time spent waiting for a
   scheduler slot and will not sum to the suite total — compare them against each
   other, not against the clock.
+
+  ## Conformance report
+
+  When `FLEZHA_E2E_RUNTIME` is set or any `:system` test ran, the formatter also
+  prints the SDK conformance table — every capability of the vocabulary with its
+  outcome (`pass`, `fail`, `deferred` or `untested`) — and
+  writes the same table as JSON to `$CONFORMANCE_OUT` when that is set. The
+  nightly uploads it per runtime.
   """
   use GenServer
+
+  alias FlezhaTest.Helper.NodeTestHelper
 
   @default_out "/tmp/flezha_test_timing.tsv"
 
   @impl true
-  def init(_opts), do: {:ok, %{mod_start: %{}, modules: [], tests: []}}
+  def init(_opts) do
+    {:ok, %{mod_start: %{}, modules: [], tests: [], capabilities: %{}, system?: false}}
+  end
 
   @impl true
   def handle_cast({:module_started, %ExUnit.TestModule{} = mod}, state) do
@@ -40,11 +52,13 @@ defmodule FlezhaTest.Helper.TimingFormatter do
   end
 
   def handle_cast({:test_finished, %ExUnit.Test{} = test}, state) do
-    {:noreply, %{state | tests: [{test.module, test.name, test.time || 0} | state.tests]}}
+    state = %{state | tests: [{test.module, test.name, test.time || 0} | state.tests]}
+    {:noreply, record_outcome(state, test)}
   end
 
   def handle_cast({:suite_finished, _times}, state) do
     path = System.get_env("TIMING_OUT", @default_out)
+    report_conformance(state)
 
     modules = Enum.sort_by(state.modules, fn {_, wall, _, _} -> -wall end)
 
@@ -66,6 +80,73 @@ defmodule FlezhaTest.Helper.TimingFormatter do
   end
 
   def handle_cast(_event, state), do: {:noreply, state}
+
+  # ---------- conformance report ----------
+
+  # A capability's outcome is the worst thing that happened to it: one failure
+  # makes the capability red however many of its tests passed, and a capability
+  # is `deferred` only when nothing of it ran.
+  @outcome_rank %{fail: 0, pass: 1, deferred: 2, untested: 3}
+
+  defp record_outcome(state, %ExUnit.Test{tags: tags} = test) do
+    case tags[:capability] do
+      nil ->
+        %{state | system?: state.system? or tags[:system] == true}
+
+      capability ->
+        %{
+          state
+          | system?: state.system? or tags[:system] == true,
+            capabilities:
+              Map.update(state.capabilities, capability, outcome(test), &worst(&1, outcome(test)))
+        }
+    end
+  end
+
+  defp outcome(%ExUnit.Test{state: nil}), do: :pass
+  # A deferred capability rides `:skip` (`FlezhaTest.SystemCase`); an exclusion
+  # means the run simply did not ask for that test.
+  defp outcome(%ExUnit.Test{state: {:excluded, _}}), do: :untested
+  defp outcome(%ExUnit.Test{state: {:skipped, _}}), do: :deferred
+  defp outcome(%ExUnit.Test{state: {:invalid, _}}), do: :fail
+  defp outcome(%ExUnit.Test{state: {:failed, _}}), do: :fail
+
+  defp worst(a, b), do: Enum.min_by([a, b], &@outcome_rank[&1])
+
+  # An excluded test still reaches `test_finished`, so a deferred capability is
+  # reported whenever the run was aimed at a runtime or ran anything `:system`.
+  defp report_conformance(state) do
+    if state.system? or System.get_env("FLEZHA_E2E_RUNTIME") != nil do
+      print_conformance(state)
+    end
+  end
+
+  defp print_conformance(state) do
+    runtime = NodeTestHelper.runtime()
+
+    table =
+      Map.new(NodeTestHelper.capabilities(), fn capability ->
+        {capability, Map.get(state.capabilities, capability, :untested)}
+      end)
+
+    rows =
+      table
+      |> Enum.sort_by(fn {capability, outcome} -> {@outcome_rank[outcome], capability} end)
+      |> Enum.map_join("\n", fn {capability, outcome} ->
+        "  #{String.pad_trailing(Atom.to_string(capability), 20)} #{outcome}"
+      end)
+
+    IO.puts(:stderr, "\n[conformance] runtime=#{runtime}\n#{rows}")
+
+    case System.get_env("CONFORMANCE_OUT") do
+      nil ->
+        :ok
+
+      path ->
+        File.write!(path, Jason.encode!(%{runtime: runtime, capabilities: table}, pretty: true))
+        IO.puts(:stderr, "[conformance] #{path}")
+    end
+  end
 
   defp summary(modules) do
     {async, sync} = Enum.split_with(modules, fn {_, _, _, a?} -> a? end)

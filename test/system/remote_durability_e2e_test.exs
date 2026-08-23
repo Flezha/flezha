@@ -34,7 +34,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   Pre-req: `docker compose -f docker/dev/docker-compose.yml up -d postgres-sink`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :effectively_once
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
@@ -47,7 +47,6 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
   alias Flezha.State.DurabilityTier.{Backend, Manifest, Shipper}
   alias Flezha.State.{InputLog, ProcJournal, Registry}
 
-  @moduletag :system
   @moduletag :postgres_integration
   @moduletag timeout: 300_000
 
@@ -59,6 +58,7 @@ defmodule FlezhaTest.System.RemoteDurabilityE2ETest do
     :ok
   end
 
+  @tag capability: :workflow, skip: FlezhaTest.SystemCase.deferral(:workflow)
   test "a sync-declared workflow loses nothing when the controller's disk is destroyed" do
     backend_opts = install_durability_tier()
     namespace = unique("dur_wf")

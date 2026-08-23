@@ -7,9 +7,10 @@ name: Nightly E2E
 # cross-node migration — precisely the behaviour that breaks in production
 # while a green `mix test` says nothing is wrong.
 #
-# Nightly rather than per-PR: these cases boot real `cargo run` runners and
-# peer BEAMs, so they are slow and inherently more timing-sensitive than the
-# unit suite. Also runnable on demand (`workflow_dispatch`) before a release.
+# Nightly rather than per-PR: these cases boot real runners and peer BEAMs, so
+# they are slow and inherently more timing-sensitive than the unit suite. Also
+# runnable on demand (`workflow_dispatch`) before a release, against any SDK
+# runtime that carries a conformance manifest.
 #
 # Deliberately NOT carrying elixir.yml's "fail on uncaptured error logs" gate:
 # these tests kill runners and tear down channels on purpose, so error-level
@@ -21,6 +22,16 @@ on:
     # 02:30 UTC daily.
     - cron: "30 2 * * *"
   workflow_dispatch:
+    inputs:
+      runtime:
+        description: "SDK runtime to run the suite against"
+        type: choice
+        default: all
+        options:
+          - all
+          - rust
+          - java
+          - elixir
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,11 +39,42 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # One job per SDK runtime, so a red cell names the SDK that broke. The
+  # schedule runs the two SDKs whose runners are committed artifacts; a
+  # dispatch can pick any runtime that carries a conformance manifest.
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      runtimes: ${{ steps.pick.outputs.runtimes }}
+    steps:
+      - id: pick
+        run: |
+          case "${{ github.event.inputs.runtime }}" in
+            rust|java|elixir) echo "runtimes=[\"${{ github.event.inputs.runtime }}\"]" >> "$GITHUB_OUTPUT" ;;
+            all)              echo 'runtimes=["rust","java","elixir"]' >> "$GITHUB_OUTPUT" ;;
+            *)                echo 'runtimes=["rust","java"]' >> "$GITHUB_OUTPUT" ;;
+          esac
+
   e2e:
+    needs: matrix
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ${{ fromJSON(needs.matrix.outputs.runtimes) }}
+    env:
+      FLEZHA_E2E_RUNTIME: ${{ matrix.runtime }}
+      CONFORMANCE_OUT: conformance-${{ matrix.runtime }}.json
     steps:
       - uses: actions/checkout@v5
+
+      - name: Set up Java 21
+        if: matrix.runtime == 'java'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
 
       - name: Set up Erlang + Elixir
         uses: erlef/setup-beam@v1
@@ -86,14 +128,32 @@ jobs:
             --manifest-path=test/apps/rust_runner/Cargo.toml \
             --target-dir=./target
 
+      - name: Pre-build the Elixir test runner
+        if: matrix.runtime == 'elixir'
+        # The standalone runner app compiles a whole flezha on its first
+        # `mix run`, which no connect budget covers.
+        run: cd test/apps/elixir_runner && mix compile
+
       - name: Run system + multi_node suites
-        run: mix test --include system --include multi_node
+        run: |
+          mix test --include system --include multi_node \
+            --formatter FlezhaTest.Helper.TimingFormatter \
+            --formatter ExUnit.CLIFormatter
+
+      - name: Upload the conformance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-${{ matrix.runtime }}
+          path: conformance-${{ matrix.runtime }}.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-app-data
+          name: e2e-app-data-${{ matrix.runtime }}
           path: |
             app_data/
           retention-days: 7

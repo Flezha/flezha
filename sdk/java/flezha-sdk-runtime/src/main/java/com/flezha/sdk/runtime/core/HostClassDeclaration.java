@@ -194,6 +194,7 @@ public final class HostClassDeclaration {
             if (desc.dynamic()) {
                 p.put("entity_mode", "dynamic");
                 desc.entityIdleTtl().ifPresent(ttl -> p.put("idle_ttl_ms", ttl.toMillis()));
+                desc.maxEntities().ifPresent(cap -> p.put("max_entities", cap));
             } else if (!desc.entityKeys().isEmpty()) {
                 p.put("entity_mode", "static");
                 p.put("entity_keys", desc.entityKeys());

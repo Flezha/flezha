@@ -2640,3 +2640,129 @@ mod sync_durability_decl_tests {
         assert!(!spec.sync_durability);
     }
 }
+
+#[cfg(test)]
+mod declaration_key_tests {
+    //! The declaration key set is a cross-SDK contract, so it is pinned in a
+    //! file both sides read: `test/fixtures/host_class_decl_keys.txt`. Here the
+    //! core proves the file matches what it accepts; `HostClassDeclarationTest`
+    //! proves the Java builder emits every key in it. A key added to one side
+    //! alone fails one of the two.
+
+    const FIXTURE: &str = include_str!("../../test/fixtures/host_class_decl_keys.txt");
+    const SOURCE: &str = include_str!("host.rs");
+
+    fn pinned(section: &str) -> Vec<String> {
+        FIXTURE
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+            .filter_map(|line| line.strip_prefix(&format!("{section}.")))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The `pub <name>:` fields of one declaration struct, in declaration order.
+    fn fields_of(struct_name: &str) -> Vec<String> {
+        let body = SOURCE
+            .split_once(&format!("pub struct {struct_name} {{"))
+            .unwrap_or_else(|| panic!("{struct_name} is declared in host.rs"))
+            .1;
+        let body = body.split_once("\n}").expect("the struct body ends").0;
+
+        body.lines()
+            .filter_map(|line| line.trim().strip_prefix("pub "))
+            .filter_map(|rest| rest.split_once(':'))
+            .map(|(name, _)| name.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn every_declaration_field_is_pinned_by_the_shared_fixture() {
+        for (section, struct_name) in [
+            ("class", "HostClassDecl"),
+            ("channel", "HostChannelDecl"),
+            ("procedure", "HostProcedureDecl"),
+            ("workflow", "HostWorkflowDecl"),
+        ] {
+            assert_eq!(
+                fields_of(struct_name),
+                pinned(section),
+                "{struct_name} and the `{section}.` lines of \
+                 test/fixtures/host_class_decl_keys.txt disagree — teach the fixture, \
+                 the Rust builder and the Java builder in the same change"
+            );
+        }
+    }
+
+    #[test]
+    fn a_declaration_carrying_every_pinned_key_is_accepted() {
+        // `deny_unknown_fields` makes this exact: a key the fixture spells
+        // differently from the core is a parse error naming it.
+        let value = |section: &str, key: &str| -> &'static str {
+            match (section, key) {
+                (_, "factory_id") | (_, "name") => r#""pinned_decl""#,
+                ("class", "schema_version") => "1",
+                ("class", "sdk_lang") | ("class", "change_format_id") => "1",
+                ("class", "ack_granularity") => r#""checkpoint""#,
+                ("class", "checkpoint_outputs") => r#""at_checkpoint""#,
+                ("class", "beyond_window_policy") => r#""drop""#,
+                ("class", "channels") => r#"[{"name":"in","kind":"entry","consumers":[0]}]"#,
+                ("class", "procedures") => r#"[{"name":"p0"}]"#,
+                ("class", "workflow") => "null",
+                ("channel", "kind") => r#""entry""#,
+                ("channel", "producer") => "null",
+                ("channel", "consumers") => "[0]",
+                ("channel", "overflow") => r#""block""#,
+                ("procedure", "entity_mode") => r#""single""#,
+                ("procedure", "entity_keys") => "[]",
+                ("procedure", "clock") => r#""wall""#,
+                ("workflow", "loop_mode") => r#""once""#,
+                ("workflow", "rollback_mode") => r#""all_or_nothing""#,
+                (_, k) if k.ends_with("_ms") || k.ends_with("_bytes") => "1000",
+                (_, k) if k.ends_with("_every") || k.ends_with("_attempts") => "1",
+                (_, k) if k.ends_with("_max") || k.ends_with("_capacity") => "1",
+                (_, k) if k.ends_with("_entities") => "1",
+                _ => "true",
+            }
+        };
+
+        let object = |section: &str| -> String {
+            pinned(section)
+                .iter()
+                .map(|key| format!(r#""{key}":{}"#, value(section, key)))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+
+        let id = format!("pinned_decl_{}", std::process::id());
+        let json = format!(
+            "{{{},{},{},{}}}",
+            object("class").replace(
+                r#""factory_id":"pinned_decl""#,
+                &format!(r#""factory_id":"{id}""#)
+            ),
+            format_args!(r#""channels":[{{{}}}]"#, object("channel")),
+            format_args!(r#""procedures":[{{{}}}]"#, object("procedure")),
+            format_args!(r#""workflow":{{{}}}"#, object("workflow")),
+        );
+
+        // The class-level `channels` / `procedures` / `workflow` placeholders
+        // above are superseded by the fully populated ones appended after them,
+        // so strip the placeholders before parsing.
+        let json = json
+            .replace(
+                r#""channels":[{"name":"in","kind":"entry","consumers":[0]}],"#,
+                "",
+            )
+            .replace(r#""procedures":[{"name":"p0"}],"#, "")
+            .replace(r#""workflow":null,"#, "");
+
+        let decl: super::HostClassDecl = serde_json::from_slice(json.as_bytes())
+            .unwrap_or_else(|e| panic!("a fully pinned declaration must parse: {e}\n{json}"));
+
+        assert_eq!(decl.factory_id, id);
+        assert_eq!(decl.channels.len(), 1);
+        assert_eq!(decl.procedures.len(), 1);
+        assert!(decl.workflow.is_some());
+    }
+}

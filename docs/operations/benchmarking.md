@@ -44,7 +44,7 @@ environment and forwards them.
 
 | Flag                               | Values                                      | Effect                                                                                                                                                                                                                                                                      |
 | ---------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-r` / `--runtime`                 | `rust` (default), `java`, `elixir`          | Which SDK runner is launched. `java` needs `test/apps/java_runner/target/java_runner.jar` (`mix test.java_sdk` or `mvn -f test/apps/java_runner/pom.xml package`). `elixir` on `uds`/`quic` spawns `test/apps/elixir_runner` — pre-build it: `cd test/apps/elixir_runner && MIX_ENV=prod mix compile`; on `native` it starts the SDK in-process. |
+| `-r` / `--runtime`                 | `rust` (default), `java`, `elixir`          | Which SDK runner is launched. Each runner is launched from its test app's manifest, `bench` profile (`test/apps/<runtime>_runner/conformance.json`), which also names the build command for a missing artifact — `java` wants `mvn -f test/apps/java_runner/pom.xml package`, `elixir` on `uds`/`quic` wants `cd test/apps/elixir_runner && MIX_ENV=prod mix compile`. On `native` the Elixir SDK starts in-process, with no spawn. |
 | `-t` / `--transport`               | `uds` (default), `quic`, `native`           | Sets `FLEZHA_TRANSPORT`. QUIC generates self-signed certs at `app_data/certs/` on first run. `native` is the in-process Elixir SDK and requires `--runtime elixir`.                                                                                                          |
 | `-s` / `--shape`                   | `regression` (default), `entity`, `dynamic` | The workload (below). `entity` ignores `-n`/`-m`.                                                                                                                                                                                                                           |
 | `-n` / `--num-operatives`          | int (default 100)                           | Operative count, `regression` and `dynamic`.                                                                                                                                                                                                                                |
@@ -254,8 +254,28 @@ lowering the floor.
 If none of these explain it, widen the tolerance band rather than lowering the
 floor.
 
+## Round-trip bench (`mix bench.roundtrip`)
+
+A full Kafka round trip — generator → `in` topic → engine → `out` topic →
+collector — with the engine as the only variable, so Flezha and Apache Flink are
+measured on one wire. `bench/flink/bench.sh` drives the whole grid; it needs the
+compose stack in `bench/flink/compose.yml`.
+
+`--runtime rust|java|elixir` picks the SDK serving the operatives, through the
+same manifest the e2e harness uses. **A number is a number for the runtime that
+produced it** — the "one change, every SDK" rule
+([`../architecture/runner.md`](../architecture/runner.md)) makes a claim that
+spans SDKs owe a run per SDK. `--runtime elixir` carries only `--durability off`
+and is refused otherwise, by name: that SDK's v1 defers the persistence family
+([`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md)).
+
+Interleave the arms inside each round (`--repeat N`) rather than running one
+runtime's grid then the next: warm-up and thermal drift are then shared by every
+arm instead of biasing whichever ran first.
+
 ## See also
 
 - [`../sdk/rust_operative_architecture.md`](../sdk/rust_operative_architecture.md) — dispatch hot path, entity mailboxes, poll workers.
 - [`../sdk/protocol_spec.md`](../sdk/protocol_spec.md) — the wire format `mix bench` exercises.
 - [`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md) — the in-process `native` transport the elixir runtime measures.
+- [`../sdk/conformance.md`](../sdk/conformance.md) — the manifests both bench profiles and the e2e harness launch from.

@@ -4,7 +4,6 @@
 
 The sdk-authoring-contract capability is the single, language-agnostic source of truth for SDK authoring sugar. It defines the canonical mapping from a sugared procedure/operative declaration to the existing `StreamOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface: signature → associated types, mutable-state parameter → `State`, `State` → `Change` derivation with an explicit hand-written boundary, explicit entity-mode opt-ins (single/static/dynamic), single-procedure input-to-sink auto-wiring, and auto-registration. All sugar is pure expansion — it introduces no new runtime path, protocol message, or WAL change, and sugared procedures compose with hand-written ones. The contract binds Rust, Java, and the forward-looking Python and Elixir SDKs so the same boilerplate collapses identically across every binding.
 ## Requirements
-
 ### Requirement: Sugar expands to existing trait surface
 The authoring sugar in every SDK SHALL be pure expansion over the existing `StreamOperative`/`Procedure`/`Change`/`Channel` trait (or interface) surface. The generated code MUST be equivalent to a valid hand-written implementation, and MUST NOT introduce any new runtime path, protocol message, or WAL change.
 
@@ -112,7 +111,7 @@ The contract SHALL define exactly one topology that may be auto-wired — a sing
 - **THEN** startup fails with an error naming the colliding id
 
 ### Requirement: Contract binds all current and future SDKs
-The contract SHALL be the single source of truth for authoring sugar across Rust, Java, and future Python and Elixir SDKs, including non-normative target sketches for the not-yet-built bindings. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Computation` base (see below).
+The contract SHALL be the single source of truth for authoring sugar across the Rust, Java and Elixir SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Computation` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
 
 #### Scenario: Reference operative expands identically across SDKs
 
@@ -121,8 +120,18 @@ The contract SHALL be the single source of truth for authoring sugar across Rust
 
 #### Scenario: Future bindings have a documented target
 
-- **WHEN** the Python or Elixir SDK is later built
+- **WHEN** a new SDK binding is later built
 - **THEN** it follows the contract's documented decorator/macro sketch and inference rules without changing the contract
+
+#### Scenario: A declaration key lands in every SDK or is deferred by name
+
+- **WHEN** a change adds a key to `HostClassDecl` (for example a checkpoint option)
+- **THEN** the same change adds its spelling to the Rust builder and the Java builder, and its spec delta records the Elixir SDK as either carrying it or deferring it to a named follow-up
+
+#### Scenario: A performance claim is measured per runtime
+
+- **WHEN** a change reports a throughput or latency result for a tier the Rust, Java and Elixir runners all carry
+- **THEN** its notes report a number per runtime from the same bench protocol, and a runtime without a number is named as unmeasured rather than covered by the Rust number
 
 ### Requirement: Keyed and collection state journaling
 The authoring contract SHALL define journaling mutators for per-key map state so a stateful procedure whose state is a `HashMap`-of-values or `HashMap`-of-collections can be authored without a hand-written `Change` or `apply_change`. Every SDK realization SHALL generate, from a journal-annotated map field, named mutators whose calls are the journaled changes, and a generated change-application that replays them.
@@ -281,3 +290,20 @@ The mandatory authoring surface for the common hand-written case therefore reduc
 
 - **WHEN** a Java implementation overrides `clockType()` (or a Rust implementation implements `Procedure` directly with a non-default `Clock`)
 - **THEN** the explicit declaration SHALL be used, defaults notwithstanding
+
+### Requirement: Every SDK binding passes the shared conformance suite
+
+Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a conformance manifest (`sdk-conformance`), and SHALL pass the shared end-to-end suite under `FLEZHA_E2E_RUNTIME=<sdk>` for every capability its manifest does not defer. A capability listed under `deferred` SHALL match the SDK's documented scope matrix, and the documented matrix SHALL point at the manifest rather than restate it. The contract's reference-operative equivalence (§6 `static_entity`, §6.1 `rolling_window_twin`) SHALL be asserted against the controller-side golden declaration snapshot in the smoke tier, in addition to any SDK-local expansion test; an SDK whose expansion differs from the golden fails conformance, whatever its local test says.
+
+#### Scenario: A new binding is admitted by the suite, not by review
+- **WHEN** a new SDK's test app and manifest are added and `FLEZHA_E2E_RUNTIME=<sdk> mix test --include system` passes with every non-deferred capability green
+- **THEN** the binding satisfies this contract for the capabilities it carries, and its deferred list is its scope matrix
+
+#### Scenario: A binding cannot land half-wired
+- **WHEN** a pull request adds a new SDK's test app without its manifest, or with a manifest that defers a required capability, omits a vocabulary capability, or is not dispatchable from the nightly
+- **THEN** `mix test` fails in the conformance gate in that pull request, naming what is missing and the "Adding an SDK to the conformance suite" section
+
+#### Scenario: A deferred list that drifts from the documented scope fails the gate
+- **WHEN** an SDK's documentation names a capability as carried while its manifest lists it under `deferred`
+- **THEN** the discrepancy is a defect of the change that introduced it; the manifest is the one place the scope is declared
+

@@ -1,6 +1,7 @@
 package com.flezha.test;
 
 import com.flezha.sdk.channel.ChannelBuilder;
+import com.flezha.sdk.channel.OverflowPolicy;
 import com.flezha.sdk.operative.StreamOperative;
 
 /**
@@ -13,14 +14,23 @@ public final class DynamicEntityStreamOperative implements StreamOperative {
 
     @Override
     public String factoryId() {
-        return "java_dynamic_entity";
+        return "dynamic_entity";
     }
 
     @Override
     public void channels(ChannelBuilder c) {
         c.input(String.class, "input")
+                .onFull(OverflowPolicy.BLOCK)
                 .filter(input -> !input.equals("drop"))
-                .keyBy(input -> input.split(":")[0])
-                .into(DynamicEntityProcedure.class);
+                .keyBy(DynamicEntityStreamOperative::key)
+                .into(DynamicEntityProcedure.class)
+                .named("kafka")
+                .sink("test_kafka");
+    }
+
+    /** Key = text before the first {@code :}; {@code partition_relay} shares it. */
+    static String key(String input) {
+        int at = input.indexOf(':');
+        return at < 0 ? input : input.substring(0, at);
     }
 }

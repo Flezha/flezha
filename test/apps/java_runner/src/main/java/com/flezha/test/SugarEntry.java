@@ -5,7 +5,7 @@ import com.flezha.sdk.authoring.EntitiesFor;
 import java.util.List;
 
 /** Static-entity entry procedure of the 2-procedure reference operative. */
-@Procedure(id = "sugar_static_entry_procedure", keys = {"a", "b", "c", "d"})
+@Procedure(id = "macro_static_entry_procedure", keys = {"a", "b", "c", "d"})
 public class SugarEntry {
 
     @EntitiesFor

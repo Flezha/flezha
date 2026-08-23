@@ -24,7 +24,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
       mix test --include system test/system/compaction_e2e_test.exs
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :state_persistence
 
   alias Flezha.Operative.Builder
   alias Flezha.Runner.FleetManager
@@ -32,7 +32,6 @@ defmodule FlezhaTest.System.CompactionE2ETest do
   alias FlezhaTest.Helper.CompactionAssertions, as: CA
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @moduletag :system
   @namespace "compaction_e2e"
   @factory "store_input"
   @procedure "store_input_procedure"
@@ -63,9 +62,7 @@ defmodule FlezhaTest.System.CompactionE2ETest do
 
   @tag :compaction_e2e
   test "a triggered compaction produces a durable snapshot file and shrinks the WAL" do
-    # Cold-cargo warmup can blow past the usual budget, so allow 120 s.
-    {port, ce_id} =
-      NodeTestHelper.start_runner_port(@namespace, runtime: :rust, connect_timeout: 120_000)
+    {port, ce_id} = NodeTestHelper.start_runner_port(@namespace)
 
     on_exit(fn -> NodeTestHelper.ensure_port_dead(port) end)
 

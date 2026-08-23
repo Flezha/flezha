@@ -18,11 +18,10 @@ defmodule Mix.Tasks.Bench do
 
     * `--num-operatives` / `-n` - Number of operatives to create (default: 100)
     * `--messages-per-operative` / `-m` - Number of messages to send per operative (default: 100)
-    * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default) or `java`.
-      The `java` runtime requires the test jar at
-      `test/apps/java_runner/target/java_runner.jar`. Build it
-      with `mix test.java_sdk` (builds host `flz_jni` + Maven) or
-      `mvn -f test/apps/java_runner/pom.xml package`.
+    * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default), `java`
+      or `elixir`. Each is launched from its test app's manifest
+      (`test/apps/<runtime>_runner/conformance.json`, `bench` profile), which
+      names the build command for a missing artifact.
     * `--shape` - Bench shape: `regression` (default; the apples-to-apples
       regression check, factory `do_nothing`, dimensions from `-n` / `-m`),
       `entity` (the `operative-bench-harness` entity-stress shape, factory

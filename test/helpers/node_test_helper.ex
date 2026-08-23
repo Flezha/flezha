@@ -2,6 +2,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   use Flezha.Constant
   use ExUnit.Case
 
+  alias Flezha.Service.PortPilot
+
   # TODO: remove or refactor.
   # def test_operative(operative_id) do
   #   operative =
@@ -173,21 +175,15 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   (`:erlang.port_info(port, :os_pid)`) to `kill -KILL` it.
   """
   def start_runner_port(namespace \\ "test_temp_namespace", opts \\ []) do
-    {:ok, current_path} = :file.get_cwd()
     transport = Keyword.get(opts, :transport, :uds)
-    runtime = Keyword.get(opts, :runtime, :rust)
-
-    command = build_command(runtime, current_path, namespace)
-
-    # `cargo run` does a freshness check on every invocation (1–3 s warm,
-    # tens of seconds cold) before the runner binary even starts, so 2 s
-    # was racy on a cold target dir and tanked QUIC's setup_all.
-    connect_timeout = Keyword.get(opts, :connect_timeout, 30_000)
+    runtime = Keyword.get(opts, :runtime, spawn_runtime())
+    command = PortPilot.launch_command(runtime, :test, namespace)
+    connect_timeout = Keyword.get(opts, :connect_timeout, manifest(runtime)["connect_timeout_ms"])
 
     Flezha.Service.EventManager.add_handler(:runner_connected_event)
 
     {port, _command} =
-      Flezha.Service.PortPilot.open_port(command,
+      PortPilot.open_port(command,
         transport: transport,
         env: Keyword.get(opts, :env, [])
       )
@@ -205,62 +201,95 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     {port, runner_id}
   end
 
-  # Build the command line used to launch the compute engine for a given runtime.
-  # Keep `:rust` as the default so every existing test keeps working unchanged.
-  defp build_command(:rust, current_path, namespace) do
-    "cargo run --quiet --manifest-path=#{current_path}/test/apps/rust_runner/Cargo.toml --target-dir=./target -- " <>
-      namespace
+  # ---------- SDK conformance: the runtime axis ----------
+  #
+  # The capability vocabulary: what a `test/system` module declares through
+  # `FlezhaTest.SystemCase` and what a manifest carries or defers. One entry per
+  # row of the runner matrix in `docs/architecture/runner.md`.
+  @capabilities [
+    :runner_lifecycle,
+    :graph_builder,
+    :liveness,
+    :pool_wedge,
+    :retry_ladder,
+    :state_persistence,
+    :effectively_once,
+    :entity_timers,
+    :correction_window,
+    :keyed_channels,
+    :workflow,
+    :dynamic_entity,
+    :entry_idle,
+    :partitioned
+  ]
+
+  # The surface every SDK carries; a manifest cannot defer these.
+  @required_capabilities [:runner_lifecycle, :graph_builder, :liveness, :retry_ladder, :partitioned]
+
+  def capabilities, do: @capabilities
+  def required_capabilities, do: @required_capabilities
+
+  # The conformance suite's runtime reaches `start_runner_port/2` through the
+  # test process, not the environment: `FLEZHA_E2E_RUNTIME` selects which SDK
+  # `test/system` runs against, and `FlezhaTest.SystemCase` publishes it per
+  # test. Everything else — controller and integration tests that merely need
+  # *a* runner, written against the reference fixtures — keeps the reference,
+  # so pointing a run at a partial SDK cannot turn them red for the wrong
+  # reason.
+  @runtime_key {__MODULE__, :spawn_runtime}
+
+  # The SDK whose manifest every other is checked against, and the one a
+  # scenario falls back to when it is not the runner under test.
+  @reference_runtime :rust
+
+  @doc "The reference SDK — the manifest every other manifest is measured by."
+  def reference_runtime, do: @reference_runtime
+
+  @doc "Scope `runtime` to the calling test process (`FlezhaTest.SystemCase`)."
+  def put_spawn_runtime(runtime), do: Process.put(@runtime_key, runtime)
+
+  @doc "The runtime `start_runner_port/2` spawns when the caller names none."
+  def spawn_runtime, do: Process.get(@runtime_key, @reference_runtime)
+
+  @doc """
+  The runtime this run exercises: `FLEZHA_E2E_RUNTIME` (default `rust`). An
+  unknown value raises naming the manifests that exist.
+  """
+  def runtime do
+    case System.get_env("FLEZHA_E2E_RUNTIME", Atom.to_string(@reference_runtime)) do
+      "" ->
+        @reference_runtime
+
+      name ->
+        Enum.find(PortPilot.runtimes(), &(Atom.to_string(&1) == name)) ||
+          raise ArgumentError,
+                "FLEZHA_E2E_RUNTIME=#{name} names no SDK test app; the manifests under " <>
+                  "test/apps are: " <>
+                  Enum.map_join(PortPilot.runtimes(), ", ", &PortPilot.manifest_path/1)
+    end
   end
 
-  defp build_command(:elixir, current_path, namespace) do
-    app_dir = Path.join([current_path, "test/apps/elixir_runner"])
+  def manifest(runtime \\ runtime()), do: PortPilot.manifest(runtime)
+  def manifest_path(runtime \\ runtime()), do: PortPilot.manifest_path(runtime)
 
-    if not File.dir?(Path.join(app_dir, "lib")) do
-      raise "elixir_runner app not found at #{app_dir}"
-    end
+  @doc "The capabilities `runtime`'s manifest defers, as vocabulary atoms."
+  def deferred(runtime \\ runtime()), do: capability_atoms(runtime, manifest(runtime)["deferred"])
 
-    # The spawned app runs in its own cwd, so the controller's relative socket /
-    # cert paths would miss it — pass them ABSOLUTE (resolved against the
-    # controller's cwd). `mix run --no-halt` boots the runner-only app and blocks;
-    # its stdin-EOF watcher halts the VM when the harness closes the port.
-    abs = fn rel ->
-      if String.starts_with?(rel, "/"), do: rel, else: Path.join(current_path, rel)
-    end
-
-    sock = abs.(Application.get_env(:flezha, :socket_files_path, "app_data/sockets/"))
-    ca = abs.(Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem"))
-    cert = abs.(Application.get_env(:flezha, :client_cert_path, "app_data/certs/client.pem"))
-    key = abs.(Application.get_env(:flezha, :client_key_path, "app_data/certs/client.key"))
-
-    env = "FLEZHA_SOCKET_FILES_PATH=#{sock} FLEZHA_CA_CERT_PATH=#{ca} " <>
-            "FLEZHA_QUIC_CLIENT_CERT=#{cert} FLEZHA_QUIC_CLIENT_KEY=#{key}"
-
-    "sh -c 'cd #{app_dir} && #{env} exec mix run --no-halt --no-deps-check -- #{namespace}'"
+  @doc "The transports `runtime`'s standalone runner supports."
+  def transports(runtime \\ runtime()) do
+    Enum.map(manifest(runtime)["transports"], &String.to_existing_atom/1)
   end
 
-  defp build_command(:java, current_path, namespace) do
-    # The test runner fat jar is *committed* under
-    # test/apps/java_runner/dist/ — refresh it locally with
-    # `scripts/build-dist.sh` whenever the SDK or test-app sources
-    # change, then `git add` and commit. CI doesn't build it.
-    jar_path =
-      Path.join([
-        current_path,
-        "test/apps/java_runner/dist/java_runner.jar"
-      ])
+  @doc "`runtime`'s fixture ids by capability (string keys, as declared)."
+  def fixtures(runtime \\ runtime()), do: manifest(runtime)["fixtures"]
 
-    if not File.exists?(jar_path) do
-      raise "Java compute engine jar not found at #{jar_path}. " <>
-              "Refresh it with `scripts/build-dist.sh` and commit."
-    end
-
-    # Cap slf4j-simple at ERROR — disconnect/reconnect WARN noise from
-    # the integration matrix tests is intentional but drowns the
-    # ExUnit output. Override per-run with
-    # `-Dorg.slf4j.simpleLogger.defaultLogLevel=info` when debugging
-    # the Java side.
-    "java -Dorg.slf4j.simpleLogger.defaultLogLevel=error " <>
-      "-jar #{jar_path} #{namespace}"
+  defp capability_atoms(runtime, names) do
+    Enum.map(names, fn name ->
+      Enum.find(@capabilities, &(Atom.to_string(&1) == name)) ||
+        raise ArgumentError,
+              "#{manifest_path(runtime)}: #{inspect(name)} is not a capability; the " <>
+                "vocabulary is #{inspect(@capabilities)}"
+    end)
   end
 
   def stop_runner(namespace, runner_id, opts \\ []) do

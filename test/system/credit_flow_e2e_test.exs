@@ -15,7 +15,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   `scripts/build-dist.sh` after any SDK change.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :state_persistence
 
   import FlezhaTest.Helper.CreditTestHelper
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2, ensure_port_dead: 1]
@@ -25,7 +25,6 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
   alias Flezha.Service.OperativeManager
   alias FlezhaTest.Helper.NodeTestHelper
 
-  @moduletag :system
   @namespace "credit_flow_e2e"
   @factory "store_input"
   @procedure "store_input_procedure"
@@ -71,15 +70,12 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
     :ok
   end
 
-  for runtime <- [:rust, :java] do
-    @tag :credit_flow_e2e
-    @tag runtime: runtime
-    test "#{runtime}: overdriven entity parks on credit, resumes on grants, zero sheds and zero drops" do
-      run_credit_scenario(unquote(runtime))
-    end
+  @tag :credit_flow_e2e
+  test "an overdriven entity parks on credit, resumes on grants, zero sheds and zero drops" do
+    run_credit_scenario()
   end
 
-  defp run_credit_scenario(runtime) do
+  defp run_credit_scenario do
     operative_id = "credit_e2e_#{System.unique_integer([:positive])}"
 
     # The stream window resolves per-Operative from the first Change's class.
@@ -87,9 +83,7 @@ defmodule FlezhaTest.System.CreditFlowE2ETest do
 
     {port, ce_id} =
       NodeTestHelper.start_runner_port(@namespace,
-        runtime: runtime,
         transport: :uds,
-        connect_timeout: 120_000,
         # Fast heartbeat so the credit_parked self-report lands within the
         # assertion window instead of the default 10s cadence.
         env: [{~c"FLEZHA_DATA_HEARTBEAT_MS", ~c"300"}]

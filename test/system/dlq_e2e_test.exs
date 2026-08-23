@@ -2,7 +2,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
   @moduledoc """
   End-to-end proof for `dead-letter-queue` against live runners.
 
-  Tier-off (`poison_probe` / `java_poison_probe`, Rust AND Java): a poison
+  Tier-off (`poison_probe`, on whichever SDK the run selects): a poison
   payload exhausts the retry budget, parks durably (park frame →
   fsync → `ParkPayloadAck`), the entity continues, the entry is
   inspectable, and — after the "antidote" input fixes the procedure — a
@@ -16,11 +16,10 @@ defmodule FlezhaTest.System.DlqE2ETest do
   behaviour is covered by the credit suites).
 
   Tagged `:system` (boots real subprocesses); the Java case additionally
-  needs the committed fat jar (`:java_sdk`). Run with
-  `mix test --include system [--include java_sdk] test/system/dlq_e2e_test.exs`.
+  Run with `mix test --include system test/system/dlq_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :retry_ladder
 
   import ExUnit.CaptureIO
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
@@ -32,7 +31,6 @@ defmodule FlezhaTest.System.DlqE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.InputLog
 
-  @moduletag :system
   @moduletag timeout: 300_000
 
   setup do
@@ -53,23 +51,14 @@ defmodule FlezhaTest.System.DlqE2ETest do
     :ok
   end
 
-  test "tier-off poison payload parks durably, entity continues, replay works (Rust)" do
-    run_poison_probe_case(:rust, "poison_probe", "poison_probe_procedure")
-  end
-
-  @tag :java_sdk
-  test "tier-off poison payload parks durably, entity continues, replay works (Java)" do
-    run_poison_probe_case(:java, "java_poison_probe", "java_poison_probe_procedure")
-  end
-
-  defp run_poison_probe_case(runtime, factory, procedure) do
-    namespace = unique("dlq_#{runtime}")
-    operative_id = unique("probe_#{runtime}")
+  test "tier-off poison payload parks durably, entity continues, replay works" do
+    namespace = unique("dlq")
+    operative_id = unique("probe")
     id_path = unique_id_path()
 
     on_exit(fn -> cleanup(namespace, operative_id, id_path) end)
 
-    {_port, _exec} = boot_runner(namespace, id_path, runtime: runtime)
+    {_port, _exec} = boot_runner(namespace, id_path)
 
     sink = %Flezha.Plugin{
       id: "probe_sink",
@@ -82,7 +71,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
 
     builder = %Builder{
       id: operative_id,
-      factory_id: factory,
+      factory_id: "poison_probe",
       init_values: %{},
       opts: [plugins: [sink]]
     }
@@ -103,7 +92,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
            "durable DLQ entry never appeared"
 
     assert [entry] = Store.list(operative_id)
-    assert entry["procedure_id"] == procedure
+    assert entry["procedure_id"] == "poison_probe_procedure"
     assert entry["channel"] == "input"
     assert entry["attempts"] == 3, "the default retry budget is 3 total attempts"
     assert entry["error"] =~ "poison"
@@ -126,6 +115,7 @@ defmodule FlezhaTest.System.DlqE2ETest do
     assert {:error, :not_found} = Store.get(ref)
   end
 
+  @tag capability: :effectively_once, skip: FlezhaTest.SystemCase.deferral(:effectively_once)
   test "tier-on poison payload freezes the min-watermark; the park un-freezes it" do
     namespace = unique("dlq_tier")
     operative_id = unique("tier_poison")

@@ -11,7 +11,7 @@ public final class PoisonProbeStreamOperative implements StreamOperative {
 
     @Override
     public String factoryId() {
-        return "java_poison_probe";
+        return "poison_probe";
     }
 
     @Override

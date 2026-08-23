@@ -79,10 +79,10 @@ What each section runs (each line below is the literal command):
 - **`elixir`** — mirrors `.github/workflows/elixir.yml`:
   - `mix deps.get`
   - `mix compile --warnings-as-errors`
-  - `mix test` (excludes `:system` and `:java_sdk`)
+  - `mix test` (excludes `:system`; includes the SDK conformance gate)
 - **`java`** — mirrors `.github/workflows/java-sdk.yml` (both jobs):
   - `mvn -B -f sdk/java/pom.xml -P coverage,native-verify verify` (Java unit tests + JaCoCo)
-  - `mix test.java_sdk` (Elixir↔Java integration matrix against the committed test runner jar)
+  - `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` (the shared smoke tier against the committed test runner jar)
 
 The `java` section refuses to run if any committed distribution artifact
 is missing — it'll point you at `scripts/build-dist.sh`. The script uses
@@ -285,33 +285,32 @@ for the full safety table.
 Run the application inside the docker containers.
 See `docker/dev/README.md` for more information.
 
-### Running Java SDK tests
+### Running the SDK test suites
 
-Flezha ships a Java 21 SDK under `sdk/java/`. Its integration matrix runs
-against the unchanged Elixir controller over both UDS and QUIC transports, and
-covers both the Rust and Java runtimes. The single entry point is:
+One end-to-end suite serves every SDK; `FLEZHA_E2E_RUNTIME` picks which one a
+run exercises, and nothing under `test/system/` names a runtime.
 
 ```bash
-mix test.java_sdk
+mix test                                             # unit + the conformance gate, no runner
+FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke # the smoke tier on the Java SDK
+FLEZHA_E2E_RUNTIME=java mix test --include system    # the whole suite on the Java SDK
+mvn -f sdk/java/pom.xml -P coverage,native-verify verify   # the Java SDK's own unit tests
 ```
 
-This alias (defined in `mix.exs`):
-1. Cross-builds the host-triple `flz_jni` cdylib via
-   `scripts/build-native.sh` and stages it at
-   `sdk/java/flezha-sdk-native/src/main/resources/native/<os>-<arch>/libflz_transport.<ext>`.
-2. Builds the Java SDK fat jar (`mvn -f sdk/java/pom.xml -P host-only package`).
-3. Builds the Java test runner
-   (`mvn -f test/apps/java_runner/pom.xml package`).
-4. Runs `mix test --only java_sdk`.
+A capability an SDK does not carry is declared in its manifest
+(`test/apps/<sdk>_runner/conformance.json`) and skipped by name; everything else
+must pass. `docs/sdk/conformance.md` has the whole contract, including what a
+new SDK owes.
 
-Prerequisites: Java 21, Rust stable, `cargo-zigbuild`
-(`cargo install cargo-zigbuild`), and a Zig toolchain (pulled in by
-`cargo-zigbuild`).
+The jars and native binaries the Java runs consume are **committed** and never
+built by CI — refresh them with `scripts/build-dist.sh` and commit. That needs
+Java 21, Rust stable, `cargo-zigbuild` and a Zig toolchain.
 
 On hardened containers where `/tmp` is mounted `noexec`, set
 `FLEZHA_NATIVE_LIB_DIR=/path/to/writable` so `NativeLibraryLoader` can
 extract `libflz_transport` somewhere it can be loaded. See
 `sdk/java/README.md` for the full env-var reference.
+
 ## License, trademark and warranty
 
 | Path | License |

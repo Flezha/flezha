@@ -120,15 +120,24 @@ working example (path dependency, runner-only, stdin-EOF watcher).
 
 ## Deferred capabilities (v1 scope)
 
-State persistence and everything gated on it (entity state shipping, restore, compaction,
-credit windows, the effectively-once tier, checkpoints, correction windows, entity timers,
-`ctx.stable_id`, clocks); the workflow kind (`kind: workflow` on `AddOperative` is refused:
-`workflow kind is not supported by the Elixir stream SDK`); keyed channels (`keyed`,
-`emit_keyed`, output identity stamps); `merge`, `route_latest`, `branch`, `codec`;
-dynamic-entity eviction (dynamic Entities live for the operative's lifetime); the entry-idle
-observer; graceful-shutdown final-state; and the hex package (`package-elixir-sdk`). A
-builder/ctx call into a deferred surface fails registration loudly, naming the operative
-module; a persistence frame from the controller is ignored with a warning.
+The list is [`test/apps/elixir_runner/conformance.json`](../../test/apps/elixir_runner/conformance.json)'s
+`deferred` — the one place this SDK's scope is declared, read by the e2e harness, the bench and
+the conformance gate ([`conformance.md`](conformance.md)). In prose: state persistence and
+everything gated on it (entity state shipping, restore, compaction, credit windows, the
+effectively-once tier, checkpoints, correction windows, entity timers, `ctx.stable_id`,
+clocks); the workflow kind (`kind: workflow` on `AddOperative` is refused: `workflow kind is
+not supported by the Elixir stream SDK`); keyed channels (`keyed`, `emit_keyed`, output
+identity stamps); `merge`, `route_latest`, `branch`, `codec`; dynamic-entity eviction (dynamic
+Entities live for the operative's lifetime); and the entry-idle observer. A builder/ctx call
+into a deferred surface fails registration loudly, naming the operative module; a persistence
+frame from the controller is ignored with a warning.
+
+Two more, outside the vocabulary because no capability names them:
+graceful-shutdown final-state, and the hex package (`package-elixir-sdk`).
+
+Each deferred capability's follow-up re-expresses the kernel's rules
+(`StagedInterval::fold`, the credit window, restore) in Elixir under the "one change, every
+SDK" rule — this SDK is not a poll host and inherits nothing from `flz_core`.
 
 ## Packaging boundary
 
@@ -144,6 +153,7 @@ swap of seam internals, not a rewrite.
 ## See also
 
 - [`authoring_contract.md`](authoring_contract.md) — the cross-SDK authoring contract
+- [`conformance.md`](conformance.md) — the shared conformance suite and this SDK's manifest
 - [`protocol_spec.md`](protocol_spec.md) — the binary protocol a standalone runner speaks
 - [`../internals/nif_transport.md`](../internals/nif_transport.md) — the NIF client behind the
   socket modes

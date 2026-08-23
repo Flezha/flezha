@@ -1,0 +1,107 @@
+{
+  "runtime": "java",
+  "command": {
+    "test": "java -Dorg.slf4j.simpleLogger.defaultLogLevel=error -jar {artifact} {namespace}",
+    "bench": "java -Dorg.slf4j.simpleLogger.defaultLogLevel=error -jar {artifact} {namespace}"
+  },
+  "artifacts": {
+    "test": [
+      "dist/java_runner.jar"
+    ],
+    "bench": [
+      "target/java_runner.jar",
+      "dist/java_runner.jar"
+    ]
+  },
+  "build": {
+    "test": "scripts/build-dist.sh",
+    "bench": "mvn -f test/apps/java_runner/pom.xml package"
+  },
+  "connect_timeout_ms": 60000,
+  "transports": [
+    "uds",
+    "quic"
+  ],
+  "deferred": [
+    "pool_wedge"
+  ],
+  "fixtures": {
+    "runner_lifecycle": [
+      "do_nothing",
+      "compare_filter",
+      "bench_echo"
+    ],
+    "graph_builder": [
+      "sugar_do_nothing",
+      "sugar_store_input",
+      "sugar_static_entity",
+      "static_entity",
+      "mixed_operative",
+      "hybrid_channel",
+      "entity_stress",
+      "bench_keyed_nopersist"
+    ],
+    "liveness": [
+      "wedge_probe"
+    ],
+    "retry_ladder": [
+      "poison_probe",
+      "bounded_mailbox_block",
+      "bounded_mailbox_drop_newest",
+      "bounded_mailbox_drop_oldest"
+    ],
+    "state_persistence": [
+      "store_input",
+      "stateful_counter",
+      "coalescing_counter",
+      "persistence_off_counter",
+      "resume_probe",
+      "bench_keyed"
+    ],
+    "effectively_once": [
+      "tier_store",
+      "checkpoint_store",
+      "checkpoint_batched_store",
+      "bench_checkpoint"
+    ],
+    "entity_timers": [
+      "session_timeout"
+    ],
+    "correction_window": [
+      "candle"
+    ],
+    "keyed_channels": [
+      "partition_relay"
+    ],
+    "workflow": [
+      "echo_workflow",
+      "commit_block_workflow",
+      "sync_durable_workflow",
+      "optout_commit_block",
+      "tier_commit_block_workflow",
+      "saga_block_workflow",
+      "outbox_block_workflow",
+      "undo_outbox_workflow",
+      "chat_loop_workflow",
+      "stateless_loop_workflow",
+      "chat_rewind_workflow",
+      "retry_workflow",
+      "branch_workflow",
+      "diamond_workflow",
+      "bench_chain_1",
+      "bench_chain_4",
+      "bench_chain_16",
+      "bench_chain_optout_4",
+      "bench_loop_workflow"
+    ],
+    "dynamic_entity": [
+      "dynamic_entity"
+    ],
+    "entry_idle": [],
+    "partitioned": [
+      "partition_relay",
+      "dynamic_entity"
+    ]
+  },
+  "docs": "docs/sdk/java_sdk.md"
+}

@@ -15,7 +15,7 @@ import java.util.Optional;
  * {@code state.apply}, and the {@code applyChange} default mutates
  * {@code state.value}.
  */
-public final class CounterProcedure
+public class CounterProcedure
         implements Procedure<Long, CounterProcedure.State, Void, CounterChange, WallClock, Void> {
 
     public static final class State {

@@ -77,6 +77,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
     private boolean effectivelyOnce;
     /** {@code null} until {@code checkpointAck()} (or an option implying it). */
     private com.flezha.sdk.runtime.operative.CheckpointPolicy checkpoint;
+
     private long correctionWindowMs;
     private com.flezha.sdk.channel.BeyondWindowPolicy beyondWindowPolicy =
             com.flezha.sdk.channel.BeyondWindowPolicy.PROCESS_AS_ARRIVAL;
@@ -230,8 +231,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
      * each option is one call that preserves the others.
      */
     private void amendCheckpoint(
-            java.util.function.UnaryOperator<com.flezha.sdk.runtime.operative.CheckpointPolicy>
-                    amend) {
+            java.util.function.UnaryOperator<com.flezha.sdk.runtime.operative.CheckpointPolicy> amend) {
         checkMutable();
         this.checkpoint = amend.apply(
                 this.checkpoint == null
@@ -370,10 +370,12 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
                     .getMessage());
         }
         if (checkpoint != null && checkpoint.every() < 0) {
-            errors.add(StreamOperativeConfigurationException.checkpointEveryZero().getMessage());
+            errors.add(
+                    StreamOperativeConfigurationException.checkpointEveryZero().getMessage());
         }
         if (checkpoint != null && checkpoint.outputsAtCheckpoint() && checkpoint.maxDelayMs() <= 0) {
-            errors.add(StreamOperativeConfigurationException.checkpointDelayZero().getMessage());
+            errors.add(
+                    StreamOperativeConfigurationException.checkpointDelayZero().getMessage());
         }
 
         for (ChannelEntry entry : channels) {
@@ -450,7 +452,8 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
                     resolvedCapacities[i],
                     entry.mailboxCapacityOverridden,
                     entry.compensateOverridden,
-                    entry.entityIdleTtl));
+                    entry.entityIdleTtl,
+                    entry.maxEntities));
         }
 
         return new StreamOperativeTopology(
@@ -562,6 +565,9 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         entry.mailboxCapacityOverridden = probe.mailboxCapacityOverridden();
         entry.compensateOverridden = probe.compensateOverridden();
         entry.entityIdleTtl = probe.entityIdleTtl();
+        entry.maxEntities = probe.maxEntitiesOverridden()
+                ? java.util.OptionalLong.of(probe.maxEntities())
+                : java.util.OptionalLong.empty();
         // Every clock in the sealed hierarchy is wired. What Rust rejects at
         // compile time (a `TimeExtractor<Input>` bound, an unservable clock) is
         // rejected here instead — erasure precludes the compile-time form, so
@@ -929,6 +935,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         boolean mailboxCapacityOverridden;
         boolean compensateOverridden;
         java.util.Optional<java.time.Duration> entityIdleTtl = java.util.Optional.empty();
+        java.util.OptionalLong maxEntities = java.util.OptionalLong.empty();
     }
 
     // ---- Builder handle types ----------------------------------------------

@@ -11,10 +11,7 @@ The controller-packaging capability defines what the Flezha agent ships as. Thre
 | `alfetahe/flezha:latest-toolchain` | `docker/dev/Dockerfile.toolchain`   | Dev toolchain (Elixir+Rust+Node+protoc, source-mounted)            |
 
 The capability defines the prod runtime image base, layer composition, supported architectures, exposed binaries, and the explicitly excluded surface (no Node.js, no testnet, no full Elixir installation, no extra arches). It also covers the runtime-dev image contract (prod runtime + Node + pre-built testnet, for downstream consumers), the toolchain image contract (host-arch only, full dev toolchain bundled, for hacking on Flezha itself), and the build-context discipline (Java SDK natives and fat jars are committed artefacts; CI never cross-compiles them).
-
 ## Requirements
-
-
 ### Requirement: Prod runtime image SHALL be based on `debian:bookworm-slim`
 
 The final stage of `docker/prod/Dockerfile.controller` SHALL use `debian:bookworm-slim` (or a pinned digest of it) as its base image. The runtime image SHALL NOT contain a system-installed Elixir, Erlang, or build toolchain. Instead, the agent SHALL run from the Mix release's bundled ERTS (`include_erts: true` in `mix.exs`).
@@ -294,27 +291,9 @@ The `flezha-sdk-native` Maven build SHALL provide a `native-verify` profile that
 - **WHEN** `mvn -f sdk/java/pom.xml -P native-verify verify` is run
 - **THEN** the build SHALL fail in the `prepare-package` phase with a message naming the missing file
 
-### Requirement: `mix test.java_sdk` alias SHALL not invoke Maven
-
-The `test.java_sdk` alias in `mix.exs` SHALL be exactly `["test --only java_sdk"]`. It SHALL NOT shell out to `scripts/build-native.sh`, `mvn`, or any other build tool. The Java runner jar consumed by tests under `:java_sdk` SHALL be the committed jar at `test/apps/java_runner/dist/java_runner.jar`.
-
-The default `ExUnit.start/1` invocation in `test/test_helper.exs` SHALL exclude `:java_sdk` so `mix test` does not trigger the integration matrix; only `mix test.java_sdk` (or an explicit `mix test --only java_sdk`) SHALL run those cases.
-
-#### Scenario: mix test does not run java_sdk cases
-
-- **GIVEN** a clean checkout
-- **WHEN** `mix test` is run
-- **THEN** no test tagged `:java_sdk` SHALL execute (the run SHALL succeed without requiring the committed test runner jar to exist)
-
-#### Scenario: mix test.java_sdk runs only the matrix
-
-- **GIVEN** the committed test runner jar at `test/apps/java_runner/dist/java_runner.jar`
-- **WHEN** `mix test.java_sdk` is run
-- **THEN** only `:java_sdk`-tagged tests SHALL execute and the alias SHALL NOT shell out to `mvn` or `scripts/build-native.sh`
-
 ### Requirement: `elixir.yml` SHALL be Elixir+Rust only
 
-`.github/workflows/elixir.yml` SHALL NOT install Java or invoke Maven. It SHALL NOT run `cargo build --workspace` as a separate pre-step before `mix test`. Its path filters SHALL NOT include `test/apps/java_runner/**` (those changes belong to `java-sdk.yml`). The workflow SHALL run only `mix deps.get`, `mix compile --warnings-as-errors`, and `mix test` (which uses the default-excluded `[:system, :java_sdk]` tag set).
+`.github/workflows/elixir.yml` SHALL NOT install Java or invoke Maven. It SHALL NOT run `cargo build --workspace` as a separate pre-step before `mix test`. Its path filters SHALL NOT include `test/apps/java_runner/**` (those changes belong to `java-sdk.yml`). The workflow SHALL run only `mix deps.get`, `mix compile --warnings-as-errors`, and `mix test` (which uses the default-excluded tag set, `:system` among it, and therefore spawns no runner; the SDK conformance gate is an untagged module and runs inside it).
 
 #### Scenario: elixir.yml does not set up Java
 
@@ -353,3 +332,4 @@ A workflow (either `.github/workflows/elixir.yml` or a dedicated `docker.yml`) S
 - **GIVEN** a PR whose diff is exclusively under `lib/flezha/operative/**`
 - **WHEN** CI runs
 - **THEN** the docker-size gate is not triggered (the workflow's path filter excludes the change)
+

@@ -65,14 +65,6 @@ public final class SessionTimeoutProcedure
     }
 
     private static long timeoutMs() {
-        String raw = System.getenv("TIMER_TEST_TIMEOUT_MS");
-        if (raw == null) {
-            return 1_000L;
-        }
-        try {
-            return Long.parseLong(raw.trim());
-        } catch (NumberFormatException e) {
-            return 1_000L;
-        }
+        return TestEnv.longVar("TIMER_TEST_TIMEOUT_MS", 1_000L);
     }
 }

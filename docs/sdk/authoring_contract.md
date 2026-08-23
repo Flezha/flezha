@@ -413,7 +413,7 @@ Where the fixtures live: the hand-written `StaticEntityOperative`
 (`factory_id` `static_entity`) and its `operative!` twin `sugar_static_entity`
 are in `test/apps/rust_runner/src/main.rs`; the Java twin is
 `test/apps/java_runner/src/main/java/com/flezha/test/SugarStaticEntityStreamOperative.java`
-(`java_sugar_static_entity`, `SugarEntry` with `@EntitiesFor`), asserted by
+(`sugar_static_entity`, `SugarEntry` with `@EntitiesFor`), asserted by
 `SugarTwinTest.referenceOperativeMatchesContract`. Java has no pipeline macro,
 so its two-procedure twin is an explicit `@StreamOperative` class with a
 `channels()` body.

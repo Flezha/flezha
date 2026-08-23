@@ -19,7 +19,8 @@
 #
 # Prerequisites:
 #   - rust runtime: nothing extra (test/apps/rust_runner is built on demand)
-#   - java runtime: run `mix test.java_sdk` once to build the test jar
+#   - java runtime: `mvn -f test/apps/java_runner/pom.xml package` once
+#     (the manifest's `bench` build command)
 #   - quic transport: certs auto-generated at app_data/certs/ on first run
 #
 # Full reference: docs/operations/benchmarking.md

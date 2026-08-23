@@ -9,7 +9,7 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   `mix test --include system test/system/task_kind_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :workflow
 
   alias Flezha.Runner.FleetManager
   alias Flezha.Operative.Builder
@@ -18,7 +18,6 @@ defmodule FlezhaTest.System.TaskKindE2ETest do
   alias Flezha.Service.PortPilot
   alias Flezha.Service.OperativeManager
 
-  @moduletag :system
   @namespace "task_kind_e2e"
   @factory "echo_workflow"
 

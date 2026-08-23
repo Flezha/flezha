@@ -25,7 +25,7 @@ public final class CompareFilterProcedure
     @Override
     public void run(String input, StateHandle<State, NoChange> state, ProcedureCtx ctx) throws ProcedureException {
         if (state.get().comparable().equals(input)) {
-            // matched — filter passes the input through (no-op here).
+            ctx.emit(input);
         }
     }
 

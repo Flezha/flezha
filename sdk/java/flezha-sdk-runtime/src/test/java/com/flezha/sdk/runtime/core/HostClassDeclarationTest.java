@@ -19,8 +19,14 @@ import com.flezha.sdk.workflow.WorkflowOperative;
 import com.flezha.sdk.workflow.WorkflowOperativeCtx;
 import com.flezha.sdk.workflow.WorkflowOperativeException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -120,6 +126,260 @@ class HostClassDeclarationTest {
 
         JsonNode decl = JSON.readTree(HostClassDeclaration.forWorkflow(spec));
         assertThat(decl.get("sync_durability").asBoolean()).isTrue();
+    }
+
+    @Test
+    @DisplayName("the builder can spell every key the shared fixture pins")
+    void everyPinnedDeclarationKeyHasAJavaSpelling() throws Exception {
+        StreamOperativeClassRegistry.registerClass(FullyDeclaredOperative.class);
+        StreamOperativeClassRegistry.registerClass(FullyDeclaredDynamicOperative.class);
+        WorkflowOperativeClassRegistry.registerClass(FullyDeclaredWorkflow.class);
+
+        JsonNode stream =
+                JSON.readTree(HostClassDeclaration.forStream(StreamOperativeClassRegistry.getTopology("decl_full_op")));
+        JsonNode dynamic = JSON.readTree(
+                HostClassDeclaration.forStream(StreamOperativeClassRegistry.getTopology("decl_full_dynamic_op")));
+        JsonNode workflow = JSON.readTree(
+                HostClassDeclaration.forWorkflow(WorkflowOperativeClassRegistry.getSpec("decl_full_workflow")));
+
+        // A key may live on any node of its section: the entry channel has no
+        // `producer`, the plugin-bound one has the `keyed` flag.
+        assertEverySpellingExists("class", List.of(stream), Set.of("sync_durability", "workflow"));
+        assertEverySpellingExists("channel", nodes(stream.get("channels")), Set.of());
+        // Entity mode splits the procedure keys: a static procedure declares its
+        // key set, a dynamic one its TTL and cap. Both modes together are the
+        // section.
+        List<JsonNode> procedures = new ArrayList<>(nodes(stream.get("procedures")));
+        procedures.addAll(nodes(dynamic.get("procedures")));
+        assertEverySpellingExists("procedure", procedures, Set.of());
+        assertEverySpellingExists("workflow", List.of(workflow.get("workflow")), Set.of("wake_after_ms"));
+        assertThat(workflow.has("sync_durability")).isTrue();
+    }
+
+    private static List<JsonNode> nodes(JsonNode array) {
+        List<JsonNode> out = new ArrayList<>();
+        array.forEach(out::add);
+        return out;
+    }
+
+    /**
+     * Every key the fixture pins for {@code section} that no node of that
+     * section carries, minus the ones this declaration legitimately omits (a
+     * static procedure has no {@code idle_ttl_ms}, a stream class no
+     * {@code sync_durability}). A key with no Java spelling at all shows up
+     * here and nowhere else.
+     */
+    private static void assertEverySpellingExists(
+            String section, List<JsonNode> sectionNodes, Set<String> legitimatelyAbsent) throws Exception {
+        List<String> missing = new ArrayList<>();
+        for (String key : pinnedKeys(section)) {
+            boolean present = sectionNodes.stream().anyMatch(node -> node.has(key));
+            if (!present && !legitimatelyAbsent.contains(key)) {
+                missing.add(key);
+            }
+        }
+        assertThat(missing)
+                .as(
+                        "%s keys pinned by %s that the Java builder never emits — teach "
+                                + "HostClassDeclaration and the authoring surface, or the core and Java "
+                                + "have drifted apart",
+                        section, KEY_FIXTURE)
+                .isEmpty();
+    }
+
+    private static final String KEY_FIXTURE = "test/fixtures/host_class_decl_keys.txt";
+
+    private static List<String> pinnedKeys(String section) throws Exception {
+        // The test runs from the module directory; the fixture is repo-relative.
+        Path fixture = Path.of("..", "..", "..").resolve(KEY_FIXTURE).normalize();
+        if (!Files.exists(fixture)) {
+            fixture = Path.of(KEY_FIXTURE);
+        }
+        String prefix = section + ".";
+        return Files.readAllLines(fixture).stream()
+                .filter(line -> !line.startsWith("#") && !line.isBlank())
+                .filter(line -> line.startsWith(prefix))
+                .map(line -> line.substring(prefix.length()))
+                .collect(Collectors.toCollection(java.util.ArrayList::new));
+    }
+
+    /** Declares every stream-side option the Java surface has a spelling for. */
+    public static final class FullyDeclaredOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "decl_full_op";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.effectivelyOnce();
+            c.checkpointEvery(500);
+            c.outputsAtCheckpoint(50);
+            c.correctionWindow(600_000);
+            c.beyondWindowPolicy(com.flezha.sdk.channel.BeyondWindowPolicy.DROP);
+            c.input(String.class, "in")
+                    .onFull(com.flezha.sdk.channel.OverflowPolicy.BLOCK)
+                    .retryMax(3)
+                    .retryBackoffMs(300)
+                    .into(FullyDeclaredProc.class)
+                    .keyed()
+                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /** The dynamic half of the procedure surface: a lazy Entity with a TTL and a cap. */
+    public static final class FullyDeclaredDynamicOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "decl_full_dynamic_op";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.input(String.class, "in")
+                    .keyBy(input -> input.split(":")[0])
+                    .into(FullyDeclaredDynamicProc.class)
+                    .named("out")
+                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    public static final class FullyDeclaredDynamicProc extends StatelessTestProcedure<String, Object, String> {
+        @Override
+        public String name() {
+            return "decl_full_dynamic_proc";
+        }
+
+        @Override
+        protected Object initState(Optional<String> entityKey) {
+            return new Object();
+        }
+
+        @Override
+        public Optional<Duration> entityIdleTtl() {
+            return Optional.of(Duration.ofMillis(200));
+        }
+
+        @Override
+        public long maxEntities() {
+            return 4096;
+        }
+
+        @Override
+        public boolean maxEntitiesOverridden() {
+            return true;
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx)
+                throws com.flezha.sdk.procedure.ProcedureException {
+            ctx.emit(input);
+        }
+    }
+
+    /** A static, compensating, persistent procedure: the widest procedure declaration. */
+    public static final class FullyDeclaredProc
+            implements com.flezha.sdk.procedure.Procedure<
+                    String, FullyDeclaredProc.State, String, DeclChange, com.flezha.sdk.state.EventTimeFrom, Void> {
+
+        public static final class State {
+            public int seen;
+        }
+
+        @Override
+        public String name() {
+            return "decl_full_proc";
+        }
+
+        @Override
+        public State initState(
+                Optional<String> entityKey, Optional<com.flezha.sdk.state.RestoreInitPayload> initPayload) {
+            return new State();
+        }
+
+        @Override
+        public List<Class<?>> kryoTypes() {
+            return List.of(State.class, DeclChange.class);
+        }
+
+        @Override
+        public void applyChange(State state, DeclChange change) {
+            state.seen++;
+        }
+
+        @Override
+        public List<String> entityKeys() {
+            return List.of("a", "b");
+        }
+
+        @Override
+        public List<String> entitiesFor(String input) {
+            return List.of("a");
+        }
+
+        @Override
+        public boolean entitiesForOverridden() {
+            return true;
+        }
+
+        @Override
+        public boolean compensateOverridden() {
+            return true;
+        }
+
+        @Override
+        public long compactAfterBytes() {
+            return 4096;
+        }
+
+        // `correctionWindow` needs an event-time clock: a correction rewinds to a
+        // baseline before the late input's event time.
+        @Override
+        public Class<com.flezha.sdk.state.EventTimeFrom> clockType() {
+            return com.flezha.sdk.state.EventTimeFrom.class;
+        }
+
+        @Override
+        public long eventTime(String input) {
+            return Long.parseLong(input.split(":")[0]);
+        }
+
+        @Override
+        public boolean eventTimeOverridden() {
+            return true;
+        }
+
+        @Override
+        public void run(String input, StateHandle<State, DeclChange> state, ProcedureCtx ctx)
+                throws com.flezha.sdk.procedure.ProcedureException {
+            state.apply(new DeclChange(input));
+            ctx.emitKeyed("a", input);
+        }
+    }
+
+    public record DeclChange(String value) implements com.flezha.sdk.state.Change {}
+
+    /** Declares every workflow-side option the Java surface has a spelling for. */
+    public static final class FullyDeclaredWorkflow implements WorkflowOperative {
+        @Override
+        public String factoryId() {
+            return "decl_full_workflow";
+        }
+
+        @Override
+        public boolean syncDurability() {
+            return true;
+        }
+
+        @Override
+        public Optional<Duration> maxDuration() {
+            return Optional.of(Duration.ofSeconds(30));
+        }
+
+        @Override
+        public void run(WorkflowOperativeCtx ctx, String args) throws WorkflowOperativeException {
+            ctx.complete(args.getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     @Test

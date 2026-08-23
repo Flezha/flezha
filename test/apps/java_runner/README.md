@@ -1,8 +1,11 @@
 # Java Compute Engine
 
 Reference Java test app that mirrors `test/apps/rust_runner/`. Used
-by the Java↔controller integration matrix under `mix test --only java_sdk` and
-by the `mix bench --runtime java` regression bench.
+by the shared conformance suite under `FLEZHA_E2E_RUNTIME=java mix test
+--include system` and by the `mix bench --runtime java` regression bench. The
+factory ids it registers, the transports it supports and how it is launched are
+declared in `conformance.json` beside this file — see
+`docs/sdk/conformance.md`.
 
 The app declares its StreamOperative classes via
 `Flezha.createRunner(ns).defineStream(...)` — the integration-matrix core

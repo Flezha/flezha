@@ -17,6 +17,6 @@ public final class CoalescingCounterStreamOperative implements StreamOperative {
 
     @Override
     public void channels(ChannelBuilder c) {
-        c.input(String.class, "input").into(TickProcedure.class);
+        c.input(String.class, "input").into(TickEntryProcedure.class).named("ticks").into(TickProcedure.class);
     }
 }

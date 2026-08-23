@@ -349,7 +349,7 @@ documented in-process forms of what the byte boundary removes for FFI hosts.
 
 The kernel has exactly two hosts today: the Rust SDK (the crate) and the Java SDK
 (`flz_core_ffi` over JNI). **The Elixir SDK is the deliberate exception.** It is not a poll
-host ([`../elixir_sdk.md`](../sdk/elixir_sdk.md)): it re-expresses dispatch, overflow, the
+host ([`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md)): it re-expresses dispatch, overflow, the
 retry→park ladder and the partition guard in Elixir and inherits *nothing* from `flz_core`. So
 a change below the seam reaches Rust and Java for free and reaches Elixir only when someone
 writes it; a change above the seam reaches nobody for free.
@@ -363,7 +363,8 @@ The rule, normative for every binding:
   bench factories, the e2e runtime matrix).
 - **Deferred is named, never silent.** An SDK that cannot carry a capability yet is recorded as
   deferred *by name* — in the change's spec delta and in that SDK's scope matrix
-  ([`../elixir_sdk.md` → "Deferred capabilities"](../sdk/elixir_sdk.md#deferred-capabilities-v1-scope))
+  (that SDK's `conformance.json` `deferred` list, and
+  [`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md#deferred-capabilities-v1-scope))
   — together with the follow-up that owes it. The crate is the dogfood host (a capability the
   crate reaches and the C ABI does not is a defect); one level up the same holds: a capability
   one SDK reaches that another neither reaches nor names as deferred is a defect of the change,
@@ -372,32 +373,25 @@ The rule, normative for every binding:
   change, a kernel change or a host change — its dev note says which — and a number taken with
   the Rust runner is not a number for Java or Elixir until the same bench has run on them.
 
-Where each SDK stands (Rust and Java share the kernel, so every row below the seam is one
-implementation; Elixir is v1):
+Where each SDK stands is not a table anyone maintains by hand. Each SDK's test app declares it
+in `test/apps/<sdk>_runner/conformance.json`: the capabilities it defers, by name, and the
+fixture ids it registers for the ones it carries. The static gate fails any pull request whose
+manifests do not account for every capability, and the nightly publishes a per-runtime
+capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conformance.md).
 
-| Surface | Rust | Java | Elixir |
-|---|---|---|---|
-| Runner-as-handle, `UpdateFactories`, stable identity, reconnect as a binding swap | ✓ | ✓ | ✓ |
-| Graph builder: `input`/`into`/`sink`, `map`/`filter`/`flat_map`/`key_by`, fan-out, fan-in | ✓ | ✓ | ✓ |
-| Overflow default `Block`, retry→park ladder, partition guard, heartbeats, `ctx.now` | ✓ | ✓ | ✓ |
-| State persistence, restore, compaction, credit windows | ✓ | ✓ | deferred |
-| Effectively-once tier; `checkpoint_ack` / `checkpoint_every` / `outputs_at_checkpoint` | ✓ | ✓ | deferred |
-| Entity timers, correction windows, `ctx.stable_id` | ✓ | ✓ | deferred |
-| Keyed channels, `merge`, `route_latest`, `branch`, `codec` | ✓ | ✓ | deferred |
-| Workflow kind | ✓ | ✓ | deferred |
-| Entry-idle observer, dynamic-Entity eviction | ✓ | ✓ | deferred |
-| Regression bench fixtures (`mix bench`) | ✓ | ✓ | ✓ |
-| Round-trip bench fixtures (`mix bench.roundtrip`) | ✓ | — | — |
-| Checkpoint-outputs e2e (`test/system/checkpoint_batched_outputs_e2e_test.exs`) | ✓ | — | n/a |
-
-A `—` is a gap this rule forbids; the two above are closed by `cross-sdk-perf-parity`.
+Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
+[`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
+the reference every other is checked against — and the Elixir SDK (v1) defers the persistence
+family, the effectively-once tier, timers, correction windows, keyed channels, the workflow
+kind, dynamic-Entity eviction and the entry-idle observer.
 
 ---
 
 ## Where to go next
 
-- The poll boundary in mechanism detail → [`../sdk_poll_core.md`](../sdk/poll_core.md)
-- Authoring an operative → [`../operative_architecture.md`](../sdk/rust_operative_architecture.md)
+- The poll boundary in mechanism detail → [`../sdk/poll_core.md`](../sdk/poll_core.md)
+- Authoring an operative → [`../sdk/rust_operative_architecture.md`](../sdk/rust_operative_architecture.md)
+- Proving an SDK still works → [`../sdk/conformance.md`](../sdk/conformance.md)
 - What the runner ships to the controller → [`kernel.md`](kernel.md)
 - The wire protocol → [`../sdk_protocol_spec.md`](../sdk/protocol_spec.md)
 - Naming rules for a new SDK → [`../sdk_naming_conventions.md`](../sdk/naming_conventions.md)

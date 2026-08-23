@@ -353,4 +353,19 @@ public interface Procedure<
     default boolean eventTimeOverridden() {
         return false;
     }
+
+    /**
+     * Dynamic-mode soft cap on live Entities for this Procedure. At the cap,
+     * inputs for a new key are dropped; existing keys are unaffected. This
+     * bounds memory against a runaway {@code keyBy}, not admission — there is no
+     * error path back to the controller.
+     */
+    default long maxEntities() {
+        return 100_000L;
+    }
+
+    /** Override-detection sentinel for {@link #maxEntities}. Default {@code false}. */
+    default boolean maxEntitiesOverridden() {
+        return false;
+    }
 }

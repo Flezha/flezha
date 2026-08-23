@@ -125,6 +125,10 @@
                                         <exclude>META-INF/LICENSE.txt</exclude>
                                         <exclude>META-INF/NOTICE</exclude>
                                         <exclude>META-INF/NOTICE.txt</exclude>
+                                        <!-- The SDK fat jar already carries one; this jar adds its own
+                                             through the transformer above, so the incoming copy would be
+                                             a duplicate entry. -->
+                                        <exclude>META-INF/THIRD_PARTY_NOTICES.md</exclude>
                                     </excludes>
                                 </filter>
                             </filters>

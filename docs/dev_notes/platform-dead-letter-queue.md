@@ -45,7 +45,7 @@
   `wal_writer_outbox_test.exs`, CLI `cli_manager_dlq_test.exs`, e2e
   `test/system/dlq_e2e_test.exs` (Rust + Java + tier watermark;
   `--include system [--include java_sdk]`). Poison test procs:
-  `poison_probe` (Rust) / `java_poison_probe` (rebuild the committed jar
+  `poison_probe` (one id on every SDK; rebuild the committed jar
   with `scripts/build-dist.sh` after SDK changes!) / `tier_store` value
   `"poison"`.
 - **Docs**: `docs/resilience/data_durability.md` "Dead-letter queue",

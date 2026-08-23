@@ -150,14 +150,17 @@ defmodule Flezha.SDK.DispatchTest do
     Operative.input(op, "in", "poison", %{})
 
     # Operative forwards the park to its runner (this test process).
-    assert_receive {:"$gen_cast", {:park, entity_pid, body}}, 1_000
+    assert_receive {:"$gen_cast", {:park, entity_pid, identity, body}}, 1_000
     assert body.error =~ "always"
     assert body.payload == "poison"
+
+    # The park is keyed by the Entity the controller must file it under.
+    assert {:ok, {"op-1", "poison", ""}} = Flezha.State.Wire.decode_entity_id(identity)
 
     # releasing lets the Entity resume (a fresh input dispatches)
     Entity.release_park(entity_pid, body.park_id)
     Operative.input(op, "in", "poison2", %{})
-    assert_receive {:"$gen_cast", {:park, ^entity_pid, _body2}}, 1_000
+    assert_receive {:"$gen_cast", {:park, ^entity_pid, _identity2, _body2}}, 1_000
   end
 
   test "drop_newest sheds at capacity; the runner stays responsive" do
@@ -193,7 +196,7 @@ defmodule Flezha.SDK.DispatchTest do
     %{op: op} = start_operative(IdentityKeyOp, range: range, runner: self())
     # "BTC-USD" hashes to key group 129 — outside this partition's 0..127 range.
     Operative.input(op, "in", "BTC-USD", %{})
-    assert_receive {:"$gen_cast", {:park, _entity, body}}, 1_000
+    assert_receive {:"$gen_cast", {:park, _entity, _identity, body}}, 1_000
     assert body.error =~ "does not own"
   end
 

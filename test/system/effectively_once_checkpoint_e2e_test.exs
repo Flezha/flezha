@@ -18,7 +18,7 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   `mix test --include system test/system/effectively_once_checkpoint_e2e_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :effectively_once
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
@@ -29,7 +29,6 @@ defmodule FlezhaTest.System.EffectivelyOnceCheckpointE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.InputLog
 
-  @moduletag :system
   @moduletag :effectively_once_e2e
   @moduletag timeout: 300_000
 

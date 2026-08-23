@@ -109,7 +109,7 @@
   `TimersUnavailable` unit case in
   `dispatcher.rs`, and e2e `test/system/entity_timers_e2e_test.exs` — fires +
   re-seat-from-disk on BOTH runtimes (fixtures `session_timeout` /
-  `java_session_timeout`, timeout from `TIMER_TEST_TIMEOUT_MS`). GOTCHA: the
+  `session_timeout` on every SDK, timeout from `TIMER_TEST_TIMEOUT_MS`). GOTCHA: the
   e2e's re-seat uses `TierE2EHarness.force_fresh_rebind` (kill the Overwatch),
   because `AddOperative` rebuilds the SDK-side instance — fresh slots, fresh
   timer state, no in-memory pending set — so ONLY the restore can still close the

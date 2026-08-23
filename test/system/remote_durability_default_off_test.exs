@@ -13,7 +13,7 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
   `mix test --include system test/system/remote_durability_default_off_test.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :effectively_once
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.TierE2EHarness
@@ -24,7 +24,6 @@ defmodule FlezhaTest.System.RemoteDurabilityDefaultOffTest do
   alias Flezha.State.DurabilityTier
   alias Flezha.State.InputLog
 
-  @moduletag :system
   @moduletag timeout: 300_000
 
   test "an effectively-once operative runs unchanged and no tier process ever starts" do

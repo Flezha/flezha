@@ -20,7 +20,7 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   Pre-req: `docker compose -f docker/dev/docker-compose.yml up -d postgres-sink`.
   """
 
-  use ExUnit.Case, async: false
+  use FlezhaTest.SystemCase, capability: :effectively_once
 
   import FlezhaTest.Helper.NodeTestHelper, only: [wait_until: 2]
   import FlezhaTest.Helper.PostgresSink
@@ -31,7 +31,6 @@ defmodule FlezhaTest.System.EffectivelyOncePostgresE2ETest do
   alias Flezha.Service.OperativeManager
   alias Flezha.State.Outbox
 
-  @moduletag :system
   @moduletag :postgres_integration
   @moduletag timeout: 300_000
 

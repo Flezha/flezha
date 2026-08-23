@@ -64,7 +64,7 @@ jobs:
             cargo build --release -p rust_runner
             cargo build -p rust_runner
           else
-            mix test.java_sdk -- --only never-run-just-build || true
+            mvn -B -q -f test/apps/java_runner/pom.xml -DskipTests package
           fi
 
       - name: Run mix bench — ${{ matrix.runtime }} / ${{ matrix.transport }}

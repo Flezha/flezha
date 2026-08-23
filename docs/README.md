@@ -25,6 +25,8 @@ Two references sit at the top level: [`glossary.md`](glossary.md) (vocabulary) a
 | [`rust_operative_architecture.md`](sdk/rust_operative_architecture.md) | The Rust SDK's dispatch pipeline: channels, procedures, entities, mailboxes, backpressure, plugin egress |
 | [`state_persistence.md`](sdk/state_persistence.md) | Per-Entity state, Change, snapshot/WAL restore and compaction — Rust and Java surfaces |
 | [`elixir_sdk.md`](sdk/elixir_sdk.md) | The Elixir SDK: in-node native mode and the standalone runner |
+| [`java_sdk.md`](sdk/java_sdk.md) | The Java SDK: scope, committed artifacts, how it is tested |
+| [`conformance.md`](sdk/conformance.md) | The cross-SDK conformance suite: manifests, capabilities, the gate, adding an SDK |
 | [`stream_transforms.md`](sdk/stream_transforms.md) | Edge transforms and `key_by` keying |
 | [`multi_input_procedures.md`](sdk/multi_input_procedures.md) | Merged subscriptions: what a merge promises |
 | [`entity_timers.md`](sdk/entity_timers.md) | Per-Entity processing-time and event-time timers |

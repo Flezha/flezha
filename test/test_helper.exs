@@ -1,7 +1,9 @@
-# `:java_sdk` is excluded from default `mix test` because it requires the
-# Java runner fat jar to be on disk. Run those tests via the
-# `mix test.java_sdk` alias, which builds the jar first.
-# `:system` is excluded by convention — those tests boot extra OS processes.
+# `:system` is excluded by convention — those tests boot extra OS processes;
+# `mix test --include system` runs them against the SDK runtime named by
+# `FLEZHA_E2E_RUNTIME` (default `rust`), and `--include sdk_smoke` runs the
+# smoke tier alone. What that runtime carries comes from its manifest
+# (`test/apps/<runtime>_runner/conformance.json`) — see
+# `docs/sdk/conformance.md`.
 # `:testnet` is excluded because the WS testnet daemon must be running on
 # port 4500 — run `npm --prefix test/apps/testnet start` first, then
 # `mix test --include testnet`.
@@ -13,10 +15,25 @@
 # `:multi_node` boots a peer BEAM and stops it mid-suite, which disturbs the
 # shared cluster state the boot-time runners and the concurrently-running
 # namespace tests depend on. Run with `mix test --include multi_node`.
+alias FlezhaTest.Helper.NodeTestHelper
+
+# What the selected runtime carries is not a filter: `--include system` is how
+# this suite runs, and an ExUnit include overrides an exclude. A deferred
+# capability is skipped by name in `FlezhaTest.SystemCase`, and a transport the
+# manifest omits is never enumerated into a test.
+runtime = NodeTestHelper.runtime()
+
+if Enum.any?([:system, :sdk_smoke], &(&1 in (ExUnit.configuration()[:include] || []))) do
+  IO.puts(
+    "[conformance] runtime=#{runtime} manifest=#{NodeTestHelper.manifest_path(runtime)} " <>
+      "deferred=#{inspect(NodeTestHelper.deferred(runtime))} " <>
+      "transports=#{inspect(NodeTestHelper.transports(runtime))}"
+  )
+end
+
 ExUnit.start(
   exclude: [
     :system,
-    :java_sdk,
     :kafka_integration,
     :postgres_integration,
     :s3_integration,
@@ -64,3 +81,4 @@ Mimic.copy(Flezha.Dlq.Store)
 Mimic.copy(Flezha.State.InputLog)
 Mimic.copy(Flezha.State.WalTransfer)
 Mimic.copy(Flezha.Operative.PartitionGroup)
+Mimic.copy(Flezha.Operative.ClassRegistry)

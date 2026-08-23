@@ -8,7 +8,7 @@ public final class SessionTimeoutStreamOperative implements StreamOperative {
 
     @Override
     public String factoryId() {
-        return "java_session_timeout";
+        return "session_timeout";
     }
 
     @Override
