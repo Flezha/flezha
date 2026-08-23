@@ -35,7 +35,7 @@ defmodule Flezha.Runner.FleetManager do
   `init_payload` is the decoded JSON from the initial frame.
   """
   def list_factories(namespace) do
-    GenServer.call(__MODULE__, {:list_factories, namespace})
+    GenServer.call(__MODULE__, {:list_factories, namespace}, manager_call_timeout())
   end
 
   def connect_handler(stream_ref, namespace, init_payload, transport) do
@@ -210,7 +210,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   def disconnect_runner(namespace, runner_id) do
-    GenServer.call(__MODULE__, {:disconnect_runner, namespace, runner_id})
+    GenServer.call(__MODULE__, {:disconnect_runner, namespace, runner_id}, manager_call_timeout())
   end
 
   @doc """
@@ -249,7 +249,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   def stop_namespace(namespace) do
-    GenServer.call(__MODULE__, {:stop_namespace, namespace})
+    GenServer.call(__MODULE__, {:stop_namespace, namespace}, manager_call_timeout())
   end
 
   @impl true
@@ -846,6 +846,14 @@ defmodule Flezha.Runner.FleetManager do
   # forms after a restart. The connect call must outlast that window plus the
   # rest of the connect work, or the caller's default 5s timeout fires and
   # strands every runner that connects during formation.
+  # Every call lands on this one serialized process, and a connect is allowed to
+  # take `runner_connect_timeout/0` — so a caller waiting the `GenServer.call`
+  # default of 5 s times out whenever it arrives while a connect is in flight.
+  # That is not contention to ride out: the manager is permitted to be busy for
+  # longer than the caller was willing to wait. Every caller gets the same
+  # budget as the work the manager may be doing.
+  defp manager_call_timeout, do: runner_connect_timeout()
+
   defp runner_connect_timeout do
     Application.get_env(:flezha, :cluster_formation_timeout_ms, 15_000) + 5_000
   end
