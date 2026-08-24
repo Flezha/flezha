@@ -206,7 +206,6 @@ defmodule Flezha.State.Wire do
 
   defp put_stamp(stamps, _key, _value), do: stamps
 
-
   @doc """
   Assemble a durable frame: the Entity identity, its seq, the 16-byte record
   header and the body under its CRC. The inverse of `decode_frame/1` and the
@@ -424,7 +423,9 @@ defmodule Flezha.State.Wire do
           required(:attempts) => non_neg_integer(),
           optional(:payload) => binary() | nil
         }) :: binary()
-  def encode_park_body(%{park_id: park_id, channel: channel, error: error, attempts: attempts} = body) do
+  def encode_park_body(
+        %{park_id: park_id, channel: channel, error: error, attempts: attempts} = body
+      ) do
     entry = %{
       channel: channel,
       error: error,

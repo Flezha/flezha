@@ -76,8 +76,9 @@ fn start_quic_server(
         .parse()
         .map_err(|e| rustler::Error::Term(Box::new(format!("invalid address: {}", e))))?;
 
-    let server_config = quic_driver::build_quic_server_config(&cert_path, &key_path, &client_ca_path)
-        .map_err(|e| rustler::Error::Term(Box::new(format!("TLS config error: {}", e))))?;
+    let server_config =
+        quic_driver::build_quic_server_config(&cert_path, &key_path, &client_ca_path)
+            .map_err(|e| rustler::Error::Term(Box::new(format!("TLS config error: {}", e))))?;
 
     let (cmd_tx, cmd_rx) = channel::unbounded::<ServerCommand>();
     let (ready_tx, ready_rx) = channel::bounded(1);

@@ -9,7 +9,13 @@ defmodule Flezha.SDK.UnitTest do
     @behaviour Flezha.SDK.Procedure
     def name, do: "echo"
     def init_state(_), do: nil
-    def run(input, state, ctx), do: (Ctx.emit(ctx, input); {:ok, state})
+
+    def run(input, state, ctx),
+      do:
+        (
+          Ctx.emit(ctx, input)
+          {:ok, state}
+        )
   end
 
   defmodule EchoOp do
@@ -17,7 +23,12 @@ defmodule Flezha.SDK.UnitTest do
     def factory_id, do: "echo_op"
 
     def channels(c),
-      do: c |> Channels.input("in") |> Channels.into(EchoProc) |> Channels.named("echo") |> Channels.sink("out")
+      do:
+        c
+        |> Channels.input("in")
+        |> Channels.into(EchoProc)
+        |> Channels.named("echo")
+        |> Channels.sink("out")
   end
 
   defmodule KeyedProc do
@@ -55,7 +66,12 @@ defmodule Flezha.SDK.UnitTest do
     def factory_id, do: "static_op"
 
     def channels(c),
-      do: c |> Channels.input("in") |> Channels.into(StaticProc) |> Channels.named("s") |> Channels.sink("out")
+      do:
+        c
+        |> Channels.input("in")
+        |> Channels.into(StaticProc)
+        |> Channels.named("s")
+        |> Channels.sink("out")
   end
 
   # --- entity mode derivation ---
@@ -87,7 +103,11 @@ defmodule Flezha.SDK.UnitTest do
     {:ok, agent} = Agent.start_link(fn -> 0 end)
 
     chain = [
-      {:filter, fn _v -> Agent.update(agent, &(&1 + 1)); true end},
+      {:filter,
+       fn _v ->
+         Agent.update(agent, &(&1 + 1))
+         true
+       end},
       {:map, fn v -> v * 2 end}
     ]
 
@@ -128,7 +148,12 @@ defmodule Flezha.SDK.UnitTest do
       def factory_id, do: "t"
 
       def channels(c),
-        do: c |> Channels.input("in") |> Channels.key_by(& &1) |> Channels.map(& &1) |> Channels.into(KeyedProc)
+        do:
+          c
+          |> Channels.input("in")
+          |> Channels.key_by(& &1)
+          |> Channels.map(& &1)
+          |> Channels.into(KeyedProc)
     end
 
     assert :TransformAfterKeyBy in issues(TAK)
@@ -139,7 +164,12 @@ defmodule Flezha.SDK.UnitTest do
       def factory_id, do: "r"
 
       def channels(c),
-        do: c |> Channels.input("in") |> Channels.retry_max(0) |> Channels.into(EchoProc) |> Channels.sink("o")
+        do:
+          c
+          |> Channels.input("in")
+          |> Channels.retry_max(0)
+          |> Channels.into(EchoProc)
+          |> Channels.sink("o")
     end
 
     assert :RetryMaxZero in issues(RMZ)
@@ -164,7 +194,12 @@ defmodule Flezha.SDK.UnitTest do
       def factory_id, do: "k"
 
       def channels(c),
-        do: c |> Channels.input("in") |> Channels.key_by(& &1) |> Channels.into(StaticProc) |> Channels.sink("o")
+        do:
+          c
+          |> Channels.input("in")
+          |> Channels.key_by(& &1)
+          |> Channels.into(StaticProc)
+          |> Channels.sink("o")
     end
 
     assert :KeyByOnUnkeyableTarget in issues(KBU)
@@ -239,7 +274,8 @@ defmodule Flezha.SDK.UnitTest do
 
     uf = Codec.encode_request("uf-1", Codec.update_factories_command([{"a", "d"}]))
 
-    assert {:ok, %RunnerCommands.CommandRequest{command: {:update_factories, %{factories: [decl]}}}} =
+    assert {:ok,
+            %RunnerCommands.CommandRequest{command: {:update_factories, %{factories: [decl]}}}} =
              Codec.decode_command(uf)
 
     assert decl.id == "a"

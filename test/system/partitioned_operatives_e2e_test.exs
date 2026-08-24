@@ -27,7 +27,6 @@ defmodule FlezhaTest.System.PartitionedOperativesE2ETest do
   alias Flezha.State.Registry
   alias FlezhaTest.Helper.NodeTestHelper
 
-
   @relay_procedure "partition_relay_procedure"
   @dynamic_procedure "dynamic_entity_procedure"
 

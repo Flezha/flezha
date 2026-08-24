@@ -134,9 +134,7 @@ fn print_namespace_help() {
     println!("    set-quota <name> --X<quota>=<value>  Update quota overrides");
     println!("    help                                 Show this help message");
     println!();
-    println!(
-        "Quota fields: max_operatives, max_entities_per_operative, max_mailbox_bytes_total,"
-    );
+    println!("Quota fields: max_operatives, max_entities_per_operative, max_mailbox_bytes_total,");
     println!("              max_message_rate_per_second, max_state_bytes, max_runners");
     println!();
     println!("Identity for gated verbs rides `--token <token>` or the FLEZHA_TOKEN env var.");

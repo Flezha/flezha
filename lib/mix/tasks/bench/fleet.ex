@@ -59,9 +59,13 @@ defmodule Mix.Tasks.Bench.Fleet do
   # block until it connects over the native transport.
   defp start_native_sdk(namespace) do
     handle =
-      Enum.reduce(Mix.Tasks.Bench.ElixirFactories.all(), Flezha.SDK.create_runner(namespace, transport: :native), fn m, acc ->
-        Flezha.SDK.define_stream(acc, m)
-      end)
+      Enum.reduce(
+        Mix.Tasks.Bench.ElixirFactories.all(),
+        Flezha.SDK.create_runner(namespace, transport: :native),
+        fn m, acc ->
+          Flezha.SDK.define_stream(acc, m)
+        end
+      )
       |> Flezha.SDK.start()
 
     case handle do
@@ -76,9 +80,15 @@ defmodule Mix.Tasks.Bench.Fleet do
 
   defp wait_for_connect(namespace, tries \\ 300) do
     cond do
-      tries <= 0 -> raise "in-process Elixir SDK never connected"
-      FleetManager.active_runners(namespace) != [] -> :ok
-      true -> Process.sleep(50); wait_for_connect(namespace, tries - 1)
+      tries <= 0 ->
+        raise "in-process Elixir SDK never connected"
+
+      FleetManager.active_runners(namespace) != [] ->
+        :ok
+
+      true ->
+        Process.sleep(50)
+        wait_for_connect(namespace, tries - 1)
     end
   end
 

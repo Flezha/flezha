@@ -137,15 +137,22 @@ defmodule Mix.Tasks.Bench.Workflow do
 
   defp stop_mem_sampler do
     case Process.get(:mem_peak_pid) do
-      pid when is_pid(pid) -> Process.unlink(pid); Process.exit(pid, :kill)
-      _ -> :ok
+      pid when is_pid(pid) ->
+        Process.unlink(pid)
+        Process.exit(pid, :kill)
+
+      _ ->
+        :ok
     end
   end
 
   defp mem_peak_mb do
     case Process.get(:mem_peak_ref) do
-      ref when not is_nil(ref) -> div(max(:atomics.get(ref, 1), :erlang.memory(:total)), 1_048_576)
-      _ -> mib(:erlang.memory(:total))
+      ref when not is_nil(ref) ->
+        div(max(:atomics.get(ref, 1), :erlang.memory(:total)), 1_048_576)
+
+      _ ->
+        mib(:erlang.memory(:total))
     end
   end
 
@@ -177,10 +184,17 @@ defmodule Mix.Tasks.Bench.Workflow do
 
     factory =
       case {scenario, tier} do
-        {:chain, "durable"} when procs in [1, 4, 16] -> "bench_chain_#{procs}"
-        {:chain, "optout"} when procs == 4 -> "bench_chain_optout_4"
-        {:chain, _} -> raise "chain fixtures: --procs 1|4|16 --tier durable, or --procs 4 --tier optout"
-        _ -> "bench_loop_workflow"
+        {:chain, "durable"} when procs in [1, 4, 16] ->
+          "bench_chain_#{procs}"
+
+        {:chain, "optout"} when procs == 4 ->
+          "bench_chain_optout_4"
+
+        {:chain, _} ->
+          raise "chain fixtures: --procs 1|4|16 --tier durable, or --procs 4 --tier optout"
+
+        _ ->
+          "bench_loop_workflow"
       end
 
     n = opts[:num] || 100
@@ -299,7 +313,11 @@ defmodule Mix.Tasks.Bench.Workflow do
     do: :counters.add(c, 2, 1)
 
   defp commits(counters),
-    do: %{proc: :counters.get(counters, 1), iter: :counters.get(counters, 2), failed: :counters.get(counters, 3)}
+    do: %{
+      proc: :counters.get(counters, 1),
+      iter: :counters.get(counters, 2),
+      failed: :counters.get(counters, 3)
+    }
 
   # ------------------------------------------------------------ scenarios --
 
@@ -411,7 +429,10 @@ defmodule Mix.Tasks.Bench.Workflow do
 
       c0 = commits(counters)
       st = %{st | suspended: 0, rehydrating: 0}
-      if cfg.kill_runner_at, do: Process.send_after(self(), :kill_runner, cfg.kill_runner_at * 1_000)
+
+      if cfg.kill_runner_at,
+        do: Process.send_after(self(), :kill_runner, cfg.kill_runner_at * 1_000)
+
       t0 = now_ns()
       received = :counters.new(1, [])
       start_turn_pacer(cfg, ids, n..(total - 1), received)
@@ -493,11 +514,14 @@ defmodule Mix.Tasks.Bench.Workflow do
         diagnose_stall(st, ids)
         raise("parking stalled at #{st.suspended}/#{n}")
       end
+
       sleep_report(cfg, mem0, n, c_turn)
       wake_storms(cfg, st, ids, counters)
     after
       if cfg.keep do
-        IO.puts("--keep: namespace #{@namespace} left on disk with its #{cfg.n} sleepers; run `--scenario sleep-boot -n #{cfg.n}` next")
+        IO.puts(
+          "--keep: namespace #{@namespace} left on disk with its #{cfg.n} sleepers; run `--scenario sleep-boot -n #{cfg.n}` next"
+        )
       else
         Fleet.cleanup(@namespace)
       end
@@ -514,19 +538,27 @@ defmodule Mix.Tasks.Bench.Workflow do
     # measured from that connect, not from the VM start.
     Fleet.setup(@namespace, cfg.runners, runner_env(cfg))
     connected_at = now_ns()
-    IO.puts("Booted over #{@namespace}; runners connected #{fmt_ms(connected_at - boot_t0)} ms after app start; waiting for #{n} sleepers to be restored as suspended...")
+
+    IO.puts(
+      "Booted over #{@namespace}; runners connected #{fmt_ms(connected_at - boot_t0)} ms after app start; waiting for #{n} sleepers to be restored as suspended..."
+    )
+
     st = collect(st, &(&1.suspended >= n), 300_000)
     restored_at = now_ns()
 
     if st.stalled do
       IO.puts("  only #{st.suspended}/#{n} restored — see the boot gate / reconcile grace")
     else
-      IO.puts("  #{n} restored #{fmt_ms(restored_at - connected_at)} ms after the runners connected")
+      IO.puts(
+        "  #{n} restored #{fmt_ms(restored_at - connected_at)} ms after the runners connected"
+      )
     end
 
     :ets.delete_all_objects(@waiters)
     ids = st.park_at |> Map.keys() |> Enum.sort() |> List.to_tuple()
-    for {id, seq} <- Enum.with_index(Tuple.to_list(ids)), do: :ets.insert(@waiters, {id, seq, nil, nil})
+
+    for {id, seq} <- Enum.with_index(Tuple.to_list(ids)),
+        do: :ets.insert(@waiters, {id, seq, nil, nil})
 
     sleep_report(cfg, mem0, tuple_size(ids), commits(counters))
 
@@ -569,7 +601,10 @@ defmodule Mix.Tasks.Bench.Workflow do
 
     # Message wake: one turn to every sleeper — as fast as the casts go out,
     # or paced at `--wake-rate` wakes/s.
-    IO.puts("Message wake storm: #{n} turns #{if cfg.wake_rate > 0, do: "at #{cfg.wake_rate}/s", else: "at once"}...")
+    IO.puts(
+      "Message wake storm: #{n} turns #{if cfg.wake_rate > 0, do: "at #{cfg.wake_rate}/s", else: "at once"}..."
+    )
+
     st = %{st | out: Tally.new(2 * n), rehydrating: 0, suspended: 0, park_at: %{}}
     c0 = commits(counters)
     t0 = now_ns()
@@ -604,7 +639,8 @@ defmodule Mix.Tasks.Bench.Workflow do
       unit: "wakes/s",
       p50_ms: p50_ms(st.out),
       commits_s: rate(c1.proc - c0.proc, max(t1 - t0, 1)),
-      integrity: integrity(%{st | out: %{st.out | duplicates: st.out.duplicates}}, n - st.out.seen)
+      integrity:
+        integrity(%{st | out: %{st.out | duplicates: st.out.duplicates}}, n - st.out.seen)
     )
 
     unless st.stalled do
@@ -734,6 +770,7 @@ defmodule Mix.Tasks.Bench.Workflow do
       init_values: init_values,
       opts: [plugins: [sink]]
     }
+
     t0 = now_ns()
 
     case OperativeManager.start_operative(@namespace, builder) do
@@ -756,7 +793,11 @@ defmodule Mix.Tasks.Bench.Workflow do
     spawn_burst(cfg, sink, 0..(n - 1), self())
     st = collect(st, &(&1.spawned + &1.spawn_errors >= n))
     if st.spawn_errors > 0, do: raise("#{st.spawn_errors} spawns failed")
-    IO.puts("  spawned in #{fmt_ms(now_ns() - t0)} ms; start_operative #{Tally.latency_line(st.spawn)}")
+
+    IO.puts(
+      "  spawned in #{fmt_ms(now_ns() - t0)} ms; start_operative #{Tally.latency_line(st.spawn)}"
+    )
+
     {st, List.to_tuple(for seq <- 0..(n - 1), do: "wf_#{seq}")}
   end
 
@@ -886,7 +927,13 @@ defmodule Mix.Tasks.Bench.Workflow do
   end
 
   defp handle({:spawned, seq, dur_ns, at}, st) do
-    st = %{st | spawn: Tally.record({seq, dur_ns}, st.spawn), spawned: st.spawned + 1, last_spawn_at: at}
+    st = %{
+      st
+      | spawn: Tally.record({seq, dur_ns}, st.spawn),
+        spawned: st.spawned + 1,
+        last_spawn_at: at
+    }
+
     progress(st)
   end
 
@@ -905,7 +952,10 @@ defmodule Mix.Tasks.Bench.Workflow do
           # A reply to a turn sent by a previous VM (`sleep-boot` over a kept
           # namespace) carries that VM's monotonic clock: count it, time it 0.
           st = %{st | out: Tally.record({seq, max(now - ts, 0)}, st.out), last_out_at: now}
-          if st.killed_at && is_nil(st.first_out_after_kill), do: %{st | first_out_after_kill: now}, else: st
+
+          if st.killed_at && is_nil(st.first_out_after_kill),
+            do: %{st | first_out_after_kill: now},
+            else: st
 
         :timer_wake ->
           id = md |> Map.get("flz.entity", "") |> String.split("/") |> hd()
@@ -942,8 +992,9 @@ defmodule Mix.Tasks.Bench.Workflow do
     %{st | killed_at: now_ns(), killed_pid: pid}
   end
 
-  defp handle({:EXIT, pid, reason}, _st) when is_pid(pid) and reason not in [:normal, :killed, :shutdown],
-    do: raise("bench worker #{inspect(pid)} crashed: #{inspect(reason)}")
+  defp handle({:EXIT, pid, reason}, _st)
+       when is_pid(pid) and reason not in [:normal, :killed, :shutdown],
+       do: raise("bench worker #{inspect(pid)} crashed: #{inspect(reason)}")
 
   defp handle(_other, st), do: st
 
@@ -1010,7 +1061,9 @@ defmodule Mix.Tasks.Bench.Workflow do
     no_done = Tally.missing(st.done)
 
     if no_output != [] or no_done != [] do
-      IO.puts("missing outputs (seq): #{inspect(no_output)}; missing completions (seq): #{inspect(no_done)}")
+      IO.puts(
+        "missing outputs (seq): #{inspect(no_output)}; missing completions (seq): #{inspect(no_done)}"
+      )
 
       for seq <- Enum.uniq(no_output ++ no_done) |> Enum.take(5) do
         id = id_of.(seq)

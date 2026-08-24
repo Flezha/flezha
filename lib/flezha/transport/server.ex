@@ -542,9 +542,7 @@ defmodule Flezha.Transport.Server do
   defp route_quic_data_stream(stream_ref, stream_type, index, runner_id, state) do
     case bind_data_stream(runner_id, stream_type, stream_ref) do
       {:ok, type, stream_name} ->
-        Logger.debug(
-          "[Transport.Server] QUIC #{type} stream ##{index} → #{inspect(stream_name)}"
-        )
+        Logger.debug("[Transport.Server] QUIC #{type} stream ##{index} → #{inspect(stream_name)}")
 
       {:error, :no_channel} ->
         Logger.warning(

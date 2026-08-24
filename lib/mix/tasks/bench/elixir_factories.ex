@@ -16,7 +16,13 @@ defmodule Flezha.Bench.EchoProc do
   @behaviour Flezha.SDK.Procedure
   def name, do: "do_nothing_procedure"
   def init_state(_), do: nil
-  def run(input, s, ctx), do: (Flezha.SDK.Ctx.emit(ctx, input); {:ok, s})
+
+  def run(input, s, ctx),
+    do:
+      (
+        Flezha.SDK.Ctx.emit(ctx, input)
+        {:ok, s}
+      )
 end
 
 defmodule Flezha.Bench.DoNothing do
@@ -35,7 +41,14 @@ defmodule Flezha.Bench.StressA do
   @behaviour Flezha.SDK.Procedure
   def name, do: "stress_a"
   def init_state(_), do: nil
-  def run(input, s, ctx), do: (Flezha.SDK.Ctx.emit(ctx, input); {:ok, s})
+
+  def run(input, s, ctx),
+    do:
+      (
+        Flezha.SDK.Ctx.emit(ctx, input)
+        {:ok, s}
+      )
+
   # The shared 8-key static set (Rust's `STRESS_KEYS`); B/C/D declare the same
   # keyset and narrow the routing to `p0` through `entities_for/1`.
   def entity_keys, do: ~w(p0 p1 p2 p3 p4 p5 p6 p7)
@@ -46,7 +59,14 @@ defmodule Flezha.Bench.StressB do
   @behaviour Flezha.SDK.Procedure
   def name, do: "stress_b"
   def init_state(_), do: nil
-  def run(input, s, ctx), do: (Flezha.SDK.Ctx.emit(ctx, input); {:ok, s})
+
+  def run(input, s, ctx),
+    do:
+      (
+        Flezha.SDK.Ctx.emit(ctx, input)
+        {:ok, s}
+      )
+
   defdelegate entity_keys, to: Flezha.Bench.StressA
   def entities_for(_), do: ["p0"]
 end
@@ -56,7 +76,14 @@ defmodule Flezha.Bench.StressC do
   @behaviour Flezha.SDK.Procedure
   def name, do: "stress_c"
   def init_state(_), do: nil
-  def run(input, s, ctx), do: (Flezha.SDK.Ctx.emit(ctx, input); {:ok, s})
+
+  def run(input, s, ctx),
+    do:
+      (
+        Flezha.SDK.Ctx.emit(ctx, input)
+        {:ok, s}
+      )
+
   defdelegate entity_keys, to: Flezha.Bench.StressA
   def entities_for(_), do: ["p0"]
 end
@@ -66,7 +93,14 @@ defmodule Flezha.Bench.StressD do
   @behaviour Flezha.SDK.Procedure
   def name, do: "stress_d"
   def init_state(_), do: nil
-  def run(input, s, ctx), do: (Flezha.SDK.Ctx.emit(ctx, input); {:ok, s})
+
+  def run(input, s, ctx),
+    do:
+      (
+        Flezha.SDK.Ctx.emit(ctx, input)
+        {:ok, s}
+      )
+
   defdelegate entity_keys, to: Flezha.Bench.StressA
   def entities_for(_), do: ["p0"]
 end

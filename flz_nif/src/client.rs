@@ -18,12 +18,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam::channel::unbounded;
-use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
-
 use flz_transport::service::payloader::{build_from_binary_into, extract_payload};
 use flz_transport::transport::protocol::{STREAM_TYPE_PRIMARY, STREAM_TYPE_SECONDARY};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
+use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
 use crate::atoms;
 use crate::driver_msg::{send_closed_msg, send_data_msg};
@@ -207,8 +206,9 @@ fn spawn_client_stream(stream: FlezhaStream, owner_pid: LocalPid) -> StreamHandl
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::os::unix::net::UnixListener;
+
+    use super::*;
 
     #[test]
     fn connect_retry_succeeds_against_a_live_listener() {
