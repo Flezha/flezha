@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # Stage 2 — Elixir builder. Assembles the Mix release using the
 # pre-built NIF + CLI from Stage 1; cargo is not invoked here.
-FROM hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-20241202-slim AS elixir-build
+FROM hexpm/elixir:1.20.2-erlang-28.5.0.5-debian-bookworm-20260713-slim AS elixir-build
 
 WORKDIR /app
 
