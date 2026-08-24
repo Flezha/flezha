@@ -143,25 +143,34 @@ defmodule Flezha.Plugin.Extension.Table do
   Invoked by operative hosts after `start_operative_sdk/2` returns `{:ok, _}` — see
   `operative-extensions` "Two-phase plugin lifecycle gated on SDK readiness".
 
-  An `activate/1` callback that raises is logged at `:error` level; the
-  plugin remains in `:prepared` and the host SHOULD treat the binding as
-  unhealthy on its next teardown cycle.
+  An `activate/1` callback that fails or raises is logged at `:error` level and
+  the plugin remains in `:prepared`. It is also RETURNED: the second element is
+  `[{plugin_id, reason}]` for every plugin that did not reach `:running`, so a
+  caller can answer its own caller honestly instead of recording a success it
+  did not achieve. Deriving that from the phase map afterwards would lose the
+  reason, which is the only thing naming what went wrong.
   """
-  @spec bulk_activate(t(), map()) :: t()
+  @spec bulk_activate(t(), map()) :: {t(), [{binary(), term()}]}
   def bulk_activate(%__MODULE__{} = table, activation_env \\ %{}) do
     # Remember the env so plugin-heal re-activations (attempt_restart)
     # re-apply it without the host re-supplying it.
     table = %{table | activation_env: Map.merge(table.activation_env, activation_env)}
 
-    Enum.reduce(table.plugins, table, fn {plugin_id, plugin}, acc ->
-      case Map.get(acc.phases, plugin_id, :prepared) do
-        :running ->
-          acc
+    {table, failed} =
+      Enum.reduce(table.plugins, {table, []}, fn {plugin_id, plugin}, {acc, failed} ->
+        case Map.get(acc.phases, plugin_id, :prepared) do
+          :running ->
+            {acc, failed}
 
-        :prepared ->
-          activate_plugin(acc, plugin_id, plugin)
-      end
-    end)
+          :prepared ->
+            case activate_plugin(acc, plugin_id, plugin) do
+              {activated, :ok} -> {activated, failed}
+              {activated, {:error, reason}} -> {activated, [{plugin_id, reason} | failed]}
+            end
+        end
+      end)
+
+    {table, Enum.reverse(failed)}
   end
 
   defp activate_plugin(table, plugin_id, %Plugin{provider: provider, opts: opts}) do
@@ -171,10 +180,10 @@ defmodule Flezha.Plugin.Extension.Table do
           "[Extension.Table] activate skipped — provider not loaded plugin_id=#{plugin_id}"
         )
 
-        put_phase(table, plugin_id, :running)
+        {put_phase(table, plugin_id, :running), :ok}
 
       not function_exported?(provider, :activate, 1) ->
-        put_phase(table, plugin_id, :running)
+        {put_phase(table, plugin_id, :running), :ok}
 
       true ->
         # Operative-level facts resolved at bind time (currently
@@ -192,19 +201,19 @@ defmodule Flezha.Plugin.Extension.Table do
     try do
       case provider.activate(opts) do
         {:ok, pid} when is_pid(pid) ->
-          table
-          |> track_owned_pid(plugin_id, pid)
-          |> put_phase(plugin_id, :running)
+          {table
+           |> track_owned_pid(plugin_id, pid)
+           |> put_phase(plugin_id, :running), :ok}
 
         ok when ok == :ok or (is_tuple(ok) and elem(ok, 0) == :ok) ->
-          put_phase(table, plugin_id, :running)
+          {put_phase(table, plugin_id, :running), :ok}
 
         {:error, reason} ->
           Logger.error(
             "[Extension.Table] activate failed for plugin_id=#{plugin_id}: #{inspect(reason)}"
           )
 
-          table
+          {table, {:error, reason}}
 
         other ->
           Logger.error(
@@ -212,7 +221,7 @@ defmodule Flezha.Plugin.Extension.Table do
               inspect(other)
           )
 
-          table
+          {table, {:error, {:invalid_activate_return, other}}}
       end
     catch
       kind, reason ->
@@ -221,7 +230,7 @@ defmodule Flezha.Plugin.Extension.Table do
             "#{inspect(kind)}/#{inspect(reason)}"
         )
 
-        table
+        {table, {:error, {kind, reason}}}
     end
   end
 
@@ -238,13 +247,39 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   @doc """
+  The ids of every plugin subscribed on this table, whatever its phase. This is
+  the set an "is this plugin declared here at all" question reads — a plugin the
+  declaration does not name is extra even while it is still `:prepared`.
+  """
+  @spec subscribed_ids(t()) :: [binary()]
+  def subscribed_ids(%__MODULE__{plugins: plugins}), do: Map.keys(plugins)
+
+  @doc """
+  The ids of the plugins that reached `:running` — the ones actually holding the
+  upstream resources their provider's `activate/1` acquires.
+
+  This, not the subscribed set, answers "which plugins are running". A plugin
+  whose `activate/1` failed stays subscribed and `:prepared`; counting it as
+  running is what let a source that never connected read as healthy forever.
+  """
+  @spec running_ids(t()) :: [binary()]
+  def running_ids(%__MODULE__{plugins: plugins, phases: phases}) do
+    for {id, _plugin} <- plugins, Map.get(phases, id, :prepared) == :running, do: id
+  end
+
+  @doc """
   Health verdict for every plugin on the table (plugin health contract). Only
   `:running` plugins are evaluated — a `:prepared` plugin has not acquired
-  upstream resources yet, so it is reported `:healthy`. Providers that export
-  `health/1` are queried (with `:owned_pid` injected); providers without it
-  default to "owned pid alive (or absent) ⇒ healthy". A provider whose `health/1`
-  raises or times out is reported `:healthy` so the reconciler never escalates on
-  an uncertain probe. Returns `%{plugin_id => :healthy | {:unhealthy, reason}}`.
+  upstream resources yet, so it is reported `:healthy`, and that verdict is NOT
+  evidence the plugin is running (read the phase for that). Providers that
+  export `health/1` are queried (with `:owned_pid` injected); providers without
+  it default to "owned pid alive (or absent) ⇒ healthy".
+
+  A probe that could not be completed — the provider reported
+  `{:fail_open, reason}`, raised, or answered with nonsense — is reported
+  `:healthy` so the reconciler never escalates on uncertainty, AND emitted as
+  telemetry naming this plugin. Returns
+  `%{plugin_id => :healthy | {:unhealthy, reason}}`.
   """
   @spec health(t()) :: %{binary() => ProviderBehaviour.health_verdict()}
   def health(%__MODULE__{} = table) do
@@ -268,24 +303,40 @@ defmodule Flezha.Plugin.Extension.Table do
       end
 
     cond do
-      not Code.ensure_loaded?(provider) -> {:unhealthy, :provider_not_loaded}
-      function_exported?(provider, :health, 1) -> safe_health(provider, opts, owned_pid)
-      is_nil(owned_pid) -> :healthy
-      Process.alive?(owned_pid) -> :healthy
-      true -> {:unhealthy, :owned_pid_dead}
+      not Code.ensure_loaded?(provider) ->
+        {:unhealthy, :provider_not_loaded}
+
+      function_exported?(provider, :health, 1) ->
+        safe_health(plugin_id, provider, opts, owned_pid)
+
+      is_nil(owned_pid) ->
+        :healthy
+
+      Process.alive?(owned_pid) ->
+        :healthy
+
+      true ->
+        {:unhealthy, :owned_pid_dead}
     end
   end
 
-  defp safe_health(provider, opts, owned_pid) do
+  # An uncertain probe reports healthy so the reconciler never escalates on one
+  # — but it is emitted, because a wedged provider is otherwise
+  # indistinguishable from a working one at every layer above this call. This is
+  # the single place that happens: a provider reports its own uncertainty as
+  # `{:fail_open, reason}` and this is the only layer that knows which plugin
+  # to name.
+  defp safe_health(plugin_id, provider, opts, owned_pid) do
     case provider.health(Map.put(opts || %{}, :owned_pid, owned_pid)) do
       :healthy -> :healthy
       {:unhealthy, _reason} = unhealthy -> unhealthy
-      _ -> :healthy
+      {:fail_open, reason} -> ProviderBehaviour.fail_open(plugin_id, provider, reason)
+      other -> ProviderBehaviour.fail_open(plugin_id, provider, {:invalid_return, other})
     end
   rescue
-    _ -> :healthy
+    error -> ProviderBehaviour.fail_open(plugin_id, provider, {:raised, error})
   catch
-    _, _ -> :healthy
+    kind, reason -> ProviderBehaviour.fail_open(plugin_id, provider, {kind, reason})
   end
 
   @doc """
@@ -1168,7 +1219,8 @@ defmodule Flezha.Plugin.Extension.Table do
         # the base delay forever. The counter is reset only after an owned
         # pid stays up `@stable_uptime_ms` (see `reset_retries_if_stable/2`).
         if prior_phase == :running do
-          activate_plugin(new_table, plugin_id, fresh_plugin)
+          {activated, _outcome} = activate_plugin(new_table, plugin_id, fresh_plugin)
+          activated
         else
           new_table
         end

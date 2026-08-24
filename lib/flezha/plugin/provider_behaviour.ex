@@ -26,6 +26,14 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @typedoc "Health verdict for a running provider instance."
   @type health_verdict() :: :healthy | {:unhealthy, reason :: term()}
 
+  @typedoc """
+  A verdict plus the third answer a probe can give: `{:fail_open, reason}` for a
+  probe that could not be completed. It reads as healthy — the reconciler must
+  never escalate on uncertainty — but it is NOT a verdict, and the layer that
+  knows the plugin's identity turns it into telemetry (`Extension.Table`).
+  """
+  @type probe_result() :: health_verdict() | {:fail_open, reason :: term()}
+
   @doc """
   Optional health verdict for a *running* provider instance. The reconciler
   (`Flezha.Plugin.Extension.Table.health/1`) queries this to escalate — restart
@@ -148,6 +156,38 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   @spec probe_budget_ms() :: pos_integer()
   def probe_budget_ms(), do: @probe_timeout_ms
 
+  @fail_open_event [:flezha, :plugin, :health, :fail_open]
+
+  @doc """
+  Report `:healthy` for a probe that could not be completed, and emit the fact.
+
+  Fail-open is deliberate — the reconciler must never escalate on a probe it
+  could not finish — but it is the one verdict that cannot be trusted, and a
+  provider that has stopped answering is otherwise indistinguishable from a
+  healthy one.
+
+  Called from `Extension.Table`, the only layer that reliably knows which plugin
+  a provider belongs to: a provider's own opts may carry no `:plugin_id`, so an
+  event emitted from inside one could not name what had gone quiet. Detection
+  reports `{:fail_open, reason}` upward; this is where it becomes an event.
+  """
+  @spec fail_open(binary() | nil, module(), term()) :: :healthy
+  def fail_open(plugin_id, provider, reason) do
+    :telemetry.execute(@fail_open_event, %{count: 1}, %{
+      plugin_id: plugin_id,
+      provider: provider,
+      reason: reason
+    })
+
+    :healthy
+  end
+
+  @doc """
+  The telemetry event `fail_open/3` emits, for handlers to attach to.
+  """
+  @spec fail_open_event() :: [atom()]
+  def fail_open_event(), do: @fail_open_event
+
   @doc """
   The pid preamble every worker-backed `health/1` shares: resolve the tracked
   process, name its absence and its death, and otherwise delegate to the
@@ -166,7 +206,7 @@ defmodule Flezha.Plugin.ProviderBehaviour do
   reports healthy: the loop must never escalate on an uncertain probe, and a
   genuinely gone process is already the `:dead` branch.
   """
-  @spec worker_health(map(), keyword(), (pid() -> health_verdict())) :: health_verdict()
+  @spec worker_health(map(), keyword(), (pid() -> probe_result())) :: probe_result()
   def worker_health(opts, reasons, verdict_fun) do
     pid = worker_pid(opts, Keyword.get(reasons, :pid, [:owned_pid]))
 
@@ -205,13 +245,13 @@ defmodule Flezha.Plugin.ProviderBehaviour do
         Process.demonitor(monitor, [:flush])
         verdict
 
-      {:DOWN, ^monitor, :process, _pid, _reason} ->
-        :healthy
+      {:DOWN, ^monitor, :process, _pid, reason} ->
+        {:fail_open, {:verdict_crashed, reason}}
     after
       budget_ms ->
         Process.exit(child, :kill)
         Process.demonitor(monitor, [:flush])
-        :healthy
+        {:fail_open, :probe_budget_exceeded}
     end
   end
 
@@ -219,10 +259,11 @@ defmodule Flezha.Plugin.ProviderBehaviour do
     case verdict_fun.(pid) do
       :healthy -> :healthy
       {:unhealthy, _reason} = unhealthy -> unhealthy
-      _ -> :healthy
+      {:fail_open, _reason} = uncertain -> uncertain
+      other -> {:fail_open, {:invalid_return, other}}
     end
   catch
-    _, _ -> :healthy
+    kind, reason -> {:fail_open, {kind, reason}}
   end
 
   @doc """

@@ -75,65 +75,78 @@ defmodule Flezha.Convergence.Probe do
   defp observe_operative(pid) when is_pid(pid) do
     case SafeCall.bounded(pid, :get_overwatch_state, @operative_call_timeout_ms) do
       {:ok, ow} when is_map(ow) ->
-        %{
+        observed(%{
           pid: pid,
           bound_runner: Map.get(ow, :runner_id),
           factory_id: Map.get(ow, :factory_id),
           parked?: Map.get(ow, :init_error) != nil,
           suspended?: Map.get(ow, :suspended, false),
           running_plugins: running_plugins(ow),
+          subscribed_plugins: subscribed_plugins(ow),
           plugin_health: plugin_health(pid, ow)
-        }
+        })
 
       _ ->
         unreadable()
     end
   end
 
-  defp observe_operative(_),
-    do: %{
-      pid: nil,
-      bound_runner: nil,
-      factory_id: nil,
-      parked?: false,
-      suspended?: false,
-      running_plugins: [],
-      plugin_health: %{}
-    }
+  defp observe_operative(_), do: observed()
 
-  defp unreadable(),
-    do: %{
-      pid: nil,
-      bound_runner: :unknown,
-      factory_id: nil,
-      parked?: false,
-      running_plugins: [],
-      plugin_health: %{}
-    }
+  # A operative whose state could not be read at all. `:unknown` rather than
+  # `nil` for the binding: "we could not tell" must not be diffed as "unbound".
+  defp unreadable(), do: observed(%{bound_runner: :unknown})
 
-  # The plugin ids currently subscribed in the operative's extension table.
-  defp running_plugins(ow) do
-    case Map.get(ow, :extensions) do
-      %{plugins: plugins} when is_map(plugins) -> Map.keys(plugins)
-      _ -> []
-    end
+  # The one shape an observed operative has. `Diff` reads every key through a
+  # default, so a field added to one constructor and forgotten in another would
+  # not fail — it would silently read as "nothing diverged". There is therefore
+  # exactly one place the keys are listed.
+  defp observed(fields \\ %{}) do
+    Map.merge(
+      %{
+        pid: nil,
+        bound_runner: nil,
+        factory_id: nil,
+        parked?: false,
+        suspended?: false,
+        running_plugins: [],
+        subscribed_plugins: [],
+        plugin_health: %{}
+      },
+      fields
+    )
   end
 
+  # The plugin ids that reached `:running` — the ones actually holding their
+  # provider's upstream resources. A plugin whose `activate/1` failed is
+  # subscribed but `:prepared`, and reporting it as running is what let a
+  # source that never connected sit undetected forever.
+  defp running_plugins(ow), do: with_table(ow, [], &Table.running_ids/1)
+
+  # The full subscribed set, whatever the phase — what the `extra_plugins`
+  # check reads, so an undeclared plugin is torn down in either phase.
+  defp subscribed_plugins(ow), do: with_table(ow, [], &Table.subscribed_ids/1)
+
   # Provider self-reported health (`Extension.Table.health/1`). Owned plugin
-  # pids live on the Overwatch's node, so only the loop running there can
-  # probe them; elsewhere — and on any failed read — report `%{}`: an
-  # uncertain probe is healthy and must never drive a heal.
+  # pids live on the Overwatch's node, so only the loop running there can probe
+  # them; elsewhere, report `%{}` — an uncertain probe is healthy and must never
+  # drive a heal.
   defp plugin_health(pid, ow) do
-    with true <- node(pid) == node(),
-         %Table{} = table <- Map.get(ow, :extensions) do
-      Table.health(table)
-    else
-      _ -> %{}
+    if node(pid) == node(), do: with_table(ow, %{}, &Table.health/1), else: %{}
+  end
+
+  # The one read of an operative's extension table. A snapshot that carries no
+  # table, or a read that fails, answers `default` — which for every caller is
+  # the value that plans nothing.
+  defp with_table(ow, default, fun) do
+    case Map.get(ow, :extensions) do
+      %Table{} = table -> fun.(table)
+      _ -> default
     end
   rescue
-    _ -> %{}
+    _ -> default
   catch
-    _, _ -> %{}
+    _, _ -> default
   end
 
   # For every observed `{namespace, factory}` pair: this node's runners

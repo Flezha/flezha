@@ -24,6 +24,105 @@ defmodule Flezha.ConvergenceTest do
     )
   end
 
+  defp plugin_intent(ids),
+    do: %Intent{
+      operatives: [
+        %{
+          namespace: :ns,
+          operative_id: "r",
+          factory_id: nil,
+          plugins: Enum.map(ids, &{&1, plugin(&1)})
+        }
+      ]
+    }
+
+  defp plugin_reality(fields),
+    do: %{
+      active_runners: %{ns: MapSet.new(["e"])},
+      operatives: %{
+        {:ns, "r"} =>
+          Map.merge(
+            %{bound_runner: "e", pid: self(), running_plugins: [], subscribed_plugins: []},
+            fields
+          )
+      },
+      stalled_operatives: MapSet.new()
+    }
+
+  describe "a declared plugin that is not running is a divergence (D1)" do
+    test "a declared plugin stuck in :prepared is missing and yields a start_plugin op" do
+      delta =
+        Diff.compute(
+          plugin_intent(["src"]),
+          plugin_reality(%{running_plugins: [], subscribed_plugins: ["src"]})
+        )
+
+      assert [{{:ns, "r"}, "src", _plugin}] = delta.missing_plugins
+      assert delta.extra_plugins == []
+      refute Diff.empty?(delta)
+
+      assert [%{primitive: :start_plugin, target: "r"}] =
+               delta
+               |> Planner.plan(Backoff.new())
+               |> Enum.map(&Map.take(&1, [:primitive, :target]))
+    end
+
+    test "a running declared plugin yields no divergence and no op" do
+      delta =
+        Diff.compute(
+          plugin_intent(["src"]),
+          plugin_reality(%{running_plugins: ["src"], subscribed_plugins: ["src"]})
+        )
+
+      assert delta.missing_plugins == []
+      assert Planner.plan(delta, Backoff.new()) == []
+    end
+
+    test "an undeclared plugin is extra in BOTH phases" do
+      for observed <- [
+            %{running_plugins: ["src", "stray"], subscribed_plugins: ["src", "stray"]},
+            %{running_plugins: ["src"], subscribed_plugins: ["src", "stray"]}
+          ] do
+        delta = Diff.compute(plugin_intent(["src"]), plugin_reality(observed))
+
+        assert delta.extra_plugins == [{{:ns, "r"}, "stray", self()}],
+               "an undeclared plugin must be torn down whatever its phase, got " <>
+                 inspect(delta.extra_plugins)
+      end
+    end
+
+    test "a parked or a suspended operative yields neither missing nor extra" do
+      for gate <- [%{parked?: true}, %{suspended?: true}] do
+        observed =
+          Map.merge(%{running_plugins: [], subscribed_plugins: ["src", "stray"]}, gate)
+
+        delta = Diff.compute(plugin_intent(["src"]), plugin_reality(observed))
+
+        assert delta.missing_plugins == []
+        assert delta.extra_plugins == []
+      end
+    end
+
+    test "a heal that keeps failing settles onto the backoff ladder, not every tick" do
+      delta =
+        Diff.compute(
+          plugin_intent(["src"]),
+          plugin_reality(%{running_plugins: [], subscribed_plugins: ["src"]})
+        )
+
+      [op] = Planner.plan(delta, Backoff.new())
+
+      # `Plugins.subscribe/3` now answers `:error` for a plugin that did not
+      # reach `:running`, so `Loop.ladder_outcome/2` records the heal as failed.
+      # The divergence is recomputed from the Probe each tick and so is still
+      # there — but the ladder holds the retry until its cooldown opens.
+      backoff = Backoff.update(Backoff.new(), Planner.key(op), :error, 0)
+
+      refute Backoff.eligible?(backoff, Planner.key(op), 0)
+      assert Backoff.eligible?(backoff, Planner.key(op), 5_000)
+    end
+  end
+
   describe "Backoff" do
     test "fresh keys are eligible; failures arm an exponential cooldown" do
       b = Backoff.new()
@@ -188,7 +287,12 @@ defmodule Flezha.ConvergenceTest do
       reality = %{
         active_runners: %{ns: MapSet.new(["e"])},
         operatives: %{
-          {:ns, "r"} => %{bound_runner: "e", pid: self(), running_plugins: ["stray"]}
+          {:ns, "r"} => %{
+            bound_runner: "e",
+            pid: self(),
+            running_plugins: ["stray"],
+            subscribed_plugins: ["stray"]
+          }
         },
         stalled_operatives: MapSet.new()
       }

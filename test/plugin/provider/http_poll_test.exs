@@ -302,7 +302,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       Enum.each(1..50, fn n -> send(self(), {:host_work, n}) end)
       Enum.each(1..50, fn n -> assert_received {:host_work, ^n} end)
 
-      assert {:ok, {0, nil}} = probe(poller)
+      assert {:ok, {0, nil, _last_settled_at}} = probe(poller)
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
     end
 
@@ -312,7 +312,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
 
       # Mid-flight: the request is blocking its own child, not the worker, so
       # the verdict is available for exactly the slow endpoint it must report.
-      assert {:ok, {0, nil}} = probe(poller)
+      assert {:ok, {0, nil, _last_settled_at}} = probe(poller)
       assert :healthy = HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
 
       assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
@@ -352,7 +352,7 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       assert {:ok, table} = Table.subscribe(Table.new(@catalog), "cfg", plugin)
       assert Table.phase(table, "cfg") == :prepared
 
-      table = Table.bulk_activate(table)
+      {table, _} = Table.bulk_activate(table)
       assert Table.phase(table, "cfg") == :running
 
       assert {"cfg-v1", %{"channel" => @channel}} = take_ingest()
@@ -364,6 +364,69 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       ref = Process.monitor(poller)
       Table.unsubscribe(table, "cfg")
       assert_receive {:DOWN, ^ref, :process, ^poller, _}, 2_000
+    end
+  end
+
+  describe "a poller that stopped settling polls says so" do
+    test "a worker idle past the window is unhealthy with a zero failure run" do
+      poller = stub_worker(failures: 0, last_error: nil, settled_ago_ms: 400)
+
+      assert {:unhealthy, {:poll_idle, age}} =
+               HttpPoll.health(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+
+      assert age >= 400
+    end
+
+    test "unchanged content on cadence stays healthy" do
+      # `settle/3` stamps on EVERY outcome, so a content-gated poller that has
+      # injected nothing for many intervals is still settling and still healthy.
+      poller = stub_worker(failures: 0, last_error: nil, settled_ago_ms: 10)
+
+      assert :healthy =
+               HttpPoll.health(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+    end
+
+    test "a poll in flight inside the window stays healthy" do
+      origin = start_origin(body: "cfg-v1", delay_ms: 250)
+      poller = start_poller(origin)
+
+      assert :healthy = HttpPoll.health(%{owned_pid: poller, failure_threshold: 3})
+      assert {"cfg-v1", _} = take_ingest(:ok, 5_000)
+    end
+
+    test "a failure run outranks the idle age" do
+      poller = stub_worker(failures: 5, last_error: :econnrefused, settled_ago_ms: 10_000)
+
+      assert {:unhealthy, {:poll_failing, :econnrefused}} =
+               HttpPoll.health(%{owned_pid: poller, failure_threshold: 3, idle_after_ms: 200})
+    end
+
+    test "the window defaults to three intervals when unset" do
+      # 3 x 1_000 ms = 3_000 ms, so a 2 s-old settle is healthy and a 4 s-old
+      # one is not, without the option ever being supplied.
+      assert :healthy =
+               HttpPoll.health(%{
+                 owned_pid: stub_worker(settled_ago_ms: 2_000),
+                 interval_ms: 1_000
+               })
+
+      assert {:unhealthy, {:poll_idle, _}} =
+               HttpPoll.health(%{
+                 owned_pid: stub_worker(settled_ago_ms: 4_000),
+                 interval_ms: 1_000
+               })
+    end
+
+    test "a wedged worker is reported as uncertain, not as a verdict" do
+      wedged = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> if Process.alive?(wedged), do: Process.exit(wedged, :kill) end)
+
+      # A worker that is alive but not answering is neither healthy nor
+      # unhealthy. The provider says so rather than swallowing it as `:healthy`;
+      # `Extension.Table` is what turns this into telemetry, because it is the
+      # layer that knows which plugin the provider belongs to.
+      assert {:fail_open, :probe_timeout} =
+               HttpPoll.health(%{owned_pid: wedged, failure_threshold: 3})
     end
   end
 
@@ -393,6 +456,35 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
       assert message =~ ":channel"
 
       assert {:error, _} = HttpPoll.init_provider(%{url: "http://x/y", channel: ""})
+    end
+
+    test "accepts an explicit idle window and rejects a malformed one" do
+      assert {:ok, opts} =
+               HttpPoll.init_provider(%{
+                 url: "http://x/y",
+                 channel: @channel,
+                 idle_after_ms: 5_000
+               })
+
+      assert opts.idle_after_ms == 5_000
+
+      assert {:error, message} =
+               HttpPoll.init_provider(%{
+                 url: "http://x/y",
+                 channel: @channel,
+                 idle_after_ms: -1
+               })
+
+      assert message =~ "idle_after_ms"
+
+      assert {:error, message} =
+               HttpPoll.init_provider(%{
+                 url: "http://x/y",
+                 channel: @channel,
+                 idle_after_ms: "soon"
+               })
+
+      assert message =~ "idle_after_ms"
     end
 
     test "rejects an interval below the minimum and a non-positive tunable" do
@@ -519,6 +611,32 @@ defmodule Flezha.Plugin.Provider.HttpPollTest do
   end
 
   # ---------- poller helpers ----------
+
+  # A worker that answers the health probe with a chosen verdict. The idle
+  # window is a clock, and driving a real poller past it would mean sleeping
+  # through real intervals.
+  defp stub_worker(fields) do
+    failures = Keyword.get(fields, :failures, 0)
+    last_error = Keyword.get(fields, :last_error, nil)
+    settled_ago = Keyword.get(fields, :settled_ago_ms, 0)
+    settled_at = :erlang.monotonic_time(:millisecond) - settled_ago
+
+    pid =
+      spawn(fn ->
+        recv = fn recv ->
+          receive do
+            {:health_probe, from, ref} ->
+              send(from, {ref, {failures, last_error, settled_at}})
+              recv.(recv)
+          end
+        end
+
+        recv.(recv)
+      end)
+
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+    pid
+  end
 
   defp base_opts(origin, extra \\ %{}) do
     Map.merge(

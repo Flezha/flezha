@@ -69,7 +69,11 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
         last_hash: nil,
         etag: nil,
         consecutive_failures: 0,
-        last_error: nil
+        last_error: nil,
+        # Seeded at start, not left nil: a poller that has never settled is
+        # measured from its own birth, so the idle window is the same clock
+        # for a worker that stopped and one that never began.
+        last_settled_at: :erlang.monotonic_time(:millisecond)
       })
 
     # The first poll is scheduled, never executed here: `activate/1` is
@@ -103,7 +107,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
   end
 
   def handle_info({:health_probe, from, ref}, state) do
-    send(from, {ref, {state.consecutive_failures, state.last_error}})
+    send(from, {ref, {state.consecutive_failures, state.last_error, state.last_settled_at}})
     {:noreply, state}
   end
 
@@ -121,6 +125,10 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
     %{state | fetch: {pid, ref, :erlang.monotonic_time(:millisecond)}}
   end
 
+  # Every outcome funnels through here — injected, unchanged, or failed — which
+  # is why the idle stamp belongs here and not on the injection path. An
+  # `http_poll` is content-gated: a healthy poller against content that never
+  # changes correctly injects nothing, so "last injected" would call it dead.
   defp settle(state, result, latency_ms) do
     state =
       case result do
@@ -129,6 +137,7 @@ defmodule Flezha.Plugin.Provider.HttpPoll.PollWorker do
         {:error, reason} -> failed(state, reason, latency_ms)
       end
 
+    state = %{state | last_settled_at: :erlang.monotonic_time(:millisecond)}
     Process.send_after(self(), :poll, state.interval_ms)
     state
   end

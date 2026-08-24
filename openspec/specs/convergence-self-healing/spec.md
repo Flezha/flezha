@@ -273,6 +273,14 @@ When `flz plugin enable <operative> <plugin>` succeeds, the plugin MUST be persi
 
 The convergence loop SHALL judge production liveness of a operative's plugins by the plugin provider's own `health/1` self-report (`Extension.Table.health/1`), never by traffic-volume proxies. A plugin that is declared, currently subscribed, and self-reports `{:unhealthy, reason}` SHALL produce a `restart_plugin` heal op routed through the extension table's existing restart machinery, subject to the loop's per-target exponential backoff. An uncertain health probe (timeout, raise, missing provider callback) SHALL be treated as healthy so the loop never escalates on uncertainty.
 
+The health self-report is the authority on whether a RUNNING plugin is producing;
+it is not the authority on whether a plugin is running at all. A declared plugin
+that is not in the `:running` phase SHALL be healed as missing rather than judged
+by its health verdict, per "A declared plugin that is not running is a divergence".
+
+An uncertain probe treated as healthy SHALL be emitted as telemetry by the
+extension table, so that fail-open is observable rather than silent.
+
 #### Scenario: wedged kafka producer is restarted after broker recovery
 - **GIVEN** a operative with a declared kafka producer plugin and an unreachable broker long enough for the provider to self-report `{:unhealthy, :produce_stalled}`
 - **WHEN** the Loop ticks
@@ -287,7 +295,7 @@ The convergence loop SHALL judge production liveness of a operative's plugins by
 - **GIVEN** a plugin whose `health/1` raises or times out
 - **WHEN** the Loop ticks
 - **THEN** the plugin is treated as healthy and no heal op is issued.
-
+- **AND** telemetry SHALL record that the verdict was a fail-open, naming the plugin and the reason.
 ### Requirement: Plugin-degraded operatives surface on /healthz and telemetry
 
 A operative with at least one declared plugin that is missing or self-reported unhealthy SHALL be published to the convergence snapshot as plugin-degraded. While any operative is plugin-degraded, `/healthz` SHALL report `degraded` with HTTP 200 and a `plugin_unhealthy` reason — degraded MUST NOT trigger a kubelet restart. The loop SHALL log plugin-health verdict transitions (degraded set becomes non-empty, changes membership, or clears), not steady-state. A suspended workflow instance — alive, unbound, its plugins released with its runner — SHALL NOT be plugin-diffed: the rehydrating bind replays its declared plugins, and until then there is nothing to heal.
@@ -477,3 +485,64 @@ runner restarting repeatedly is visible rather than mysterious.
 **Reason**: The function has zero callers in application code. It was added as a test-convenience export but is not referenced anywhere. Removing it trims the public API surface.
 
 **Migration**: Any test or external code that calls `Backoff.schedule_ms/0` should inline the value `[5_000, 30_000, 60_000, 300_000]` or read the module attribute `@schedule_ms` if needed for compile-time assertions.
+### Requirement: A declared plugin that is not running is a divergence
+
+`Convergence.Probe` SHALL report a operative's RUNNING plugins as the set whose
+lifecycle phase is `:running`, not the set of subscribed plugin ids. A declared
+plugin that is subscribed but stuck in `:prepared` — because its `activate/1`
+failed — SHALL therefore appear in the Diff's `missing_plugins`, and SHALL be
+healed by the existing `start_plugin` primitive under the existing per-target
+backoff.
+
+The `extra_plugins` check SHALL continue to read the full SUBSCRIBED set, so an
+undeclared plugin is still torn down whatever its phase; the two checks read two
+different sets deliberately, and the Probe SHALL report both.
+
+Without this, a plugin that never acquired its upstream resources is counted as
+running, is reported healthy because `:prepared` is healthy by rule, and yields
+an empty delta on every tick — the operative produces nothing and no verdict,
+op, or alarm is ever raised.
+
+#### Scenario: a plugin stuck in prepared is diffed as missing
+- **GIVEN** a operative with one declared plugin whose `activate/1` failed, leaving it `:prepared` and subscribed
+- **WHEN** the Loop ticks
+- **THEN** the Diff SHALL list that plugin in `missing_plugins`
+- **AND** the Planner SHALL plan a `start_plugin` op for it under backoff
+
+#### Scenario: a running plugin is not diffed as missing
+- **GIVEN** a operative whose declared plugins are all `:running`
+- **WHEN** the Loop ticks
+- **THEN** `missing_plugins` SHALL be empty and no `start_plugin` op SHALL be planned
+
+#### Scenario: an undeclared plugin is still extra whatever its phase
+- **GIVEN** a operative holding a subscribed plugin that its declaration does not name, in either phase
+- **WHEN** the Loop ticks
+- **THEN** the Diff SHALL list it in `extra_plugins` and a `stop_plugin` op SHALL be planned
+
+### Requirement: A heal that did not bring the plugin up SHALL report failure
+
+The `start_plugin` and `restart_plugin` primitives SHALL report `:error` when the
+plugin did not reach the `:running` phase, even when the underlying subscribe
+succeeded. A heal that reports `:ok` for a plugin that acquired no upstream
+resources advances the per-target backoff as though the divergence were repaired,
+and — for `restart_plugin` — converts a plugin the loop HAD detected as unhealthy
+into one it can no longer detect, because the plugin is now `:prepared` and
+`:prepared` is healthy. The remedy must never be able to hide the fault.
+
+#### Scenario: a restart whose activation fails is recorded as a failed heal
+- **GIVEN** a declared plugin self-reporting `{:unhealthy, :upstream_down}` whose upstream is still down
+- **WHEN** the Loop plans and executes `restart_plugin`
+- **THEN** the primitive SHALL report `:error`
+- **AND** the next tick SHALL still see a divergence for that plugin and re-plan the heal under backoff
+
+#### Scenario: upstream recovering lets the ladder succeed
+- **GIVEN** a plugin whose repeated `restart_plugin` heals have failed while upstream was down
+- **WHEN** upstream recovers and the next backoff window opens
+- **THEN** the heal SHALL bring the plugin to `:running` and report `:ok`
+- **AND** the following tick SHALL show no divergence for it
+
+#### Scenario: a successful heal still reports success
+- **GIVEN** a declared plugin that is missing and whose `activate/1` will succeed
+- **WHEN** the Loop executes `start_plugin`
+- **THEN** the primitive SHALL report `:ok` and the plugin SHALL be `:running`
+

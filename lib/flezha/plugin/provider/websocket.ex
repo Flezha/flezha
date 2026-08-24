@@ -366,10 +366,12 @@ defmodule Flezha.Plugin.Provider.Websocket do
           true -> :healthy
         end
 
-      # A wedged probe reads healthy so the reconciler does not escalate on
-      # uncertainty (a genuinely dead pid is caught by `worker_health/3`).
+      # A wedged probe does not escalate — an uncertain probe never drives a
+      # heal — but it is reported rather than swallowed, so `Extension.Table`
+      # can name the plugin that stopped answering. A genuinely dead pid is
+      # caught by `worker_health/3`.
       :timeout ->
-        :healthy
+        {:fail_open, :probe_timeout}
     end
   end
 

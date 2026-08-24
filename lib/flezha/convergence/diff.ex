@@ -269,7 +269,16 @@ defmodule Flezha.Convergence.Diff do
       pid = Map.get(observed_operative, :pid)
 
       if plugins_diffable?(observed_operative) do
+        # Two sets, deliberately. `running` is the `:running`-phase set — a
+        # declared plugin outside it is missing, whether it was never
+        # subscribed or subscribed and failed to activate. `subscribed` is
+        # every plugin on the table whatever its phase, so an UNDECLARED one
+        # is still torn down while it is `:prepared`. Reading one set for both
+        # checks is what let a failed activation read as running.
         running = MapSet.new(Map.get(observed_operative, :running_plugins, []))
+
+        subscribed = MapSet.new(Map.get(observed_operative, :subscribed_plugins, []))
+
         health = Map.get(observed_operative, :plugin_health, %{})
         declared_ids = MapSet.new(plugins, fn {id, _plugin} -> id end)
 
@@ -295,7 +304,7 @@ defmodule Flezha.Convergence.Diff do
           if MapSet.size(declared_ids) == 0 do
             []
           else
-            for id <- MapSet.to_list(running),
+            for id <- MapSet.to_list(subscribed),
                 not MapSet.member?(declared_ids, id),
                 do: {ref, id, pid}
           end

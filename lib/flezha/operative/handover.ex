@@ -82,10 +82,14 @@ defmodule Flezha.Operative.Handover do
     table = Table.teardown_all(state.extensions)
     rehydrated = Table.rehydrate(table, Map.get(handover_state, :plugins, []))
 
+    # A provider that fails to reconnect on the migrated side stays `:prepared`;
+    # the convergence loop diffs it as missing and heals it under backoff.
+    {reactivated, _failed} = Table.bulk_activate(rehydrated, Plugins.env(state))
+
     migrated =
       %Overwatch{
         state
-        | extensions: Table.bulk_activate(rehydrated, Plugins.env(state)),
+        | extensions: reactivated,
           init_values: handover_state.init_values,
           # Only a handover that actually carried state suppresses the WAL
           # restore. An empty one carries nothing to double-apply, so the

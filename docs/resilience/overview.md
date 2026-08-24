@@ -22,6 +22,26 @@ retries on failure with jittered backoff 200 ms → 500 ms → 1 s → 2 s → 5
 calls Overwatch; Overwatch never calls back.
 Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).
 
+**Plugin liveness** — `lib/flezha/plugin/extension/table.ex`,
+`lib/flezha/convergence/{probe,diff}.ex`. A plugin's lifecycle PHASE, not its subscription, is
+what "running" means: a plugin whose `activate/1` failed stays subscribed in `:prepared`, so the
+Probe reports it as not running, the Diff lists it under `missing_plugins`, and the existing
+`start_plugin` primitive re-activates it under the standard backoff until upstream returns. The
+`extra_plugins` check reads the full SUBSCRIBED set instead, so an undeclared plugin is torn
+down whatever its phase. Bringing a plugin up is idempotent — a plugin already on the table is
+re-activated rather than refused as a duplicate — which is what lets the heal reach a failed
+`activate/1` at all. A heal that did not reach `:running` reports `:error`, so the ladder walks
+instead of the loop recording a repair it did not achieve.
+
+Three fail-open rules compose here and each is deliberate: `:prepared` is healthy (it holds no
+upstream resources), an uncertain probe is healthy (the loop must never escalate on a probe it
+could not finish), and an idle operative is not stalled. A probe that cannot be completed is
+reported upward as `{:fail_open, reason}` and emitted once, by the extension table, as
+`[:flezha, :plugin, :health, :fail_open]` — fail-open stays, but stops being invisible. A source
+provider that has stopped completing work self-reports: `http_poll` is unhealthy once its last
+SETTLED poll ages past its idle window, mirroring `websocket`'s data-liveness watchdog.
+Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).
+
 **Output-stall watchdog** — `lib/flezha/state/watchdog.ex`. Sweeps every 10 s; an Entity still
 receiving changes whose seq has not advanced in `output_stall_timeout_ms` (60 s) emits
 `[:flezha, :state, :output_stall]` and nothing else — the remedy is the loop's. A `CompactEntity`

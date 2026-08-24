@@ -39,6 +39,12 @@ The `channel` name SHALL NOT be checked against the operative's declared entry c
 
 `init_provider/1` SHALL perform no upstream I/O (first poll deferred to the worker). All HTTP waiting SHALL occur off the host's dispatch path, and off the poller process itself, so a hanging endpoint blocks neither dispatch nor the health probe. Failures (timeout, connect, status outside 2xx, oversized body, non-UTF-8 body, refused ingest) SHALL inject nothing, retain the last-delivered hash AND validator, and count toward the standard provider health contract (consecutive-failure threshold → unhealthy; success → healthy, and inject if the content changed during the outage).
 
+The health verdict SHALL additionally carry the idle window defined in "A poller
+that has stopped settling polls SHALL self-report unhealthy": the consecutive-failure
+threshold catches a poller that keeps trying and keeps failing, the idle window
+catches one that has stopped trying at all. Both verdicts are unhealthy; the
+failure run takes precedence when both apply, because it names the actual error.
+
 Injection SHALL use the operative's confirming ingest, and the recorded hash SHALL advance only on a delivered verdict, so a frame the operative did not take is re-offered on the next poll rather than treated as delivered. Redirects SHALL NOT be followed, and the response-size cap SHALL be enforced as the body arrives so it bounds controller memory.
 
 #### Scenario: A refused ingest is re-offered
@@ -66,6 +72,10 @@ Injection SHALL use the operative's confirming ingest, and the recorded hash SHA
 - **WHEN** the target entry channel carries `String` payloads (the Rust SDK seals entry types to `String`) and a response body is not valid UTF-8
 - **THEN** no frame SHALL be injected and the failure SHALL name the encoding, counting toward the health threshold
 
+#### Scenario: A failure run outranks the idle window
+
+- **WHEN** a poller has both exceeded its consecutive-failure threshold and gone idle past the window
+- **THEN** the verdict SHALL name the failure and its last error, not the idle age
 ### Requirement: The URL SHALL support partition placeholders rendered once at init
 The provider SHALL substitute `{{partition_index}}` and `{{partition_count}}` in the `url` opt exactly once, at `init_provider`, from the plugin's partition opts. URL validation SHALL run on the rendered URL. A URL containing these placeholders while the plugin has no partition opts SHALL be refused at init; all other URLs behave exactly as before.
 
@@ -80,3 +90,46 @@ The provider SHALL substitute `{{partition_index}}` and `{{partition_count}}` in
 #### Scenario: Validation sees the rendered URL
 - **WHEN** the rendered URL is invalid (for example the substitution lands in the host position)
 - **THEN** init refuses via the existing URL validation, not at request time
+### Requirement: A poller that has stopped settling polls SHALL self-report unhealthy
+
+The `http_poll` provider SHALL track the age of its last SETTLED poll — any
+outcome that completes a cycle: injected, unchanged, or failed — and SHALL report
+`{:unhealthy, {:poll_idle, age_ms}}` once that age exceeds a configurable idle
+window, defaulting to a small multiple of `:interval_ms`. This mirrors the
+data-liveness window the `websocket` provider already carries
+(`resubscribe_after_ms` → `:data_idle`) and gives the two source providers the
+same contract.
+
+A consecutive-failure run is not sufficient on its own: a poller that has stopped
+scheduling polls altogether has a failure run of zero and a clean last error, so
+it reads healthy under the failure-threshold rule while delivering nothing. A
+source that has gone quiet SHALL be unhealthy rather than merely failure-free,
+because a quiet source is indistinguishable downstream from a quiet stream — every
+producing verdict is gated on input actually arriving.
+
+The window SHALL be measured from the last settled poll, not the last injection:
+`http_poll` is content-gated, so a healthy poller against unchanged content
+correctly injects nothing for as long as the content holds.
+
+#### Scenario: a poller that stopped scheduling polls is unhealthy
+- **GIVEN** an `http_poll` plugin whose worker has not settled a poll for longer than the idle window
+- **AND** whose consecutive-failure run is zero
+- **WHEN** `health/1` is queried
+- **THEN** it SHALL report `{:unhealthy, {:poll_idle, age_ms}}`
+- **AND** the convergence loop SHALL plan a `restart_plugin` op under backoff
+
+#### Scenario: unchanged content does not read as idle
+- **GIVEN** an `http_poll` plugin polling on cadence against content that never changes
+- **WHEN** `health/1` is queried after many intervals with no injection
+- **THEN** it SHALL report `:healthy`, because each poll settled as unchanged
+
+#### Scenario: a poll in flight within the window is healthy
+- **GIVEN** an `http_poll` plugin with a request outstanding and its last settled poll inside the idle window
+- **WHEN** `health/1` is queried
+- **THEN** it SHALL report `:healthy`
+
+#### Scenario: the idle window is configurable
+- **GIVEN** an `http_poll` plugin configured with an explicit idle window
+- **WHEN** the plugin is enabled
+- **THEN** the configured value SHALL be validated with the provider's other integer options and used in place of the default
+

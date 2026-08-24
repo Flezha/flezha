@@ -31,6 +31,9 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     * `:timeout_ms`        — int, default `10_000` (must be under the interval)
     * `:max_body_bytes`    — int, default `1_048_576` (1 MiB, ceiling 64 MiB)
     * `:failure_threshold` — int, default `3` consecutive failures → unhealthy
+    * `:idle_after_ms`      — int, age of the last SETTLED poll past which the
+      poller reports `{:unhealthy, {:poll_idle, age_ms}}`. Default `0`, meaning
+      three `:interval_ms`.
     * `:headers`           — map of static request headers (JSON object via CLI)
     * `:plugin_id`         — label for telemetry/logs; defaults to the URL
       with its credentials and query stripped
@@ -60,8 +63,18 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     interval_ms: 60_000,
     timeout_ms: 10_000,
     max_body_bytes: 1_048_576,
-    failure_threshold: 3
+    failure_threshold: 3,
+    # 0 = derive from `:interval_ms` (see `@idle_intervals`). There is
+    # deliberately no "disable" value: a source that has stopped settling polls
+    # is the wedge this window exists to catch.
+    idle_after_ms: 0
   ]
+
+  # The derived idle window, in polling intervals. Three, because a poll that
+  # outlives its own interval stretches the cadence rather than stacking, so a
+  # single slow cycle plus the poll after it must both land inside the window —
+  # otherwise a merely slow endpoint would read as a dead one.
+  @idle_intervals 3
 
   @min_interval_ms 1_000
   @max_body_ceiling_bytes 64 * 1_048_576
@@ -149,9 +162,16 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
   def on_terminate(%Ctx.Terminate{}, _opts), do: :ok
 
   @doc """
-  Health verdict from the poller's own failure run — no new liveness state.
-  A single failed poll is not unhealthiness; `:failure_threshold` consecutive
-  ones are, and the next success clears the run on the poll that reports it.
+  Health verdict from the poller's failure run and the age of its last settled
+  poll. A single failed poll is not unhealthiness; `:failure_threshold`
+  consecutive ones are, and the next success clears the run on the poll that
+  reports it.
+
+  The failure run alone is not enough: a poller that has stopped scheduling
+  polls at all has a run of zero and a clean last error, so it read healthy
+  while delivering nothing — and a source delivering nothing is
+  indistinguishable downstream from a quiet stream, because every producing
+  verdict is gated on input actually arriving. The idle window closes that.
   """
   @impl true
   @spec health(map()) :: ProviderBehaviour.health_verdict()
@@ -160,22 +180,48 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
 
     ProviderBehaviour.worker_health(
       opts,
-      [absent: :no_poller, dead: :poller_dead],
-      &health_from_failures(&1, threshold)
+      # The outer budget must exceed the inner `PollWorker.probe/1` timeout, or
+      # the two race and this provider's precise `:probe_timeout` is replaced by
+      # the generic budget one.
+      [
+        absent: :no_poller,
+        dead: :poller_dead,
+        budget_ms: 2 * ProviderBehaviour.probe_budget_ms()
+      ],
+      &poller_health(&1, threshold, idle_window(opts))
     )
   end
 
-  defp health_from_failures(pid, threshold) do
+  # The window an operator did not set is derived from the cadence they did.
+  defp idle_window(opts) do
+    case coerce_int(Map.get(opts, :idle_after_ms, @int_opts[:idle_after_ms])) do
+      ms when ms > 0 -> ms
+      _ -> @idle_intervals * coerce_int(Map.get(opts, :interval_ms, @int_opts[:interval_ms]))
+    end
+  end
+
+  # The failure run outranks the idle age when both apply: it names the actual
+  # error, and the age only says nothing has happened.
+  defp poller_health(pid, threshold, idle_window) do
     case PollWorker.probe(pid) do
-      {:ok, {failures, last_error}} when failures >= threshold ->
+      {:ok, {failures, last_error, _last_settled_at}} when failures >= threshold ->
         {:unhealthy, {:poll_failing, last_error}}
 
-      # A wedged probe reads healthy so the reconciler does not escalate on
-      # uncertainty — a genuinely dead poller is the `dead` branch, and requests
-      # run off the worker so a slow endpoint cannot wedge it.
-      _ ->
-        :healthy
+      {:ok, {_failures, _last_error, last_settled_at}} ->
+        idle_verdict(last_settled_at, idle_window)
+
+      # The worker is alive but did not answer inside the probe budget: an
+      # UNCERTAIN probe, not a verdict. Reported upward rather than swallowed —
+      # `Extension.Table` is the layer that can name the plugin.
+      :timeout ->
+        {:fail_open, :probe_timeout}
     end
+  end
+
+  defp idle_verdict(last_settled_at, idle_window) do
+    age = :erlang.monotonic_time(:millisecond) - last_settled_at
+
+    if age > idle_window, do: {:unhealthy, {:poll_idle, age}}, else: :healthy
   end
 
   @doc """
@@ -255,6 +301,10 @@ defmodule Flezha.Plugin.Provider.HttpPoll do
     do:
       {:error,
        "http_poll max_body_bytes #{value} exceeds the #{@max_body_ceiling_bytes} byte ceiling"}
+
+  # 0 is the documented "derive from :interval_ms" value for the idle window,
+  # so it is the one field where zero is not a typo.
+  defp bound(:idle_after_ms, 0), do: :ok
 
   defp bound(field, value) when value < 1,
     do: {:error, "http_poll #{field} must be positive, got #{value}"}

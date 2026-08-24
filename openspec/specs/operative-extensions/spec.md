@@ -358,6 +358,13 @@ under a bounded governor — only when the provider's own fast in-process recove
 repeatedly failed to restore health. The providers' in-process reconnect/retry detectors
 are retained; the health contract adds escalation, it does not replace them.
 
+A plugin in the `:prepared` phase SHALL be reported `:healthy` by `Table.health/1` — it
+has acquired no upstream resources, so it has nothing to be unhealthy about — and that
+verdict SHALL NOT be read anywhere as evidence that the plugin is running. The phase, not
+the health verdict, is the authority on whether a plugin is doing its work; a consumer
+that needs "is this plugin running" SHALL read the phase (see "A declared plugin that is
+not running is a divergence" in `convergence-self-healing`).
+
 #### Scenario: Unhealthy provider is restarted
 - **GIVEN** an operative whose Kafka producer worker is alive but permanently parked (not draining)
 - **WHEN** the reconciler queries the provider's `health/1`
@@ -369,6 +376,11 @@ are retained; the health contract adds escalation, it does not replace them.
 - **WHEN** `health/1` is queried
 - **THEN** it SHALL report healthy and the reconciler SHALL take no action
 
+#### Scenario: A prepared plugin is healthy but is not running
+- **GIVEN** a declared plugin whose `activate/1` failed, leaving it in the `:prepared` phase
+- **WHEN** `Table.health/1` is queried
+- **THEN** the verdict SHALL be `:healthy`
+- **AND** the plugin SHALL NOT be reported as running to any consumer that asks which plugins are running
 ### Requirement: Recovered operatives SHALL NOT reuse dead or parked plugin workers
 
 When an operative is recovered/respawned, plugin re-application SHALL NOT reuse a stale
@@ -395,4 +407,92 @@ Enabling a plugin id that is already registered for the **same** `{namespace, op
 
 - **WHEN** the plugin id is registered against a different operative or namespace
 - **THEN** the enable fails with an error naming the existing registration, unchanged from today
+
+### Requirement: A failed activation SHALL be reported to the caller, not only logged
+
+`Flezha.Plugin.Extension.Table.bulk_activate/2` SHALL report which plugins did
+NOT reach `:running`. A provider's `activate/1` returning `{:error, reason}`,
+returning an invalid value, or raising SHALL leave the plugin in `:prepared`
+AND SHALL surface that outcome to the caller, so the operative host can answer
+its own caller honestly instead of recording a success it did not achieve.
+
+`Flezha.Operative.Plugins.subscribe/3` and `Flezha.Operative.Plugins.restart/3`
+SHALL return an error when the plugin they were asked to bring up did not reach
+`:running`, even when `Table.subscribe/3` itself succeeded. Returning `{:ok, _}`
+for a plugin that never activated makes the convergence loop's `start_plugin` and
+`restart_plugin` heals report success for a plugin that acquired no upstream
+resources, which advances the backoff ladder as though the divergence were fixed.
+
+#### Scenario: activate returning an error is reported, not swallowed
+- **GIVEN** a declared plugin whose provider's `activate/1` returns `{:error, :upstream_down}`
+- **WHEN** the operative host runs `bulk_activate/2`
+- **THEN** the plugin's phase SHALL remain `:prepared`
+- **AND** `bulk_activate/2` SHALL identify that plugin as not activated
+- **AND** `Plugins.subscribe/3` SHALL return an error naming the plugin and the reason
+
+#### Scenario: activate raising is reported, not swallowed
+- **GIVEN** a declared plugin whose provider's `activate/1` raises
+- **WHEN** the operative host runs `bulk_activate/2`
+- **THEN** the plugin's phase SHALL remain `:prepared`
+- **AND** `Plugins.subscribe/3` SHALL return an error rather than `{:ok, state}`
+
+#### Scenario: a restart whose activation fails does not report success
+- **GIVEN** a declared plugin that self-reports `{:unhealthy, :upstream_down}`
+- **AND** its upstream is still down when the restart fires
+- **WHEN** `Plugins.restart/3` unsubscribes, re-subscribes, and activates it
+- **THEN** the plugin's phase SHALL be `:prepared`
+- **AND** `Plugins.restart/3` SHALL return an error so the heal is recorded as failed
+
+#### Scenario: a successful activation still reports success
+- **GIVEN** a declared plugin whose provider's `activate/1` returns `{:ok, pid}`
+- **WHEN** the operative host runs `bulk_activate/2`
+- **THEN** the plugin's phase SHALL be `:running`
+- **AND** `Plugins.subscribe/3` SHALL return `{:ok, state}`
+
+### Requirement: Bringing up a plugin SHALL be idempotent on one already subscribed
+
+`Flezha.Operative.Plugins.subscribe/3` SHALL re-ACTIVATE a plugin that is already
+present on the extension table, rather than refusing it as a duplicate id.
+
+This is load-bearing, not a convenience. `Table.subscribe/3` rejects a duplicate
+plugin id, and a plugin whose `activate/1` failed remains SUBSCRIBED in the
+`:prepared` phase — so the `start_plugin` heal that "A declared plugin that is
+not running is a divergence" relies on would fail at the subscribe step on every
+tick, forever. The divergence would be visible, the op would be planned, the
+heal would be attempted, and nothing would ever be repaired. Re-activating is
+what makes the heal reach the provider's `activate/1` at all.
+
+A plugin already in the `:running` phase is skipped by `bulk_activate/2`, so the
+same call is a no-op for one that needs nothing.
+
+#### Scenario: a heal re-activates rather than refusing a duplicate
+- **GIVEN** a declared plugin left `:prepared` by a failed `activate/1`, still subscribed on the table
+- **WHEN** the convergence loop heals it with `start_plugin`
+- **THEN** `Plugins.subscribe/3` SHALL re-activate it rather than returning a duplicate-id error
+- **AND** once upstream recovers the plugin SHALL reach `:running` and the primitive SHALL report `:ok`
+
+#### Scenario: bringing up an already-running plugin changes nothing
+- **GIVEN** a declared plugin already in the `:running` phase
+- **WHEN** `Plugins.subscribe/3` is called for it
+- **THEN** it SHALL remain `:running`, its provider's `activate/1` SHALL NOT be invoked again, and the call SHALL return `{:ok, state}`
+
+### Requirement: An uncertain health probe SHALL be observable
+
+`Extension.Table` SHALL keep reporting `:healthy` when a provider's `health/1`
+raises, times out, or returns an unrecognised value — an uncertain probe MUST
+never drive a heal — and SHALL emit telemetry naming the plugin id, the provider
+and the reason it fell back. A worker that is alive but no longer answering is
+otherwise indistinguishable from a healthy one at every layer of the system.
+
+#### Scenario: a wedged worker's fail-open verdict is emitted
+- **GIVEN** a running plugin whose provider `health/1` does not answer within the probe budget
+- **WHEN** `Table.health/1` is queried
+- **THEN** the verdict SHALL be `:healthy`
+- **AND** telemetry SHALL be emitted naming the plugin id, the provider and the fallback reason
+
+#### Scenario: a definite verdict emits nothing
+- **GIVEN** a running plugin whose provider `health/1` returns `:healthy` or `{:unhealthy, reason}`
+- **WHEN** `Table.health/1` is queried
+- **THEN** that verdict SHALL be returned
+- **AND** no fail-open telemetry SHALL be emitted
 
