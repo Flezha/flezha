@@ -223,21 +223,30 @@ defmodule FlezhaTest.Operative.PartitionGroupTest do
       :ets.delete(registry, "ohlc#p2")
 
       # Converge preflights the missing count, then each member start prices
-      # its own unit — the queue arms p1 to pass and p2 to fail.
-      expect(Quotas, :check_allocation, fn _ns, :max_operatives, 2 -> :ok end)
-      expect(Quotas, :check_allocation, fn _ns, :max_operatives, 1 -> :ok end)
+      # its own unit. Members start CONCURRENTLY, so which of p1/p2 prices
+      # first is not fixed: arm by call ordinal instead of by an assumed
+      # order — one unit passes, the next fails, whichever arrives first.
+      priced = :atomics.new(1, [])
 
-      expect(Quotas, :check_allocation, fn _ns, :max_operatives, 1 ->
-        {:error, {:quota_exceeded, :max_operatives, 1}}
+      stub(Quotas, :check_allocation, fn
+        _ns, :max_operatives, 2 ->
+          :ok
+
+        _ns, :max_operatives, 1 ->
+          if :atomics.add_get(priced, 1, 1) == 1,
+            do: :ok,
+            else: {:error, {:quota_exceeded, :max_operatives, 1}}
       end)
 
       assert {:error, message} = PartitionGroup.start(@namespace, builder(), 3)
-      assert message =~ "ohlc#p2"
       assert message =~ "1 already-started member(s) were stopped"
 
-      # p1 was started by this run and rolled back; the survivor is untouched.
-      assert Enum.map(started_members(), & &1.id) == ["ohlc#p1"]
-      assert {:error, _} = FakeStartRegistry.pid_of(registry, "ohlc#p1")
+      # One of this run's two members failed and the other was rolled back;
+      # the survivor from the first run is untouched either way.
+      assert [rolled_back] = Enum.map(started_members(), & &1.id)
+      assert rolled_back in ["ohlc#p1", "ohlc#p2"]
+      assert message =~ if(rolled_back == "ohlc#p1", do: "ohlc#p2", else: "ohlc#p1")
+      assert {:error, _} = FakeStartRegistry.pid_of(registry, rolled_back)
       assert {:ok, ^p0_pid} = FakeStartRegistry.pid_of(registry, "ohlc#p0")
     end
 

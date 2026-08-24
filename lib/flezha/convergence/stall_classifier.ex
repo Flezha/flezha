@@ -198,8 +198,8 @@ defmodule Flezha.Convergence.StallClassifier do
         send_frame_calls: Map.get(c, :send_frame_calls, 0),
         hb_count: Map.get(c, :hb_count, 0),
         hb_dispatches: Map.get(c, :hb_dispatches, 0),
-        # Absent on an SDK that has not shipped the self-report yet; zero is
-        # what "no handout is outstanding" reads as, so it never stalls.
+        # An SDK that does not send the self-report never advances these, so
+        # they read 0 — "no handout is outstanding", which never stalls.
         hb_inflight: Map.get(c, :hb_inflight, 0),
         hb_inflight_oldest_ms: Map.get(c, :hb_inflight_oldest_ms, 0)
       }
