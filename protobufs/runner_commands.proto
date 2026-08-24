@@ -141,7 +141,17 @@ message EntityState {
     string entity_key = 3;
 }
 
-message RunnerDisconnect {}
+message RunnerDisconnect {
+    // Terminal disconnect: the runner runs its graceful shutdown and then
+    // exits NON-ZERO, so the orchestrator that owns process lifecycle
+    // restarts it. Default (false) is the existing cooperative disconnect,
+    // which leaves the process running and reconnectable. A zero exit would
+    // read as a clean stop and the runner would not come back — which is
+    // exactly the flap the terminal rung exists to end.
+    bool terminal = 1;
+    // Why, for the runner's own log. Never interpreted by the SDK.
+    string reason = 2;
+}
 
 message OperativeMessage {
     string operative_id = 1;

@@ -27,6 +27,10 @@ defmodule Flezha.Transport.LivenessCounters do
   # self-reported dispatch-progress counter carried in heartbeat metadata —
   # heartbeats advancing while hb_dispatches is frozen means the runner
   # process is alive but its dispatch pool is wedged.
+  # `hb_inflight` and `hb_inflight_oldest_ms` mirror the runner's handout
+  # self-report (set, not incremented): activations underway and the age of the
+  # oldest. `hb_dispatches` freezing says the WHOLE pool stopped; these two are
+  # what make ONE wedged Entity visible while the runner keeps completing work.
   # `credit_active` is 0/1 (set), `credit_ledger_level` is the stream's
   # remaining credit bytes (set), `credit_overrun_total` counts frames a
   # credit-speaking sender pushed past an exhausted ledger (protocol
@@ -42,6 +46,8 @@ defmodule Flezha.Transport.LivenessCounters do
     :hb_count,
     :hb_dispatches,
     :hb_credit_parked,
+    :hb_inflight,
+    :hb_inflight_oldest_ms,
     :credit_active,
     :credit_ledger_level,
     :credit_overrun_total,

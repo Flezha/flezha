@@ -196,8 +196,13 @@ pub struct EntityState {
     #[prost(string, tag = "3")]
     pub entity_key: ::prost::alloc::string::String,
 }
-#[derive(Clone, Copy, PartialEq, ::prost::Message)]
-pub struct RunnerDisconnect {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RunnerDisconnect {
+    #[prost(bool, tag = "1")]
+    pub terminal: bool,
+    #[prost(string, tag = "2")]
+    pub reason: ::prost::alloc::string::String,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OperativeMessage {
     #[prost(string, tag = "1")]

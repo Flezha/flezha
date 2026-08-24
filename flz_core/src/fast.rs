@@ -509,6 +509,18 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool 
         "restore_discarded_inputs".to_string(),
         crate::entity::restore_discarded_inputs().to_string(),
     );
+    // Handout liveness: how many activations are underway and how long the
+    // oldest has been out. `dispatches` freezing tells the controller the
+    // WHOLE pool stopped; these two are what make ONE wedged Entity visible
+    // among thousands that are still completing. Reporting only — the core
+    // cannot tell a ten-minute Procedure from a lost handout, so the decision
+    // is the controller's and the remedy is a rebind from durable state.
+    let core = crate::poll_core::global();
+    metadata.insert("inflight".to_string(), core.outstanding_count().to_string());
+    metadata.insert(
+        "inflight_oldest_ms".to_string(),
+        core.outstanding_oldest_age_ms().to_string(),
+    );
     // Wake-list occupancy: a runaway registration shows here long before it
     // is fatal, and a `timers_fired` that stops moving while `timers_armed`
     // climbs is promotion wedged rather than the Operative idle.

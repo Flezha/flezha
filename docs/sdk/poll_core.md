@@ -136,6 +136,52 @@ land only at completion, so wider batches would make due-firing interleave
 depend on batch timing — and a correction replay must fold firings at the same
 positions the live run did. Wall/logical classes batch freely.
 
+### The host answers every activation exactly once
+
+Because the handout is what gates the entity, an activation that is never
+answered retires its entity **for the life of the process** — silently, since
+the runner-wide dispatch counter keeps climbing on every other entity. There
+are exactly three answers:
+
+| Answer | When | Ladder attempt |
+| ------ | ---- | -------------- |
+| `complete` | the batch ran | — |
+| fail (`retry_after_failure`) | an item failed retryably | consumed |
+| `abandon` | the host could not finish: an unwound worker, a dead thread, a veneer whose language threw | **none** |
+
+Abandon re-hands the items the host did **not** process and leaves the entity
+exactly as if it had never been polled. Only untouched items may be passed:
+re-handing one that already ran would execute it twice, which is the one thing
+this seam may never do.
+
+**Make the answer structural, not a discipline.** An RAII guard in Rust
+(`operative::dispatcher::Handout`, whose `Drop` abandons), a `finally` in Java
+(`PollHost.runActivation`), an `after` in Elixir — so a panic, an exception, an
+early return or a `?` cannot skip it. A contract a reviewer has to notice is
+not a contract: the discipline version of this rule produced two live leak
+paths before it was replaced.
+
+Answering a token the core does not hold — a double answer, or one from a
+context that never held it — is **reported**, not ignored: `Answered::UnknownToken`
+in the crate API, an error through `flz_core_last_error` at the ABI.
+
+### What the core will never do
+
+**It never reclaims an outstanding activation on a timer.** From the boundary a
+ten-minute Procedure and a handout the host lost are byte-for-byte identical:
+an entry in `outstanding` that has not been answered. A deadline that re-handed
+would re-execute work the effectively-once tier promises once, and would do it
+precisely to the slowest, most expensive activations in the system. There is no
+threshold that separates the two cases, so the core does not pretend there is
+one.
+
+What it does instead is **report**: `outstanding_count()` and
+`outstanding_oldest_age_ms()` ride the data-channel heartbeat as `inflight` and
+`inflight_oldest_ms`, the controller's classifier mints
+`entity_dispatch_stalled` from them, and the remedy is an operative rebind that
+resumes from durable state — the path that is already safe. Detection is the
+core's; the judgement and the remedy are the controller's.
+
 ## The retry→park ladder
 
 The engine drives the ladder from completion verdicts: a `RetryableError`
@@ -192,7 +238,7 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
 | ------ | ---- |
 | `flz_core_schema_version`, `flz_core_context_new`, `flz_core_init_error`, `flz_core_last_error` | Version negotiation and error text |
 | `flz_core_declare_class`, `flz_core_start`, `flz_core_shutdown`, `flz_core_context_free` | Context lifecycle |
-| `flz_core_poll`, `flz_core_complete`, `flz_core_wait_starvation`, `flz_core_buf_free` | The loop |
+| `flz_core_poll`, `flz_core_complete`, `flz_core_abandon`, `flz_core_wait_starvation`, `flz_core_buf_free` | The loop |
 | `flz_core_workflow_emit`, `flz_core_workflow_recv`, `flz_core_workflow_cancelled`, `flz_core_spawn_workflow` | Workflow session calls and procedure-requested spawn |
 | `flz_core_monotonic_nanos`, `flz_core_entry_last_delivery_nanos` | Context-free reads |
 | `flz_core_set_log_callback` | The one host callback the core ever invokes |
@@ -203,6 +249,13 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   impossible.
 - **Any host thread may poll; any host thread may complete**, including a
   different one than the thread that polled. No affinity.
+- **`flz_core_abandon(ctx, token)` exists because no unwind crosses the ABI.**
+  A veneer whose host language throws, or whose thread dies, has no way to
+  reach `flz_core_complete`, and per-entity exclusivity would then retire that
+  entity for the life of the process. A veneer SHALL answer every polled
+  activation exactly once and SHALL make that structural in its own language —
+  a `finally`, a destructor, a scope guard. An unknown or already-answered
+  token is refused with `FLZ_ERR` and the reason in `flz_core_last_error`.
 - `flz_core_poll` blocks up to its timeout and answers `FLZ_POLL_ACTIVATION`
   (1), `FLZ_POLL_TIMEOUT` (0) or `FLZ_POLL_SHUTTING_DOWN` (2); **shutdown wakes
   every blocked poller promptly** with that distinguishable status.

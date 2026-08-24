@@ -269,7 +269,22 @@ pub fn handle_command(
             // an aborted read (losing the response) and then deadlock its
             // disconnect call cycle on the missing ack. The read half drains
             // to EOF when the controller closes its side.
+            // A terminal disconnect ships its state BEFORE the write half
+            // closes: the graceful shutdown's per-operative notifications ride
+            // this same control channel, and a closed write half would turn
+            // every one of them into a broken pipe.
+            let terminal = crate::shutdown::take_terminal_exit();
+            if terminal.is_some() {
+                crate::shutdown::run_active_graceful_shutdown();
+            }
+
             let _ = stream.shutdown(Shutdown::Write);
+
+            // The ack and the final state are on the wire, so the process may
+            // now go. Nothing below this line runs.
+            if let Some(reason) = terminal {
+                crate::shutdown::exit_terminally(&reason);
+            }
         }
 
         CommandActionType::AckSignal(result) => {

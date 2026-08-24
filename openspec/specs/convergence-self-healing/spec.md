@@ -317,17 +317,11 @@ When an SDK runner process restarts and presents `previous_runner_id`, the contr
 - **THEN** the controller evicts the stale `default_X` binding inside the connect handler before the new bind, re-attaches the operative, and kafka offsets resume within a couple of ticks
 - **AND** no entry in the active runner set references a dead `default_X`.
 
-## Removed Requirements
-
-### Requirement: `Backoff.schedule_ms/0` is part of the public API
-
-**Reason**: The function has zero callers in application code. It was added as a test-convenience export but is not referenced anywhere. Removing it trims the public API surface.
-
-**Migration**: Any test or external code that calls `Backoff.schedule_ms/0` should inline the value `[5_000, 30_000, 60_000, 300_000]` or read the module attribute `@schedule_ms` if needed for compile-time assertions.
-
 ### Requirement: Data-plane stall verdicts feed the convergence pipeline
 
-The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `evict_runner` (planner ordering already rebinds an evicted runner's operatives); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; the operative-scoped verdict (`operative_not_forwarding`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
+The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `evict_runner` (planner ordering already rebinds an evicted runner's operatives); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; operative-scoped verdicts (`operative_not_forwarding`, `entity_dispatch_stalled`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
+
+`entity_dispatch_stalled` SHALL be minted from the runner's self-reported handout liveness — a non-zero outstanding count whose oldest-age exceeds the configured threshold — under the same "is it actually being fed?" precondition every other check carries, and SHALL rank *shallower* than every runner-scoped verdict, since a wedged runner explains a wedged entity and not the reverse. Its detail SHALL carry the reported age so a false positive is diagnosable from the log alone.
 
 #### Scenario: A wedged runner pool is evicted from a classifier verdict
 - **WHEN** the classifier reports `runner_pool_wedged` (heartbeats flowing, dispatch counter frozen) for a runner that remains in the active set
@@ -340,6 +334,15 @@ The classifier verdict the Loop already computes each tick SHALL be consumed by 
 #### Scenario: One verdict per tick, deepest first
 - **WHEN** both a channel and the runner beneath it are wedged
 - **THEN** the classifier reports only the deeper runner-scoped verdict, that layer is healed first, and any surviving channel wedge surfaces on a later tick
+
+#### Scenario: A single stalled entity is rebound while the runner keeps working
+- **GIVEN** a runner whose dispatch counter is still advancing and whose operatives are being fed
+- **WHEN** its heartbeat reports an outstanding activation older than the threshold for one operative
+- **THEN** the classifier SHALL report `entity_dispatch_stalled` scoped to that operative, the plan SHALL issue `rebind_operative` for it, and no `evict_runner` SHALL be issued for the runner
+
+#### Scenario: A wedged runner outranks a stalled entity
+- **WHEN** a runner reports both a frozen dispatch counter and an aged outstanding activation
+- **THEN** the classifier SHALL report only `runner_pool_wedged`, and the entity-scoped verdict SHALL surface on a later tick only if it survives the runner-level remedy
 
 ### Requirement: Sensor freshness is visible
 
@@ -429,3 +432,48 @@ eligible for the next convergence tick.
 - **THEN** each replacement target is chosen by the factory-filtered placement
   function, and no operative is bound to a runner that does not advertise its
   factory
+
+### Requirement: A runner the classifier proves wedged is terminally restarted, not only evicted
+
+`restart_runner` SHALL join the heal primitives as the rung **above**
+`evict_runner` on the existing per-target backoff ladder. It SHALL be planned
+only when eviction has already been applied to that runner and the classifier
+still proves it wedged, and it SHALL be gated on the same `proved_wedged?/1`
+evidence that waives the healthy-target guards. A runner that is merely slow,
+idle, or unfed SHALL never reach the rung.
+
+The primitive SHALL send a terminal disconnect reason over the control channel.
+On receiving it the SDK SHALL run its graceful shutdown and then exit the
+process with a **non-zero** status, so the orchestrator that owns process
+lifecycle restarts it; a zero exit would read as a clean stop and the runner
+would not come back. The controller SHALL NOT attempt to restart the process
+itself.
+
+Every issued restart SHALL be logged and emitted as telemetry naming the
+namespace, runner, the verdict that proved the wedge, and the ladder rung, so a
+runner restarting repeatedly is visible rather than mysterious.
+
+#### Scenario: Eviction first, restart only if the wedge survives it
+- **GIVEN** a runner the classifier reports `runner_pool_wedged` for
+- **WHEN** the first tick plans a remedy
+- **THEN** it SHALL plan `evict_runner`; and only if a later tick still proves the same runner wedged SHALL it plan `restart_runner`
+
+#### Scenario: The restarted runner exits non-zero
+- **WHEN** a runner receives the terminal disconnect reason
+- **THEN** it SHALL run its graceful shutdown and exit with a non-zero status, and its operatives SHALL be rerouted by the existing disconnect path
+
+#### Scenario: A healthy runner is never restarted
+- **WHEN** a runner is idle, or is connected but unfed, or is slow without a wedge verdict
+- **THEN** no `restart_runner` op SHALL be planned for it
+
+#### Scenario: Repeats are throttled and visible
+- **WHEN** a runner is restarted and wedges again after reconnecting
+- **THEN** the next restart SHALL be delayed by the standard per-target backoff, and each issued restart SHALL be logged and emitted with the verdict and rung
+
+## Removed Requirements
+
+### Requirement: `Backoff.schedule_ms/0` is part of the public API
+
+**Reason**: The function has zero callers in application code. It was added as a test-convenience export but is not referenced anywhere. Removing it trims the public API surface.
+
+**Migration**: Any test or external code that calls `Backoff.schedule_ms/0` should inline the value `[5_000, 30_000, 60_000, 300_000]` or read the module attribute `@schedule_ms` if needed for compile-time assertions.

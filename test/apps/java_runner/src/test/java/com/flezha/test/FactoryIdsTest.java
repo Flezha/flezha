@@ -57,6 +57,8 @@ class FactoryIdsTest {
             "resume_probe",
             "retry_workflow",
             "saga_block_workflow",
+            "schema_evolution_v1",
+            "schema_evolution_v2",
             "session_timeout",
             "stateful_counter",
             "stateless_loop_workflow",

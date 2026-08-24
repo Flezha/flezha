@@ -9,11 +9,11 @@ it; the model they compose into is in [`../architecture/`](../architecture/READM
 
 **Convergence loop** — `lib/flezha/convergence/`. The controller's single self-healer runs
 `Intent → Probe → Diff → Planner → Heal` every 5 s and immediately on a declared event, through
-seven idempotent primitives (`rebind_operative`, `replace_operative`, `resync_runner`,
-`start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`), at most 20 procs per tick,
-each `{primitive, target}` backed off 5 s → 30 s → 60 s → 300 s. A rebind needs two consecutive
-misbound ticks, a failed read is `:unknown` rather than "gone", and an uncaught error is a
-skipped tick, never a crashed loop.
+eight idempotent primitives (`rebind_operative`, `replace_operative`, `resync_runner`,
+`start_plugin`, `stop_plugin`, `restart_plugin`, `evict_runner`, `restart_runner`), at most 20
+procs per tick, each `{primitive, target}` backed off 5 s → 30 s → 60 s → 300 s. A rebind needs
+two consecutive misbound ticks, a failed read is `:unknown` rather than "gone", and an uncaught
+error is a skipped tick, never a crashed loop.
 Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md); model:
 [`../architecture/kernel.md` "Health and liveness"](../architecture/kernel.md#health-and-liveness).
 
@@ -34,6 +34,38 @@ Names the layer that wedged (operative, channel, NIF queue, driver thread, socke
 hands each verdict to exactly one consumer: a heal primitive where the BEAM has a remedy, a
 `/healthz` 503 where only a process restart does.
 Owner: [`../internals/transport_liveness.md`](../internals/transport_liveness.md).
+
+**Runner-side self-healing** — `sdk/rust/src/operative/poll_pool.rs`,
+`sdk/java/.../PollHost.java`, `lib/flezha/sdk/operative.ex`. A host that loses a worker gets it
+back without operator action: the pool's live count is released by a guard that runs on an
+unwind (so a departed worker never occupies ceiling headroom), the starvation supervisor tops
+the pool back up to its base size, Java replaces a fetcher that ends on a throwable, and the
+Elixir Operative recreates a crashed Entity on that key's next input. Every activation a host
+takes is answered exactly once — complete, fail, or **abandon** — through a structural guard,
+because per-entity exclusivity means an unanswered activation retires its entity for the life
+of the process.
+Owner: [`../sdk/poll_core.md` "The host answers every activation exactly once"](../sdk/poll_core.md).
+
+**The wedged-runner ladder** — `lib/flezha/convergence/`. A runner the classifier proves wedged
+rides two rungs on one per-target cooldown: `evict_runner` moves its operatives, and if a later
+tick still proves the same runner wedged, `restart_runner` sends a terminal disconnect. The SDK
+answers it by running its graceful shutdown and exiting **non-zero** (`70`), so the orchestrator
+that owns process lifecycle restarts it — a zero exit would read as a clean stop and the runner
+would not come back. Eviction alone leaves the wedged process connected and placeable, which is
+the flap the rung exists to end; every restart is logged and emitted as
+`[:flezha, :runner, :restarted]` with the verdict and the rung. The controller never restarts a
+process itself.
+Owner: [`../internals/convergence_loop.md`](../internals/convergence_loop.md).
+
+**Handout liveness** — `flz_core/src/poll_core.rs`, `lib/flezha/sdk/counters.ex`. Every SDK
+reports how many activations are underway (`inflight`) and how long the oldest has been out
+(`inflight_oldest_ms`) in the data heartbeat's metadata. One wedged Entity is invisible to the
+runner-wide dispatch counter — it keeps climbing on every other Entity — so these two are what
+mint `entity_dispatch_stalled`, whose remedy is an operative rebind from durable state. The
+core never reclaims a handout on a timer: a ten-minute Procedure and a lost handout are
+indistinguishable from it, and re-handing on a deadline would re-execute exactly the slowest
+work in the system. `FLEZHA_CONVERGENCE_ENTITY_STALL_MS` (default 300 s) is the threshold.
+Owner: [`../sdk/poll_core.md`](../sdk/poll_core.md).
 
 **Control- and data-channel liveness** — `flz_transport/src/transport/liveness.rs`, shared by
 the Rust and Java SDKs. A fresh control channel reconnects with no ack inside

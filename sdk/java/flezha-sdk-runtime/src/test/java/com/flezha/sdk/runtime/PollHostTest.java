@@ -28,10 +28,15 @@ import org.junit.jupiter.api.Test;
  */
 class PollHostTest {
 
-    /** A stand-in core: hands out queued activations and records completions. */
+    /** A stand-in core: hands out queued activations and records answers. */
     private static final class FakeCore implements PollHost.CoreCalls {
         private final LinkedBlockingQueue<byte[]> handouts = new LinkedBlockingQueue<>();
         private final AtomicInteger completed = new AtomicInteger();
+        private final List<Long> abandoned = new CopyOnWriteArrayList<>();
+        /** Set to make every {@code complete} throw, as a refusing core would. */
+        private volatile boolean completeThrows = false;
+        /** How many {@code poll} calls still throw an Error (killing a fetcher). */
+        private final AtomicInteger pollErrors = new AtomicInteger();
 
         void handOut(Activation activation) {
             handouts.add(ActivationCodec.encodeActivation(activation));
@@ -40,6 +45,12 @@ class PollHostTest {
         @Override
         @Nullable
         public byte[] poll(long timeoutMs) {
+            // An Error, not an Exception: an Exception is one bad turn the
+            // loop retries, an Error ends the thread — which is the death a
+            // replacement has to cover.
+            if (pollErrors.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                throw new StackOverflowError("fetcher died");
+            }
             try {
                 return handouts.poll(timeoutMs, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
@@ -52,7 +63,15 @@ class PollHostTest {
         public void complete(byte[] result) {
             // Decoding an ActivationResult is the core's side of the ABI; the
             // host contract under test is only that `complete` is called.
+            if (completeThrows) {
+                throw new IllegalStateException("core refused the completion");
+            }
             completed.incrementAndGet();
+        }
+
+        @Override
+        public void abandon(long token) {
+            abandoned.add(token);
         }
     }
 
@@ -153,6 +172,73 @@ class PollHostTest {
 
         assertThat(new ArrayList<>(trace))
                 .containsExactly("enter-1", "exit-1", "enter-2", "exit-2", "enter-3", "exit-3");
+    }
+
+    /**
+     * Per-entity exclusivity IS the handout, so an activation that returns
+     * without an answer retires its Entity for the life of the process. Every
+     * way the answer can be missed — the dispatch throwing, the result failing
+     * to encode, `complete` itself throwing — must abandon instead.
+     */
+    @Test
+    @DisplayName("a throwing dispatch abandons rather than dropping the activation")
+    void aThrowingDispatchAbandons() throws Exception {
+        FakeCore core = new FakeCore();
+        CountDownLatch dispatched = new CountDownLatch(1);
+        Function<Activation, ActivationResult> dispatch = activation -> {
+            dispatched.countDown();
+            throw new IllegalStateException("dispatcher blew up");
+        };
+
+        try (PollHost host = start(core, dispatch, 1)) {
+            core.handOut(activation(7, "unlucky"));
+            assertThat(dispatched.await(10, TimeUnit.SECONDS)).isTrue();
+            awaitTrue(() -> core.abandoned.contains(7L), "the activation was abandoned");
+        }
+        assertThat(core.completed.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("a throwing complete abandons rather than dropping the activation")
+    void aThrowingCompleteAbandons() throws Exception {
+        FakeCore core = new FakeCore();
+        core.completeThrows = true;
+
+        try (PollHost host = start(core, PollHostTest::ok, 1)) {
+            core.handOut(activation(8, "unlucky"));
+            awaitTrue(() -> core.abandoned.contains(8L), "the activation was abandoned");
+        }
+    }
+
+    /**
+     * A runner whose last fetcher died stays connected, heartbeating and
+     * processing nothing — the wedge this host must not be able to reach on
+     * its own.
+     */
+    @Test
+    @DisplayName("a fetcher killed by a throwable is replaced")
+    void aDeadFetcherIsReplaced() throws Exception {
+        FakeCore core = new FakeCore();
+        core.pollErrors.set(1);
+
+        try (PollHost host = start(core, PollHostTest::ok, 2)) {
+            awaitTrue(() -> core.pollErrors.get() == 0, "a fetcher died on the poll Error");
+            // The configured count is what the runner budgets for, so it must
+            // come back — and the replacement must actually fetch.
+            awaitTrue(
+                    () -> host.liveFetcherCount() == host.fetcherCount(),
+                    "the fetcher count returned to its configured size");
+            core.handOut(activation(9, "after-the-death"));
+            awaitTrue(() -> core.completed.get() == 1, "a replacement fetcher served new work");
+        }
+    }
+
+    private static void awaitTrue(java.util.function.BooleanSupplier done, String what) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!done.getAsBoolean()) {
+            assertThat(System.nanoTime()).as("timed out waiting for %s", what).isLessThan(deadline);
+            Thread.sleep(10);
+        }
     }
 
     @Test

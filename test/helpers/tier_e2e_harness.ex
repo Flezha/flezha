@@ -49,7 +49,8 @@ defmodule FlezhaTest.Helper.TierE2EHarness do
     {port, runner_id} =
       NodeTestHelper.start_runner_port(namespace,
         transport: :uds,
-        env: [{"FLEZHA_RUNNER_ID_PATH", id_path} | Keyword.get(opts, :env, [])]
+        env: [{"FLEZHA_RUNNER_ID_PATH", id_path} | Keyword.get(opts, :env, [])],
+        port_opts: Keyword.get(opts, :port_opts, [])
       )
 
     on_exit(fn ->

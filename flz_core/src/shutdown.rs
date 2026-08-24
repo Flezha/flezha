@@ -245,6 +245,61 @@ pub fn register_bridge(bridge: Arc<ShutdownBridge>) {
     install_sigterm_handler();
 }
 
+/// Record a terminal disconnect the controller ordered. The exit itself waits
+/// until the disconnect response has been written.
+pub fn request_terminal_exit(reason: String) {
+    *terminal_exit().lock().unwrap() = Some(reason);
+}
+
+/// Take the pending terminal-disconnect reason, if one was ordered.
+pub fn take_terminal_exit() -> Option<String> {
+    terminal_exit().lock().unwrap().take()
+}
+
+fn terminal_exit() -> &'static Mutex<Option<String>> {
+    static TERMINAL_EXIT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    TERMINAL_EXIT.get_or_init(|| Mutex::new(None))
+}
+
+/// Exit code a terminally-disconnected runner ends with. Any non-zero value
+/// makes the orchestrator restart the process; a distinct one lets an operator
+/// tell "the controller proved me wedged" apart from a crash in the logs.
+pub const TERMINAL_EXIT_CODE: i32 = 70;
+
+/// Run the graceful shutdown and end the process NON-ZERO, at the controller's
+/// order.
+///
+/// The last rung of the convergence ladder: eviction moves a wedged runner's
+/// operatives but leaves the process connected and placeable, so it takes work
+/// and wedges again. Only the process going away clears it, and only the
+/// orchestrator can bring it back — which it does for a failure, not for a
+/// clean stop. Hence non-zero.
+///
+/// Called after the disconnect response is on the wire: the controller must see
+/// its ack before the process disappears.
+pub fn exit_terminally(reason: &str) -> ! {
+    eprintln!(
+        "[flezha] controller ordered a terminal disconnect (reason={}); exiting {} so the \
+         orchestrator restarts this runner",
+        reason, TERMINAL_EXIT_CODE
+    );
+    // A no-op when the caller already shipped state — the bridge latches.
+    run_active_graceful_shutdown();
+    crate::poll_core::global().shutdown();
+    std::process::exit(TERMINAL_EXIT_CODE);
+}
+
+/// Run the registered bridge's graceful shutdown, if any. Idempotent: the
+/// bridge's own latch makes a second caller a no-op, which is what lets the
+/// disconnect path ship state while the control channel is still writable and
+/// still hand the exit path the same call.
+pub fn run_active_graceful_shutdown() {
+    let bridge = active_bridge().lock().unwrap().clone();
+    if let Some(bridge) = bridge {
+        bridge.run_graceful_shutdown();
+    }
+}
+
 /// Installs a one-shot SIGTERM handler on the first call. Subsequent
 /// calls are no-ops via `std::sync::Once`. The handler runs the active
 /// bridge's graceful shutdown synchronously, then exits the process —
@@ -258,10 +313,7 @@ fn install_sigterm_handler() {
                 thread::spawn(move || {
                     if signals.forever().next().is_some() {
                         eprintln!("[flezha] SIGTERM received; running graceful shutdown");
-                        let bridge = active_bridge().lock().unwrap().clone();
-                        if let Some(bridge) = bridge {
-                            bridge.run_graceful_shutdown();
-                        }
+                        run_active_graceful_shutdown();
                         std::process::exit(0);
                     }
                 });

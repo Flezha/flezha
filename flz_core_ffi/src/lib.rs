@@ -61,6 +61,17 @@ impl FlzContext {
             Some(CString::new(msg.into()).unwrap_or_default());
         FLZ_ERR
     }
+
+    /// Take a polled activation by token. `Err` carries the status the entry
+    /// point returns, with the reason already recorded for `last_error` — an
+    /// unknown token means the veneer answered twice, or answered one it never
+    /// held, and either is a defect to surface rather than a no-op.
+    fn take_outstanding(&self, token: u64) -> Result<EngineActivation, i32> {
+        self.outstanding
+            .remove(&token)
+            .map(|(_, act)| act)
+            .ok_or_else(|| self.fail(format!("unknown activation token {token}")))
+    }
 }
 
 /// The schema version this core speaks; a shim compares before connecting.
@@ -268,10 +279,45 @@ pub unsafe extern "C" fn flz_core_complete(
         Ok(r) => r,
         Err(e) => return ctx.fail(format!("activation result failed to decode: {e}")),
     };
-    let Some((_, act)) = ctx.outstanding.remove(&result.token) else {
-        return ctx.fail(format!("unknown activation token {}", result.token));
+    let act = match ctx.take_outstanding(result.token) {
+        Ok(act) => act,
+        Err(status) => return status,
     };
     match flz_core::host::apply_result(flz_core::poll_core::global(), act, result) {
+        Ok(()) => FLZ_OK,
+        Err(e) => ctx.fail(e),
+    }
+}
+
+/// Abandon a polled activation: re-hand its untouched items and release its
+/// entity, exactly as if it had never been polled. Accepted from any thread.
+///
+/// The third and last way to answer a handout, and the one the ABI must name
+/// explicitly because **no unwind crosses this boundary**: a veneer whose host
+/// language throws, or whose thread dies, cannot reach [`flz_core_complete`],
+/// and per-entity exclusivity would then retire that entity for the life of
+/// the process. A veneer SHALL answer every polled activation exactly once and
+/// SHALL make that structural in its own language — a `finally`, a
+/// destructor, a scope guard — not a discipline at each return site.
+///
+/// No retry-ladder attempt is consumed: an abandon is not a failure, it is
+/// work that never ran. Only pass a token whose items the veneer did NOT
+/// process; abandoning a partly-processed batch would execute those items
+/// twice. An unknown or already-answered token is refused with
+/// [`FLZ_ERR`] and the reason in [`flz_core_last_error`].
+///
+/// # Safety
+/// `ctx` must be a live pointer from [`flz_core_context_new`].
+#[no_mangle]
+pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i32 {
+    let Some(ctx) = ctx.as_mut() else {
+        return FLZ_ERR;
+    };
+    let act = match ctx.take_outstanding(token) {
+        Ok(act) => act,
+        Err(status) => return status,
+    };
+    match flz_core::host::abandon_activation(flz_core::poll_core::global(), act) {
         Ok(()) => FLZ_OK,
         Err(e) => ctx.fail(e),
     }

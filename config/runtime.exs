@@ -597,6 +597,14 @@ if config_env() != :test do
     convergence_unmet_intent_grace_ms:
       System.get_env("FLEZHA_CONVERGENCE_UNMET_INTENT_GRACE_MS", "120000")
       |> String.to_integer(),
+    # How long one activation may stay outstanding on a runner before the
+    # classifier calls that Entity stalled. Far above the longest activation
+    # the bench fleet produces on purpose: from the runner, a slow Procedure
+    # and a handout its host lost are indistinguishable, so the threshold is
+    # what separates them and the remedy is a rebind from durable state.
+    convergence_entity_stall_ms:
+      System.get_env("FLEZHA_CONVERGENCE_ENTITY_STALL_MS", "300000")
+      |> String.to_integer(),
     convergence_plugin_strike_threshold:
       System.get_env("FLEZHA_CONVERGENCE_PLUGIN_STRIKE_THRESHOLD", "2")
       |> String.to_integer(),

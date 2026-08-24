@@ -186,6 +186,18 @@ is recorded in this requirement once `mix bench --runtime java` has been
 measured 3× on the reference host (median, rounded down to a clean number) —
 until then the recorded floor is "TBD pending v1 measurement".
 
+A fetcher that exits for any reason other than shutdown SHALL be replaced, so
+the configured fetcher count is maintained for the life of the runner; each
+replacement SHALL be logged with the throwable that ended the previous thread.
+A runner SHALL NOT be left with zero fetchers while it is still connected.
+
+Every activation dispatched onto a virtual thread SHALL be answered exactly
+once. The dispatch SHALL be wrapped so that a throwable escaping the dispatcher
+— including one thrown while encoding the result or while calling `complete` —
+abandons the activation rather than returning without answering it; logging the
+throwable is not sufficient, because an unanswered activation retires its entity
+for the life of the process.
+
 #### Scenario: Reference bench meets the Java throughput floor
 - **WHEN** a developer runs `MIX_ENV=prod mix bench --runtime java --shape regression -n 100 -m 10000` on a modern 8-core x86_64 laptop with a warm JVM (≥ 30 s warmup)
 - **THEN** the reported `Throughput:` line SHALL be ≥ the recorded Java floor value
@@ -194,6 +206,14 @@ until then the recorded floor is "TBD pending v1 measurement".
 - **WHEN** the SDK starts with `FLEZHA_WORKER_POOL_SIZE` unset
 - **THEN** exactly 2 platform fetcher threads SHALL poll, and every activation
   SHALL be dispatched on a virtual thread
+
+#### Scenario: A dead fetcher is replaced
+- **WHEN** a fetcher thread ends on a throwable while the runner is connected and not closing
+- **THEN** a replacement fetcher SHALL be started, the configured fetcher count SHALL be restored, and the throwable SHALL be logged
+
+#### Scenario: A throwing dispatch abandons instead of dropping the activation
+- **WHEN** a throwable escapes the dispatcher, the result encoder, or `complete` for an activation on entity E
+- **THEN** the SDK SHALL abandon the activation, E SHALL be pollable again with its items intact, and the throwable SHALL be logged
 
 ### Requirement: JNI Bridge to flz_core_ffi
 

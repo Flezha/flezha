@@ -109,15 +109,33 @@ fn abi_complete(ctx: *mut FlzContext, result: &schema::ActivationResult) {
     let bytes = schema::encode_result(result);
     let status = unsafe { flz_core_complete(ctx, bytes.as_ptr(), bytes.len()) };
     if status != FLZ_OK {
-        let err = unsafe { flz_core_last_error(ctx) };
-        let msg = if err.is_null() {
-            "<no error recorded>".to_string()
-        } else {
-            unsafe { std::ffi::CStr::from_ptr(err) }
-                .to_string_lossy()
-                .into_owned()
-        };
-        panic!("complete failed: {msg}");
+        panic!("complete failed: {}", last_error(ctx));
+    }
+}
+
+/// The activation's input payloads, in batch order.
+fn work_payloads(act: &schema::Activation) -> Vec<Vec<u8>> {
+    let schema::ActivationKind::Work(items) = &act.kind else {
+        panic!("expected a work batch");
+    };
+    items
+        .iter()
+        .map(|item| match item {
+            schema::WorkItem::Input(input) => input.payload.clone(),
+            other => panic!("expected inputs, got {other:?}"),
+        })
+        .collect()
+}
+
+/// The last error the context recorded, or a placeholder.
+fn last_error(ctx: *mut FlzContext) -> String {
+    let err = unsafe { flz_core_last_error(ctx) };
+    if err.is_null() {
+        "<no error recorded>".to_string()
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(err) }
+            .to_string_lossy()
+            .into_owned()
     }
 }
 
@@ -221,18 +239,40 @@ fn c_abi_full_scenario() {
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "queued inputs hand out");
     let act = act.unwrap();
-    let schema::ActivationKind::Work(items) = &act.kind else {
-        panic!("expected a work batch");
-    };
-    let payloads: Vec<Vec<u8>> = items
-        .iter()
-        .map(|item| match item {
-            schema::WorkItem::Input(input) => input.payload.clone(),
-            other => panic!("expected inputs, got {other:?}"),
-        })
-        .collect();
-    assert_eq!(payloads, vec![b"alpha".to_vec(), b"beta".to_vec()]);
+    assert_eq!(
+        work_payloads(&act),
+        vec![b"alpha".to_vec(), b"beta".to_vec()]
+    );
     assert_eq!(act.target.procedure, 0);
+
+    // ------------------------------------------------------------- abandon
+    // The third answer, and the one the ABI has to name because no unwind
+    // crosses it: a veneer whose language threw cannot reach `complete`, and
+    // per-entity exclusivity would then retire this entity for the life of
+    // the process. Abandoning re-hands the batch untouched.
+    assert_eq!(unsafe { flz_core_abandon(ctx, act.token) }, FLZ_OK);
+    assert_eq!(
+        unsafe { flz_core_abandon(ctx, act.token) },
+        FLZ_ERR,
+        "an already-answered token is refused, not silently accepted"
+    );
+    assert!(
+        last_error(ctx).contains(&format!("{}", act.token)),
+        "the refusal names the token: {}",
+        last_error(ctx)
+    );
+
+    let (status, act) = abi_poll(ctx, 2_000);
+    assert_eq!(
+        status, FLZ_POLL_ACTIVATION,
+        "an abandoned entity polls again"
+    );
+    let act = act.unwrap();
+    assert_eq!(
+        work_payloads(&act),
+        vec![b"alpha".to_vec(), b"beta".to_vec()],
+        "abandon re-hands the items untouched and in order"
+    );
 
     // Complete FROM A DIFFERENT THREAD (thread-safety pin), registering a
     // processing-time timer 30ms out on the last item.

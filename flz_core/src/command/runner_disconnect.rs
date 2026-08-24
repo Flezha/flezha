@@ -10,6 +10,12 @@ impl CommandAction for RunnerDisconnect {
         _errors: &mut Vec<String>,
     ) -> (String, Vec<u8>) {
         runner.set_status(RunnerStatus::Stopped);
+        if self.terminal {
+            // Acted on by the disconnect arm of `command::handle_command`,
+            // once this reply is on the wire — the controller must see its ack
+            // before the process goes away.
+            crate::shutdown::request_terminal_exit(self.reason.clone());
+        }
 
         ("runner_disconnect".to_string(), Vec::new())
     }

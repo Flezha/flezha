@@ -21,7 +21,9 @@ The end-to-end harness SHALL resolve the SDK runtime for a run from `FLEZHA_E2E_
 
 ### Requirement: Every SDK test app carries a conformance manifest
 
-Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conformance.json` declaring: `runtime` (the name `FLEZHA_E2E_RUNTIME` selects it by); `command` (a launch template over `{artifact}`, `{app_dir}`, `{repo}`, `{namespace}` and the absolute-path placeholders `{socket_dir}`, `{ca_cert}`, `{client_cert}`, `{client_key}`); `artifacts` with a `test` and a `bench` profile, each an ordered list of paths relative to the app directory; `build` with the one command that produces each profile's artifact; `connect_timeout_ms`; `transports` (the subset of `uds`, `quic` the SDK's standalone runner supports); `deferred` (capabilities from the shared vocabulary the SDK does not carry); `fixtures` (a map from capability to the factory ids the app registers for it); and `docs` (the path of the page that documents the SDK's scope). Every vocabulary capability SHALL appear in a manifest exactly once — under `deferred` or as a `fixtures` key — so a capability can be neither forgotten nor both; the required capabilities (`runner_lifecycle`, `graph_builder`, `liveness`, `retry_ladder`, `partitioned` — the surface every SDK carries) SHALL NOT appear under `deferred`. The page named by `docs` SHALL exist and SHALL reference the manifest by path rather than restate its scope. The Rust test app's manifest SHALL be the reference: a fixture id exists for a capability if and only if the reference lists it there. Both spawners — the test harness (`test` profile) and the bench fleet (`bench` profile) — SHALL render the launch line from the manifest and SHALL carry no per-runtime launch clause of their own. The first artifact in a profile's list that exists SHALL be used; using a later one SHALL log a warning naming the first; none existing SHALL raise with the profile's `build` command.
+Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conformance.json` declaring: `runtime` (the name `FLEZHA_E2E_RUNTIME` selects it by); `command` (a launch template over `{artifact}`, `{app_dir}`, `{repo}`, `{namespace}` and the absolute-path placeholders `{socket_dir}`, `{ca_cert}`, `{client_cert}`, `{client_key}`); `artifacts` with a `test` and a `bench` profile, each an ordered list of paths relative to the app directory; `build` with the one command that produces each profile's artifact; `connect_timeout_ms`; `transports` (the subset of `uds`, `quic` the SDK's standalone runner supports); `deferred` (capabilities from the shared vocabulary the SDK does not carry); `fixtures` (a map from capability to the factory ids the app registers for it); and `docs` (the path of the page that documents the SDK's scope). Every vocabulary capability SHALL appear in a manifest exactly once — under `deferred` or as a `fixtures` key — so a capability can be neither forgotten nor both; the required capabilities (`runner_lifecycle`, `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge` — the surface every SDK carries) SHALL NOT appear under `deferred`. The page named by `docs` SHALL exist and SHALL reference the manifest by path rather than restate its scope. The Rust test app's manifest SHALL be the reference: a fixture id exists for a capability if and only if the reference lists it there. Both spawners — the test harness (`test` profile) and the bench fleet (`bench` profile) — SHALL render the launch line from the manifest and SHALL carry no per-runtime launch clause of their own. The first artifact in a profile's list that exists SHALL be used; using a later one SHALL log a warning naming the first; none existing SHALL raise with the profile's `build` command.
+
+`pool_wedge` becomes required because a host that cannot be wedged on demand cannot prove it recovers: the fixture is what exercises the abandon path, the worker replacement and the classifier's verdict on that SDK rather than on Rust alone.
 
 #### Scenario: Adding an SDK touches no harness code
 - **WHEN** a new `test/apps/<sdk>_runner/` directory with a valid manifest is added and `FLEZHA_E2E_RUNTIME=<sdk> mix test --include sdk_smoke` is run
@@ -37,6 +39,10 @@ Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conforman
 
 #### Scenario: A required capability cannot be deferred
 - **WHEN** a manifest lists `retry_ladder` under `deferred`
+- **THEN** the static gate fails naming the manifest and the required set
+
+#### Scenario: pool_wedge cannot be deferred either
+- **WHEN** a manifest lists `pool_wedge` under `deferred`
 - **THEN** the static gate fails naming the manifest and the required set
 
 #### Scenario: The bench and the test harness launch the same app the same way
@@ -197,4 +203,18 @@ migration refuses instead of producing state.
 - **GIVEN** the fixture's Procedure at the next schema version with no migration declared
 - **WHEN** it restores an Entity persisted at the previous version
 - **THEN** the restore SHALL fail with a schema error and the Entity SHALL NOT resume with cold state presented as restored
+
+### Requirement: The wedge scenario proves detection and recovery on every SDK
+
+The suite SHALL carry a scenario, driven by each SDK's `pool_wedge` fixture, that occupies the runner's dispatch capacity and asserts the full chain on the runtime under test: the runner's heartbeat reports handout liveness; the classifier mints the expected verdict; the planner issues the expected remedy; and the affected operative resumes producing afterwards.
+
+The scenario SHALL additionally cover the abandon path — a fixture whose Procedure aborts its worker rather than returning an error — and assert that the entity is served again without operator action and without a duplicate execution of the item that killed the worker.
+
+#### Scenario: A wedged pool is detected and remedied on each runtime
+- **WHEN** the wedge fixture occupies the runner's dispatch capacity under `FLEZHA_E2E_RUNTIME=<sdk>`
+- **THEN** the heartbeat SHALL report the outstanding activation, the classifier SHALL mint the wedge verdict, the plan SHALL issue its remedy, and the operative SHALL produce again once the remedy lands
+
+#### Scenario: A worker killed mid-dispatch recovers without losing the entity
+- **WHEN** the fixture aborts the worker holding an activation
+- **THEN** the pool SHALL return to its configured size, the entity SHALL be served again, and the aborting item SHALL NOT have been executed twice
 

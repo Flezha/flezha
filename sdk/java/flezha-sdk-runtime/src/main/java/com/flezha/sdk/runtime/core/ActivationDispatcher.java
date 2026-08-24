@@ -26,6 +26,7 @@ import com.flezha.sdk.runtime.workflow.WorkflowSpec;
 import com.flezha.sdk.state.Change;
 import com.flezha.sdk.state.EventTimeFrom;
 import com.flezha.sdk.state.StateHandle;
+import com.flezha.sdk.state.Stateless;
 import com.flezha.sdk.state.TimerKind;
 import com.flezha.sdk.workflow.WorkflowOperative;
 import com.flezha.sdk.workflow.WorkflowOperativeException;
@@ -410,6 +411,16 @@ public final class ActivationDispatcher {
 
         private byte[] stateJson(EntityRef target) {
             EntityCell cell = cellFor(target);
+            // A stateless procedure has nothing to ship. Jackson refuses an
+            // empty bean, and that refusal is RIGHT for a user state class with
+            // no readable properties — an author mistake worth surfacing — but
+            // `Stateless` is the SDK's own marker for "there is no state", so it
+            // ships `{}` and reads back through `applyState`'s no-arg
+            // constructor. Without this, every stateless Java operative failed
+            // its migration serialize and its shutdown state ship.
+            if (cell.state instanceof Stateless) {
+                return "{}".getBytes(StandardCharsets.UTF_8);
+            }
             try {
                 return JSON.writeValueAsBytes(cell.state);
             } catch (Exception e) {

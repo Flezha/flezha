@@ -298,7 +298,7 @@ defmodule Flezha.Runner.FleetManager do
       _ ->
         Logger.info("Disconnecting runner #{runner_id} from namespace #{namespace}")
 
-        GenServer.call(Identificator.control_unit(runner_id), :disconnect_runner)
+        Flezha.Runner.ControlUnit.disconnect(runner_id)
 
         {:reply, :ok, state}
     end

@@ -6,10 +6,19 @@ TBD - created by archiving change extract-sdk-poll-core. Update Purpose after ar
 ### Requirement: C ABI surface and lifecycle
 
 `flz_core_ffi` SHALL expose the core over a C ABI: context create/destroy, configure,
-start, `poll` (blocking, with timeout), `complete`, shutdown, `last_error`, and a log
-callback. Ownership follows the existing FFI convention: whoever allocates frees;
-buffers returned by the core are freed via a core-provided free function; the context
-pointer is opaque.
+start, `poll` (blocking, with timeout), `complete`, `abandon`, shutdown, `last_error`,
+and a log callback. Ownership follows the existing FFI convention: whoever allocates
+frees; buffers returned by the core are freed via a core-provided free function; the
+context pointer is opaque.
+
+`abandon` takes a polled activation's token and re-hands its untouched items,
+releasing the entity as if it had never been polled. It exists because no unwind
+crosses the ABI: a veneer whose host language throws, or whose thread dies, has
+no way to reach `complete`, and without an explicit call the entity would be
+retired for the lifetime of the process. A veneer SHALL answer every polled
+activation exactly once — `complete`, the failure path, or `abandon` — and SHALL
+make that structural in its own language (a `finally`, a destructor, a scope
+guard), not a discipline at each return site.
 
 #### Scenario: Shutdown wakes blocked pollers
 - **WHEN** host workers are blocked in `poll` and shutdown is requested
@@ -18,6 +27,14 @@ pointer is opaque.
 #### Scenario: Poll honors its timeout
 - **WHEN** `poll` is called with a 100 ms timeout and no work arrives
 - **THEN** it SHALL return an empty/timeout result within a bounded margin of 100 ms rather than blocking indefinitely
+
+#### Scenario: An abandoned activation releases its entity
+- **WHEN** a veneer polls an activation for entity E and calls `flz_core_abandon` with its token instead of completing it
+- **THEN** E SHALL become pollable again with its items intact and in order, and no retry-ladder attempt SHALL have been consumed
+
+#### Scenario: An unknown or already-answered token is rejected, not silently accepted
+- **WHEN** `abandon` or `complete` is called with a token that was never handed out, or that was already answered
+- **THEN** the call SHALL return an error retrievable through `last_error`, and SHALL NOT disturb any live handout
 
 ### Requirement: Versioned activation schema with boot-time refusal
 

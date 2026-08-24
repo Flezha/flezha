@@ -35,7 +35,7 @@ defmodule Flezha.Convergence.Planner do
 
     planned =
       delta
-      |> ordered_ops()
+      |> ordered_ops(backoff)
       |> Backoff.filter(backoff, &key/1)
       |> Enum.take(max_ops)
 
@@ -48,25 +48,35 @@ defmodule Flezha.Convergence.Planner do
   @doc """
   Backoff key for an op: `{primitive, target}`.
 
-  The output-stall ladder is the exception: both of its rungs key on
-  `ladder_key/1`, so escalating from `resync_runner` to `rebind_operative`
-  walks one cooldown instead of restarting the throttle under a fresh key.
+  The two ladders are the exception: every rung of one keys on
+  `ladder_key/2`, so escalating (`resync_runner` → `rebind_operative`;
+  `evict_runner` → `restart_runner`) walks ONE cooldown instead of restarting
+  the throttle under a fresh key — which is also what makes the attempt count
+  the rung.
   """
   @spec key(op()) :: Backoff.key()
-  def key(%{target: target, args: %{reason: @ladder_reason}}), do: ladder_key(target)
+  def key(%{target: target, args: %{reason: reason}}) when reason in @proved_not_producing,
+    do: ladder_key(reason, target)
+
   def key(%{primitive: primitive, target: target}), do: {primitive, target}
 
-  @doc "The one cooldown key both rungs of `target`'s output-stall ladder share."
+  @doc "The one cooldown key every rung of `target`'s `reason` ladder shares."
+  @spec ladder_key(atom(), term()) :: Backoff.key()
+  def ladder_key(reason, target), do: {reason, target}
+
+  @doc "The output-stall ladder's cooldown key for `target`."
   @spec ladder_key(term()) :: Backoff.key()
-  def ladder_key(target), do: {@ladder_reason, target}
+  def ladder_key(target), do: ladder_key(@ladder_reason, target)
 
   @doc """
   Whether an op is a ladder rung. Its `:ok` means the remedy was APPLIED, not
   that the stall cleared, so the Loop advances the cooldown on either outcome
-  — that is what reaches the next rung instead of re-firing this one.
+  — that is what reaches the next rung instead of re-firing this one. Both
+  proved-not-producing ladders qualify: only fresh evidence on a later tick
+  proves the target still needs healing.
   """
   @spec ladder?(op()) :: boolean()
-  def ladder?(%{args: %{reason: @ladder_reason}}), do: true
+  def ladder?(%{args: %{reason: reason}}), do: reason in @proved_not_producing
   def ladder?(_op), do: false
 
   @doc """
@@ -95,24 +105,30 @@ defmodule Flezha.Convergence.Planner do
     stalled
     |> Enum.reject(fn {_ns, rid} -> MapSet.member?(covered, rid) end)
     |> Enum.map(fn {ns, rid} ->
-      op(stall_rung(backoff, rid), ns, rid, %{reason: @ladder_reason})
+      op(rung(backoff, @ladder_reason, rid, :resync_runner, :rebind_operative), ns, rid, %{
+        reason: @ladder_reason
+      })
     end)
     |> Backoff.filter(backoff, &key/1)
   end
 
-  defp stall_rung(backoff, target) do
-    case Backoff.attempt(backoff, ladder_key(target)) do
-      0 -> :resync_runner
-      _ -> :rebind_operative
+  # Which rung of `reason`'s ladder `target` is on, read off the ladder's own
+  # cooldown attempt count — the counter that already throttles it, so there is
+  # no second piece of per-target bookkeeping. `first` until the cooldown has
+  # recorded an attempt, `next` after.
+  defp rung(backoff, reason, target, first, next) do
+    case Backoff.attempt(backoff, ladder_key(reason, target)) do
+      0 -> first
+      _ -> next
     end
   end
 
   # Prerequisite order: evictions, then (re)binds, then re-placements, then
   # plugin starts. Each group preserves Delta order within it. The data-plane
   # wedge sits between them because it is at most one op and may be either kind.
-  defp ordered_ops(%Diff{} = d) do
+  defp ordered_ops(%Diff{} = d, backoff) do
     eviction_ops(d) ++
-      wedge_ops(d) ++
+      wedge_ops(d, backoff) ++
       bind_ops(d) ++
       replace_ops(d) ++
       plugin_ops(d)
@@ -122,18 +138,32 @@ defmodule Flezha.Convergence.Planner do
   # healed. Remedy by scope: a wedged runner is evicted (its operatives rebind
   # through the existing ordering), a wedged connection is resynced in place,
   # a wedged operative is rebound.
-  defp wedge_ops(%Diff{data_plane_wedge: nil}), do: []
+  defp wedge_ops(%Diff{data_plane_wedge: nil}, _backoff), do: []
 
-  defp wedge_ops(%Diff{data_plane_wedge: {:runner, runner_id}, data_plane_layer: layer}) do
-    [op(:evict_runner, nil, runner_id, wedge_args(layer))]
+  # A runner rides its own two-rung ladder. Eviction first — cheap, moves the
+  # work, leaves the process alone; the terminal restart only once eviction has
+  # been applied and the classifier STILL proves the same runner wedged, since
+  # an evicted-but-connected runner is placeable again and would otherwise flap.
+  defp wedge_ops(
+         %Diff{data_plane_wedge: {:runner, ns, runner_id}, data_plane_layer: layer},
+         backoff
+       ) do
+    [
+      op(
+        rung(backoff, @wedge_reason, runner_id, :evict_runner, :restart_runner),
+        ns,
+        runner_id,
+        wedge_args(layer)
+      )
+    ]
   end
 
-  defp wedge_ops(%Diff{data_plane_wedge: {:connection, refs}, data_plane_layer: layer}) do
+  defp wedge_ops(%Diff{data_plane_wedge: {:connection, refs}, data_plane_layer: layer}, _backoff) do
     Enum.map(refs, fn {ns, rid} -> op(:resync_runner, ns, rid, wedge_args(layer)) end)
   end
 
-  defp wedge_ops(%Diff{data_plane_wedge: {:operative, {ns, rid}}, data_plane_layer: layer}) do
-    [op(:rebind_operative, ns, rid, wedge_args(layer))]
+  defp wedge_ops(%Diff{data_plane_wedge: {:operative, refs}, data_plane_layer: layer}, _backoff) do
+    Enum.map(refs, fn {ns, rid} -> op(:rebind_operative, ns, rid, wedge_args(layer)) end)
   end
 
   defp wedge_args(layer), do: %{reason: @wedge_reason, layer: layer}

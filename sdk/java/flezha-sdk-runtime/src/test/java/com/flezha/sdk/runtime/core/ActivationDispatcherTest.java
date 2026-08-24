@@ -17,6 +17,7 @@ import com.flezha.sdk.state.EventTimeFrom;
 import com.flezha.sdk.state.NoChange;
 import com.flezha.sdk.state.RestoreInitPayload;
 import com.flezha.sdk.state.StateHandle;
+import com.flezha.sdk.state.Stateless;
 import com.flezha.sdk.state.TimerKind;
 import com.flezha.sdk.state.WallClock;
 import com.flezha.sdk.workflow.WorkflowOperative;
@@ -503,6 +504,28 @@ class ActivationDispatcherTest {
                 .isEqualTo("{\"n\":42}");
     }
 
+    // A stateless procedure has nothing to ship, and Jackson refuses an empty
+    // bean — which used to fail the migration serialize AND the graceful
+    // shutdown's state ship for every stateless Java operative.
+    @Test
+    @DisplayName("a Stateless state serializes as an empty object and reads back")
+    void statelessStateShipsAsEmptyObject() {
+        StreamOperativeClassRegistry.registerClass(StatelessStateOperative.class);
+
+        ActivationOutcome migrated =
+                outcome(command("stateless_state_op", 0, Optional.empty(), new ActivationKind.MigrationSerialize()));
+        byte[] json = ((ActivationOutcome.MigrationState) migrated).json();
+        assertThat(new String(json, StandardCharsets.UTF_8)).isEqualTo("{}");
+
+        ActivationOutcome read =
+                outcome(command("stateless_state_op", 0, Optional.empty(), new ActivationKind.LiveStateRead()));
+        assertThat(new String(((ActivationOutcome.StateJson) read).json(), StandardCharsets.UTF_8))
+                .isEqualTo("{}");
+
+        assertThat(outcome(command("stateless_state_op", 0, Optional.empty(), new ActivationKind.ApplyState(json))))
+                .isInstanceOf(ActivationOutcome.StateApplied.class);
+    }
+
     // ------------------------------------------------------------------
     // prepare: event time + per-payload failure
     // ------------------------------------------------------------------
@@ -789,6 +812,40 @@ class ActivationDispatcherTest {
                     .into(KeyedProc.class)
                     .keyed()
                     .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    public static final class StatelessStateOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "stateless_state_op";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.input(String.class, "in")
+                    .into(StatelessStateProc.class)
+                    .named("out")
+                    .sink("out", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /** The shape the annotation processor generates for a stateless `@Procedure`. */
+    public static final class StatelessStateProc extends StatelessTestProcedure<String, Stateless, String> {
+        @Override
+        public String name() {
+            return "stateless_state_proc";
+        }
+
+        @Override
+        protected Stateless initState(Optional<String> entityKey) {
+            return new Stateless();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Stateless, NoChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
+            ctx.emit("ok:" + input);
         }
     }
 

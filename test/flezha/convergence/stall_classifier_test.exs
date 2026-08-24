@@ -276,6 +276,144 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert StallClassifier.layer({:runner_pool_wedged, %{}}) == :runner_pool_wedged
   end
 
+  describe "entity_dispatch_stalled" do
+    @stall_opts %{entity_stall_ms: 60_000}
+
+    # One activation the runner took and never answered. `dispatches` keeps
+    # climbing on every other Entity, so the runner-wide verdict is blind to
+    # it — and per-entity exclusivity means the stalled Entity simply never
+    # appears in a poll result again.
+    test "fires for an aged handout on a runner that is still completing work" do
+      prev =
+        snapshot(
+          channels: [
+            channel(name: :scp, send_frame_calls: 100),
+            channel(name: :scs, hb_count: 5, hb_dispatches: 9_000, hb_inflight: 1)
+          ]
+        )
+
+      curr =
+        snapshot(
+          channels: [
+            channel(name: :scp, send_frame_calls: 200),
+            channel(
+              name: :scs,
+              hb_count: 6,
+              hb_dispatches: 9_500,
+              hb_inflight: 1,
+              hb_inflight_oldest_ms: 600_000
+            )
+          ]
+        )
+
+      assert {:entity_dispatch_stalled, ctx} =
+               StallClassifier.classify(curr, prev, @stall_opts)
+
+      assert ctx.runner_id == "exec-1"
+      assert ctx.inflight == 1
+      # The reported age rides the verdict so a false positive — a genuinely
+      # long Procedure — is diagnosable from the log line alone.
+      assert ctx.oldest_ms == 600_000
+      assert StallClassifier.layer_scope(:entity_dispatch_stalled) == :operative
+    end
+
+    test "does NOT fire below the threshold, nor with nothing outstanding" do
+      prev =
+        snapshot(
+          channels: [
+            channel(name: :scp, send_frame_calls: 100),
+            channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)
+          ]
+        )
+
+      for outstanding <- [
+            [hb_inflight: 1, hb_inflight_oldest_ms: 10_000],
+            [hb_inflight: 0, hb_inflight_oldest_ms: 600_000]
+          ] do
+        curr =
+          snapshot(
+            channels: [
+              channel(name: :scp, send_frame_calls: 200),
+              channel([name: :scs, hb_count: 6, hb_dispatches: 9_500] ++ outstanding)
+            ]
+          )
+
+        assert StallClassifier.classify(curr, prev, @stall_opts) == :ok
+      end
+    end
+
+    # An SDK that has not shipped the self-report sends neither key, which the
+    # snapshot reads as zero. Zero must never look like a stall.
+    test "an SDK that reports neither key never reads as stalled" do
+      prev = snapshot(channels: [channel(name: :scs, hb_count: 5, hb_dispatches: 9_000)])
+
+      curr =
+        snapshot(
+          channels: [
+            channel(name: :scp, send_frame_calls: 200),
+            channel(name: :scs, hb_count: 6, hb_dispatches: 9_500)
+          ]
+        )
+
+      assert StallClassifier.classify(curr, prev, @stall_opts) == :ok
+    end
+
+    # A wedged runner explains a wedged Entity, not the other way round.
+    test "a wedged runner outranks a stalled entity" do
+      prev =
+        snapshot(
+          channels: [
+            channel(name: :scp, send_frame_calls: 100),
+            channel(name: :scs, hb_count: 5, hb_dispatches: 9_000, hb_inflight: 1)
+          ]
+        )
+
+      curr =
+        snapshot(
+          channels: [
+            channel(name: :scp, send_frame_calls: 200),
+            channel(
+              name: :scs,
+              hb_count: 6,
+              hb_dispatches: 9_000,
+              hb_inflight: 1,
+              hb_inflight_oldest_ms: 600_000
+            )
+          ]
+        )
+
+      assert {:runner_pool_wedged, _} = StallClassifier.classify(curr, prev, @stall_opts)
+    end
+
+    # The fed precondition every check carries: a runner nobody is sending to
+    # is idle, not stalled, however long its handout has been out.
+    test "an unfed runner yields nothing" do
+      prev =
+        snapshot(
+          channels: [
+            channel(name: :scp, send_frame_calls: 100),
+            channel(name: :scs, hb_count: 5, hb_dispatches: 9_000, hb_inflight: 1)
+          ]
+        )
+
+      curr =
+        snapshot(
+          channels: [
+            channel(name: :scp, send_frame_calls: 100),
+            channel(
+              name: :scs,
+              hb_count: 6,
+              hb_dispatches: 9_500,
+              hb_inflight: 1,
+              hb_inflight_oldest_ms: 600_000
+            )
+          ]
+        )
+
+      assert StallClassifier.classify(curr, prev, @stall_opts) == :ok
+    end
+  end
+
   # ---------- builders ----------
 
   defp snapshot(opts \\ []) do
@@ -318,7 +456,9 @@ defmodule Flezha.Convergence.StallClassifierTest do
       flz_data_received: Keyword.get(opts, :flz_data_received, 0),
       last_send_ms: Keyword.get(opts, :last_send_ms, 0),
       hb_count: Keyword.get(opts, :hb_count, 0),
-      hb_dispatches: Keyword.get(opts, :hb_dispatches, 0)
+      hb_dispatches: Keyword.get(opts, :hb_dispatches, 0),
+      hb_inflight: Keyword.get(opts, :hb_inflight, 0),
+      hb_inflight_oldest_ms: Keyword.get(opts, :hb_inflight_oldest_ms, 0)
     }
   end
 

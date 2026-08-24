@@ -1,12 +1,12 @@
 defmodule Flezha.Convergence.Heal do
   @moduledoc """
-  The entire heal surface: seven idempotent, bounded primitives. Every
+  The entire heal surface: eight idempotent, bounded primitives. Every
   catalogue row reduces to a composition of these — adding a failure mode
   never adds a primitive.
 
       rebind_operative  replace_operative  resync_runner
       start_plugin  stop_plugin  restart_plugin
-      evict_runner
+      evict_runner  restart_runner
 
   `execute/1` dispatches one planned op to its primitive and returns
   `:ok | :error` so the Loop can drive `Backoff`.
@@ -33,12 +33,18 @@ defmodule Flezha.Convergence.Heal do
       classifier proved also waives the "never evict a live runner" guard,
       since a still-connected runner processing nothing is precisely the
       case that guard would otherwise protect forever.
+    * `restart_runner` — the rung ABOVE `evict_runner`, and the only remedy
+      that clears a wedged process: a terminal disconnect the SDK answers by
+      running its graceful shutdown and then exiting non-zero, so the
+      orchestrator that owns process lifecycle restarts it. Eviction alone
+      leaves the wedged runner connected and placeable, which is the flap —
+      evict, reconnect, take work, wedge.
   """
 
   alias Flezha.Cluster.Directory
   alias Flezha.Convergence.{Planner, SafeCall}
   alias Flezha.Operative.Overwatch
-  alias Flezha.Runner.FleetManager
+  alias Flezha.Runner.{ControlUnit, FleetManager}
   alias Flezha.Service.{HubManager, Identificator, OperativeManager}
   alias Flezha.State.Recovery
   alias ProcessHub.Service.Migration
@@ -49,7 +55,7 @@ defmodule Flezha.Convergence.Heal do
   @migrate_timeout_ms 2_000
   @plugin_call_timeout_ms 2_000
 
-  @primitives ~w(rebind_operative replace_operative resync_runner start_plugin stop_plugin restart_plugin evict_runner)a
+  @primitives ~w(rebind_operative replace_operative resync_runner start_plugin stop_plugin restart_plugin evict_runner restart_runner)a
 
   @spec primitives() :: [atom()]
   def primitives(), do: @primitives
@@ -157,11 +163,42 @@ defmodule Flezha.Convergence.Heal do
     end
   end
 
+  # Terminal disconnect: the SDK shuts down gracefully and exits non-zero so its
+  # orchestrator restarts the process. Reached only after `evict_runner` has
+  # already been applied to this runner and the classifier still proves it
+  # wedged — the Planner's rung, gated on `proved_wedged?/1`.
+  defp apply_primitive(:restart_runner, %{target: runner_id, args: args} = op)
+       when is_binary(runner_id) do
+    if Planner.proved_wedged?(op) do
+      layer = Map.get(args, :layer)
+      why = "convergence:#{layer}"
+
+      case ControlUnit.disconnect(runner_id,
+             terminal: true,
+             reason: why,
+             timeout: @migrate_timeout_ms
+           ) do
+        {:ok, _} ->
+          emit_restart(runner_id, layer)
+          :ok
+
+        _ ->
+          :error
+      end
+    else
+      # Never restart a runner on anything but proved-wedged evidence; a merely
+      # slow or idle runner must be left alone.
+      Logger.warning("[convergence] refused restart_runner for #{runner_id}: wedge not proved")
+      :error
+    end
+  end
+
   # Malformed op (no live target) — never produced by the Planner, but a
   # crash here would take down the whole tick. Treat as a failed heal.
   defp apply_primitive(prim, _op)
        when prim in [
               :evict_runner,
+              :restart_runner,
               :resync_runner,
               :replace_operative,
               :start_plugin,
@@ -256,6 +293,21 @@ defmodule Flezha.Convergence.Heal do
     |> Directory.factory_nodes(factory_id)
     |> List.delete(node())
     |> OperativeManager.pick_runner(operative_id)
+  end
+
+  # A runner restarting on a schedule must be visible rather than mysterious:
+  # the verdict that proved the wedge and the ladder rung both ride the event.
+  defp emit_restart(runner_id, layer) do
+    Logger.warning(
+      "[convergence] restarting runner #{runner_id} terminally — still proved wedged " <>
+        "(#{inspect(layer)}) after eviction"
+    )
+
+    :telemetry.execute(
+      [:flezha, :runner, :restarted],
+      %{count: 1},
+      %{runner_id: runner_id, verdict: layer, rung: :restart_runner}
+    )
   end
 
   defp emit_reconnected(namespace, operative_id, prev, target) do

@@ -55,6 +55,17 @@ defmodule Flezha.Runner.StreamChannel do
     end
   end
 
+  # The runner's self-report, mirrored slot for slot. `dispatches` frozen while
+  # the runner is alive is a wedged pool; `credit_parked` advancing while it
+  # freezes is fed-but-parked rather than frozen; `inflight` and its oldest age
+  # are what make ONE wedged Entity visible while the rest keeps completing.
+  @heartbeat_slots [
+    {"dispatches", :hb_dispatches},
+    {"credit_parked", :hb_credit_parked},
+    {"inflight", :hb_inflight},
+    {"inflight_oldest_ms", :hb_inflight_oldest_ms}
+  ]
+
   @impl true
   def init({runner_id, type, name}) do
     # The runner heartbeats every SECONDARY stream every ~10s; a bound
@@ -89,6 +100,16 @@ defmodule Flezha.Runner.StreamChannel do
         refused_entities: MapSet.new()
       }
     }
+  end
+
+  # Mirror one heartbeat-metadata integer into its liveness slot. A key the
+  # runner did not send leaves the slot at zero, which is what an SDK without
+  # the self-report must read as — never as a stall.
+  defp set_reported(ref, metadata, key, slot) do
+    case Integer.parse(Map.get(metadata, key, "")) do
+      {value, _} -> LivenessCounters.set_channel(ref, slot, value)
+      :error -> :ok
+    end
   end
 
   defp schedule_io_liveness_check do
@@ -259,19 +280,7 @@ defmodule Flezha.Runner.StreamChannel do
   def handle_info({:flz_data, _stream_id, "data_heartbeat", _message, metadata}, state) do
     ref = state[:liveness_ref]
     LivenessCounters.bump_channel(ref, :hb_count)
-
-    case Integer.parse(Map.get(metadata, "dispatches", "")) do
-      {dispatches, _} -> LivenessCounters.set_channel(ref, :hb_dispatches, dispatches)
-      :error -> :ok
-    end
-
-    # Credit-park self-report: advancing while dispatches freeze classifies
-    # the runner as fed-but-parked on credit, not silently frozen.
-    case Integer.parse(Map.get(metadata, "credit_parked", "")) do
-      {parked, _} -> LivenessCounters.set_channel(ref, :hb_credit_parked, parked)
-      :error -> :ok
-    end
-
+    for {key, slot} <- @heartbeat_slots, do: set_reported(ref, metadata, key, slot)
     {:noreply, mark_seen(state)}
   end
 

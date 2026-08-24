@@ -544,6 +544,19 @@ the supervisor SHALL spawn one additional poll worker, up to a ceiling
 count SHALL exit after a sustained idle streak; base workers SHALL NOT exit.
 A workload that never starves SHALL observe exactly the base pool.
 
+The pool's live-worker accounting SHALL be unwind-safe: a worker that leaves for
+any reason — clean exit, panic, or any other unwind — SHALL release its slot, so
+a departed worker can never occupy capacity in the ceiling. The supervisor SHALL
+additionally restore the pool to its base size whenever it finds the live count
+below `base`, replacing a worker that died rather than waiting for a starvation
+signal that a shrunken-but-sufficient pool may never produce. Each replacement
+SHALL be logged with the reason available, so a pool respawning into a repeating
+crash is visible.
+
+Every poll worker SHALL answer each activation it takes exactly once — complete,
+fail, or abandon — through a guard that runs on unwind, so a panic escaping the
+dispatcher's own guards re-hands the activation instead of retiring its entity.
+
 #### Scenario: Blocking user code no longer halts the runner
 
 - **WHEN** activations blocking longer than the starvation detection interval
@@ -563,6 +576,26 @@ A workload that never starves SHALL observe exactly the base pool.
 - **WHEN** starvation persists with the pool at `FLEZHA_WORKER_POOL_MAX`
 - **THEN** no further threads SHALL be spawned and remaining work SHALL wait
   for a completion, exactly as the whole pool does today at CPU count
+
+#### Scenario: A dead base worker is replaced
+
+- **WHEN** a base poll worker unwinds out of its loop
+- **THEN** its slot SHALL be released, the supervisor SHALL spawn a replacement
+  returning the pool to `base`, and the replacement SHALL be logged
+
+#### Scenario: A dead worker does not consume the ceiling
+
+- **GIVEN** a pool at base size where one worker has died
+- **WHEN** starvation is subsequently observed
+- **THEN** growth SHALL be measured against the live worker count, and the
+  ceiling SHALL NOT be reached earlier because of the departed worker
+
+#### Scenario: An escaping panic re-hands rather than retiring the entity
+
+- **WHEN** a panic escapes the dispatcher's own guards while a worker holds an
+  activation for entity E
+- **THEN** the activation SHALL be abandoned by the worker's guard, E SHALL be
+  pollable again with its items intact, and the replacement worker SHALL serve it
 
 ### Requirement: Pool workers run activations inside the core's activation scope
 

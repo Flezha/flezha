@@ -307,7 +307,7 @@ defmodule Flezha.Convergence.Loop do
   defp classify_data_plane(%__MODULE__{} = state) do
     if LivenessCounters.poll_enabled?() do
       current = build_liveness_snapshot()
-      verdict = StallClassifier.classify(current, state.prev_liveness, %{})
+      verdict = StallClassifier.classify(current, state.prev_liveness, classifier_opts())
       maybe_emit_stall(verdict, StallClassifier.layer(state.stall_verdict))
 
       %{
@@ -336,6 +336,15 @@ defmodule Flezha.Convergence.Loop do
     if StallClassifier.layer(verdict) == StallClassifier.layer(state.stall_verdict),
       do: state.stall_streak + 1,
       else: 1
+  end
+
+  # The classifier's own defaults, with the one knob an operator whose
+  # Procedures legitimately run long has to raise.
+  defp classifier_opts() do
+    case Application.get_env(:flezha, :convergence_entity_stall_ms) do
+      ms when is_integer(ms) and ms > 0 -> %{entity_stall_ms: ms}
+      _ -> %{}
+    end
   end
 
   defp build_liveness_snapshot() do

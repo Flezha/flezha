@@ -10,6 +10,14 @@ defmodule Flezha.Service.PortPilot do
     GenServer.start_link(__MODULE__, arg, name: __MODULE__)
   end
 
+  @doc """
+  Spawn `command` as a port with the runner's transport environment.
+
+  `:env` adds environment entries; `:port_opts` adds `Port.open/2` options
+  beyond `:binary` and the env (a caller that needs `:exit_status` — proving a
+  runner really ended non-zero — asks for it here rather than opening its own
+  port and re-deriving this environment).
+  """
   def open_port(command, opts \\ []) do
     socket_files_path = Application.fetch_env!(:flezha, :socket_files_path)
 
@@ -42,10 +50,7 @@ defmodule Flezha.Service.PortPilot do
     port =
       Port.open(
         {:spawn, command},
-        [
-          :binary,
-          {:env, env}
-        ]
+        [:binary, {:env, env} | Keyword.get(opts, :port_opts, [])]
       )
 
     Port.monitor(port)

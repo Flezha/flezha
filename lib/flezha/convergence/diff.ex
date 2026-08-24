@@ -19,9 +19,9 @@ defmodule Flezha.Convergence.Diff do
   """
   @type wedge ::
           nil
-          | {:runner, binary()}
+          | {:runner, atom(), binary()}
           | {:connection, [operative_ref()]}
-          | {:operative, operative_ref()}
+          | {:operative, [operative_ref()]}
 
   @typedoc """
   Facts the sensors produced this tick, as opposed to what the Probe observed:
@@ -177,23 +177,24 @@ defmodule Flezha.Convergence.Diff do
 
   defp wedged_runner(ctx, active) do
     case runner_of(ctx) do
-      nil -> nil
-      id -> if live_runner?(id, active), do: {:runner, id}
-    end
-  end
-
-  # Every operative bound to the wedged runner: the connection carries all of
-  # them, so the resync is per operative on the one runner they share.
-  defp wedged_connection(ctx, observed) do
-    case runner_of(ctx) do
       nil ->
         nil
 
       id ->
-        case for {ref, %{bound_runner: ^id}} <- observed, do: ref do
-          [] -> nil
-          refs -> {:connection, Enum.sort(refs)}
+        # The namespace the runner is live in rides along: a runner-scoped op
+        # has no operative to take one from, and the terminal-restart rung has
+        # to name it in the telemetry an operator reads during a flap.
+        case namespace_of_runner(id, active) do
+          nil -> nil
+          ns -> {:runner, ns, id}
         end
+    end
+  end
+
+  defp wedged_connection(ctx, observed) do
+    case operatives_on_runner(ctx, observed) do
+      nil -> nil
+      refs -> {:connection, refs}
     end
   end
 
@@ -201,12 +202,34 @@ defmodule Flezha.Convergence.Diff do
   # verdict for an operative this controller does not hold resolves to nothing.
   defp wedged_operative(%{operative_id: rid}, observed) do
     case for {{_ns, ^rid} = ref, _obs} <- observed, do: ref do
-      [ref | _] -> {:operative, ref}
+      [ref | _] -> {:operative, [ref]}
       [] -> nil
     end
   end
 
+  defp wedged_operative(%{runner_id: id} = ctx, observed) when is_binary(id) do
+    case operatives_on_runner(ctx, observed) do
+      nil -> nil
+      refs -> {:operative, refs}
+    end
+  end
+
   defp wedged_operative(_ctx, _observed), do: nil
+
+  # Every operative bound to the runner the verdict names, sorted. Two verdicts
+  # resolve through it: a wedged connection carries all of them, and a runner's
+  # handout self-report is process-global — it proves one activation is stuck,
+  # not which operative owns it — so the runner's operatives are the healable
+  # set either way. A rebind resumes each from durable state, which is safe
+  # whether or not that operative was the stuck one.
+  defp operatives_on_runner(ctx, observed) do
+    with id when is_binary(id) <- runner_of(ctx),
+         [_ | _] = refs <- for({ref, %{bound_runner: ^id}} <- observed, do: ref) do
+      Enum.sort(refs)
+    else
+      _ -> nil
+    end
+  end
 
   # A driver verdict names its transport; only the per-runner data transports
   # (`{:uds_data, runner_id, type}`) identify a runner. A control-transport
@@ -215,10 +238,10 @@ defmodule Flezha.Convergence.Diff do
   defp runner_of(%{transport: {:uds_data, id, _type}}) when is_binary(id), do: id
   defp runner_of(_ctx), do: nil
 
-  defp live_runner?(id, active) do
-    Enum.any?(active, fn
-      {_ns, :unknown} -> false
-      {_ns, set} -> MapSet.member?(set, id)
+  defp namespace_of_runner(id, active) do
+    Enum.find_value(active, fn
+      {_ns, :unknown} -> nil
+      {ns, set} -> if MapSet.member?(set, id), do: ns
     end)
   end
 

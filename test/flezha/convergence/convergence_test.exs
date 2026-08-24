@@ -569,13 +569,50 @@ defmodule Flezha.ConvergenceTest do
     end
 
     test "wedge ops ride the standard per-target backoff" do
-      verdict = {:runner_pool_wedged, %{runner_id: "e_live"}}
+      verdict = {:channel_not_sending, %{runner_id: "e_live", channel: "c1"}}
       now = System.monotonic_time(:millisecond)
-      backoff = Backoff.update(Backoff.new(), {:evict_runner, "e_live"}, :error, now)
+
+      backoff =
+        Backoff.update(Backoff.new(), Planner.ladder_key(:data_plane_wedge, "rc_a"), :error, now)
+        |> Backoff.update(Planner.ladder_key(:data_plane_wedge, "rc_b"), :error, now)
 
       assert wedge_intent()
              |> Diff.compute(wedge_reality(), %{verdict: verdict})
              |> Planner.plan(backoff) == []
+    end
+
+    # Eviction moves a wedged runner's operatives but leaves the process
+    # connected and placeable, so it takes work and wedges again. Only the
+    # process going away clears it — and only after eviction has been tried.
+    test "a runner still proved wedged after eviction is restarted terminally" do
+      verdict = {:runner_pool_wedged, %{runner_id: "e_live", dispatches: 7}}
+      now = System.monotonic_time(:millisecond)
+
+      assert [%{primitive: :evict_runner, target: "e_live"}] = plan_for(verdict)
+
+      # The rung is read off the wedge ladder's own cooldown attempt count, so
+      # the tick that applied the eviction is what reaches the restart.
+      backoff =
+        Backoff.update(
+          Backoff.new(),
+          Planner.ladder_key(:data_plane_wedge, "e_live"),
+          :error,
+          now - 60_000
+        )
+
+      assert [%{primitive: :restart_runner, namespace: :ns, target: "e_live", args: args}] =
+               wedge_intent()
+               |> Diff.compute(wedge_reality(), %{verdict: verdict})
+               |> Planner.plan(backoff)
+
+      assert args == %{reason: :data_plane_wedge, layer: :runner_pool_wedged}
+      assert Planner.proved_wedged?(%{args: args}), "the restart rung is gated on proved evidence"
+    end
+
+    test "a runner with no wedge verdict is never restarted" do
+      for verdict <- [:ok, {:operative_not_forwarding, %{operative_id: "rc_other"}}] do
+        refute Enum.any?(plan_for(verdict), &(&1.primitive == :restart_runner))
+      end
     end
   end
 
@@ -683,7 +720,7 @@ defmodule Flezha.ConvergenceTest do
   end
 
   describe "Heal" do
-    test "the heal surface is exactly the seven reachable primitives" do
+    test "the heal surface is exactly the eight reachable primitives" do
       assert Enum.sort(Heal.primitives()) ==
                Enum.sort([
                  :rebind_operative,
@@ -692,7 +729,8 @@ defmodule Flezha.ConvergenceTest do
                  :start_plugin,
                  :stop_plugin,
                  :restart_plugin,
-                 :evict_runner
+                 :evict_runner,
+                 :restart_runner
                ])
     end
 

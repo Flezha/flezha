@@ -225,6 +225,36 @@ defmodule FlezhaTest.Runner.StreamChannelTest do
       assert row.hb_count == 2
       assert row.hb_dispatches == 57
     end
+
+    test "heartbeat metadata records the runner's handout self-report", %{pid: pid, name: name} do
+      send(
+        pid,
+        {:flz_data, :ref_x, "data_heartbeat", "",
+         %{"dispatches" => "42", "inflight" => "3", "inflight_oldest_ms" => "612345"}}
+      )
+
+      _ = GenServer.call(pid, :stream_ref_status)
+      row = channel_row(name)
+
+      assert row.hb_inflight == 3
+      assert row.hb_inflight_oldest_ms == 612_345
+    end
+
+    # An SDK that has not shipped the self-report sends neither key. Absent
+    # must read as zero — never as a stalled entity.
+    test "a heartbeat without the handout keys reads as zeros", %{pid: pid, name: name} do
+      send(pid, {:flz_data, :ref_x, "data_heartbeat", "", %{"dispatches" => "42"}})
+      _ = GenServer.call(pid, :stream_ref_status)
+      row = channel_row(name)
+
+      assert row.hb_inflight == 0
+      assert row.hb_inflight_oldest_ms == 0
+    end
+
+    defp channel_row(name) do
+      Flezha.Transport.LivenessCounters.snapshot_all().channels
+      |> Enum.find(fn c -> c.runner_id == "ce_test" and c.name == name end)
+    end
   end
 
   describe "output_stall / delete gating (kind-aware)" do

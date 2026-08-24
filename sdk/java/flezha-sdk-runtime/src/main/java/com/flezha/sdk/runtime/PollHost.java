@@ -3,8 +3,9 @@ package com.flezha.sdk.runtime;
 import com.flezha.sdk.runtime.core.Activation;
 import com.flezha.sdk.runtime.core.ActivationCodec;
 import com.flezha.sdk.runtime.core.ActivationResult;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -40,6 +41,13 @@ import org.slf4j.LoggerFactory;
  * handout guarantee (one outstanding activation per Entity), and a virtual
  * thread completes its activation only after the dispatch returns, so the
  * next one for that Entity cannot start early.
+ *
+ * <p><b>Nothing here may stop on its own.</b> That same exclusivity means an
+ * activation that returns unanswered retires its Entity for the life of the
+ * process, so every dispatch answers exactly once through a {@code finally}
+ * (complete, or abandon); and a fetcher that ends on a throwable is replaced,
+ * because a runner whose last fetcher died stays connected, heartbeating and
+ * processing nothing.
  */
 final class PollHost implements AutoCloseable {
 
@@ -65,13 +73,30 @@ final class PollHost implements AutoCloseable {
         byte[] poll(long timeoutMs);
 
         void complete(@Nonnull byte[] result);
+
+        /**
+         * Re-hand an activation's untouched items and release its entity, as
+         * if it had never been polled. The third and last way to answer a
+         * handout; no retry-ladder attempt is consumed.
+         */
+        void abandon(long token);
     }
 
     private final CoreCalls core;
     private final Function<Activation, ActivationResult> dispatch;
-    private final List<Thread> fetchers = new ArrayList<>();
+
+    /**
+     * The fetchers currently running. ONE structure, not a list plus a
+     * counter: a replacement joins it and a departing thread leaves it, so
+     * "the configured count is restored" is a size comparison rather than two
+     * things that can disagree, and {@link #close()} joins what is actually
+     * alive rather than the threads this host happened to start with.
+     */
+    private final Set<Thread> live = ConcurrentHashMap.newKeySet();
+
+    private final int configuredFetchers;
+    private final AtomicInteger nextFetcherId = new AtomicInteger();
     private final ExecutorService activations = Executors.newVirtualThreadPerTaskExecutor();
-    private final AtomicInteger liveFetchers = new AtomicInteger();
     private final AtomicBoolean closing = new AtomicBoolean(false);
     private final Runnable onFetchersDrained;
 
@@ -83,21 +108,56 @@ final class PollHost implements AutoCloseable {
         this.core = core;
         this.dispatch = dispatch;
         this.onFetchersDrained = onFetchersDrained;
-        for (int i = 0; i < Math.max(1, fetcherCount); i++) {
-            Thread t = new Thread(this::fetchLoop, "flz-fetcher-" + (i + 1));
-            t.setDaemon(true);
-            fetchers.add(t);
+        this.configuredFetchers = Math.max(1, fetcherCount);
+        for (int i = 0; i < configuredFetchers; i++) {
+            newFetcher();
         }
     }
 
     /** Start the fetchers. Separate from construction so no thread sees a half-built host. */
     void start() {
-        liveFetchers.set(fetchers.size());
-        fetchers.forEach(Thread::start);
+        live.forEach(Thread::start);
     }
 
+    /** The configured fetcher count — what a replacement restores the pool to. */
     int fetcherCount() {
-        return fetchers.size();
+        return configuredFetchers;
+    }
+
+    /** Fetchers currently running. Restored by {@link #replaceFetcher}. */
+    int liveFetcherCount() {
+        return live.size();
+    }
+
+    /** A fetcher thread, already counted as live. The caller starts it. */
+    private Thread newFetcher() {
+        Thread t = new Thread(this::fetchLoop, "flz-fetcher-" + nextFetcherId.incrementAndGet());
+        t.setDaemon(true);
+        live.add(t);
+        return t;
+    }
+
+    /**
+     * Replace a fetcher that ended on a throwable. Nothing else would bring it
+     * back: a runner whose last fetcher died stays connected, heartbeating and
+     * processing nothing, which is the wedge this host must not be able to
+     * reach on its own.
+     */
+    private void replaceFetcher(Throwable cause) {
+        LOG.error("fetcher thread ended unexpectedly; starting a replacement", cause);
+        if (closing.get()) {
+            return;
+        }
+        Thread replacement = newFetcher();
+        try {
+            replacement.start();
+        } catch (Throwable t) {
+            // It never ran, so it must not stay counted: a phantom fetcher
+            // would keep `live` non-empty and the runner would never read as
+            // drained.
+            live.remove(replacement);
+            LOG.error("could not start a replacement fetcher", t);
+        }
     }
 
     /**
@@ -106,6 +166,21 @@ final class PollHost implements AutoCloseable {
      * rethrown — a fetcher must not die on one bad activation.
      */
     private void fetchLoop() {
+        try {
+            fetchTurns();
+        } catch (Throwable t) {
+            // Anything that escaped the loop's own per-turn guards. The
+            // replacement joins `live` BEFORE this thread leaves it, so the
+            // set never empties on a replacement and reads as a drained runner.
+            replaceFetcher(t);
+        }
+        live.remove(Thread.currentThread());
+        if (live.isEmpty()) {
+            onFetchersDrained.run();
+        }
+    }
+
+    private void fetchTurns() {
         // Either end stops a fetcher: the core's shutdown (a zero-length poll
         // result) or close() here. Depending on the core alone would make
         // close() wait out a full poll timeout per fetcher for nothing.
@@ -118,6 +193,14 @@ final class PollHost implements AutoCloseable {
                     break;
                 }
                 LOG.error("core poll failed: {}", t.toString());
+                // An Exception is one bad turn — retry it. An Error is the JVM
+                // telling this thread it is finished (OOM, StackOverflow, a
+                // LinkageError); retrying it forever would spin a fetcher that
+                // can never fetch. End the thread and let the replacement try
+                // with a fresh stack.
+                if (t instanceof Error) {
+                    throw (Error) t;
+                }
                 continue;
             }
             if (bytes == null) {
@@ -140,17 +223,42 @@ final class PollHost implements AutoCloseable {
                 break;
             }
         }
-        if (liveFetchers.decrementAndGet() == 0) {
-            onFetchersDrained.run();
+    }
+
+    /**
+     * Run one activation and answer it exactly once.
+     *
+     * <p>The {@code finally} is the contract, not politeness: per-entity
+     * exclusivity IS the handout, so an activation that returns without
+     * {@code complete} retires its entity for the life of the process. A
+     * throwable from the dispatcher, from encoding the result, or from
+     * {@code complete} itself therefore abandons — logging it and returning,
+     * which is what this method used to do, silently retired the entity.
+     */
+    private void runActivation(Activation activation) {
+        boolean answered = false;
+        try {
+            ActivationResult result = dispatch.apply(activation);
+            byte[] encoded = ActivationCodec.encodeResult(result);
+            core.complete(encoded);
+            answered = true;
+        } catch (Throwable t) {
+            LOG.error("activation processing failed: {}", t.toString());
+        } finally {
+            if (!answered) {
+                abandonQuietly(activation.token());
+            }
         }
     }
 
-    private void runActivation(Activation activation) {
+    private void abandonQuietly(long token) {
         try {
-            ActivationResult result = dispatch.apply(activation);
-            core.complete(ActivationCodec.encodeResult(result));
+            core.abandon(token);
         } catch (Throwable t) {
-            LOG.error("activation processing failed: {}", t.toString());
+            // The core refuses an unknown token: `complete` had already
+            // landed and only the bookkeeping after it threw. Nothing is
+            // wedged, so this is a log line and not an escalation.
+            LOG.warn("abandoning activation {} failed: {}", token, t.toString());
         }
     }
 
@@ -162,7 +270,7 @@ final class PollHost implements AutoCloseable {
     @Override
     public void close() {
         closing.set(true);
-        for (Thread fetcher : fetchers) {
+        for (Thread fetcher : List.copyOf(live)) {
             joinQuietly(fetcher);
         }
         activations.shutdown();

@@ -176,6 +176,23 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_complete(
     }
 }
 
+/// Abandon a polled activation by token: re-hand its untouched items and
+/// release its entity. Java's `finally` calls it when a throwable escaped the
+/// dispatch, so an unanswered activation can never retire an entity.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_abandon(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    token: jlong,
+) {
+    let ctx = ctx as *mut FlzContext;
+    let status = unsafe { crate::flz_core_abandon(ctx, token as u64) };
+    if status != FLZ_OK {
+        throw(&mut env, &last_error_of(ctx));
+    }
+}
+
 /// Emit one output payload from a live workflow run-sugar body.
 #[no_mangle]
 pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_workflowEmit(

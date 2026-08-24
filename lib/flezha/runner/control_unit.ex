@@ -118,6 +118,32 @@ defmodule Flezha.Runner.ControlUnit do
     :exit, reason -> {:error, {:control_unit_exit, reason}}
   end
 
+  @doc """
+  Disconnect `runner_id`, awaiting its acknowledgement.
+
+  `terminal: true` makes the SDK run its graceful shutdown and then exit
+  NON-ZERO, so the orchestrator that owns process lifecycle restarts it — the
+  rung above `evict_runner`, which moves a wedged runner's operatives but
+  leaves the process connected and placeable. `reason` rides along for the
+  runner's own log and is never interpreted by the SDK.
+
+  Bounded and crash-proof through `send_control_await/3`: the target may be
+  exactly the wedged process the caller is trying to clear.
+  """
+  @spec disconnect(binary(), keyword()) ::
+          {:ok, binary()} | {:ok, binary(), map()} | {:error, term()}
+  def disconnect(runner_id, opts \\ []) when is_binary(runner_id) do
+    send_control_await(
+      runner_id,
+      {:runner_disconnect,
+       %RunnerCommands.RunnerDisconnect{
+         terminal: Keyword.get(opts, :terminal, false),
+         reason: Keyword.get(opts, :reason, "")
+       }},
+      opts
+    )
+  end
+
   defp decode_operative_message_response(raw_data) do
     case RunnerCommands.OperativeMessageResponse.decode(raw_data) do
       {:ok, %RunnerCommands.OperativeMessageResponse{error: "", payload: payload}} ->
@@ -307,23 +333,6 @@ defmodule Flezha.Runner.ControlUnit do
            {
              :rem_operative,
              %RunnerCommands.RemOperative{operative_id: operative_id}
-           }
-         ) do
-      {:ok, ref} ->
-        {:noreply, store_ref(state, ref, from)}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
-    end
-  end
-
-  @impl true
-  def handle_call(:disconnect_runner, from, state) do
-    case ControlChannel.send_control(
-           state.runner_id,
-           {
-             :runner_disconnect,
-             %RunnerCommands.RunnerDisconnect{}
            }
          ) do
       {:ok, ref} ->

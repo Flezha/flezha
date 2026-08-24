@@ -70,6 +70,11 @@ public final class FlezhaImpl implements RunnerHandle {
                     public void complete(@Nonnull byte[] result) {
                         FlzCore.complete(core, result);
                     }
+
+                    @Override
+                    public void abandon(long token) {
+                        FlzCore.abandon(core, token);
+                    }
                 },
                 dispatcher::dispatch,
                 fetchers,

@@ -26,6 +26,22 @@ procedure, entity_key)` concurrently: an entity with an outstanding (polled,
 uncompleted) activation SHALL NOT appear in any other poll result until its completion
 arrives. This restates the existing single-active-drainer invariant at the boundary.
 
+Because the handout is what gates the entity, every polled activation SHALL be
+answered exactly once, by one of three calls: **complete**, **fail** (the
+retry-ladder path), or **abandon** — a new call that re-hands the activation's
+untouched items and releases the entity. A host SHALL make the answer
+structural, so that an unwind, an exception, or an early return cannot skip it;
+discipline at each return site is not sufficient. Abandon SHALL re-hand only
+items the host has not processed, SHALL NOT count against the retry ladder, and
+SHALL leave the entity exactly as if it had never been polled.
+
+The core SHALL NOT reclaim an outstanding activation on a timer or deadline. A
+long-running activation and a lost handout are indistinguishable at the
+boundary, and re-handing on a deadline would re-execute work the
+effectively-once tier promises once. Recovery from a handout a host lost despite
+the above is the controller's operative rebind, which resumes from durable
+state.
+
 #### Scenario: Same entity never outstanding twice
 - **WHEN** two host workers poll concurrently while 100 inputs for one entity and 100 for another are queued
 - **THEN** at no point SHALL both workers hold activations for the same entity, and each entity's inputs SHALL be delivered in enqueue order across its successive activations
@@ -33,6 +49,14 @@ arrives. This restates the existing single-active-drainer invariant at the bound
 #### Scenario: Completion releases the entity
 - **WHEN** an activation for entity E is completed and E has further queued inputs
 - **THEN** a subsequent poll SHALL be able to return E's next activation
+
+#### Scenario: An unwound dispatch abandons rather than retiring the entity
+- **WHEN** a host worker holding an activation for entity E unwinds (panic, exception, or early return) without completing it
+- **THEN** the activation SHALL be abandoned, E's items SHALL be re-handed untouched, a subsequent poll SHALL be able to return E's next activation, and no retry-ladder attempt SHALL have been consumed
+
+#### Scenario: A slow activation is never reclaimed
+- **WHEN** an activation stays outstanding for longer than any configured interval because user code is still running
+- **THEN** the core SHALL NOT re-hand it, SHALL NOT hand the entity to another worker, and the activation SHALL complete normally whenever user code returns
 
 ### Requirement: Activation is a per-entity batch
 
@@ -345,3 +369,29 @@ not a prediction; `sdk/rust/tests/workflow_scaling.rs` is that measurement, and
   thread count per instance, CPU while blocked, start and teardown latency, and
   an unrelated instance's latency beside the population — for a population
   blocked mid-step and for one blocked in the inbox wait
+
+### Requirement: Handout liveness is observable without a new frame
+
+The core SHALL expose two counters over its existing self-report: the number of
+activations currently outstanding, and the age in milliseconds of the oldest
+outstanding activation (zero when none). Every SDK SHALL carry them in the
+data-channel heartbeat's metadata map beside the counters it already reports
+(`dispatches`, `blocked_parks`, `credit_parked`, the timer counters), so the
+controller reads them through the liveness snapshot it already builds — no new
+frame, no new payload id, and no new sensor process.
+
+The counters are reporting only: nothing in the SDK SHALL change behaviour based
+on them.
+
+#### Scenario: A stalled entity is visible while the runner looks healthy
+- **GIVEN** a runner whose overall dispatch counter is still advancing
+- **WHEN** one entity's activation has been outstanding far longer than any other
+- **THEN** the heartbeat SHALL report a non-zero outstanding count and an oldest-age reflecting that activation
+
+#### Scenario: An idle runner reports zero
+- **WHEN** a runner has no outstanding activations
+- **THEN** the heartbeat SHALL report an outstanding count of zero and an oldest-age of zero
+
+#### Scenario: The counters change no behaviour
+- **WHEN** the oldest-age counter grows without bound
+- **THEN** the SDK SHALL take no action of its own — no reclaim, no re-hand, no pool change

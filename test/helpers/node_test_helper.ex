@@ -185,7 +185,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     {port, _command} =
       PortPilot.open_port(command,
         transport: transport,
-        env: Keyword.get(opts, :env, [])
+        env: Keyword.get(opts, :env, []),
+        port_opts: Keyword.get(opts, :port_opts, [])
       )
 
     runner_id =
@@ -225,12 +226,18 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   ]
 
   # The surface every SDK carries; a manifest cannot defer these.
+  #
+  # `pool_wedge` is required because a host that cannot be wedged on demand
+  # cannot prove it recovers: its fixtures are what exercise the abandon path,
+  # the worker replacement and the classifier's verdict on that SDK rather than
+  # on the reference alone.
   @required_capabilities [
     :runner_lifecycle,
     :graph_builder,
     :liveness,
     :retry_ladder,
-    :partitioned
+    :partitioned,
+    :pool_wedge
   ]
 
   def capabilities, do: @capabilities

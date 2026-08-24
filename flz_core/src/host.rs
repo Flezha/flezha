@@ -1526,18 +1526,25 @@ pub fn apply_result(
                 // The head parked; the tail never ran and is owed a fresh
                 // round, not a retry.
                 let rest: Vec<WorkItem> = items.into_iter().skip(1).collect();
-                core.rehand_unprocessed(token, rest);
+                core.abandon(token, rest);
             } else {
                 core.retry_after_failure(token, items, err.message);
             }
             return Ok(());
         }
-        _ => return Err("work activation answered with a non-work outcome".to_string()),
+        // A malformed answer still answers: the entity is released with its
+        // items intact rather than retired behind a handout nobody will
+        // complete.
+        _ => {
+            core.abandon(token, items);
+            return Err("work activation answered with a non-work outcome".to_string());
+        }
     };
 
     let mut queue: std::collections::VecDeque<WorkItem> = items.into();
     for effect in effects {
         let Some(work) = queue.pop_front() else {
+            core.abandon(token, Vec::new());
             return Err("completion carries more effects than items".to_string());
         };
         match effect.verdict.clone() {
@@ -1576,9 +1583,45 @@ pub fn apply_result(
     if rest.is_empty() {
         core.complete(token);
     } else {
-        core.rehand_unprocessed(token, rest);
+        core.abandon(token, rest);
     }
     Ok(())
+}
+
+/// Answer a polled activation the host cannot finish, without processing it.
+///
+/// The ABI's third answer, and the one no unwind can reach across the
+/// boundary: a veneer whose language threw, or whose thread died, has no way
+/// to call `complete`, and per-entity exclusivity would retire the entity for
+/// the life of the process. One function so every payload kind is answered the
+/// way its own waiter expects — a work batch re-hands its items and consumes
+/// no ladder attempt, while a command, workflow step or prepare crossing has a
+/// blocked enqueuer that must be released with a failure rather than left
+/// parked.
+pub fn abandon_activation(core: &PollCore, act: EngineActivation) -> Result<(), String> {
+    let EngineActivation { token, payload } = act;
+    match payload {
+        EnginePayload::Work { items, .. } => match core.abandon(token, items) {
+            crate::poll_core::Answered::Released => Ok(()),
+            crate::poll_core::Answered::UnknownToken => Err(format!(
+                "unknown or already-answered activation token {token}"
+            )),
+        },
+        other => apply_result(
+            core,
+            EngineActivation {
+                token,
+                payload: other,
+            },
+            schema::ActivationResult {
+                token,
+                outcome: schema::ActivationOutcome::Failed(schema::WorkError {
+                    message: "host abandoned the activation".to_string(),
+                    non_retryable: false,
+                }),
+            },
+        ),
+    }
 }
 
 /// The effect a whole-activation failure resolves its head item with: the

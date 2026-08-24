@@ -2,7 +2,14 @@
 //!
 //! The single-active-drainer invariant, expressed at a boundary: an entity
 //! with an outstanding (handed-out, uncompleted) activation never appears in
-//! another handout until [`PollCore::complete`] releases it. The engine owns
+//! another handout until it is answered. There are exactly three answers —
+//! [`PollCore::complete`], [`PollCore::retry_after_failure`] and
+//! [`PollCore::abandon`] — and a host that gives none of them retires that
+//! entity for the life of the process, which is why every host makes the
+//! answer structural (`docs/sdk/poll_core.md`). The core reports how long a
+//! handout has been out ([`PollCore::outstanding_oldest_age_ms`]) and never
+//! reclaims one on a timer: from here a slow Procedure and a lost handout are
+//! identical. The engine owns
 //! everything that used to run inside the drain loop except user code:
 //! consumed-floor skip, replay-slice buffering and event-time ordering,
 //! late-input admission and classification, event-time due-timer generation,
@@ -136,6 +143,17 @@ pub enum Polled {
     Activation(EngineActivation),
     Timeout,
     ShuttingDown,
+}
+
+/// What answering a handout did. A token the core does not hold means the
+/// activation was already answered, or was never handed out — a host defect
+/// that a silent no-op would hide until an entity stopped progressing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answered {
+    /// The handout was taken and the entity released.
+    Released,
+    /// No live handout carries this token.
+    UnknownToken,
 }
 
 /// What [`PollCore::wait_starvation`] answers — the same three-way shape as
@@ -295,6 +313,12 @@ impl DeferredWake {
     }
 }
 
+/// One handed-out work activation, from the core's side.
+struct Outstanding {
+    slot: Arc<EntitySlot>,
+    handed_at: Instant,
+}
+
 pub struct PollCore {
     ready: Mutex<VecDeque<Arc<EntitySlot>>>,
     /// Command and workflow-step activations, handed out ahead of `ready`.
@@ -305,7 +329,11 @@ pub struct PollCore {
     cv: Condvar,
     shutting_down: AtomicBool,
     next_token: AtomicU64,
-    outstanding: DashMap<u64, Arc<EntitySlot>>,
+    /// Live handouts by token. The instant rides alongside the slot because
+    /// the only thing that separates a ten-minute Procedure from a handout
+    /// the host lost is how long it has been out — which the core reports
+    /// and never acts on (`outstanding_oldest_age_ms`).
+    outstanding: DashMap<u64, Outstanding>,
     wakes: DeferredWake,
     next_wake: AtomicU64,
     /// Work activations underway. `outstanding.len()` would answer it too,
@@ -670,7 +698,13 @@ impl PollCore {
             let items = assemble_batch(slot);
             if !items.is_empty() {
                 let token = self.next_token.fetch_add(1, Ordering::Relaxed) + 1;
-                self.outstanding.insert(token, Arc::clone(slot));
+                self.outstanding.insert(
+                    token,
+                    Outstanding {
+                        slot: Arc::clone(slot),
+                        handed_at: Instant::now(),
+                    },
+                );
                 self.outstanding_count.fetch_add(1, Ordering::Release);
                 return Some(EngineActivation {
                     token,
@@ -703,22 +737,62 @@ impl PollCore {
     /// Release the entity and, if work remains, schedule the next round.
     /// Any host thread may call this — including a different one than the
     /// thread that polled the activation.
-    pub fn complete(&self, token: u64) {
-        let Some(slot) = self.take_outstanding(token) else {
-            return;
+    pub fn complete(&self, token: u64) -> Answered {
+        self.release(token, Vec::new(), "complete")
+    }
+
+    /// The one body behind [`Self::complete`] (nothing owed) and
+    /// [`Self::abandon`] (the items the host never processed): take the
+    /// handout, park anything owed back at the head of the entity's line, and
+    /// release its gates. `answer` names the caller in the unknown-token
+    /// warning, which is the only thing that makes a double answer diagnosable.
+    fn release(&self, token: u64, owed: Vec<WorkItem>, answer: &'static str) -> Answered {
+        let Some(slot) = self.take_outstanding(token, answer) else {
+            return Answered::UnknownToken;
         };
+        self.hold_head_of_line(&slot, owed);
         self.release_and_rearm(&slot);
+        Answered::Released
     }
 
     /// Drop one activation from the jobs-underway count. A count that was at
     /// the cap had pollers parked as if `ready` were empty, so falling below
     /// it is the one event that makes them servable again.
-    fn take_outstanding(&self, token: u64) -> Option<Arc<EntitySlot>> {
-        let (_, slot) = self.outstanding.remove(&token)?;
+    ///
+    /// `None` is a host answering a token twice (or one it never held). It is
+    /// reported rather than ignored: the second answer would otherwise release
+    /// an entity the first answer already re-armed.
+    fn take_outstanding(&self, token: u64, answer: &'static str) -> Option<Arc<EntitySlot>> {
+        let Some((_, out)) = self.outstanding.remove(&token) else {
+            tracing::warn!(
+                target: "flezha::dispatch",
+                token,
+                answer,
+                "handout answered with an unknown or already-answered token"
+            );
+            return None;
+        };
         if self.outstanding_count.fetch_sub(1, Ordering::AcqRel) >= self.max_inflight {
             self.notify_waiters();
         }
-        Some(slot)
+        Some(out.slot)
+    }
+
+    /// Work activations handed out and not yet answered.
+    pub fn outstanding_count(&self) -> usize {
+        self.outstanding_count.load(Ordering::Acquire)
+    }
+
+    /// How long the oldest unanswered handout has been out, in milliseconds;
+    /// `0` when none is. Reporting only — see [`Self::abandon`] for why the
+    /// core never acts on it.
+    pub fn outstanding_oldest_age_ms(&self) -> u64 {
+        let now = Instant::now();
+        self.outstanding
+            .iter()
+            .map(|e| now.saturating_duration_since(e.handed_at).as_millis() as u64)
+            .max()
+            .unwrap_or(0)
     }
 
     /// A retryable failure stopped the batch at `items[0]`: bump its attempt,
@@ -729,9 +803,14 @@ impl PollCore {
     /// in-line sleep exactly: nothing else could drain the entity then
     /// either, producers just enqueued. The promoting poller runs the
     /// release-and-reclaim when the entry comes due.
-    pub fn retry_after_failure(&self, token: u64, mut items: Vec<WorkItem>, error: String) {
-        let Some(slot) = self.take_outstanding(token) else {
-            return;
+    pub fn retry_after_failure(
+        &self,
+        token: u64,
+        mut items: Vec<WorkItem>,
+        error: String,
+    ) -> Answered {
+        let Some(slot) = self.take_outstanding(token, "retry_after_failure") else {
+            return Answered::UnknownToken;
         };
         let mut delay = Duration::ZERO;
         if let Some(head) = items.first_mut() {
@@ -748,7 +827,7 @@ impl PollCore {
         self.hold_head_of_line(&slot, items);
         if delay.is_zero() {
             self.release_and_rearm(&slot);
-            return;
+            return Answered::Released;
         }
         self.wakes.record(
             WakeKey {
@@ -758,17 +837,28 @@ impl PollCore {
             Wake::Retry(slot),
         );
         self.notify_waiters();
+        Answered::Released
     }
 
-    /// Put back items the host never processed — they sat behind a failed
-    /// head that parked. No attempt bump and no backoff: these items are not
-    /// failures, they are simply owed a fresh round.
-    pub fn rehand_unprocessed(&self, token: u64, items: Vec<WorkItem>) {
-        let Some(slot) = self.take_outstanding(token) else {
-            return;
-        };
-        self.hold_head_of_line(&slot, items);
-        self.release_and_rearm(&slot);
+    /// Give up a handout without having processed `items`: park them back at
+    /// the head of the entity's line and release it, exactly as if the
+    /// activation had never been polled. The third and last way to answer a
+    /// handout, beside completing it and failing it.
+    ///
+    /// No attempt bump and no backoff — these items are not failures. Two
+    /// callers, one contract: the tail that sat behind a head the host parked,
+    /// and a host whose worker died holding the batch. Because per-entity
+    /// exclusivity is the handout itself, an activation that is never answered
+    /// retires its entity for the life of the process; abandoning is what a
+    /// host's unwind guard calls so that cannot happen.
+    ///
+    /// Only items the host did NOT process may be passed: re-handing one it
+    /// already ran would execute it twice, which is the one thing this change
+    /// may not do. For the same reason the core never abandons on its own —
+    /// a slow Procedure and a lost handout are identical from here, and a
+    /// deadline would re-run the slowest work in the system.
+    pub fn abandon(&self, token: u64, items: Vec<WorkItem>) -> Answered {
+        self.release(token, items, "abandon")
     }
 
     /// Park re-handed items at the head of the entity's line. Only ever

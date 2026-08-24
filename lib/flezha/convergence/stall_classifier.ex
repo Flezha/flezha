@@ -25,6 +25,9 @@ defmodule Flezha.Convergence.StallClassifier do
       self-reported dispatch counter is frozen — the SDK pool stopped processing
     * `:channel_not_sending`    — channel fed but not calling send_frame
     * `:operative_not_forwarding`   — operative fed but not forwarding to its channel
+    * `:entity_dispatch_stalled` — the runner is completing work, but one
+      activation it took has been outstanding past the threshold: a handout its
+      host lost, which per-entity exclusivity would otherwise retire silently
 
   Each check has a built-in "is it actually being fed?" precondition (a count
   that must be *advancing* between ticks), so an idle operative never reads as a
@@ -34,7 +37,17 @@ defmodule Flezha.Convergence.StallClassifier do
   @type snapshot :: %{drivers: [map()], channels: [map()], operatives: [map()]}
   @type verdict :: {atom(), map()} | :ok
 
-  @defaults %{driver_freeze_ms: 5_000, stall_ms: 30_000, queue_high: 256}
+  # `entity_stall_ms` is deliberately far above the longest activation any
+  # bench-fleet fixture produces (a chained workflow turn is milliseconds; the
+  # slowest e2e Procedure sleeps seconds), because from the runner an activation
+  # that is merely slow and one whose handout was lost look identical. Override
+  # with `FLEZHA_CONVERGENCE_ENTITY_STALL_MS` where real Procedures run longer.
+  @defaults %{
+    driver_freeze_ms: 5_000,
+    stall_ms: 30_000,
+    queue_high: 256,
+    entity_stall_ms: 300_000
+  }
 
   # What KIND of thing each layer says is wedged. This is the taxonomy half of
   # a verdict and belongs beside the checks that mint them: the Diff resolves a
@@ -53,7 +66,8 @@ defmodule Flezha.Convergence.StallClassifier do
     runner_not_consuming: :runner,
     runner_pool_wedged: :runner,
     channel_not_sending: :connection,
-    operative_not_forwarding: :operative
+    operative_not_forwarding: :operative,
+    entity_dispatch_stalled: :operative
   }
 
   @doc "The layer a verdict names, or `nil` for `:ok`."
@@ -84,6 +98,7 @@ defmodule Flezha.Convergence.StallClassifier do
       runner_pool_wedged(current, previous) ||
       channel_not_sending(current, previous) ||
       operative_not_forwarding(current, previous) ||
+      entity_dispatch_stalled(current, previous, o) ||
       :ok
   end
 
@@ -137,27 +152,39 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
-  # ---------- runner self-report check ----------
+  # ---------- runner self-report checks ----------
 
-  # The runner's heartbeat thread outlives a wedged dispatch pool, so an
-  # runner can look perfectly alive while processing nothing (the 2026-06-10
-  # freeze). Heartbeat metadata carries a dispatch-progress counter; flag the
-  # runner when it is being fed and heartbeating but that counter is frozen.
+  # The runner's heartbeat thread outlives a wedged dispatch pool, so a runner
+  # can look perfectly alive while processing nothing (the 2026-06-10 freeze).
+  # Heartbeat metadata carries a dispatch-progress counter; flag the runner when
+  # that counter is frozen.
   defp runner_pool_wedged(current, previous) do
-    prev_by_exec = group_channels_by_runner(previous.channels)
+    find_runner(current, previous, fn runner_id, cur, prev ->
+      if cur.hb_dispatches > 0 and cur.hb_dispatches == prev.hb_dispatches do
+        {:runner_pool_wedged, %{runner_id: runner_id, dispatches: cur.hb_dispatches}}
+      end
+    end)
+  end
 
-    current.channels
-    |> group_channels_by_runner()
-    |> find_first(fn {runner_id, cur} ->
-      case Map.get(prev_by_exec, runner_id) do
-        nil ->
-          nil
-
-        prev ->
-          if cur.send_frame_calls > prev.send_frame_calls and cur.hb_count > prev.hb_count and
-               cur.hb_dispatches > 0 and cur.hb_dispatches == prev.hb_dispatches do
-            {:runner_pool_wedged, %{runner_id: runner_id, dispatches: cur.hb_dispatches}}
-          end
+  # One activation the runner took and never answered. Invisible to
+  # `runner_pool_wedged` by construction: the runner-wide dispatch counter keeps
+  # climbing on every other Entity, and per-entity exclusivity means the stalled
+  # one simply never appears in a poll result again.
+  #
+  # Ranked shallower than every runner-scoped verdict — a wedged runner explains
+  # a wedged Entity and not the reverse — and it carries the reported age, so a
+  # false positive (a legitimately long Procedure) is diagnosable from the log
+  # line alone. The verdict names the runner; resolving it to the operatives
+  # that can actually be rebound is the Diff's job.
+  defp entity_dispatch_stalled(current, previous, o) do
+    find_runner(current, previous, fn runner_id, cur, _prev ->
+      if cur.hb_inflight > 0 and cur.hb_inflight_oldest_ms > o.entity_stall_ms do
+        {:entity_dispatch_stalled,
+         %{
+           runner_id: runner_id,
+           inflight: cur.hb_inflight,
+           oldest_ms: cur.hb_inflight_oldest_ms
+         }}
       end
     end)
   end
@@ -170,14 +197,20 @@ defmodule Flezha.Convergence.StallClassifier do
       row = %{
         send_frame_calls: Map.get(c, :send_frame_calls, 0),
         hb_count: Map.get(c, :hb_count, 0),
-        hb_dispatches: Map.get(c, :hb_dispatches, 0)
+        hb_dispatches: Map.get(c, :hb_dispatches, 0),
+        # Absent on an SDK that has not shipped the self-report yet; zero is
+        # what "no handout is outstanding" reads as, so it never stalls.
+        hb_inflight: Map.get(c, :hb_inflight, 0),
+        hb_inflight_oldest_ms: Map.get(c, :hb_inflight_oldest_ms, 0)
       }
 
       Map.update(acc, c.runner_id, row, fn v ->
         %{
           send_frame_calls: v.send_frame_calls + row.send_frame_calls,
           hb_count: v.hb_count + row.hb_count,
-          hb_dispatches: max(v.hb_dispatches, row.hb_dispatches)
+          hb_dispatches: max(v.hb_dispatches, row.hb_dispatches),
+          hb_inflight: max(v.hb_inflight, row.hb_inflight),
+          hb_inflight_oldest_ms: max(v.hb_inflight_oldest_ms, row.hb_inflight_oldest_ms)
         }
       end)
     end)
@@ -336,6 +369,27 @@ defmodule Flezha.Convergence.StallClassifier do
       case Map.get(prev_index, d.transport) do
         nil -> nil
         prev -> fun.(d, prev)
+      end
+    end)
+  end
+
+  # Pair each runner's aggregated row with its previous one and judge only a
+  # runner that is demonstrably still being fed AND still answering — the
+  # "is it actually being fed?" precondition in its runner-scoped form, so the
+  # self-report checks differ in nothing but the counter they read.
+  defp find_runner(current, previous, fun) do
+    prev_index = group_channels_by_runner(previous.channels)
+
+    current.channels
+    |> group_channels_by_runner()
+    |> find_first(fn {runner_id, cur} ->
+      case Map.get(prev_index, runner_id) do
+        nil ->
+          nil
+
+        prev ->
+          if cur.send_frame_calls > prev.send_frame_calls and cur.hb_count > prev.hb_count,
+            do: fun.(runner_id, cur, prev)
       end
     end)
   end

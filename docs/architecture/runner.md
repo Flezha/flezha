@@ -361,6 +361,17 @@ The rule, normative for every binding:
   protocol and its metadata keys, every default (overflow policy, retry ladder, mailbox
   capacity, heartbeat keys), and the fixtures that prove them (the regression and round-trip
   bench factories, the e2e runtime matrix).
+- **A host that brings its own workers brings their replacement.** Whatever a host's unit of
+  work is — a poll thread, a fetcher, a per-Entity process — one that leaves for any reason
+  other than shutdown is replaced without operator action, and its departure never consumes
+  capacity the host budgets for. Every activation a host takes is answered exactly once
+  (complete, fail, or abandon) through a guard that runs on an unwind, never a discipline at
+  each return site: per-entity exclusivity means an unanswered activation retires its entity
+  for the life of the process. And every host reports handout liveness — `inflight` and
+  `inflight_oldest_ms` in the data heartbeat — because that is the only thing that makes ONE
+  wedged Entity visible while the runner keeps completing work. The obligations and the seam
+  are in [`../sdk/poll_core.md`](../sdk/poll_core.md); `pool_wedge` is a required conformance
+  capability precisely so no SDK can carry them on review alone.
 - **Deferred is named, never silent.** An SDK that cannot carry a capability yet is recorded as
   deferred *by name* — in the change's spec delta and in that SDK's scope matrix
   (that SDK's `conformance.json` `deferred` list, and

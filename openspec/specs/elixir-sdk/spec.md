@@ -220,3 +220,52 @@ Modules under the SDK namespace SHALL reference controller-application modules o
 - **WHEN** `mix bench.roundtrip --runtime elixir --durability on` runs
 - **THEN** the task exits before starting a runner with an error naming the deferred persistence capability and the Elixir SDK guide
 
+### Requirement: A crashed Entity is recovered by its Operative, and the recovery is a requirement
+
+The Operative process SHALL trap exits from the Entity processes it starts, SHALL
+drop a dead Entity from its live map on `:EXIT`, and SHALL recreate it on that
+key's next input. A crashed Entity SHALL NOT take the Operative down with it, and
+SHALL NOT leave the key permanently unroutable.
+
+The recreated Entity starts fresh: the SDK persists no Entity state in v1, so the
+in-flight value that ended the previous process and any in-memory Procedure state
+are lost. That is the documented v1 behaviour of a persistence-free runner, not a
+gap this change closes — but it SHALL be stated, because the other SDKs' hosts
+owe the same "a dead worker comes back" property and this is the reference for it.
+
+A crash SHALL be logged naming the operative, the node reference and the entity
+key, so a key crashing on every input is visible rather than appearing as silent
+inactivity.
+
+#### Scenario: A crashed Entity does not take its Operative down
+- **WHEN** an Entity process exits abnormally
+- **THEN** the Operative SHALL remain alive, SHALL drop that Entity from its live map, and SHALL keep serving every other key
+
+#### Scenario: The key is routable again on the next input
+- **GIVEN** an Entity that crashed
+- **WHEN** the next input for that key arrives
+- **THEN** a fresh Entity SHALL be started for it and the input SHALL be dispatched
+
+#### Scenario: A repeatedly crashing key is visible
+- **WHEN** an Entity crashes on every input for its key
+- **THEN** each crash SHALL be logged naming the operative, node reference and entity key
+
+### Requirement: The Elixir runner reports handout liveness on its heartbeat
+
+The SDK SHALL report the same two handout-liveness values every other SDK
+reports — the number of dispatches currently in flight and the age in
+milliseconds of the oldest — in the data-channel heartbeat's metadata map,
+beside the counters it already carries. The values SHALL be maintained in the
+existing shared counters structure rather than by a new process or message round
+trip, and SHALL be reporting-only: the SDK SHALL take no action of its own based
+on them.
+
+#### Scenario: In-flight work is visible to the controller
+- **GIVEN** an Operative with one Entity mid-dispatch and the rest idle
+- **WHEN** the heartbeat is written
+- **THEN** its metadata SHALL carry an in-flight count of one and an oldest-age reflecting that dispatch
+
+#### Scenario: An idle runner reports zero
+- **WHEN** no dispatch is in flight
+- **THEN** the heartbeat SHALL report an in-flight count of zero and an oldest-age of zero
+

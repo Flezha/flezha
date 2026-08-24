@@ -58,6 +58,23 @@ public final class FlzCore {
      */
     public static native void complete(long ctx, byte[] result);
 
+    /**
+     * Abandon a polled activation by token: its untouched items are re-handed
+     * and its entity released, exactly as if it had never been polled. No
+     * retry-ladder attempt is consumed.
+     *
+     * <p>The third and last way to answer a handout. No unwind crosses the
+     * native boundary, so a throwable that escapes the dispatch has no way to
+     * reach {@link #complete}; without this call the activation's entity would
+     * be retired for the life of the process (per-entity exclusivity is the
+     * handout itself). Call it from a {@code finally}, never from a
+     * hand-written return site.
+     *
+     * @throws RuntimeException if the token was never handed out or was
+     *     already answered
+     */
+    public static native void abandon(long ctx, long token);
+
     /** Emit one output payload from a live workflow run-sugar body. */
     public static native void workflowEmit(long ctx, String instanceId, byte[] payload);
 
