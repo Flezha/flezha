@@ -42,11 +42,19 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain stable --profile minimal \
     && chown -R flezha:flezha /home/flezha/.cargo /home/flezha/.rustup
 
-# socket_data is outside the bind-mount so its named-volume ownership
-# is fixed at image-build time.
-RUN mkdir -p /flezha/socket_data \
-    && chown -R flezha:flezha /flezha \
-    && chmod -R g+rw /flezha/socket_data
+# Every path a compose file mounts a named volume onto is created here,
+# owned by flezha. Docker initialises a freshly-provisioned named volume
+# from the image directory, ownership included, so a harness container
+# never needs root to fix it at boot. A mountpoint missing from this list
+# is provisioned root-owned instead, which is what forces a boot-time
+# `chown` and the privilege-drop wrapper that goes with it. Same contract
+# `docker/prod/Dockerfile.controller` applies to the prod volume mounts.
+RUN mkdir -p /flezha/socket_data /socket_data \
+             /flezha/_build /flezha/deps /flezha/target \
+             /home/flezha/_build /home/flezha/deps \
+    && chown -R flezha:flezha /flezha /socket_data \
+    && chown flezha:flezha /home/flezha/_build /home/flezha/deps \
+    && chmod -R g+rw /flezha/socket_data /socket_data
 
 USER flezha
 

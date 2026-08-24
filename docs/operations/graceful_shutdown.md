@@ -19,6 +19,15 @@ second caller during an in-flight shutdown joins as a waiter and receives the sa
 | `docker stop` / compose stop      | SIGTERM via tini, then the entrypoint trap | Trap runs `flz controller stop --timeout-ms ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS}` |
 | `kubectl delete pod`              | `lifecycle.preStop` runs first             | Same `flz controller stop`, then SIGTERM (already shutting down)                    |
 
+Every one of these needs the BEAM to *receive* SIGTERM. A container that
+starts as root and drops privileges must do so with a mechanism that
+replaces the process image (`exec setpriv`), so the BEAM stays PID 1.
+Wrapping it in `su` breaks the drain outright: util-linux `su` answers
+SIGTERM by force-killing its child about two seconds later, regardless of
+`stop_grace_period` or `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS`. The dev and
+chaos harnesses go through `scripts/harness-boot.sh`, which does this
+correctly on both the privileged and unprivileged paths.
+
 ## Phases
 
 1. **Quiesce** sets an ETS-backed flag (`Coordinator.shutting_down?/0`):

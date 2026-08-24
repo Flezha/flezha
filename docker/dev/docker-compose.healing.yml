@@ -2,32 +2,30 @@ services:
   controller:
     image: alfetahe/flezha:latest-toolchain
     container_name: flezha_controller_dev
-    user: "0:0"
+    user: "${FLEZHA_CONTAINER_USER:-1000:1000}"
+    working_dir: /flezha
     stdin_open: true
     # Graceful shutdown — see docs/operations/graceful_shutdown.md.
     stop_signal: SIGTERM
     stop_grace_period: 75s
     # Auto-start the BEAM so the connection_healing test (or any future
     # automated probe) does not need to exec `mix run` after `docker compose
-    # up`. Run as root to chown the bind-mount edge cases that arise on
-    # systems with userns-remap, then drop to the flezha user.
+    # up`. harness-boot.sh guards the mounted paths and the deps fetch, then
+    # execs the BEAM in place — so the BEAM is PID 1 and its graceful drain
+    # receives SIGTERM directly.
     command:
-      - sh
-      - -c
-      - |
-        # Container has Elixir 1.17 but the host may have a newer Elixir
-        # version that already compiled _build/ and deps/ on the bind mount —
-        # mixing those triggers `corrupt atom table` failures inside the
-        # container. Use container-local MIX_BUILD_PATH / MIX_DEPS_PATH so
-        # the in-container compile is independent of whatever the host has
-        # cached.
-        mkdir -p /home/flezha/_build /home/flezha/deps
-        chown -R 1000:1000 /home/flezha/_build /home/flezha/deps 2>/dev/null || true
-        chown -R 1000:1000 /flezha/app_data/sockets 2>/dev/null || true
-        cd /flezha
-        exec su -m -s /bin/sh flezha -c 'cd /flezha && export MIX_ENV=dev MIX_BUILD_PATH=/home/flezha/_build/dev MIX_DEPS_PATH=/home/flezha/deps && mix deps.get --only "$$MIX_ENV" >/dev/null && exec mix run --no-halt'
+      - /flezha/scripts/harness-boot.sh
+      - mix
+      - run
+      - --no-halt
     environment:
       MIX_ENV: dev
+      # Container-local build/deps paths: the host may have compiled the
+      # bind-mounted _build/ and deps/ with a different Elixir, and mixing
+      # the two triggers `corrupt atom table` failures inside the container.
+      MIX_BUILD_PATH: /home/flezha/_build/dev
+      MIX_DEPS_PATH: /home/flezha/deps
+      FLEZHA_HARNESS_PATHS: /home/flezha/_build /home/flezha/deps /flezha/app_data/sockets
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
       FLEZHA_GRACEFUL_SHUTDOWN_ENABLED: ${FLEZHA_GRACEFUL_SHUTDOWN_ENABLED:-true}
@@ -46,9 +44,9 @@ services:
       start_period: 30s
     # Direct bind mount only — DO NOT pull in the parent compose's named
     # volumes for /flezha/_build, /flezha/deps, /flezha/target. Those start
-    # empty and root-owned, defeating the host's existing build cache and
-    # forcing every run to recompile from scratch (8+ min). With the bind
-    # mount alone, compile artifacts persist on the host across runs.
+    # empty, defeating the host's existing build cache and forcing every run
+    # to recompile from scratch (8+ min). With the bind mount alone, compile
+    # artifacts persist on the host across runs.
     volumes:
       - ../../:/flezha
     networks:
@@ -57,26 +55,24 @@ services:
   rust:
     image: alfetahe/flezha:latest-toolchain
     container_name: flezha_rust_runner
-    user: "0:0"
+    user: "${FLEZHA_CONTAINER_USER:-1000:1000}"
     stdin_open: true
     depends_on:
       controller:
         condition: service_healthy
     command:
+      - /flezha/scripts/harness-boot.sh
       - sh
       - -c
       - |
-        chown -R 1000:1000 /flezha 2>/dev/null || true
-        until [ -S /flezha/app_data/sockets/runner_control_channel.sock ]; do
-          echo "[rust] waiting for controller control socket..."
-          sleep 1
-        done
         ns="$$FLEZHA_DEMO_NAMESPACE"
         : "$${ns:=default}"
         echo "[rust] starting compute engine for namespace=$$ns"
-        exec su -m -s /bin/sh flezha -c "cd /flezha/test/apps/rust_runner && exec cargo run --quiet --target-dir=/flezha/target -- $$ns"
+        exec cargo run --quiet --manifest-path=/flezha/test/apps/rust_runner/Cargo.toml --target-dir=/flezha/target -- "$$ns"
     environment:
       FLEZHA_DEMO_NAMESPACE: ${FLEZHA_DEMO_NAMESPACE:-default}
+      FLEZHA_HARNESS_PATHS: /flezha/target /flezha/app_data
+      FLEZHA_HARNESS_WAIT_SOCKET: /flezha/app_data/sockets/runner_control_channel.sock
       FLEZHA_SOCKET_FILES_PATH: /flezha/app_data/sockets/
       FLEZHA_TRANSPORT: ${FLEZHA_TRANSPORT:-uds}
       HOME: /home/flezha

@@ -91,9 +91,11 @@ defmodule Flezha.MixProject do
       {:process_hub, process_hub_dep()},
       {:blockade, "~> 0.2.2"},
       # fresh 0.4.4's released mix.exs declares charlist elixirc_paths,
-      # which Mix >= 1.20 rejects; upstream is unresponsive. Pinned to
-      # José Valim's fix (bunopnu/fresh PR #5) until it is merged+released.
-      {:fresh, github: "josevalim/fresh", ref: "26291bc9b3d869b555785fa8fc790e8670711309"},
+      # which Mix >= 1.20 rejects; upstream is unresponsive. Pinned to the
+      # PR branch carrying the fix. Pin the branch head, not a fork's default
+      # branch commit: the previous pin was rewritten away upstream and no
+      # ref reached it any more, so a fresh clone could not resolve deps.
+      {:fresh, github: "josevalim/fresh", ref: "d8159bf148df51a15d91c432bf2120ff56d384a0"},
       {:kafka_ex, github: "alfetahe/kafka_ex", ref: "0764363353dc2ffc9996bdc8af11b9fe00561a57"},
       # Compiled in unconditionally; active only when the Postgres sink
       # plugin is configured (same posture as :kafka_ex).

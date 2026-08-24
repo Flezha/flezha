@@ -104,7 +104,11 @@ and `rust`, which waits for the control socket and runs the test runner against
 `FLEZHA_DEMO_NAMESPACE` (default `default`). Named volumes `flezha_build`,
 `flezha_deps` and `flezha_cargo_target` cache build output across restarts;
 the single bind mount also carries `app_data/` (ProcessHub registry, WAL
-files, plugin root).
+files, plugin root). The toolchain image creates each of those volume
+mountpoints owned by uid 1000, so the stack runs unprivileged; the chaos and
+healing stacks share `scripts/harness-boot.sh`, which guards the mountpoints,
+skips `mix deps.get` when `mix.lock` is unchanged, and execs the workload in
+place so it keeps PID 1.
 
 Inside the container, first time:
 

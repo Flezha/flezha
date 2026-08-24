@@ -6,7 +6,7 @@
   "db_connection": {:hex, :db_connection, "2.10.2", "ae391e803a5adff104da913c2fc1c0c14a37f8b10001dcef568796e1fb7bf95c", [:mix], [{:telemetry, "~> 0.4 or ~> 1.0", [hex: :telemetry, repo: "hexpm", optional: false]}], "hexpm", "510b14482330f1af6490a2fa0efd8d4f1435d1529b165647df22ac0f2df0fa93"},
   "decimal": {:hex, :decimal, "3.1.1", "430d87b04011ce6cbd4fd205be758311a81f87d552d40904abd00f015935b1d0", [:mix], [], "hexpm", "c5f25f2ced74a0587d03e6023f595db8e924c9d3922c8c8ffd9edfc4498cf1f6"},
   "elector": {:hex, :elector, "0.3.3", "eb25dfeb4342a4bddad5102c14666a4fc92cb6edf7faef3426d428d78d3696de", [:rebar3], [], "hexpm", "961c36e129b0740b545185b041a4a37aa28d45ea198cd83a8f9ff83f0f8aac45"},
-  "fresh": {:git, "https://github.com/josevalim/fresh.git", "26291bc9b3d869b555785fa8fc790e8670711309", [ref: "26291bc9b3d869b555785fa8fc790e8670711309"]},
+  "fresh": {:git, "https://github.com/josevalim/fresh.git", "d8159bf148df51a15d91c432bf2120ff56d384a0", [ref: "d8159bf148df51a15d91c432bf2120ff56d384a0"]},
   "ham": {:hex, :ham, "0.3.2", "02ae195f49970ef667faf9d01bc454fb80909a83d6c775bcac724ca567aeb7b3", [:mix], [], "hexpm", "b71cc684c0e5a3d32b5f94b186770551509e93a9ae44ca1c1a313700f2f6a69a"},
   "hash_ring": {:hex, :hash_ring, "0.4.2", "65d7e84ee911c2f07e53193711013ec9b9761c5eb180720e31224b776c98f502", [:rebar3], [], "hexpm", "c327d99b1e2af41b50e5c4803a9bee7932db2c0f39ad7854a9fdad7e42444066"},
   "hpax": {:hex, :hpax, "1.0.4", "777de5d433b0fbdc7c418159c8055910faa8047ffdb3d6b31098d2a46cd7685c", [:mix], [], "hexpm", "afc7cb142ebcc2d01ce7816190b98ce5dd49e799111b24249f3443d730f377ca"},

@@ -49,6 +49,33 @@ toolchain — Elixir+OTP, Rust, Node.js+npm+TypeScript, protoc — so
 This is the image used for hacking on Flezha itself; downstream consumers
 should use `:latest` (prod runtime) or `:latest-dev` (runtime + Node + testnet).
 
+The image also creates every path a compose file mounts a named volume onto
+(`/flezha/_build`, `/flezha/deps`, `/flezha/target`, `/socket_data`, and the
+container-local `/home/flezha/_build` + `/home/flezha/deps` the chaos and
+healing stacks use) owned by uid 1000. Docker initialises a fresh named
+volume from the image directory, ownership included, so **no harness
+container needs root**. A mountpoint missing from that list is provisioned
+root-owned instead — if you add one to a compose file, add it to
+`Dockerfile.toolchain` in the same change.
+
+`scripts/harness-boot.sh` is the shared entrypoint for the chaos and healing
+stacks: it guards those mountpoints, fetches Elixir deps only when
+`mix.lock` moved, waits for the controller's control socket, then execs the
+service command. Because it is a plain script it can be exercised outside
+compose:
+
+```bash
+docker run --rm -v "$PWD/scripts/harness-boot.sh:/boot.sh:ro" \
+  -e FLEZHA_HARNESS_PATHS=/home/flezha/_build \
+  alfetahe/flezha:latest-toolchain /boot.sh sh -c 'echo uid=$(id -u) pid=$$'
+```
+
+On a host where the image-supplied ownership does not apply (userns-remap),
+start a harness service with `FLEZHA_CONTAINER_USER=0:0`: the script then
+chowns only the mountpoints whose top-level owner is wrong and drops
+privileges with `setpriv`. It never uses `su` — see
+[graceful shutdown](../../docs/operations/graceful_shutdown.md).
+
 ## Build and push the toolchain image
 
 ```bash

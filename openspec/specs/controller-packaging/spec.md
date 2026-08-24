@@ -333,3 +333,86 @@ A workflow (either `.github/workflows/elixir.yml` or a dedicated `docker.yml`) S
 - **WHEN** CI runs
 - **THEN** the docker-size gate is not triggered (the workflow's path filter excludes the change)
 
+### Requirement: Dev harness containers SHALL run unprivileged
+
+`docker/dev/Dockerfile.toolchain` SHALL create every directory that a
+harness compose file mounts a named volume onto — the in-repo build,
+deps and cargo-target paths, the container-local `MIX_BUILD_PATH` /
+`MIX_DEPS_PATH` paths under `/home/flezha`, and the socket-data mount
+path — owned by the `flezha` user at image-build time, so Docker
+initialises a freshly-provisioned named volume with that ownership.
+
+Given that image, a harness compose service that boots a controller or a
+runner against bind-mounted source SHALL run as the unprivileged uid by
+default and SHALL NOT perform an unconditional recursive `chown` at boot. A service SHALL be able to opt back into running as root for
+hosts where the mount ownership cannot be satisfied by the image (for
+example userns-remap); on that path it SHALL recurse only into
+directories whose top-level owner is wrong.
+
+A harness service that starts as root and drops privileges SHALL drop
+them with a mechanism that replaces the process image, so the workload
+retains PID 1 and receives the container stop signal directly. It SHALL
+NOT wrap the workload in `su`, which terminates its child shortly after
+SIGTERM and so truncates the controller's graceful drain.
+
+When a mount path is not writable by the effective uid, the service
+SHALL fail at boot with a message naming the remedy, rather than
+surfacing the failure as a permission error inside a downstream build
+tool or as a handshake timeout.
+
+#### Scenario: Fresh named volume is writable without root
+
+- **GIVEN** a toolchain image built from `docker/dev/Dockerfile.toolchain`
+- **WHEN** a freshly-provisioned named volume is mounted at a harness build or deps path and the container runs as the unprivileged uid
+- **THEN** that path is writable, and no recursive `chown` runs at boot
+
+#### Scenario: The workload owns PID 1 and the stop signal
+
+- **GIVEN** a harness controller service, started either unprivileged or as root
+- **WHEN** the container is stopped within its declared stop grace period
+- **THEN** the controller process is PID 1 and receives SIGTERM directly
+- **AND** no privilege-drop wrapper terminates it before it exits on its own terms
+
+Whether the application's drain then completes is the shutdown capability's
+concern, not packaging's; packaging guarantees only that the signal arrives
+and that nothing between the container and the workload cuts the drain short.
+
+#### Scenario: Root fallback stays available and bounded
+
+- **GIVEN** a host on which the image-supplied mount ownership does not apply
+- **WHEN** the harness service is configured to start as root
+- **THEN** it chowns only the mount paths whose top-level owner is wrong, drops privileges without `su`, and the workload still owns PID 1
+
+#### Scenario: Unwritable mount fails with an actionable message
+
+- **GIVEN** a harness service running as the unprivileged uid against an image that predates the mountpoint ownership contract
+- **WHEN** the service starts against an empty named volume
+- **THEN** it exits non-zero with a message naming both the image rebuild and the run-as-root override
+
+### Requirement: Harness dependency fetch SHALL be guarded by the lock file
+
+A harness compose service that fetches Elixir dependencies at boot SHALL
+run the fetch only when the resolved `mix.lock` differs from a hash
+stamped in the deps volume, and SHALL write the stamp only after a
+successful fetch. An unchanged lock file SHALL therefore require no
+package-registry access, so a harness controller can boot with no
+network once its deps volume is populated.
+
+#### Scenario: Unchanged lock file skips the fetch
+
+- **GIVEN** a harness controller whose deps volume was populated by a previous boot
+- **WHEN** the controller restarts with an unchanged `mix.lock`
+- **THEN** no dependency resolution runs and the boot log shows no registry access
+
+#### Scenario: Changed lock file re-fetches and re-stamps
+
+- **GIVEN** a populated deps volume whose stamp does not match the current `mix.lock`
+- **WHEN** the controller boots
+- **THEN** dependencies are fetched and the stamp is updated only after the fetch succeeds
+
+#### Scenario: Interrupted fetch retries on the next boot
+
+- **GIVEN** a dependency fetch that did not complete
+- **WHEN** the controller boots again
+- **THEN** no stamp was written, and the fetch runs again
+

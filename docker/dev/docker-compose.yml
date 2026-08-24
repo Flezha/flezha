@@ -34,9 +34,10 @@ services:
       retries: 3
       start_period: 10s
     volumes:
-      # Named-volume priming pattern: the Dockerfile build pre-populates these
-      # volumes so the bind-mounted source tree doesn't need to be rebuilt from
-      # scratch on first `up`. Source changes are reflected immediately via the
+      # The toolchain image creates each of these mountpoints owned by the
+      # flezha user, so Docker initialises a fresh volume with that ownership
+      # and the container never needs root to fix it. Contents still build on
+      # first `up`. Source changes are reflected immediately via the
       # bind mount (../../:/flezha) — this single bind also covers ProcessHub's
       # persistent registry (`app_data/process_hub/`), per-Entity WAL files
       # (`app_data/state/`), and the plugin install root (`app_data/plugins/`).

@@ -63,6 +63,12 @@ PLUGIN_KAFKA_ID="sp_test_kafka"
 
 PROJECT="${PROJECT:-flezha_state_persistence}"
 
+# The BEAM is started with distribution enabled and `flz` reaches it via
+# `flzvm rpc`, which sources `rel/env.sh.eex` and refuses to start
+# distribution without a cookie. One constant so the two call sites cannot
+# drift apart.
+RELEASE_COOKIE_VALUE="flezha_cluster_cookie"
+
 COMPOSE=(
   docker compose
     --project-name "${PROJECT}"
@@ -97,10 +103,9 @@ force_remove_known_containers() {
 # Stale UDS socket files from a previous interrupted run linger on
 # the host bind-mount (`app_data/sockets/`). The rust container's
 # wait-loop watches for `runner_control_channel.sock` to exist and
-# would race straight past it on next boot — exiting wait-loop before
-# our `fix_volume_permissions` runs, then crashing on cargo
-# permission errors. Wipe sockets pre-flight (per CLAUDE.md memory:
-# never `rm -rf app_data`, only its subdirs).
+# would race straight past it on next boot and hand off to a runner
+# the controller has not registered. Wipe sockets pre-flight (per
+# CLAUDE.md memory: never `rm -rf app_data`, only its subdirs).
 clean_stale_sockets() {
   rm -f "${REPO_ROOT}"/app_data/sockets/*.sock 2>/dev/null || true
 }
@@ -112,51 +117,8 @@ clean_persisted_state() {
   rm -rf "${REPO_ROOT}"/app_data/state/* 2>/dev/null || true
 }
 
-# The dev compose's named volumes (flezha_build, flezha_deps,
-# flezha_cargo_target, socket_data) are root-owned on first mount,
-# but the toolchain image runs services as `flezha` (uid 1000, see
-# `docker/dev/Dockerfile.toolchain`). Without chown'ing them, both
-# `mix run` and `cargo run` fail with `Permission denied` inside
-# their respective containers — symptom: rust runner hangs the
-# script at "waiting for initial runner handshake" while logging
-#   error: failed to create directory `/flezha/target/debug`
-#   Caused by: Permission denied (os error 13)
-# The healing compose handles this implicitly in its `command:` block;
-# the regular dev compose does not, so we do it via `docker exec -u 0`.
-fix_volume_permissions() {
-  # Wait briefly for both containers to be exec-ready (they may have
-  # only just been created by `up -d`).
-  local deadline=$(( $(date +%s) + 30 ))
-  while [ "$(date +%s)" -lt "${deadline}" ]; do
-    [ "$(docker inspect -f '{{.State.Status}}' flezha_controller_dev 2>/dev/null)" = "running" ] \
-      && [ "$(docker inspect -f '{{.State.Status}}' flezha_rust_runner 2>/dev/null)" = "running" ] \
-      && break
-    sleep 1
-  done
-
-  # `docker exec` (note: NOT `docker compose exec`) has no `-T`/`-i`
-  # tty flag — it never allocates a TTY by default. -u 0 runs as root
-  # inside the container regardless of the image's USER directive.
-  docker exec -u 0 flezha_controller_dev sh -c '
-    chown -R 1000:1000 /flezha/_build /flezha/deps 2>/dev/null
-    chown -R 1000:1000 /flezha/target 2>/dev/null
-    chown -R 1000:1000 /flezha/app_data 2>/dev/null
-    chown -R 1000:1000 /socket_data 2>/dev/null
-    true
-  ' || {
-    echo "[state_persistence] WARN: chown via controller failed (state=$(docker inspect -f '{{.State.Status}}' flezha_controller_dev 2>/dev/null))" >&2
-  }
-  docker exec -u 0 flezha_rust_runner sh -c '
-    chown -R 1000:1000 /flezha/target 2>/dev/null
-    chown -R 1000:1000 /socket_data 2>/dev/null
-    true
-  ' || {
-    echo "[state_persistence] WARN: chown via rust failed (state=$(docker inspect -f '{{.State.Status}}' flezha_rust_runner 2>/dev/null))" >&2
-  }
-}
-
-# Fail fast if the rust container has already exited (e.g. cargo
-# permission error). Keeps the script from sitting on a 300s timeout.
+# Fail fast if the rust container has already exited (e.g. a cargo build
+# failure). Keeps the script from sitting on a 300s timeout.
 assert_rust_running() {
   local state
   state="$(docker inspect -f '{{.State.Status}}' flezha_rust_runner 2>/dev/null || echo missing)"
@@ -186,7 +148,8 @@ note() {
 }
 
 flz() {
-  "${COMPOSE[@]}" exec -T controller _build/dev/rel/flezha/bin/flz "$@"
+  "${COMPOSE[@]}" exec -T -e "RELEASE_COOKIE=${RELEASE_COOKIE_VALUE}" \
+    controller _build/dev/rel/flezha/bin/flz "$@"
 }
 
 # Run an arbitrary command inside the running controller container.
@@ -206,9 +169,6 @@ CONTROL_SOCKET="${SOCKETS_DIR}/runner_control_channel.sock"
 # in detached mode and poll on the host filesystem for the controller's
 # UDS control socket to confirm the BEAM is ready and listening.
 start_beam() {
-  note "fixing volume ownership (named volumes are root-owned on creation)"
-  fix_volume_permissions
-
   # `flz` is a release artifact at `_build/dev/rel/flezha/bin/flz`.
   # `mix release` does NOT build it — see `copy_cli_commands` in
   # `mix.exs`, which only copies a pre-built `target/debug/flz`
@@ -218,12 +178,18 @@ start_beam() {
   # Ubuntu 25.10 GLIBC 2.39 vs Debian 12 GLIBC 2.36) the copied
   # binary will run with `version GLIBC_2.39 not found`.
   #
-  # Workaround: build `flz` *inside the container* so it links against
-  # the container's GLIBC, then overwrite the copy mix release just
-  # made. Cargo writes to the workspace target dir at /flezha/target,
-  # which the dev compose mounts as the named volume
-  # `flezha_cargo_target` — so this never touches the host's
-  # `target/`.
+  # So `flz` is built *inside the container*, and built BEFORE the release:
+  # `copy_cli_commands` copies whatever `target/debug/flz` holds, and the
+  # compose mounts `/flezha/target` as a named volume that starts empty, so
+  # a release run ahead of the cargo build fails outright. Cargo writes to
+  # that volume, never to the host's `target/`.
+  note "building flz CLI inside container (matches container GLIBC)"
+  if ! "${COMPOSE[@]}" exec -T controller sh -c \
+    'cd /flezha && cargo build -p flz --quiet 2>&1' >/tmp/state_persistence_cargo.log 2>&1; then
+    echo "[state_persistence] FAIL: cargo build -p flz failed; tail of log:" >&2
+    tail -40 /tmp/state_persistence_cargo.log >&2
+    exit 1
+  fi
   note "ensuring 'flz' release is built"
   if ! "${COMPOSE[@]}" exec -T controller sh -c \
     'cd /flezha && export MIX_ENV=dev && \
@@ -233,19 +199,7 @@ start_beam() {
     tail -40 /tmp/state_persistence_release.log >&2
     exit 1
   fi
-  note "rebuilding flz CLI inside container (matches container GLIBC)"
-  if ! "${COMPOSE[@]}" exec -T controller sh -c \
-    'cd /flezha && cargo build -p flz --quiet 2>&1' >/tmp/state_persistence_cargo.log 2>&1; then
-    echo "[state_persistence] FAIL: cargo build -p flz failed; tail of log:" >&2
-    tail -40 /tmp/state_persistence_cargo.log >&2
-    exit 1
-  fi
-  if ! "${COMPOSE[@]}" exec -T controller sh -c \
-    'cp /flezha/target/debug/flz /flezha/_build/dev/rel/flezha/bin/flz'; then
-    echo "[state_persistence] FAIL: could not patch release flz binary" >&2
-    exit 1
-  fi
-  note "release built; flz patched with container-linked binary"
+  note "release built with the container-linked flz"
 
   # We can't use `flzvm daemon` (the release entrypoint) because the
   # default release pulls in `wx`, whose NIF needs libGL — absent on
@@ -261,11 +215,9 @@ start_beam() {
   # distribution) can still reach it. RELEASE_COOKIE / node name
   # come from `rel/env.sh.eex`.
   note "starting BEAM inside controller container ('mix run --no-halt' + distribution)"
-  "${COMPOSE[@]}" exec -d -T controller sh -c \
-    'cd /flezha && export MIX_ENV=dev \
-       RELEASE_COOKIE=flezha_cluster_cookie \
-       ERL_FLAGS="-name flezha@127.0.0.1 -setcookie flezha_cluster_cookie" && \
-     exec mix run --no-halt'
+  "${COMPOSE[@]}" exec -d -T -e "RELEASE_COOKIE=${RELEASE_COOKIE_VALUE}" \
+    -e "ERL_FLAGS=-name flezha@127.0.0.1 -setcookie ${RELEASE_COOKIE_VALUE}" \
+    controller sh -c 'cd /flezha && export MIX_ENV=dev && exec mix run --no-halt'
 
   local deadline=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
   while [ "$(date +%s)" -lt "${deadline}" ]; do
