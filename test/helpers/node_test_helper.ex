@@ -220,7 +220,8 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     :workflow,
     :dynamic_entity,
     :entry_idle,
-    :partitioned
+    :partitioned,
+    :schema_evolution
   ]
 
   # The surface every SDK carries; a manifest cannot defer these.

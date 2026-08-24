@@ -89,8 +89,15 @@ public final class ActivationDispatcher {
     @Nonnull
     public ActivationResult dispatch(@Nonnull Activation activation) {
         try {
-            JavaInstance instance = instances.computeIfAbsent(
-                    activation.target().operative(), id -> JavaInstance.materialize(id, activation.factory()));
+            // Keyed by operative id, but the FACTORY the activation names is what
+            // decides which class runs: an operative id rebound to a different
+            // factory — a deploy putting the next version of a class behind the
+            // same id — must not keep running the class we materialized first.
+            JavaInstance instance = instances.compute(
+                    activation.target().operative(),
+                    (id, existing) -> existing != null && existing.factoryId().equals(activation.factory())
+                            ? existing
+                            : JavaInstance.materialize(id, activation.factory()));
             return new ActivationResult(activation.token(), instance.dispatch(activation, workflowSessions));
         } catch (Throwable t) {
             String message = t.getMessage() == null ? t.toString() : t.getMessage();
@@ -374,13 +381,31 @@ public final class ActivationDispatcher {
             EntityRef target = activation.target();
             EntityCell cell = freshCell(target.procedure(), target.entityKey());
             if (fold.snapshot().isPresent()) {
-                cell.state = cell.codec.deserialize(fold.snapshot().get(), Object.class);
+                ActivationKind.RestoreBody body = fold.snapshot().get();
+                cell.state = read(body, cell, Object.class, cell.procedure::migrateState);
             }
-            for (byte[] changeBytes : fold.changes()) {
-                cell.procedure.applyChange(cell.state, cell.codec.deserialize(changeBytes, Change.class));
+            for (ActivationKind.RestoreBody body : fold.changes()) {
+                Change change = read(body, cell, Change.class, cell.procedure::migrateChange);
+                cell.procedure.applyChange(cell.state, change);
             }
             cells.put(new CellKey(target.procedure(), target.entityKey().orElse("")), cell);
             return new ActivationOutcome.Restored();
+        }
+
+        /**
+         * One restore body: decoded with this version's codec, or handed to
+         * the migration the core tagged it for. The core has already refused
+         * everything unreadable, so there is no third case.
+         */
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        private static <T> T read(
+                ActivationKind.RestoreBody body,
+                EntityCell cell,
+                Class<T> type,
+                java.util.function.BiFunction<Integer, byte[], ?> migrate) {
+            return body.fromVersion().isPresent()
+                    ? (T) migrate.apply(body.fromVersion().getAsInt(), body.bytes())
+                    : cell.codec.deserialize(body.bytes(), type);
         }
 
         private byte[] stateJson(EntityRef target) {

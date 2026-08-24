@@ -40,6 +40,8 @@ public final class Main {
                 .defineStream(PersistenceOffStreamOperative.class)
                 .defineStream(HybridChannelStreamOperative.class)
                 .defineStream(ResumeProbeStreamOperative.class)
+                .defineStream(SchemaEvolutionStreamOperatives.V1.class)
+                .defineStream(SchemaEvolutionStreamOperatives.V2.class)
                 .defineStream(DynamicEntityStreamOperative.class)
                 .defineStream(PartitionRelayStreamOperative.class)
                 .defineStream(SessionTimeoutStreamOperative.class)

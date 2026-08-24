@@ -307,3 +307,26 @@ Every SDK binding SHALL ship a test app under `test/apps/<sdk>_runner/` with a c
 - **WHEN** an SDK's documentation names a capability as carried while its manifest lists it under `deferred`
 - **THEN** the discrepancy is a defect of the change that introduced it; the manifest is the one place the scope is declared
 
+### Requirement: The authoring contract documents schema evolution
+
+The authoring contract SHALL document, in lockstep across every SDK that
+persists state, that:
+
+- `SCHEMA_VERSION` is bumped on any non-additive edit to the Procedure's `State`
+  **or** its `Change` type — not to the `Change` type alone;
+- the codecs are positional and not self-describing, so an unbumped edit that
+  changes field order or field count is a silent corruption, not a compatibility
+  question;
+- `MIN_READABLE_SCHEMA_VERSION` plus the migration entry points are how an
+  author reads what an earlier version wrote, and their default is to refuse.
+
+The authoring test harness SHALL be able to restore a Procedure from bytes
+stamped at an older schema version, so a migration is testable without a running
+controller.
+
+#### Scenario: a migration is proven at the authoring seam
+
+- **GIVEN** a Procedure at `SCHEMA_VERSION = 2` with a declared migration from version 1
+- **WHEN** the author restores a harness from a payload stamped version 1
+- **THEN** the harness SHALL apply the migration and expose the migrated state for assertion
+

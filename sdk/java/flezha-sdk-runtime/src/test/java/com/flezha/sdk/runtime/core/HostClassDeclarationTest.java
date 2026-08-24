@@ -23,7 +23,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -90,6 +92,32 @@ class HostClassDeclarationTest {
                 .isFalse();
         assertThat(procedures.get(0).get("clock").asText()).isEqualTo("wall");
         assertThat(procedures.get(0).get("mailbox_capacity").asInt()).isPositive();
+    }
+
+    @Test
+    @DisplayName("each Procedure declares its own schema version, never the class maximum")
+    void perProcedureSchemaVersions() throws Exception {
+        StreamOperativeClassRegistry.registerClass(MixedVersionOperative.class);
+        JsonNode decl = JSON.readTree(
+                HostClassDeclaration.forStream(StreamOperativeClassRegistry.getTopology("decl_mixed_version_op")));
+
+        assertThat(decl.has("schema_version"))
+                .as("a class-wide version would re-stamp a Procedure with a version it never declared")
+                .isFalse();
+
+        JsonNode procedures = decl.get("procedures");
+        assertThat(procedures).hasSize(2);
+        Map<String, JsonNode> byName = new LinkedHashMap<>();
+        procedures.forEach(p -> byName.put(p.get("name").asText(), p));
+
+        assertThat(byName.get("v2_proc").get("schema_version").asInt()).isEqualTo(2);
+        assertThat(byName.get("v2_proc").get("min_readable_schema_version").asInt())
+                .isEqualTo(1);
+        assertThat(byName.get("v1_proc").get("schema_version").asInt())
+                .as("the sibling keeps its own version when v2_proc is bumped")
+                .isEqualTo(1);
+        assertThat(byName.get("v1_proc").get("min_readable_schema_version").asInt())
+                .isEqualTo(1);
     }
 
     @Test
@@ -462,6 +490,69 @@ class HostClassDeclarationTest {
                     .into(DeclProc.class)
                     .keyed()
                     .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /** Two procedures in one class, each at its own schema version. */
+    public static final class MixedVersionOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "decl_mixed_version_op";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.input(String.class, "in")
+                    .into(VersionTwoProc.class)
+                    .named("mid")
+                    .into(VersionOneProc.class)
+                    .sink("sink", s -> s.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    public static final class VersionTwoProc extends StatelessTestProcedure<String, Object, String> {
+        @Override
+        public String name() {
+            return "v2_proc";
+        }
+
+        @Override
+        public int schemaVersion() {
+            return 2;
+        }
+
+        @Override
+        public int minReadableSchemaVersion() {
+            return 1;
+        }
+
+        @Override
+        protected Object initState(Optional<String> entityKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx)
+                throws com.flezha.sdk.procedure.ProcedureException {
+            ctx.emit(input);
+        }
+    }
+
+    public static final class VersionOneProc extends StatelessTestProcedure<String, Object, String> {
+        @Override
+        public String name() {
+            return "v1_proc";
+        }
+
+        @Override
+        protected Object initState(Optional<String> entityKey) {
+            return new Object();
+        }
+
+        @Override
+        public void run(String input, StateHandle<Object, NoChange> state, ProcedureCtx ctx)
+                throws com.flezha.sdk.procedure.ProcedureException {
+            ctx.emit(input);
         }
     }
 

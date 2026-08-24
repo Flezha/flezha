@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 /// Bumped on any incompatible change to the types in this module. A core and
 /// a host shim negotiate at context creation and refuse to start on mismatch.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 pub use crate::channel::{ChannelId, ProcedureId};
 
@@ -111,9 +111,22 @@ pub struct TimerItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RestoreFold {
     /// Host-encoded state snapshot baseline, when one exists.
-    pub snapshot: Option<Vec<u8>>,
+    pub snapshot: Option<RestoreBody>,
     /// Host-encoded change records in seq order, to fold on top.
-    pub changes: Vec<Vec<u8>>,
+    pub changes: Vec<RestoreBody>,
+}
+
+/// One host-encoded body the core hands across for a restore, with the schema
+/// version it was written at when that is not the running one. The core has
+/// already refused everything unreadable, so a host either decodes at its own
+/// version or migrates from the named one — it never has to decide.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RestoreBody {
+    pub bytes: Vec<u8>,
+    /// `None` — written at the procedure's current `schema_version`.
+    /// `Some(v)` — written at `v`, migrate from it.
+    #[serde(default)]
+    pub from_version: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -451,10 +464,24 @@ mod fixture_tests {
         let kinds: Vec<(ActivationKind, &str)> = vec![
             (
                 ActivationKind::RestoreFold(RestoreFold {
-                    snapshot: Some(vec![0x0F]),
-                    changes: vec![vec![0x01], vec![0x02]],
+                    snapshot: Some(RestoreBody {
+                        bytes: vec![0x0F],
+                        from_version: None,
+                    }),
+                    changes: vec![
+                        RestoreBody {
+                            bytes: vec![0x01],
+                            from_version: None,
+                        },
+                        // A body the host must migrate: pinned so a shim
+                        // reproduces the tagged shape, not only the plain one.
+                        RestoreBody {
+                            bytes: vec![0x02],
+                            from_version: Some(1),
+                        },
+                    ],
                 }),
-                "0101010f0201010102000166",
+                "0101010f000201010001020101000166",
             ),
             (ActivationKind::SnapshotRequest, "02000166"),
             (ActivationKind::LiveStateRead, "03000166"),

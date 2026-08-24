@@ -30,6 +30,7 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -398,6 +399,58 @@ class ActivationDispatcherTest {
     // ------------------------------------------------------------------
 
     @Test
+    @DisplayName("a RestoreFold body tagged with an older version goes to the migration, not the codec")
+    void restoreFoldMigratesTaggedBodies() {
+        StreamOperativeClassRegistry.registerClass(MigratingCounterOperative.class);
+        ActivationDispatcher dispatcher = new ActivationDispatcher(id -> session);
+
+        ActivationOutcome restored = dispatcher
+                .dispatch(command(
+                        "migrating_counter_op",
+                        0,
+                        Optional.empty(),
+                        new ActivationKind.RestoreFold(
+                                Optional.of(new ActivationKind.RestoreBody(
+                                        "5".getBytes(StandardCharsets.UTF_8), OptionalInt.of(1))),
+                                List.of(new ActivationKind.RestoreBody(
+                                        "3".getBytes(StandardCharsets.UTF_8), OptionalInt.of(1))))))
+                .outcome();
+        assertThat(restored).isInstanceOf(ActivationOutcome.Restored.class);
+
+        ActivationOutcome json = dispatcher
+                .dispatch(command("migrating_counter_op", 0, Optional.empty(), new ActivationKind.LiveStateRead()))
+                .outcome();
+        assertThat(new String(((ActivationOutcome.StateJson) json).json(), StandardCharsets.UTF_8))
+                .as("snapshot migrated to 5, then the migrated change folded +3")
+                .isEqualTo("{\"n\":8}");
+    }
+
+    @Test
+    @DisplayName("a Procedure declaring no migration refuses an older body rather than decoding it")
+    void restoreFoldWithoutAMigrationRefuses() {
+        StreamOperativeClassRegistry.registerClass(CounterOperative.class);
+        ActivationDispatcher dispatcher = new ActivationDispatcher(id -> session);
+
+        ActivationOutcome outcome = dispatcher
+                .dispatch(command(
+                        "counter_op",
+                        0,
+                        Optional.empty(),
+                        new ActivationKind.RestoreFold(
+                                Optional.of(new ActivationKind.RestoreBody(
+                                        "5".getBytes(StandardCharsets.UTF_8), OptionalInt.of(1))),
+                                List.of())))
+                .outcome();
+
+        assertThat(outcome).isInstanceOf(ActivationOutcome.Failed.class);
+        assertThat(((ActivationOutcome.Failed) outcome).error().message())
+                .as("the failure names the procedure and the version it was asked for")
+                .contains("count_proc")
+                .contains("no state migration")
+                .contains("1");
+    }
+
+    @Test
     @DisplayName("RestoreFold rebuilds snapshot + changes; SnapshotRequest and LiveStateRead read the result")
     void restoreSnapshotAndLiveRead() {
         StreamOperativeClassRegistry.registerClass(CounterOperative.class);
@@ -419,7 +472,11 @@ class ActivationDispatcherTest {
                         "counter_op",
                         0,
                         Optional.empty(),
-                        new ActivationKind.RestoreFold(Optional.of(snapshot), first.changes())))
+                        new ActivationKind.RestoreFold(
+                                Optional.of(new ActivationKind.RestoreBody(snapshot, OptionalInt.empty())),
+                                first.changes().stream()
+                                        .map(c -> new ActivationKind.RestoreBody(c, OptionalInt.empty()))
+                                        .toList())))
                 .outcome();
         assertThat(restored).isInstanceOf(ActivationOutcome.Restored.class);
         ActivationOutcome reboundJson = rebound.dispatch(
@@ -638,6 +695,85 @@ class ActivationDispatcherTest {
             } else {
                 ctx.emit(input);
             }
+        }
+    }
+
+    /**
+     * The Counter class one deploy later: version 2, reading down to 1 through
+     * declared migrations. The v1 encoding here is deliberately trivial — what
+     * the test proves is that the runtime routes an older body to the
+     * migration instead of to the codec.
+     */
+    public static final class MigratingCounterOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "migrating_counter_op";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.input(String.class, "in")
+                    .into(MigratingCountProc.class)
+                    .named("out")
+                    .sink("out", s -> ("seen:" + s).getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    public static final class MigratingCountProc
+            implements Procedure<String, CounterState, String, CountChange, WallClock, Void> {
+        @Override
+        public String name() {
+            return "count_proc";
+        }
+
+        @Override
+        public int schemaVersion() {
+            return 2;
+        }
+
+        @Override
+        public int minReadableSchemaVersion() {
+            return 1;
+        }
+
+        @Override
+        public List<Class<?>> kryoTypes() {
+            return List.of(CountChange.class, CounterState.class);
+        }
+
+        @Override
+        public CounterState initState(Optional<String> entityKey, Optional<RestoreInitPayload> initPayload) {
+            return new CounterState();
+        }
+
+        @Override
+        public CounterState migrateState(int fromVersion, byte[] bytes) {
+            if (fromVersion != 1) {
+                throw new IllegalStateException("no migration from " + fromVersion);
+            }
+            CounterState migrated = new CounterState();
+            migrated.n = Integer.parseInt(new String(bytes, StandardCharsets.UTF_8));
+            return migrated;
+        }
+
+        @Override
+        public CountChange migrateChange(int fromVersion, byte[] bytes) {
+            if (fromVersion != 1) {
+                throw new IllegalStateException("no migration from " + fromVersion);
+            }
+            return new CountChange(Integer.parseInt(new String(bytes, StandardCharsets.UTF_8)));
+        }
+
+        @Override
+        public void applyChange(CounterState state, CountChange change) {
+            state.n += change.delta;
+        }
+
+        @Override
+        public void run(String input, StateHandle<CounterState, CountChange> state, ProcedureCtx ctx)
+                throws ProcedureException {
+            state.apply(new CountChange(1));
+            ctx.emit(input);
         }
     }
 

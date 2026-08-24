@@ -3,7 +3,8 @@ defmodule Flezha.State.Restore do
   Assembles the byte payload shipped with `RestoreInitState`.
 
   The controller reads:
-    * The latest snapshot (if any) — supplies `snapshot_bytes`.
+    * The latest snapshot (if any) — supplies `snapshot_bytes` and the
+      16-byte `snapshot_header` it was stored with.
     * The tail-WAL records strictly newer than the snapshot's `seq` —
       supplies `change_log_bytes` (records concatenated in their on-disk
       `[seq][len][header][bytes][crc32]` framing).
@@ -19,6 +20,7 @@ defmodule Flezha.State.Restore do
 
   @type payload :: %{
           snapshot_bytes: binary(),
+          snapshot_header: binary(),
           change_log_bytes: binary(),
           terminal_seq_hint: non_neg_integer()
         }
@@ -28,15 +30,18 @@ defmodule Flezha.State.Restore do
     # `-1` (not `0`) is the "no snapshot" sentinel: the WAL is 0-based, so a
     # `0` sentinel with the `seq > snapshot_seq` tail filter would silently
     # drop the very first change record. `-1` includes seq 0.
-    {snapshot_bytes, snapshot_seq} =
+    # The header travels with the body: it carries the schema_version the
+    # snapshot was written at, and stripping it left every compacted Entity
+    # unverifiable on the SDK side.
+    {snapshot_bytes, snapshot_header, snapshot_seq} =
       case Snapshot.latest_snapshot(entity_id) do
         nil ->
-          {<<>>, -1}
+          {<<>>, <<>>, -1}
 
         {seq, path} ->
           case Snapshot.read_snapshot(path) do
-            {:ok, _header, bytes} -> {bytes, seq}
-            {:error, _} -> {<<>>, -1}
+            {:ok, header, bytes} -> {bytes, header, seq}
+            {:error, _} -> {<<>>, <<>>, -1}
           end
       end
 
@@ -48,6 +53,7 @@ defmodule Flezha.State.Restore do
     {:ok,
      %{
        snapshot_bytes: snapshot_bytes,
+       snapshot_header: snapshot_header,
        change_log_bytes: change_log_bytes,
        terminal_seq_hint: terminal_seq_hint
      }}

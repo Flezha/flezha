@@ -70,9 +70,37 @@ defmodule Flezha.State.Commands do
 
           err
 
-        ok ->
+        {:ok, raw} = ok ->
+          compact_after_migration(runner_id, entity_id, raw)
           ok
       end
+    end
+  end
+
+  # A restore that migrated records leaves the Entity current in memory and
+  # stale on disk: its baseline is still the bytes an older schema version
+  # wrote, so every future restore would migrate them again. Compaction is
+  # what rewrites the baseline at the running version, and the controller
+  # already knows how to drive it — the migration is then paid once.
+  defp compact_after_migration(runner_id, {rc, sh, pk} = entity_id, raw) do
+    case RunnerCommands.RestoreInitStateResponse.decode(raw) do
+      {:ok, %RunnerCommands.RestoreInitStateResponse{migrated: true}} ->
+        :telemetry.execute(
+          [:flezha, :state, :schema_migration],
+          %{count: 1},
+          %{operative: rc, procedure: sh, key: pk, runner: runner_id}
+        )
+
+        Logger.info(
+          "[State] restore migrated records from an older schema version " <>
+            "entity=#{inspect(entity_id)}; compacting to rebase the snapshot"
+        )
+
+        _ = dispatch_compact_entity(runner_id, entity_id)
+        :ok
+
+      _ ->
+        :ok
     end
   end
 
@@ -87,6 +115,7 @@ defmodule Flezha.State.Commands do
           %RunnerCommands.RestoreInitState{
             entity_id: entity_id_bytes,
             snapshot_bytes: payload.snapshot_bytes,
+            snapshot_header: payload.snapshot_header,
             change_log_bytes: payload.change_log_bytes,
             has_compensation_intent: markers.intent,
             has_compensation_done: markers.done,

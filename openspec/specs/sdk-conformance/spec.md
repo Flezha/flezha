@@ -175,3 +175,26 @@ When `FLEZHA_E2E_RUNTIME` is set or any `:system` test ran, the suite's formatte
 - **WHEN** `FLEZHA_E2E_RUNTIME=java CONFORMANCE_OUT=java.json mix test --include system` completes
 - **THEN** the console ends with a capability table for `java` and `java.json` contains one entry per vocabulary capability with its outcome
 
+### Requirement: A reference fixture proves schema evolution per runtime
+
+The conformance suite SHALL carry a reference fixture that persists per-Entity
+state under one schema version and restores it under the next, and every runtime
+that persists state SHALL advertise it. A runtime that persists nothing SHALL
+declare the fixture unsupported rather than silently omitting it.
+
+The fixture SHALL assert both directions of the guard: that a declared migration
+restores the accumulated value, and that a version mismatch with no declared
+migration refuses instead of producing state.
+
+#### Scenario: the evolution fixture runs on every persisting runtime
+
+- **GIVEN** the conformance gate running against a runtime that advertises per-Entity state persistence
+- **WHEN** the fixture set is resolved for that runtime
+- **THEN** the schema-evolution fixture SHALL be among the fixtures the runtime advertises, and the gate SHALL fail if it is absent
+
+#### Scenario: a mismatch with no migration refuses
+
+- **GIVEN** the fixture's Procedure at the next schema version with no migration declared
+- **WHEN** it restores an Entity persisted at the previous version
+- **THEN** the restore SHALL fail with a schema error and the Entity SHALL NOT resume with cold state presented as restored
+

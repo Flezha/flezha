@@ -292,6 +292,12 @@ Every WAL record and snapshot file SHALL carry a 16-byte header preceding the pa
 
 The agent SHALL stamp the header at write time using the SDK-supplied values (the SDK ships the header pre-stamped in the wire frame; the agent writes it verbatim). The SDK SHALL verify the header at read time; the agent SHALL NOT verify the header except for the leading WAL record-framing crc32 over `header + change_bytes`.
 
+Read-time verification SHALL cover the snapshot as well as the change log. The
+agent SHALL therefore ship the snapshot's stored header alongside its payload in
+the `RestoreInitState` restore payload, rather than stripping it — a stripped
+header leaves the snapshot, and so every compacted Entity, unverifiable. The
+snapshot header SHALL be empty only when there is no snapshot.
+
 #### Scenario: Header stamped verbatim from SDK
 
 - **WHEN** the SDK ships an `entity_state_change` frame with header `[0x01, ...sdk_version..., ...schema_version..., 0x01, 0x00, 0x00, ...crc32...]`
@@ -301,6 +307,12 @@ The agent SHALL stamp the header at write time using the SDK-supplied values (th
 
 - **WHEN** a Java SDK reconnects to an Entity whose WAL was written by a Rust SDK (header `sdk_lang = 1`)
 - **THEN** on `RestoreInitState` decode, the Java SDK SHALL fail with a cross-language-mismatch error and SHALL NOT proceed; the agent's role is unchanged (it ships bytes, the SDK enforces the language gate)
+
+#### Scenario: The snapshot's header reaches the SDK
+
+- **GIVEN** an Entity with a snapshot on disk
+- **WHEN** the controller assembles the `RestoreInitState` payload for it
+- **THEN** the payload SHALL carry the snapshot's stored 16-byte header, and the SDK SHALL verify it before decoding the snapshot body
 
 ### Requirement: Idempotent emits with stable dedup keys
 

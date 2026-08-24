@@ -99,7 +99,6 @@ The runtime SHALL stamp `flz.entity`, `flz.seq`, and (on keyed emits) `flz.key` 
 - **WHEN** a Procedure calls `ctx.emitKeyed("BTC", candle)` on a channel declared `.keyed()`
 - **THEN** the plugin frame's metadata SHALL carry `flz.key -> "BTC"`, `flz.entity -> "<instance>/<procedure>/<entityKey>"`, and `flz.seq -> "<changeSeq>.<emitOrdinal>"`
 
-
 #### Scenario: A key-less emit in a keyed Entity carries that Entity's key
 - **WHEN** the Entity routed by `"BTC/USD"` calls `ctx.emit(candle)` on a channel declared `.keyed()`
 - **THEN** the plugin frame SHALL carry `flz.key -> "BTC/USD"`, identically to `ctx.emitKeyed("BTC/USD", candle)`
@@ -951,4 +950,32 @@ fixtures, reproduced in a Java fixture suite.
 - **THEN** the fetchers SHALL keep polling and handing out further
   activations, and work for unblocked entities SHALL proceed — concurrency is
   bounded by the core's jobs-underway limit, not by the fetcher count
+
+### Requirement: The Java class declaration carries per-Procedure schema versions
+
+The Java SDK's host class declaration SHALL carry each Procedure's own
+`schema_version` and `min_readable_schema_version`. It SHALL NOT reduce the
+class's Procedures to a single class-wide value.
+
+**BREAKING** for any Java class whose Procedures declare differing schema
+versions: their records were previously stamped with the class maximum.
+
+#### Scenario: two Procedures with different versions declare both
+
+- **GIVEN** a Java class whose Procedure A declares schema version 2 and Procedure B declares schema version 1
+- **WHEN** the class declaration is built
+- **THEN** the declaration SHALL carry 2 for A and 1 for B, and SHALL NOT carry 2 for both
+
+### Requirement: The Java Procedure surface declares migrations
+
+The Java `Procedure` surface SHALL expose the same migration declaration the
+Rust surface does: a readable-from floor and entry points that convert a state
+snapshot and a change record from a named older schema version, both defaulting
+to a refusal.
+
+#### Scenario: a Java Procedure restores state written at an older version
+
+- **GIVEN** a Java Procedure at schema version 2 declaring a readable-from floor of 1 and a state migration
+- **WHEN** an Entity whose snapshot was written at version 1 restores
+- **THEN** the migration SHALL be invoked with `from_version = 1` and the snapshot bytes, and the Entity SHALL resume with the value it returned
 

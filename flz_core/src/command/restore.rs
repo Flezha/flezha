@@ -20,7 +20,7 @@ use prost::Message;
 use super::CommandAction;
 use crate::entity::EntitySlot;
 use crate::pb::{RestoreInitState, RestoreInitStateResponse};
-use crate::restore::iter_change_log_records;
+use crate::restore::{iter_change_log_records, RestoreOutcome};
 use crate::runner::RunnerNode;
 use crate::util::LockRecover;
 
@@ -31,7 +31,7 @@ impl CommandAction for RestoreInitState {
         _message: &str,
         errors: &mut Vec<String>,
     ) -> (String, Vec<u8>) {
-        let terminal_seq = if let Some(slot) = find_entity_slot(runner, &self.entity_id) {
+        let outcome = if let Some(slot) = find_entity_slot(runner, &self.entity_id) {
             restore_into_slot(&slot, self, errors)
         } else if let Some((instance, slot)) = runner.find_workflow_entity(&self.entity_id) {
             // Durable workflow Entity: rebuild its committed state in place and
@@ -62,12 +62,16 @@ impl CommandAction for RestoreInitState {
                     }
                 }
             }
-            terminal.max(self.terminal_seq)
+            RestoreOutcome {
+                terminal_seq: terminal.max(self.terminal_seq),
+                migrated: false,
+            }
         };
 
         let response = RestoreInitStateResponse {
             entity_id: self.entity_id.clone(),
-            terminal_seq,
+            terminal_seq: outcome.terminal_seq,
+            migrated: outcome.migrated,
         };
 
         ("restore_init_state".to_string(), response.encode_to_vec())
@@ -79,18 +83,20 @@ impl CommandAction for RestoreInitState {
 /// controller then skips epoch realign). Shared by the stream and workflow
 /// restore paths; a host-run Entity folds through its `RestoreFold`
 /// activation, a typed one through the dispatcher's in-process
-/// `restore_state`. Returns the terminal WAL seq (0 on apply failure).
+/// `restore_state`. Returns the terminal WAL seq and whether any record was
+/// read through a migration (a zeroed outcome on apply failure).
 fn restore_into_slot(
     slot: &Arc<EntitySlot>,
     cmd: &RestoreInitState,
     errors: &mut Vec<String>,
-) -> u64 {
+) -> RestoreOutcome {
     // The fold runs under the entity's handout exclusivity: no input
     // activation is handed out before it completes.
     crate::poll_core::global().with_entity_exclusive(slot, || {
-        let terminal = if slot.dispatcher.host_facts().is_some() {
+        let folded = if slot.dispatcher.host_facts().is_some() {
             crate::host::restore_fold_exclusive(
                 slot,
+                &cmd.snapshot_header,
                 &cmd.snapshot_bytes,
                 &cmd.change_log_bytes,
                 errors,
@@ -98,15 +104,18 @@ fn restore_into_slot(
         } else {
             restore_typed_exclusive(slot, cmd, errors)
         };
-        match terminal {
-            Some(t) => {
+        match folded {
+            Some(outcome) => {
                 // The change log alone undercounts a snapshot-only restore:
                 // the controller's terminal covers the snapshot too.
-                let t = t.max(cmd.terminal_seq);
+                let t = outcome.terminal_seq.max(cmd.terminal_seq);
                 reseat_restored(slot, t, &cmd.change_log_bytes);
-                t
+                RestoreOutcome {
+                    terminal_seq: t,
+                    migrated: outcome.migrated,
+                }
             }
-            None => 0,
+            None => RestoreOutcome::default(),
         }
     })
 }
@@ -115,7 +124,7 @@ fn restore_typed_exclusive(
     slot: &Arc<EntitySlot>,
     cmd: &RestoreInitState,
     errors: &mut Vec<String>,
-) -> Option<u64> {
+) -> Option<RestoreOutcome> {
     let mut guard = match slot.state.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -124,11 +133,12 @@ fn restore_typed_exclusive(
     match slot.dispatcher.restore_state(
         &mut guard,
         &mut timers,
+        &cmd.snapshot_header,
         &cmd.snapshot_bytes,
         &cmd.change_log_bytes,
         slot.entity_key.as_deref(),
     ) {
-        Ok(t) => Some(t),
+        Ok(outcome) => Some(outcome),
         Err(e) => {
             errors.push(format!("restore_init_state: apply failed: {e}"));
             None

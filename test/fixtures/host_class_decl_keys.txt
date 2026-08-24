@@ -9,7 +9,6 @@
 # Adding a key: teach the core, add it here, teach the Rust builder and the Java
 # builder — one change, every SDK (docs/architecture/runner.md).
 class.factory_id
-class.schema_version
 class.persistent
 class.sdk_lang
 class.change_format_id
@@ -42,6 +41,8 @@ procedure.entities_for_overridden
 procedure.compensate_overridden
 procedure.clock
 procedure.mailbox_capacity
+procedure.schema_version
+procedure.min_readable_schema_version
 workflow.loop_mode
 workflow.rollback_mode
 workflow.retry_attempts

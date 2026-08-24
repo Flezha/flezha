@@ -1034,8 +1034,13 @@ message RestoreInitState {
     bool   has_compensation_intent = 4;  // saga crash-resume markers
     bool   has_compensation_done = 5;
     uint64 terminal_seq = 6;             // highest seq the shipped state covers
+    bytes  snapshot_header = 7;          // the snapshot's stored 16-byte header
 }
-message RestoreInitStateResponse { bytes entity_id = 1; uint64 terminal_seq = 2; }
+message RestoreInitStateResponse {
+    bytes  entity_id = 1;
+    uint64 terminal_seq = 2;
+    bool   migrated = 3;                 // a record was read at an older schema version
+}
 ```
 
 Each record inside `change_log_bytes` uses the controller's on-disk WAL
@@ -1049,7 +1054,15 @@ framing, back to back:
 [crc32:  u32 BE]    <- crc32 over header + change_bytes
 ```
 
-The runner decodes `snapshot_bytes` (when non-empty) into `State`, folds the
+`snapshot_header` is the snapshot file's stored header, shipped rather than
+stripped: it carries the `schema_version` the snapshot was written at, and
+without it every compacted Entity is unverifiable. It is empty exactly when
+`snapshot_bytes` is empty.
+
+The runner resolves every record's header — the snapshot included — against
+the running Procedure's `schema_version` and `min_readable_schema_version`
+before decoding anything (see "Schema evolution" below), decodes
+`snapshot_bytes` (when non-empty) into `State`, folds the
 change-log records through the Procedure's `apply_change`, and re-arms the
 Entity's change seq to `max(change-log terminal, terminal_seq) + 1` — a
 snapshot-only restore (empty WAL tail after a compaction) has no record to
@@ -1061,6 +1074,36 @@ the next `entity_state_change` at `seq = terminal_seq + 1`. The proc-journal is
 **not** here — it is instance-scoped and rides `AddOperative.proc_journal`; a
 durable workflow class with no per-Entity state receives no `RestoreInitState`
 at all.
+
+#### Schema evolution
+
+A record's `schema_version` (header bytes 5..9) is the version of the
+Procedure that wrote it. Per record, against the running Procedure's
+`SCHEMA_VERSION` (`V`) and `MIN_READABLE_SCHEMA_VERSION` (`M`, defaulting to
+`V`):
+
+| stamped | outcome |
+|---|---|
+| `== V` | decode with the current codec |
+| `>= M` and `< V` | hand the bytes to the Procedure's migration for that version |
+| `< M` | refuse — the record predates what this build declares it reads |
+| `> V` | refuse — older code cannot read newer state; a downgrade, not an evolution |
+
+The decision is per record because one WAL legitimately holds both: records
+written before a deploy sit under records written after it. It is made in
+`flz_core` for every SDK, so a host-run Procedure receives only bodies it can
+decode at its own version or migrate from a named one, and a refusal never
+crosses to the host.
+
+When any record was migrated, the runner sets `migrated` on the response and
+the controller answers with the `CompactEntity` it already drives on WAL size
+and age: the next snapshot is written by the running version and the migration
+is paid once rather than on every restore.
+
+`schema_version` and `min_readable_schema_version` are declared **per
+procedure** in the class declaration (`procedures[].schema_version`), never
+class-wide — a class-wide value re-stamps a Procedure's records with a version
+it never declared.
 
 ### Control command `CompactEntity` (controller → runner)
 

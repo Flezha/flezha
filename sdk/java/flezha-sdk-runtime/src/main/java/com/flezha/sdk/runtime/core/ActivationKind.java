@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime.core;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import javax.annotation.Nonnull;
 
 /**
@@ -18,7 +19,16 @@ public sealed interface ActivationKind {
      * Discriminant 1 — fold a persisted change log into a live state; input
      * activations for the Entity are gated until this completes.
      */
-    record RestoreFold(@Nonnull Optional<byte[]> snapshot, @Nonnull List<byte[]> changes) implements ActivationKind {}
+    record RestoreFold(@Nonnull Optional<RestoreBody> snapshot, @Nonnull List<RestoreBody> changes)
+            implements ActivationKind {}
+
+    /**
+     * One host-encoded body the core hands across for a restore. The core has
+     * already refused everything unreadable, so a body either decodes at the
+     * running schema version ({@code fromVersion} empty) or migrates from the
+     * named one — the host never has to decide.
+     */
+    record RestoreBody(@Nonnull byte[] bytes, @Nonnull OptionalInt fromVersion) {}
 
     /**
      * Discriminant 2 — encode the current state for compaction. The core

@@ -133,6 +133,16 @@ pub struct HostProcedureDecl {
     pub clock: HostClock,
     #[serde(default = "default_mailbox_capacity")]
     pub mailbox_capacity: usize,
+    /// Stamped into every durable record this procedure writes (header byte
+    /// 5..9). Per procedure: a class-wide value re-stamps a procedure's
+    /// records with a version it never declared.
+    #[serde(default = "default_decl_schema_version")]
+    pub schema_version: u32,
+    /// The oldest `schema_version` this procedure can still read. Defaults to
+    /// its own `schema_version` — "reads only what it wrote". Below it, the
+    /// host declares migrations for every version in between.
+    #[serde(default)]
+    pub min_readable_schema_version: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
@@ -156,9 +166,6 @@ fn default_clock() -> HostClock {
 #[serde(deny_unknown_fields)]
 pub struct HostClassDecl {
     pub factory_id: String,
-    /// Stamped into every durable record header (byte 5..9).
-    #[serde(default = "default_decl_schema_version")]
-    pub schema_version: u32,
     /// Whether change bytes in completions are flushed to the controller's
     /// per-Entity WAL. When false they are dropped (stateless class).
     #[serde(default)]
@@ -549,7 +556,6 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
     }
 
     let factory_id: &'static str = Box::leak(decl.factory_id.clone().into_boxed_str());
-    let schema_version = decl.schema_version;
     let persistent = decl.persistent;
     let sync_durability = decl.sync_durability;
     let correction = decl.correction_window_ms.map(|window_ms| CorrectionPolicy {
@@ -682,7 +688,10 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             name: proc_name,
             factory: factory_id,
             retry,
-            schema_version,
+            schema_version: proc_decl.schema_version,
+            min_readable_schema_version: proc_decl
+                .min_readable_schema_version
+                .unwrap_or(proc_decl.schema_version),
             persistent,
             effectively_once: decl.effectively_once,
             checkpoint: checkpoint_policy,
@@ -940,7 +949,12 @@ pub struct HostProcedureFacts {
     /// The declaring class — stamped on every activation for this procedure.
     pub factory: &'static str,
     pub retry: RetryPolicy,
+    /// Stamped into this procedure's durable records; per procedure, never a
+    /// class-wide maximum.
     pub schema_version: u32,
+    /// The oldest stamped version this procedure still reads; equal to
+    /// `schema_version` unless the host declares migrations.
+    pub min_readable_schema_version: u32,
     pub persistent: bool,
     /// Effectively-once tier: completions produce effect records (changes +
     /// outputs + consumed offset in ONE durable record) instead of plain
@@ -1198,10 +1212,11 @@ impl ProcedureDispatcher for HostDispatcher {
         &self,
         _state: &mut Box<dyn Any + Send>,
         _timers: &mut PendingTimers,
+        _snapshot_header: &[u8],
         _snapshot_bytes: &[u8],
         _change_log_bytes: &[u8],
         _entity_key: Option<&str>,
-    ) -> Result<u64, crate::header::RestoreError> {
+    ) -> Result<crate::restore::RestoreOutcome, crate::header::RestoreError> {
         Err(crate::header::RestoreError::SnapshotDecode(
             "host-held state: restore reaches the host through its RestoreFold \
              activation (`restore_fold_exclusive`), never this in-process seam"
@@ -2246,70 +2261,109 @@ fn finish_crossing(
 }
 
 /// Restore a host-run Entity: split the persisted records into what the core
-/// owns (cursors, timer ops — folded here) and what only the host can decode
-/// (its own change bodies — crossed as a [`schema::RestoreFold`] activation).
-/// Runs under the entity gate; returns the terminal WAL seq, or `None` with
-/// the failure recorded in `errors`.
+/// owns (cursors, timer ops, the schema decision — resolved here) and what only
+/// the host can decode (its own change bodies — crossed as a
+/// [`schema::RestoreFold`] activation). Runs under the entity gate; returns the
+/// terminal WAL seq and whether anything migrated, or `None` with the failure
+/// recorded in `errors`.
+///
+/// The version decision is the core's, not the host's: a host SDK receives only
+/// bodies it can decode at its own version or migrate from a named one. That is
+/// what gives every FFI SDK the guard the typed path has, rather than each
+/// reimplementing a table it can get subtly wrong.
+/// A refusal from the core is the restore's failure, reported by name — the
+/// host never sees the record.
+fn note_error<T>(
+    result: Result<T, crate::header::RestoreError>,
+    errors: &mut Vec<String>,
+) -> Option<T> {
+    result
+        .map_err(|e| errors.push(format!("restore_init_state: {e}")))
+        .ok()
+}
+
+/// The host's sink: change bodies are collected verbatim for the crossing,
+/// tagged with the version the host must migrate them from. Timers are the
+/// core's own concern and fold here.
+#[derive(Default)]
+struct HostSink {
+    changes: Vec<schema::RestoreBody>,
+    timers: PendingTimers,
+}
+
+impl crate::restore::ChangeLogSink for HostSink {
+    fn change(
+        &mut self,
+        decision: crate::header::SchemaDecision,
+        bytes: &[u8],
+    ) -> Result<(), crate::header::RestoreError> {
+        self.changes.push(schema::RestoreBody {
+            bytes: bytes.to_vec(),
+            from_version: from_version(decision),
+        });
+        Ok(())
+    }
+
+    fn timers(&mut self, ops: &[TimerOp]) {
+        for op in ops {
+            self.timers.apply(op);
+        }
+    }
+}
+
+/// The version tag a body crosses with: absent when the host decodes it at its
+/// own version.
+fn from_version(decision: crate::header::SchemaDecision) -> Option<u32> {
+    match decision {
+        crate::header::SchemaDecision::Decode => None,
+        crate::header::SchemaDecision::Migrate { from_version } => Some(from_version),
+    }
+}
+
 pub fn restore_fold_exclusive(
     slot: &Arc<EntitySlot>,
+    snapshot_header: &[u8],
     snapshot_bytes: &[u8],
     change_log_bytes: &[u8],
     errors: &mut Vec<String>,
-) -> Option<u64> {
-    let mut changes: Vec<Vec<u8>> = Vec::new();
-    let mut pending = PendingTimers::default();
-    let mut terminal = 0u64;
-    for record in crate::restore::iter_change_log_records(change_log_bytes) {
-        let record = match record {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push(format!("restore_init_state: change_log decode error: {e}"));
-                return None;
-            }
-        };
-        terminal = terminal.max(record.seq);
-        match record.header.get(9) {
-            Some(&crate::header::FORMAT_ID_EFFECT_RECORD) => {
-                match postcard::from_bytes::<crate::flusher::EffectRecordBody>(record.change_bytes)
-                {
-                    Ok(body) => {
-                        changes.extend(body.changes);
-                        for op in &body.timers {
-                            pending.apply(op);
-                        }
-                    }
-                    Err(e) => {
-                        errors.push(format!(
-                            "restore_init_state: effect record decode error: {e}"
-                        ));
-                        return None;
-                    }
-                }
-            }
-            Some(&crate::header::FORMAT_ID_TIMER_OPS) => {
-                match postcard::from_bytes::<Vec<TimerOp>>(record.change_bytes) {
-                    Ok(ops) => {
-                        for op in &ops {
-                            pending.apply(op);
-                        }
-                    }
-                    Err(e) => {
-                        errors.push(format!("restore_init_state: timer ops decode error: {e}"));
-                        return None;
-                    }
-                }
-            }
-            _ => changes.push(record.change_bytes.to_vec()),
-        }
-    }
+) -> Option<crate::restore::RestoreOutcome> {
+    let facts = slot.dispatcher.host_facts()?;
+    let expected = facts.header();
+    let min_readable = facts.min_readable_schema_version;
+
+    let mut sink = HostSink::default();
+    let summary = note_error(
+        crate::restore::fold_change_log(change_log_bytes, &expected, min_readable, &mut sink),
+        errors,
+    )?;
+    let mut migrated = summary.migrated;
+
+    let snapshot = if snapshot_bytes.is_empty() {
+        None
+    } else {
+        let decision = note_error(
+            crate::header::decode_header(snapshot_header)
+                .and_then(|h| crate::header::resolve_state(&h, &expected, min_readable)),
+            errors,
+        )?;
+        migrated |= decision.migrating();
+        Some(schema::RestoreBody {
+            bytes: snapshot_bytes.to_vec(),
+            from_version: from_version(decision),
+        })
+    };
+
     let fold = schema::RestoreFold {
-        snapshot: (!snapshot_bytes.is_empty()).then(|| snapshot_bytes.to_vec()),
-        changes,
+        snapshot,
+        changes: sink.changes,
     };
     match crate::poll_core::global().host_command(slot, schema::ActivationKind::RestoreFold(fold)) {
         Ok(schema::ActivationOutcome::Restored) => {
-            *slot.timers.lock_recover() = pending;
-            Some(terminal)
+            *slot.timers.lock_recover() = sink.timers;
+            Some(crate::restore::RestoreOutcome {
+                terminal_seq: summary.terminal_seq,
+                migrated,
+            })
         }
         Ok(schema::ActivationOutcome::Failed(err)) => {
             errors.push(format!(
@@ -2701,8 +2755,10 @@ mod declaration_key_tests {
         let value = |section: &str, key: &str| -> &'static str {
             match (section, key) {
                 (_, "factory_id") | (_, "name") => r#""pinned_decl""#,
-                ("class", "schema_version") => "1",
                 ("class", "sdk_lang") | ("class", "change_format_id") => "1",
+                ("procedure", "schema_version") | ("procedure", "min_readable_schema_version") => {
+                    "1"
+                }
                 ("class", "ack_granularity") => r#""checkpoint""#,
                 ("class", "checkpoint_outputs") => r#""at_checkpoint""#,
                 ("class", "beyond_window_policy") => r#""drop""#,

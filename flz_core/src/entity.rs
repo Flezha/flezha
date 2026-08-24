@@ -514,21 +514,25 @@ pub trait ProcedureDispatcher: Send + Sync + 'static {
 
     /// Warm-restart: rebuild the type-erased entity `state` in place from a
     /// persisted `RestoreInitState` payload (snapshot + WAL change-log),
-    /// returning the terminal seq applied. Type-erased entry point so the
+    /// returning the terminal seq applied and whether any record was read
+    /// through a migration. Type-erased entry point so the
     /// control-channel `RestoreInitState` handler — which has no `S` — can
     /// re-seed a live entity after a runner restart. Mirrors the
     /// downcast pattern used by `dispatch`.
     /// `timers` is rebuilt in place from the same change log: the pending set
     /// is folded state, so it comes back through the fold rather than through
     /// a side-file of its own.
+    /// `snapshot_header` is the snapshot's stored 16-byte header; it carries
+    /// the schema version the snapshot was written at.
     fn restore_state(
         &self,
         state: &mut Box<dyn Any + Send>,
         timers: &mut crate::timer::PendingTimers,
+        snapshot_header: &[u8],
         snapshot_bytes: &[u8],
         change_log_bytes: &[u8],
         entity_key: Option<&str>,
-    ) -> Result<u64, crate::restore::RestoreError>;
+    ) -> Result<crate::restore::RestoreOutcome, crate::restore::RestoreError>;
 
     /// Compaction: serialize the type-erased entity `state` into a
     /// `entity_state_snapshot` wire frame the restore path decodes. Drains any

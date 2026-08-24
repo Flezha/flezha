@@ -352,7 +352,11 @@ fn c_abi_full_scenario() {
             {"name": "ein", "kind": "entry", "consumers": [0]},
             {"name": "eout", "kind": "plugin", "producer": 0, "keyed": true}
         ],
-        "procedures": [{"name": "eff_pass"}]
+        "procedures": [{
+            "name": "eff_pass",
+            "schema_version": 2,
+            "min_readable_schema_version": 1
+        }]
     }"#;
     assert_eq!(
         unsafe { flz_core_declare_class(ctx, decl.as_ptr(), decl.len()) },
@@ -377,18 +381,21 @@ fn c_abi_full_scenario() {
     });
 
     // On-disk WAL records: seq 1 a plain (host-codec) change, seq 2 an
-    // effect record whose consumed offset seeds the floor.
-    let header_for = |format_id: u8, body: &[u8]| {
+    // effect record whose consumed offset seeds the floor. The class runs at
+    // schema_version 2 reading down to 1, so the snapshot below (stamped 1)
+    // crosses tagged for migration while these records (stamped 2) cross to be
+    // decoded — both arms of the decision, in one restore.
+    let header_for = |format_id: u8, schema_version: u32, body: &[u8]| {
         flz_core::header::HeaderTemplate {
             sdk_lang: 2,
             sdk_version: 0,
-            schema_version: 1,
+            schema_version,
             format_id,
         }
         .stamp(body)
     };
     let record = |seq: u64, format_id: u8, body: &[u8]| {
-        let header = header_for(format_id, body);
+        let header = header_for(format_id, 2, body);
         let mut framed = Vec::new();
         framed.extend_from_slice(&seq.to_be_bytes());
         framed.extend_from_slice(&((16 + body.len()) as u32).to_be_bytes());
@@ -421,6 +428,7 @@ fn c_abi_full_scenario() {
         flz_core::pb::command_request::Command::RestoreInitState(flz_core::pb::RestoreInitState {
             entity_id: entity_id.clone(),
             snapshot_bytes: vec![0x5A],
+            snapshot_header: header_for(4, 1, &[0x5A]).to_vec(),
             change_log_bytes: change_log,
             ..Default::default()
         }),
@@ -432,10 +440,26 @@ fn c_abi_full_scenario() {
     let schema::ActivationKind::RestoreFold(fold) = &act.kind else {
         panic!("expected a restore fold, got {:?}", act.kind);
     };
-    assert_eq!(fold.snapshot.as_deref(), Some(&[0x5A][..]));
+    assert_eq!(
+        fold.snapshot,
+        Some(flz_core::schema::RestoreBody {
+            bytes: vec![0x5A],
+            from_version: Some(1),
+        }),
+        "a snapshot from an older version crosses tagged with that version"
+    );
     assert_eq!(
         fold.changes,
-        vec![vec![0xC1], vec![0xC2]],
+        vec![
+            flz_core::schema::RestoreBody {
+                bytes: vec![0xC1],
+                from_version: None,
+            },
+            flz_core::schema::RestoreBody {
+                bytes: vec![0xC2],
+                from_version: None,
+            },
+        ],
         "plain bodies verbatim, effect records unwrapped to their host changes"
     );
     abi_complete(

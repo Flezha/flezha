@@ -138,11 +138,6 @@ public final class HostClassDeclaration {
     private static Map<String, Object> base(String factoryId, StreamOperativeTopology topology) {
         Map<String, Object> decl = new LinkedHashMap<>();
         decl.put("factory_id", factoryId);
-        int schemaVersion = topology.procedures().stream()
-                .mapToInt(ProcedureDescriptor::schemaVersion)
-                .max()
-                .orElse(1);
-        decl.put("schema_version", schemaVersion);
         decl.put("sdk_lang", SDK_LANG_JAVA);
         decl.put("change_format_id", FORMAT_ID_KRYO);
         return decl;
@@ -207,6 +202,11 @@ public final class HostClassDeclaration {
             }
             p.put("clock", clockOf(desc.clockType()));
             p.put("mailbox_capacity", desc.mailboxCapacity());
+            // Per Procedure, never a class-wide maximum: one Procedure's bump
+            // would otherwise re-stamp its siblings' records with a version
+            // they never declared.
+            p.put("schema_version", desc.schemaVersion());
+            p.put("min_readable_schema_version", desc.minReadableSchemaVersion());
             out.add(p);
         }
         return out;

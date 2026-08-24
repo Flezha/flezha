@@ -7,6 +7,7 @@ import com.flezha.sdk.state.TimerKind;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.OptionalLong;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -82,8 +83,14 @@ class ActivationCodecTest {
         List<Map.Entry<ActivationKind, String>> kinds = List.of(
                 Map.entry(
                         new ActivationKind.RestoreFold(
-                                Optional.of(new byte[] {0x0F}), List.of(new byte[] {0x01}, new byte[] {0x02})),
-                        "0101010f0201010102000166"),
+                                Optional.of(new ActivationKind.RestoreBody(new byte[] {0x0F}, OptionalInt.empty())),
+                                List.of(
+                                        new ActivationKind.RestoreBody(new byte[] {0x01}, OptionalInt.empty()),
+                                        // A body the host must migrate: pinned
+                                        // so the tagged shape stays byte-identical
+                                        // to the core's.
+                                        new ActivationKind.RestoreBody(new byte[] {0x02}, OptionalInt.of(1)))),
+                        "0101010f000201010001020101000166"),
                 Map.entry(new ActivationKind.SnapshotRequest(), "02000166"),
                 Map.entry(new ActivationKind.LiveStateRead(), "03000166"),
                 Map.entry(new ActivationKind.ApplyState("{}".getBytes()), "04027b7d000166"),

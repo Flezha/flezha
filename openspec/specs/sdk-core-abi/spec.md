@@ -92,3 +92,30 @@ required surface is missing.
 #### Scenario: The Java shim is a consumer, not a fork
 - **WHEN** the Java SDK's JNI bridge is compared against the ABI's exported symbol set
 - **THEN** it SHALL call only `flz_core_ffi` entry points — any Java-reachable kernel capability that bypasses the ABI is a defect of this capability
+
+### Requirement: The restore crossing carries each record's stamped schema version
+
+The host restore activation SHALL carry, for the snapshot and for every change
+body it crosses, the schema version stamped in that record's header. A host SDK
+SHALL NOT be required to parse the 16-byte header itself to learn it.
+
+The core SHALL resolve the version decision (decode / migrate / refuse) before
+crossing, so a host SDK receives only items it is expected to decode at its own
+version or to migrate from a named `from_version`. A refusal SHALL be produced
+by the core and SHALL NOT cross.
+
+The class declaration SHALL carry `schema_version` and
+`min_readable_schema_version` per Procedure, not per class.
+
+#### Scenario: a host receives the version it must migrate from
+
+- **GIVEN** a host-run Procedure declaring `schema_version = 2` and `min_readable_schema_version = 1`
+- **WHEN** a restore payload carries a snapshot stamped version 1
+- **THEN** the crossing SHALL present the snapshot bytes tagged `from_version = 1`, and the host SHALL decode them with its version-1 migration rather than its current codec
+
+#### Scenario: an unreadable record never reaches the host
+
+- **GIVEN** a host-run Procedure declaring `schema_version = 2` and `min_readable_schema_version = 2`
+- **WHEN** a restore payload carries a record stamped version 1
+- **THEN** the core SHALL fail the restore with a schema error and SHALL NOT cross the record to the host
+

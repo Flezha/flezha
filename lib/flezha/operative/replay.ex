@@ -159,10 +159,20 @@ defmodule Flezha.Operative.Replay do
       _ = ProcJournal.flush_pending(operative_class, overwatch)
     end
 
-    Enum.each(restorable_entities(kind, operative_class), fn entity_id ->
-      _ = Commands.dispatch_restore_init_state(runner_id, entity_id)
-    end)
+    # Awaited, not fire-and-forget: the reply carries whether the SDK had to
+    # migrate records from an older schema version, and the controller answers
+    # that with a compaction. This already runs off-process (the enumeration
+    # does blocking disk reads) and Entities are independent, so the awaits run
+    # concurrently rather than serialising a large rebind.
+    Flezha.Parallel.each(
+      restorable_entities(kind, operative_class),
+      fn entity_id -> Commands.await_restore_init_state(runner_id, entity_id) end,
+      max_concurrency: restore_concurrency()
+    )
   end
+
+  defp restore_concurrency,
+    do: Application.get_env(:flezha, :bind_restore_concurrency, 16)
 
   # Persisted, restorable Entities of this class — empty when the kind/class
   # combination has no persistent state.

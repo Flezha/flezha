@@ -166,9 +166,63 @@ public interface Procedure<
         return 8L * 1024 * 1024;
     }
 
-    /** Schema version for additive Change evolution. Default: 1. */
+    /**
+     * Per-Procedure schema version stamped into every persisted record this
+     * Procedure writes — change records and state snapshots alike. Default: 1.
+     *
+     * <p>Bump it on any non-additive edit to the State <b>or</b> the Change
+     * type. Kryo encodes them positionally, so reordering fields, removing one,
+     * or changing a field's type is not a compatibility question the codec can
+     * answer. The version turns that into a decision instead of a silent
+     * corruption.
+     *
+     * <p>A bump alone refuses the old records. Declare
+     * {@link #minReadableSchemaVersion()} and the migration hooks to read them.
+     */
     default int schemaVersion() {
         return 1;
+    }
+
+    /**
+     * The oldest {@link #schemaVersion()} whose persisted records this
+     * Procedure can still read. Defaults to its own version — "reads only what
+     * it wrote".
+     *
+     * <p>Lowering it is a promise that {@link #migrateState} and
+     * {@link #migrateChange} handle every version in between. A record below
+     * the floor, and any record stamped above {@link #schemaVersion()} (older
+     * code meeting newer state), is refused rather than guessed at.
+     */
+    default int minReadableSchemaVersion() {
+        return schemaVersion();
+    }
+
+    /**
+     * Rebuild the State from a snapshot written at an older schema version.
+     * Invoked only for records between {@link #minReadableSchemaVersion()} and
+     * {@link #schemaVersion()}; {@code bytes} is the snapshot body exactly as
+     * that version wrote it.
+     *
+     * <p>Keep the old type in your own source and decode it here — the runtime
+     * cannot know a type that no longer exists in this build. Must be
+     * deterministic: crash-resume, retry-replay and rewind all re-enter the
+     * restore fold.
+     */
+    @Nonnull
+    default State migrateState(int fromVersion, @Nonnull byte[] bytes) {
+        throw new IllegalStateException(
+                "procedure `" + name() + "` declares no state migration from schema_version " + fromVersion);
+    }
+
+    /**
+     * Rebuild a Change from a record written at an older schema version. Same
+     * contract as {@link #migrateState}; a WAL legitimately holds records from
+     * more than one version, so this is invoked per record.
+     */
+    @Nonnull
+    default ChangeT migrateChange(int fromVersion, @Nonnull byte[] bytes) {
+        throw new IllegalStateException(
+                "procedure `" + name() + "` declares no change migration from schema_version " + fromVersion);
     }
 
     /**

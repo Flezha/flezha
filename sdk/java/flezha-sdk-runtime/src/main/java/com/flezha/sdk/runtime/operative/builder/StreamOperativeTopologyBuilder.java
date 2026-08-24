@@ -448,6 +448,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
                     entry.configType,
                     entry.kryoTypes,
                     entry.schemaVersion,
+                    entry.minReadableSchemaVersion,
                     entry.compactAfterBytes,
                     resolvedCapacities[i],
                     entry.mailboxCapacityOverridden,
@@ -560,6 +561,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         entry.configType = probe.configType();
         entry.kryoTypes = List.copyOf(probe.kryoTypes());
         entry.schemaVersion = probe.schemaVersion();
+        entry.minReadableSchemaVersion = probe.minReadableSchemaVersion();
         entry.compactAfterBytes = probe.compactAfterBytes();
         entry.mailboxCapacityDeclared = probe.mailboxCapacity();
         entry.mailboxCapacityOverridden = probe.mailboxCapacityOverridden();
@@ -928,6 +930,7 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         Class<?> configType;
         List<Class<?>> kryoTypes;
         int schemaVersion;
+        int minReadableSchemaVersion;
         long compactAfterBytes;
         Integer inputChannelId;
         Integer outputChannelId;

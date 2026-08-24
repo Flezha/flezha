@@ -148,6 +148,67 @@ named fields and at least one field; every field type must be
 cloneable/serializable (Rust derives `Clone` + serde on the generated enum), so
 a field that is not fails to compile and the author hand-writes a `Change`.
 
+### 3.0 Changing a State or Change type after it has been deployed
+
+The persisted encodings are **positional and not self-describing** (postcard in
+Rust, Kryo in Java). Reordering fields, removing one, or changing a field's
+type is not a compatibility question the codec can answer: last version's bytes
+either run out mid-decode or land in the wrong fields. So the rule is:
+
+> **Bump `SCHEMA_VERSION` on any non-additive edit to the Procedure's `State`
+> or its `Change` type** — not to the `Change` type alone.
+
+The version is stamped in every record's 16-byte header, and every restore
+resolves it before decoding anything (`docs/sdk/protocol_spec.md` → "Schema
+evolution"). A bump alone is fail-closed: the old records are refused, loudly,
+by name. To *read* them, declare how far back you read and how:
+
+| | Rust | Java |
+|---|---|---|
+| version | `const SCHEMA_VERSION: u32` | `int schemaVersion()` |
+| readable floor | `const MIN_READABLE_SCHEMA_VERSION: u32` | `int minReadableSchemaVersion()` |
+| state migration | `fn migrate_state(from_version, bytes)` | `State migrateState(int, byte[])` |
+| change migration | `fn migrate_change(from_version, bytes)` | `ChangeT migrateChange(int, byte[])` |
+
+Both migrations default to refusing, so declaring a floor without implementing
+them fails at the first affected record rather than guessing. Keep the old type
+in your own source and decode it inside the migration — the runtime cannot know
+a type that no longer exists in this build. Rust re-exports the codec it wrote
+the bytes with as `flezha_runner::state::postcard`; Java constructs a
+`KryoCodec` over **the old version's type list, in the old order** (Kryo ids are
+positional).
+
+```rust
+const SCHEMA_VERSION: u32 = 2;
+const MIN_READABLE_SCHEMA_VERSION: u32 = 1;
+
+fn migrate_state(from_version: u32, bytes: &[u8]) -> Result<Cart, String> {
+    match from_version {
+        1 => {
+            #[derive(serde::Deserialize)]
+            struct CartV1 { items: u32 }
+            let old: CartV1 = postcard::from_bytes(bytes).map_err(|e| e.to_string())?;
+            Ok(Cart { items: old.items, currency: "EUR".into() })
+        }
+        v => Err(format!("no migration from {v}")),
+    }
+}
+```
+
+A migration is subject to the determinism contract (§3.3): crash-resume,
+retry-replay and rewind all re-enter the restore fold, so the same bytes must
+produce the same value every time. Prove it without a controller — the test
+harness restores from a payload stamped at the older version
+(`ProcedureTestHarness::with_payload`, `sdk/rust/tests/state_evolution.rs`).
+
+Two refusals are not migrations and cannot be made into them: a record older
+than your declared floor, and a record from a version **newer** than the one
+running (a downgrade — older code meeting newer state). Rolling a deploy back
+past a schema bump means restoring the pre-deploy snapshot.
+
+The reference fixtures are `schema_evolution_v1` / `schema_evolution_v2` in the
+Rust and Java test apps, driven by `test/system/schema_evolution_e2e_test.exs`.
+
 ### 3.1 Keyed and collection state journaling
 
 A map field annotated `#[journal(...)]` (Rust) / `@Journal(...)` (Java) opts

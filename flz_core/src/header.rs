@@ -22,8 +22,18 @@ pub enum RestoreError {
     HeaderInvalid,
     #[error("sdk_lang mismatch: expected {expected}, found {found}")]
     LangMismatch { expected: u8, found: u8 },
-    #[error("schema_version mismatch: expected {expected}, found {found}")]
-    SchemaMismatch { expected: u32, found: u32 },
+    #[error(
+        "record stamped schema_version {found} is below the readable floor \
+         {min_readable} the running procedure declares"
+    )]
+    SchemaTooOld { found: u32, min_readable: u32 },
+    #[error(
+        "record stamped schema_version {found} is above the running procedure's \
+         {running}: older code cannot read newer state"
+    )]
+    SchemaFromTheFuture { found: u32, running: u32 },
+    #[error("no migration from schema_version {from_version}: {reason}")]
+    MigrationFailed { from_version: u32, reason: String },
     #[error("crc32 mismatch on change record (entity={entity}, seq={seq})")]
     CrcMismatch { entity: u32, seq: u64 },
 }
@@ -96,8 +106,8 @@ impl HeaderTemplate {
     }
 }
 
-/// Decode a 16-byte header into its fields. Validation against the running
-/// class's expectations lives in the `validate_header_for_*` helpers so the
+/// Decode a 16-byte header into its fields. Resolution against the running
+/// procedure's expectations lives in the `resolve_header_for_*` helpers so the
 /// caller sees a typed error.
 pub fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, RestoreError> {
     if bytes.len() < 16 {
@@ -115,75 +125,115 @@ pub fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, RestoreError> {
     })
 }
 
-/// Validate a header about to be applied to a state snapshot. Same
-/// language + schema-version checks as for change records.
-pub fn validate_header_for_state(
-    header: &DecodedHeader,
-    expected_schema_version: u32,
-) -> Result<(), RestoreError> {
-    validate_common(header, expected_schema_version)
+/// What a record's stamped `schema_version` means to the procedure now
+/// running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaDecision {
+    /// Stamped at the running version: decode with the current codec.
+    Decode,
+    /// Stamped older, and at or above the declared readable floor: the bytes
+    /// belong to the procedure's migration for `from_version`.
+    Migrate { from_version: u32 },
 }
 
-/// Validate a header attached to a change-log record before
-/// deserialization.
-pub fn validate_header_for_change(
-    header: &DecodedHeader,
-    expected_schema_version: u32,
-) -> Result<(), RestoreError> {
-    validate_common(header, expected_schema_version)
+impl SchemaDecision {
+    /// Whether this record reaches the author's migration rather than the
+    /// current codec — what a restore reports back so the controller compacts.
+    pub fn migrating(self) -> bool {
+        matches!(self, Self::Migrate { .. })
+    }
 }
 
-/// Validate a header attached to an effect record (effectively-once tier):
-/// same language + schema checks, `format_id = 2`.
-pub fn validate_header_for_effect_record(
+/// The one place a stamped schema version is resolved against the procedure
+/// reading it. `running` is its `SCHEMA_VERSION`, `min_readable` its
+/// `MIN_READABLE_SCHEMA_VERSION`.
+///
+/// A floor above `running` reads nothing but the running version — the
+/// fail-closed reading of a contradictory declaration.
+pub fn decide_schema(
+    stamped: u32,
+    running: u32,
+    min_readable: u32,
+) -> Result<SchemaDecision, RestoreError> {
+    if stamped == running {
+        return Ok(SchemaDecision::Decode);
+    }
+    if stamped > running {
+        return Err(RestoreError::SchemaFromTheFuture {
+            found: stamped,
+            running,
+        });
+    }
+    if stamped < min_readable {
+        return Err(RestoreError::SchemaTooOld {
+            found: stamped,
+            min_readable,
+        });
+    }
+    Ok(SchemaDecision::Migrate {
+        from_version: stamped,
+    })
+}
+
+/// Which record a WAL entry is. The format byte says it, read against the
+/// running procedure's declared change format (postcard for Rust, Kryo for
+/// Java) — effect records and timer ops are the runtime's own shapes and carry
+/// their own ids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordKind {
+    /// The author's own `Change` body.
+    Change,
+    /// Effectively-once effect record: changes + outputs + consumed offset.
+    EffectRecord,
+    /// A mutation of the pending-timer set.
+    TimerOps,
+}
+
+/// Classify and resolve one WAL record's header in a single step: the format
+/// byte says which record this is, the schema version says what to do with its
+/// body. Both restore folds go through here, so neither re-derives the kind
+/// from the byte it just matched on, and an unknown format is refused once.
+pub fn resolve_record(
     header: &DecodedHeader,
-    expected_schema_version: u32,
-) -> Result<(), RestoreError> {
-    if header.format_id != FORMAT_ID_EFFECT_RECORD {
+    expected: &HeaderTemplate,
+    min_readable: u32,
+) -> Result<(RecordKind, SchemaDecision), RestoreError> {
+    let kind = match header.format_id {
+        FORMAT_ID_EFFECT_RECORD => RecordKind::EffectRecord,
+        FORMAT_ID_TIMER_OPS => RecordKind::TimerOps,
+        id if id == expected.format_id => RecordKind::Change,
+        _ => return Err(RestoreError::HeaderInvalid),
+    };
+    Ok((kind, resolve_version(header, expected, min_readable)?))
+}
+
+/// Resolve the header of a state snapshot. A snapshot has no kind of its own:
+/// it is the running procedure's state, in the format that procedure declares.
+pub fn resolve_state(
+    header: &DecodedHeader,
+    expected: &HeaderTemplate,
+    min_readable: u32,
+) -> Result<SchemaDecision, RestoreError> {
+    if header.format_id != expected.format_id {
         return Err(RestoreError::HeaderInvalid);
     }
-    validate_lang_and_schema(header, expected_schema_version)
+    resolve_version(header, expected, min_readable)
 }
 
-/// Validate a header attached to a timer-ops record: same language + schema
-/// checks, `format_id = 3`.
-pub fn validate_header_for_timer_ops(
+/// Language first, then version: a record from another SDK is not a schema
+/// question at all.
+fn resolve_version(
     header: &DecodedHeader,
-    expected_schema_version: u32,
-) -> Result<(), RestoreError> {
-    if header.format_id != FORMAT_ID_TIMER_OPS {
-        return Err(RestoreError::HeaderInvalid);
-    }
-    validate_lang_and_schema(header, expected_schema_version)
-}
-
-fn validate_common(
-    header: &DecodedHeader,
-    expected_schema_version: u32,
-) -> Result<(), RestoreError> {
-    if header.format_id != FORMAT_ID_POSTCARD {
-        return Err(RestoreError::HeaderInvalid);
-    }
-    validate_lang_and_schema(header, expected_schema_version)
-}
-
-fn validate_lang_and_schema(
-    header: &DecodedHeader,
-    expected_schema_version: u32,
-) -> Result<(), RestoreError> {
-    if header.sdk_lang != SDK_LANG_RUST {
+    expected: &HeaderTemplate,
+    min_readable: u32,
+) -> Result<SchemaDecision, RestoreError> {
+    if header.sdk_lang != expected.sdk_lang {
         return Err(RestoreError::LangMismatch {
-            expected: SDK_LANG_RUST,
+            expected: expected.sdk_lang,
             found: header.sdk_lang,
         });
     }
-    if header.schema_version != expected_schema_version {
-        return Err(RestoreError::SchemaMismatch {
-            expected: expected_schema_version,
-            found: header.schema_version,
-        });
-    }
-    Ok(())
+    decide_schema(header.schema_version, expected.schema_version, min_readable)
 }
 
 /// Parse `CARGO_PKG_VERSION` into the `(major << 16) | (minor << 8) | patch`
@@ -239,6 +289,154 @@ mod tests {
         assert_eq!(decoded.schema_version, 7);
         assert_eq!(decoded.format_id, FORMAT_ID_POSTCARD);
         assert_eq!(decoded.crc32, crc32fast::hash(b"hello"));
+    }
+
+    /// The four arms of the decision table, which is the whole of what a
+    /// restore is allowed to conclude from a stamped version.
+    #[test]
+    fn equal_versions_decode_directly() {
+        assert_eq!(decide_schema(2, 2, 1).unwrap(), SchemaDecision::Decode);
+    }
+
+    #[test]
+    fn an_older_version_at_or_above_the_floor_migrates() {
+        assert_eq!(
+            decide_schema(1, 3, 1).unwrap(),
+            SchemaDecision::Migrate { from_version: 1 }
+        );
+        assert_eq!(
+            decide_schema(2, 3, 1).unwrap(),
+            SchemaDecision::Migrate { from_version: 2 }
+        );
+    }
+
+    #[test]
+    fn a_version_below_the_floor_is_refused() {
+        let err = decide_schema(1, 4, 3).unwrap_err();
+        assert!(matches!(
+            err,
+            RestoreError::SchemaTooOld {
+                found: 1,
+                min_readable: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn a_version_above_the_running_one_is_refused_and_never_migrates() {
+        let err = decide_schema(3, 2, 1).unwrap_err();
+        assert!(matches!(
+            err,
+            RestoreError::SchemaFromTheFuture {
+                found: 3,
+                running: 2
+            }
+        ));
+    }
+
+    /// A floor above the running version is a contradictory declaration; it
+    /// must read the running version and nothing else, never widen.
+    #[test]
+    fn a_floor_above_the_running_version_reads_only_the_running_one() {
+        assert_eq!(decide_schema(2, 2, 5).unwrap(), SchemaDecision::Decode);
+        assert!(matches!(
+            decide_schema(1, 2, 5).unwrap_err(),
+            RestoreError::SchemaTooOld { .. }
+        ));
+    }
+
+    /// The resolvers claim the format the running procedure declares, so a
+    /// Kryo-stamped record resolves for a Kryo class and not for a postcard
+    /// one.
+    #[test]
+    fn the_expected_format_comes_from_the_running_procedure() {
+        let kryo = HeaderTemplate {
+            sdk_lang: 2,
+            sdk_version: 1,
+            schema_version: 1,
+            format_id: 4,
+        };
+        let stamped = decode_header(&kryo.stamp(b"body")).unwrap();
+        assert_eq!(
+            resolve_record(&stamped, &kryo, 1).unwrap(),
+            (RecordKind::Change, SchemaDecision::Decode)
+        );
+
+        let postcard = HeaderTemplate::new(1, 1);
+        assert!(matches!(
+            resolve_record(&stamped, &postcard, 1).unwrap_err(),
+            RestoreError::HeaderInvalid
+        ));
+    }
+
+    #[test]
+    fn a_foreign_language_byte_is_refused_before_the_version_is_read() {
+        let java = HeaderTemplate {
+            sdk_lang: 2,
+            sdk_version: 1,
+            schema_version: 9,
+            format_id: FORMAT_ID_POSTCARD,
+        };
+        let stamped = decode_header(&java.stamp(b"body")).unwrap();
+        let rust = HeaderTemplate::new(1, 1);
+        assert!(matches!(
+            resolve_record(&stamped, &rust, 1).unwrap_err(),
+            RestoreError::LangMismatch {
+                expected: SDK_LANG_RUST,
+                found: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn an_unknown_format_byte_is_refused_at_classification() {
+        let mut template = HeaderTemplate::new(1, 1);
+        template.format_id = 9;
+        let stamped = decode_header(&template.stamp(b"body")).unwrap();
+        assert!(matches!(
+            resolve_record(&stamped, &HeaderTemplate::new(1, 1), 1).unwrap_err(),
+            RestoreError::HeaderInvalid
+        ));
+    }
+
+    #[test]
+    fn effect_and_timer_records_classify_by_their_own_ids() {
+        let expected = HeaderTemplate::new(1, 1);
+        for (format_id, kind) in [
+            (FORMAT_ID_EFFECT_RECORD, RecordKind::EffectRecord),
+            (FORMAT_ID_TIMER_OPS, RecordKind::TimerOps),
+        ] {
+            let template = HeaderTemplate {
+                format_id,
+                ..expected
+            };
+            let stamped = decode_header(&template.stamp(b"body")).unwrap();
+            assert_eq!(
+                resolve_record(&stamped, &expected, 1).unwrap(),
+                (kind, SchemaDecision::Decode)
+            );
+        }
+    }
+
+    /// A snapshot resolves through the same table as a change record — the
+    /// gap that let a bumped version restore transposed state.
+    #[test]
+    fn a_snapshot_header_resolves_like_a_change_record() {
+        let v1 = HeaderTemplate::new(1, 1);
+        let stamped = decode_header(&v1.stamp(b"state")).unwrap();
+        let v2 = HeaderTemplate::new(1, 2);
+
+        assert!(matches!(
+            resolve_state(&stamped, &v2, 2).unwrap_err(),
+            RestoreError::SchemaTooOld {
+                found: 1,
+                min_readable: 2
+            }
+        ));
+        assert_eq!(
+            resolve_state(&stamped, &v2, 1).unwrap(),
+            SchemaDecision::Migrate { from_version: 1 }
+        );
     }
 
     #[test]

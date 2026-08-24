@@ -5,10 +5,12 @@ import com.flezha.sdk.runtime.state.TimerOp;
 import com.flezha.sdk.state.TimerKind;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import javax.annotation.Nonnull;
 
 /**
- * Postcard codec for the poll-core activation boundary (schema version 2),
+ * Postcard codec for the poll-core activation boundary (schema version 3),
  * byte-identical to {@code flz_core::schema}. Both directions exist for every
  * type: the shim decodes Activations and encodes ActivationResults on the hot
  * path; the inverses back the cross-language fixtures.
@@ -72,6 +74,21 @@ public final class ActivationCodec {
         w.optional(ref.entityKey(), Postcard.Writer::string);
     }
 
+    private static void encodeRestoreBody(Postcard.Writer w, ActivationKind.RestoreBody body) {
+        w.bytes(body.bytes());
+        w.optionalVarint(
+                body.fromVersion().isPresent()
+                        ? OptionalLong.of(body.fromVersion().getAsInt())
+                        : OptionalLong.empty());
+    }
+
+    private static ActivationKind.RestoreBody decodeRestoreBody(Postcard.Reader r) {
+        byte[] bytes = r.bytes();
+        OptionalLong from = r.optionalVarint();
+        return new ActivationKind.RestoreBody(
+                bytes, from.isPresent() ? OptionalInt.of(Math.toIntExact(from.getAsLong())) : OptionalInt.empty());
+    }
+
     private static EntityRef decodeEntityRef(Postcard.Reader r) {
         return new EntityRef(r.string(), Math.toIntExact(r.varint()), optionalString(r));
     }
@@ -80,8 +97,9 @@ public final class ActivationCodec {
         switch (kind) {
             case ActivationKind.Work work -> w.varint(0).vec(work.items(), ActivationCodec::encodeWorkItem);
             case ActivationKind.RestoreFold fold -> {
-                w.varint(1).optionalBytes(fold.snapshot());
-                w.vec(fold.changes(), Postcard.Writer::bytes);
+                w.varint(1)
+                        .optional(fold.snapshot(), ActivationCodec::encodeRestoreBody)
+                        .vec(fold.changes(), ActivationCodec::encodeRestoreBody);
             }
             case ActivationKind.SnapshotRequest ignored -> w.varint(2);
             case ActivationKind.LiveStateRead ignored -> w.varint(3);
@@ -102,7 +120,9 @@ public final class ActivationCodec {
         int discriminant = Math.toIntExact(r.varint());
         return switch (discriminant) {
             case 0 -> new ActivationKind.Work(r.vec(ActivationCodec::decodeWorkItem));
-            case 1 -> new ActivationKind.RestoreFold(r.optionalBytes(), r.vec(Postcard.Reader::bytes));
+            case 1 -> new ActivationKind.RestoreFold(
+                    r.some() ? Optional.of(decodeRestoreBody(r)) : Optional.empty(),
+                    r.vec(ActivationCodec::decodeRestoreBody));
             case 2 -> new ActivationKind.SnapshotRequest();
             case 3 -> new ActivationKind.LiveStateRead();
             case 4 -> new ActivationKind.ApplyState(r.bytes());

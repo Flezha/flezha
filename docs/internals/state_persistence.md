@@ -114,6 +114,31 @@ record tail, so a backward scan is impossible) and truncates any bytes past the 
 CRC verifies; `WalWriter.fold_records/3` is the one walk every reader uses. A snapshot file is
 `<<header::16-bytes, snapshot_bytes, crc32::32-big>>`.
 
+## Schema evolution
+
+The header's `schema_version` (bytes 5..9) is the version of the Procedure that
+wrote the record. The controller stores it and ships it back: `RestoreInitState`
+carries the change log's headers inside the WAL framing and the snapshot's own
+header in `snapshot_header` — `Restore.assemble_payload/1` reads it off disk
+with the body rather than discarding it, because a stripped header leaves every
+compacted Entity unverifiable.
+
+Resolution is the SDK's, in `flz_core` (one table for every SDK, typed path and
+host crossing alike): a record stamped at the running version decodes; one
+stamped older but at or above the Procedure's declared readable floor goes to
+its migration; anything else is refused — below the floor, or from a version
+newer than the one running. Per record, because a WAL written across a deploy
+holds both.
+
+When any record was migrated, the SDK sets `migrated` on the
+`RestoreInitStateResponse`, and `Commands.await_restore_init_state/2` answers it
+with the ordinary `CompactEntity` handshake: the next snapshot is written by the
+running version and the migrated records truncate behind it, so an Entity pays
+its migration on one restore rather than on every restart. The bind-time restore
+awaits its replies (bounded `Task.async_stream`, `:bind_restore_concurrency`)
+for exactly this reason — the reply is where that fact lives. Telemetry:
+`[:flezha, :state, :schema_migration]`.
+
 ## Writer startup and fsync batching
 
 `StreamChannel` resolves a writer with `Supervisor.find_or_start/1` on every `entity_state_change`

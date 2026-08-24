@@ -484,6 +484,11 @@ pub struct RestoreInitState {
     /// as duplicates.
     #[prost(uint64, tag = "6")]
     pub terminal_seq: u64,
+    /// The snapshot file's stored 16-byte header, so the SDK can resolve the
+    /// snapshot's `schema_version` the way it resolves a change record's.
+    /// Empty exactly when `snapshot_bytes` is empty.
+    #[prost(bytes = "vec", tag = "7")]
+    pub snapshot_header: ::prost::alloc::vec::Vec<u8>,
 }
 /// SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
 /// is the highest WAL seq folded into State; the Controller expects the next
@@ -494,6 +499,12 @@ pub struct RestoreInitStateResponse {
     pub entity_id: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "2")]
     pub terminal_seq: u64,
+    /// At least one record was migrated from an older schema version. The
+    /// Controller answers with the compaction it already knows how to drive,
+    /// so the next snapshot is written by the running version and the
+    /// migration is paid once rather than on every restore.
+    #[prost(bool, tag = "3")]
+    pub migrated: bool,
 }
 /// Controller-issued compaction request. The SDK clones the entity's
 /// `Self::State` under the sticky CAS, serializes it, and replies via

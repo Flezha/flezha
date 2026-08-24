@@ -372,6 +372,10 @@ message RestoreInitState {
     // a snapshot-only restore at 1 and the writer dropped the next changes
     // as duplicates.
     uint64 terminal_seq = 6;
+    // The snapshot file's stored 16-byte header, so the SDK can resolve the
+    // snapshot's `schema_version` the way it resolves a change record's.
+    // Empty exactly when `snapshot_bytes` is empty.
+    bytes snapshot_header = 7;
 }
 
 // SDK acknowledgement after applying a `RestoreInitState`. `terminal_seq`
@@ -380,6 +384,11 @@ message RestoreInitState {
 message RestoreInitStateResponse {
     bytes entity_id = 1;
     uint64 terminal_seq = 2;
+    // At least one record was migrated from an older schema version. The
+    // Controller answers with the compaction it already knows how to drive,
+    // so the next snapshot is written by the running version and the
+    // migration is paid once rather than on every restore.
+    bool migrated = 3;
 }
 
 // Controller-issued compaction request. The SDK clones the entity's

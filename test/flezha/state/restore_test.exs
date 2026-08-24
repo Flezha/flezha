@@ -21,6 +21,7 @@ defmodule Flezha.State.RestoreTest do
   } do
     assert {:ok, payload} = Restore.assemble_payload(pid)
     assert payload.snapshot_bytes == <<>>
+    assert payload.snapshot_header == <<>>
     assert payload.change_log_bytes == <<>>
     assert payload.terminal_seq_hint == -1
     refute Restore.has_persisted_state?(pid)
@@ -32,6 +33,11 @@ defmodule Flezha.State.RestoreTest do
 
     assert {:ok, payload} = Restore.assemble_payload(pid)
     assert payload.snapshot_bytes == "snap-bytes"
+
+    # The header travels with the body: it carries the schema_version the
+    # snapshot was written at, which the SDK resolves before decoding.
+    assert payload.snapshot_header == header
+    assert byte_size(payload.snapshot_header) == 16
     assert payload.change_log_bytes == <<>>
     assert payload.terminal_seq_hint == 50
     assert Restore.has_persisted_state?(pid)
@@ -48,6 +54,7 @@ defmodule Flezha.State.RestoreTest do
 
     assert {:ok, payload} = Restore.assemble_payload(pid)
     assert payload.snapshot_bytes == "snap@3"
+    assert payload.snapshot_header == header
     assert payload.terminal_seq_hint == 5
 
     # change_log_bytes contains exactly seq 4 and seq 5 in WAL framing.

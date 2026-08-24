@@ -31,6 +31,7 @@ public final class ProcedureDescriptor {
     private final Class<?> configType;
     private final List<Class<?>> kryoTypes;
     private final int schemaVersion;
+    private final int minReadableSchemaVersion;
     private final long compactAfterBytes;
     private final int mailboxCapacity;
     private final boolean mailboxCapacityOverridden;
@@ -54,6 +55,7 @@ public final class ProcedureDescriptor {
             @Nonnull Class<?> configType,
             @Nonnull List<Class<?>> kryoTypes,
             int schemaVersion,
+            int minReadableSchemaVersion,
             long compactAfterBytes,
             int mailboxCapacity,
             boolean mailboxCapacityOverridden,
@@ -77,6 +79,7 @@ public final class ProcedureDescriptor {
         this.configType = configType;
         this.kryoTypes = List.copyOf(kryoTypes);
         this.schemaVersion = schemaVersion;
+        this.minReadableSchemaVersion = minReadableSchemaVersion;
         this.compactAfterBytes = compactAfterBytes;
         this.mailboxCapacity = mailboxCapacity;
         this.mailboxCapacityOverridden = mailboxCapacityOverridden;
@@ -104,6 +107,11 @@ public final class ProcedureDescriptor {
 
     public int schemaVersion() {
         return schemaVersion;
+    }
+
+    /** The oldest schema version this Procedure still reads. */
+    public int minReadableSchemaVersion() {
+        return minReadableSchemaVersion;
     }
 
     public long compactAfterBytes() {
