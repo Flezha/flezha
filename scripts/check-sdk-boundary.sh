@@ -38,6 +38,12 @@ ALLOWED = {
     "Flezha.Partition",
 }
 
+# Seams allowed in ONE file only. The codec is the single place the protobuf may
+# be named — in its code, and in the moduledoc that says why it is the only one.
+PER_FILE_ALLOWED = {
+    CODEC: {"Flezha.Runner.CommandsProto"},
+}
+
 # Any `Flezha.<Something>` reference (module path), captured with its full dotted head.
 REF = re.compile(r"\bFlezha(?:\.[A-Z][A-Za-z0-9_]*)+")
 PROTO = re.compile(r"\b(?:RunnerCommands|Protox)\b")
@@ -50,6 +56,7 @@ failures = []
 for rel in listing.split("\0"):
     if not rel.endswith(".ex"):
         continue
+    allowed = ALLOWED | PER_FILE_ALLOWED.get(rel, set())
     with open(rel, encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, 1):
             stripped = line.strip()
@@ -59,7 +66,7 @@ for rel in listing.split("\0"):
             for m in REF.finditer(line):
                 ref = m.group(0)
                 # allowed if it IS or is nested under an allowed seam
-                if any(ref == a or ref.startswith(a + ".") for a in ALLOWED):
+                if any(ref == a or ref.startswith(a + ".") for a in allowed):
                     continue
                 failures.append(f"{rel}:{lineno}: stray controller reference `{ref}`")
 

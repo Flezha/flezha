@@ -37,13 +37,9 @@
 *:= (un)?bounded(::<[^>]*>)?\(
 
 # --- capacity sense -----------------------------------------------------
-*:[Bb]ounded[ -]mailbox(es)?
+*:[Bb]ounded[ -](Entity )?mailbox(es)?
 *:BoundedMailbox
 *:bounded_mailbox
-*:unbounded-mailbox
-*:mailbox is bounded
-*:mailbox boundedness
-openspec/specs/rust-sdk-dispatch/spec.md:operative-bounded-mailbox
 # historical archived-spec filename cited in a javadoc
 sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.java:boundeds\.md
 
@@ -53,26 +49,22 @@ sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.jav
 # near-duplicate line — that is how `bounded queue` and `bounded-queue` once
 # ended up as two entries.
 *:[Bb]ounded `GenServer\.call`
-*:[Bb]ounded[ -](by|above|below|at|to|timeout|window|FIFO|cardinality|loss|buffer|queue|queueing|ring|backoff|exponential|governor|wait|time|ack|park|call|calls|margin|primitives|capacity|lock-free|outbound|per-|retry|retries|lookup|quota|degrade-to-solo|\"degrade)
+*:[Bb]ounded[ -](by|above|below|at|to|timeout|window|FIFO|cardinality|loss|buffer|queue|queueing|ring|backoff|exponential|governor|wait|time|ack|park|call|calls|margin|primitives|capacity|lock-free|outbound|per-|retry|retries|lookup|quota|degrade-to-solo|\"degrade|state|input|number|ladder|connect|re-send|in-process|accounting|[0-9]+ ms|`Task\.async_stream`)
 *:[Bb]ounded \(1024
-*:barrier-bounded
 # `Convergence.SafeCall.bounded/3` is a TIME-LIMITED `GenServer.call`, not a
 # kind — the one English-sense identifier in the tree, plus its own docs.
 *:SafeCall\.bounded
 *:`bounded/3`
 *:bounded\(target\(\)
 *:def bounded\(server
-*:fenced batch\. Bounded
 # "X is/stays bounded", and the unbounded-as-"without limit" family.
-*:(stays|SHALL be) bounded
+*:(stay|stays|SHALL be) bounded
 *:(memory|[Cc]ardinality|back-pressure|cost|wait|buffer|pull|park|handshake|depth) is bounded
 *:mailbox (is |)bounded
-*:mailbox boundedness
-*:unbounded[ -](growth|buffer|cardinality|allocation|count|body cap|history)
+*:unbounded[ -](growth|buffer|cardinality|allocation|count|body cap|history|in size)
 *:(grow(s|ing)?|count is) unbounded
 openspec/specs/runner-controller-connection-healing/spec.md:bounded `:start_operative` retry
 
-docs/operations/remote_durability_tier.md:visible, bounded
 docs/dev_notes/wire-frame-limits.md:slice-bounded
 flz_transport/src/service/payloader.rs:length_bounded_by_enclosing_payload
 openspec/specs/wire-frame-limits/spec.md:Bounded frame allocation
@@ -84,11 +76,25 @@ openspec/specs/wire-frame-limits/spec.md:Bounded frame allocation
 *:unbounded hold
 *:hold outputs, unbounded
 *:unbounded amount
-*:latency you add is bounded
 *:Bounded producer queue
 *:visible, bounded
-*:parks \(bounded
 *:bounded upstream
 *:bounded interval
 *:park, bounded
 *:unbounded concurrent
+
+# --- plain English: the bare adjective, standing alone -------------------
+# Prose uses the word with no noun attached — followed by a comma, wrapped in
+# parentheses, or left at the end of a wrapped line. The lookbehind keeps a
+# reintroduced identifier (`spawn_bounded,`) caught: only the bare word is
+# masked, so `spawn_` is never what is left over.
+*:(?<![A-Za-z0-9_])[Bb]ounded,
+*:\((?:un)?bounded\)
+*:Bounded and crash-proof
+lib/flezha/parallel.ex:shape, bounded —
+lib/flezha/runner/control_channel.ex:bounded so a sink
+# Line-wrapped prose, where the noun is on the next line.
+docs/dev_notes/state-evolution.md:over a bounded$
+docs/plugins/http_poll.md:would be unbounded$
+openspec/specs/controller-packaging/spec.md:available and bounded$
+test/apps/rust_runner/src/main.rs:shape with a bounded$
