@@ -76,43 +76,71 @@ The whole sequence SHALL be bounded by `:flezha, :graceful_shutdown_timeout_ms` 
 
 ### Requirement: SIGTERM and SIGINT SHALL trigger graceful shutdown in every BEAM run mode
 
-`Flezha.Shutdown.SignalHandler` is a GenServer started **first** in `Flezha.Application.start/2`'s children list (before `Flezha.Service.EventManager`). Its `init/1` SHALL return `{:ok, state, {:continue, :install_signal_handler}}` and the `handle_continue/2` SHALL call `:os.set_signal(:sigterm, :handle)` and `:os.set_signal(:sigint, :handle)`.
+`Flezha.Shutdown.SignalHandler` is a GenServer started **first** in `Flezha.Application.start/2`'s children list (before `Flezha.Service.EventManager`). Its `init/1` SHALL return `{:ok, state, {:continue, :install_signal_handler}}`.
 
-The SignalHandler SHALL receive `:signal` messages and dispatch as follows:
+**SIGTERM.** `handle_continue/2` SHALL call `:os.set_signal(:sigterm, :handle)` as an explicit, idempotent assertion of the platform default, and SHALL register itself with the `erl_signal_server` `gen_event` so signal notifications reach it. Registration SHALL replace kernel's `erl_signal_handler`, because that handler calls `init:stop()` on `sigterm` independently: with both registered the shutdown is driven by `Flezha.Application.prep_stop/1` and recorded as `reason: :prep_stop`, which contradicts the dispatch contract below.
 
-- **First** `SIGTERM` or `SIGINT`: log `[shutdown] received <signal>`, emit `[:flezha, :shutdown, :requested]` with `%{reason: :sigterm | :sigint}`, `Task.start` a call to `Flezha.Shutdown.Coordinator.shutdown(reason)` followed by `:init.stop()`. The Task pattern keeps the SignalHandler GenServer responsive to the second/third signals.
+The registered `gen_event` handler SHALL do nothing but forward the signal to the `SignalHandler` GenServer, so it cannot raise and be removed — a removed handler leaves the node unable to react to SIGTERM at all. It SHALL be registered as a supervised handler so that a `SignalHandler` crash removes it rather than leaving a handler forwarding to a dead process, and on `terminate/2` it SHALL re-add kernel's `erl_signal_handler`, so any removal degrades to `init:stop()` rather than to an unresponsive node.
+
+Because replacing kernel's `erl_signal_handler` also removes its handling of the other signals it owned, `SignalHandler` SHALL preserve those semantics: `sigquit` SHALL halt the BEAM and `sigusr1` SHALL halt it with `"Received SIGUSR1"`, matching `erl_signal_handler` exactly. Only SIGTERM's disposition is deliberately changed.
+
+**SIGINT.** `:os.set_signal/2` SHALL NOT be called for `sigint`. ERTS reserves SIGINT for the break handler and does not accept it — it is absent from the BIF's accepted signal list, and the call raises `badarg` in every run mode and under every break-handler flag. SIGINT-initiated termination is therefore delivered by ERTS's break handler, not through `erl_signal_server`, and SHALL NOT be treated as an install failure.
+
+The SignalHandler SHALL receive forwarded signals and dispatch as follows:
+
+- **First** signal: log `[shutdown] received <signal>` and `Task.start` a call to `Flezha.Shutdown.Coordinator.shutdown(reason)` followed by `:init.stop()`. The `[:flezha, :shutdown, :requested]` event carrying `%{reason: :sigterm}` SHALL be emitted once, by the Coordinator from the reason it is given — the SignalHandler SHALL NOT emit its own, which would double-report every signalled shutdown. The Task pattern keeps the SignalHandler GenServer responsive to the second/third signals. The trailing `:init.stop()` re-enters `Flezha.Application.prep_stop/1`, whose `Coordinator.shutdown(:prep_stop)` SHALL be absorbed by the coordinator's existing `phase: :done` short-circuit rather than running a second drain.
 - **Second** signal during shutdown: log `[shutdown] already in progress, ignoring <signal>`. NOT re-dispatched.
 - **Third** signal: log `[shutdown] forced halt requested via third <signal>` at WARN, call `:erlang.halt(143)`. Operator-controlled escape hatch.
 
 This wiring SHALL apply equally to release mode (`bin/flzvm start`), `mix run --no-halt`, `iex -S mix`, and any escript packaging — the SignalHandler is in the application's supervision tree, which exists in every mode.
 
-When `:flezha, :graceful_shutdown_enabled` is `false` (env `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false`), `SignalHandler` SHALL NOT call `:os.set_signal/2`. The default OTP signal behaviour (immediate BEAM termination on SIGTERM) applies.
+When `:flezha, :graceful_shutdown_enabled` is `false` (env `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false`), `SignalHandler` SHALL NOT call `:os.set_signal/2` and SHALL NOT register with `erl_signal_server`. Kernel's `erl_signal_handler` therefore remains the owner and today's behaviour is unchanged.
 
-If `:os.set_signal/2` raises (unsupported OS, sandboxing), the SignalHandler SHALL catch the exception, log `[shutdown] os.set_signal unavailable: <reason>; falling back to release-mode SIGTERM` at WARN, and continue running so the application start does not fail. `Flezha.Shutdown.Coordinator.status/0` SHALL surface this degraded state under a `signal_handler_status: :ok | :degraded` field.
+If the SIGTERM install or the `erl_signal_server` registration fails, the SignalHandler SHALL catch the exception, log `[shutdown] os.set_signal unavailable: <reason>; falling back to release-mode SIGTERM` at WARN, latch a degraded state, and continue running so application start does not fail. Because the impossible `sigint` call is gone, this state is reached only when the platform genuinely refuses.
+
+`Flezha.Shutdown.Coordinator.status/0` SHALL surface the handler's state under `signal_handler_status: :ok | :degraded`. It SHALL read that value from `SignalHandler` on demand rather than caching a value pushed to it: `SignalHandler` is started first and terminated last, so a push at install time is delivered before the Coordinator exists and is silently lost.
+
+#### Scenario: Handlers are installed on every boot
+
+- **GIVEN** a controller booting in any supported run mode with graceful shutdown enabled
+- **WHEN** `SignalHandler`'s `handle_continue/2` runs
+- **THEN** `[shutdown] OS signal handlers installed (SIGTERM)` is logged, no `os.set_signal unavailable` WARN is logged, `SignalHandler` is a registered `erl_signal_server` handler, and `Flezha.Shutdown.Coordinator.status/0` reports `signal_handler_status: :ok`
 
 #### Scenario: SIGTERM in `iex -S mix` triggers graceful shutdown
 
 - **GIVEN** a controller running under `iex -S mix` with one Operative locally hosted and a peer node available
 - **WHEN** the OS sends SIGTERM to the BEAM process
-- **THEN** the SignalHandler logs `[shutdown] received SIGTERM`, the coordinator runs quiesce → drain → finalise, the Operative migrates to the peer, and the BEAM exits with status 0 — same outcome as in release mode
+- **THEN** the SignalHandler logs `[shutdown] received sigterm`, exactly one `[:flezha, :shutdown, :requested]` event is emitted and it carries `%{reason: :sigterm}`, the coordinator runs quiesce → drain → finalise exactly once, the Operative migrates to the peer, and the BEAM exits with status 0
 
-#### Scenario: SIGTERM with kill-switch off behaves like today (immediate BEAM exit)
+#### Scenario: The trailing `:init.stop()` does not run a second drain
 
-- **GIVEN** the controller is started with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false`
-- **WHEN** the OS sends SIGTERM
-- **THEN** the SignalHandler does not install an `:os.set_signal` handler at boot; the BEAM terminates immediately on SIGTERM without invoking the coordinator (today's behaviour, modulo `prep_stop/1` running for releases)
+- **GIVEN** a first SIGTERM whose `Coordinator.shutdown(:sigterm)` has completed
+- **WHEN** the same Task calls `:init.stop()` and `Flezha.Application.prep_stop/1` calls `Coordinator.shutdown(:prep_stop)`
+- **THEN** the coordinator is in `phase: :done`, returns its recorded outcome immediately, and emits no second `[:flezha, :shutdown, :requested]` event and no second phase sequence
 
 #### Scenario: Third SIGTERM during a wedged drain force-halts the BEAM
 
 - **GIVEN** a coordinator stuck in drain (e.g. peer migration not progressing)
 - **WHEN** an operator sends a second SIGTERM (logged & ignored) followed by a third SIGTERM
-- **THEN** the SignalHandler logs `[shutdown] forced halt requested via third SIGTERM` at WARN and calls `:erlang.halt(143)`; the BEAM exits with status 143 immediately
+- **THEN** the SignalHandler logs `[shutdown] forced halt requested via third sigterm` at WARN and calls `:erlang.halt(143)`; the BEAM exits with status 143 immediately
 
-#### Scenario: Unsupported `:os.set_signal` degrades gracefully
+#### Scenario: SIGINT is left to the ERTS break handler
 
-- **GIVEN** a host OS where `:os.set_signal/2` raises (e.g. an unsupported sandbox)
+- **GIVEN** a controller booting with graceful shutdown enabled
+- **WHEN** `SignalHandler` installs its handlers
+- **THEN** `:os.set_signal/2` is never called with `sigint`, no `badarg` is raised, the degraded state is not latched, and SIGINT continues to be delivered by ERTS's break handler
+
+#### Scenario: SIGTERM with kill-switch off behaves like today (immediate BEAM exit)
+
+- **GIVEN** the controller is started with `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false`
+- **WHEN** the OS sends SIGTERM
+- **THEN** the SignalHandler neither calls `:os.set_signal/2` nor registers with `erl_signal_server`, kernel's `erl_signal_handler` remains the owner, and the BEAM terminates on SIGTERM without the SignalHandler invoking the coordinator (today's behaviour, modulo `prep_stop/1` running for releases)
+
+#### Scenario: A genuinely unsupported platform degrades gracefully
+
+- **GIVEN** a host OS where the SIGTERM install or the `erl_signal_server` registration raises (e.g. an unsupported sandbox)
 - **WHEN** the SignalHandler `handle_continue/2` runs
-- **THEN** the exception is caught, `[shutdown] os.set_signal unavailable: <reason>; falling back to release-mode SIGTERM` is logged at WARN, the SignalHandler continues running, and `flz controller status` reports `signal_handler_status: :degraded`
+- **THEN** the exception is caught, `[shutdown] os.set_signal unavailable: <reason>; falling back to release-mode SIGTERM` is logged at WARN, the SignalHandler continues running, application start completes, and `flz controller status` reports `signal_handler_status: :degraded`
 
 ### Requirement: `Application.prep_stop/1` SHALL await the shutdown coordinator
 

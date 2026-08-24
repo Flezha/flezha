@@ -5,16 +5,17 @@ their migration, the knobs and the orchestrator grace period they pair with,
 `flz controller stop`, telemetry and status, the third-SIGTERM override and the disable flag.
 
 Graceful shutdown is on by default. `Flezha.Shutdown.Coordinator` runs
-**quiesce → drain → finalise** on SIGTERM, SIGINT, `Application.prep_stop/1` or
-`flz controller stop`. Every path converges on the idempotent `Coordinator.shutdown/2`: a
+**quiesce → drain → finalise** on SIGTERM, `Application.prep_stop/1` or
+`flz controller stop`. SIGINT is not among them: ERTS reserves it for the break
+handler and `:os.set_signal/2` refuses it, so Ctrl-C keeps its default meaning. Every path converges on the idempotent `Coordinator.shutdown/2`: a
 second caller during an in-flight shutdown joins as a waiter and receives the same outcome.
 
 ## Triggers by run mode
 
 | Run mode                          | Trigger                                    | Path                                                                                |
 | --------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------- |
-| Release (`bin/flzvm start`)       | OS SIGTERM, or `bin/flzvm stop`            | `:init.stop()` → `prep_stop/1` → coordinator                                        |
-| `mix run --no-halt`, `iex -S mix` | OS SIGTERM, Ctrl-C (SIGINT)                | `Flezha.Shutdown.SignalHandler` (`:os.set_signal/2`) → coordinator                  |
+| Any run mode                      | OS SIGTERM                                 | `Flezha.Shutdown.SignalHandler` (via `erl_signal_server`) → coordinator → `:init.stop()` |
+| Release (`bin/flzvm start`)       | `bin/flzvm stop`                           | `:init.stop()` → `prep_stop/1` → coordinator                                        |
 | Any of the above                  | `flz controller stop`                      | RPC into `Flezha.Service.CliManager.controller_stop/1` → coordinator                |
 | `docker stop` / compose stop      | SIGTERM via tini, then the entrypoint trap | Trap runs `flz controller stop --timeout-ms ${FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS}` |
 | `kubectl delete pod`              | `lifecycle.preStop` runs first             | Same `flz controller stop`, then SIGTERM (already shutting down)                    |
@@ -111,8 +112,9 @@ waiting; `--force` skips quiesce and drain and runs finalise only.
 | 3    | Controller socket unreachable (controller not running, or wrong socket path)           |
 
 `flz controller status` reports `shutdown_in_progress`, `shutdown_phase`
-(`:quiesce | :drain | :finalise | nil`), `signal_handler_status` (`:degraded` when
-`:os.set_signal/2` was unavailable), `graceful_shutdown_enabled` and
+(`:quiesce | :drain | :finalise | nil`), `signal_handler_status` (`:degraded` when the
+platform refused the SIGTERM install or the `erl_signal_server` registration — read live
+from the handler, not cached), `graceful_shutdown_enabled` and
 `graceful_shutdown_timeout_ms`; readiness probes can poll it to drain traffic early.
 
 ## Telemetry
@@ -121,24 +123,39 @@ Under `[:flezha, :shutdown, …]`; each phase boundary also logs a `[shutdown] �
 
 | Event              | Measurements                                      | Metadata                                                                     |
 | ------------------ | ------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `:requested`       | `%{}`                                             | `%{reason, timestamp_ms}` (a signal emits it twice: handler and coordinator) |
+| `:requested`       | `%{}`                                             | `%{reason, timestamp_ms}` — emitted once, at the entry of `Coordinator.shutdown/2` |
 | `:phase_started`   | `%{}`                                             | `%{phase: :quiesce \| :drain \| :finalise}`                                  |
 | `:phase_completed` | `%{duration_ms}`                                  | `%{phase}`                                                                   |
 | `:drain_progress`  | `%{migrated, forced, remaining_hubs, elapsed_ms}` | `%{namespace}`, one per completed hub                                        |
 | `:timeout`         | `%{}`                                             | `%{phase, still_local: [operative_ids]}`                                     |
 | `:complete`        | `%{duration_ms}`                                  | `%{outcome: :clean \| :partial \| :forced, reason}`                          |
 
+## Who owns SIGTERM
+
+`SignalHandler` registers a forwarding handler on `erl_signal_server` and **removes
+kernel's `erl_signal_handler`**. The two cannot coexist: kernel's calls `init:stop()` on
+its own, so with both registered the shutdown is driven by `prep_stop/1` and recorded as
+`reason: :prep_stop` about a millisecond before the handler can dispatch.
+
+The registration is added before kernel's is removed, so a failed install leaves kernel's
+handler owning the signal rather than leaving the node with neither. If the forwarding
+handler is ever removed (a `SignalHandler` crash removes it, since it is supervised), it
+re-adds kernel's handler on the way out — the node degrades to a plain `init:stop()`
+drain, never to one that ignores SIGTERM. Taking ownership also means `sigquit` and
+`sigusr1`, which kernel's handler owned, are reproduced by `SignalHandler`.
+
 ## The third-SIGTERM override
 
 If the drain wedges (a peer not progressing), `Flezha.Shutdown.SignalHandler` escalates on
-repeated operator-issued signals: the first SIGTERM/SIGINT starts graceful shutdown and then
+repeated operator-issued signals: the first SIGTERM starts graceful shutdown and then
 `:init.stop()`; the second is logged and ignored; the third logs a WARNING and calls
 `:erlang.halt(143)` immediately. The orchestrator grace period is the wall-clock backstop.
 
 ## Disable flag
 
 `FLEZHA_GRACEFUL_SHUTDOWN_ENABLED=false` reverts to a direct stop: `SignalHandler` starts but
-installs no OS handlers (the BEAM terminates on SIGTERM) and `Application.prep_stop/1` calls
+installs no OS handlers and registers nothing on `erl_signal_server`, so kernel's
+`erl_signal_handler` stays the owner (the BEAM terminates on SIGTERM) and `Application.prep_stop/1` calls
 `Flezha.Service.HubManager.stop_hub_manager/0` directly; the prod container entrypoint's
 disabled branch runs `snapshot-on-stop.sh` and then SIGTERMs the BEAM. `config/test.exs`
 sets the flag to `false` so application teardown stays fast.

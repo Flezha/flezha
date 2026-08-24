@@ -32,6 +32,7 @@ defmodule Flezha.Shutdown.Coordinator do
   require Logger
 
   alias Flezha.Service.{HubManager, Identificator}
+  alias Flezha.Shutdown.SignalHandler
   alias Flezha.State.FsyncBatcher
   alias Flezha.Transport.Server, as: TransportServer
 
@@ -53,7 +54,6 @@ defmodule Flezha.Shutdown.Coordinator do
             captured_local: %{},
             still_local: [],
             outcome: nil,
-            signal_handler_status: :ok,
             timeout_timer: nil
 
   # ---------- Public API ----------
@@ -127,16 +127,6 @@ defmodule Flezha.Shutdown.Coordinator do
     end
   end
 
-  @doc """
-  Called by `Flezha.Shutdown.SignalHandler` after the OS signal
-  install attempt. Surfaces `:degraded` when `:os.set_signal/2`
-  raised so `flz controller status` can report the condition.
-  """
-  @spec report_signal_handler_status(:ok | :degraded) :: :ok
-  def report_signal_handler_status(handler_status) when handler_status in [:ok, :degraded] do
-    GenServer.cast(__MODULE__, {:signal_handler_status, handler_status})
-  end
-
   # ---------- GenServer ----------
 
   @impl true
@@ -193,24 +183,19 @@ defmodule Flezha.Shutdown.Coordinator do
   def handle_call(:__reset_for_tests__, _from, state) do
     if is_reference(state.timeout_timer), do: Process.cancel_timer(state.timeout_timer)
     :ets.insert(@ets_table, {:phase, :idle})
-    {:reply, :ok, %__MODULE__{signal_handler_status: state.signal_handler_status}}
+    {:reply, :ok, %__MODULE__{}}
   end
 
   def handle_call(:status, _from, state) do
     reply = %{
       shutdown_in_progress: state.phase in [:quiescing, :draining, :finalising],
       shutdown_phase: external_phase(state.phase),
-      signal_handler_status: state.signal_handler_status,
+      signal_handler_status: SignalHandler.status(),
       graceful_shutdown_enabled: Application.get_env(:flezha, :graceful_shutdown_enabled, true),
       graceful_shutdown_timeout_ms: configured_timeout_ms()
     }
 
     {:reply, reply, state}
-  end
-
-  @impl true
-  def handle_cast({:signal_handler_status, handler_status}, state) do
-    {:noreply, %{state | signal_handler_status: handler_status}}
   end
 
   @impl true

@@ -1,5 +1,11 @@
 # Graceful shutdown (`controller-graceful-shutdown`)
 
+> **Superseded in part** by `fix-signal-handler-boot-race`: the signal-install
+> description below is no longer accurate. SIGINT is never installed (ERTS
+> refuses it) and signals reach `SignalHandler` through an `erl_signal_server`
+> registration that replaces kernel's `erl_signal_handler`. See
+> [fix-signal-handler-boot-race](fix-signal-handler-boot-race.md).
+
 - **Modules**: `lib/flezha/shutdown/` — `Coordinator`, `SignalHandler`.
   Coordinator drives `quiesce → drain → finalise`; SignalHandler
   installs OS handlers via `:os.set_signal/2` so SIGTERM/SIGINT

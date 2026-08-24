@@ -246,9 +246,13 @@ config :flezha,
   # `graceful_shutdown_timeout_ms`. See `docs/operations/graceful_shutdown.md`.
   #
   # Truthy: 1, true, yes, on (case-insensitive). Falsy: 0, false, no, off.
+  # Off by default under `:test` so the suite's own BEAM keeps kernel's
+  # signal handling and `Application.stop/1` at teardown stays fast — the
+  # intent `config/test.exs` documents, which an unconditional `true` here
+  # silently defeated. An explicit env var still wins in every environment.
   graceful_shutdown_enabled:
     (case System.get_env("FLEZHA_GRACEFUL_SHUTDOWN_ENABLED") do
-       nil -> true
+       nil -> config_env() != :test
        val -> String.downcase(val) in ["1", "true", "yes", "on"]
      end),
   graceful_shutdown_timeout_ms:
