@@ -83,6 +83,13 @@ cap is enforced where the registration API lives, not in the core. A declaration
 the core cannot honor SHALL be refused at declaration time with an error
 naming the field — never accepted and degraded silently.
 
+The record-header language byte is **mandatory and allocated**: a declaration
+carrying no `sdk_lang`, or `sdk_lang = 0`, SHALL be refused at declaration time
+naming the field. The core SHALL NOT substitute a default, because a veneer that
+reaches placement untagged is a veneer whose state another language can be
+handed. The core SHALL expose the declared value so the runner's factory
+advertisement can carry it without the veneer restating it.
+
 #### Scenario: A full declaration round-trips into controller metadata
 - **WHEN** a shim declares a checkpoint-ack, correction-windowed, dynamic-mode class through the ABI and the controller sends `AddOperative`
 - **THEN** the `AddOperativeResponse` metadata SHALL carry the same declarations the typed Rust path would produce for an identical class
@@ -90,6 +97,15 @@ naming the field — never accepted and degraded silently.
 #### Scenario: An unsupported declaration is refused loudly
 - **WHEN** a shim declares a field combination the host layer cannot serve
 - **THEN** `flz_core_declare_class` SHALL return an error naming the offending field, and the class SHALL NOT be registered
+
+#### Scenario: A class declaring no language is refused
+- **WHEN** a veneer declares a class with `sdk_lang` absent or zero
+- **THEN** `flz_core_declare_class` SHALL return an error naming `sdk_lang`, and the class SHALL NOT be registered
+
+#### Scenario: The advertisement reads the declared value from the core
+- **GIVEN** a veneer that declared its classes with `sdk_lang = 2`
+- **WHEN** the runner builds its connect init frame and any later `UpdateFactories`
+- **THEN** each factory entry SHALL carry the language declared for the class registered under that id, resolved from the core rather than from a constant in the veneer
 
 ### Requirement: Widened host capabilities are reachable through the ABI
 

@@ -133,6 +133,28 @@ pub fn fold_change_log(
     Ok(summary)
 }
 
+/// Frame one WAL record the way the controller's
+/// `Flezha.State.WalWriter.encode_record/3` does:
+/// `[seq: u64 BE][len: u32 BE][header: 16B][body][crc32: u32 BE]`.
+///
+/// The write side of [`iter_change_log_records`], kept beside it so the two
+/// halves of the framing cannot drift. Test-only in practice, hence hidden:
+/// SDKs receive change logs, they never author them.
+#[doc(hidden)]
+pub fn frame_record(seq: u64, header: &[u8; 16], body: &[u8]) -> Vec<u8> {
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(header);
+    hasher.update(body);
+
+    let mut out = Vec::with_capacity(12 + 16 + body.len() + 4);
+    out.extend_from_slice(&seq.to_be_bytes());
+    out.extend_from_slice(&((16 + body.len()) as u32).to_be_bytes());
+    out.extend_from_slice(header);
+    out.extend_from_slice(body);
+    out.extend_from_slice(&hasher.finalize().to_be_bytes());
+    out
+}
+
 /// One framed WAL record as produced by the controller's
 /// `Flezha.State.WalWriter.encode_record/3`. Field-borrowed against the
 /// source byte buffer. `change_bytes` excludes the leading 16-byte
@@ -194,5 +216,98 @@ impl<'a> Iterator for ChangeLogIter<'a> {
         };
         self.remaining = &self.remaining[frame_end..];
         Some(Ok(record))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::header::{
+        HeaderTemplate, FORMAT_ID_POSTCARD, SDK_LANG_ELIXIR, SDK_LANG_JAVA, SDK_LANG_RUST,
+    };
+
+    /// Collects what the walk hands it, so a test can assert that a refused
+    /// record delivered NOTHING rather than a partial state.
+    #[derive(Default)]
+    struct RecordingSink {
+        changes: Vec<Vec<u8>>,
+    }
+
+    impl ChangeLogSink for RecordingSink {
+        fn change(
+            &mut self,
+            _decision: crate::header::SchemaDecision,
+            bytes: &[u8],
+        ) -> Result<(), RestoreError> {
+            self.changes.push(bytes.to_vec());
+            Ok(())
+        }
+
+        fn timers(&mut self, _ops: &[crate::schema::TimerOp]) {}
+    }
+
+    fn template(sdk_lang: u8) -> HeaderTemplate {
+        HeaderTemplate {
+            sdk_lang,
+            sdk_version: 1,
+            schema_version: 1,
+            format_id: FORMAT_ID_POSTCARD,
+        }
+    }
+
+    /// One framed WAL record stamped by `writer`.
+    fn record(seq: u64, writer: &HeaderTemplate, body: &[u8]) -> Vec<u8> {
+        frame_record(seq, &writer.stamp(body), body)
+    }
+
+    /// The host arm and the typed arm share this walk, so the language gate
+    /// they both inherit is proved once, here: a Java-written log read by a
+    /// Rust-declared class is refused before any body reaches the sink.
+    #[test]
+    fn a_foreign_language_record_is_refused_before_any_body_is_collected() {
+        let log = record(0, &template(SDK_LANG_JAVA), b"kryo-bytes");
+        let mut sink = RecordingSink::default();
+
+        let err = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink).unwrap_err();
+
+        match err {
+            RestoreError::LangMismatch { expected, found } => {
+                assert_eq!(expected, SDK_LANG_RUST);
+                assert_eq!(found, SDK_LANG_JAVA);
+            }
+            other => panic!("expected a language mismatch, got {other:?}"),
+        }
+        assert!(
+            sink.changes.is_empty(),
+            "a refused record must not reach the host codec"
+        );
+    }
+
+    /// The error text names both SDKs, not only their bytes — the reason
+    /// travels to the controller as a string and has to be actionable there.
+    #[test]
+    fn the_refusal_names_both_languages() {
+        let log = record(0, &template(SDK_LANG_ELIXIR), b"body");
+        let mut sink = RecordingSink::default();
+
+        let message = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink)
+            .unwrap_err()
+            .to_string();
+
+        assert!(message.contains("rust"), "{message}");
+        assert!(message.contains("elixir"), "{message}");
+    }
+
+    /// The gate is a language check, not a blanket refusal: a log written by
+    /// the reading SDK still folds.
+    #[test]
+    fn a_same_language_record_folds() {
+        let log = record(0, &template(SDK_LANG_RUST), b"postcard-bytes");
+        let mut sink = RecordingSink::default();
+
+        let summary = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink).unwrap();
+
+        assert_eq!(summary.terminal_seq, 0);
+        assert_eq!(sink.changes, vec![b"postcard-bytes".to_vec()]);
     }
 }

@@ -191,23 +191,33 @@ defmodule Flezha.Operative.Lifecycle do
          operative =
            with_resume_state(operative, state.builder.kind, Overwatch.operative_class(state)),
          {:ok, final_runner_id, add_operative_raw, state} <-
-           start_operative_sdk_with_retry(state, operative) do
-      # The class's SDK-side declarations ride the AddOperative response; resolve
-      # them BEFORE plugin activation so source adapters pick the tier ingest mode
-      # (blocking call) from the env.
-      %{effectively_once: effectively_once, correction_window_ms: correction_window_ms} =
-        declarations = ClassRegistry.decode_declarations(add_operative_raw)
-
-      state =
-        %{state | effectively_once: effectively_once, correction_window_ms: correction_window_ms}
-        |> bind_to_runner(operative.id, final_runner_id)
-        |> Map.put(:init_error, nil)
-
-      # Tier: restore every persisted Entity (awaited) and re-forward the
-      # journaled input tail BEFORE sources activate, so replayed offsets
-      # reach the runner ahead of fresh ones (fold order at the SDK).
-      state = if effectively_once, do: Replay.restore_and_replay_journal(state), else: state
-
+           start_operative_sdk_with_retry(state, operative),
+         # The class's SDK-side declarations ride the AddOperative response;
+         # resolve them BEFORE plugin activation so source adapters pick the
+         # tier ingest mode (blocking call) from the env.
+         %{effectively_once: effectively_once, correction_window_ms: correction_window_ms} =
+           declarations = ClassRegistry.decode_declarations(add_operative_raw),
+         state =
+           %{
+             state
+             | effectively_once: effectively_once,
+               correction_window_ms: correction_window_ms
+           }
+           |> bind_to_runner(operative.id, final_runner_id)
+           |> Map.put(:init_error, nil),
+         # BEFORE the restore: a refused restore parks the operative, so a
+         # correction running after it would never run at all — the factory
+         # would park every attempt at its wrong language forever.
+         _ =
+           ClassRegistry.establish_sdk_lang_from_state(
+             state.namespace,
+             operative.factory_id,
+             Overwatch.operative_class(state)
+           ),
+         # Tier: restore every persisted Entity (awaited) and re-forward the
+         # journaled input tail BEFORE sources activate, so replayed offsets
+         # reach the runner ahead of fresh ones (fold order at the SDK).
+         {:ok, state} <- tier_restore(state, effectively_once) do
       state = Plugins.activate(state)
 
       # Record this class's kind so the State subsystem can gate stream-only
@@ -249,6 +259,19 @@ defmodule Flezha.Operative.Lifecycle do
     else
       {:error, reason, %Overwatch{} = parked} -> {:error, reason, parked}
       {:error, reason} -> {:error, reason, state}
+    end
+  end
+
+  # A refused restore is not a cold start: the durable state never reached the
+  # runner, so the operative parks rather than folding new inputs onto empty
+  # state. Rides the existing parked-error contract, so `bind/3` needs no new
+  # failure arm.
+  defp tier_restore(state, false), do: {:ok, state}
+
+  defp tier_restore(state, true) do
+    case Replay.restore_and_replay_journal(state) do
+      {:ok, state} -> {:ok, state}
+      {:error, reason} -> {:error, {:restore_refused, reason}, state}
     end
   end
 
@@ -421,7 +444,7 @@ defmodule Flezha.Operative.Lifecycle do
   # reconciler drives the event-driven un-park (`runner_migrate`) once a healthy
   # runner for the operative's factory is available.
   @spec park(Overwatch.t(), term()) :: Overwatch.t()
-  defp park(%Overwatch{} = state, reason) do
+  def park(%Overwatch{} = state, reason) do
     Map.put(state, :init_error, reason)
   end
 

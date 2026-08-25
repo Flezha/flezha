@@ -170,8 +170,10 @@ pub struct HostClassDecl {
     /// per-Entity WAL. When false they are dropped (stateless class).
     #[serde(default)]
     pub persistent: bool,
-    /// Header lang byte for durable records (Rust = 1, Java = 2).
-    #[serde(default = "default_sdk_lang")]
+    /// Header lang byte for durable records, from the allocation table in
+    /// [`crate::header`]. Mandatory: a veneer that reaches placement untagged
+    /// is a veneer whose state another language can be handed, so the core
+    /// refuses the declaration rather than substituting a default.
     pub sdk_lang: u8,
     /// Header format byte the host's plain change bodies claim
     /// (postcard = 1, Kryo = 4).
@@ -296,9 +298,6 @@ pub enum HostBeyondWindow {
 fn default_decl_schema_version() -> u32 {
     1
 }
-fn default_sdk_lang() -> u8 {
-    crate::header::SDK_LANG_RUST
-}
 fn default_change_format() -> u8 {
     crate::header::FORMAT_ID_POSTCARD
 }
@@ -334,6 +333,15 @@ pub struct HostPayload {
 /// Validate the declaration and build the class topology. The controller's
 /// `AddOperative` then instantiates it exactly like a typed class.
 pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
+    if !crate::header::sdk_lang_allocated(decl.sdk_lang) {
+        return Err(format!(
+            "sdk_lang: {} is not an allocated SDK language; every class declares \
+             the byte its SDK holds in the allocation table (flz_core::header), \
+             because the controller places an operative only on a runner of its \
+             factory's language",
+            decl.sdk_lang
+        ));
+    }
     if decl.procedures.is_empty() && decl.workflow.is_none() {
         return Err("a host class declares at least one procedure".to_string());
     }
@@ -378,6 +386,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             crate::workflow::registry::register_class(
                 factory_id,
                 crate::workflow::spec::WorkflowSpec {
+                    sdk_lang: decl.sdk_lang,
                     run: host_run_unreachable,
                     topology: None,
                     dag: Default::default(),
@@ -739,6 +748,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
     }
 
     let topology = Arc::new(OperativeTopology {
+        sdk_lang: decl.sdk_lang,
         channels,
         name_to_id,
         procedures,
@@ -762,6 +772,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             crate::workflow::registry::register_class(
                 factory_id,
                 crate::workflow::spec::WorkflowSpec {
+                    sdk_lang: decl.sdk_lang,
                     run: host_run_unreachable,
                     topology: Some(topology),
                     dag,
@@ -2527,7 +2538,7 @@ mod entry_observation_decl_tests {
         let id = format!("host_entry_observation_{}", std::process::id());
         super::register_host_class_json(
             format!(
-                r#"{{"factory_id":"{id}","persistent":false,
+                r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":false,
                      "channels":[{{"name":"host_trades_in","kind":"entry","consumers":[0]}},
                                  {{"name":"host_out","kind":"plugin","producer":0}}],
                      "procedures":[{{"name":"p0"}}]}}"#
@@ -2585,7 +2596,7 @@ mod checkpoint_interval_decl_tests {
 
     fn tier_class(id: &str, extra: &str) -> String {
         format!(
-            r#"{{"factory_id":"{id}","persistent":true,"effectively_once":true,{extra}
+            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"effectively_once":true,{extra}
                  "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
                              {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
                  "procedures":[{{"name":"p0"}}]}}"#
@@ -2686,7 +2697,7 @@ mod sync_durability_decl_tests {
     fn a_stream_class_declaring_sync_durability_is_refused_by_name() {
         let id = factory("sync_stream");
         let err = decl(&format!(
-            r#"{{"factory_id":"{id}","persistent":true,"sync_durability":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"sync_durability":true,
                  "channels":[{{"name":"in","kind":"entry","consumers":[0]}}],
                  "procedures":[{{"name":"p0"}}]}}"#
         ))
@@ -2703,7 +2714,7 @@ mod sync_durability_decl_tests {
     fn a_workflow_class_declaring_sync_durability_without_persistence_is_refused() {
         let id = factory("sync_wf_transient");
         let err = decl(&format!(
-            r#"{{"factory_id":"{id}","persistent":false,"sync_durability":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":false,"sync_durability":true,
                  "channels":[],"procedures":[],"workflow":{{}}}}"#
         ))
         .expect_err("there is no barrier to ship for a class that journals nothing");
@@ -2715,7 +2726,7 @@ mod sync_durability_decl_tests {
     fn a_durable_workflow_class_may_declare_it() {
         let id = factory("sync_wf_ok");
         decl(&format!(
-            r#"{{"factory_id":"{id}","persistent":true,"sync_durability":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"sync_durability":true,
                  "channels":[],"procedures":[],"workflow":{{}}}}"#
         ))
         .expect("a durable workflow class declares sync durability");
@@ -2728,7 +2739,7 @@ mod sync_durability_decl_tests {
     fn undeclared_is_the_default() {
         let id = factory("sync_wf_default");
         decl(&format!(
-            r#"{{"factory_id":"{id}","persistent":true,
+            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,
                  "channels":[],"procedures":[],"workflow":{{}}}}"#
         ))
         .expect("a workflow class declaring nothing registers");
@@ -2863,5 +2874,84 @@ mod declaration_key_tests {
         assert_eq!(decl.channels.len(), 1);
         assert_eq!(decl.procedures.len(), 1);
         assert!(decl.workflow.is_some());
+    }
+}
+
+#[cfg(test)]
+mod sdk_lang_declaration_tests {
+    //! The language byte is the one declaration a veneer cannot omit: an
+    //! untagged class reaches placement, and a placed class is handed durable
+    //! bodies only its own SDK can decode.
+
+    fn decl(id: &str, lang: &str) -> String {
+        format!(
+            r#"{{"factory_id":"{id}",{lang}"persistent":true,
+                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
+                             {{"name":"out","kind":"plugin","producer":0}}],
+                 "procedures":[{{"name":"p0"}}]}}"#
+        )
+    }
+
+    #[test]
+    fn a_class_declaring_no_language_is_refused_naming_the_field() {
+        let id = format!("host_lang_absent_{}", std::process::id());
+        let err = super::register_host_class_json(decl(&id, "").as_bytes())
+            .expect_err("an untagged class is refused");
+
+        assert!(err.contains("sdk_lang"), "{err}");
+        assert!(
+            crate::operative::registry::get_class(&id).is_none(),
+            "a refused declaration registers nothing"
+        );
+    }
+
+    #[test]
+    fn an_unspecified_language_is_refused_rather_than_defaulted() {
+        let id = format!("host_lang_zero_{}", std::process::id());
+        let err = super::register_host_class_json(decl(&id, r#""sdk_lang":0,"#).as_bytes())
+            .expect_err("sdk_lang 0 is reserved");
+
+        assert!(err.contains("sdk_lang"), "{err}");
+    }
+
+    #[test]
+    fn an_unallocated_language_is_refused_rather_than_interpreted() {
+        let id = format!("host_lang_unallocated_{}", std::process::id());
+        let err = super::register_host_class_json(decl(&id, r#""sdk_lang":99,"#).as_bytes())
+            .expect_err("99 is allocated to no SDK");
+
+        assert!(err.contains("99"), "{err}");
+    }
+
+    /// The host restore arm compares a record's byte 0 against the READING
+    /// class's declared language. Without this, a Java class would refuse its
+    /// own Kryo records (or, worse, accept another SDK's).
+    #[test]
+    fn the_declared_language_reaches_the_restore_template_and_the_advertisement() {
+        let id = format!("host_lang_java_{}", std::process::id());
+        super::register_host_class_json(
+            decl(&id, r#""sdk_lang":2,"change_format_id":4,"#).as_bytes(),
+        )
+        .expect("a Java-declared class registers");
+
+        let topology = crate::operative::registry::get_class(&id).expect("class registered");
+        assert_eq!(topology.sdk_lang, crate::header::SDK_LANG_JAVA);
+
+        let facts = topology.procedures[0]
+            .host_facts
+            .as_ref()
+            .expect("a host class carries host facts");
+        assert_eq!(facts.header().sdk_lang, crate::header::SDK_LANG_JAVA);
+
+        assert_eq!(
+            crate::operative::registry::sdk_lang_for_factory(&id),
+            crate::header::SDK_LANG_JAVA,
+            "the advertisement reads the declared value from the core"
+        );
+        assert_eq!(
+            crate::operative::registry::sdk_lang_for_factory("never_declared"),
+            crate::header::SDK_LANG_UNSPECIFIED,
+            "an undeclared factory advertises no language rather than a guess"
+        );
     }
 }

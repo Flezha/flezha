@@ -12,6 +12,11 @@
 # `MIX_RUN_MEMORY_DRIFT=1`.
 # `:s3_integration` needs the `minio` compose service (localhost:9100) and
 # `S3_INTEGRATION=1`.
+# `:interop` is the one scenario that places TWO SDK runtimes in one run: the
+# tiers are one-runtime-per-run by contract, and its namespace must not be alive
+# while another tier's cleanup tick walks the fleet. An ExUnit include BEATS an
+# exclude, so `--include system` would run it however it is excluded here — the
+# module skips itself unless `--include interop` is passed too.
 # `:multi_node` boots a peer BEAM and stops it mid-suite, which disturbs the
 # shared cluster state the boot-time runners and the concurrently-running
 # namespace tests depend on. Run with `mix test --include multi_node`.
@@ -34,6 +39,7 @@ end
 ExUnit.start(
   exclude: [
     :system,
+    :interop,
     :kafka_integration,
     :postgres_integration,
     :s3_integration,
@@ -80,5 +86,6 @@ Mimic.copy(Flezha.Schedule.Hub)
 Mimic.copy(Flezha.Dlq.Store)
 Mimic.copy(Flezha.State.InputLog)
 Mimic.copy(Flezha.State.WalTransfer)
+Mimic.copy(Flezha.State.Commands)
 Mimic.copy(Flezha.Operative.PartitionGroup)
 Mimic.copy(Flezha.Operative.ClassRegistry)

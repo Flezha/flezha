@@ -104,7 +104,10 @@ defmodule Flezha.Runner.ControlUnit do
     # so neither shape can crash the operative that asked.
     case GenServer.whereis(Identificator.control_unit(runner_id)) do
       nil ->
-        {:error, "control unit not available for runner #{runner_id} with payload"}
+        # An atom, like the ping path's: a caller has to tell "the runner never
+        # answered" from "the SDK answered with an error", and only the latter
+        # is a binary joined from the reply's `errors`.
+        {:error, :no_control_unit}
 
       _pid ->
         GenServer.call(

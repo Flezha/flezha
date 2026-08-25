@@ -165,11 +165,32 @@ defmodule Flezha.Service.OperativeManager do
     end
   end
 
-  defp cluster_wide_refusal(namespace, factory_id) when is_binary(factory_id),
-    do: "no runners for factory #{factory_id} in namespace #{namespace} on any cluster node"
+  defp cluster_wide_refusal(namespace, factory_id) when is_binary(factory_id) do
+    factory_refusal(
+      namespace,
+      factory_id,
+      "no runners for factory #{factory_id} in namespace #{namespace} on any cluster node"
+    )
+  end
 
   defp cluster_wide_refusal(namespace, _factory_id),
     do: "no runners in namespace #{namespace} on any cluster node"
+
+  # A factory that exists in another language is not a factory nobody has:
+  # reporting it as missing sends the operator looking for a runner that is
+  # already connected. Both refusal sites read this, so the two cannot drift.
+  defp factory_refusal(namespace, factory_id, absent) do
+    case FleetManager.placement_refusal(namespace, factory_id) do
+      {:language, established} ->
+        "factory #{factory_id} in namespace #{namespace} is established at sdk_lang " <>
+          "#{inspect(established)}; every runner advertising it is of another SDK and " <>
+          "cannot read its state — start a runner of that language, or clear the " <>
+          "factory's durable state so it re-establishes"
+
+      _ ->
+        absent
+    end
+  end
 
   defp do_start_operative(namespace, operative) do
     with :ok <- check_not_shutting_down(),
@@ -299,8 +320,12 @@ defmodule Flezha.Service.OperativeManager do
 
   defp validate_factory(namespace, factory_id) when is_binary(factory_id) do
     case FleetManager.runners_for_factory(namespace, factory_id) do
-      [] -> {:error, "Factory with id #{factory_id} does not exist"}
-      [_ | _] -> :ok
+      [_ | _] ->
+        :ok
+
+      [] ->
+        {:error,
+         factory_refusal(namespace, factory_id, "Factory with id #{factory_id} does not exist")}
     end
   end
 

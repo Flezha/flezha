@@ -269,3 +269,24 @@ on them.
 - **WHEN** no dispatch is in flight
 - **THEN** the heartbeat SHALL report an in-flight count of zero and an oldest-age of zero
 
+### Requirement: The Elixir SDK owns a language byte and advertises it
+
+The Elixir SDK SHALL hold the allocated language byte `3` and SHALL carry it on every factory it advertises — in the connect init frame's factory entries and in `UpdateFactories` — in both deployment modes (in-node native and standalone UDS/QUIC). The value SHALL come from one constant in the SDK, not be spelled per call site.
+
+The SDK persists no Entity state in v1 and therefore stamps no record headers; the byte is nonetheless mandatory, because the SDK advertises factory ids that the Rust and Java test apps also advertise (the round-trip twins are specified as sharing ids), and the controller's placement guard is what keeps those ids from crossing runtimes.
+
+Should the SDK later gain persistence, it SHALL stamp the same value at byte 0 of every durable record and SHALL refuse to restore a record carrying any other value, per the shared header contract.
+
+#### Scenario: The language rides both deployment modes
+- **WHEN** the SDK connects in native mode and in standalone mode
+- **THEN** each mode's connect init frame SHALL carry `sdk_lang = 3` on every advertised factory entry
+
+#### Scenario: A post-start define carries it too
+- **WHEN** the SDK defines a factory after connecting and ships `UpdateFactories`
+- **THEN** the new entry SHALL carry `sdk_lang = 3`
+
+#### Scenario: The Elixir runner is not a candidate for another language's factory
+- **GIVEN** a namespace where an Elixir runner and a Rust runner both advertise `do_nothing`, established at the Rust language
+- **WHEN** an operative of `do_nothing` is placed
+- **THEN** the Elixir runner SHALL NOT be a candidate, and the placement SHALL go to the Rust runner
+

@@ -226,6 +226,39 @@ defmodule FlezhaTest.Operative.ClassRegistryTest do
     end
   end
 
+  describe "the established SDK language" do
+    test "is scoped to the namespace, not shared across the cluster" do
+      factory = "shared-#{System.unique_integer([:positive])}"
+
+      # The test fleet gives the same reference factory ids to every SDK, so a
+      # cluster-global record would let one namespace's Rust runner refuse
+      # another namespace's Java one.
+      :ok = ClassRegistry.put_sdk_lang("ns_a", factory, 1)
+      :ok = ClassRegistry.put_sdk_lang("ns_b", factory, 2)
+
+      assert ClassRegistry.sdk_lang("ns_a", factory) == 1
+      assert ClassRegistry.sdk_lang("ns_b", factory) == 2
+    end
+
+    test "an unestablished factory reads nil rather than a default" do
+      assert ClassRegistry.sdk_lang("ns", "never-#{System.unique_integer([:positive])}") == nil
+    end
+
+    test "deleting it lets the factory re-establish, and only in that namespace" do
+      factory = "recycled-#{System.unique_integer([:positive])}"
+
+      :ok = ClassRegistry.put_sdk_lang("ns_a", factory, 1)
+      :ok = ClassRegistry.put_sdk_lang("ns_b", factory, 1)
+      :ok = ClassRegistry.delete_sdk_lang("ns_a", factory)
+
+      assert ClassRegistry.sdk_lang("ns_a", factory) == nil
+      assert ClassRegistry.sdk_lang("ns_b", factory) == 1
+
+      :ok = ClassRegistry.put_sdk_lang("ns_a", factory, 3)
+      assert ClassRegistry.sdk_lang("ns_a", factory) == 3
+    end
+  end
+
   defp sidecar(class), do: Path.join(Registry.class_dir(class), "kind")
   defp tier_sidecar(class), do: Path.join(Registry.class_dir(class), "effectively_once")
 

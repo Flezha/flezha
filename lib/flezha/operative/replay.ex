@@ -164,11 +164,67 @@ defmodule Flezha.Operative.Replay do
     # that with a compaction. This already runs off-process (the enumeration
     # does blocking disk reads) and Entities are independent, so the awaits run
     # concurrently rather than serialising a large rebind.
-    Flezha.Parallel.each(
-      restorable_entities(kind, operative_class),
-      fn entity_id -> Commands.await_restore_init_state(runner_id, entity_id) end,
-      max_concurrency: restore_concurrency()
-    )
+    refusals =
+      restorable_entities(kind, operative_class)
+      |> Flezha.Parallel.map(&await_restore(runner_id, &1),
+        max_concurrency: restore_concurrency()
+      )
+      |> Enum.filter(&match?({:error, _}, &1))
+
+    # Off-process: the bind already returned, so the verdict travels back as a
+    # message — the Overwatch is the only thing that can still stop it.
+    case refusals do
+      [] -> :ok
+      [{:error, reason} | _] -> send(overwatch, {:restore_refused, reason})
+    end
+
+    :ok
+  end
+
+  @doc """
+  Await one Entity's `RestoreInitState` and report a decisive verdict.
+
+  The one place the awaited restore's ANSWER is read. `{:error, reason}` covers
+  every way an SDK refuses a fold — language, schema, CRC, truncation, apply —
+  because they mean one thing here: the durable state did not reach the runner,
+  and folding new inputs onto empty state would lose it silently. An Entity
+  with no snapshot and a zero-length WAL is a SUCCESS and binds normally.
+  """
+  @spec await_restore(binary(), Registry.entity_id()) :: :ok | {:error, term()}
+  def await_restore(runner_id, entity_id) do
+    case Commands.await_restore_init_state(runner_id, entity_id) do
+      {:ok, _raw} ->
+        :ok
+
+      # The round trip never completed — a timeout, a dead control unit, a
+      # runner shutting down. That is not a verdict on the state, and the
+      # rebind path already owns a runner that stopped answering. Parking here
+      # would turn ordinary teardown churn into stuck operatives.
+      {:error, reason} when not is_binary(reason) ->
+        Logger.debug(
+          "[Overwatch] restore unanswered entity=#{inspect(entity_id)} " <>
+            "runner=#{runner_id}: #{inspect(reason)}"
+        )
+
+        :ok
+
+      # The SDK answered and refused: the reason is its own error text, joined
+      # from the reply's `errors`.
+      {:error, reason} ->
+        Logger.error(
+          "[Overwatch] restore REFUSED entity=#{inspect(entity_id)} runner=#{runner_id}: " <>
+            "#{inspect(reason)}; leaving the operative unbound rather than folding new " <>
+            "inputs onto empty state"
+        )
+
+        :telemetry.execute(
+          [:flezha, :state, :restore_refused],
+          %{count: 1},
+          %{entity: entity_id, runner: runner_id, reason: reason}
+        )
+
+        {:error, reason}
+    end
   end
 
   defp restore_concurrency,
@@ -222,19 +278,30 @@ defmodule Flezha.Operative.Replay do
   min watermark skip re-forwarded offsets they already consumed (SDK
   `consumed_floor`).
   """
-  @spec restore_and_replay_journal(Overwatch.t()) :: Overwatch.t()
+  @spec restore_and_replay_journal(Overwatch.t()) :: {:ok, Overwatch.t()} | {:error, term()}
   def restore_and_replay_journal(%Overwatch{} = state) do
-    state.builder.kind
-    |> restorable_entities(Overwatch.operative_class(state))
-    |> Enum.each(fn entity_id ->
-      # Starting the writer replays its WAL scan: arms the outbox re-drive
-      # and repopulates the Entity's durable consumed-offset watermark.
-      _ = Flezha.State.Supervisor.find_or_start(entity_id)
-      _ = Commands.await_restore_init_state(state.runner_id, entity_id)
-    end)
+    refused =
+      state.builder.kind
+      |> restorable_entities(Overwatch.operative_class(state))
+      |> Enum.find_value(fn entity_id ->
+        # Starting the writer replays its WAL scan: arms the outbox re-drive
+        # and repopulates the Entity's durable consumed-offset watermark.
+        _ = Flezha.State.Supervisor.find_or_start(entity_id)
 
-    replay_journaled_inputs(state)
-    state
+        case await_restore(state.runner_id, entity_id) do
+          :ok -> nil
+          {:error, reason} -> reason
+        end
+      end)
+
+    # Stop before the journal replay: re-forwarding the input tail onto an
+    # Entity whose baseline never landed is the silent loss this guards.
+    if refused do
+      {:error, refused}
+    else
+      replay_journaled_inputs(state)
+      {:ok, state}
+    end
   end
 
   # ---------- re-forwarding a durable tail ----------
@@ -391,18 +458,22 @@ defmodule Flezha.Operative.Replay do
     # Blocking: the restore rides the control channel while the replay rides the
     # data channel, and without this fence they race — the runner could fold
     # slice inputs into the very state the rewind was about to replace.
-    _ = Commands.await_restore_init_state(state.runner_id, entity_id)
+    with :ok <- await_restore(state.runner_id, entity_id) do
+      # The rewind already truncated the Entity back to its baseline, so a
+      # refused restore leaves nothing to replay the slice ONTO. Report the
+      # refusal instead: `log_correction/4` surfaces it and the correction is
+      # retried, rather than the slice folding onto empty state.
+      last = InputLog.last_offset(operative_class)
+      if last > consumed, do: replay_slice(state, operative_class, consumed + 1, last)
 
-    last = InputLog.last_offset(operative_class)
-    if last > consumed, do: replay_slice(state, operative_class, consumed + 1, last)
-
-    {:ok,
-     %{
-       baseline_seq: baseline_seq,
-       epoch: epoch,
-       replayed: max(last - consumed, 0),
-       duration_ms: System.monotonic_time(:millisecond) - started
-     }}
+      {:ok,
+       %{
+         baseline_seq: baseline_seq,
+         epoch: epoch,
+         replayed: max(last - consumed, 0),
+         duration_ms: System.monotonic_time(:millisecond) - started
+       }}
+    end
   end
 
   defp log_correction(state, entity_id, _target, {:ok, measurements}) do

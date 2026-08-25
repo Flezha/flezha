@@ -1,7 +1,7 @@
 //! 16-byte version header for durable per-Entity records.
 //!
 //! Layout:
-//!  - 0:1   `sdk_lang: u8` = 1 (Rust)
+//!  - 0:1   `sdk_lang: u8` — the writing SDK, per the allocation table below
 //!  - 1:5   `sdk_version: u32 BE` = (major << 16) | (minor << 8) | patch
 //!  - 5:9   `schema_version: u32 BE` = the class's declared schema version
 //!  - 9:10  `format_id: u8` = 1 (postcard) in v1
@@ -20,7 +20,13 @@ pub enum RestoreError {
     ChangeDecode(String),
     #[error("malformed restoration header (truncated or invalid)")]
     HeaderInvalid,
-    #[error("sdk_lang mismatch: expected {expected}, found {found}")]
+    #[error(
+        "sdk_lang mismatch: this SDK is {} ({expected}), the record was written \
+         by {} ({found}); durable bodies are per-SDK and are never decoded \
+         across languages",
+        sdk_lang_name(*expected),
+        sdk_lang_name(*found)
+    )]
     LangMismatch { expected: u8, found: u8 },
     #[error(
         "record stamped schema_version {found} is below the readable floor \
@@ -38,8 +44,49 @@ pub enum RestoreError {
     CrcMismatch { entity: u32, seq: u64 },
 }
 
-/// Compiled-in language tag stamped at byte 0 of the persistence header.
+/// The `sdk_lang` allocation table: 0 unspecified, 1 Rust, 2 Java, 3 Elixir,
+/// `4..=254` free in landing order, 255 reserved.
+///
+/// Durable `State`/`Change` bodies are per-SDK below the shared envelope, so
+/// this byte is what keeps one language's records from reaching another's
+/// codec. One value per SDK, assigned when that SDK lands — a proposal takes
+/// the next free one at implementation time rather than asserting one. An
+/// unknown value is refused, never interpreted.
+pub const SDK_LANG_UNSPECIFIED: u8 = 0;
+/// Rust SDK. Also the value the typed in-process path stamps.
 pub const SDK_LANG_RUST: u8 = 1;
+/// Java SDK (JNI over this core).
+pub const SDK_LANG_JAVA: u8 = 2;
+/// Elixir SDK. Persists no Entity state in v1, but advertises the byte so its
+/// factories are taggable at the placement seam.
+pub const SDK_LANG_ELIXIR: u8 = 3;
+/// Lowest value not yet allocated to an SDK.
+pub const SDK_LANG_NEXT_FREE: u8 = 4;
+/// Reserved; never allocated to an SDK.
+pub const SDK_LANG_RESERVED: u8 = 255;
+
+/// Every allocated value, in allocation order. The single list the uniqueness
+/// test and the allocation-check read.
+pub const SDK_LANG_ALLOCATED: &[(u8, &str)] = &[
+    (SDK_LANG_RUST, "rust"),
+    (SDK_LANG_JAVA, "java"),
+    (SDK_LANG_ELIXIR, "elixir"),
+];
+
+/// Whether `lang` is a value the allocation table hands to an SDK. `0` and
+/// `255` are reserved, and an unallocated value is refused rather than guessed.
+pub fn sdk_lang_allocated(lang: u8) -> bool {
+    SDK_LANG_ALLOCATED.iter().any(|(v, _)| *v == lang)
+}
+
+/// The SDK name behind an allocated value, for error and log text.
+pub fn sdk_lang_name(lang: u8) -> &'static str {
+    SDK_LANG_ALLOCATED
+        .iter()
+        .find(|(v, _)| *v == lang)
+        .map(|(_, name)| *name)
+        .unwrap_or("unallocated")
+}
 
 /// Postcard format id stamped at byte 9 of the persistence header.
 pub const FORMAT_ID_POSTCARD: u8 = 1;
@@ -263,6 +310,40 @@ pub fn parse_pkg_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The allocation table is only worth having if it cannot collide: two
+    /// SDKs sharing a value would make the guard that reads it meaningless.
+    #[test]
+    fn allocation_table_has_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for (value, name) in SDK_LANG_ALLOCATED {
+            assert!(
+                seen.insert(*value),
+                "sdk_lang {value} is allocated twice (second holder: {name})"
+            );
+        }
+        assert_eq!(seen.len(), SDK_LANG_ALLOCATED.len());
+    }
+
+    #[test]
+    fn reserved_values_are_never_allocated() {
+        assert!(!sdk_lang_allocated(SDK_LANG_UNSPECIFIED));
+        assert!(!sdk_lang_allocated(SDK_LANG_RESERVED));
+        assert!(!sdk_lang_allocated(SDK_LANG_NEXT_FREE));
+        for (value, _) in SDK_LANG_ALLOCATED {
+            assert!(*value >= 1 && *value < SDK_LANG_NEXT_FREE);
+            assert!(sdk_lang_allocated(*value));
+        }
+    }
+
+    #[test]
+    fn shipped_sdks_hold_their_allocated_values() {
+        assert_eq!(SDK_LANG_RUST, 1);
+        assert_eq!(SDK_LANG_JAVA, 2);
+        assert_eq!(SDK_LANG_ELIXIR, 3);
+        assert_eq!(sdk_lang_name(SDK_LANG_JAVA), "java");
+        assert_eq!(sdk_lang_name(SDK_LANG_NEXT_FREE), "unallocated");
+    }
 
     #[test]
     fn stamp_layout_matches_umbrella_spec() {

@@ -58,6 +58,9 @@ impl ProcDag {
 /// `None` for the run-sugar form; `Some` (with the resolved `tree`) for the
 /// structured form.
 pub struct WorkflowSpec {
+    /// The SDK language behind this class — see [`OperativeTopology::sdk_lang`].
+    /// Carried here as well because a run-sugar workflow has no topology.
+    pub sdk_lang: u8,
     /// Run-sugar body. Invoked only when `topology` is `None`.
     pub run: WorkflowRunFn,
     /// Structured topology, or `None` for run-sugar.

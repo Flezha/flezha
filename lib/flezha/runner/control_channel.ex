@@ -629,8 +629,16 @@ defmodule Flezha.Runner.ControlChannel do
   # control channel; the reconnect init frame remains the resync of record.
   defp handle_update_factories(state, %RunnerCommands.UpdateFactories{factories: factories}) do
     factories =
-      Enum.map(factories, fn %RunnerCommands.FactoryDecl{id: id, description: description} ->
-        %{"id" => id, "description" => if(description == "", do: nil, else: description)}
+      Enum.map(factories, fn %RunnerCommands.FactoryDecl{
+                               id: id,
+                               description: description,
+                               sdk_lang: sdk_lang
+                             } ->
+        %{
+          "id" => id,
+          "description" => if(description == "", do: nil, else: description),
+          "sdk_lang" => sdk_lang
+        }
       end)
 
     GenServer.cast(

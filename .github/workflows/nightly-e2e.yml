@@ -140,6 +140,16 @@ jobs:
             --formatter FlezhaTest.Helper.TimingFormatter \
             --formatter ExUnit.CLIFormatter
 
+      - name: Run the cross-SDK interop scenario
+        # The one scenario that places TWO runtimes in a single run, so it is
+        # excluded from the tiers above and invoked on its own. It rides the
+        # java job because that is the one with both a JDK and the pre-built
+        # rust_runner; the runtime axis does not apply to it.
+        if: matrix.runtime == 'java'
+        run: |
+          mix test --include system --include interop \
+            test/system/cross_sdk_placement_e2e_test.exs
+
       - name: Upload the conformance report
         if: always()
         uses: actions/upload-artifact@v4

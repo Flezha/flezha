@@ -258,6 +258,23 @@ defmodule Flezha.State.TestHelpers do
   end
 
   @doc """
+  Write one Entity's WAL holding a single record stamped by `sdk_lang`.
+
+  The fixture behind every "what language wrote this state" assertion: the
+  placement guard resolves a factory's established language from byte 0 of a
+  record header, so a test needs a real on-disk WAL rather than a stub.
+  """
+  @spec write_wal_of_lang(Registry.entity_id(), byte()) :: :ok
+  def write_wal_of_lang(entity_id, sdk_lang) do
+    body = "state-bytes"
+    header = <<sdk_lang, 0::32, 1::32, 1, 0::16, :erlang.crc32(body)::32>>
+    path = Registry.wal_path(entity_id)
+
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, build_wal_record(0, header, body))
+  end
+
+  @doc """
   Build a record with a caller-supplied header.
   """
   @spec build_wal_record(non_neg_integer(), binary(), binary()) :: binary()

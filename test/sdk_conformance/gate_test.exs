@@ -23,7 +23,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   @docs_section "docs/sdk/conformance.md § Adding an SDK to the conformance suite"
 
   # A manifest must declare all of these.
-  @required_fields ~w(runtime command artifacts build connect_timeout_ms transports deferred fixtures docs)
+  @required_fields ~w(runtime sdk_lang command artifacts build connect_timeout_ms transports deferred fixtures docs)
 
   defp runtimes, do: PortPilot.runtimes()
 
@@ -69,6 +69,75 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
         unless manifest["artifacts"]["test"] != [] and manifest["artifacts"]["bench"] != [] do
           fail("#{path}: an artifacts profile is empty")
+        end
+      end
+    end
+
+    test "each declares a distinct, allocated sdk_lang" do
+      langs =
+        for runtime <- runtimes(), into: %{} do
+          lang = PortPilot.sdk_lang(runtime)
+          path = PortPilot.manifest_path(runtime)
+
+          unless is_integer(lang) and lang > 0 do
+            fail(
+              "#{path} declares sdk_lang #{inspect(lang)}; every runtime holds an " <>
+                "allocated value from the table in flz_core/src/header.rs (0 is " <>
+                "reserved and never places)"
+            )
+          end
+
+          {runtime, lang}
+        end
+
+      duplicates =
+        langs
+        |> Enum.group_by(fn {_runtime, lang} -> lang end, fn {runtime, _lang} -> runtime end)
+        |> Enum.filter(fn {_lang, runtimes} -> length(runtimes) > 1 end)
+
+      for {lang, runtimes} <- duplicates do
+        fail(
+          "sdk_lang #{lang} is declared by #{inspect(runtimes)}; one value per SDK, " <>
+            "allocated in landing order — take the next free value from the table in " <>
+            "flz_core/src/header.rs"
+        )
+      end
+    end
+
+    test "each manifest's sdk_lang is the value its SDK actually stamps" do
+      # Static half of the agreement check: the manifest against the constant
+      # the SDK compiles in. The nightly `interop` scenario proves the other
+      # half — that the runner advertises it on connect.
+      stamped = %{
+        rust: {"flz_core/src/header.rs", ~r/pub const SDK_LANG_RUST: u8 = (\d+);/},
+        java:
+          {"sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java",
+           ~r/SDK_LANG_JAVA = (\d+);/},
+        elixir: {"lib/flezha/sdk/codec.ex", ~r/@sdk_lang (\d+)/}
+      }
+
+      for runtime <- runtimes() do
+        {path, pattern} =
+          Map.get(stamped, runtime) ||
+            fail(
+              "runtime #{runtime} has a manifest but no entry in this test's " <>
+                "source-of-truth table; add where its SDK spells its language byte"
+            )
+
+        source = File.read!(path)
+
+        declared =
+          case Regex.run(pattern, source) do
+            [_, value] -> String.to_integer(value)
+            nil -> fail("#{path} no longer spells #{runtime}'s language byte as expected")
+          end
+
+        unless declared == PortPilot.sdk_lang(runtime) do
+          fail(
+            "#{PortPilot.manifest_path(runtime)} declares sdk_lang " <>
+              "#{PortPilot.sdk_lang(runtime)}, but #{path} stamps #{declared} — a " <>
+              "manifest cannot drift from its SDK"
+          )
         end
       end
     end

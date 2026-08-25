@@ -82,6 +82,11 @@ pub struct ProcedureDescriptor {
 }
 
 pub struct OperativeTopology {
+    /// The SDK language behind this class, from the allocation table in
+    /// [`crate::header`]. Stamped at byte 0 of every durable record the class
+    /// writes and advertised on the factory, so the controller places an
+    /// operative only on a runner that can read its state.
+    pub sdk_lang: u8,
     pub channels: Vec<ChannelDescriptor>,
     pub name_to_id: HashMap<&'static str, ChannelId>,
     pub procedures: Vec<ProcedureDescriptor>,

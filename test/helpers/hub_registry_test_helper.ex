@@ -84,18 +84,9 @@ defmodule FlezhaTest.Helper.HubRegistryTestHelper do
   `:sys.replace_state` on exit).
   """
   def seed_runner(ns, runner_id, factory_id) do
-    :sys.replace_state(Flezha.Runner.FleetManager, fn state ->
-      state
-      |> put_in(
-        [:runner_namespaces, ns],
-        %{runner_id => {:active, System.system_time(:millisecond)}}
-      )
-      |> put_in(
-        [:namespace_factories, ns],
-        %{factory_id => %{description: nil, ce_ids: MapSet.new([runner_id])}}
-      )
-    end)
-
+    # One definition of "this namespace holds these runners advertising these
+    # factories" — including the SDK language placement filters on.
+    FlezhaTest.Helper.FleetStateHelper.seed(ns, %{runner_id => [factory_id]})
     register_control_unit(runner_id)
   end
 

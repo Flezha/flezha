@@ -33,6 +33,12 @@ type ControlConn = (
 struct FactoryInfo {
     id: String,
     description: Option<String>,
+    /// The class's declared SDK language, resolved from the class registry —
+    /// never a per-process constant, so a host serving more than one
+    /// declaration source stays correct. `0` when this runner advertises a
+    /// factory it never registered a class for, which the controller refuses
+    /// to place rather than guessing at.
+    sdk_lang: u8,
 }
 
 #[derive(Serialize)]
@@ -361,6 +367,7 @@ fn send_init_msg(
         .map(|id| FactoryInfo {
             id: id.clone(),
             description: None,
+            sdk_lang: crate::operative::registry::sdk_lang_for_factory(id),
         })
         .collect();
 

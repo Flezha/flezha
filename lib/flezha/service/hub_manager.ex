@@ -1044,7 +1044,13 @@ defmodule Flezha.Service.HubManager do
   defp durable_operative_keys(hub_id) do
     live_registry_dump(hub_id) |> Map.keys() |> Enum.filter(&is_binary/1)
   catch
+    # A hub whose registry table is already gone holds no operatives — the
+    # table vanishing IS the hub being down. `:ets` RAISES for that rather than
+    # exiting, so the exit clause alone left `runner_cleanup/1` killing the
+    # FleetManager, and the control plane with it, on any namespace whose hub
+    # died before the tick reached it.
     :exit, _ -> []
+    :error, _ -> []
   end
 
   @doc """

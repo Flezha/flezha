@@ -150,6 +150,13 @@ a field that is not fails to compile and the author hand-writes a `Change`.
 
 ### 3.0 Changing a State or Change type after it has been deployed
 
+> **A factory id is single-language.** Because the persisted encodings below are
+> per-SDK, an operative is placed only on a runner of its factory's language,
+> and a restore refuses a record another SDK stamped. Re-authoring a factory in
+> another language is therefore not an upgrade — it is drain-and-cutover under a
+> new factory id (stop, compact, `flz state get`, start the new factory), or
+> clearing the old factory's durable state so it re-establishes.
+
 The persisted encodings are **positional and not self-describing** (postcard in
 Rust, Kryo in Java). Reordering fields, removing one, or changing a field's
 type is not a compatibility question the codec can answer: last version's bytes

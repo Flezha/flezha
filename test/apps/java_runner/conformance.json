@@ -1,5 +1,6 @@
 {
   "runtime": "java",
+  "sdk_lang": 2,
   "command": {
     "test": "java -Dorg.slf4j.simpleLogger.defaultLogLevel=error -jar {artifact} {namespace}",
     "bench": "java -Dorg.slf4j.simpleLogger.defaultLogLevel=error -jar {artifact} {namespace}"

@@ -534,6 +534,14 @@ message ParkPayloadAck {
 message FactoryDecl {
     string id = 1;
     string description = 2;
+    // The SDK language of the class registered under this id — the value the
+    // SDK declares to the poll core as `class.sdk_lang` and stamps at byte 0
+    // of every durable record it writes (1 Rust, 2 Java, 3 Elixir; the
+    // allocation table of record is `flz_core::header`). The Controller places
+    // an operative only on a runner advertising its factory's established
+    // language, because the State/Change bodies below the shared envelope are
+    // per-SDK. 0 (absent) is "unspecified" and never places.
+    uint32 sdk_lang = 3;
 }
 
 // SDK -> Controller. Ships the runner's FULL current factory set after a

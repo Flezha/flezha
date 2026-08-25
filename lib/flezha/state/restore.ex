@@ -74,6 +74,53 @@ defmodule Flezha.State.Restore do
       )
   end
 
+  @doc """
+  The SDK language byte stamped in this Entity's durable state, or `nil` when
+  it has none.
+
+  Byte 0 of the newest snapshot header, else of the first WAL record's. The
+  authority on which SDK wrote an Entity's state, and what the placement guard
+  resolves a factory's established language from. A routing decision, not a
+  validation: the body is never touched and an unknown value is reported as
+  found.
+  """
+  @spec sdk_lang(Registry.entity_id()) :: byte() | nil
+  def sdk_lang(entity_id) do
+    case Snapshot.latest_snapshot(entity_id) do
+      {_seq, path} ->
+        case Snapshot.read_snapshot(path) do
+          {:ok, <<lang, _::binary>>, _bytes} -> lang
+          _ -> first_wal_lang(entity_id)
+        end
+
+      nil ->
+        first_wal_lang(entity_id)
+    end
+  end
+
+  @doc """
+  The SDK language stamped across `operative_class`'s durable state, or `nil`
+  when the class has none on disk.
+
+  The first Entity that answers wins: a class is written by one SDK, so a
+  second read would only confirm the first.
+  """
+  @spec class_sdk_lang(binary()) :: byte() | nil
+  def class_sdk_lang(operative_class) when is_binary(operative_class) do
+    operative_class
+    |> Registry.entities_of()
+    |> Enum.find_value(&sdk_lang/1)
+  end
+
+  # The WAL's first record carries the same header shape the snapshot does, at
+  # a fixed offset in the `[seq: 8][len: 4][header: 16]...` record framing.
+  defp first_wal_lang(entity_id) do
+    case :file.read_file(Registry.wal_path(entity_id)) do
+      {:ok, <<_seq::64-big, len::32-big, lang, _::binary>>} when len >= @header_size -> lang
+      _ -> nil
+    end
+  end
+
   # Read the WAL once and parse records in memory; a per-record `:file.pread`
   # churns small transient refc binaries that fragment the binary allocator.
   defp read_tail_wal(entity_id, snapshot_seq) do

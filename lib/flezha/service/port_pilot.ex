@@ -111,6 +111,17 @@ defmodule Flezha.Service.PortPilot do
   end
 
   @doc """
+  The runtime's allocated SDK language byte, as its manifest declares it.
+
+  The byte the runtime stamps at byte 0 of every durable record and advertises
+  on every factory (`flz_core::header`'s allocation table). Distinct per
+  runtime: the controller's placement guard reads it, so two runtimes sharing a
+  value would make the guard meaningless.
+  """
+  @spec sdk_lang(atom()) :: pos_integer() | nil
+  def sdk_lang(runtime), do: manifest(runtime)["sdk_lang"]
+
+  @doc """
   The shell line that launches `runtime`'s test app for `profile` (`:test` or
   `:bench`) into `namespace`, rendered from the manifest's command template.
 

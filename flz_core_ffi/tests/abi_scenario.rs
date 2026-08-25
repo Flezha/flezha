@@ -182,6 +182,7 @@ fn c_abi_full_scenario() {
 
     let decl = br#"{
         "factory_id": "abi_probe",
+        "sdk_lang": 1,
         "channels": [{"name": "in", "kind": "entry", "consumers": [0]}],
         "procedures": [{"name": "abi_pass"}]
     }"#;
@@ -618,6 +619,7 @@ fn c_abi_full_scenario() {
     // ==================== keyed dynamic route via the prepare crossing (ABI)
     let decl = br#"{
         "factory_id": "abi_dyn",
+        "sdk_lang": 1,
         "channels": [{"name": "din", "kind": "entry", "consumers": [0]}],
         "procedures": [{"name": "dyn_pass", "entity_mode": "dynamic"}]
     }"#;
@@ -695,6 +697,7 @@ fn c_abi_full_scenario() {
     // ============================================ workflow run-sugar (ABI)
     let decl = br#"{
         "factory_id": "abi_sugar",
+        "sdk_lang": 1,
         "channels": [],
         "procedures": [],
         "workflow": {}

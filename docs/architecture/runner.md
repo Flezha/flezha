@@ -383,6 +383,28 @@ The rule, normative for every binding:
 - **Measured on one runtime is proven on one runtime.** A performance change is a controller
   change, a kernel change or a host change — its dev note says which — and a number taken with
   the Rust runner is not a number for Java or Elixir until the same bench has run on them.
+- **Every SDK holds one allocated language byte, and a factory is homogeneous in it.** Durable
+  `State` and `Change` bodies are per-SDK below the shared 16-byte envelope, and a restore ships
+  those bodies verbatim to whichever runner bound the Entity — so an operative is placed only on
+  a runner of its factory's language. The byte is an allocated identifier with one table of
+  record in `flz_core/src/header.rs`:
+
+  | value | SDK | stamps records |
+  |---|---|---|
+  | 0 | unspecified — never places | — |
+  | 1 | Rust | yes (postcard) |
+  | 2 | Java | yes (Kryo) |
+  | 3 | Elixir | no (v1 persists nothing) |
+  | 4–254 | free, allocated in landing order | — |
+  | 255 | reserved | — |
+
+  One value per SDK, taken when that SDK lands; a proposal never asserts a value it has not been
+  allocated, and a `flz_core` test refuses a duplicate. Every class declares it (the core refuses
+  one that does not), every factory advertisement carries it, and every restore path — typed and
+  host — refuses a record stamped with another language rather than handing it to its own codec.
+  The homogeneous unit is the **factory**, not the namespace: a namespace holding a Rust class and
+  a Java class is normal and each places on its own language. A conformance manifest declares its
+  runtime's byte and the gate pins uniqueness, so a new SDK is covered by construction.
 
 Where each SDK stands is not a table anyone maintains by hand. Each SDK's test app declares it
 in `test/apps/<sdk>_runner/conformance.json`: the capabilities it defers, by name, and the

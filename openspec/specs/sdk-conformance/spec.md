@@ -218,3 +218,47 @@ The scenario SHALL additionally cover the abandon path — a fixture whose Proce
 - **WHEN** the fixture aborts the worker holding an activation
 - **THEN** the pool SHALL return to its configured size, the entity SHALL be served again, and the aborting item SHALL NOT have been executed twice
 
+### Requirement: Every conformance manifest declares its runtime's language byte
+
+Each SDK test app's `conformance.json` SHALL declare `sdk_lang`: the allocated language byte that runtime stamps at byte 0 of its durable records and advertises on every factory. The gate SHALL assert that:
+
+- every manifest declares one, and it is a value from the allocation table (never `0`);
+- no two manifests declare the same value;
+- the declared value equals what its SDK actually stamps — the gate is static (it spawns no runner), so it SHALL compare each manifest against the constant that SDK compiles in, and fail naming both. That a runner then *advertises* that value on connect is proved by the `interop` scenario below.
+
+An SDK that persists nothing SHALL still declare a value: the byte identifies the runtime at the placement seam, not only in a record header.
+
+#### Scenario: A new SDK cannot join untagged
+- **WHEN** a new `test/apps/<sdk>_runner/conformance.json` omits `sdk_lang`
+- **THEN** the gate SHALL fail naming the manifest and the allocation table
+
+#### Scenario: A duplicated language byte fails the gate
+- **WHEN** two manifests declare the same `sdk_lang`
+- **THEN** the gate SHALL fail naming both runtimes and both manifests
+
+#### Scenario: A manifest that disagrees with its SDK fails
+- **GIVEN** a manifest declaring `sdk_lang: 2` for an SDK whose source stamps `1`
+- **WHEN** the gate runs
+- **THEN** it SHALL fail naming the declared and the stamped value, and the file each came from
+
+#### Scenario: A persistence-free SDK still declares one
+- **GIVEN** a runtime whose manifest defers `state_persistence`
+- **WHEN** the gate runs
+- **THEN** the manifest SHALL still be required to declare a distinct `sdk_lang`
+
+### Requirement: An interop scenario proves the placement guard
+
+The suite SHALL carry an `interop`-tagged scenario that starts two SDK runners of different languages in one namespace, both advertising a factory id the reference manifest gives to both, and asserts that placement never crosses languages: an operative of that factory established at one language SHALL be placed only on the runner of that language, and killing that runner SHALL leave the operative unbound with a language reason rather than rebinding onto the other runner.
+
+The scenario SHALL be the only place two SDKs coexist in a run; the one-runtime-per-run rule stands everywhere else, and the shared factory ids that exist for cross-runtime measurement SHALL NOT be changed to avoid the collision — the guard is what makes them safe.
+
+#### Scenario: Placement does not cross languages
+- **GIVEN** a Rust runner and a Java runner in one namespace, both advertising `bench_echo`, with `bench_echo` established at the Rust language
+- **WHEN** an operative of `bench_echo` is started
+- **THEN** it SHALL be placed on the Rust runner
+
+#### Scenario: A dead runner does not hand its factory to the other language
+- **GIVEN** the operative above running on the Rust runner
+- **WHEN** the Rust runner is killed while the Java runner stays connected
+- **THEN** the operative SHALL NOT bind to the Java runner, and the refusal reason SHALL name the language mismatch
+

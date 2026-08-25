@@ -186,11 +186,44 @@ What the gate enforces, in the order it checks — a pull request adding
 
 1. The app directory carries `conformance.json`.
 2. The manifest declares every field, with both `test` and `bench` profiles.
-3. Every capability is accounted for — deferred or carried, exactly once.
-4. No required capability is deferred.
-5. Every carried capability's fixture ids equal the Rust reference's.
-6. The runtime is a `workflow_dispatch` option of `.github/workflows/nightly-e2e.yml`.
-7. The `docs` page exists and references the manifest by path.
+3. The manifest declares an `sdk_lang`, distinct from every other manifest's, and
+   equal to the value the SDK actually compiles in.
+4. Every capability is accounted for — deferred or carried, exactly once.
+5. No required capability is deferred.
+6. Every carried capability's fixture ids equal the Rust reference's.
+7. The runtime is a `workflow_dispatch` option of `.github/workflows/nightly-e2e.yml`.
+8. The `docs` page exists and references the manifest by path.
+
+### `sdk_lang`
+
+The allocated language byte your SDK stamps at byte 0 of every durable record
+and advertises on every factory. Take the next free value from the table of
+record in `flz_core/src/header.rs` — one value per SDK, assigned when the SDK
+lands, never asserted by a proposal in advance.
+
+An SDK that persists nothing still declares one. The byte identifies the runtime
+at the *placement* seam, not only in a record header: the controller places an
+operative only on a runner advertising its factory's established language, and
+the conformance fleet gives different SDKs the same factory ids on purpose so
+one workload can be measured on each runtime. Without the byte those shared ids
+would be a cross-language restore waiting to happen; with it they are safe.
+
+The gate fails on a missing value, a duplicate, or a manifest that has drifted
+from the constant its SDK compiles in. The `interop`-tagged scenario proves the
+other half — that the runner advertises the byte on connect and that placement
+never crosses languages.
+
+`:interop` is excluded from `mix test` **and** from `--include system`: it is
+the one scenario that places two runtimes in a single run, and the tiers are
+one-runtime-per-run by contract. Invoke it on its own:
+
+```
+mix test --include system --include interop \
+  test/system/cross_sdk_placement_e2e_test.exs
+```
+
+The nightly runs it once, on the `java` matrix job — the job that has both a
+JDK and the pre-built `rust_runner`.
 
 Then the test-app contract above, which the smoke tier exercises.
 

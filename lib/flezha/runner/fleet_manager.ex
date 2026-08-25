@@ -10,6 +10,7 @@ defmodule Flezha.Runner.FleetManager do
   alias Flezha.Shutdown.Coordinator, as: ShutdownCoordinator
   alias Flezha.Convergence.Heal
   alias Flezha.Convergence.SafeCall
+  alias Flezha.Operative.ClassRegistry
 
   require Logger
 
@@ -21,6 +22,10 @@ defmodule Flezha.Runner.FleetManager do
   @superseded_table :flezha_superseded_sessions
   @superseded_ttl_ms 600_000
   @lookup_timeout_ms 5_000
+
+  # An advertisement carrying no language. Never places: the runner most likely
+  # to be untagged is the one most likely to be mismatched.
+  @sdk_lang_unspecified 0
 
   def start_link(_) do
     GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -188,6 +193,21 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @doc """
+  Why `factory_id` has no placement candidate in `namespace`.
+
+  `:none` when some runner can take it; `:no_such_factory` when no runner
+  advertises the id at all; `{:language, established}` when runners advertise
+  it in another language than the one the factory is established at — a
+  factory that exists and is simply unplaceable here, which must not be
+  reported as a factory that does not exist.
+  """
+  @spec placement_refusal(String.t(), String.t(), timeout()) ::
+          :none | :no_such_factory | {:language, byte() | nil}
+  def placement_refusal(namespace, factory_id, timeout \\ @lookup_timeout_ms) do
+    GenServer.call(__MODULE__, {:placement_refusal, namespace, factory_id}, timeout)
+  end
+
+  @doc """
   Runner ids across every cluster node holding active runners in `namespace`,
   resolved through the cluster directory. Serves `Flezha.list_runners/1`.
   An unreachable peer contributes nothing rather than failing the read.
@@ -324,6 +344,20 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   @impl true
+  def handle_call({:placement_refusal, namespace, factory_id}, _from, state) do
+    {_info, advertising} = advertising_runners(state, namespace, factory_id)
+
+    refusal =
+      cond do
+        not Enum.empty?(placeable_runners(state, namespace, factory_id)) -> :none
+        not Enum.empty?(advertising) -> {:language, ClassRegistry.sdk_lang(namespace, factory_id)}
+        true -> :no_such_factory
+      end
+
+    {:reply, refusal, state}
+  end
+
+  @impl true
   def handle_call({:stop_namespace, namespace}, _from, state) do
     {reply, runner_namespaces} =
       case Map.get(state.runner_namespaces, namespace, nil) do
@@ -424,6 +458,7 @@ defmodule Flezha.Runner.FleetManager do
       state
       |> remove_ce_factories(namespace, runner_id)
       |> store_factories(namespace, runner_id, factories)
+      |> prune_empty_factories(namespace)
 
     warn_dropped_factories(state, namespace, runner_id, dropped)
 
@@ -508,10 +543,12 @@ defmodule Flezha.Runner.FleetManager do
 
     # Clean factory refs for removed CEs
     Enum.reduce(removal, state, fn {namespace, removal_runners}, acc ->
-      Enum.reduce(removal_runners, acc, fn
+      removal_runners
+      |> Enum.reduce(acc, fn
         nil, acc -> acc
         ce_id, acc -> remove_ce_factories(acc, namespace, ce_id)
       end)
+      |> prune_empty_factories(namespace)
     end)
   end
 
@@ -649,6 +686,7 @@ defmodule Flezha.Runner.FleetManager do
 
         state
         |> remove_ce_factories(namespace, runner_id)
+        |> prune_empty_factories(namespace)
         |> update_in([:runner_namespaces, namespace], &Map.delete(&1 || %{}, runner_id))
     end
   end
@@ -670,7 +708,10 @@ defmodule Flezha.Runner.FleetManager do
   defp do_handle_runner_disconnect(state, namespace, runner_id) do
     FleetSupervisor.stop_runner_sup(runner_id)
 
-    state = remove_ce_factories(state, namespace, runner_id)
+    state =
+      state
+      |> remove_ce_factories(namespace, runner_id)
+      |> prune_empty_factories(namespace)
 
     if HubManager.hub_alive?(namespace) do
       HubManager.unregister_handler(namespace, runner_id)
@@ -944,13 +985,20 @@ defmodule Flezha.Runner.FleetManager do
     ns_factories =
       Enum.reduce(factories, ns_factories, fn factory, acc ->
         factory_id = factory["id"]
-        existing = Map.get(acc, factory_id, %{description: nil, ce_ids: MapSet.new()})
 
+        existing = factory_entry(Map.get(acc, factory_id))
         description = factory["description"] || existing.description
+        advertised = advertised_lang(factory)
+
+        # Stored even when it conflicts, so operator tooling can see the
+        # runner that is advertising the wrong language; `placeable_runners/3`
+        # is what refuses it.
+        _ = establish_lang(namespace, runner_id, factory_id, advertised)
 
         Map.put(acc, factory_id, %{
           description: description,
-          ce_ids: MapSet.put(existing.ce_ids, runner_id)
+          ce_ids: MapSet.put(existing.ce_ids, runner_id),
+          langs: Map.put(existing.langs, runner_id, advertised)
         })
       end)
 
@@ -962,13 +1010,93 @@ defmodule Flezha.Runner.FleetManager do
 
     ns_factories =
       ns_factories
-      |> Enum.map(fn {factory_id, info} ->
-        {factory_id, %{info | ce_ids: MapSet.delete(info.ce_ids, runner_id)}}
+      |> Map.new(fn {factory_id, info} ->
+        info = factory_entry(info)
+
+        {factory_id,
+         %{
+           info
+           | ce_ids: MapSet.delete(info.ce_ids, runner_id),
+             langs: Map.delete(info.langs, runner_id)
+         }}
       end)
-      |> Enum.reject(fn {_factory_id, info} -> MapSet.size(info.ce_ids) == 0 end)
-      |> Map.new()
 
     put_in(state, [:namespace_factories, namespace], ns_factories)
+  end
+
+  # Drop the factories no runner advertises any more, releasing the language
+  # each established. A pass of its own, run AFTER any store: a full-set resync
+  # removes the runner's whole list before re-adding it, and releasing inside
+  # the removal would discard a language the durable header had corrected.
+  defp prune_empty_factories(state, namespace) do
+    {empty, kept} =
+      state.namespace_factories
+      |> Map.get(namespace, %{})
+      |> Map.split_with(fn {_factory_id, info} -> MapSet.size(info.ce_ids) == 0 end)
+
+    Enum.each(Map.keys(empty), &ClassRegistry.delete_sdk_lang(namespace, &1))
+    put_in(state, [:namespace_factories, namespace], kept)
+  end
+
+  # The one constructor for a stored factory entry. Total on an older entry: a
+  # `KeyError` here would take the whole FleetManager down over a shape
+  # question, and every placement lookup with it.
+  defp factory_entry(nil), do: %{description: nil, ce_ids: MapSet.new(), langs: %{}}
+
+  defp factory_entry(%{} = info) do
+    info
+    |> Map.put_new(:description, nil)
+    |> Map.put_new(:ce_ids, MapSet.new())
+    |> Map.put_new(:langs, %{})
+  end
+
+  # The language a factory entry advertises. Absent / `0` stays `0`: an
+  # unspecified language is refused at the placement filter, never guessed.
+  defp advertised_lang(factory) do
+    case factory["sdk_lang"] do
+      lang when is_integer(lang) and lang > 0 -> lang
+      _ -> @sdk_lang_unspecified
+    end
+  end
+
+  # An advertisement establishes the factory's language if nothing has yet, and
+  # is reported when it disagrees. The one place a language is RECORDED — the
+  # record is a durable sidecar, so writing it belongs on this path and never
+  # in a query.
+  #
+  # The durable half of the resolution is read at the BIND
+  # (`Flezha.Operative.Lifecycle`): a disk walk here would stall every
+  # concurrent placement lookup behind the connect path.
+  defp establish_lang(_ns, _runner_id, _factory_id, @sdk_lang_unspecified), do: :ok
+
+  defp establish_lang(namespace, runner_id, factory_id, advertised) do
+    case ClassRegistry.sdk_lang(namespace, factory_id) do
+      nil ->
+        ClassRegistry.put_sdk_lang(namespace, factory_id, advertised)
+
+      established when established != advertised ->
+        Logger.warning(
+          "[fleet_manager] runner #{runner_id} on #{namespace} advertises factory " <>
+            "#{factory_id} at sdk_lang #{advertised}, but the factory is established " <>
+            "at #{established}; it will not be a placement candidate for it — durable " <>
+            "State/Change bodies are per-SDK and are never decoded across languages"
+        )
+
+        :telemetry.execute(
+          [:flezha, :runner, :factory_language_conflict],
+          %{count: 1},
+          %{
+            namespace: namespace,
+            runner: runner_id,
+            factory: factory_id,
+            established: established,
+            advertised: advertised
+          }
+        )
+
+      _agreed ->
+        :ok
+    end
   end
 
   # Factory ids this runner advertised before a sync that are absent from the
@@ -1018,16 +1146,66 @@ defmodule Flezha.Runner.FleetManager do
     |> Enum.map(& &1.id)
   end
 
-  # ACTIVE runners currently advertising `factory_id` — the placement filter
-  # (`runners_for_factory`) and the dropped-factory tripwire share this view.
+  # ACTIVE runners advertising `factory_id` **in that factory's established SDK
+  # language** — the one filter every placement path reads (initial start, the
+  # convergence rebind, the reroute off a dead runner), so a future caller
+  # inherits the guard rather than having to remember it.
+  #
+  # The homogeneous unit is the FACTORY, not the namespace: a restore ships one
+  # SDK's bytes verbatim to whichever runner bound the Entity, and only one
+  # factory id's implementations must never mix.
   defp placeable_runners(state, namespace, factory_id) do
+    {info, candidates} = advertising_runners(state, namespace, factory_id)
+    established = established_lang(namespace, factory_id, info, candidates)
+
+    MapSet.filter(candidates, &(Map.get(info.langs, &1, @sdk_lang_unspecified) == established))
+  end
+
+  # The stored entry and the ACTIVE runners advertising `factory_id` at any
+  # language — what separates "the factory exists in another language" from "no
+  # runner has this factory at all". `placeable_runners/3` is this set narrowed
+  # to one language, so the two never disagree on who is even a candidate.
+  defp advertising_runners(state, namespace, factory_id) do
     active_ids = MapSet.new(get_runner_ids(state, namespace, :active))
 
-    state.namespace_factories
-    |> Map.get(namespace, %{})
-    |> Map.get(factory_id, %{ce_ids: MapSet.new()})
-    |> Map.get(:ce_ids)
-    |> MapSet.intersection(active_ids)
+    info =
+      state.namespace_factories
+      |> Map.get(namespace, %{})
+      |> Map.get(factory_id)
+      |> factory_entry()
+
+    {info, MapSet.intersection(info.ce_ids, active_ids)}
+  end
+
+  # A factory's established language: the record if there is one, else what its
+  # own live advertisements say. Both halves of the record are losable (the ETS
+  # table is recreated empty if its owner restarts, the sidecar goes with the
+  # factory's state dir), and a missing record is no evidence of a conflict —
+  # so it must not read as one. Derives, never records: this is a query.
+  #
+  # Unanimity required: disagreeing advertisements with nothing recorded mean
+  # the controller cannot tell which language owns the factory.
+  defp established_lang(namespace, factory_id, info, candidates) do
+    case ClassRegistry.sdk_lang(namespace, factory_id) do
+      nil ->
+        case advertised_langs(info, candidates) do
+          [lang] -> lang
+          _none_or_conflicting -> nil
+        end
+
+      recorded ->
+        recorded
+    end
+  end
+
+  # The distinct non-zero languages the live candidates advertise. An
+  # unspecified advertisement contributes nothing: it can neither establish a
+  # factory nor make one ambiguous.
+  defp advertised_langs(info, candidates) do
+    candidates
+    |> Enum.map(&Map.get(info.langs, &1, @sdk_lang_unspecified))
+    |> Enum.reject(&(&1 == @sdk_lang_unspecified))
+    |> Enum.uniq()
   end
 
   defp catch_runner_connect(stream_ref, namespace, transport) do

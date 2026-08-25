@@ -58,6 +58,24 @@ pub fn class_factory_ids() -> Vec<&'static str> {
     CLASS_REGISTRY.read().unwrap().keys().copied().collect()
 }
 
+/// The SDK language to advertise for `factory_id`, from whichever class
+/// registry holds it.
+///
+/// The one lookup every factory advertisement reads — the connect init frame
+/// and `UpdateFactories` alike — so no veneer restates the byte it already
+/// declared to the core, and the two frames cannot disagree.
+///
+/// A factory this runner declared no class for answers
+/// [`crate::header::SDK_LANG_UNSPECIFIED`], which the controller refuses to
+/// place rather than guessing at. That default lives here, once: a second
+/// spelling at a call site is exactly how the two halves of the seam drift.
+pub fn sdk_lang_for_factory(factory_id: &str) -> u8 {
+    get_class(factory_id)
+        .map(|topology| topology.sdk_lang)
+        .or_else(|| crate::workflow::registry::get_class(factory_id).map(|spec| spec.sdk_lang))
+        .unwrap_or(crate::header::SDK_LANG_UNSPECIFIED)
+}
+
 pub struct OperativeRegistry {
     inner: dashmap::DashMap<String, Arc<Operative>>,
 }

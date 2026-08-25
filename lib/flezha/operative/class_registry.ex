@@ -37,6 +37,7 @@ defmodule Flezha.Operative.ClassRegistry do
   alias Flezha.State.InputLog
   alias Flezha.State.PersistenceResolver
   alias Flezha.State.Registry
+  alias Flezha.State.Restore
 
   require Logger
 
@@ -220,6 +221,80 @@ defmodule Flezha.Operative.ClassRegistry do
   end
 
   def keyless?(_factory_id), do: false
+
+  @doc """
+  Record the **established SDK language** of `factory_id` in `namespace` — the
+  one language every runner of that factory there must speak.
+
+  Scoped by namespace as well as factory, because a factory id names a class
+  within a deployment, not across the cluster: the test fleet alone gives the
+  same reference ids to every SDK, so a global record would let one namespace's
+  Rust runner refuse another namespace's Java one.
+
+  In-memory only, like `put_keyless/2`: the durable header re-establishes it at
+  the next bind (`establish_sdk_lang_from_state/3`), and the SDK's own refusal
+  is the backstop either way — so a restarted controller simply learns again.
+  """
+  @spec put_sdk_lang(binary(), binary(), byte()) :: :ok
+  def put_sdk_lang(namespace, factory_id, lang)
+      when is_binary(namespace) and is_binary(factory_id) and is_integer(lang) and lang > 0 do
+    ensure_table()
+    :ets.insert(@table, {{namespace, factory_id, :sdk_lang}, lang})
+    :ok
+  end
+
+  @doc """
+  `factory_id`'s established SDK language in `namespace`, or `nil` when none is
+  established yet.
+  """
+  @spec sdk_lang(binary(), binary()) :: byte() | nil
+  def sdk_lang(namespace, factory_id) when is_binary(namespace) and is_binary(factory_id) do
+    case ets_lookup({namespace, factory_id, :sdk_lang}) do
+      {:ok, lang} -> lang
+      :error -> nil
+    end
+  end
+
+  def sdk_lang(_namespace, _factory_id), do: nil
+
+  @doc """
+  Establish the language of `factory_id` in `namespace` from the bytes
+  `operative_class` actually wrote, correcting a value some runner established
+  by advertising first.
+
+  The header is the authority wherever durable state exists. A class with
+  nothing on disk records nothing. Called from the bind, the one seam holding
+  both the factory id and the operative's on-disk class.
+  """
+  @spec establish_sdk_lang_from_state(binary(), binary(), binary()) :: :ok
+  def establish_sdk_lang_from_state(namespace, factory_id, operative_class)
+      when is_binary(namespace) and is_binary(factory_id) and is_binary(operative_class) do
+    case Restore.class_sdk_lang(operative_class) do
+      nil ->
+        :ok
+
+      lang ->
+        if sdk_lang(namespace, factory_id) == lang,
+          do: :ok,
+          else: put_sdk_lang(namespace, factory_id, lang)
+    end
+  end
+
+  @doc """
+  Forget the established language of `factory_id` in `namespace`, so the next
+  advertisement establishes it afresh.
+
+  The escape hatch from a factory deliberately re-authored in another language.
+  """
+  @spec delete_sdk_lang(binary(), binary()) :: :ok
+  def delete_sdk_lang(namespace, factory_id)
+      when is_binary(namespace) and is_binary(factory_id) do
+    if :ets.whereis(@table) != :undefined do
+      :ets.delete(@table, {namespace, factory_id, :sdk_lang})
+    end
+
+    :ok
+  end
 
   @doc """
   Record that `instance_id` resolves to `operative_class` on disk.

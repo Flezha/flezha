@@ -668,6 +668,8 @@ pub struct FactoryDecl {
     pub id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub description: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "3")]
+    pub sdk_lang: u32,
 }
 /// SDK -> Controller. Ships the runner's FULL current factory set after a
 /// post-start define or remove (sdk-runner-entrypoint-redesign). Full-set
