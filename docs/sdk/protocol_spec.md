@@ -241,12 +241,13 @@ flagged as a stall.
 
 The runner's per-Entity mailbox is a fixed-capacity queue
 (`crossbeam::queue::ArrayQueue`) sized at Operative startup. A frame for a
-full mailbox takes the channel's declared `OverflowPolicy`: `Block` (the
-producer parks until a slot frees — the default for every channel kind in
-every SDK), `DropNewest` or `DropOldest` (a counter is bumped). Under `Block`
-a saturated entry channel parks the **wire-reader thread** and sibling
-Operatives on that connection wait with it; the reader never runs procedures
-itself, and `Block` requires an acyclic procedure graph. Capacity declaration
+full mailbox takes the channel's declared `OverflowPolicy`: `DropNothing`
+(nothing is discarded — the producer waits for a slot; the default for every
+channel kind in every SDK), `DropNewest` or `DropOldest` (a counter is
+bumped). Under `DropNothing` a saturated entry channel parks the **wire-reader
+thread** and sibling Operatives on that connection wait with it; the reader
+never runs procedures itself, and `DropNothing` requires an acyclic procedure
+graph. Capacity declaration
 and counters: [`rust_operative_architecture.md`](rust_operative_architecture.md)
 "Backpressure and bounded mailboxes".
 

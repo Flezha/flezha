@@ -87,7 +87,7 @@ pub enum HostChannelKind {
 #[serde(rename_all = "snake_case")]
 pub enum HostOverflow {
     #[default]
-    Block,
+    DropNothing,
     DropNewest,
     DropOldest,
 }
@@ -606,7 +606,7 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
             backoff_base_ms: channel_decl.retry_backoff_ms,
         };
         let overflow_policy = match channel_decl.overflow {
-            HostOverflow::Block => OverflowPolicy::Block,
+            HostOverflow::DropNothing => OverflowPolicy::DropNothing,
             HostOverflow::DropNewest => OverflowPolicy::DropNewest,
             HostOverflow::DropOldest => OverflowPolicy::DropOldest,
         };
@@ -2750,6 +2750,45 @@ mod sync_durability_decl_tests {
 }
 
 #[cfg(test)]
+mod overflow_literal_tests {
+    //! The wire spelling of the overflow policy is derived from the variant
+    //! name by `rename_all = "snake_case"`, so the name and the literal cannot
+    //! drift. What that derivation gives is worth pinning: it is the only
+    //! cross-SDK statement of the policy every host language has to emit.
+
+    use super::HostOverflow;
+
+    fn parse(literal: &str) -> Result<HostOverflow, String> {
+        serde_json::from_str(literal).map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn the_wire_literal_follows_the_variant() {
+        assert_eq!(
+            parse(r#""drop_nothing""#).unwrap(),
+            HostOverflow::DropNothing
+        );
+        assert_eq!(parse(r#""drop_newest""#).unwrap(), HostOverflow::DropNewest);
+        assert_eq!(parse(r#""drop_oldest""#).unwrap(), HostOverflow::DropOldest);
+    }
+
+    #[test]
+    fn a_channel_declaring_nothing_discards_nothing() {
+        assert_eq!(HostOverflow::default(), HostOverflow::DropNothing);
+    }
+
+    #[test]
+    fn the_retired_spelling_is_refused_listing_what_is_accepted() {
+        let err = parse(r#""block""#).expect_err("`block` is not a policy");
+        assert!(err.contains("unknown variant `block`"), "{err}");
+        assert!(
+            err.contains("drop_nothing"),
+            "the refusal names the replacement: {err}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod declaration_key_tests {
     //! The declaration key set is a cross-SDK contract, so it is pinned in a
     //! file both sides read: `test/fixtures/host_class_decl_keys.txt`. Here the
@@ -2822,7 +2861,7 @@ mod declaration_key_tests {
                 ("channel", "kind") => r#""entry""#,
                 ("channel", "producer") => "null",
                 ("channel", "consumers") => "[0]",
-                ("channel", "overflow") => r#""block""#,
+                ("channel", "overflow") => r#""drop_nothing""#,
                 ("procedure", "entity_mode") => r#""single""#,
                 ("procedure", "entity_keys") => "[]",
                 ("procedure", "clock") => r#""wall""#,

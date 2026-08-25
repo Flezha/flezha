@@ -978,13 +978,13 @@ public final class FlezhaProcessor extends AbstractProcessor {
         }
         String variant =
                 switch (onFull) {
-                    case "block" -> "BLOCK";
+                    case "drop_nothing" -> "DROP_NOTHING";
                     case "drop_newest" -> "DROP_NEWEST";
                     case "drop_oldest" -> "DROP_OLDEST";
                     default -> null;
                 };
         if (variant == null) {
-            error(origin, "@Procedure onFull must be one of: block, drop_newest, drop_oldest");
+            error(origin, "@Procedure onFull must be one of: drop_nothing, drop_newest, drop_oldest");
             return "";
         }
         return ".onFull(com.flezha.sdk.channel.OverflowPolicy." + variant + ")";

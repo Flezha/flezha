@@ -284,56 +284,6 @@ every `poll` pass promotes what has come due.
   waiting in `poll`) and the limit is not reached
 - **THEN** a host thread parked in the starvation wait SHALL be woken
 
-### Requirement: A Block-policy push drains the consumer inline only from a pool thread
-
-When a `Block`-policy push finds its consumer's mailbox full, the core SHALL
-serve that consumer inline on the pushing thread only while the thread is
-marked as a serving pool thread — one running an activation, or one promoting
-a due deferred wake from inside `poll` — the only producers that may be the
-lone thread able to run the consumer's round (parking there self-deadlocks a
-fully blocked pool). The host SHALL run every activation, including one it
-serves inline, inside the core's activation scope so the rule can tell the
-two apart. Any other producer — the transport reader feeding every operative
-on the runner, a host thread outside that scope — SHALL park, bounded and
-woken per pop, while the pool drains the consumer; a reader SHALL never run
-one consumer's round while every other operative on its connection waits on
-it.
-
-#### Scenario: A pool worker blocked on a full consumer serves it inline
-
-- **WHEN** an activation's emit pushes under `Block` into a consumer whose
-  mailbox is full and whose round no worker is serving
-- **THEN** the pushing worker assembles and runs the consumer's round itself,
-  then completes its push — the one-worker pool makes progress
-
-#### Scenario: A due firing into a saturated consumer drains it
-
-- **WHEN** a processing-time timer comes due for an entity whose mailbox is
-  full and whose round no worker is serving
-- **THEN** the poller promoting it runs the entity's round inline and the
-  firing lands, instead of the poller parking on a mailbox nobody else drains
-
-#### Scenario: A transport reader parks instead of serving
-
-- **WHEN** the runner's stream reader pushes an entry-channel frame under
-  `Block` into a full mailbox
-- **THEN** the reader parks until a pop frees a slot and a pool worker drains
-  the consumer; the reader runs no procedure code
-
-#### Scenario: A busy runner does not read as starved
-
-- **WHEN** work is continuously queued and threads keep entering `poll` to
-  take it — a saturated but healthy runner
-- **THEN** the starvation wait SHALL NOT report starvation, however deep the
-  queue grows
-
-#### Scenario: A due deferred wake with no waiting poller counts as starvation
-
-- **WHEN** a deferred wake (retry or processing-time timer) comes due while no
-  poller is waiting in `poll`
-- **THEN** the starvation wait SHALL wake no later than the due time, so the
-  host can supply a thread to promote the firing
-
 ### Requirement: A running workflow instance holds one driver thread
 
 The core SHALL drive each actively-running workflow instance from one dedicated
@@ -395,3 +345,40 @@ on them.
 #### Scenario: The counters change no behaviour
 - **WHEN** the oldest-age counter grows without bound
 - **THEN** the SDK SHALL take no action of its own — no reclaim, no re-hand, no pool change
+
+### Requirement: A DropNothing push drains the consumer inline only from a pool thread
+
+When a `DropNothing` push finds its consumer's mailbox full, the core SHALL
+serve that consumer inline on the pushing thread only while the thread is
+marked as a serving pool thread — one running an activation, or one promoting
+a due deferred wake from inside `poll` — the only producers that may be the
+lone thread able to run the consumer's round (parking there self-deadlocks a
+fully blocked pool). The host SHALL run every activation, including one it
+serves inline, inside the core's activation scope so the rule can tell the
+two apart. Any other producer — the transport reader feeding every operative
+on the runner, a host thread outside that scope — SHALL park, bounded and
+woken per pop, while the pool drains the consumer; a reader SHALL never run
+one consumer's round while every other operative on its connection waits on
+it.
+
+#### Scenario: A pool worker blocked on a full consumer serves it inline
+
+- **WHEN** an activation's emit pushes under `DropNothing` into a consumer
+  whose mailbox is full and whose round no worker is serving
+- **THEN** the pushing worker assembles and runs the consumer's round itself,
+  then completes its push — the one-worker pool makes progress
+
+#### Scenario: A due firing into a saturated consumer drains it
+
+- **WHEN** a processing-time timer comes due for an entity whose mailbox is
+  full and whose round no worker is serving
+- **THEN** the poller promoting it runs the entity's round inline and the
+  firing lands, instead of the poller parking on a mailbox nobody else drains
+
+#### Scenario: A transport reader parks instead of serving
+
+- **WHEN** the runner's stream reader pushes an entry-channel frame under
+  `DropNothing` into a full mailbox
+- **THEN** the reader parks until a pop frees a slot and a pool worker drains
+  the consumer; the reader runs no procedure code
+

@@ -16,7 +16,7 @@ import java.util.Optional;
  * mailbox counting what it processed and echoing the input bytes. One concrete
  * procedure per overflow policy, because the graph-shape rule allows exactly one
  * entry channel per operative. Mirrors the Rust test app's
- * {@code BlockTestProcedure} / {@code DropNewestTestProcedure} /
+ * {@code DropNothingTestProcedure} / {@code DropNewestTestProcedure} /
  * {@code DropOldestTestProcedure}.
  */
 public abstract class BoundedMailboxProcedure

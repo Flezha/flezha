@@ -30,7 +30,7 @@ class FactoryIdsTest {
             "bench_keyed",
             "bench_keyed_nopersist",
             "bench_loop_workflow",
-            "bounded_mailbox_block",
+            "bounded_mailbox_drop_nothing",
             "bounded_mailbox_drop_newest",
             "bounded_mailbox_drop_oldest",
             "branch_workflow",

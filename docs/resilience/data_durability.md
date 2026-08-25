@@ -91,9 +91,9 @@ Entity's mailbox when a restore lands: with no log to re-forward from, the queue
 copy, so the restore keeps it. Under the tier the restore discards it
 (`discard_queued_input_on_restore`) because the input log re-forwards it.
 
-**Nothing drops by default.** `Block` is the default overflow policy for every channel kind in
-both SDKs and the FFI host; an operative that prefers to shed declares `.on_full(DropNewest)` or
-`.on_full(DropOldest)`. The Kafka producer's `:queue_overflow` defaults to `:block` for every
+**Nothing drops by default.** `DropNothing` is the default overflow policy for every channel
+kind in both SDKs and the FFI host; an operative that prefers to shed declares
+`.on_full(DropNewest)` or `.on_full(DropOldest)`. The Kafka producer's `:queue_overflow` defaults to `:block` for every
 record. Non-keyed channels are plain at-least-once.
 
 ### Effectively-once tier (opt-in, `effectively_once()` on the channel builder)

@@ -109,10 +109,11 @@ public interface EdgeStream<T> {
 
     /**
      * Override the default {@link OverflowPolicy}, which is
-     * {@link OverflowPolicy#BLOCK} for every channel kind. On an entry channel
-     * {@code BLOCK} parks the shared wire reader on this operative's
-     * saturation; declare a drop policy when shedding under saturation is
-     * acceptable and ordering or completeness can be sacrificed for liveness.
+     * {@link OverflowPolicy#DROP_NOTHING} for every channel kind. On an entry
+     * channel {@code DROP_NOTHING} parks the shared wire reader on this
+     * operative's saturation; declare a drop policy when shedding under
+     * saturation is acceptable and ordering or completeness can be sacrificed
+     * for liveness.
      */
     @Nonnull
     EdgeStream<T> onFull(@Nonnull OverflowPolicy policy);

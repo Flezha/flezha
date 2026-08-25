@@ -81,8 +81,8 @@ class HostClassDeclarationTest {
         assertThat(channels.get(1).get("producer").asInt()).isEqualTo(0);
         assertThat(channels.get(1).get("keyed").asBoolean()).isTrue();
         assertThat(channels.get(0).get("overflow").asText())
-                .as("nothing drops by default: an entry channel blocks")
-                .isEqualTo("block");
+                .as("nothing drops by default: an entry channel discards nothing")
+                .isEqualTo("drop_nothing");
 
         JsonNode procedures = decl.get("procedures");
         assertThat(procedures).hasSize(1);
@@ -246,7 +246,7 @@ class HostClassDeclarationTest {
             c.correctionWindow(600_000);
             c.beyondWindowPolicy(com.flezha.sdk.channel.BeyondWindowPolicy.DROP);
             c.input(String.class, "in")
-                    .onFull(com.flezha.sdk.channel.OverflowPolicy.BLOCK)
+                    .onFull(com.flezha.sdk.channel.OverflowPolicy.DROP_NOTHING)
                     .retryMax(3)
                     .retryBackoffMs(300)
                     .into(FullyDeclaredProc.class)

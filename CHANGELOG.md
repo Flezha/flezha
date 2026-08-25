@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Changed — the overflow policy names its guarantee (`rename-block-to-drop-nothing`)
+
+**BREAKING for every operative that declares an overflow policy.** The policy
+formerly spelled `Block` is now `DropNothing` — searching for `Block`,
+`BLOCK`, `"block"` or `:block` on the overflow surface lands here.
+
+- **Rename, no behaviour change.** `OverflowPolicy` now answers one question
+  three times — *what does a full mailbox discard?* — instead of answering it
+  twice and describing the producer's thread once. `DropNothing` is already
+  true of the shipped mechanism, which retries until the push lands and
+  discards nothing.
+- **Every surface moves together**: Rust `OverflowPolicy::DropNothing`, Java
+  `OverflowPolicy.DROP_NOTHING`, Elixir `:drop_nothing`, the `HostClassDecl`
+  wire literal `"drop_nothing"`, and `on_full = "drop_nothing"` /
+  `onFull = "drop_nothing"` in the procedure attribute. An unrecognised
+  spelling is refused at declaration; there is no compatibility alias.
+- **The parking mechanism keeps its own names.** `block_parker`,
+  `BLOCK_PARK_TIMEOUT` and `pushes_blocked_total` name the entry-side park,
+  which still exists and is honestly named. So do the Kafka producer's
+  `:queue_overflow`, the observability bus's per-sink `overflow:` and the
+  transport write buffer — separate mechanisms, unchanged.
+- **`scripts/check-overflow-naming.sh`** fails a build that reintroduces the
+  retired spelling on the policy surface, and runs in the Naming CI job.
+
 ### Changed — nothing drops by default (`close-silent-data-loss-defaults`)
 
 **BREAKING for operatives and producer chains that ran above capacity.** Two
@@ -9,7 +33,7 @@ defaults invert from drop to block, so a saturated pipeline now back-pressures
 its source (visibly slower ingest) instead of silently discarding records with
 every health surface green.
 
-- **Entry channels default to `Block`** in both SDKs (`OverflowPolicy`). An
+- **Entry channels default to `DropNothing`** in both SDKs (`OverflowPolicy`). An
   operative that wants to shed under saturation declares it —
   `.on_full(OverflowPolicy::DropNewest)` / `.onFull(OverflowPolicy.DROP_NEWEST)`
   — and the loss is a stated intent at the declaration site. The cost: a

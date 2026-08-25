@@ -20,7 +20,7 @@ public final class DynamicEntityStreamOperative implements StreamOperative {
     @Override
     public void channels(ChannelBuilder c) {
         c.input(String.class, "input")
-                .onFull(OverflowPolicy.BLOCK)
+                .onFull(OverflowPolicy.DROP_NOTHING)
                 .filter(input -> !input.equals("drop"))
                 .keyBy(DynamicEntityStreamOperative::key)
                 .into(DynamicEntityProcedure.class)

@@ -280,6 +280,44 @@ defmodule Flezha.SDK.DispatchTest do
     assert length(outputs) < 10
   end
 
+  test "the undeclared default discards nothing; every input arrives" do
+    defmodule DefaultSlowProc do
+      @behaviour Flezha.SDK.Procedure
+      def name, do: "default_slow"
+      def init_state(_), do: nil
+
+      def run(input, s, ctx) do
+        Process.sleep(50)
+        Flezha.SDK.Ctx.emit(ctx, input)
+        {:ok, s}
+      end
+
+      def mailbox_capacity, do: 1
+    end
+
+    defmodule DefaultOp do
+      @behaviour Flezha.SDK.StreamOperative
+      def factory_id, do: "default_op"
+
+      # No `on_full/2`: the kind-independent default is `:drop_nothing`, in
+      # lockstep with the Rust and Java builders and the FFI host.
+      def channels(c),
+        do:
+          c
+          |> Channels.input("in")
+          |> Channels.into(DefaultSlowProc)
+          |> Channels.named("s")
+          |> Channels.sink("out")
+    end
+
+    %{op: op} = start_operative(DefaultOp)
+    # The same burst `drop_newest` sheds: capacity 1 against 10 inputs, each
+    # held 50 ms. Under the default the router waits instead of dropping.
+    for n <- 1..10, do: Operative.input(op, "in", "v#{n}", %{})
+
+    assert length(drain_outputs([], 1_500)) == 10
+  end
+
   test "a mis-routed dynamic key parks with the contract error before any Entity state" do
     range = KeyGroup.decode(0, 2, 0, 127)
     %{op: op} = start_operative(IdentityKeyOp, range: range, runner: self())

@@ -77,7 +77,7 @@ of dead owners on `snapshot_all/0`. Channel slots: `io_in_received`, `send_frame
 
 **Runner dispatch self-report** (all three SDKs): every `data_heartbeat` frame on a secondary stream
 carries `dispatches` (process-global payloads dispatched through the poll engine), `blocked_parks`
-(Block-policy full-mailbox episodes) and, from `flz_core`, `credit_parked`. The heartbeat thread
+(DropNothing full-mailbox episodes) and, from `flz_core`, `credit_parked`. The heartbeat thread
 outlives a wedged dispatch pool, so without the counter a runner can look alive while processing
 nothing. The secondary `StreamChannel` mirrors `dispatches` into `hb_dispatches` and `credit_parked`
 into `hb_credit_parked` and bumps `hb_count`; the per-stream `output_stall` heartbeat check runs only

@@ -87,9 +87,9 @@ Refusals accumulate into one `{:error, {:invalid_topology, issues}}` — e.g.
 
 ## Overflow, retry, park
 
-The overflow default is `:block` for **every** edge kind, in lockstep with the Rust/Java SDKs
-and the FFI host: it waits for room and never drops, at the cost that a blocked primary-stream
-router delays every operative fed by that stream. `on_full(:drop_newest | :drop_oldest)` sheds
+The overflow default is `:drop_nothing` for **every** edge kind, in lockstep with the
+Rust/Java SDKs and the FFI host: it waits for room and never drops, at the cost that a delayed
+primary-stream router delays every operative fed by that stream. `on_full(:drop_newest | :drop_oldest)` sheds
 instead. In native mode the Entity bound is a dispatch-concurrency bound, not a memory bound;
 the heartbeat's frozen `dispatches` / `blocked_parks` counters make a stall visible
 (`data_heartbeat` every ~10 s per data stream, `control_ping` every 15 s, echoed by the

@@ -28,7 +28,7 @@
 //! (`operative::poll_pool`), or a C-ABI host's own —
 //! block in [`PollCore::poll`] and answer with completions. A host may also
 //! serve one slot inline (`try_assemble` + complete), which is how a
-//! Block-policy producer drains a full consumer on its own thread.
+//! DropNothing-policy producer drains a full consumer on its own thread.
 //!
 //! It also owns the one answer to "do something with this entity at time T":
 //! the [`DeferredWake`] list, holding retry backoffs and processing-time timer
@@ -438,7 +438,7 @@ impl PollCore {
     fn poll_until(&self, deadline: Instant) -> Polled {
         loop {
             // First thing in the pass, before any lock is taken: a firing
-            // enqueues under the Block policy and may drain a saturated
+            // enqueues under the DropNothing policy and may drain a saturated
             // consumer inline, and peers must keep serving `ready` while it
             // does.
             self.promote_due();
@@ -574,7 +574,7 @@ impl PollCore {
                     let Some(slot) = slot.upgrade() else {
                         continue;
                     };
-                    // Same Block/inline reasoning as a timer promotion: the
+                    // Same DropNothing/inline reasoning as a timer promotion: the
                     // promoter may be the only pool thread able to drain this
                     // slot, and a close silently dropped would hold the
                     // interval's outputs until the next input — exactly what
@@ -583,7 +583,7 @@ impl PollCore {
                         crate::routing::enqueue(
                             &slot,
                             EntityItem::CloseInterval,
-                            OverflowPolicy::Block,
+                            OverflowPolicy::DropNothing,
                         )
                     });
                 }
@@ -591,7 +591,7 @@ impl PollCore {
                     let Some(slot) = slot.upgrade() else {
                         continue;
                     };
-                    // Block policy: a saturated mailbox delays the firing
+                    // DropNothing policy: a saturated mailbox delays the firing
                     // rather than dropping it — a timer silently lost is a
                     // bug the author cannot see. The promoter is a pool
                     // thread and may be the only one, so it drains the slot
@@ -605,7 +605,7 @@ impl PollCore {
                                 scheduled_at: key.due_at_ms,
                                 stream,
                             }),
-                            OverflowPolicy::Block,
+                            OverflowPolicy::DropNothing,
                         )
                     });
                 }

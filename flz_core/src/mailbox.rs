@@ -8,8 +8,8 @@
 //! - **Bounded capacity**: the queue is a fixed-size [`ArrayQueue`] sized at
 //!   construction (`Mailbox::with_capacity`). Pushes that would exceed the
 //!   cap return the rejected payload to the caller; the caller decides what
-//!   to do based on the channel's declared `OverflowPolicy` (Block, drop the
-//!   newest, or replace the oldest via `force_push`).
+//!   to do based on the channel's declared `OverflowPolicy` (drop nothing,
+//!   drop the newest, or replace the oldest via `force_push`).
 //!
 //! Wake protocol (unchanged from the stream shape):
 //!
@@ -84,7 +84,7 @@ impl<Payload: Send + 'static> Mailbox<Payload> {
         self.queue.is_empty()
     }
 
-    /// True when the bounded queue is at capacity. Used by Block-policy
+    /// True when the bounded queue is at capacity. Used by DropNothing-policy
     /// producers to recheck saturation after registering on the parker's
     /// wait list, closing the missed-wake window between a failed
     /// `try_push` and the deque push inside `BlockParker::wait_one`.

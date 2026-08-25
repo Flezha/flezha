@@ -30,13 +30,13 @@ class BoundedMailboxTopologyTest {
     }
 
     @Test
-    @DisplayName("default policy: BLOCK on entry and inter-procedure channels alike")
+    @DisplayName("default policy: DROP_NOTHING on entry and inter-procedure channels alike")
     void defaultPoliciesByKind() {
         StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new TwoStageStreamOperative());
         // Channel index 0 is the entry channel "input"; index 1 is the
         // inter-procedure channel "mid".
-        assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.BLOCK);
-        assertThat(topology.channels().get(1).overflowPolicy()).isEqualTo(OverflowPolicy.BLOCK);
+        assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_NOTHING);
+        assertThat(topology.channels().get(1).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_NOTHING);
     }
 
     @Test

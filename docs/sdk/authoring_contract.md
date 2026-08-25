@@ -58,7 +58,7 @@ mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 | unspecified                                         | `type Config = ()` / `Void`                         |
 | `id = "…"` else the declaration name                | `name()` — Rust: the function name; Java: the class name in snake_case |
 | `capacity = N` / `capacity = N`                     | `mailbox_capacity()` / `mailboxCapacity()` override |
-| `on_full = …` / `onFull = "…"`                      | overflow policy of the auto-wired entry channel (§5): `block`, `drop_newest`, `drop_oldest` |
+| `on_full = …` / `onFull = "…"`                      | overflow policy of the auto-wired entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
 
 A mutable-state parameter is **the single signal** that a procedure is
 stateful. Its presence sets `State` and selects the derived change type; its

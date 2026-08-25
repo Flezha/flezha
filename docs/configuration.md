@@ -427,7 +427,7 @@ Declared on the stream handle returned by `input(...)` or a node's output.
 
 | Declaration | Default | What it does |
 |---|---|---|
-| `.on_full(OverflowPolicy)` (`onFull`) | `Block` | What a full Entity mailbox does: `Block` (back-pressure), `DropNewest`, `DropOldest`. Nothing drops by default. |
+| `.on_full(OverflowPolicy)` (`onFull`) | `DropNothing` | What a full Entity mailbox discards: `DropNothing`, `DropNewest`, `DropOldest`. Nothing drops by default; `DropNothing` slows the producer to the consumer's rate instead. |
 | `.retry_max(n)` (`retryMax`) | `3` attempts | Attempts before a failing payload is parked to the dead-letter queue. The Elixir SDK refuses `0`. |
 | `.retry_backoff_ms(ms)` (`retryBackoffMs`) | `50` | Base of the exponential backoff between attempts; the wait holds no thread. |
 | `.keyed()` (`keyed`) | off | Every plugin emit must carry a natural key; the runtime stamps `flz.entity` / `flz.seq` / `flz.key`. Requires a `sink`; required on every plugin channel under `effectively_once()`. |

@@ -19,7 +19,7 @@ public final class BenchKeyedStreamOperative implements StreamOperative {
     @Override
     public void channels(ChannelBuilder c) {
         c.input(String.class, "input")
-                .onFull(OverflowPolicy.BLOCK)
+                .onFull(OverflowPolicy.DROP_NOTHING)
                 .into(TierStoreProcedure.class)
                 .named("sink")
                 .keyed()

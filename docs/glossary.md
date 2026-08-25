@@ -218,6 +218,13 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
   apply-state, migration serialize), a **prepare crossing** (`KeyRequest`, batched keying) or a
   workflow step. The result carries change bytes, outputs, consumed offset, timer ops and a
   verdict (`ok | retryable_error | non_retryable_error`).
+- **Overflow policy** — what a channel discards when the consumer Entity's bounded mailbox is
+  full, and the only question the enum answers: `DropNothing` (nothing — the producer waits for
+  room, the default for every channel kind on every SDK), `DropNewest` (the arriving item) or
+  `DropOldest` (the queued head). Declared per channel with `.on_full(...)` / `.onFull(...)` and
+  frozen at registration — an authoring declaration, never operator config. Not to be confused
+  with the Kafka producer's `:queue_overflow`, the observability bus's per-sink `overflow:`, or
+  the transport write buffer: separate mechanisms with their own vocabulary.
 - **Deferred wake** — the one ordered list in the poll core holding retry backoffs and
   processing-time timer deadlines; it owns no thread, and a due entry is promoted by the next
   thread that enters or wakes inside `poll`.

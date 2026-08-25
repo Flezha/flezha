@@ -49,7 +49,7 @@ sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.jav
 # near-duplicate line — that is how `bounded queue` and `bounded-queue` once
 # ended up as two entries.
 *:[Bb]ounded `GenServer\.call`
-*:[Bb]ounded[ -](by|above|below|at|to|timeout|window|FIFO|cardinality|loss|buffer|queue|queueing|ring|backoff|exponential|governor|wait|time|ack|park|call|calls|margin|primitives|capacity|lock-free|outbound|per-|retry|retries|lookup|quota|degrade-to-solo|\"degrade|state|input|number|ladder|connect|re-send|in-process|accounting|[0-9]+ ms|`Task\.async_stream`)
+*:[Bb]ounded[ -](by|above|below|at|to|timeout|window|FIFO|cardinality|loss|buffer|queue|queueing|ring|backoff|exponential|governor|wait|time|ack|park|call|calls|margin|primitives|capacity|lock-free|outbound|per-|retry|retries|lookup|quota|degrade-to-solo|\"degrade|state|input|number|ladder|connect|re-send|in-process|accounting|[0-9]+ ms|concurrency|`Task\.async_stream`)
 *:[Bb]ounded \(1024
 # `Convergence.SafeCall.bounded/3` is a TIME-LIMITED `GenServer.call`, not a
 # kind — the one English-sense identifier in the tree, plus its own docs.

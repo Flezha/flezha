@@ -209,7 +209,7 @@ backoffs, processing-time timer deadlines
 ([`entity_timers.md`](entity_timers.md)) and checkpoint-interval deadline
 closes. It owns **no thread**. Entries are promoted by whichever thread next
 enters or wakes inside `poll` — with no lock held, since a firing enqueues
-under the `Block` policy and may drain a saturated consumer inline — and the
+under the `DropNothing` policy and may drain a saturated consumer inline — and the
 nearest entry shortens the poller wait. Recording one notifies blocked pollers
 so they re-compute that wait.
 

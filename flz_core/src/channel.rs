@@ -130,22 +130,22 @@ pub enum ChannelKind {
     PluginBound,
 }
 
-/// Per-channel backpressure policy applied at the producer-side push
-/// site when the consumer's bounded mailbox is full. Declared via
-/// `.on_full(...)` on the channel builder; the default is `Block` for every
-/// kind, so nothing is discarded unless the operative declared it.
-/// Plugin-bound channels have no SDK-side mailbox and ignore this value.
+/// What a channel discards when the consumer's bounded mailbox is full,
+/// applied at the producer-side push site. Declared via `.on_full(...)` on
+/// the channel builder; the default is `DropNothing` for every kind, so
+/// nothing is discarded unless the operative declared it. Plugin-bound
+/// channels have no SDK-side mailbox and ignore this value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OverflowPolicy {
-    /// Producer parks until the consumer drains an item, then retries.
-    /// Preserves ordering at the cost of producer-thread stall.
+    /// Discards nothing: the producer's rate is coupled to the consumer's
+    /// until room appears. Ordering is preserved.
     #[default]
-    Block,
-    /// Incoming item is discarded; consumer's `drops_newest_total` increments.
+    DropNothing,
+    /// Discards the arriving item; consumer's `drops_newest_total` increments.
     DropNewest,
-    /// Consumer's mailbox atomically drops its oldest item and accepts the
-    /// new one; consumer's `drops_oldest_total` increments. Best-effort
-    /// under MPMC contention.
+    /// Discards the queued head: the consumer's mailbox atomically pops its
+    /// oldest item and accepts the new one; consumer's `drops_oldest_total`
+    /// increments. Best-effort under MPMC contention.
     DropOldest,
 }
 

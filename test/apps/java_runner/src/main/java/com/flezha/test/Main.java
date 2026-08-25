@@ -32,7 +32,7 @@ public final class Main {
                 .defineStream(CompareFilterStreamOperative.class)
                 .defineStream(StaticEntityStreamOperative.class)
                 .defineStream(EntityStressStreamOperative.class)
-                .defineStream(BoundedMailboxBlockStreamOperative.class)
+                .defineStream(BoundedMailboxDropNothingStreamOperative.class)
                 .defineStream(BoundedMailboxDropNewestStreamOperative.class)
                 .defineStream(BoundedMailboxDropOldestStreamOperative.class)
                 .defineStream(StatefulCounterStreamOperative.class)

@@ -16,11 +16,11 @@ use crate::channel::OverflowPolicy;
 use crate::entity::{make_entity_payload, EntityItem, EntitySlot};
 use crate::operative::instance::StreamInstance;
 
-/// The Block-policy inline serve, installed by the in-process host: a full
+/// The DropNothing-policy inline serve, installed by the in-process host: a full
 /// consumer is drained on the producing thread because a parked pool worker
 /// can be the only thread able to run the slot's queued round (one-worker
 /// self-deadlock; prod 2026-06-10). A host that only polls (the C ABI)
-/// installs nothing and Block degrades to the bounded park-retry loop.
+/// installs nothing and DropNothing degrades to the bounded park-retry loop.
 static INLINE_SERVE: std::sync::OnceLock<fn(&Arc<EntitySlot>)> = std::sync::OnceLock::new();
 
 /// Install the inline-serve hook (idempotent; first install wins).
@@ -35,7 +35,7 @@ thread_local! {
     static ACTIVATION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
-/// Run `f` as an activation on this thread, so a Block-policy push it makes
+/// Run `f` as an activation on this thread, so a DropNothing-policy push it makes
 /// into a full consumer drains that consumer inline instead of parking. A
 /// transport reader never runs inside this: it parks, and the pool drains —
 /// serving inline there would make the thread feeding every operative on the
@@ -56,7 +56,7 @@ fn serve_inline(slot: &Arc<EntitySlot>) {
     }
 }
 
-/// Bounded park per Block-policy retry; progress is re-checked (and the
+/// Bounded park per DropNothing-policy retry; progress is re-checked (and the
 /// inline drain re-attempted) on every wakeup.
 const BLOCK_PARK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
 
@@ -96,7 +96,7 @@ pub fn enqueue(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy)
                 return;
             }
             Err(returned) => match policy {
-                OverflowPolicy::Block => {
+                OverflowPolicy::DropNothing => {
                     slot.mailbox
                         .counters()
                         .pushes_blocked_total
@@ -129,7 +129,7 @@ pub fn enqueue(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy)
                             target: "flezha::mailbox",
                             procedure_id = slot.procedure_id,
                             entity_key = ?slot.entity_key,
-                            "Block-policy producer stalled >{:?} on a full entity mailbox; consumer procedure wedged or far behind",
+                            "DropNothing-policy producer stalled >{:?} on a full entity mailbox; consumer procedure wedged or far behind",
                             BLOCK_WARN_AFTER
                         );
                     }

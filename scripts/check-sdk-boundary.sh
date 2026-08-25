@@ -21,8 +21,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 exec python3 - <<'PY'
 import re
-import subprocess
 import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, "scripts")
+import naming_gate
 
 SDK_DIR = "lib/flezha/sdk"
 # The codec module is the ONLY place Protox / RunnerCommands may appear.
@@ -48,38 +51,31 @@ PER_FILE_ALLOWED = {
 REF = re.compile(r"\bFlezha(?:\.[A-Z][A-Za-z0-9_]*)+")
 PROTO = re.compile(r"\b(?:RunnerCommands|Protox)\b")
 
-listing = subprocess.run(
-    ["git", "ls-files", "-z", SDK_DIR], capture_output=True, check=True
-).stdout.decode()
 
-failures = []
-for rel in listing.split("\0"):
-    if not rel.endswith(".ex"):
-        continue
+def check(rel, line):
+    if line.strip().startswith("#"):
+        return []
     allowed = ALLOWED | PER_FILE_ALLOWED.get(rel, set())
-    with open(rel, encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, 1):
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                continue
+    out = []
+    for match in REF.finditer(line):
+        ref = match.group(0)
+        # allowed if it IS or is nested under an allowed seam
+        if any(ref == seam or ref.startswith(seam + ".") for seam in allowed):
+            continue
+        out.append(f"stray controller reference `{ref}`")
+    if rel != CODEC and PROTO.search(line):
+        out.append("Protox/RunnerCommands outside the codec seam")
+    return out
 
-            for m in REF.finditer(line):
-                ref = m.group(0)
-                # allowed if it IS or is nested under an allowed seam
-                if any(ref == a or ref.startswith(a + ".") for a in allowed):
-                    continue
-                failures.append(f"{rel}:{lineno}: stray controller reference `{ref}`")
 
-            if rel != CODEC and PROTO.search(line):
-                failures.append(f"{rel}:{lineno}: Protox/RunnerCommands outside the codec seam")
-
-if failures:
-    print("SDK packaging-boundary violations (SDK must touch the controller only")
-    print("through the named seams — see scripts/check-sdk-boundary.sh):\n")
-    for f in failures:
-        print("  " + f)
-    print(f"\n{len(failures)} violation(s).")
-    sys.exit(1)
-
-print("SDK packaging boundary OK")
+sys.exit(naming_gate.walk(
+    check=check,
+    pathspec=[SDK_DIR],
+    path_filter=lambda rel: rel.endswith(".ex"),
+    headline="SDK packaging-boundary violations (SDK must touch the controller only\n"
+             "through the named seams — see scripts/check-sdk-boundary.sh):",
+    hint="",
+    noun="violation(s)",
+    ok_message="SDK packaging boundary OK",
+))
 PY

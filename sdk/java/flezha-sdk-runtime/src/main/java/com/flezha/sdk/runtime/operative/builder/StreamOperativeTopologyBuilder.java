@@ -521,8 +521,8 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
         entry.name = name;
         entry.kind = kind;
         entry.payloadType = payloadType;
-        // BLOCK for every kind: a channel drops only when the operative declared it.
-        entry.overflowPolicy = OverflowPolicy.BLOCK;
+        // DROP_NOTHING for every kind: a channel drops only when the operative declared it.
+        entry.overflowPolicy = OverflowPolicy.DROP_NOTHING;
         channels.add(entry);
         return id;
     }

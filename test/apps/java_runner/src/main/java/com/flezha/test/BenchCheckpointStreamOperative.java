@@ -25,7 +25,7 @@ public final class BenchCheckpointStreamOperative implements StreamOperative {
             c.outputsAtCheckpoint(TestEnv.longVar("FLEZHA_BENCH_CHECKPOINT_DELAY_MS", 50));
         }
         c.input(String.class, "input")
-                .onFull(OverflowPolicy.BLOCK)
+                .onFull(OverflowPolicy.DROP_NOTHING)
                 .into(BenchCheckpointProcedure.class)
                 .named("sink")
                 .keyed()

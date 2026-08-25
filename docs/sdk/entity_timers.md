@@ -95,7 +95,7 @@ next one would be wrong.
 
 **Processing time** — an entry on the poll core's deferred-wake list, keyed
 `(entity, scheduled_at)`. On expiry it pushes a timer item onto the Entity's
-existing **mailbox** under the `Block` policy, so a firing is delayed rather
+existing **mailbox** under the `DropNothing` policy, so a firing is delayed rather
 than dropped, and `on_timer` can never run concurrently with `run` on the same
 Entity. Due entries fire in ascending scheduled order, ties broken by Entity
 identity. There is **no timer thread**: the list is serviced by whichever

@@ -82,19 +82,24 @@ The override-detection const `MAILBOX_CAPACITY_OVERRIDDEN` SHALL exist on the `P
 - **THEN** the resolved capacity SHALL fall through to the default 1024
 
 ### Requirement: Overflow policy declared per channel
+
 Each channel declared via `c.input::<T>(...)` (entry) or `c.channel::<T>(...).from::<S>()` (inter-procedure) SHALL carry an `OverflowPolicy` value applied at the producer-side push site when the consumer's mailbox is full. Plugin-bound channels (`.to_plugin(...)`) SHALL NOT carry an `OverflowPolicy` because no SDK-side mailbox sits between the producer Procedure and the wire; declaring `.on_full(...)` on a plugin-bound channel SHALL be a compile error (the chained-builder shape after `.to_plugin(...)` MUST NOT expose `.on_full(...)`).
 
-`OverflowPolicy` SHALL be an enum with exactly three variants:
+`OverflowPolicy` SHALL be an enum with exactly three variants, each naming what
+the policy discards:
 
-- `Block` — the producer SHALL park its calling thread until the consumer drains an item, then re-attempt the push.
+- `DropNothing` — nothing is discarded; the producer's rate is coupled to the consumer's instead. Ordering is preserved.
 - `DropNewest` — the incoming item SHALL be discarded; the consumer's `drops_newest_total` counter SHALL be incremented by 1.
 - `DropOldest` — the consumer's mailbox SHALL atomically pop its oldest item and push the incoming one (best-effort under MPMC contention); the consumer's `drops_oldest_total` counter SHALL be incremented by 1.
 
+The variant SHALL be named for its guarantee rather than for its implementation, so that one name stays correct on every channel kind whatever mechanism realizes it. `Block` SHALL NOT be a variant name, on any SDK, on the wire, or in the `#[flezha::procedure]` attribute.
+
 The policy SHALL be declared via the channel-builder method `.on_full(OverflowPolicy)` on `EntryChannel`, `ChannelDecl`, and `ChannelDeclWithProducer`. When `.on_full(...)` is not called the channel SHALL use the kind-specific default (see "Default overflow policy by channel kind").
 
-#### Scenario: Block waits then retries
-- **WHEN** an inter-procedure channel declares `.on_full(OverflowPolicy::Block)`, the consumer's mailbox is full, and a producer calls `ctx.emit::<C>(value)`
-- **THEN** the producer's thread SHALL park until the consumer pops an item, then the push SHALL retry; on success the producer's `Procedure::run` SHALL return `Ok(())` (assuming no other error)
+#### Scenario: DropNothing discards nothing
+
+- **WHEN** an inter-procedure channel declares `.on_full(OverflowPolicy::DropNothing)`, the consumer's mailbox is full, and a producer calls `ctx.emit::<C>(value)`
+- **THEN** the value SHALL be delivered to the consumer's mailbox once room appears, in the order the producer emitted it; no item SHALL be discarded and neither `drops_newest_total` nor `drops_oldest_total` SHALL change
 - **AND** the producer's call to `ctx.emit::<C>(value)` SHALL eventually return `Ok(())` (no `ProcedureError` is produced for the backpressure event)
 
 #### Scenario: DropNewest discards the incoming item
@@ -106,31 +111,39 @@ The policy SHALL be declared via the channel-builder method `.on_full(OverflowPo
 - **THEN** the consumer's mailbox SHALL drop its oldest item and SHALL accept the new item; the consumer Entity's `drops_oldest_total` SHALL increase by 1; the producer's `ctx.emit::<C>(value)` SHALL return `Ok(())`
 
 #### Scenario: Plugin-bound channel rejects on_full at compile time
-- **WHEN** a Operative declares `c.channel::<Vec<u8>>("p").from::<S>().to_plugin("kafka").on_full(OverflowPolicy::Block)`
+- **WHEN** a Operative declares `c.channel::<Vec<u8>>("p").from::<S>().to_plugin("kafka").on_full(OverflowPolicy::DropNothing)`
 - **THEN** the Rust compiler SHALL emit a "no method named `on_full`" error and the program MUST NOT build
+
+#### Scenario: The retired spelling does not build
+
+- **WHEN** any source file, `HostClassDecl` payload, `#[flezha::procedure]` attribute or conformance manifest names the policy `Block` / `BLOCK` / `"block"` / `:block`
+- **THEN** the build or the declaration SHALL fail, and `scripts/check-overflow-naming.sh` SHALL report the offending file and line
 
 ### Requirement: Default overflow policy by channel kind
 When a channel does not call `.on_full(...)`, the runtime SHALL apply a default policy determined by the channel's kind:
 
-- Entry channels: `OverflowPolicy::Block`.
-- Inter-procedure channels: `OverflowPolicy::Block`.
+- Entry channels: `OverflowPolicy::DropNothing`.
+- Inter-procedure channels: `OverflowPolicy::DropNothing`.
 - Plugin-bound channels: not applicable (no SDK-side mailbox).
 
 An entry channel SHALL NOT discard a wire frame unless the Operative declared a dropping policy explicitly. Data loss on the ingress path SHALL be a stated intent, never a default: an Operative that wants shedding under saturation declares `.on_full(OverflowPolicy::DropNewest)` or `.on_full(OverflowPolicy::DropOldest)`.
 
+The three SDK builders and the FFI host default SHALL stay in lockstep: the `#[default]` variant of `OverflowPolicy` (`flz_core/src/channel.rs`, read at channel creation by `sdk/rust/src/channel/builder.rs`), the policy assigned by `declareChannel` (`StreamOperativeTopologyBuilder.java`), the `:on_full` fallback in `Flezha.SDK.Operative` and the serde `#[default]` on `HostOverflow` (`flz_core/src/host.rs`) SHALL all name `DropNothing`.
+
 These defaults SHALL be reflected in the `ChannelDescriptor.overflow_policy` field set by `build_topology` for every channel for which the user did not explicitly call `.on_full(...)`.
 
-#### Scenario: Default entry policy is Block
+#### Scenario: Default entry policy discards nothing
 - **WHEN** a Operative declares `c.input::<Vec<u8>>("trade.raw").into::<ParseProcedure>()` without `.on_full(...)` and a frame arrives while the consumer mailbox is full
-- **THEN** the pushing thread SHALL park until the consumer drains an item and the push SHALL then retry until success; the frame SHALL NOT be discarded and `drops_newest_total` SHALL NOT change
+- **THEN** the frame SHALL be delivered once room appears; it SHALL NOT be discarded and `drops_newest_total` SHALL NOT change
 
 #### Scenario: An entry channel still drops when it says so
 - **WHEN** a Operative declares `c.input::<Vec<u8>>("trade.raw").on_full(OverflowPolicy::DropNewest).into::<ParseProcedure>()` and a frame arrives while the consumer mailbox is full
 - **THEN** the frame SHALL be discarded and `drops_newest_total` SHALL increase by 1
 
-#### Scenario: Default inter-procedure policy is Block
-- **WHEN** a Operative declares `c.channel::<Candle>("ohlc.candles").from::<OhlcProcedure>().into::<IndicatorProcedure>()` without `.on_full(...)` and IndicatorProcedure's mailbox is full while OhlcProcedure emits
-- **THEN** the OhlcProcedure's calling thread SHALL park until IndicatorProcedure drains an item, and then the push SHALL retry until success; OhlcProcedure's `pushes_blocked_total` SHALL increase by at least 1
+#### Scenario: The wire literal follows the variant
+
+- **WHEN** a host class declares a channel with the default policy
+- **THEN** its `HostClassDecl` JSON SHALL carry `"overflow": "drop_nothing"`, and a payload carrying `"block"` SHALL be refused at deserialization with an error naming the unknown variant and listing the three accepted spellings
 
 ### Requirement: Per-Entity backpressure counters
 Each EntitySlot's mailbox SHALL expose four `AtomicU64` counters readable via an `EntityCounters` accessor:
@@ -153,22 +166,6 @@ The counters SHALL use `Ordering::Relaxed` for both reads and writes. The counte
 #### Scenario: DropNewest increments only drops_newest_total
 - **WHEN** an entry channel under `DropNewest` policy receives 5 frames while the consumer mailbox is full
 - **THEN** `drops_newest_total` SHALL increase by 5; `drops_oldest_total` SHALL be unchanged; `pushes_blocked_total` SHALL be unchanged; `pushes_total` SHALL be unchanged
-
-### Requirement: Block parking does not violate sticky per-entity ordering
-When a producer thread is parked on a full consumer mailbox under `OverflowPolicy::Block`, the runtime SHALL preserve the existing "Sticky per-entity ordering" requirement on the *consumer* Entity. Specifically:
-
-- The consumer Entity's drain loop SHALL continue to run on whichever worker thread holds its inflight CAS; no parked producer SHALL block consumer drain.
-- Producers parked on the same consumer mailbox SHALL be unparked one at a time as items pop, in the order they parked (FIFO unpark fairness).
-
-This requirement is in addition to and does not modify the "Sticky per-entity ordering" requirement from the umbrella `operative-architecture` capability spec; it constrains how Block must integrate with that invariant.
-
-#### Scenario: Parked producer does not block its consumer's drain
-- **WHEN** Producer A's thread is parked because Consumer X's mailbox is full, and the worker pool has one other thread that picks up X's drain
-- **THEN** X's drain SHALL run to completion (popping items, calling `Procedure::run`); each pop SHALL unpark one waiting producer (FIFO order); A SHALL eventually be unparked and complete its push
-
-#### Scenario: FIFO unpark order
-- **WHEN** Producers A, B, C park in that order on the same full consumer mailbox
-- **THEN** the consumer's first three pops SHALL unpark A, B, C respectively (best-effort under MPMC contention; the *intent* is FIFO order via a `VecDeque<Unparker>` implementation)
 
 ### Requirement: Procedure declares Change associated type and apply_change function (Rust SDK)
 The Rust SDK's `Procedure` trait SHALL declare an associated `type Change: flezha_runner::state::Change` with default `flezha_runner::state::NoChange`. The `Change` trait SHALL bound on `Serialize + DeserializeOwned + Send + Sync + 'static` and SHALL declare `fn coalesce_key(&self) -> Option<CoalesceKey>` defaulting to `None`.
@@ -513,7 +510,7 @@ The plugin sink SHALL be stored on the channel descriptor as a `plugin_sink: Opt
 ### Requirement: Hybrid channel emission — consumer fan-out then single serializer call
 When a Procedure's `Procedure::run` calls `ctx.emit(value)` on a hybrid channel (`kind = InterProcedure, plugin_sink = Some(_)`), the dispatcher SHALL execute the following sequence on the producer thread:
 
-1. Fan out the typed `Arc<dyn Any + Send + Sync>` value to every consumer mailbox listed in the channel's `consumers` per the channel's `OverflowPolicy`. This step SHALL complete (modulo `OverflowPolicy::Block` parking) before step 2 begins.
+1. Fan out the typed `Arc<dyn Any + Send + Sync>` value to every consumer mailbox listed in the channel's `consumers` per the channel's `OverflowPolicy`. This step SHALL complete (modulo `OverflowPolicy::DropNothing` parking) before step 2 begins.
 2. If `plugin_sink` is `Some(sink)`, invoke `sink.serializer(value.as_ref())` exactly once inside `std::panic::catch_unwind(AssertUnwindSafe(...))`. On `Ok(bytes)`, send the bytes through the existing plugin-wire framing path (`channel: String` wire-metadata key set to the channel name; `[key_len][val_len][key][value]` block format). On `Err(panic)`, return `ProcedureError::PluginSerializerPanic { channel: <channel name>, message: <formatted panic payload> }` to the producing Procedure's `ctx.emit` call without emitting any plugin bytes.
 
 The dispatcher thread SHALL remain alive across a serializer panic. Subsequent emits SHALL proceed normally; only the producing Procedure sees the per-emit error.
@@ -537,7 +534,7 @@ The serializer SHALL run exactly once per `ctx.emit` invocation regardless of co
 - **AND** the dispatcher thread SHALL remain alive — a subsequent `ctx.emit` call SHALL execute normally
 
 #### Scenario: Serializer runs after consumer fan-out, not before
-- **WHEN** an `OverflowPolicy::Block` consumer mailbox is full and the producer emits on a hybrid channel
+- **WHEN** an `OverflowPolicy::DropNothing` consumer mailbox is full and the producer emits on a hybrid channel
 - **THEN** the producer SHALL park on the consumer mailbox
 - **AND** the plugin sink SHALL NOT receive any bytes until the consumer drains and the producer unparks
 - **AND** when the producer unparks, the serializer SHALL be invoked exactly once and the plugin sink SHALL receive the corresponding bytes
@@ -930,4 +927,20 @@ Under a declared drop policy (`.on_full(OverflowPolicy::DropNewest)` or `DropOld
 #### Scenario: A declared drop policy keeps the wire reader running
 - **WHEN** Operative A's entry channel declares `.on_full(OverflowPolicy::DropNewest)`, its mailbox is full, and Operative B (sharing the physical wire connection) has frames pending
 - **THEN** the wire reader SHALL discard the frame addressed to A and continue dispatching the next frame; B's frames SHALL NOT be delayed by A's saturation
+
+### Requirement: DropNothing parking does not violate sticky per-entity ordering
+When a producer thread is parked on a full consumer mailbox under `OverflowPolicy::DropNothing`, the runtime SHALL preserve the existing "Sticky per-entity ordering" requirement on the *consumer* Entity. Specifically:
+
+- The consumer Entity's drain loop SHALL continue to run on whichever worker thread holds its inflight CAS; no parked producer SHALL block consumer drain.
+- Producers parked on the same consumer mailbox SHALL be unparked one at a time as items pop, in the order they parked (FIFO unpark fairness).
+
+This requirement is in addition to and does not modify the "Sticky per-entity ordering" requirement from the umbrella `operative-architecture` capability spec; it constrains how `DropNothing` must integrate with that invariant.
+
+#### Scenario: Parked producer does not block its consumer's drain
+- **WHEN** Producer A's thread is parked because Consumer X's mailbox is full, and the worker pool has one other thread that picks up X's drain
+- **THEN** X's drain SHALL run to completion (popping items, calling `Procedure::run`); each pop SHALL unpark one waiting producer (FIFO order); A SHALL eventually be unparked and complete its push
+
+#### Scenario: FIFO unpark order
+- **WHEN** Producers A, B, C park in that order on the same full consumer mailbox
+- **THEN** the consumer's first three pops SHALL unpark A, B, C respectively (best-effort under MPMC contention; the *intent* is FIFO order via a `VecDeque<Unparker>` implementation)
 

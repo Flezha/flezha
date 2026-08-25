@@ -152,7 +152,7 @@ defmodule Flezha.Bench.DynamicEntity do
 
     c
     |> input("input")
-    |> on_full(:block)
+    |> on_full(:drop_nothing)
     |> filter(fn s -> s != "drop" end)
     |> key_by(fn s -> s |> to_string() |> String.split(":") |> hd() end)
     |> into(Flezha.Bench.DynamicProc)
@@ -171,7 +171,7 @@ defmodule Flezha.Bench.BenchEcho do
 
     c
     |> input("input")
-    |> on_full(:block)
+    |> on_full(:drop_nothing)
     |> into(Flezha.Bench.EchoProc)
     |> named("echo")
     |> sink("bench_echo_sink")
@@ -213,7 +213,7 @@ defmodule Flezha.Bench.KeyedNoPersist do
 
     c
     |> input("input")
-    |> on_full(:block)
+    |> on_full(:drop_nothing)
     |> into(Flezha.Bench.TierStoreProc)
     |> named("sink")
     |> sink("tier_sink")

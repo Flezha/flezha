@@ -5,7 +5,7 @@
 //! is active per slot; under that exclusion the typed dispatcher
 //! downcasts state and runs `Procedure::run`. The mailbox is bounded
 //! (`crossbeam::queue::ArrayQueue`); when the channel's declared
-//! `OverflowPolicy` is `Block`, producers park on the slot's
+//! `OverflowPolicy` is `DropNothing`, producers park on the slot's
 //! [`BlockParker`] and the drain loop unparks one waiter per popped
 //! item. Per-Entity push / drop / block counters live on
 //! [`EntityCounters`] and are bumped on the producer side.
@@ -104,7 +104,7 @@ pub struct EntityCounters {
     /// Number of payloads successfully enqueued onto this Entity's
     /// mailbox.
     pub pushes_total: AtomicU64,
-    /// Number of times a `Block`-policy producer parked waiting for the
+    /// Number of times a `DropNothing`-policy producer parked waiting for the
     /// consumer to free a slot. Multiple parks per push (under
     /// multi-producer contention) each increment.
     pub pushes_blocked_total: AtomicU64,
@@ -115,7 +115,7 @@ pub struct EntityCounters {
     pub drops_oldest_total: AtomicU64,
 }
 
-/// Multi-waiter, multi-unparker FIFO parker used by `Block`-policy
+/// Multi-waiter, multi-unparker FIFO parker used by `DropNothing`-policy
 /// producers when the consumer's mailbox is saturated.
 ///
 /// Implementation: `Mutex<VecDeque<Unparker>>` per Decision 3's note. A
@@ -172,7 +172,7 @@ impl BlockParker {
         parker.park();
     }
 
-    /// [`wait_one`] with a bounded park. Used by `Block`-policy producers
+    /// [`wait_one`] with a bounded park. Used by `DropNothing`-policy producers
     /// so that even an unforeseen lost-wake degrades to a retry loop with
     /// warnings instead of a permanent silent freeze.
     pub fn wait_one_timeout<P: Send + 'static>(&self, mailbox: &Mailbox<P>, timeout: Duration) {
@@ -219,8 +219,8 @@ impl Default for BlockParker {
 /// the 2026-06-10 freeze was invisible to every heartbeat-level signal.
 pub static DISPATCHES_COMPLETED: AtomicU64 = AtomicU64::new(0);
 
-/// Process-global count of Block-policy park episodes (producer found a full
-/// mailbox with an active drainer elsewhere). Also shipped in heartbeat
+/// Process-global count of DropNothing-policy park episodes (producer found a
+/// full mailbox with an active drainer elsewhere). Also shipped in heartbeat
 /// metadata; a climbing value flags sustained backpressure.
 pub static BLOCKED_PARK_EPISODES: AtomicU64 = AtomicU64::new(0);
 
@@ -250,14 +250,14 @@ pub struct EntitySlot {
     pub entity_key: Option<Arc<str>>,
     pub instance: Weak<crate::operative::instance::StreamInstance>,
     pub topology: Arc<crate::operative::topology::OperativeTopology>,
-    /// FIFO wait list for `Block`-policy producers parked on a full
+    /// FIFO wait list for `DropNothing`-policy producers parked on a full
     /// mailbox. Drained one entry at a time by `drain_entity` after
     /// every successful pop.
     pub block_parker: BlockParker,
     /// Single-ACTIVE-drainer gate. `mailbox`'s inflight flag means "a round is
     /// scheduled or running" (it is held from the moment the slot is queued on
     /// the poll core, before any worker takes it); this flag is true only while
-    /// a thread holds the handed-out activation. Block-policy producers use it
+    /// a thread holds the handed-out activation. DropNothing producers use it
     /// to drain a full slot inline instead of parking — a parked worker can be
     /// the only thread able to serve the slot's queued round, which is a
     /// permanent self-deadlock on a one-worker host.

@@ -61,6 +61,6 @@ public @interface Procedure {
     /** Per-entity mailbox capacity override. {@code 0} keeps the default. */
     int capacity() default 0;
 
-    /** Channel overflow policy: {@code "block"}, {@code "drop_newest"}, or {@code "drop_oldest"}. */
+    /** Channel overflow policy: {@code "drop_nothing"}, {@code "drop_newest"}, or {@code "drop_oldest"}. */
     String onFull() default "";
 }

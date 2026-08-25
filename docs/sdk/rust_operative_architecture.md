@@ -383,13 +383,13 @@ c.input::<Vec<u8>>("trade.raw")
     .into::<ParseProc>()
     .into::<OhlcProc>()
     .named("ohlc.candles")
-    .on_full(OverflowPolicy::Block)        // inter-procedure policy
+    .on_full(OverflowPolicy::DropNothing)  // inter-procedure policy
     .into::<IndicatorProc>();
 ```
 
 | `OverflowPolicy` | Behaviour |
 |---|---|
-| `Block` (default, every kind) | The producer retries after a bounded 50 ms park on the consumer's `BlockParker`, woken per pop. A producer that is itself a pool thread first drains the full mailbox inline when no drainer is active (a parked pool worker could be the only thread able to serve the queued round); any other producer — the wire reader above all — only parks. Preserves ordering, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
+| `DropNothing` (default, every kind) | Nothing is discarded: the producer retries after a bounded 50 ms park on the consumer's `BlockParker`, woken per pop. A producer that is itself a pool thread first drains the full mailbox inline when no drainer is active (a parked pool worker could be the only thread able to serve the queued round); any other producer — the wire reader above all — only parks. Preserves ordering, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
 | `DropNewest` | The incoming item is discarded; `drops_newest_total` += 1. |
 | `DropOldest` | The mailbox pops its oldest item and accepts the new one (`force_push`); `drops_oldest_total` += 1. Best-effort under MPMC contention. |
 
@@ -400,7 +400,7 @@ socket buffer plus transport flow control. `.sealed()` returns a finalized
 terminality in the type — nothing, `.on_full(...)` included, chains after it.
 
 The entry default has a co-tenancy cost: the wire reader services every
-Operative on one physical connection, and under `Block` it parks on the
+Operative on one physical connection, and under `DropNothing` it parks on the
 saturated Operative's mailbox until the pool pops a slot — siblings wait with
 it. An Operative that prefers to shed (a live ticker where a stale price is
 worthless) declares `DropNewest` / `DropOldest` on its entry channel; the
@@ -413,7 +413,7 @@ reader stays free and every drop is counted at the declaration site.
 | Counter | Bumped on |
 |---|---|
 | `pushes_total` | every successful `try_push` |
-| `pushes_blocked_total` | every `Block`-policy retry iteration |
+| `pushes_blocked_total` | every `DropNothing` retry iteration |
 | `drops_newest_total` | every drop under `DropNewest` |
 | `drops_oldest_total` | every eviction under `DropOldest` |
 
@@ -425,8 +425,8 @@ backend is not wired (see "Limits").
 `FLEZHA_WORKER_POOL_SIZE` sets the base worker count (default: the host's
 available parallelism, fallback 2); a starvation supervisor grows the pool up
 to `FLEZHA_WORKER_POOL_MAX` (default `10 × base`, never below base), and a
-grown worker retires after 30 s idle. A `Block`-policy producer parks the
-worker it ran on, so a pipeline of depth D under `Block` wants `≥ 2 × D + 1`
+grown worker retires after 30 s idle. A `DropNothing` producer parks the
+worker it ran on, so a pipeline of depth D under `DropNothing` wants `≥ 2 × D + 1`
 threads — but a parked producer is not inside `poll`, so the work queued
 behind it is exactly the starvation the pool grows on; raising the base only
 removes the growth latency. Single-stage pipelines are unaffected: the wire

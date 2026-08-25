@@ -117,9 +117,11 @@ The SDK SHALL define `Flezha.SDK.StreamOperative` (callbacks: `factory_id/0`, `c
 - **THEN** registration fails with an error naming the operative module — never a silent no-op, never a crash of the runner
 
 ### Requirement: Bounded Entity mailbox with the cross-SDK overflow default
-Each Entity SHALL have a bounded queue (capacity from `mailbox_capacity/0`) with an `OverflowPolicy` of `:block`, `:drop_newest`, or `:drop_oldest`. The default SHALL be `:block` for **every** edge kind (entry, inter-procedure, plugin-bound) — in lockstep with the Rust SDK builder, the Java SDK builder and the FFI host — and an operative that prefers to shed SHALL say so with `on_full/2`. Under `:block` the routing caller SHALL wait for room (guarded by a monitor on the Entity so a dead Entity cannot wedge it) and SHALL neither drop nor refuse the input; the documented co-tenancy cost is that a blocked primary-stream router delays every operative fed by that stream, exactly as the Rust reader parks. Drops SHALL be observable via telemetry; `blocked_parks` SHALL count episodes (the first wait of a contiguous full period), and the `dispatches` heartbeat counter SHALL increment only on completed dispatches so a wedged Entity population is visible to the existing `runner_pool_wedged` classifier verdict.
+Each Entity SHALL have a bounded queue (capacity from `mailbox_capacity/0`) with an `OverflowPolicy` of `:drop_nothing`, `:drop_newest`, or `:drop_oldest`. The default SHALL be `:drop_nothing` for **every** edge kind (entry, inter-procedure, plugin-bound) — in lockstep with the Rust SDK builder, the Java SDK builder and the FFI host — and an operative that prefers to shed SHALL say so with `on_full/2`. The retired spelling SHALL NOT be accepted by `on_full/2`, by `Flezha.SDK.Stream`'s type, or by any manifest. Under `:drop_nothing` the routing caller SHALL wait for room (guarded by a monitor on the Entity so a dead Entity cannot wedge it) and SHALL neither drop nor refuse the input; the documented co-tenancy cost is that a delayed primary-stream router delays every operative fed by that stream, exactly as the Rust reader parks. Drops SHALL be observable via telemetry; `blocked_parks` SHALL count episodes (the first wait of a contiguous full period), and the `dispatches` heartbeat counter SHALL increment only on completed dispatches so a wedged Entity population is visible to the existing `runner_pool_wedged` classifier verdict.
 
-#### Scenario: Default policy blocks and loses nothing
+The Elixir SDK's mechanism is unchanged by this delta: `Flezha.SDK.Entity.handle_call({:enqueue, …})` already answers immediately when there is room and defers the reply into a `waiters` FIFO when there is not, which is what `:drop_nothing` names.
+
+#### Scenario: Default policy discards nothing
 - **WHEN** an Entity queue at capacity receives further inputs under the default policy and the Entity later drains
 - **THEN** every input is eventually dispatched in order, nothing is dropped, and `blocked_parks` records one episode
 
@@ -130,6 +132,13 @@ Each Entity SHALL have a bounded queue (capacity from `mailbox_capacity/0`) with
 #### Scenario: Wedged population is visible, not silent
 - **WHEN** an Entity stays at capacity and never drains while the runner stays connected
 - **THEN** subsequent heartbeats carry a non-advancing `dispatches` value and `blocked_parks` stops at one episode
+
+#### Scenario: The retired spelling is refused
+
+<!-- overflow-naming-record:begin -->
+- **WHEN** `Flezha.SDK.Channels.on_full/2` is called with `:block`
+<!-- overflow-naming-record:end -->
+- **THEN** it SHALL raise a `FunctionClauseError` as it does for any other unrecognised policy, and no stream handle SHALL be returned
 
 ### Requirement: Failing invocations ride the cross-SDK retry-then-park ladder
 A failing `run/3` — error tuple, raise, or exit — SHALL be retried up to the input channel's `retry_max` (default 3 total attempts) with exponential backoff plus jitter from `retry_backoff_ms` (default 50 ms base, capped at 5 s); `{:error, {:non_retryable, reason}}` SHALL park immediately; a raise/exit is retryable by default. On exhaustion the SDK SHALL ship a `park_payload` frame whose body is the postcard `ParkBody` byte-compatible with the pinned cross-language fixture (`park_id`, `origin_offset` absent for the tier-off runner, and a `DlqEntryBody` of channel, error, attempts, payload — payload bytes present for binary/String inputs), SHALL hold the Entity, and SHALL resend every 2 s until the controller's `ParkPayloadAck` (sent only after the DLQ store fsync) matches the `park_id` — the existing controller park path SHALL require zero changes, in both deployment modes. The `ParkBody` encoder SHALL live in `Flezha.State.Wire` beside its decoder, sharing the module's postcard helpers.

@@ -379,7 +379,7 @@ The counters SHALL use `Ordering::Relaxed` (the BEAM `:counters` API does not ex
 
 For sessions that are NOT credit-speaking (pre-credit SDKs, or the controller running with credit flow control disabled), the agent SHALL monitor each `WalWriter`'s `pending_bytes` (queued-but-not-fsynced bytes). When `pending_bytes >= wal_high_watermark_bytes` (default 16 MiB), the agent SHALL ship `EntityMailboxStatus{entity_id, status: :full}` over the control channel to the SDK. When `pending_bytes` falls below `wal_low_watermark_bytes` (default `wal_high_watermark_bytes / 2`), the agent SHALL ship `EntityMailboxStatus{entity_id, status: :open}`.
 
-The SDK's per-Entity mailbox observer SHALL treat `:full` as equivalent to the existing per-Entity mailbox-full condition that drives `OverflowPolicy`; the producing Procedure's `ctx.emit(...)` SHALL apply the channel's declared policy (`Block` parks the producer, `DropNewest` drops, `DropOldest` discards-oldest).
+The SDK's per-Entity mailbox observer SHALL treat `:full` as equivalent to the existing per-Entity mailbox-full condition that drives `OverflowPolicy`; the producing Procedure's `ctx.emit(...)` SHALL apply the channel's declared policy (`DropNothing` waits for room, `DropNewest` drops, `DropOldest` discards-oldest).
 
 The agent SHALL NOT issue `:full` more than once per Entity while the watermark is exceeded (idempotent transitions); SHALL NOT issue `:open` until `:full` was previously sent for that Entity (no spurious `:open` frames).
 
@@ -395,9 +395,9 @@ For credit-speaking sessions the agent SHALL NOT ship `EntityMailboxStatus` fram
 - **WHEN** the same Entity's `pending_bytes` drains below 8 MiB after fsyncs
 - **THEN** the agent SHALL ship `EntityMailboxStatus{entity_id, status: :open}` exactly once
 
-#### Scenario: OverflowPolicy::Block parks producer under back-pressure
+#### Scenario: OverflowPolicy::DropNothing parks producer under back-pressure
 
-- **WHEN** a Procedure with `OverflowPolicy::Block` on its emit channel calls `ctx.emit(...)` for an Entity under `:full` status on a non-credit-speaking session
+- **WHEN** a Procedure with `OverflowPolicy::DropNothing` on its emit channel calls `ctx.emit(...)` for an Entity under `:full` status on a non-credit-speaking session
 - **THEN** the producer SHALL park its calling thread; on receipt of `:open` status the producer SHALL unpark and the emit SHALL succeed; the producer's `Procedure::run` SHALL eventually return `Ok(())`
 
 #### Scenario: Credit-speaking session receives no status flags

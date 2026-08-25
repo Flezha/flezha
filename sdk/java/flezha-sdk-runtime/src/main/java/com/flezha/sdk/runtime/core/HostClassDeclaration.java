@@ -169,7 +169,7 @@ public final class HostClassDeclaration {
             c.put(
                     "overflow",
                     switch (channel.overflowPolicy()) {
-                        case BLOCK -> "block";
+                        case DROP_NOTHING -> "drop_nothing";
                         case DROP_NEWEST -> "drop_newest";
                         case DROP_OLDEST -> "drop_oldest";
                     });
