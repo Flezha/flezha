@@ -1021,3 +1021,35 @@ The coverage SHALL assert against observable durable state — a snapshot file e
 - **WHEN** the Watchdog evaluates the size trigger
 - **THEN** the global `:default_compact_after_bytes` SHALL be used
 
+### Requirement: The persistence contract SHALL have a runnable smoke check
+
+`test/scripts/state_persistence.sh` SHALL run to completion against the dev
+compose stack and SHALL assert the data-plane half of this capability: with
+an operative running, plugins attached and inputs flowing, WAL files appear
+under the namespaced state layout and `flz state list <class>` surfaces the
+live entity.
+
+The script SHALL drive the plugin-attach API that currently exists rather
+than a removed one, and SHALL start from a clean state on every run, so a
+green result is evidence about the contract and not about leftovers from a
+previous run.
+
+Where the script cannot run in CI, its manual status and its measured
+runtime SHALL be recorded next to it, so a later reader can tell "nobody
+ran it" from "it passes".
+
+#### Scenario: The smoke check passes from a clean state
+
+- **WHEN** the script is run twice in succession, each run starting from wiped volumes
+- **THEN** both runs complete successfully and assert the WAL layout and the live-entity listing
+
+#### Scenario: A removed API is not driven
+
+- **WHEN** the script attaches a plugin to an operative
+- **THEN** it passes only options the provider currently accepts, and the attach succeeds
+
+#### Scenario: Manual status is recorded
+
+- **WHEN** the script is not wired into an automated tier
+- **THEN** its manual status and measured runtime are recorded next to the script and in the docs that reference it
+

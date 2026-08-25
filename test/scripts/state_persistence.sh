@@ -2,10 +2,23 @@
 # Per-Entity state-persistence smoke test (engagement-only).
 #
 # Verifies the data-plane half of the `operative-state-persistence`
-# contract (see `docs/internals/state_persistence.md`): with a operative
+# contract (see `docs/internals/state_persistence.md`): with an operative
 # running, plugins attached, and inputs flowing, the controller writes
-# WAL files under `app_data/state/<runner_id>/<operative_class>/...`
-# and `flz state list <class>` surfaces the live entity.
+# WAL files under the namespaced layout
+# `app_data/state/<namespace>/<operative_class>/<procedure_id>/<entity_key>.wal`
+# and `flz state list <operative_class>` surfaces the live entity.
+#
+# `operative_class` is NOT the factory id: `Overwatch.operative_class/1`
+# falls back to the operative's own id, so the class level on disk — and
+# the argument `flz state list` takes — is the operative id, while
+# `flz operative start` takes the factory id. The script keeps them in
+# two variables because they are two different names for two different
+# things.
+#
+# Cost: 2.5-4 min from a clean state, dominated by the `cargo build` and
+# `mix release` inside the container — `cleanup` runs `down -v`, which
+# removes the `_build`/`deps`/`target` volumes, so EVERY run rebuilds.
+# Manual — see "Keeping it honest" at the end of this header.
 #
 # Out of scope (deliberately, see end-of-script PASS notes):
 #   * Full controller-side BEAM down/up cycle. The controller does
@@ -15,9 +28,13 @@
 #     `flz operative start`. The SDK-side `RestoreInitState` handshake
 #     does work for runner-only restarts; that flavor of test
 #     belongs next to `plugin_persistence.sh`.
-#   * `flz state rotate` and `flz state at` — these currently crash
-#     the BEAM in this dev setup (`:noconnection` after one call).
-#     Filed-bug-shaped, not test-fixture-shaped.
+#   * `flz state at` / `flz state get` / `flz state rotate`. An older note
+#     here claimed these crash the BEAM; they do not — all three were driven
+#     against this stack and the node stayed up. `state get` and `state at`
+#     belong to `entity-state-live-query` and the time-travel CLI, `rotate`
+#     to `entity-compaction`; wiring them in is those capabilities' job, not
+#     this one's. Note `state at` takes the DECODED entity key, so the
+#     on-disk filename (`_.wal` for the empty key) is not a path fragment.
 #
 # Layout:
 #   * dedicated compose project name so it does not collide with the
@@ -39,12 +56,20 @@
 # Knobs (env vars):
 #   REJOIN_TIMEOUT_S       per-step poll deadline (default 300)
 #   FLEZHA_KEEP_STACK=1    leave compose stack up post-mortem
-#   OPERATIVE_CLASS            operative class on disk (default: store_input,
-#                          matching `StoreInputRelay::factory_id()` in
-#                          `test/apps/rust_runner/src/main.rs`)
+#   FACTORY_ID             factory the operative is started from (default:
+#                          store_input, matching `StoreInputOperative::
+#                          factory_id()` in `test/apps/rust_runner/src/main.rs`)
+#   FLEZHA_PERSISTENCE_OPERATIVE  operative id, which is also its state class
+#                          on disk (default: sp_test_operative)
 #   FLEZHA_DEMO_NAMESPACE  namespace for the rust runner (default: default)
 #   INPUT_WAIT_S           seconds to let testnet drive inputs into
 #                          the operative before assertions (default 8)
+#
+# Keeping it honest:
+#   This script is NOT wired into CI — it needs a Docker daemon, a Kafka
+#   broker and a full in-container toolchain build, none of which the
+#   `elixir`/`naming`/`docker` workflows carry. Run it by hand when you
+#   touch `lib/flezha/state/`, the plugin-attach CLI, or this script.
 
 set -euo pipefail
 
@@ -54,10 +79,13 @@ TESTING_OVERLAY="${REPO_ROOT}/docker/dev/docker-compose.testing.yml"
 
 REJOIN_TIMEOUT_S="${REJOIN_TIMEOUT_S:-300}"
 DEMO_NAMESPACE="${FLEZHA_DEMO_NAMESPACE:-default}"
-OPERATIVE_CLASS="${OPERATIVE_CLASS:-store_input}"
 INPUT_WAIT_S="${INPUT_WAIT_S:-8}"
 
-PROCESSOR_ID="${FLEZHA_PERSISTENCE_PROCESSOR:-sp_test_operative}"
+# The factory `flz operative start` instantiates, and the operative id it
+# is instantiated under. The id is ALSO the class level of the on-disk
+# state layout and the argument `flz state list` takes — see the header.
+FACTORY_ID="${FACTORY_ID:-store_input}"
+OPERATIVE_ID="${FLEZHA_PERSISTENCE_OPERATIVE:-sp_test_operative}"
 PLUGIN_WS_ID="sp_test_ws"
 PLUGIN_KAFKA_ID="sp_test_kafka"
 
@@ -77,6 +105,24 @@ COMPOSE=(
 )
 
 cd "${REPO_ROOT}/docker/dev"
+
+# Every line this script prints carries its tag, so the tag is written twice
+# rather than once per message. `diag` is `note`'s stderr twin — diagnostics
+# and failures — so a dump always lands next to the message explaining it.
+note() {
+  echo "[state_persistence] $*"
+}
+
+diag() {
+  echo "[state_persistence] $*" >&2
+}
+
+# The rust runner's tail, prefixed so it cannot be mistaken for this script's
+# own output. Every "the runner did not do X" path wants exactly this, and the
+# depth is one fact.
+dump_rust_logs() {
+  docker logs --tail=80 flezha_rust_runner 2>&1 | sed 's/^/  rust> /' >&2 || true
+}
 
 # `docker/dev/docker-compose.yml` pins hardcoded container_name values
 # (flezha_controller_dev, flezha_zookeeper, flezha_kafka, flezha_kafka_ui,
@@ -123,18 +169,18 @@ assert_rust_running() {
   local state
   state="$(docker inspect -f '{{.State.Status}}' flezha_rust_runner 2>/dev/null || echo missing)"
   if [ "${state}" != "running" ]; then
-    echo "[state_persistence] FAIL: rust container is not running (state=${state})" >&2
-    docker logs --tail=80 flezha_rust_runner 2>&1 | sed 's/^/  rust> /' >&2 || true
+    diag "FAIL: rust container is not running (state=${state})"
+    dump_rust_logs
     exit 1
   fi
 }
 
 cleanup() {
   if [ "${FLEZHA_KEEP_STACK:-0}" = "1" ]; then
-    echo "[state_persistence] FLEZHA_KEEP_STACK=1, leaving stack up"
+    note "FLEZHA_KEEP_STACK=1, leaving stack up"
     return
   fi
-  echo "[state_persistence] tearing down compose stack (project=${PROJECT})"
+  note "tearing down compose stack (project=${PROJECT})"
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   # Compose 'down' is project-scoped; sweep stragglers by name too so
   # the next run starts clean even if an earlier run was interrupted
@@ -142,10 +188,6 @@ cleanup() {
   force_remove_known_containers
 }
 trap cleanup EXIT
-
-note() {
-  echo "[state_persistence] $*"
-}
 
 flz() {
   "${COMPOSE[@]}" exec -T -e "RELEASE_COOKIE=${RELEASE_COOKIE_VALUE}" \
@@ -162,6 +204,20 @@ controller_sh() {
 SOCKETS_DIR="${REPO_ROOT}/app_data/sockets"
 STATE_DIR="${REPO_ROOT}/app_data/state"
 CONTROL_SOCKET="${SOCKETS_DIR}/runner_control_channel.sock"
+
+# Run one long build inside the controller container, keeping its output out
+# of the run log unless it fails. Both builds below are this shape, and the
+# tail depth is one fact rather than two that can drift.
+build_step() {
+  local label="$1" logfile="$2" script="$3"
+
+  note "${label}"
+  if ! controller_sh "${script}" >"${logfile}" 2>&1; then
+    diag "FAIL: ${label} failed; tail of ${logfile}:"
+    tail -40 "${logfile}" >&2
+    exit 1
+  fi
+}
 
 # The regular dev compose does NOT auto-start the BEAM — its controller
 # service just keeps the container alive (see `pgrep -f 'beam.smp\|tail'`
@@ -183,22 +239,14 @@ start_beam() {
   # compose mounts `/flezha/target` as a named volume that starts empty, so
   # a release run ahead of the cargo build fails outright. Cargo writes to
   # that volume, never to the host's `target/`.
-  note "building flz CLI inside container (matches container GLIBC)"
-  if ! "${COMPOSE[@]}" exec -T controller sh -c \
-    'cd /flezha && cargo build -p flz --quiet 2>&1' >/tmp/state_persistence_cargo.log 2>&1; then
-    echo "[state_persistence] FAIL: cargo build -p flz failed; tail of log:" >&2
-    tail -40 /tmp/state_persistence_cargo.log >&2
-    exit 1
-  fi
-  note "ensuring 'flz' release is built"
-  if ! "${COMPOSE[@]}" exec -T controller sh -c \
-    'cd /flezha && export MIX_ENV=dev && \
-     mix deps.get --only "$MIX_ENV" && \
-     mix release --overwrite' >/tmp/state_persistence_release.log 2>&1; then
-    echo "[state_persistence] FAIL: mix release failed; tail of log:" >&2
-    tail -40 /tmp/state_persistence_release.log >&2
-    exit 1
-  fi
+  build_step "building flz CLI inside container (matches container GLIBC)" \
+    /tmp/state_persistence_cargo.log \
+    'cd /flezha && cargo build -p flz --quiet 2>&1'
+
+  build_step "building the flezha release" \
+    /tmp/state_persistence_release.log \
+    'cd /flezha && export MIX_ENV=dev && mix deps.get --only "$MIX_ENV" && mix release --overwrite'
+
   note "release built with the container-linked flz"
 
   # We can't use `flzvm daemon` (the release entrypoint) because the
@@ -227,7 +275,7 @@ start_beam() {
     fi
     sleep 2
   done
-  echo "[state_persistence] timed out waiting for BEAM control socket" >&2
+  diag "timed out waiting for BEAM control socket"
   "${COMPOSE[@]}" logs --tail=200 controller >&2 || true
   return 1
 }
@@ -254,113 +302,56 @@ wait_for_any_ce_id() {
     local now
     now="$(date +%s)"
     if [ $(( now - last_diag )) -ge 30 ]; then
-      echo "[state_persistence] still waiting for handshake (rust last log line: $(docker logs --tail=1 flezha_rust_runner 2>&1 | tr -d '\r' | tail -1))" >&2
+      diag "still waiting for handshake (rust last log line: $(docker logs --tail=1 flezha_rust_runner 2>&1 | tr -d '\r' | tail -1))"
       last_diag="${now}"
     fi
     sleep 5
   done
-  echo "[state_persistence] timed out waiting for runner_id" >&2
-  docker logs --tail=80 flezha_rust_runner 2>&1 | sed 's/^/  rust> /' >&2 || true
+  diag "timed out waiting for runner_id"
+  dump_rust_logs
   return 1
 }
 
-wait_for_new_ce_id() {
-  local previous_ce_id="$1"
-  local deadline=$(( $(date +%s) + REJOIN_TIMEOUT_S ))
-  local current=""
+# Poll a `flz` read command until its output contains `needle`. Every runtime
+# assertion below is this shape: what the CLI reports is updated
+# asynchronously w.r.t. the RPC that requested the change (the kafka producer
+# only appears once its first broker handshake against kafka:9092 lands), so a
+# single read is a race, and a failure has to show what the command actually
+# said.
+#
+# The output is CAPTURED and the SAME text is both matched and dumped. The
+# assertions this replaced discarded stderr, threw away what they matched
+# against, and then re-ran the command to build the failure message — so a
+# failure could (and did) print a dump containing the very plugin it had just
+# reported missing, with nothing to say whether the poll had seen different
+# output or no output at all. Reporting `flz`'s exit code alongside the text
+# is what separates "the CLI said no" from "the CLI failed".
+await_flz_output() {
+  local what="$1" needle="$2" budget_s="$3"
+  shift 3
+  local started deadline out="" rc=0
+  started="$(date +%s)"
+  deadline=$(( started + budget_s ))
+
   while [ "$(date +%s)" -lt "${deadline}" ]; do
-    assert_rust_running
-    current="$(fetch_active_ce_id)"
-    if [ -n "${current}" ] && [ "${current}" != "${previous_ce_id}" ]; then
-      echo "${current}"
-      return 0
-    fi
-    sleep 5
-  done
-  echo "[state_persistence] timed out waiting for fresh runner_id (last: '${current}')" >&2
-  docker logs --tail=80 flezha_rust_runner 2>&1 | sed 's/^/  rust> /' >&2 || true
-  return 1
-}
+    rc=0
+    out="$(flz "$@" 2>&1)" || rc=$?
 
-assert_operative_listed() {
-  local stage="$1"
-  if ! flz operative list -n "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${PROCESSOR_ID}"; then
-    echo "[state_persistence] FAIL (${stage}): operative '${PROCESSOR_ID}' not listed" >&2
-    flz operative list -n "${DEMO_NAMESPACE}" >&2 || true
-    return 1
-  fi
-  note "${stage}: operative '${PROCESSOR_ID}' present in list"
-}
-
-assert_plugin_listed() {
-  local plugin_id="$1"
-  local stage="$2"
-  # Plugin registration on the BEAM side is asynchronous w.r.t. the
-  # `flz plugin enable` RPC return. The kafka producer plugin in
-  # particular takes longer because its first registration drives a
-  # broker handshake against kafka:9092. Poll for up to ~30s.
-  local i
-  for i in $(seq 1 30); do
-    if flz operative info -n "${DEMO_NAMESPACE}" 2>/dev/null | grep -q "${plugin_id}"; then
-      note "${stage}: plugin '${plugin_id}' present (${i}s)"
-      return 0
+    if [ "${rc}" -eq 0 ]; then
+      case "${out}" in
+        *"${needle}"*)
+          note "${what} (after $(( $(date +%s) - started ))s)"
+          return 0
+          ;;
+      esac
     fi
+
     sleep 1
   done
-  echo "[state_persistence] FAIL (${stage}): plugin '${plugin_id}' not listed by 'flz operative info' after 30s" >&2
-  flz operative info -n "${DEMO_NAMESPACE}" >&2 || true
+
+  diag "FAIL: ${what} — '${needle}' absent after ${budget_s}s (flz exit=${rc})"
+  printf '%s\n' "${out}" | sed 's/^/  flz> /' >&2
   return 1
-}
-
-assert_state_entities_present() {
-  local stage="$1"
-  local out
-  out="$(flz state list "${OPERATIVE_CLASS}" --output json 2>&1 || true)"
-  if ! echo "${out}" | grep -q '"entity_key"'; then
-    echo "[state_persistence] FAIL (${stage}): no entities reported under '${OPERATIVE_CLASS}'" >&2
-    echo "${out}" >&2
-    return 1
-  fi
-  note "${stage}: 'flz state list ${OPERATIVE_CLASS}' reports entities"
-  echo "${out}"
-}
-
-# Pick an entity path "operative_class/procedure_id/entity_key" off the
-# host filesystem so the time-travel assertion has a concrete target,
-# regardless of which runner_id the rust container is running under.
-discover_entity_path() {
-  local rel
-  rel="$(find "${STATE_DIR}" -maxdepth 4 -type f \( -name '*.wal' -o -name '*.snap.*' \) 2>/dev/null \
-    | head -1)"
-  if [ -z "${rel}" ]; then
-    return 1
-  fi
-  local rc sh pk
-  pk="$(basename "${rel}" | sed -E 's/\.(wal|snap\.[0-9]+|outbox\.dedup)$//')"
-  sh="$(basename "$(dirname "${rel}")")"
-  rc="$(basename "$(dirname "$(dirname "${rel}")")")"
-  printf '%s/%s/%s\n' "${rc}" "${sh}" "${pk}"
-}
-
-assert_time_travel_replay() {
-  local stage="$1"
-  local path
-  if ! path="$(discover_entity_path)"; then
-    echo "[state_persistence] FAIL (${stage}): no on-disk WAL/snapshot under ${STATE_DIR}" >&2
-    return 1
-  fi
-  note "${stage}: replaying ${path}@latest via 'flz state at'"
-  if ! flz state at "${path}" latest --output json >/dev/null 2>&1; then
-    # Fallback: some builds expect a numeric seq rather than the
-    # word `latest`. Try seq=0 (genesis) which all valid entities
-    # accept and which proves the time-travel pipeline is wired.
-    if ! flz state at "${path}" 0 --output json >/dev/null 2>&1; then
-      echo "[state_persistence] FAIL (${stage}): 'flz state at ${path}' did not return a state" >&2
-      flz state at "${path}" 0 >&2 || true
-      return 1
-    fi
-  fi
-  note "${stage}: time-travel replay succeeded for ${path}"
 }
 
 # --- Phase 0: bring stack up ----------------------------------------------
@@ -383,8 +374,8 @@ note "initial runner_id: ${INITIAL_CE_ID}"
 
 # --- Phase 1: start operative + attach plugins --------------------------------
 
-note "starting operative ${PROCESSOR_ID}"
-flz operative start "${PROCESSOR_ID}" "${OPERATIVE_CLASS}" \
+note "starting operative ${OPERATIVE_ID}"
+flz operative start "${OPERATIVE_ID}" "${FACTORY_ID}" \
   -n "${DEMO_NAMESPACE}" \
   --init_values '{"binary_inputs": [], "text_inputs": ["FIRST"]}'
 
@@ -417,64 +408,67 @@ controller_sh '
   exit 1
 '
 
+# `--X…` flags are PROVIDER options and reach `init_provider/1`; a provider
+# with a strict allow-list refuses every key it does not own. Attachment
+# (`--operative_id`) and subscription (`--trigger`) are plain CLI options,
+# consumed by `CliManager.enable_plugin/4` before the provider ever sees the
+# map. `position` is a subscription sub-option and applies only to the ordered
+# kinds (`:fold`, `:transform`) — `on_interval` is a `:timer`, so it has none.
 note "enabling websocket plugin ${PLUGIN_WS_ID}"
 flz plugin enable "${PLUGIN_WS_ID}" operative_websocket \
-  --Xoperative_id="${PROCESSOR_ID}" \
-  --Xtrigger="proactive" \
+  --operative_id="${OPERATIVE_ID}" \
+  --trigger="proactive" \
   --Xuri="ws://localhost:4500" \
-  --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":500}}"}}' \
-  --Xposition=0
+  --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":500}}"}}'
 
 note "enabling kafka producer plugin ${PLUGIN_KAFKA_ID}"
 flz plugin enable "${PLUGIN_KAFKA_ID}" operative_kafka_producer \
-  --Xoperative_id="${PROCESSOR_ID}" \
-  --Xtrigger=on_output \
+  --operative_id="${OPERATIVE_ID}" \
+  --trigger=on_output \
   --Xhosts=kafka:9092 \
-  --Xtopic="${PROCESSOR_ID}.test.v1"
+  --Xtopic="${OPERATIVE_ID}.test.v1"
 
 # Let the WS plugin drive inputs into the operative so apply_change runs
 # and the WAL/outbox actually grow before we make the assertions.
 note "letting testnet drive inputs for ${INPUT_WAIT_S}s so WAL/snapshots fill"
 sleep "${INPUT_WAIT_S}"
 
-# Asserting plugin presence via `flz operative info` is unreliable: the
-# `flz plugin enable` RPC returns "enabled successfully" the moment
-# the cspec is persisted, but the runtime extension table that
-# `operative info` reads from is updated asynchronously. The kafka
-# producer plugin in particular only appears there after its first
-# broker handshake to `kafka:9092`, which on a cold compose stack
-# can lag 30s+. We've already trusted both `flz plugin enable`
-# command's return code (the script would have aborted at that step
-# under set -e). What we still want to verify here is the runtime —
-# operative listed + at least one plugin observable in `operative info`,
-# combined with the on-disk WAL assertion below.
-assert_operative_listed   "baseline"
-assert_plugin_listed  "${PLUGIN_WS_ID}"    "baseline"
-assert_state_entities_present "baseline"
+# The runtime, not the RPC return codes: `flz plugin enable` answers as soon
+# as the cspec is persisted, so only these reads prove the operative and its
+# plugins are actually live. `set -e` already aborted on a failed enable.
+await_flz_output "operative '${OPERATIVE_ID}' is listed" "${OPERATIVE_ID}" 30 \
+  operative list -n "${DEMO_NAMESPACE}"
 
-note "verifying on-disk WAL files under ${STATE_DIR}"
-ON_DISK_FILES=$(find "${STATE_DIR}" -type f 2>/dev/null | wc -l)
-if [ "${ON_DISK_FILES}" -eq 0 ]; then
-  echo "[state_persistence] FAIL: no files under ${STATE_DIR} — persistence not engaged" >&2
+await_flz_output "plugin '${PLUGIN_WS_ID}' is in 'flz operative info'" "${PLUGIN_WS_ID}" 30 \
+  operative info -n "${DEMO_NAMESPACE}"
+
+await_flz_output "'flz state list ${OPERATIVE_ID}' reports entities" '"entity_key"' 30 \
+  state list "${OPERATIVE_ID}" --output json
+
+# The namespaced layout itself, not merely "some file exists": a WAL under
+# `<state_root>/<namespace>/<operative_class>/<procedure_id>/<key>.wal` is
+# what `Flezha.State.Registry.class_dir/1` promises, and asserting the shape
+# is what catches the layout moving out from under the contract.
+CLASS_DIR="${STATE_DIR}/${DEMO_NAMESPACE}/${OPERATIVE_ID}"
+note "verifying the namespaced WAL layout under ${CLASS_DIR}"
+mapfile -t WAL_FILES < <(find "${CLASS_DIR}" -mindepth 2 -maxdepth 2 -type f -name '*.wal' 2>/dev/null)
+if [ "${#WAL_FILES[@]}" -eq 0 ]; then
+  diag "FAIL: no <procedure_id>/<key>.wal under ${CLASS_DIR} — persistence not engaged"
+  find "${STATE_DIR}" 2>/dev/null | sed 's/^/  /' >&2
   exit 1
 fi
-note "${ON_DISK_FILES} on-disk file(s) under ${STATE_DIR}:"
-find "${STATE_DIR}" -type f 2>/dev/null | sed 's/^/  /'
+note "${#WAL_FILES[@]} WAL file(s) in the expected layout:"
+printf '  %s\n' "${WAL_FILES[@]}"
 
 note "PASS: per-Entity state persistence is engaged"
-note "  operative='${PROCESSOR_ID}' / class='${OPERATIVE_CLASS}'"
-note "  plugins=${PLUGIN_WS_ID},${PLUGIN_KAFKA_ID}"
+note "  operative='${OPERATIVE_ID}' (factory='${FACTORY_ID}') in namespace '${DEMO_NAMESPACE}'"
+note "  plugins enabled=${PLUGIN_WS_ID},${PLUGIN_KAFKA_ID} (presence asserted for ${PLUGIN_WS_ID})"
 note ""
 note "Scope notes:"
-note "  * This script verifies the data-plane WAL is being written"
-note "    and that 'flz state list <class>' surfaces the live entity."
-note "  * It does NOT exercise a controller-side BEAM restart. As of"
-note "    today the controller does not auto-recreate operatives after"
-note "    its own BEAM restarts (only SDK/runner restarts trigger"
-note "    the SDK-side RestoreInitState handshake while the controller"
-note "    stays up). Follow-up testing of runner-only restart"
-note "    belongs alongside test/scripts/plugin_persistence.sh."
-note "  * 'flz state rotate' and 'flz state at' are NOT exercised"
-note "    here because they currently crash the BEAM in this dev"
-note "    setup; that's a separate bug worth filing."
-note "      and entity state replayed under '${OPERATIVE_CLASS}'"
+note "  * This script verifies the data-plane WAL is being written under the"
+note "    namespaced layout and that 'flz state list' surfaces the live entity."
+note "  * It does NOT exercise a controller-side BEAM restart. The controller"
+note "    does not auto-recreate operatives after its own BEAM restarts (only"
+note "    SDK/runner restarts trigger the SDK-side RestoreInitState handshake"
+note "    while the controller stays up). Follow-up testing of runner-only"
+note "    restart belongs alongside test/scripts/plugin_persistence.sh."

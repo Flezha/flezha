@@ -493,6 +493,31 @@ instance metadata → SDK declaration → global default.
 | `:operative_persistence` | `%{}` (default `true`) | Per-class persistence on/off (workflow kinds; a stream is always persistent). |
 | `:sync_durability` | `%{}` (default: the SDK declaration) | Per-class: commit barriers wait for the remote tier. |
 
+## Smoke check (manual)
+
+`test/scripts/state_persistence.sh` is the executable check for the data-plane
+half of this capability: it brings up the dev compose stack, starts an
+operative on the `store_input` factory, attaches the websocket and Kafka
+plugins, lets the testnet drive inputs, then asserts the namespaced WAL layout
+(`<state_root>/<namespace>/<operative_class>/<procedure_id>/<key>.wal`) and
+that `flz state list <operative_class>` reports the live entity. It wipes
+`app_data/state/` and its compose volumes on every run, so a green result is
+evidence about the contract and not about leftovers.
+
+**It is NOT wired into CI, and nothing else runs it.** It needs a Docker
+daemon, a Kafka broker and a full in-container `cargo build` + `mix release`,
+none of which the `elixir`, `naming`, `docker` or `nightly-e2e` workflows
+carry. Measured cost: **2.5-4 min** for a green run from wiped volumes (four
+consecutive green runs: 2m20s, 3m36s, 3m37s, 4m08s). `cleanup` runs `down -v`,
+so the `cargo build` and `mix release` inside the container are paid every
+time. Run it by hand after touching
+`lib/flezha/state/`, the plugin-attach CLI, or the script itself — a long
+green gap in this file's history means nobody ran it, not that it passes.
+
+Note that `flz state at` takes the DECODED entity key: `_.wal` on disk is
+`Registry.encode_entity_key/1`'s rendering of the empty key, not a path
+fragment.
+
 ## See also
 
 - [`../architecture/kernel.md`](../architecture/kernel.md) — the write path, the effect record, push-vs-pull baseline, the minimum watermark.
@@ -501,3 +526,4 @@ instance metadata → SDK declaration → global default.
 - [`runner_identity.md`](runner_identity.md) — the takeover guard the owner-bound realign relies on.
 - [`convergence_loop.md`](convergence_loop.md) — the output-stall remediation ladder.
 - [`../operations/remote_durability_tier.md`](../operations/remote_durability_tier.md) — surviving the loss of the disk.
+- [`../../test/scripts/state_persistence.sh`](../../test/scripts/state_persistence.sh) — the manual smoke check for this capability's data-plane half.

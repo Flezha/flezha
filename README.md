@@ -200,26 +200,25 @@ See [`docs/plugins/installation.md`](docs/plugins/installation.md) for the
 full authoring guide and [`examples/plugins/hello_world/`](examples/plugins/hello_world/)
 for a minimal copy-paste starting point.
 
-### Enabling websocket plugin for operative. 
+### Enabling websocket plugin for operative.
+
+`flz plugin enable <plugin_id> <provider_id> …`. Provider options carry the
+`--X` prefix and reach `init_provider/1`; attachment (`--operative_id`) and
+subscription (`--trigger`) are plain options the CLI consumes first — a
+provider with a strict allow-list refuses every `--X` key it does not own.
+
 ```bash
-_build/dev/rel/flezha/bin/flz plugin enable operative_websocket  --settings='{
-  "operative_id": "my_operative",
-  "trigger": "proactive",
-  "uri": "ws://localhost:4500",
-  "post_connect": {
-    "payload": {
-      "type": "text",
-      "message": "{\\"event_type\\": \\"subscribe\\",\\"event_data\\": {\\"default_message\\": \\"hello world\\",\\"interval\\": 1000}}"
-    }
-  }
-}'
+_build/dev/rel/flezha/bin/flz plugin enable my_ws operative_websocket \
+  --operative_id=my_operative \
+  --trigger=proactive \
+  --Xuri="ws://localhost:4500" \
+  --Xpost_connect='{"payload":{"type":"text","message":"{\"event_type\":\"subscribe\",\"event_data\":{\"default_message\":\"hello world\",\"interval\":1000}}"}}'
 ```
 
 ```bash
-_build/dev/rel/flezha/bin/flz plugin enable operative_stdout  --settings='{
-  "operative_id": "my_operative",
-  "trigger": "on_out",
-}'
+_build/dev/rel/flezha/bin/flz plugin enable my_stdout operative_stdout \
+  --operative_id=my_operative \
+  --trigger=on_output
 ```
 
 ### Get operative state.
