@@ -466,6 +466,39 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
         if !seen.insert(channel.name.as_str()) {
             return Err(format!("duplicate channel name `{}`", channel.name));
         }
+        // A shedding policy is refused where the loss it permits cannot be
+        // accounted for. Both drop policies are rate-dependent, so which items
+        // survive depends on timing — and both durability contracts below
+        // promise an answer that does not.
+        let sheds = match channel.overflow {
+            HostOverflow::DropNothing => None,
+            HostOverflow::DropNewest => Some("drop_newest"),
+            HostOverflow::DropOldest => Some("drop_oldest"),
+        };
+        if let Some(policy) = sheds {
+            if decl.effectively_once {
+                // A dropped input's offset is skipped by a later item's
+                // watermark advance: the input is gone for good while the tier
+                // reports effectively-once.
+                return Err(format!(
+                    "channel `{}` declares overflow `{}` on a class that declares \
+                     effectively_once; a shed input's offset is still advanced past by \
+                     the tier's watermark, so the loss is permanent and unreported — \
+                     declare one or the other, not both",
+                    channel.name, policy
+                ));
+            }
+            if decl.correction_window_ms.is_some() {
+                // A correction's answer may not depend on arrival timing.
+                return Err(format!(
+                    "channel `{}` declares overflow `{}` on a class that declares \
+                     correction_window_ms; a correction re-folds a replayed slice and \
+                     its answer may not depend on which items a full mailbox happened \
+                     to keep",
+                    channel.name, policy
+                ));
+            }
+        }
         let arity = |idx: u32| (idx as usize) < decl.procedures.len();
         if let Some(p) = channel.producer {
             if !arity(p) {
@@ -1738,6 +1771,51 @@ fn resolve_item(
         }
     });
 
+    // Edge values into consumer mailboxes — the offset propagates exactly as
+    // the typed emit path propagates it.
+    //
+    // BEFORE the effect record is folded, and that order is the guarantee: an
+    // edge output is the one output kind with no durable copy (it is excluded
+    // from the transactional outbox), so the only thing that can re-produce it
+    // is the producer re-running its input. Fold first and a crash in the
+    // ~5 ms until the flusher runs leaves the offset durable, the replay floor
+    // skipping that input, and the consumer never fed — a permanent loss under
+    // a contract that promises effectively-once. Holding the item's effects
+    // until every push has landed makes the item unresolved while a delivery
+    // is outstanding, exactly as `stash_pending_attempt` holds a failed
+    // attempt's changes. The typed path emits from inside `ctx.emit` during
+    // `run()`, before the effect block exists, and already satisfies this.
+    if !edge_outputs.is_empty() {
+        if let Some(instance) = slot.instance.upgrade() {
+            for output in edge_outputs {
+                let schema::OutputTarget::Edge { channel, consumer } = output.target else {
+                    continue;
+                };
+                let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
+                    bytes: output.payload,
+                    channel,
+                    keys: output.key.into_iter().collect(),
+                    event_time: output.event_time,
+                    metadata: output.metadata,
+                });
+                if let Err(e) = crate::routing::deliver_host_output(
+                    &instance,
+                    channel,
+                    consumer,
+                    &value,
+                    &stream,
+                    consumed_offset,
+                ) {
+                    tracing::warn!(
+                        target: "flezha::host",
+                        entity = slot.dispatcher.entity_label(),
+                        "edge output dropped: {e}"
+                    );
+                }
+            }
+        }
+    }
+
     let mut tier_off_dlq = None;
     let mut plugin_outputs: Vec<schema::Output> = Vec::new();
     {
@@ -1809,39 +1887,6 @@ fn resolve_item(
     }
 
     crate::timer::arm_interval_deadline(slot);
-
-    // Edge values into consumer mailboxes — the offset propagates exactly as
-    // the typed emit path propagates it.
-    if !edge_outputs.is_empty() {
-        if let Some(instance) = slot.instance.upgrade() {
-            for output in edge_outputs {
-                let schema::OutputTarget::Edge { channel, consumer } = output.target else {
-                    continue;
-                };
-                let value: Arc<dyn Any + Send + Sync> = Arc::new(HostPayload {
-                    bytes: output.payload,
-                    channel,
-                    keys: output.key.into_iter().collect(),
-                    event_time: output.event_time,
-                    metadata: output.metadata,
-                });
-                if let Err(e) = crate::routing::deliver_host_output(
-                    &instance,
-                    channel,
-                    consumer,
-                    &value,
-                    &stream,
-                    consumed_offset,
-                ) {
-                    tracing::warn!(
-                        target: "flezha::host",
-                        entity = slot.dispatcher.entity_label(),
-                        "edge output dropped: {e}"
-                    );
-                }
-            }
-        }
-    }
 
     // `plugin_outputs` is empty on a park and under the tier (where outputs
     // ride the effect record's transactional outbox instead). The frame's
@@ -2746,6 +2791,283 @@ mod sync_durability_decl_tests {
 
         let spec = crate::workflow::registry::get_class(&id).expect("class registered");
         assert!(!spec.sync_durability);
+    }
+}
+
+#[cfg(test)]
+mod dropping_policy_decl_tests {
+    //! A shedding policy is refused where the loss it permits cannot be
+    //! accounted for. Declaration time is the only place the author can still
+    //! see it: both facts — the tier and the correction window — are frozen at
+    //! registration, so the contradiction is decidable before any data moves.
+
+    fn decl(json: &str) -> Result<(), String> {
+        super::register_host_class_json(json.as_bytes())
+    }
+
+    fn factory(name: &str) -> String {
+        format!("{name}_{}", std::process::id())
+    }
+
+    /// One entry channel with a declared overflow policy, plus whatever
+    /// durability contract `extra` adds.
+    fn class(id: &str, overflow: &str, extra: &str) -> String {
+        format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,{extra}
+                 "channels":[{{"name":"in","kind":"entry","consumers":[0],
+                               "overflow":"{overflow}"}},
+                             {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
+                 "procedures":[{{"name":"p0","clock":"event_time"}}]}}"#
+        )
+    }
+
+    #[test]
+    fn the_tier_refuses_a_shedding_channel_naming_both_declarations() {
+        for policy in ["drop_newest", "drop_oldest"] {
+            let id = factory(&format!("shed_tier_{policy}"));
+            let err = decl(&class(&id, policy, r#""effectively_once":true,"#))
+                .expect_err("shedding under the tier must not be declarable");
+            assert!(err.contains("`in`"), "the refusal names the channel: {err}");
+            assert!(err.contains(policy), "the refusal names the policy: {err}");
+            assert!(
+                err.contains("effectively_once"),
+                "the refusal names the conflicting declaration: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_correction_window_refuses_a_shedding_channel() {
+        let id = factory("shed_correction");
+        let err = decl(&class(
+            &id,
+            "drop_oldest",
+            r#""correction_window_ms":600000,"#,
+        ))
+        .expect_err("shedding under a correction window must not be declarable");
+        assert!(err.contains("`in`"), "{err}");
+        assert!(err.contains("correction_window_ms"), "{err}");
+    }
+
+    #[test]
+    fn shedding_stays_available_to_a_class_that_promises_neither() {
+        let id = factory("shed_plain");
+        decl(&class(&id, "drop_newest", "")).expect("shedding is a legitimate intent");
+    }
+
+    #[test]
+    fn the_tier_accepts_the_policy_that_discards_nothing() {
+        let id = factory("shed_none");
+        decl(&class(&id, "drop_nothing", r#""effectively_once":true,"#))
+            .expect("the default policy is what the tier requires");
+    }
+}
+
+#[cfg(test)]
+mod edge_output_ordering_tests {
+    //! An edge output is the one output kind with no durable copy, so the only
+    //! thing that can re-produce it after a crash is the producer re-running
+    //! its input. That makes the order of two statements a durability
+    //! guarantee: fold the effect record (offset included) after the pushes
+    //! land, never before. The flusher drains every ~5 ms, so "before" is a
+    //! real window, not a theoretical one.
+
+    use std::any::Any;
+    use std::sync::Arc;
+
+    use super::{resolve_item, schema, BytesBuffer, HostPayload};
+    use crate::entity::{EntityItem, EntityPayload, EntitySlot};
+    use crate::operative::instance::StreamInstance;
+    use crate::poll_core::WorkItem;
+    use crate::util::LockRecover;
+
+    fn stream() -> Arc<flz_transport::transport::FlezhaStream> {
+        let (sock, _peer) = std::os::unix::net::UnixStream::pair().expect("pair");
+        Arc::new(flz_transport::transport::FlezhaStream::Unix(sock))
+    }
+
+    /// A tier class: one entry channel into `p0`, one inter-procedure channel
+    /// from `p0` to every consumer in `consumers`, each with a one-slot
+    /// mailbox so it is full after a single push.
+    fn instance(id: &str, consumers: &[u32]) -> Arc<StreamInstance> {
+        let consumer_list = consumers
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let procs = std::iter::once(r#"{"name":"p0"}"#.to_string())
+            .chain(
+                consumers
+                    .iter()
+                    .map(|c| format!(r#"{{"name":"p{c}","mailbox_capacity":1}}"#)),
+            )
+            .collect::<Vec<_>>()
+            .join(",");
+        let json = format!(
+            r#"{{"factory_id":"{id}","sdk_lang":1,"persistent":true,"effectively_once":true,
+                 "channels":[{{"name":"in","kind":"entry","consumers":[0]}},
+                             {{"name":"mid","kind":"inter_proc","producer":0,
+                               "consumers":[{consumer_list}]}},
+                             {{"name":"out","kind":"plugin","producer":0,"keyed":true}}],
+                 "procedures":[{procs}]}}"#
+        );
+        super::register_host_class_json(json.as_bytes()).expect("class registers");
+        let topology = crate::operative::registry::get_class(id).expect("class registered");
+        StreamInstance::new(topology, Arc::from(format!("{id}_inst").as_str()))
+    }
+
+    /// Fill one consumer's single mailbox slot and claim its round, so nothing
+    /// drains it until the test says so.
+    fn saturate(slot: &Arc<EntitySlot>) {
+        assert!(slot
+            .mailbox
+            .try_push(EntityItem::Input(EntityPayload {
+                value: Arc::new(0usize) as Arc<dyn Any + Send + Sync>,
+                stream: stream(),
+                consumed_offset: None,
+                replay: false,
+            }))
+            .is_ok());
+        assert!(slot.mailbox.is_full());
+        assert!(slot.mailbox.try_mark_inflight());
+    }
+
+    /// One input at `offset`, and the completion that emits one edge value to
+    /// each consumer in `consumers`.
+    fn work_and_effect(offset: u64, consumers: &[u32]) -> (WorkItem, schema::ItemEffect) {
+        let work = WorkItem {
+            item: EntityItem::Input(EntityPayload {
+                value: Arc::new(HostPayload {
+                    bytes: b"input".to_vec(),
+                    channel: 0,
+                    keys: Vec::new(),
+                    event_time: None,
+                    metadata: Vec::new(),
+                }) as Arc<dyn Any + Send + Sync>,
+                stream: stream(),
+                consumed_offset: Some(offset),
+                replay: false,
+            }),
+            now: None,
+            attempt: 1,
+            is_final: false,
+        };
+        let outputs = consumers
+            .iter()
+            .map(|&consumer| schema::Output {
+                target: schema::OutputTarget::Edge {
+                    channel: 1,
+                    consumer,
+                },
+                payload: b"edge".to_vec(),
+                key: None,
+                metadata: Vec::new(),
+                event_time: None,
+            })
+            .collect();
+        let effect = schema::ItemEffect {
+            verdict: schema::Verdict::Ok,
+            changes: vec![b"change".to_vec()],
+            outputs,
+            consumed_offset: None,
+            event_time: 0,
+            timers: Vec::new(),
+            checkpoint: false,
+            dlq: None,
+        };
+        (work, effect)
+    }
+
+    /// Freeze the producer's buffer so the two states either side of the push
+    /// are observable. The `flezha-flusher` thread drains every registered
+    /// buffer every ~5 ms — which is exactly the window the ordering bug lived
+    /// in, and also short enough to race any assertion about buffer contents.
+    fn detach_from_flusher(slot: &Arc<EntitySlot>) {
+        let id = slot
+            .flusher_entry_id
+            .expect("a persistent class registers with the flusher");
+        crate::flusher::EntityFlusher::instance().deregister(id);
+    }
+
+    /// Effect records sitting in the producer's flush buffer — what the flusher
+    /// would ship, held still by `detach_from_flusher`.
+    fn buffered_records(slot: &Arc<EntitySlot>) -> usize {
+        let mut buffer = slot.flush_buffer.lock_recover();
+        buffer
+            .as_any_mut()
+            .downcast_mut::<BytesBuffer>()
+            .expect("a persistent class buffers bytes")
+            .effects
+            .len()
+    }
+
+    #[test]
+    fn no_record_carries_the_offset_until_the_edge_push_lands() {
+        let id = format!("edge_order_{}", std::process::id());
+        let instance = instance(&id, &[1]);
+        let producer = Arc::clone(&instance.entities[0][0]);
+        detach_from_flusher(&producer);
+        let consumer = Arc::clone(&instance.entities[1][0]);
+        saturate(&consumer);
+
+        let (work, effect) = work_and_effect(7, &[1]);
+        let resolving = {
+            let producer = Arc::clone(&producer);
+            std::thread::spawn(move || resolve_item(&producer, &work, effect, None))
+        };
+
+        // The push has nowhere to go, so the item is unresolved — and an
+        // unresolved item contributes nothing durable.
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        assert_eq!(
+            buffered_records(&producer),
+            0,
+            "the offset must not be durable while its edge output is undelivered"
+        );
+        assert!(!resolving.is_finished());
+
+        // Room appears: the push lands and the record follows it.
+        assert!(consumer.mailbox.pop().is_some());
+        resolving.join().expect("resolution completes");
+        assert_eq!(buffered_records(&producer), 1);
+        assert_eq!(
+            consumer.mailbox.len(),
+            1,
+            "the edge value reached the consumer's mailbox"
+        );
+    }
+
+    #[test]
+    fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
+        let id = format!("edge_fanout_{}", std::process::id());
+        let instance = instance(&id, &[1, 2, 3]);
+        let producer = Arc::clone(&instance.entities[0][0]);
+        detach_from_flusher(&producer);
+        let full = Arc::clone(&instance.entities[3][0]);
+        saturate(&full);
+
+        let (work, effect) = work_and_effect(11, &[1, 2, 3]);
+        let resolving = {
+            let producer = Arc::clone(&producer);
+            std::thread::spawn(move || resolve_item(&producer, &work, effect, None))
+        };
+
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        assert_eq!(
+            instance.entities[1][0].mailbox.len(),
+            1,
+            "the consumers with room took theirs"
+        );
+        assert_eq!(instance.entities[2][0].mailbox.len(), 1);
+        assert_eq!(
+            buffered_records(&producer),
+            0,
+            "one undelivered consumer holds the whole record"
+        );
+
+        assert!(full.mailbox.pop().is_some());
+        resolving.join().expect("resolution completes");
+        assert_eq!(buffered_records(&producer), 1);
     }
 }
 

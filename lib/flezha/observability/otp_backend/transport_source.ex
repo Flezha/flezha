@@ -124,6 +124,14 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     emit_sum(:credit_overrun_total, channels, :credit_overrun_total)
     emit_sum(:credit_parked, channels, :hb_credit_parked)
 
+    # Receive-side overflow, the mirror of `credit_parked`: `mailbox_blocked`
+    # climbing is producers held on full entity mailboxes (backpressure
+    # working), and either drop counter climbing is data an operative shed —
+    # the only handle on that loss from outside the runner.
+    emit_sum(:mailbox_blocked, channels, :hb_blocked_parks)
+    emit_sum(:mailbox_drops_newest, channels, :hb_drops_newest)
+    emit_sum(:mailbox_drops_oldest, channels, :hb_drops_oldest)
+
     ledger =
       Enum.reduce(channels, 0, fn row, acc -> acc + Map.get(row, :credit_ledger_level, 0) end)
 

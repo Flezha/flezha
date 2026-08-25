@@ -58,6 +58,28 @@ public final class FlzCore {
      */
     public static native void complete(long ctx, byte[] result);
 
+    /** {@link #waitStarvation} saw work queued with no thread left to take it. */
+    public static final int STARVATION_OBSERVED = 1;
+
+    /** {@link #waitStarvation} reached its timeout with nothing owed. */
+    public static final int STARVATION_TIMEOUT = 0;
+
+    /** {@link #waitStarvation} returned because the core is shutting down. */
+    public static final int STARVATION_SHUTTING_DOWN = 2;
+
+    /**
+     * Block up to {@code timeoutMs} until the core observes starvation —
+     * runnable work with no thread inside {@link #poll} and the jobs-underway
+     * cap not reached. Returns {@link #STARVATION_OBSERVED},
+     * {@link #STARVATION_TIMEOUT} or {@link #STARVATION_SHUTTING_DOWN}.
+     *
+     * <p>The other half of the bring-your-own-thread contract: the core caps
+     * how much runs, the host supplies threads, and this is how the host is
+     * told it owes one. A host that ships a fixed worker count and never calls
+     * it wedges with no recovery and no report when every worker is held.
+     */
+    public static native int waitStarvation(long ctx, long timeoutMs);
+
     /**
      * Abandon a polled activation by token: its untouched items are re-handed
      * and its entity released, exactly as if it had never been polled. No

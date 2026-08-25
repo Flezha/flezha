@@ -432,6 +432,17 @@ without `id`, or `sink` on a procedure with no output, is refused.
 - **Duplicate factory id fails fast.** Declaring two operatives with the same
   `factory_id` on one runner fails at the second `define*` call with an error
   naming the colliding id (Rust: `FlezhaError::DuplicateFactoryId`).
+- **A declaration that contradicts a durability contract is refused, naming
+  both halves.** A channel may not declare a dropping overflow policy
+  (`DropNewest` / `DropOldest`) on a class that declares `effectively_once` — a
+  shed input's offset is still advanced past by the tier's watermark, so the
+  loss is permanent under a contract that promises nothing is lost — nor on one
+  that declares a correction window, whose answer may not depend on arrival
+  timing. Both facts are frozen at registration, so the contradiction is
+  decidable before any data moves, which is where an author can still see it.
+  Shedding stays fully available to a class that promises neither. Refused in
+  every SDK's builder and again in `flz_core`'s declaration validation, so a
+  hand-written host declaration cannot slip past.
 
 ## 6. Canonical reference operative (cross-SDK conformance anchor)
 

@@ -20,7 +20,10 @@ use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use jni::JNIEnv;
 
-use crate::{FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT};
+use crate::{
+    FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT,
+    FLZ_STARVATION_OBSERVED,
+};
 
 fn throw(env: &mut JNIEnv, message: &str) {
     let thrown = env
@@ -152,6 +155,28 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_poll(
         _ => {
             throw(&mut env, &last_error_of(ctx));
             std::ptr::null_mut()
+        }
+    }
+}
+
+/// Park up to `timeout_ms` until the core observes starvation. Answers the
+/// ABI's three-way status directly (`1` observed, `0` timeout, `2` shutting
+/// down) rather than an object, so a supervisor loop costs one JNI call per
+/// park and allocates nothing.
+#[no_mangle]
+pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_waitStarvation(
+    mut env: JNIEnv,
+    _class: JClass,
+    ctx: jlong,
+    timeout_ms: jlong,
+) -> jint {
+    let ctx = ctx as *mut FlzContext;
+    let status = unsafe { crate::flz_core_wait_starvation(ctx, timeout_ms.max(0) as u64) };
+    match status {
+        FLZ_STARVATION_OBSERVED | FLZ_POLL_TIMEOUT | FLZ_POLL_SHUTTING_DOWN => status,
+        _ => {
+            throw(&mut env, &last_error_of(ctx));
+            FLZ_POLL_TIMEOUT
         }
     }
 }

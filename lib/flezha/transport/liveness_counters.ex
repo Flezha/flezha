@@ -35,6 +35,11 @@ defmodule Flezha.Transport.LivenessCounters do
   # remaining credit bytes (set), `credit_overrun_total` counts frames a
   # credit-speaking sender pushed past an exhausted ledger (protocol
   # violations — any non-zero value is an anomaly, never load response).
+  # `hb_blocked_parks` mirrors the runner's DropNothing block counter and
+  # `hb_drops_newest`/`hb_drops_oldest` its shed counts (all set, not
+  # incremented): dispatches frozen with blocked_parks climbing is healthy
+  # backpressure, dispatches frozen with it flat is a wedge, and the two drop
+  # counters are the only outside handle on a shedding operative's loss.
   # `stale_writer_refused` counts durable-write forwards refused on a fenced
   # (takeover-superseded) channel.
   @channel_slots [
@@ -48,6 +53,9 @@ defmodule Flezha.Transport.LivenessCounters do
     :hb_credit_parked,
     :hb_inflight,
     :hb_inflight_oldest_ms,
+    :hb_blocked_parks,
+    :hb_drops_newest,
+    :hb_drops_oldest,
     :credit_active,
     :credit_ledger_level,
     :credit_overrun_total,

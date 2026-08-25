@@ -489,50 +489,11 @@ fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
 /// so a runner producing no state changes still drives its own recovery
 /// instead of waiting for a `ConnectSocket` that may never come.
 fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool {
-    // Dispatch-progress self-report: the heartbeat thread stays alive even
-    // when every worker is wedged, so the controller needs these counters to
-    // tell "alive but frozen" apart from "healthy".
-    let mut metadata = HashMap::new();
-    metadata.insert(
-        "dispatches".to_string(),
-        crate::entity::dispatches_completed().to_string(),
+    let frame = payloader::build_from_binary(
+        liveness::DATA_HEARTBEAT_PAYLOAD_ID,
+        &[],
+        heartbeat_metadata(),
     );
-    metadata.insert(
-        "blocked_parks".to_string(),
-        crate::entity::blocked_park_episodes().to_string(),
-    );
-    metadata.insert(
-        "credit_parked".to_string(),
-        crate::credit::credit_parked().to_string(),
-    );
-    metadata.insert(
-        "restore_discarded_inputs".to_string(),
-        crate::entity::restore_discarded_inputs().to_string(),
-    );
-    // Handout liveness: how many activations are underway and how long the
-    // oldest has been out. `dispatches` freezing tells the controller the
-    // WHOLE pool stopped; these two are what make ONE wedged Entity visible
-    // among thousands that are still completing. Reporting only — the core
-    // cannot tell a ten-minute Procedure from a lost handout, so the decision
-    // is the controller's and the remedy is a rebind from durable state.
-    let core = crate::poll_core::global();
-    metadata.insert("inflight".to_string(), core.outstanding_count().to_string());
-    metadata.insert(
-        "inflight_oldest_ms".to_string(),
-        core.outstanding_oldest_age_ms().to_string(),
-    );
-    // Wake-list occupancy: a runaway registration shows here long before it
-    // is fatal, and a `timers_fired` that stops moving while `timers_armed`
-    // climbs is promotion wedged rather than the Operative idle.
-    metadata.insert(
-        "timers_armed".to_string(),
-        crate::timer::timers_armed().to_string(),
-    );
-    metadata.insert(
-        "timers_fired".to_string(),
-        crate::timer::timers_fired_total().to_string(),
-    );
-    let frame = payloader::build_from_binary(liveness::DATA_HEARTBEAT_PAYLOAD_ID, &[], metadata);
     let streams = io_streams.read().unwrap();
     let mut delivered = false;
     for stream in streams.values() {
@@ -542,6 +503,54 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool 
         }
     }
     delivered
+}
+
+/// The runner's self-report, as the heartbeat frame carries it. Separate from
+/// the write so the key set — a cross-SDK contract the controller mirrors slot
+/// for slot — is readable without a socket.
+fn heartbeat_metadata() -> HashMap<String, String> {
+    let core = crate::poll_core::global();
+    // The runner's whole self-report, as one table. The heartbeat thread
+    // outlives a wedged dispatch pool, so these counters are what tell "alive
+    // but frozen" from "healthy" — and every key here is mirrored slot for slot
+    // by the controller (`Flezha.Runner.StreamChannel`), so the set is a
+    // cross-SDK contract, not a convenience.
+    [
+        // Dispatch progress: frozen with the runner alive is a wedged pool.
+        ("dispatches", crate::entity::dispatches_completed()),
+        // Overflow outcomes. `dispatches` frozen with `blocked_parks` climbing
+        // is healthy backpressure; frozen with it flat is a wedge. The two drop
+        // counters are the shed an operator would otherwise only find by
+        // attaching a debugger to the runner.
+        ("blocked_parks", crate::entity::pushes_blocked_total()),
+        ("drops_newest", crate::entity::drops_newest_total()),
+        ("drops_oldest", crate::entity::drops_oldest_total()),
+        ("credit_parked", crate::credit::credit_parked()),
+        // A discard is correct only where the controller re-forwards from a
+        // durable log, so a climbing value is the operator's one handle on how
+        // much a rebind threw away.
+        (
+            "restore_discarded_inputs",
+            crate::entity::restore_discarded_inputs(),
+        ),
+        // Handout liveness: how many activations are underway and how long the
+        // oldest has been out. `dispatches` freezing tells the controller the
+        // WHOLE pool stopped; these two are what make ONE wedged Entity visible
+        // among thousands that are still completing. Reporting only — the core
+        // cannot tell a ten-minute Procedure from a lost handout, so the
+        // decision is the controller's and the remedy is a rebind from durable
+        // state.
+        ("inflight", core.outstanding_count() as u64),
+        ("inflight_oldest_ms", core.outstanding_oldest_age_ms()),
+        // Wake-list occupancy: a runaway registration shows here long before it
+        // is fatal, and a `timers_fired` that stops moving while `timers_armed`
+        // climbs is promotion wedged rather than the Operative idle.
+        ("timers_armed", crate::timer::timers_armed() as u64),
+        ("timers_fired", crate::timer::timers_fired_total()),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_string(), value.to_string()))
+    .collect()
 }
 
 fn return_operatives(runner: &RunnerNode, ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>) {
@@ -778,6 +787,36 @@ impl OperativeDispatchHandle {
 #[cfg(test)]
 mod heartbeat_tests {
     use super::*;
+
+    /// Every overflow outcome has to reach an operator without a debugger, and
+    /// the heartbeat is the only frame a wedged-but-alive runner still sends.
+    /// The keys are a cross-SDK contract — `stream_channel.ex` mirrors them
+    /// slot for slot — so a rename here silently blinds the controller.
+    #[test]
+    fn the_heartbeat_carries_every_overflow_counter() {
+        let before = super::heartbeat_metadata();
+        for key in ["blocked_parks", "drops_newest", "drops_oldest"] {
+            assert!(before.contains_key(key), "the heartbeat must carry {key}");
+        }
+
+        crate::entity::PUSHES_BLOCKED_TOTAL.fetch_add(3, std::sync::atomic::Ordering::Relaxed);
+        crate::entity::DROPS_NEWEST_TOTAL.fetch_add(5, std::sync::atomic::Ordering::Relaxed);
+        crate::entity::DROPS_OLDEST_TOTAL.fetch_add(7, std::sync::atomic::Ordering::Relaxed);
+        let after = super::heartbeat_metadata();
+
+        for (key, bumped) in [
+            ("blocked_parks", 3u64),
+            ("drops_newest", 5),
+            ("drops_oldest", 7),
+        ] {
+            let read = |m: &HashMap<String, String>| m[key].parse::<u64>().expect("an integer");
+            assert_eq!(
+                read(&after) - read(&before),
+                bumped,
+                "{key} must report what the core counted"
+            );
+        }
+    }
 
     /// An Operative that writes no state changes trips no flood ladder, so the
     /// 10 s data heartbeat is its only outbound signal. When that heartbeat

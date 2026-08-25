@@ -51,6 +51,7 @@ public final class FlezhaImpl implements RunnerHandle {
             long core,
             ActivationDispatcher dispatcher,
             int fetchers,
+            int fetcherMax,
             Set<String> declared,
             Runnable onTerminated) {
         this.namespace = namespace;
@@ -72,12 +73,18 @@ public final class FlezhaImpl implements RunnerHandle {
                     }
 
                     @Override
+                    public int waitStarvation(long timeoutMs) {
+                        return FlzCore.waitStarvation(core, timeoutMs);
+                    }
+
+                    @Override
                     public void abandon(long token) {
                         FlzCore.abandon(core, token);
                     }
                 },
                 dispatcher::dispatch,
                 fetchers,
+                fetcherMax,
                 terminationLatch::countDown);
     }
 
@@ -92,7 +99,7 @@ public final class FlezhaImpl implements RunnerHandle {
             @Nonnull String namespace,
             @Nonnull Supplier<List<String>> declaredFactoryIds,
             @Nonnull Runnable onTerminated) {
-        int fetchers = FlezhaEnv.resolveFromEnv().fetcherCount();
+        FlezhaEnv.ResolvedConfig config = FlezhaEnv.resolveFromEnv();
 
         long core = FlzCore.newContext();
         Set<String> declared = ConcurrentHashMap.newKeySet();
@@ -111,7 +118,8 @@ public final class FlezhaImpl implements RunnerHandle {
                 new ActivationDispatcher(instanceId -> new FlzCoreWorkflowSession(core, instanceId));
         SpawnRequests.install(new CoreSpawnRequester(core));
 
-        FlezhaImpl handle = new FlezhaImpl(namespace, core, dispatcher, fetchers, declared, onTerminated);
+        FlezhaImpl handle = new FlezhaImpl(
+                namespace, core, dispatcher, config.fetcherCount(), config.fetcherMax(), declared, onTerminated);
         handle.pollHost.start();
 
         // SIGTERM (Kubernetes pre-stop) triggers the graceful teardown even
@@ -119,9 +127,11 @@ public final class FlezhaImpl implements RunnerHandle {
         Runtime.getRuntime().addShutdownHook(new Thread(handle::close, "flezha-graceful-shutdown"));
 
         LOG.info(
-                "Flezha runner started on namespace `{}` with {} fetcher(s); activations run on virtual threads",
+                "Flezha runner started on namespace `{}` with {} fetcher(s), supervisor ceiling {};"
+                        + " activations run on virtual threads",
                 namespace,
-                handle.pollHost.fetcherCount());
+                handle.pollHost.fetcherCount(),
+                handle.pollHost.maxFetcherCount());
         return handle;
     }
 

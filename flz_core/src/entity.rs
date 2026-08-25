@@ -8,7 +8,10 @@
 //! `OverflowPolicy` is `DropNothing`, producers park on the slot's
 //! [`BlockParker`] and the drain loop unparks one waiter per popped
 //! item. Per-Entity push / drop / block counters live on
-//! [`EntityCounters`] and are bumped on the producer side.
+//! [`EntityCounters`]; the producer accounts for an overflow through
+//! [`EntitySlot::note_blocked`] / [`EntitySlot::note_shed`], which move the
+//! per-Entity counter and the process-wide aggregate the heartbeat reports
+//! together so the two cannot drift.
 //!
 //! State persistence (`operative-state-persistence`):
 //!
@@ -27,7 +30,7 @@ use std::time::Duration;
 use crossbeam::sync::{Parker, Unparker};
 use flz_transport::transport::FlezhaStream;
 
-use crate::channel::ProcedureId;
+use crate::channel::{OverflowPolicy, ProcedureId};
 pub use crate::header::RestoreError;
 use crate::mailbox::Mailbox;
 pub use crate::restore::RestoreInitPayload;
@@ -96,9 +99,14 @@ pub enum EntityItem {
 
 pub type EntityMailbox = Arc<Mailbox<EntityItem>>;
 
-/// Producer-side observability for one Entity. All counters are
-/// monotonic, written by producers under [`std::sync::atomic::Ordering::Relaxed`],
-/// and read by future metrics export at its leisure (Decision 5).
+/// Producer-side observability for one Entity. All counters are monotonic and
+/// written by producers under [`std::sync::atomic::Ordering::Relaxed`].
+///
+/// Per-Entity breakdown, read by tests and by anything holding a slot. What
+/// leaves the process is the process-wide aggregate beside it
+/// ([`PUSHES_BLOCKED_TOTAL`], [`DROPS_NEWEST_TOTAL`], [`DROPS_OLDEST_TOTAL`]),
+/// which the data heartbeat carries: a per-Entity breakdown on that path would
+/// need a registry walk per heartbeat.
 #[derive(Debug, Default)]
 pub struct EntityCounters {
     /// Number of payloads successfully enqueued onto this Entity's
@@ -219,10 +227,23 @@ impl Default for BlockParker {
 /// the 2026-06-10 freeze was invisible to every heartbeat-level signal.
 pub static DISPATCHES_COMPLETED: AtomicU64 = AtomicU64::new(0);
 
-/// Process-global count of DropNothing-policy park episodes (producer found a
-/// full mailbox with an active drainer elsewhere). Also shipped in heartbeat
-/// metadata; a climbing value flags sustained backpressure.
-pub static BLOCKED_PARK_EPISODES: AtomicU64 = AtomicU64::new(0);
+/// Process-global count of DropNothing-policy wait iterations (a producer
+/// found a full mailbox and went round again). Shipped in heartbeat metadata
+/// as `blocked_parks`.
+///
+/// Per ITERATION, not per contiguous episode: a runner held in one long
+/// episode would otherwise show a frozen dispatch count beside a frozen block
+/// count — byte for byte the picture a wedged runner shows. `credit.rs`'s
+/// `CREDIT_PARKED` advances per wait iteration for the same reason, and the
+/// controller's stall classifier tells backpressure from a wedge by reading
+/// the two together.
+pub static PUSHES_BLOCKED_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+/// Process-global count of payloads discarded under `DropNewest`.
+pub static DROPS_NEWEST_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+/// Process-global count of queue heads evicted under `DropOldest`.
+pub static DROPS_OLDEST_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 /// Process-global count of queued inputs a restore discarded. Also shipped in
 /// heartbeat metadata: a discard is correct only where the controller
@@ -234,8 +255,16 @@ pub fn dispatches_completed() -> u64 {
     DISPATCHES_COMPLETED.load(Ordering::Relaxed)
 }
 
-pub fn blocked_park_episodes() -> u64 {
-    BLOCKED_PARK_EPISODES.load(Ordering::Relaxed)
+pub fn pushes_blocked_total() -> u64 {
+    PUSHES_BLOCKED_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn drops_newest_total() -> u64 {
+    DROPS_NEWEST_TOTAL.load(Ordering::Relaxed)
+}
+
+pub fn drops_oldest_total() -> u64 {
+    DROPS_OLDEST_TOTAL.load(Ordering::Relaxed)
 }
 
 pub fn restore_discarded_inputs() -> u64 {
@@ -343,12 +372,72 @@ pub struct EntitySlot {
 }
 
 impl EntitySlot {
-    /// Convenience accessor for the per-Entity counter set. Future
-    /// observability code walks the registry, calls `slot.mailbox().counters()`
-    /// (or this shorthand), and reads the four atomics with `Relaxed`
-    /// loads — no internal-state poke required.
+    /// Convenience accessor for the per-Entity counter set: four `Relaxed`
+    /// loads, no internal-state poke. The heartbeat reports the process-wide
+    /// aggregates instead; this is the per-Entity view for a holder of the
+    /// slot.
     pub fn counters(&self) -> &EntityCounters {
         self.mailbox.counters()
+    }
+
+    /// Account for one `DropNothing` wait iteration. The per-Entity counter
+    /// and the process-wide aggregate move together here so they cannot drift:
+    /// the breakdown is read from a slot, the aggregate is what leaves on the
+    /// heartbeat, and both describe the same event.
+    pub fn note_blocked(&self) {
+        self.counters()
+            .pushes_blocked_total
+            .fetch_add(1, Ordering::Relaxed);
+        PUSHES_BLOCKED_TOTAL.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Account for one item a shedding policy discarded: both counters, and
+    /// the identity of what was lost. This is the last place that identity
+    /// exists — `force_push` hands the evicted item back and nothing
+    /// downstream ever sees it — so the counters say how much and this line
+    /// says which. `debug`, because a shedding policy sheds at input rates:
+    /// the operator's signal is the counter on the heartbeat.
+    ///
+    /// `evicted` is `None` only for a `DropOldest` force-push that found the
+    /// queue already drained under contention: the policy applied, so the
+    /// count moves, but there is no identity to name.
+    pub fn note_shed(&self, policy: OverflowPolicy, evicted: Option<&EntityItem>) {
+        let policy = match policy {
+            OverflowPolicy::DropNewest => {
+                self.counters()
+                    .drops_newest_total
+                    .fetch_add(1, Ordering::Relaxed);
+                DROPS_NEWEST_TOTAL.fetch_add(1, Ordering::Relaxed);
+                "drop_newest"
+            }
+            OverflowPolicy::DropOldest => {
+                self.counters()
+                    .drops_oldest_total
+                    .fetch_add(1, Ordering::Relaxed);
+                DROPS_OLDEST_TOTAL.fetch_add(1, Ordering::Relaxed);
+                "drop_oldest"
+            }
+            // The policy that discards nothing sheds nothing.
+            OverflowPolicy::DropNothing => return,
+        };
+        let Some(item) = evicted else { return };
+        tracing::debug!(
+            target: "flezha::mailbox",
+            policy,
+            procedure_id = self.procedure_id,
+            entity_key = ?self.entity_key,
+            item = %match item {
+                EntityItem::Input(p) => match p.consumed_offset {
+                    Some(offset) => format!("input at offset {offset}"),
+                    None => "input".to_string(),
+                },
+                EntityItem::Timer(fire) => {
+                    format!("{:?} timer for {}", fire.kind, fire.scheduled_at)
+                }
+                EntityItem::CloseInterval => "checkpoint interval close".to_string(),
+            },
+            "shed an item from a full entity mailbox"
+        );
     }
 
     /// Drop an open checkpoint interval's staged changes. A restore re-seats

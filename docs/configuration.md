@@ -215,7 +215,7 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_CONTROL_KEEPALIVE_MS` | `15000` | `flz_transport` — control-channel ping interval |
 | `FLEZHA_DATA_HEARTBEAT_MS` | `10000` | `flz_transport`, `Flezha.SDK.RunnerServer` — `data_heartbeat` interval, jittered into `[base/2, base]` |
 | `FLEZHA_WORKER_POOL_SIZE` | Rust: host parallelism; Java: `2` fetchers | `flezha_runner::operative::poll_pool`, `FlezhaEnv` |
-| `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived) | Rust — ceiling the starvation supervisor may grow the pool to |
+| `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it) | Rust and Java — ceiling the starvation supervisor may grow the worker/fetcher set to (`flezha_runner::operative::poll_pool`, `FlezhaEnv`) |
 | `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` |
 | `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
 | `FLEZHA_FLUSH_BEFORE_EMIT` | on | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |

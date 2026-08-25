@@ -391,7 +391,19 @@ c.input::<Vec<u8>>("trade.raw")
 |---|---|
 | `DropNothing` (default, every kind) | Nothing is discarded: the producer retries after a bounded 50 ms park on the consumer's `BlockParker`, woken per pop. A producer that is itself a pool thread first drains the full mailbox inline when no drainer is active (a parked pool worker could be the only thread able to serve the queued round); any other producer — the wire reader above all — only parks. Preserves ordering, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
 | `DropNewest` | The incoming item is discarded; `drops_newest_total` += 1. |
-| `DropOldest` | The mailbox pops its oldest item and accepts the new one (`force_push`); `drops_oldest_total` += 1. Best-effort under MPMC contention. |
+| `DropOldest` | The mailbox pops its oldest item and accepts the new one (`force_push`); `drops_oldest_total` += 1 **and `pushes_total` += 1** — the force-push admitted, so it is a successful enqueue by that counter's definition. Which item is evicted is best-effort under MPMC contention; the evicted one is named in a `flezha::mailbox` debug line. |
+
+A **replay-slice member ignores the declared policy and takes the `DropNothing`
+path**, whatever the channel says: a correction's answer may not depend on
+arrival timing, and a dropped member would leave the slice open, short, and
+folded anyway — a wrong answer with nothing reported.
+
+Declaring a dropping policy on a class that also declares `effectively_once()`
+is **refused at build time** (`TopologyIssue::DroppingPolicyUnderEffectivelyOnce`,
+and its C-ABI twin at declare time): a shed input's offset is still advanced
+past by the tier's watermark, so the loss is permanent under a contract that
+promises nothing is lost. A correction window requires the tier, so it is
+covered by the same refusal.
 
 A `PluginBound` channel has no SDK-side mailbox between the emit and the
 wire, so a policy declared on it is never consulted; backpressure there is the
@@ -408,17 +420,27 @@ reader stays free and every drop is counted at the declaration site.
 
 ### Per-Entity counters
 
-`EntityCounters` on every mailbox, four `AtomicU64`s bumped `Relaxed`:
+`EntityCounters` on every mailbox, four `AtomicU64`s bumped `Relaxed`, plus a
+process-wide aggregate of each overflow outcome beside `DISPATCHES_COMPLETED`:
 
-| Counter | Bumped on |
-|---|---|
-| `pushes_total` | every successful `try_push` |
-| `pushes_blocked_total` | every `DropNothing` retry iteration |
-| `drops_newest_total` | every drop under `DropNewest` |
-| `drops_oldest_total` | every eviction under `DropOldest` |
+| Counter | Bumped on | Readable |
+|---|---|---|
+| `pushes_total` | every admission, `DropOldest`'s force-push included | `slot.counters()` |
+| `pushes_blocked_total` | every `DropNothing` wait iteration | `slot.counters()`; process-wide via `entity::pushes_blocked_total()` → heartbeat `blocked_parks` |
+| `drops_newest_total` | every drop under `DropNewest` | `slot.counters()`; process-wide via `entity::drops_newest_total()` → heartbeat `drops_newest` |
+| `drops_oldest_total` | every eviction under `DropOldest` | `slot.counters()`; process-wide via `entity::drops_oldest_total()` → heartbeat `drops_oldest` |
 
-They are readable through `slot.mailbox.counters()`; export to a metrics
-backend is not wired (see "Limits").
+The per-Entity set is the breakdown a holder of the slot reads; what leaves the
+process is the aggregate, carried in the data-channel heartbeat's metadata
+beside `dispatches`, `credit_parked` and `inflight`. A per-Entity breakdown on
+that path would need a registry walk per heartbeat.
+
+`blocked_parks` counts **wait iterations, not episodes**. A runner held in one
+long block episode would otherwise show a frozen dispatch count beside a frozen
+block count — byte for byte the picture a wedged runner shows — and that
+distinction is exactly what the controller's `runner_pool_wedged` verdict hangs
+off: dispatches frozen with blocks climbing is backpressure, dispatches frozen
+with blocks flat is a wedge.
 
 ### Worker pool
 
@@ -519,8 +541,10 @@ port: [`state_persistence.md`](state_persistence.md).
 - **`UpdateFactories` has no ack**; the reconnect init frame is the resync.
 - **`remove_*` cannot see a suspended durable workflow instance**: the removal
   succeeds and rehydration fails placement.
-- **Counters are in-process only** — mailbox and dynamic-entity counters are
-  not exported to a metrics backend.
+- **Only the overflow aggregates leave the process** — `blocked_parks`,
+  `drops_newest` and `drops_oldest` ride the data heartbeat; the per-Entity
+  breakdown and the dynamic-entity counters stay in-process, unexported to a
+  metrics backend.
 - **`max_entities` is a soft cap** and `DropOldest` is best-effort under
   contention; the Java SDK has no `maxEntities` knob at all.
 

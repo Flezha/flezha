@@ -18,12 +18,22 @@ public final class FlezhaEnv {
 
     public static final String FLEZHA_WORKER_POOL_SIZE = "FLEZHA_WORKER_POOL_SIZE";
 
+    /** Ceiling the starvation supervisor may grow the fetcher set to. */
+    public static final String FLEZHA_WORKER_POOL_MAX = "FLEZHA_WORKER_POOL_MAX";
+
     /**
      * Fetchers never run user code — they poll, decode and hand off to a
      * virtual thread — so a small fixed set saturates the core's handout.
      * How much work is underway is the core's number, not this one.
      */
     public static final int DEFAULT_FETCHER_COUNT = 2;
+
+    /**
+     * Default ceiling, as a multiple of the configured count — the same
+     * base x 10 the Rust pool's {@code FLEZHA_WORKER_POOL_MAX} defaults to,
+     * so the two hosts grow the same distance under the same signal.
+     */
+    public static final int DEFAULT_FETCHER_MAX_MULTIPLE = 10;
 
     private FlezhaEnv() {}
 
@@ -41,21 +51,27 @@ public final class FlezhaEnv {
 
     @Nonnull
     static ResolvedConfig resolve(@Nonnull Function<String, String> lookup) {
-        return new ResolvedConfig(parseFetcherCount(lookup.apply(FLEZHA_WORKER_POOL_SIZE)));
+        int count =
+                parsePositive(FLEZHA_WORKER_POOL_SIZE, lookup.apply(FLEZHA_WORKER_POOL_SIZE), DEFAULT_FETCHER_COUNT);
+        int max = parsePositive(
+                FLEZHA_WORKER_POOL_MAX, lookup.apply(FLEZHA_WORKER_POOL_MAX), count * DEFAULT_FETCHER_MAX_MULTIPLE);
+        // A ceiling below the configured count would make the host start
+        // fewer fetchers than the operator asked for; the count wins.
+        return new ResolvedConfig(count, Math.max(count, max));
     }
 
-    private static int parseFetcherCount(String raw) {
+    private static int parsePositive(String name, String raw, int fallback) {
         if (raw == null || raw.isBlank()) {
-            return DEFAULT_FETCHER_COUNT;
+            return fallback;
         }
         try {
             int parsed = Integer.parseInt(raw.trim());
-            return parsed <= 0 ? DEFAULT_FETCHER_COUNT : parsed;
+            return parsed <= 0 ? fallback : parsed;
         } catch (NumberFormatException e) {
-            LOG.warn("Invalid {}={}; falling back to {}", FLEZHA_WORKER_POOL_SIZE, raw, DEFAULT_FETCHER_COUNT);
-            return DEFAULT_FETCHER_COUNT;
+            LOG.warn("Invalid {}={}; falling back to {}", name, raw, fallback);
+            return fallback;
         }
     }
 
-    public record ResolvedConfig(int fetcherCount) {}
+    public record ResolvedConfig(int fetcherCount, int fetcherMax) {}
 }

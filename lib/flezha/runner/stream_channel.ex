@@ -57,14 +57,16 @@ defmodule Flezha.Runner.StreamChannel do
 
   # The runner's self-report, mirrored slot for slot. `dispatches` frozen while
   # the runner is alive is a wedged pool; `credit_parked` advancing while it
-  # freezes is fed-but-parked rather than frozen; `inflight` and its oldest age
-  # are what make ONE wedged Entity visible while the rest keeps completing.
-  @heartbeat_slots [
-    {"dispatches", :hb_dispatches},
-    {"credit_parked", :hb_credit_parked},
-    {"inflight", :hb_inflight},
-    {"inflight_oldest_ms", :hb_inflight_oldest_ms}
-  ]
+  # freezes is fed-but-parked rather than frozen; `blocked_parks` says the same
+  # for the receive side (a producer held on a full entity mailbox);
+  # `inflight` and its oldest age are what make ONE wedged Entity visible while
+  # the rest keeps completing; the two drop counters are what a shedding
+  # operative loses, which nothing outside the runner could see before.
+  # Each reported key mirrors into the `hb_<key>` liveness slot, so the two
+  # sides cannot be spelled apart.
+  @heartbeat_keys ~w(dispatches credit_parked blocked_parks inflight inflight_oldest_ms
+                     drops_newest drops_oldest)
+  @heartbeat_slots for key <- @heartbeat_keys, do: {key, :"hb_#{key}"}
 
   @impl true
   def init({runner_id, type, name}) do

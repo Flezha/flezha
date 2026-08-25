@@ -69,7 +69,23 @@ the other:
 | Host | Threading model | Knobs |
 | ---- | --------------- | ----- |
 | Rust | A base pool of poll workers plus one supervisor thread parked in the core's **starvation wait**. Each observation spawns one more worker up to the ceiling; workers above the base retire after an idle streak, so a workload that never starves observes exactly the base pool. | `FLEZHA_WORKER_POOL_SIZE` (default: available parallelism, 2 if unknown), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
-| Java | A small fixed set of platform *fetcher* threads loop `poll → decode → hand off → poll`; one **virtual thread** per activation runs the dispatch and completes it (`Executors.newVirtualThreadPerTaskExecutor()`). Waiting costs a stack, the starvation condition cannot arise by construction, and Java never calls `wait_starvation`. | fetcher count, default 2 (`FlezhaEnv.DEFAULT_FETCHER_COUNT`) |
+| Java | A small fixed set of platform *fetcher* threads loop `poll → decode → hand off → poll`; one **virtual thread** per activation runs the dispatch and completes it (`Executors.newVirtualThreadPerTaskExecutor()`), plus one platform **supervisor** thread parked in the starvation wait that starts one more fetcher per observation, up to the ceiling. | `FLEZHA_WORKER_POOL_SIZE` (default 2, `FlezhaEnv.DEFAULT_FETCHER_COUNT`), `FLEZHA_WORKER_POOL_MAX` (default 10× the count, never below it) |
+
+**A poll host brings a supervisor.** Not "may": a host that ships a fixed
+worker count and never parks a thread in `wait_starvation` has no answer at all
+when every worker is held — it processes nothing, recovers from nothing, and
+reports nothing. Java shipped exactly that shape and measured 0 of 20 payloads
+delivered against a consumer nobody was draining; with the supervisor the same
+probe recovers. What the supervisor does *not* buy is a thread against user
+code that never returns: no ceiling outruns a handler that never comes back,
+which is why the conformance `pool_wedge` capability is a separate claim.
+
+**A thread inside `poll` is invisible to the starvation wait.** `pollers_inside`
+is incremented across the whole call, and `starving()` answers `false`
+unconditionally while it is non-zero — a thread inside `poll` is read as a
+thread about to take work. So a poller that blocks anywhere inside `poll` both
+stops the runner and hides that it has, which is why nothing on the poll path
+may wait for anything (see the deferred-wake list below).
 
 Starvation is exposed as a blocking wait a host thread may park in
 (`PollCore::wait_starvation`, C ABI `flz_core_wait_starvation`), never as a
@@ -182,6 +198,11 @@ What it does instead is **report**: `outstanding_count()` and
 resumes from durable state — the path that is already safe. Detection is the
 core's; the judgement and the remedy are the controller's.
 
+**And it never waits inside `poll`.** The engine's own paths — batch assembly,
+wake promotion — take no lock a host holds and wait on no mailbox. A poller
+that waits is counted as a poller about to take work, so a wait there is a
+wedge the starvation supervisor is structurally blind to.
+
 ## The retry→park ladder
 
 The engine drives the ladder from completion verdicts: a `RetryableError`
@@ -208,10 +229,24 @@ One ordered list answers "do something with this entity at time T": retry
 backoffs, processing-time timer deadlines
 ([`entity_timers.md`](entity_timers.md)) and checkpoint-interval deadline
 closes. It owns **no thread**. Entries are promoted by whichever thread next
-enters or wakes inside `poll` — with no lock held, since a firing enqueues
-under the `DropNothing` policy and may drain a saturated consumer inline — and the
-nearest entry shortens the poller wait. Recording one notifies blocked pollers
-so they re-compute that wait.
+enters or wakes inside `poll`, and the nearest entry shortens the poller wait.
+Recording one notifies blocked pollers so they re-compute that wait.
+
+**A wake that cannot be delivered stays on the list.** Promotion attempts a
+non-waiting admission; if the target's mailbox is full the entry is re-recorded
+at a strictly later due time and the pass continues. The list IS the holdback,
+so nothing new was built to hold the firing — and the condition becomes
+*reportable*, because `starving()` treats a due wake as starvation with no
+dwell. Neither promotion path serves a consumer inline and neither parks: the
+promoter is a thread inside `poll`, and a thread inside `poll` is counted as a
+thread about to take work.
+
+A firing keeps the timestamp it was **armed** with across every deferral — that
+is what the pending set cancels by and what `ctx.now()` reads inside `on_timer`
+— while the entry's due time moves. A deferred firing is delayed, never
+dropped; and it is never *wrongly* delivered either, because the pending set is
+the authority at staging: an entry for a timer that was cancelled or restored
+away fires nothing.
 
 Promotion needs a thread in `poll`, so a due entry with every worker inside
 user code is starvation and reads as such: the starvation wait's deadline

@@ -2,6 +2,84 @@
 
 ## Unreleased
 
+### Fixed — a due wake no longer wedges a poll host (`close-overflow-silent-failures`)
+
+`PollCore::promote_due` runs *inside* `poll` and pushed a due timer or an
+interval close under `DropNothing`. With a full mailbox and no inline-serve
+hook — the situation of **every** C-ABI host — the poller parked there. Because
+`pollers_inside` is held across the whole call and `starving()` answers `false`
+while it is non-zero, that poller read to the starvation wait as a thread about
+to take work: the runner stopped and hid that it had. Measured at 1 of 3
+firings delivered, wedged 15 s, with the pool ceiling free to grow.
+
+A wake that cannot be admitted is now re-recorded at a later due time and the
+pass continues — the wake list itself is the holdback — so the condition is
+both impossible and *reportable*, since a due entry is starvation with no
+dwell. A deferred firing keeps the timestamp it was armed with. No mechanism
+was added and `routing::in_activation` leaves `poll_core.rs`.
+
+### Added — the Java SDK brings a starvation supervisor (`close-overflow-silent-failures`)
+
+`flz_core_wait_starvation` existed in the ABI and nothing in `sdk/java`
+referenced it, so a Java runner whose fetchers were all held processed nothing,
+recovered from nothing and reported nothing — measured at 0 of 20 payloads,
+forever. `FlzCore.waitStarvation` is now bound and `PollHost` parks one
+platform supervisor thread in it, starting one more fetcher per observation up
+to `FLEZHA_WORKER_POOL_MAX` (default 10× `FLEZHA_WORKER_POOL_SIZE`, never below
+it — the same shape and spelling the Rust pool uses). Every growth logs at
+`INFO`; the first refusal at the ceiling logs at `WARN` and latches.
+
+This does **not** cover the conformance `pool_wedge` condition: no ceiling
+outruns user code that never returns.
+
+### Fixed — an edge output's offset can no longer become durable ahead of the output (`close-overflow-silent-failures`)
+
+**FFI hosts only** (Java and every proposed FFI SDK); the typed Rust path emits
+during `run()` and was already correct. `resolve_item` folded the invocation's
+changes, plugin outputs *and consumed offset* into the effect record and only
+then routed the edge outputs. `OutputTarget::Edge` is excluded from the
+transactional outbox, so a crash inside the flusher's 5 ms linger left the
+offset durable, the input skipped on replay, and the consumer never fed — a
+permanent loss while the tier reported effectively-once. The two blocks are now
+in the other order: an item with an undelivered edge output is unresolved, and
+an unresolved item contributes nothing durable. A fan-out holds its record
+until every consumer's push has landed.
+
+### Added — every overflow outcome is observable (`close-overflow-silent-failures`)
+
+`drops_newest_total`, `drops_oldest_total` and `pushes_blocked_total` were
+written by the kernel and read by nothing: `EntitySlot::counters()` had zero
+production callers, so no heartbeat, export or log ever carried a drop.
+
+- **Three counters ride the data heartbeat.** Process-wide aggregates beside
+  `dispatches` and `credit_parked`, mirrored by the controller into
+  `hb_blocked_parks` / `hb_drops_newest` / `hb_drops_oldest`. The Elixir SDK
+  reports the same keys from its own counters.
+- **`blocked_parks` now counts wait iterations, not episodes.** A runner held
+  in one long block episode showed a frozen dispatch count beside a frozen
+  block count — byte for byte the picture a wedged runner shows.
+  `runner_pool_wedged` reads the pair: dispatches frozen with blocks climbing
+  is backpressure, dispatches frozen with blocks flat is a wedge.
+- **`DropOldest` counts its admission.** A force-push that admits now bumps
+  `pushes_total` (it is a successful enqueue by that counter's own definition;
+  `processed` used to exceed `admitted` for this policy) and the evicted item's
+  identity is named in a `flezha::mailbox` debug line instead of discarded.
+
+### Changed — a dropping policy is refused where its loss is unaccountable (`close-overflow-silent-failures`)
+
+**BREAKING for a class that declared both `effectively_once` and a dropping
+overflow policy** — a combination that was silently lossy and is now a
+declaration error naming the channel and both declarations. Refused in the Rust
+and Java builders and again in `flz_core`'s declaration validation, so a
+hand-written host declaration cannot slip past. A correction window requires
+the tier, so it is covered by the same rule. Shedding stays fully available to
+a class that promises neither.
+
+Independently of the declared policy, a **replay-slice member always takes the
+`DropNothing` path**: a dropped member left the slice open and short, the slice
+still closed on the end-of-slice broadcast, and the correction folded whatever
+arrived — a wrong answer with nothing reported.
+
 ### Changed — the overflow policy names its guarantee (`rename-block-to-drop-nothing`)
 
 **BREAKING for every operative that declares an overflow policy.** The policy

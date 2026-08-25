@@ -249,3 +249,28 @@ this capability.
 - **THEN** its re-emitted outputs carry identical identity and a conforming sink
   deduplicates them
 
+### Requirement: An inter-procedure output's offset is never durable ahead of the output
+
+An invocation's consumed input offset SHALL NOT become durable before every inter-procedure (edge) output that invocation produced has been admitted to its consumer's mailbox. An item with an undelivered edge output SHALL be treated as unresolved: its changes, its plugin outputs and its offset SHALL be held out of the flush buffer until the delivery completes, exactly as a failed-but-retryable attempt's changes are held until its item resolves.
+
+The reason is that an edge output is the one output kind with no durable copy: `OutputTarget::Edge` is excluded from the transactional outbox, so the only thing that can re-produce it is the producer re-running its input. If the offset is durable first, the crash-replay floor skips that input, the producer never re-runs, and the consumer is never fed — a permanent loss under a contract that promises effectively-once.
+
+With the ordering correct, at-least-once edge delivery composes into effectively-once without a second mechanism: the edge payload carries the producer's input offset, the consumer's own effect record acknowledges that offset, and the consumer's restored floor skips a re-emitted duplicate. A fan-out invocation SHALL hold its record until **every** consumer's push has landed; a replay after a partial fan-out re-emits to all consumers and each one's own floor decides whether it is a duplicate.
+
+This requirement binds the host (C-ABI) resolution path, where an activation's outputs are reported at completion and were previously folded before being routed. The typed in-process path emits during the invocation, before the effect block is assembled, and already satisfies it.
+
+#### Scenario: A crash between the fold and the delivery loses nothing
+
+- **WHEN** a tier-mode host activation produces an edge output, the consumer's mailbox is full, and the runner dies before the output is admitted
+- **THEN** no durable record SHALL carry that invocation's consumed offset, the controller SHALL re-forward the input, and the producer SHALL re-run and re-emit it
+
+#### Scenario: The re-emitted output is not applied twice
+
+- **WHEN** a producer re-runs an input after a crash and re-emits to a consumer that had already durably consumed that offset
+- **THEN** the consumer SHALL skip the re-delivered value against its restored consumed floor and its state SHALL be unchanged
+
+#### Scenario: A partial fan-out is completed by replay
+
+- **WHEN** an invocation emits to three consumers, two pushes land, and the runner dies before the third
+- **THEN** the invocation's offset SHALL NOT be durable, and after restart all three consumers SHALL end in the state they would have reached had the invocation completed once
+

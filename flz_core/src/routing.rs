@@ -65,6 +65,36 @@ const BLOCK_PARK_TIMEOUT: std::time::Duration = std::time::Duration::from_millis
 /// severely behind, and silence here is how the 2026-06-10 freeze hid.
 const BLOCK_WARN_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Admit one item without ever waiting for room: the success half of
+/// [`enqueue`], shared with the wake list's promotion pass, which must return
+/// the item rather than hold the poller that is servicing it.
+///
+/// `Err` hands the item back exactly as [`crate::mailbox::Mailbox::try_push`]
+/// does, so the caller decides what a full mailbox means.
+pub(crate) fn try_admit(slot: &Arc<EntitySlot>, item: EntityItem) -> Result<(), EntityItem> {
+    slot.mailbox.try_push(item)?;
+    note_admitted(slot);
+    Ok(())
+}
+
+/// What every admission owes, whichever path admitted the item — a plain
+/// `try_push` or a `DropOldest` force-push: the count, the reaper's activity
+/// stamp, and the round claim that schedules the entity when nobody is
+/// draining it.
+fn note_admitted(slot: &Arc<EntitySlot>) {
+    slot.mailbox
+        .counters()
+        .pushes_total
+        .fetch_add(1, Ordering::Relaxed);
+    // Activity stamp for the dynamic-mode reaper (one atomic store; inert for
+    // single/static Entities that are never reaped).
+    slot.last_activity_at
+        .store(crate::dynamic::now_millis(), Ordering::Relaxed);
+    if slot.mailbox.try_mark_inflight() {
+        crate::poll_core::global().schedule(slot);
+    }
+}
+
 pub fn enqueue(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy) {
     // Open the slice here, on the frame-handling thread, rather than in the
     // drain: the controller's end-of-slice broadcast arrives on this same thread
@@ -72,40 +102,31 @@ pub fn enqueue(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy)
     // overtake a member it was meant to include. Opening in the drain would race
     // — a slow drain could see the close first and then buffer members nobody
     // would ever flush.
-    if matches!(&item, EntityItem::Input(p) if p.replay) {
+    let replay = matches!(&item, EntityItem::Input(p) if p.replay);
+    if replay {
         slot.replay_open.store(true, Ordering::Release);
     }
+    // A correction's answer may not depend on arrival timing, so a replay-slice
+    // member is never shed whatever the channel declares: a dropped member
+    // leaves `replay_open` set and `replay_depth` short, the slice still closes
+    // on the end-of-slice broadcast, and `flush_closed_slice` folds whatever
+    // arrived — a wrong answer with no error anywhere.
+    let policy = if replay {
+        OverflowPolicy::DropNothing
+    } else {
+        policy
+    };
     let mut next = item;
     let mut blocked_since: Option<std::time::Instant> = None;
     let mut block_warned = false;
     loop {
-        match slot.mailbox.try_push(next) {
-            Ok(()) => {
-                slot.mailbox
-                    .counters()
-                    .pushes_total
-                    .fetch_add(1, Ordering::Relaxed);
-                // Activity stamp for the dynamic-mode reaper (one atomic
-                // store; inert for single/static Entities that are never
-                // reaped).
-                slot.last_activity_at
-                    .store(crate::dynamic::now_millis(), Ordering::Relaxed);
-                if slot.mailbox.try_mark_inflight() {
-                    crate::poll_core::global().schedule(slot);
-                }
-                return;
-            }
+        match try_admit(slot, next) {
+            Ok(()) => return,
             Err(returned) => match policy {
                 OverflowPolicy::DropNothing => {
-                    slot.mailbox
-                        .counters()
-                        .pushes_blocked_total
-                        .fetch_add(1, Ordering::Relaxed);
+                    slot.note_blocked();
                     next = returned;
-                    if blocked_since.is_none() {
-                        blocked_since = Some(std::time::Instant::now());
-                        crate::entity::BLOCKED_PARK_EPISODES.fetch_add(1, Ordering::Relaxed);
-                    }
+                    let since = *blocked_since.get_or_insert_with(std::time::Instant::now);
                     // A pool worker serves the full slot inline rather than
                     // parking on it: the slot's round may exist only as a
                     // queued pool task, and a parked pool worker can be the
@@ -121,9 +142,7 @@ pub fn enqueue(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy)
                         slot.block_parker
                             .wait_one_timeout(&slot.mailbox, BLOCK_PARK_TIMEOUT);
                     }
-                    if !block_warned
-                        && blocked_since.is_some_and(|t| t.elapsed() >= BLOCK_WARN_AFTER)
-                    {
+                    if !block_warned && since.elapsed() >= BLOCK_WARN_AFTER {
                         block_warned = true;
                         tracing::warn!(
                             target: "flezha::mailbox",
@@ -135,22 +154,16 @@ pub fn enqueue(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy)
                     }
                 }
                 OverflowPolicy::DropNewest => {
-                    slot.mailbox
-                        .counters()
-                        .drops_newest_total
-                        .fetch_add(1, Ordering::Relaxed);
-                    drop(returned);
+                    slot.note_shed(policy, Some(&returned));
                     return;
                 }
                 OverflowPolicy::DropOldest => {
-                    let _dropped = slot.mailbox.force_push(returned);
-                    slot.mailbox
-                        .counters()
-                        .drops_oldest_total
-                        .fetch_add(1, Ordering::Relaxed);
-                    if slot.mailbox.try_mark_inflight() {
-                        crate::poll_core::global().schedule(slot);
-                    }
+                    let evicted = slot.mailbox.force_push(returned);
+                    slot.note_shed(policy, evicted.as_ref());
+                    // A force-push that admits IS a successful enqueue by
+                    // `pushes_total`'s own definition; not counting it made
+                    // `processed` exceed `admitted` for this policy.
+                    note_admitted(slot);
                     return;
                 }
             },

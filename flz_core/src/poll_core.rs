@@ -50,7 +50,6 @@ use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use flz_transport::transport::FlezhaStream;
 
-use crate::channel::OverflowPolicy;
 use crate::correction::Lateness;
 use crate::entity::{EntityItem, EntityPayload, EntitySlot};
 use crate::timer::{TimerFire, TimerKind};
@@ -200,9 +199,15 @@ enum Wake {
     /// die with it: the upgrade fails and the firing is dropped, which is the
     /// D6 contract. The stream is the one captured at arming, so `on_timer`'s
     /// plugin emits leave on the same connection an input's would.
+    ///
+    /// `scheduled_at` is the deadline the author armed — what the firing is
+    /// stamped with and what cancels it — kept beside the entry because the
+    /// key's due time is only *when to attempt admission*, and a firing that
+    /// could not be admitted is re-recorded at a later one.
     Timer {
         slot: Weak<EntitySlot>,
         stream: Arc<FlezhaStream>,
+        scheduled_at: u64,
     },
     /// A checkpoint interval's `max_delay_ms` has elapsed. `Weak` for the same
     /// reason a timer is: an evicted Entity's interval died with its state.
@@ -384,6 +389,12 @@ const ENV_MAX_INFLIGHT: &str = "FLEZHA_MAX_INFLIGHT_ACTIVATIONS";
 /// window.
 const STARVATION_DWELL: Duration = Duration::from_millis(100);
 
+/// How long a wake whose target mailbox was full waits before the promotion
+/// pass tries it again. Short enough that a firing is not visibly delayed,
+/// strictly non-zero so the pass cannot re-service the same entry it just
+/// deferred.
+const WAKE_RETRY_BACKOFF_MS: u64 = 5;
+
 impl PollCore {
     pub fn new() -> Self {
         Self::with_max_inflight(crate::util::env_parse_positive(
@@ -437,10 +448,9 @@ impl PollCore {
 
     fn poll_until(&self, deadline: Instant) -> Polled {
         loop {
-            // First thing in the pass, before any lock is taken: a firing
-            // enqueues under the DropNothing policy and may drain a saturated
-            // consumer inline, and peers must keep serving `ready` while it
-            // does.
+            // First thing in the pass, before any lock is taken: promotion
+            // admits without waiting and re-records what it could not place,
+            // so it holds nothing peers need.
             self.promote_due();
             let mut ready = self.ready.lock_recover();
             if self.shutting_down.load(Ordering::Acquire) {
@@ -566,51 +576,85 @@ impl PollCore {
 
     /// Hand every entry that has come due to its effect. Called once per
     /// [`Self::poll`] pass — the list has no thread of its own.
+    ///
+    /// **Nothing here waits for mailbox room.** A promoter is a thread inside
+    /// [`Self::poll`], counted by `pollers_inside`, which makes
+    /// [`Self::starving`] answer "a thread is about to take work" — so a
+    /// promoter held on a full mailbox both stops the runner and hides that it
+    /// has, and no supervisor can see it. A firing that cannot be admitted is
+    /// re-recorded at a later due time instead: the wake list IS the holdback,
+    /// and an entry still sitting there is exactly what `starving()` reports
+    /// with no dwell.
     fn promote_due(&self) {
-        for (key, wake) in self.wakes.take_due(crate::util::wall_now_ms()) {
-            match wake {
-                Wake::Retry(slot) => self.release_and_rearm(&slot),
+        let now = crate::util::wall_now_ms();
+        for (key, wake) in self.wakes.take_due(now) {
+            // What to admit, and the entry to put back if it will not fit. One
+            // tail for every wake kind, so "no promotion waits" is a single
+            // statement rather than a rule each arm has to remember.
+            let (slot, item, retry) = match wake {
+                Wake::Retry(slot) => {
+                    self.release_and_rearm(&slot);
+                    continue;
+                }
+                // A close silently dropped would hold the interval's outputs
+                // until the next input — exactly what the delay exists to
+                // prevent.
                 Wake::CloseInterval { slot } => {
-                    let Some(slot) = slot.upgrade() else {
-                        continue;
-                    };
-                    // Same DropNothing/inline reasoning as a timer promotion: the
-                    // promoter may be the only pool thread able to drain this
-                    // slot, and a close silently dropped would hold the
-                    // interval's outputs until the next input — exactly what
-                    // the delay exists to prevent.
-                    crate::routing::in_activation(|| {
-                        crate::routing::enqueue(
-                            &slot,
-                            EntityItem::CloseInterval,
-                            OverflowPolicy::DropNothing,
-                        )
-                    });
+                    let Some(live) = slot.upgrade() else { continue };
+                    (
+                        live,
+                        EntityItem::CloseInterval,
+                        Wake::CloseInterval { slot },
+                    )
                 }
-                Wake::Timer { slot, stream } => {
-                    let Some(slot) = slot.upgrade() else {
-                        continue;
-                    };
-                    // DropNothing policy: a saturated mailbox delays the firing
-                    // rather than dropping it — a timer silently lost is a
-                    // bug the author cannot see. The promoter is a pool
-                    // thread and may be the only one, so it drains the slot
-                    // inline as an activation would instead of parking on a
-                    // mailbox nobody else is serving.
-                    crate::routing::in_activation(|| {
-                        crate::routing::enqueue(
-                            &slot,
-                            EntityItem::Timer(TimerFire {
-                                kind: TimerKind::ProcessingTime,
-                                scheduled_at: key.due_at_ms,
-                                stream,
-                            }),
-                            OverflowPolicy::DropNothing,
-                        )
+                // A timer silently lost is a bug the author cannot see. The
+                // firing keeps its armed `scheduled_at` across every deferral:
+                // that is what the pending set cancels by, and what `ctx.now()`
+                // reads inside `on_timer`.
+                Wake::Timer {
+                    slot,
+                    stream,
+                    scheduled_at,
+                } => {
+                    let Some(live) = slot.upgrade() else { continue };
+                    let fire = EntityItem::Timer(TimerFire {
+                        kind: TimerKind::ProcessingTime,
+                        scheduled_at,
+                        stream: Arc::clone(&stream),
                     });
+                    (
+                        live,
+                        fire,
+                        Wake::Timer {
+                            slot,
+                            stream,
+                            scheduled_at,
+                        },
+                    )
                 }
+            };
+            if crate::routing::try_admit(&slot, item).is_err() {
+                self.defer_wake(now, key.tiebreak, retry);
             }
         }
+    }
+
+    /// Put a wake the target's mailbox had no room for back on the list, due
+    /// again after [`WAKE_RETRY_BACKOFF_MS`].
+    ///
+    /// Strictly later than the pass that observed it, or every pass would
+    /// re-service it and `park_slice` — which already shortens a poller's wait
+    /// to the nearest due entry — would return zero and spin the promoter.
+    /// That same shortening is the retry cadence, so the deferral needs no
+    /// timer of its own.
+    fn defer_wake(&self, now: u64, tiebreak: WakeTiebreak, wake: Wake) {
+        self.wakes.record(
+            WakeKey {
+                due_at_ms: now + WAKE_RETRY_BACKOFF_MS,
+                tiebreak,
+            },
+            wake,
+        );
     }
 
     /// Arm one processing-time timer. Re-arming the same
@@ -625,6 +669,7 @@ impl PollCore {
             Wake::Timer {
                 slot: Arc::downgrade(slot),
                 stream,
+                scheduled_at,
             },
         );
         self.notify_waiters();

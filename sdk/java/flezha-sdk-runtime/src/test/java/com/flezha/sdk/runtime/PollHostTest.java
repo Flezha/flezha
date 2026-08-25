@@ -2,6 +2,7 @@ package com.flezha.sdk.runtime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.flezha.sdk.native_.FlzCore;
 import com.flezha.sdk.runtime.core.Activation;
 import com.flezha.sdk.runtime.core.ActivationCodec;
 import com.flezha.sdk.runtime.core.ActivationKind;
@@ -37,6 +38,12 @@ class PollHostTest {
         private volatile boolean completeThrows = false;
         /** How many {@code poll} calls still throw an Error (killing a fetcher). */
         private final AtomicInteger pollErrors = new AtomicInteger();
+        /** How many {@code waitStarvation} calls still report an observation. */
+        private final AtomicInteger starvations = new AtomicInteger();
+        /** Every {@code waitStarvation} call, observed or not. */
+        private final AtomicInteger starvationWaits = new AtomicInteger();
+        /** How many {@code waitStarvation} calls still throw an Exception. */
+        private final AtomicInteger starvationErrors = new AtomicInteger();
 
         void handOut(Activation activation) {
             handouts.add(ActivationCodec.encodeActivation(activation));
@@ -70,6 +77,23 @@ class PollHostTest {
         }
 
         @Override
+        public int waitStarvation(long timeoutMs) {
+            starvationWaits.incrementAndGet();
+            if (starvationErrors.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                throw new IllegalStateException("starvation wait failed");
+            }
+            if (starvations.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+                return FlzCore.STARVATION_OBSERVED;
+            }
+            try {
+                Thread.sleep(Math.min(timeoutMs, 20));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return FlzCore.STARVATION_TIMEOUT;
+        }
+
+        @Override
         public void abandon(long token) {
             abandoned.add(token);
         }
@@ -89,7 +113,12 @@ class PollHostTest {
     }
 
     private static PollHost start(FakeCore core, Function<Activation, ActivationResult> dispatch, int fetchers) {
-        PollHost host = new PollHost(core, dispatch, fetchers, () -> {});
+        return start(core, dispatch, fetchers, fetchers * 10);
+    }
+
+    private static PollHost start(
+            FakeCore core, Function<Activation, ActivationResult> dispatch, int fetchers, int max) {
+        PollHost host = new PollHost(core, dispatch, fetchers, max, () -> {});
         host.start();
         return host;
     }
@@ -231,6 +260,70 @@ class PollHostTest {
             core.handOut(activation(9, "after-the-death"));
             awaitTrue(() -> core.completed.get() == 1, "a replacement fetcher served new work");
         }
+    }
+
+    /**
+     * The other half of the core's bring-your-own-thread contract. Java ships
+     * a fixed fetcher set, so without this a runner whose fetchers are all
+     * held processes nothing, recovers from nothing, and reports nothing —
+     * measured as 0 of 20 payloads delivered, forever.
+     */
+    @Test
+    @DisplayName("observed starvation grows the fetcher set")
+    void starvationGrowsTheFetcherSet() throws Exception {
+        FakeCore core = new FakeCore();
+        try (PollHost host = start(core, PollHostTest::ok, 1, 3)) {
+            core.starvations.set(2);
+            awaitTrue(() -> host.liveFetcherCount() == 3, "the pool grew once per observation");
+            // A grown fetcher is a real one: it fetches.
+            core.handOut(activation(11, "after-the-growth"));
+            awaitTrue(() -> core.completed.get() == 1, "a grown fetcher served work");
+        }
+    }
+
+    @Test
+    @DisplayName("growth stops at the ceiling and the supervisor keeps waiting")
+    void starvationGrowthStopsAtTheCeiling() throws Exception {
+        FakeCore core = new FakeCore();
+        try (PollHost host = start(core, PollHostTest::ok, 1, 2)) {
+            core.starvations.set(5);
+            awaitTrue(() -> host.liveFetcherCount() == 2, "the pool grew to its ceiling");
+            awaitTrue(() -> core.starvations.get() == 0, "every observation was consumed");
+            assertThat(host.liveFetcherCount()).as("the ceiling holds exactly").isEqualTo(host.maxFetcherCount());
+            int waits = core.starvationWaits.get();
+            awaitTrue(() -> core.starvationWaits.get() > waits, "the supervisor keeps waiting after refusing to grow");
+        }
+    }
+
+    /**
+     * Nothing in this host may stop on its own. A supervisor that ended on a
+     * transient failure would leave the runner with no answer to starvation
+     * and no report of it — the exact wedge the thread exists to close.
+     */
+    @Test
+    @DisplayName("the supervisor survives a failing starvation wait")
+    void supervisorSurvivesAFailingWait() throws Exception {
+        FakeCore core = new FakeCore();
+        core.starvationErrors.set(2);
+        try (PollHost host = start(core, PollHostTest::ok, 1, 3)) {
+            awaitTrue(() -> core.starvationErrors.get() == 0, "both failing waits were made");
+            core.starvations.set(1);
+            awaitTrue(() -> host.liveFetcherCount() == 2, "the supervisor still grows the pool");
+        }
+    }
+
+    @Test
+    @DisplayName("close() joins the supervisor")
+    void closeJoinsTheSupervisor() throws Exception {
+        FakeCore core = new FakeCore();
+        PollHost host = start(core, PollHostTest::ok, 1, 4);
+        awaitTrue(() -> core.starvationWaits.get() > 0, "the supervisor parked at least once");
+        host.close();
+        int waits = core.starvationWaits.get();
+        Thread.sleep(100);
+        assertThat(core.starvationWaits.get())
+                .as("the supervisor was still parking after close() returned")
+                .isEqualTo(waits);
     }
 
     private static void awaitTrue(java.util.function.BooleanSupplier done, String what) throws InterruptedException {

@@ -22,7 +22,10 @@ defmodule Flezha.Convergence.StallClassifier do
     * `:socket_write_blocked`   — driver writing into a buffer the peer won't drain
     * `:runner_not_consuming` — controller sending fine, runner reads nothing back
     * `:runner_pool_wedged`   — runner alive (heartbeats flowing) and fed, but its
-      self-reported dispatch counter is frozen — the SDK pool stopped processing
+      self-reported dispatch counter is frozen AND its block counter is flat —
+      the SDK pool stopped processing. A frozen dispatch count with the block
+      counter climbing is healthy backpressure, not a wedge: producers are held
+      on full mailboxes and a rebind would only move the congestion
     * `:channel_not_sending`    — channel fed but not calling send_frame
     * `:operative_not_forwarding`   — operative fed but not forwarding to its channel
     * `:entity_dispatch_stalled` — the runner is completing work, but one
@@ -158,9 +161,17 @@ defmodule Flezha.Convergence.StallClassifier do
   # can look perfectly alive while processing nothing (the 2026-06-10 freeze).
   # Heartbeat metadata carries a dispatch-progress counter; flag the runner when
   # that counter is frozen.
+  #
+  # Unless its block counter is climbing. A producer held on a full entity
+  # mailbox freezes `dispatches` exactly as a wedge does — the two pictures were
+  # byte-for-byte identical — but it is the system working: the consumer is
+  # behind, backpressure is propagating, and the remedy for a wedge (a rebind)
+  # would only move the congestion. The runner counts a block per wait
+  # iteration precisely so this reads as motion.
   defp runner_pool_wedged(current, previous) do
     find_runner(current, previous, fn runner_id, cur, prev ->
-      if cur.hb_dispatches > 0 and cur.hb_dispatches == prev.hb_dispatches do
+      if cur.hb_dispatches > 0 and cur.hb_dispatches == prev.hb_dispatches and
+           cur.hb_blocked_parks == prev.hb_blocked_parks do
         {:runner_pool_wedged, %{runner_id: runner_id, dispatches: cur.hb_dispatches}}
       end
     end)
@@ -189,29 +200,26 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
-  # Aggregate per-channel counters to one row per runner: sends and
-  # heartbeats sum across its channels; the self-reported dispatch counter is
-  # process-global on the runner, so max() collapses duplicates.
+  # Per-channel facts: one runner's channels each count their own.
+  @summed_slots [:send_frame_calls, :hb_count]
+  # Runner self-report: process-global on the runner, so every channel of one
+  # runner carries the same value and max() collapses the duplicates. An SDK
+  # that does not send the self-report never advances these, so they read 0 —
+  # "no handout is outstanding", which never stalls, and "no producer is
+  # blocked", which leaves the wedge check as it was.
+  @reported_slots [:hb_dispatches, :hb_blocked_parks, :hb_inflight, :hb_inflight_oldest_ms]
+
+  # Aggregate per-channel counters to one row per runner. Adding a reported
+  # counter is one entry above, not two lists to keep in step.
   defp group_channels_by_runner(channels) do
     Enum.reduce(channels, %{}, fn c, acc ->
-      row = %{
-        send_frame_calls: Map.get(c, :send_frame_calls, 0),
-        hb_count: Map.get(c, :hb_count, 0),
-        hb_dispatches: Map.get(c, :hb_dispatches, 0),
-        # An SDK that does not send the self-report never advances these, so
-        # they read 0 — "no handout is outstanding", which never stalls.
-        hb_inflight: Map.get(c, :hb_inflight, 0),
-        hb_inflight_oldest_ms: Map.get(c, :hb_inflight_oldest_ms, 0)
-      }
+      row = Map.new(@summed_slots ++ @reported_slots, fn slot -> {slot, Map.get(c, slot, 0)} end)
 
-      Map.update(acc, c.runner_id, row, fn v ->
-        %{
-          send_frame_calls: v.send_frame_calls + row.send_frame_calls,
-          hb_count: v.hb_count + row.hb_count,
-          hb_dispatches: max(v.hb_dispatches, row.hb_dispatches),
-          hb_inflight: max(v.hb_inflight, row.hb_inflight),
-          hb_inflight_oldest_ms: max(v.hb_inflight_oldest_ms, row.hb_inflight_oldest_ms)
-        }
+      Map.update(acc, c.runner_id, row, fn seen ->
+        Map.merge(seen, row, fn
+          slot, a, b when slot in @summed_slots -> a + b
+          _slot, a, b -> max(a, b)
+        end)
       end)
     end)
   end

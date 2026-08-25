@@ -137,6 +137,20 @@ public class StreamOperativeConfigurationException extends RuntimeException {
     }
 
     /**
+     * Raised when a channel declares a dropping overflow policy on an
+     * {@code effectivelyOnce()} Operative. A shed input's offset is still
+     * advanced past by the tier's watermark, so the loss is permanent under a
+     * contract that promises nothing is lost. A correction window requires the
+     * tier, so it is refused by the same rule.
+     */
+    public static StreamOperativeConfigurationException tierChannelSheds(String channel, String policy) {
+        return new StreamOperativeConfigurationException("channel `" + channel
+                + "` declares `.onFull(" + policy + ")` on an `effectivelyOnce()` operative; "
+                + "a shed input's offset is still advanced past by the tier's watermark, so the loss "
+                + "is permanent and reported nowhere — declare one or the other, not both");
+    }
+
+    /**
      * Raised when a channel is declared {@code .keyed()} without a plugin wire.
      * A key rides as a {@code flz.key} stamp on a plugin frame, so a pure
      * inter-procedure channel has nowhere to carry it.

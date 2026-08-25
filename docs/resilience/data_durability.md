@@ -112,6 +112,22 @@ guarantee.
 - **Atomic effect record.** State changes, outputs, consumed offset, dead-letter entry and event
   time form ONE `entity_effect_record` under ONE fsync. No partial combination is ever durable
   and effect records are never coalesced away.
+- **An inter-procedure output's offset is never durable ahead of the output.** An edge value is
+  the one output kind with **no** durable copy — `OutputTarget::Edge` is excluded from the
+  transactional outbox — so the only thing that can re-produce it is the producer re-running its
+  input. The invocation is therefore treated as unresolved until every edge push has been
+  admitted to its consumer's mailbox: its changes, its plugin outputs and its offset are held out
+  of the flush buffer until then, exactly as a failed-but-retryable attempt's changes are. Fold
+  first and a crash inside the flusher's ~5 ms linger leaves the offset durable, the replay floor
+  skipping that input, and the consumer never fed. A fan-out invocation holds its record until
+  **every** consumer's push has landed; a replay after a partial fan-out re-emits to all of them
+  and each consumer's own restored floor decides whether it is a duplicate — which is how
+  at-least-once edge delivery composes into effectively-once without a second mechanism.
+  *Not closed by this:* between the push landing and the consumer's own record becoming durable
+  the value lives only in the consumer's volatile mailbox, which a tier-class restore discards
+  (`discard_queued_input_on_restore`) and which the controller re-supplies only at the *entry*
+  channel, where the producer's floor skips it. Closing that needs `OutputTarget::Edge` in the
+  transactional outbox — a separate change.
 - **Fsync-gated outbox.** Outputs reach the `:on_output` chain only after their record is
   fsynced, stamped `(flz.entity, flz.seq = outbox_seq, flz.epoch, flz.key)` — a sufficient handle
   for exact dedup. On restart the controller re-drives every record above the per-Entity

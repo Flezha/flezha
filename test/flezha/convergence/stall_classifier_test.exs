@@ -147,6 +147,50 @@ defmodule Flezha.Convergence.StallClassifierTest do
     assert ctx.dispatches == 9_000
   end
 
+  test "runner_pool_wedged does NOT fire while the block counter climbs (backpressure)" do
+    # A producer held on a full entity mailbox freezes `dispatches` exactly as
+    # a wedge does — this was byte-for-byte the same picture. The block counter
+    # advancing per wait iteration is what separates them: the system is
+    # working, the consumer is behind, and a rebind would only move the jam.
+    prev =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 100),
+          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000, hb_blocked_parks: 40)
+        ]
+      )
+
+    curr =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 200),
+          channel(name: :scs, hb_count: 6, hb_dispatches: 9_000, hb_blocked_parks: 91)
+        ]
+      )
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
+  test "runner_pool_wedged DOES fire when dispatches and blocks are both frozen" do
+    prev =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 100),
+          channel(name: :scs, hb_count: 5, hb_dispatches: 9_000, hb_blocked_parks: 40)
+        ]
+      )
+
+    curr =
+      snapshot(
+        channels: [
+          channel(name: :scp, send_frame_calls: 200),
+          channel(name: :scs, hb_count: 6, hb_dispatches: 9_000, hb_blocked_parks: 40)
+        ]
+      )
+
+    assert {:runner_pool_wedged, _ctx} = StallClassifier.classify(curr, prev)
+  end
+
   test "runner_pool_wedged does NOT fire while dispatches advance" do
     prev =
       snapshot(
@@ -457,6 +501,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
       last_send_ms: Keyword.get(opts, :last_send_ms, 0),
       hb_count: Keyword.get(opts, :hb_count, 0),
       hb_dispatches: Keyword.get(opts, :hb_dispatches, 0),
+      hb_blocked_parks: Keyword.get(opts, :hb_blocked_parks, 0),
       hb_inflight: Keyword.get(opts, :hb_inflight, 0),
       hb_inflight_oldest_ms: Keyword.get(opts, :hb_inflight_oldest_ms, 0)
     }

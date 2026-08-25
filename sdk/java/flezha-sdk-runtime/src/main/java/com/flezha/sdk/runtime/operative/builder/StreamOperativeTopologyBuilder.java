@@ -392,6 +392,15 @@ public final class StreamOperativeTopologyBuilder implements ChannelBuilder {
                 errors.add(StreamOperativeConfigurationException.tierChannelNotKeyed(entry.name)
                         .getMessage());
             }
+            // Promising effectively-once and asking to shed is a contradiction,
+            // not a trade-off: a dropped input's offset is advanced past by a
+            // later item's watermark. `correctionWindow` requires the tier
+            // (checked above), so this arm covers it too.
+            if (effectivelyOnce && entry.overflowPolicy != OverflowPolicy.DROP_NOTHING) {
+                errors.add(
+                        StreamOperativeConfigurationException.tierChannelSheds(entry.name, entry.overflowPolicy.name())
+                                .getMessage());
+            }
         }
 
         if (!errors.isEmpty()) {

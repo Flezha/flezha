@@ -90,10 +90,17 @@ Refusals accumulate into one `{:error, {:invalid_topology, issues}}` — e.g.
 The overflow default is `:drop_nothing` for **every** edge kind, in lockstep with the
 Rust/Java SDKs and the FFI host: it waits for room and never drops, at the cost that a delayed
 primary-stream router delays every operative fed by that stream. `on_full(:drop_newest | :drop_oldest)` sheds
-instead. In native mode the Entity bound is a dispatch-concurrency bound, not a memory bound;
-the heartbeat's frozen `dispatches` / `blocked_parks` counters make a stall visible
-(`data_heartbeat` every ~10 s per data stream, `control_ping` every 15 s, echoed by the
+instead, and every shed item is counted: `drops_newest` / `drops_oldest` ride the heartbeat
+beside `dispatches` and `blocked_parks`, the same keys the other SDKs report, and the
+`[:flezha, :sdk, :mailbox]` telemetry event stays the in-node handle on the same drop.
+In native mode the Entity bound is a dispatch-concurrency bound, not a memory bound;
+a frozen `dispatches` with `blocked_parks` climbing is backpressure, and frozen with it flat is
+a stall (`data_heartbeat` every ~10 s per data stream, `control_ping` every 15 s, echoed by the
 controller).
+
+There is no declare-time refusal of a shedding policy here, because this SDK declares no
+durability tier and no correction window for one to contradict — the rule the other SDKs
+enforce ships with `effectively_once` if this SDK ever gains it.
 
 A failing `run/3` (error tuple, raise, or exit) retries up to `retry_max` (default 3 total)
 with exponential backoff and ±50 % jitter from `retry_backoff_ms` (default 50 ms, cap 5 s);

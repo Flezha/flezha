@@ -11,6 +11,32 @@ annotation sugar. See [`authoring_contract.md`](authoring_contract.md) for what
 each tier expands to and [`state_persistence.md`](state_persistence.md) for the
 `StateHandle` / Kryo side.
 
+## Threading
+
+Platform *fetcher* threads loop `poll → decode → hand off → poll`; one virtual
+thread per activation runs the dispatch, encodes the result and calls
+`complete` itself. Fetchers stay platform threads because `FlzCore.poll` blocks
+in native code and a native frame pins its carrier.
+
+One platform **supervisor** thread parks in `FlzCore.waitStarvation` and starts
+one more fetcher on every `STARVATION_OBSERVED`, up to a ceiling. It is not
+optional: a virtual thread parked inside `complete` — pushing into a consumer
+nobody is draining — holds its fetcher's handout, and with every fetcher held
+the runner processes nothing and reports nothing. Without the supervisor that
+probe delivered 0 of 20 payloads and stayed wedged. Growth is self-limiting:
+each new fetcher's own `poll` entry restarts the core's dwell. What it does not
+buy is a thread against user code that never returns — that is the conformance
+`pool_wedge` condition, and no ceiling outruns it.
+
+| Knob | Meaning | Default |
+| --- | --- | --- |
+| `FLEZHA_WORKER_POOL_SIZE` | Fetchers started at boot | 2 |
+| `FLEZHA_WORKER_POOL_MAX` | Ceiling the supervisor may grow to | 10× the count, never below it |
+
+Every growth is logged at `INFO`; the first refusal at the ceiling is logged at
+`WARN` and latched, so a sustained wedge names itself once instead of once a
+second.
+
 ## Scope
 
 Every capability of the conformance vocabulary, deferred: none. The one place

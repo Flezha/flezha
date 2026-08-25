@@ -271,13 +271,21 @@ defmodule Flezha.SDK.DispatchTest do
           |> Channels.sink("out")
     end
 
-    %{op: op} = start_operative(DropOp)
+    %{op: op, counters: counters} = start_operative(DropOp)
     # Fire many quickly; capacity 1 + drop_newest → only a subset get through.
     for n <- 1..10, do: Operative.input(op, "in", "v#{n}", %{})
 
     outputs = drain_outputs([], 400)
     assert length(outputs) >= 1
     assert length(outputs) < 10
+
+    # A shed input has to be countable from OUTSIDE the runner: the counter is
+    # what the data heartbeat carries, the telemetry event is the in-node
+    # handle, and the two must agree about the same drop.
+    shed = Counters.drops_newest(counters)
+    assert shed >= 1
+    assert shed == 10 - length(outputs)
+    assert Counters.drops_oldest(counters) == 0
   end
 
   test "the undeclared default discards nothing; every input arrives" do

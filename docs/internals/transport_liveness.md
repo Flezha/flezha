@@ -71,17 +71,26 @@ branch). `StreamAcceptor` registers each per-runner data-stream server
 **BEAM counters** (`Flezha.Transport.LivenessCounters`): always-on `:atomics`-backed `:counters`, one
 array per channel (`{runner_id, name}`) and per operative, registered in a public ETS table and pruned
 of dead owners on `snapshot_all/0`. Channel slots: `io_in_received`, `send_frame_calls`, `nil_drops`,
-`flz_data_received`, `last_send_ms`, `hb_count`, `hb_dispatches`, `hb_credit_parked`, `credit_active`,
+`flz_data_received`, `last_send_ms`, `hb_count`, `hb_dispatches`, `hb_credit_parked`, `hb_blocked_parks`,
+`hb_drops_newest`, `hb_drops_oldest`, `credit_active`,
 `credit_ledger_level`, `credit_overrun_total`, `stale_writer_refused`. Operative slots: `io_in_received`,
 `forwarded`, `filtered_nil`.
 
 **Runner dispatch self-report** (all three SDKs): every `data_heartbeat` frame on a secondary stream
-carries `dispatches` (process-global payloads dispatched through the poll engine), `blocked_parks`
-(DropNothing full-mailbox episodes) and, from `flz_core`, `credit_parked`. The heartbeat thread
+carries `dispatches` (process-global payloads dispatched through the poll engine), `blocked_parks`,
+`drops_newest`, `drops_oldest` and, from `flz_core`, `credit_parked`. The heartbeat thread
 outlives a wedged dispatch pool, so without the counter a runner can look alive while processing
-nothing. The secondary `StreamChannel` mirrors `dispatches` into `hb_dispatches` and `credit_parked`
-into `hb_credit_parked` and bumps `hb_count`; the per-stream `output_stall` heartbeat check runs only
-on secondary channels — primary streams are send-only.
+nothing. The secondary `StreamChannel` mirrors each into its `hb_*` slot and bumps `hb_count`; the
+per-stream `output_stall` heartbeat check runs only on secondary channels — primary streams are
+send-only.
+
+`blocked_parks` counts a producer's **wait iterations** on a full entity mailbox, not contiguous
+episodes — the same choice `credit_parked` makes on the sender side, and for the same reason: a
+runner held in one long episode would show a frozen dispatch count beside a frozen block count,
+byte for byte the picture a wedged runner shows. That is exactly the pair `runner_pool_wedged`
+reads, so the two are only separable while the block counter keeps moving. The two drop counters
+are the only way an operator can see what a shedding operative discarded; both were written by the
+kernel and read by nothing before this.
 
 **Metric emission** (`Observability.OtpBackend.TransportSource`, ~1 Hz): driver stats per transport
 (`:driver_loop_iterations`, `:driver_loop_age_ms`, `:driver_cmd_queue_depth`, `:driver_write_buffer_bytes`,
@@ -118,7 +127,7 @@ reads as a stall. Defaults: `driver_freeze_ms` 5 000, `stall_ms` 30 000, `queue_
 | `:nif_queue_backing_up` | `cmd_queue_depth` > `queue_high` and rising, no stream's `frames_written` advancing |
 | `:socket_write_blocked` | a stream's `write_buffer_len` rising, `frames_written` advancing, last write older than `stall_ms` |
 | `:runner_not_consuming` | `frames_written` advancing, `frames_read` flat and previously > 0 (exempts send-only primaries), last read older than `stall_ms` |
-| `:runner_pool_wedged` | per runner: `send_frame_calls` and `hb_count` advancing, self-reported `hb_dispatches` > 0 and frozen |
+| `:runner_pool_wedged` | per runner: `send_frame_calls` and `hb_count` advancing, self-reported `hb_dispatches` > 0 and frozen, **and `hb_blocked_parks` flat** — a frozen dispatch count with the block counter climbing is backpressure, not a wedge |
 | `:channel_not_sending` | channel `io_in_received` advancing, `send_frame_calls` and `nil_drops` flat |
 | `:operative_not_forwarding` | operative `io_in_received` advancing, `forwarded` flat, the gap not explained by `filtered_nil` |
 

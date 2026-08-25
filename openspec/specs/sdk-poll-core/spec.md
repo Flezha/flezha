@@ -348,37 +348,46 @@ on them.
 
 ### Requirement: A DropNothing push drains the consumer inline only from a pool thread
 
-When a `DropNothing` push finds its consumer's mailbox full, the core SHALL
-serve that consumer inline on the pushing thread only while the thread is
-marked as a serving pool thread — one running an activation, or one promoting
-a due deferred wake from inside `poll` — the only producers that may be the
-lone thread able to run the consumer's round (parking there self-deadlocks a
-fully blocked pool). The host SHALL run every activation, including one it
-serves inline, inside the core's activation scope so the rule can tell the
-two apart. Any other producer — the transport reader feeding every operative
-on the runner, a host thread outside that scope — SHALL park, bounded and
-woken per pop, while the pool drains the consumer; a reader SHALL never run
-one consumer's round while every other operative on its connection waits on
-it.
+When a `DropNothing`-policy push finds its consumer's mailbox full, the core SHALL serve that consumer inline on the pushing thread only while the thread is marked as a serving pool thread — one running an activation — the only producer that may be the lone thread able to run the consumer's round (parking there self-deadlocks a fully blocked pool). The host SHALL run every activation, including one it serves inline, inside the core's activation scope so the rule can tell the two apart. Any other producer — the transport reader feeding every operative on the runner, a host thread outside that scope — SHALL park, bounded and woken per pop, while the pool drains the consumer; a reader SHALL never run one consumer's round while every other operative on its connection waits on it.
+
+A poller promoting a due deferred wake SHALL NOT be one of those producers: it neither serves inline nor parks, per "A due wake that cannot be delivered stays on the wake list".
 
 #### Scenario: A pool worker blocked on a full consumer serves it inline
 
-- **WHEN** an activation's emit pushes under `DropNothing` into a consumer
-  whose mailbox is full and whose round no worker is serving
-- **THEN** the pushing worker assembles and runs the consumer's round itself,
-  then completes its push — the one-worker pool makes progress
-
-#### Scenario: A due firing into a saturated consumer drains it
-
-- **WHEN** a processing-time timer comes due for an entity whose mailbox is
-  full and whose round no worker is serving
-- **THEN** the poller promoting it runs the entity's round inline and the
-  firing lands, instead of the poller parking on a mailbox nobody else drains
+- **WHEN** an activation's emit pushes under `DropNothing` into a consumer whose mailbox is full and whose round no worker is serving
+- **THEN** the pushing worker assembles and runs the consumer's round itself, then completes its push — the one-worker pool makes progress
 
 #### Scenario: A transport reader parks instead of serving
 
-- **WHEN** the runner's stream reader pushes an entry-channel frame under
-  `DropNothing` into a full mailbox
-- **THEN** the reader parks until a pop frees a slot and a pool worker drains
-  the consumer; the reader runs no procedure code
+- **WHEN** the runner's stream reader pushes an entry-channel frame under `DropNothing` into a full mailbox
+- **THEN** the reader parks until a pop frees a slot and a pool worker drains the consumer; the reader runs no procedure code
+
+### Requirement: A due wake that cannot be delivered stays on the wake list
+
+When servicing the deferred-wake list, the core SHALL NOT hold a thread waiting for room in the target's mailbox. If the wake's item cannot be admitted, the entry SHALL be re-recorded at a later due time and the servicing pass SHALL continue; the wake list itself is the holdback. No poller SHALL park inside `poll` waiting on a mailbox, because a poller inside `poll` is counted by `pollers_inside` and therefore reads to the starvation wait as a thread about to take work — so a parked poller both stops the runner and hides that it has.
+
+A re-recorded wake SHALL be re-recorded at a strictly later due time than the pass that observed it, so servicing does not spin, and the existing nearest-due wait shortening SHALL govern the retry cadence.
+
+A timer firing that is deferred this way SHALL NOT be dropped, and the ordering between a deferred firing and a later input for the same entity SHALL be no weaker than it is when both race for mailbox room today.
+
+#### Scenario: A due timer into a full mailbox does not wedge a single-poller host
+
+- **WHEN** a host runs exactly one poll thread, installs no inline-serve hook, and a processing-time timer comes due for an entity whose mailbox is full
+- **THEN** the poller SHALL return from the pass without parking, the entity's queued round SHALL be served, and the firing SHALL land on a later pass
+
+#### Scenario: The undeliverable wake is visible as starvation
+
+- **WHEN** a due wake cannot be admitted and no thread is inside `poll`
+- **THEN** the starvation wait SHALL report starvation with no dwell, because the still-due entry proves no pass has serviced it
+
+### Requirement: A poll host SHALL bring a starvation supervisor
+
+Every host that drives `poll` SHALL also park a thread in `wait_starvation` and SHALL start one additional worker on `Starvation::Observed`, up to a declared ceiling. A host that ships a fixed worker count with no supervisor SHALL be treated as a defect of that SDK, not as a configuration choice: the supervisor is what buys a thread against a consumer that nobody is draining, and without it a host whose workers are all held wedges with no recovery and no report.
+
+The supervisor SHALL NOT be claimed to cover the conformance `pool_wedge` condition, which is user code that never returns and which no ceiling can outrun.
+
+#### Scenario: Java grows its fetcher pool under starvation
+
+- **WHEN** work is queued, no Java fetcher is inside `poll`, and the dwell elapses
+- **THEN** the Java host SHALL start one more fetcher, up to its configured ceiling, and SHALL log the growth
 

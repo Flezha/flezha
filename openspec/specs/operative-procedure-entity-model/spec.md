@@ -944,3 +944,47 @@ This requirement is in addition to and does not modify the "Sticky per-entity or
 - **WHEN** Producers A, B, C park in that order on the same full consumer mailbox
 - **THEN** the consumer's first three pops SHALL unpark A, B, C respectively (best-effort under MPMC contention; the *intent* is FIFO order via a `VecDeque<Unparker>` implementation)
 
+### Requirement: A dropping policy is refused where its loss cannot be accounted for
+
+A channel SHALL NOT declare `DropNewest` or `DropOldest` when the loss it permits would break a durability contract the same class declares. Declaration SHALL fail, naming the channel and the conflicting declaration, in the same validation that already refuses `effectively_once` without `persistent`:
+
+- A class declaring `effectively_once` SHALL NOT carry a dropping policy on any channel. Under the tier a dropped input's offset is skipped by a later item's watermark advance, so the input is permanently lost while the tier reports effectively-once. This holds for both dropping policies equally.
+- A channel whose consumer declares a correction window SHALL NOT carry a dropping policy, because a correction's answer must not depend on arrival timing.
+
+Independently of the declared policy, a **replay-slice member SHALL always take the `DropNothing` path**. Dropping a slice member leaves the slice's open marker set and its depth short, so the slice closes on the end-of-slice broadcast and folds whatever arrived — the correction then computes a wrong answer with no error surfaced anywhere.
+
+A dropping policy remains fully available to a class that declares neither the tier nor a correction window. Shedding is a legitimate intent; promising effectively-once *and* shedding is a contradiction, and it is refused where the author can still see it.
+
+#### Scenario: The tier refuses a shedding channel at declare time
+
+- **WHEN** a class declares `effectively_once` and any channel declares `.on_full(DropNewest)`
+- **THEN** registration SHALL fail with an error naming the channel and both declarations, and no operative process SHALL be created
+
+#### Scenario: A replay slice is never shed
+
+- **WHEN** an entry channel declares `.on_full(DropNewest)`, a correction replay delivers a slice, and the consumer's mailbox is full mid-slice
+- **THEN** the member SHALL be delivered once room appears; `drops_newest_total` SHALL NOT change and the slice SHALL close with every member present
+
+### Requirement: Overflow outcomes are observable outside the process
+
+Every overflow outcome SHALL reach an operator without attaching a debugger. `pushes_blocked_total`, `drops_newest_total` and `drops_oldest_total` SHALL be aggregated process-wide and carried in the data-channel heartbeat's metadata — as `blocked_parks`, `drops_newest` and `drops_oldest` — beside `dispatches` and `credit_parked`, and the controller SHALL surface them on the same path it surfaces those.
+
+The block counter SHALL advance on **every wait iteration**, not once per contiguous full period; `blocked_parks` names that one counter and there is no second, per-episode one. A counter that advances once per episode leaves a runner in one long episode showing a frozen dispatch count and a frozen block count — byte-for-byte the picture a wedged runner shows — which is the distinction the sender-side credit window already gets right by advancing per iteration.
+
+A `DropOldest` eviction that admits its item SHALL increment `pushes_total`, because it is a successful enqueue by that counter's own definition, and SHALL report the evicted item's identity, which the mailbox's force-push already returns to the caller.
+
+#### Scenario: A parked runner is distinguishable from a wedged one
+
+- **WHEN** a runner's dispatch count stops advancing while producers are held on full mailboxes
+- **THEN** the heartbeat's block counter SHALL keep advancing, and the controller's stall classifier SHALL read that as backpressure rather than as a wedge
+
+#### Scenario: A shed input is countable from outside
+
+- **WHEN** an operative declares a dropping policy and sheds inputs under saturation
+- **THEN** the drop count SHALL appear in the heartbeat metadata and SHALL be readable through the controller's counter surface
+
+#### Scenario: DropOldest's admitted count is correct
+
+- **WHEN** a mailbox at capacity accepts N items under `DropOldest`, evicting N heads
+- **THEN** `pushes_total` SHALL have increased by N and `drops_oldest_total` SHALL have increased by N
+

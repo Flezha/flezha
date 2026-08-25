@@ -150,6 +150,47 @@ class BoundedMailboxTopologyTest {
         }
     }
 
+    /**
+     * Promising effectively-once and asking to shed is a contradiction, not a
+     * trade-off: a dropped input's offset is still advanced past by the tier's
+     * watermark, so the loss is permanent under a contract that says nothing
+     * is lost. Refused at declare time, where the author can still see it.
+     */
+    @Test
+    @DisplayName("a dropping policy under effectivelyOnce() is refused, naming the channel")
+    void droppingPolicyUnderTheTierIsRefused() {
+        assertThatThrownBy(() -> StreamOperativeTopologyBuilder.build(new TierShedsStreamOperative()))
+                .isInstanceOf(StreamOperativeConfigurationException.class)
+                .hasMessageContaining("input")
+                .hasMessageContaining("DROP_NEWEST")
+                .hasMessageContaining("effectivelyOnce()");
+    }
+
+    @Test
+    @DisplayName("shedding stays available to a class that declares neither the tier nor a correction")
+    void droppingPolicyOffTheTierStillBuilds() {
+        StreamOperativeTopology topology = StreamOperativeTopologyBuilder.build(new EntryDropNewestStreamOperative());
+        assertThat(topology.channels().get(0).overflowPolicy()).isEqualTo(OverflowPolicy.DROP_NEWEST);
+    }
+
+    public static final class TierShedsStreamOperative implements StreamOperative {
+        @Override
+        public String factoryId() {
+            return "tier_sheds";
+        }
+
+        @Override
+        public void channels(ChannelBuilder c) {
+            c.effectivelyOnce();
+            c.input(String.class, "input")
+                    .onFull(OverflowPolicy.DROP_NEWEST)
+                    .into(A.class)
+                    .named("out")
+                    .keyed()
+                    .sink("kafka");
+        }
+    }
+
     public static final class EntryDropNewestStreamOperative implements StreamOperative {
         @Override
         public String factoryId() {
