@@ -25,8 +25,8 @@ config :flezha,
     # `:on_message` provider that forwards a `{:flezha_request, key, payload,
     # reply_to, ref}` envelope to the SDK-side operative via the
     # `OperativeMessage` control command. Attach at operative start with a
-    # subscription keyed on the handler name, e.g. `["on_message",
-    # {"name": "fetch_init_state"}]`.
+    # subscription keyed on the handler key, e.g. `["on_message",
+    # {"key": "fetch_init_state"}]`.
     "operative_message_forward" => Flezha.Plugin.Provider.MessageForward
   },
 

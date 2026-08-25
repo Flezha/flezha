@@ -105,12 +105,13 @@ defmodule Flezha.Plugin.Extension.Table do
   `subscriptions` field. Returns `{:ok, table}` or `{:error, reason}`.
   """
   @spec subscribe(t(), binary(), Plugin.t()) :: {:ok, t()} | {:error, term()}
-  def subscribe(%__MODULE__{} = table, plugin_id, %Plugin{subscriptions: subs} = plugin)
+  def subscribe(%__MODULE__{} = table, plugin_id, %Plugin{} = plugin)
       when is_binary(plugin_id) do
     with :ok <- validate_plugin_unique(table, plugin_id),
+         {:ok, plugin} <- canonicalise(table.catalog, plugin),
          :ok <- validate_subscriptions(table, plugin) do
       try do
-        {:ok, do_subscribe(table, plugin_id, plugin, subs)}
+        {:ok, do_subscribe(table, plugin_id, plugin, plugin.subscriptions)}
       catch
         :throw, {:init_provider_failed, reason} -> {:error, reason}
       end
@@ -506,6 +507,175 @@ defmodule Flezha.Plugin.Extension.Table do
     end
   end
 
+  # `position` orders a chain, and the unordered kinds have none — so they
+  # declare it refused rather than unknown, which is the answer callers read.
+  @position_refused {:refused, :position_not_applicable}
+
+  # The whole sub-option vocabulary, by dispatch kind: every name an operator
+  # may write and the type its value carries. Coercion and refusal both read
+  # it, so a new sub-option is declared in the module that validates it.
+  @sub_opt_types %{
+    fold: [position: :int, timeout_ms: :int, on_error: {:enum, ["fail", "empty"]}],
+    transform: [position: :int],
+    fanout: [position: @position_refused],
+    request: [key: :string, position: @position_refused],
+    timer: [interval_ms: :int, position: @position_refused]
+  }
+
+  # A kind absent from the table would raise at its first subscribe. Fail the
+  # build instead.
+  @undeclared_kinds Flezha.Plugin.Host.valid_kinds() -- Map.keys(@sub_opt_types)
+  if @undeclared_kinds != [] do
+    raise "@sub_opt_types declares no sub-options for #{inspect(@undeclared_kinds)}"
+  end
+
+  # What a sub-option means when the operator omits it — read by the validator
+  # and by the dispatch chain, so it is written once.
+  @sub_opt_defaults [timeout_ms: 5_000, on_error: "fail"]
+
+  defp sub_opt(sub_opts, name),
+    do: Keyword.get(sub_opts, name, Keyword.get(@sub_opt_defaults, name))
+
+  @doc """
+  Canonicalise a plugin's subscriptions against `catalog` and the declared
+  sub-option types: `{atom, keyword}` tuples whose values carry their declared
+  type.
+
+  An extension name may arrive as text or as an atom, and sub-opts as a map or
+  a keyword list — the shapes the CLI, the operative-start spec, an installed
+  package manifest and direct construction produce. Both are resolved against
+  a declaration rather than interned, so operator text never creates an atom;
+  a name that resolves to nothing is refused.
+
+  `subscribe/3` runs it, so the table stores canonical values and a provider
+  restart, an unsubscribe and a handover all observe them. A caller that writes
+  durable intent runs it first, so nothing ill-typed is ever persisted. It is
+  idempotent: canonical input is returned unchanged.
+  """
+  @spec canonicalise(map(), Plugin.t()) :: {:ok, Plugin.t()} | {:error, term()}
+  def canonicalise(catalog, %Plugin{subscriptions: subs} = plugin)
+      when is_map(catalog) and is_list(subs) do
+    subs
+    |> Enum.reduce_while({:ok, []}, fn sub, {:ok, acc} ->
+      case canonicalise_subscription(catalog, sub) do
+        {:ok, canonical} -> {:cont, {:ok, [canonical | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, %Plugin{plugin | subscriptions: Enum.reverse(acc)}}
+      err -> err
+    end
+  end
+
+  def canonicalise(catalog, %Plugin{}) when is_map(catalog),
+    do: {:error, {:invalid_subscription, :not_a_list}}
+
+  defp canonicalise_subscription(catalog, {name, sub_opts}) do
+    with {:ok, name, kind} <- resolve_extension(catalog, name),
+         {:ok, opts} <- canonicalise_sub_opts(kind, sub_opts) do
+      {:ok, {name, opts}}
+    end
+  end
+
+  defp canonicalise_subscription(_catalog, other),
+    do: {:error, {:invalid_subscription, other}}
+
+  defp resolve_extension(catalog, name) when is_atom(name) and not is_nil(name) do
+    case Map.fetch(catalog, name) do
+      {:ok, %{kind: kind}} -> {:ok, name, kind}
+      :error -> {:error, {:unknown_extension, name}}
+    end
+  end
+
+  defp resolve_extension(catalog, name) do
+    case Enum.find(catalog, fn {known, _entry} -> same_name?(known, name) end) do
+      {known, %{kind: kind}} -> {:ok, known, kind}
+      nil -> {:error, {:unknown_extension, name}}
+    end
+  end
+
+  defp canonicalise_sub_opts(kind, sub_opts) do
+    declared = Map.fetch!(@sub_opt_types, kind)
+
+    with {:ok, pairs} <- declared_order(declared, sub_opts) do
+      pairs
+      |> Enum.reduce_while({:ok, []}, fn {key, value}, {:ok, acc} ->
+        with {:ok, name, type} <- resolve_sub_opt(declared, kind, key),
+             {:ok, coerced} <- coerce_sub_opt(type, name, value) do
+          {:cont, {:ok, [{name, coerced} | acc]}}
+        else
+          {:error, _} = err -> {:halt, err}
+        end
+      end)
+      |> case do
+        {:ok, acc} -> {:ok, Enum.reverse(acc)}
+        err -> err
+      end
+    end
+  end
+
+  # A map carries no order to preserve, so it is emitted in declared order:
+  # one declaration canonicalises to one term whatever shape it arrived in.
+  # A keyword list already has one, and keeping it makes canonical input
+  # come back unchanged.
+  defp declared_order(declared, sub_opts) when is_map(sub_opts) do
+    {:ok,
+     Enum.sort_by(sub_opts, fn {key, _value} ->
+       Enum.find_index(declared, fn {name, _type} -> same_name?(name, key) end) ||
+         length(declared)
+     end)}
+  end
+
+  defp declared_order(_declared, sub_opts) when is_list(sub_opts) do
+    if Enum.all?(sub_opts, &match?({_k, _v}, &1)),
+      do: {:ok, sub_opts},
+      else: {:error, {:invalid_subscription_opts, :not_a_keyword}}
+  end
+
+  defp declared_order(_declared, _sub_opts),
+    do: {:error, {:invalid_subscription_opts, :not_a_keyword}}
+
+  defp resolve_sub_opt(declared, kind, key) do
+    case Enum.find(declared, fn {name, _type} -> same_name?(name, key) end) do
+      {name, type} -> {:ok, name, type}
+      nil -> {:error, {:unknown_subscription_opt, kind, key}}
+    end
+  end
+
+  defp same_name?(declared, key) when is_atom(key) and not is_nil(key),
+    do: declared == key
+
+  defp same_name?(declared, key) when is_binary(key), do: Atom.to_string(declared) == key
+  defp same_name?(_declared, _key), do: false
+
+  # Reuses the provider layer's parse_int/2 — the same "the CLI ships text"
+  # problem, already solved once.
+  defp coerce_sub_opt(:int, name, value) when is_integer(value) or is_binary(value) do
+    case ProviderBehaviour.parse_int(value, name) do
+      {:ok, int} -> {:ok, int}
+      {:error, _msg} -> invalid_sub_opt(name, value)
+    end
+  end
+
+  defp coerce_sub_opt(:string, _name, value) when is_binary(value), do: {:ok, value}
+
+  defp coerce_sub_opt(:string, _name, value) when is_atom(value) and not is_nil(value),
+    do: {:ok, Atom.to_string(value)}
+
+  defp coerce_sub_opt({:enum, allowed}, name, value)
+       when is_binary(value) or (is_atom(value) and not is_nil(value)) do
+    text = to_string(value)
+
+    if text in allowed, do: {:ok, text}, else: invalid_sub_opt(name, value)
+  end
+
+  defp coerce_sub_opt({:refused, reason}, _name, _value), do: {:error, reason}
+
+  defp coerce_sub_opt(_type, name, value), do: invalid_sub_opt(name, value)
+
+  defp invalid_sub_opt(name, value), do: {:error, {:invalid_subscription_opts, {name, value}}}
+
   ## Private — validation
 
   defp validate_plugin_unique(%__MODULE__{plugins: plugins}, plugin_id) do
@@ -520,7 +690,6 @@ defmodule Flezha.Plugin.Extension.Table do
     Enum.reduce_while(plugin.subscriptions, :ok, fn {name, sub_opts}, :ok ->
       with {:ok, entry} <- fetch_catalog_entry(catalog, name),
            :ok <- validate_callback(plugin.provider, name, entry.kind),
-           :ok <- validate_sub_opts(entry.kind, sub_opts),
            :ok <- validate_kind_specific(entry.kind, name, sub_opts, table, plugin) do
         {:cont, :ok}
       else
@@ -553,35 +722,17 @@ defmodule Flezha.Plugin.Extension.Table do
 
   defp callback_name(name, _kind), do: name
 
-  defp validate_sub_opts(_kind, sub_opts) when is_list(sub_opts), do: :ok
+  defp validate_kind_specific(:timer, _name, sub_opts, _table, _plugin),
+    do: validate_positive(sub_opts, :interval_ms)
 
-  defp validate_sub_opts(_kind, _other),
-    do: {:error, {:invalid_subscription_opts, :not_a_keyword}}
-
-  # `position` only makes sense for ordered kinds (:fold, :transform).
-  defp validate_kind_specific(kind, _name, sub_opts, _table, _plugin)
-       when kind in [:fanout, :timer] do
-    if Keyword.has_key?(sub_opts, :position) do
-      {:error, :position_not_applicable}
-    else
-      case kind do
-        :timer -> validate_interval(sub_opts)
-        :fanout -> :ok
-      end
-    end
-  end
+  defp validate_kind_specific(:fanout, _name, _sub_opts, _table, _plugin), do: :ok
 
   defp validate_kind_specific(:request, name, sub_opts, table, _plugin) do
-    cond do
-      Keyword.has_key?(sub_opts, :position) ->
-        {:error, :position_not_applicable}
-
-      not Keyword.has_key?(sub_opts, :key) ->
+    case Keyword.fetch(sub_opts, :key) do
+      :error ->
         {:error, {:invalid_subscription_opts, :missing_key}}
 
-      true ->
-        key = Keyword.fetch!(sub_opts, :key)
-
+      {:ok, key} ->
         case get_in(table.request_subs, [name, key]) do
           nil -> :ok
           _ -> {:error, {:key_conflict, name, key}}
@@ -590,33 +741,30 @@ defmodule Flezha.Plugin.Extension.Table do
   end
 
   defp validate_kind_specific(:fold, _name, sub_opts, _table, _plugin) do
-    with :ok <- validate_timeout(sub_opts),
-         :ok <- validate_on_error(sub_opts) do
-      :ok
+    with :ok <- validate_position(sub_opts) do
+      validate_positive(sub_opts, :timeout_ms)
     end
   end
 
-  defp validate_kind_specific(:transform, _name, _sub_opts, _table, _plugin), do: :ok
+  defp validate_kind_specific(:transform, _name, sub_opts, _table, _plugin),
+    do: validate_position(sub_opts)
 
-  defp validate_interval(sub_opts) do
-    case Keyword.get(sub_opts, :interval_ms) do
+  # Canonicalisation types `position` as an integer; only the range is left,
+  # and a negative one would still reach `insert_by_position/3`.
+  defp validate_position(sub_opts) do
+    case Keyword.get(sub_opts, :position) do
+      nil -> :ok
+      n when is_integer(n) and n >= 0 -> :ok
+      other -> {:error, {:invalid_subscription_opts, {:position, other}}}
+    end
+  end
+
+  # The bounds a type cannot express. `interval_ms` has no default, so an
+  # absent one fails the guard — which is what makes it required.
+  defp validate_positive(sub_opts, name) do
+    case sub_opt(sub_opts, name) do
       n when is_integer(n) and n > 0 -> :ok
-      other -> {:error, {:invalid_subscription_opts, {:interval_ms, other}}}
-    end
-  end
-
-  defp validate_timeout(sub_opts) do
-    case Keyword.get(sub_opts, :timeout_ms, 5_000) do
-      n when is_integer(n) and n > 0 -> :ok
-      other -> {:error, {:invalid_subscription_opts, {:timeout_ms, other}}}
-    end
-  end
-
-  defp validate_on_error(sub_opts) do
-    case Keyword.get(sub_opts, :on_error, :fail) do
-      :fail -> :ok
-      :empty -> :ok
-      other -> {:error, {:invalid_subscription_opts, {:on_error, other}}}
+      other -> {:error, {:invalid_subscription_opts, {name, other}}}
     end
   end
 
@@ -970,8 +1118,8 @@ defmodule Flezha.Plugin.Extension.Table do
   defp compile_chain(:fold, name, entries) do
     fn ctx ->
       Enum.reduce_while(entries, {:ok, ctx}, fn entry, {:ok, acc_ctx} ->
-        timeout_ms = Keyword.get(entry.sub_opts, :timeout_ms, 5_000)
-        on_error = Keyword.get(entry.sub_opts, :on_error, :fail)
+        timeout_ms = sub_opt(entry.sub_opts, :timeout_ms)
+        on_error = sub_opt(entry.sub_opts, :on_error)
 
         case invoke_fold(name, entry.provider, acc_ctx, entry.provider_opts, timeout_ms) do
           {:ok, new_ctx} ->
@@ -1085,9 +1233,9 @@ defmodule Flezha.Plugin.Extension.Table do
 
   defp merge_fold_ctx(_prev, next), do: next
 
-  defp handle_fold_error(:fail, _acc_ctx, reason), do: {:halt, {:error, reason}}
+  defp handle_fold_error("fail", _acc_ctx, reason), do: {:halt, {:error, reason}}
 
-  defp handle_fold_error(:empty, acc_ctx, reason) do
+  defp handle_fold_error("empty", acc_ctx, reason) do
     Logger.debug(fn ->
       "[Extension.Table] fold subscriber skipped on error: #{inspect(reason)}"
     end)

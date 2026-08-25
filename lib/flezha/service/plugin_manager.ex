@@ -8,8 +8,11 @@ defmodule Flezha.Service.PluginManager do
   subsequent Overwatch (re)start, controller restart, or full cluster
   cold boot.
 
-  Ordering: cspec-write-first, then runtime mutation. A successful
-  subscribe is always preceded by a durable record. Failure to write
+  Ordering: canonicalise-first, then cspec write, then runtime mutation. An
+  ill-typed or unknown subscription is refused before any durable record
+  exists, so the convergence loop is never handed intent that can never be
+  satisfied. A successful subscribe is always preceded by a durable record
+  holding canonical, typed values. Failure to write
   the cspec returns `{:error, :registry_unavailable}` without touching
   the runtime — the caller can retry. Failure of the subsequent runtime
   call returns the error directly; the durable record is still in
@@ -19,6 +22,8 @@ defmodule Flezha.Service.PluginManager do
   use GenServer
 
   alias Flezha.Plugin
+  alias Flezha.Plugin.Extension.Table
+  alias Flezha.Operative.Overwatch
   alias Flezha.Operative.PartitionGroup
   alias Flezha.Service.RegistryUpdate
   alias Flezha.Service.Identificator
@@ -30,16 +35,18 @@ defmodule Flezha.Service.PluginManager do
 
   ## Public API
 
+  # Canonicalised here, before anything reads the subscriptions and before any
+  # durable write: the declaration-only half of validation needs no live table,
+  # only the host catalog. A refusal therefore costs nothing and leaves nothing,
+  # and `has_init_subscription?/1` below matches a name the operator typed as
+  # text. What is persisted is the canonical struct.
   def enable_plugin(plugin_id, %Plugin{} = plugin) do
-    cond do
-      has_init_subscription?(plugin) ->
-        {:error, "init-state plugins must be attached at operative start"}
-
-      true ->
-        case PartitionGroup.members(plugin.namespace, plugin.operative_id) do
-          [] -> do_enable_plugin(plugin_id, plugin)
-          members -> enable_across_group(plugin_id, plugin, members)
-        end
+    with {:ok, plugin} <- Table.canonicalise(Overwatch.__extensions_catalog__(), plugin),
+         :ok <- refuse_init_subscription(plugin) do
+      case PartitionGroup.members(plugin.namespace, plugin.operative_id) do
+        [] -> do_enable_plugin(plugin_id, plugin)
+        members -> enable_across_group(plugin_id, plugin, members)
+      end
     end
   end
 
@@ -107,15 +114,11 @@ defmodule Flezha.Service.PluginManager do
     end
   end
 
-  defp has_init_subscription?(%Plugin{subscriptions: subs}) when is_list(subs) do
-    Enum.any?(subs, fn
-      {:on_operative_init, _} -> true
-      :on_operative_init -> true
-      _ -> false
-    end)
+  defp refuse_init_subscription(%Plugin{subscriptions: subs}) do
+    if Enum.any?(subs, &match?({:on_operative_init, _}, &1)),
+      do: {:error, "init-state plugins must be attached at operative start"},
+      else: :ok
   end
-
-  defp has_init_subscription?(_), do: false
 
   def disable_plugin(plugin_id) do
     case GenServer.call(__MODULE__, {:disable_plugin, plugin_id}) do

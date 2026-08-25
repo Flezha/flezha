@@ -150,6 +150,51 @@ defmodule Flezha.Service.PluginManagerTest do
     end
   end
 
+  describe "a subscription is type-checked before anything durable is written" do
+    # Fails when: an ill-typed sub-option is refused only after the cspec write,
+    # leaving declared intent for a plugin that can never subscribe — which the
+    # convergence loop then tries to heal forever.
+    test "an enable refused for an ill-typed sub-option leaves no cspec entry", %{store: store} do
+      plugin = %{
+        build_plugin("typo_interval", topic: "a")
+        | subscriptions: [{"on_interval", %{"interval_ms" => "soon"}}]
+      }
+
+      assert {:error, {:invalid_subscription_opts, {:interval_ms, "soon"}}} =
+               PluginManager.enable_plugin("typo_interval", plugin)
+
+      assert [] = read_plugins(store)
+      refute Map.has_key?(PluginManager.get_plugins(), "typo_interval")
+    end
+
+    test "an unknown extension name is refused without being interned", %{store: store} do
+      name = "on_never_enabled_#{System.unique_integer([:positive])}"
+
+      plugin = %{
+        build_plugin("typo_name", topic: "a")
+        | subscriptions: [{name, %{}}]
+      }
+
+      assert {:error, {:unknown_extension, ^name}} =
+               PluginManager.enable_plugin("typo_name", plugin)
+
+      assert [] = read_plugins(store)
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
+
+    test "what is persisted holds the coerced value, not the text", %{store: store} do
+      plugin = %{
+        build_plugin("typed_interval", topic: "a")
+        | subscriptions: [{"on_interval", %{"interval_ms" => "5000"}}]
+      }
+
+      assert {:ok, "plugin enabled"} = PluginManager.enable_plugin("typed_interval", plugin)
+
+      assert [{"typed_interval", %Plugin{subscriptions: subs}}] = read_plugins(store)
+      assert subs == [{:on_interval, [interval_ms: 5_000]}]
+    end
+  end
+
   describe "disable_plugin/1 cspec persistence" do
     test "removes the plugin from the cspec on success", %{store: store} do
       plugin = build_plugin("dis_a", topic: "a")

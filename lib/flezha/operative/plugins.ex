@@ -253,8 +253,10 @@ defmodule Flezha.Operative.Plugins do
 
   @doc """
   Deliver an inbound `:flezha_request` to the `:on_message` handler chain.
+  The handler key is passed through as it arrives: it is matched against the
+  subscription's `key` sub-option, which is a string.
   """
-  @spec handle_request(Overwatch.t(), term(), binary(), pid(), reference()) :: :ok
+  @spec handle_request(Overwatch.t(), binary(), binary(), pid(), reference()) :: :ok
   def handle_request(%Overwatch{} = state, handler_key, payload, reply_to, ref) do
     run_chain(state, :on_message, %{
       key: handler_key,

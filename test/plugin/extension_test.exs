@@ -36,6 +36,13 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
     def on_operative_init(_ctx, _opts), do: {:error, :boom}
   end
 
+  defmodule TimerPing do
+    def on_interval(%Ctx.Tick{} = ctx, opts) do
+      send(Map.fetch!(opts, :pid), {:tick, ctx.operative_id})
+      :ok
+    end
+  end
+
   defmodule TransformUpcase do
     def on_input(%Ctx.IO{message: m} = ctx, _opts),
       do: {:ok, %Ctx.IO{ctx | message: String.upcase(m)}}
@@ -278,7 +285,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
       ref = make_ref()
 
       ctx = %Ctx.Msg{
-        key: :nope,
+        key: "nope",
         payload: <<>>,
         reply_to: self(),
         ref: ref,
@@ -287,7 +294,7 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
       }
 
       assert :ok = Extension.run(table, :on_message, ctx)
-      assert_receive {:flezha_response, ^ref, {:error, {:unknown_key, :on_message, :nope}}}, 200
+      assert_receive {:flezha_response, ^ref, {:error, {:unknown_key, :on_message, "nope"}}}, 200
     end
 
     test "keyed dispatch invokes subscriber" do
@@ -298,13 +305,13 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
           id: "e",
           provider: MsgEcho,
           opts: %{},
-          subscriptions: [{:on_message, [key: :echo]}]
+          subscriptions: [{:on_message, [key: "echo"]}]
         })
 
       ref = make_ref()
 
       ctx = %Ctx.Msg{
-        key: :echo,
+        key: "echo",
         payload: "hi",
         reply_to: self(),
         ref: ref,
@@ -314,6 +321,133 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
 
       assert :ok = Extension.run(table, :on_message, ctx)
       assert_receive {:flezha_response, ^ref, {:ok, "echo:hi"}}, 500
+    end
+  end
+
+  describe "subscription canonicalisation" do
+    test "every sub-option coerces from the text an operator types" do
+      assert {:ok, %Plugin{subscriptions: subs}} =
+               Table.canonicalise(@catalog, %Plugin{
+                 id: "c",
+                 provider: MsgEcho,
+                 subscriptions: [
+                   {"on_interval", %{"interval_ms" => "5000"}},
+                   {"on_operative_init",
+                    %{"position" => "1", "timeout_ms" => "1000", "on_error" => "empty"}},
+                   {"on_input", %{"position" => "0"}},
+                   {"on_message", %{"key" => "orders"}}
+                 ]
+               })
+
+      assert subs == [
+               {:on_interval, [interval_ms: 5_000]},
+               {:on_operative_init, [position: 1, timeout_ms: 1_000, on_error: "empty"]},
+               {:on_input, [position: 0]},
+               {:on_message, [key: "orders"]}
+             ]
+    end
+
+    test "canonical input is returned unchanged" do
+      canonical = [
+        {:on_interval, [interval_ms: 5_000]},
+        {:on_operative_init, [position: 1, timeout_ms: 1_000, on_error: "fail"]},
+        {:on_message, [key: "orders"]},
+        {:on_snapshot, []}
+      ]
+
+      plugin = %Plugin{id: "c", provider: MsgEcho, subscriptions: canonical}
+
+      assert {:ok, ^plugin} = Table.canonicalise(@catalog, plugin)
+    end
+
+    test "a value that cannot be coerced is refused naming the sub-option" do
+      for {name, opts, expected} <- [
+            {"on_interval", %{"interval_ms" => "soon"}, {:interval_ms, "soon"}},
+            {"on_operative_init", %{"timeout_ms" => :bad}, {:timeout_ms, :bad}},
+            {"on_operative_init", %{"on_error" => "shrug"}, {:on_error, "shrug"}},
+            {"on_message", %{"key" => 7}, {:key, 7}}
+          ] do
+        assert {:error, {:invalid_subscription_opts, ^expected}} =
+                 Table.canonicalise(@catalog, %Plugin{
+                   id: "c",
+                   provider: MsgEcho,
+                   subscriptions: [{name, opts}]
+                 })
+      end
+    end
+
+    test "a sub-option the kind does not declare is refused" do
+      assert {:error, {:unknown_subscription_opt, :timer, "interval"}} =
+               Table.canonicalise(@catalog, %Plugin{
+                 id: "c",
+                 provider: MsgEcho,
+                 subscriptions: [{"on_interval", %{"interval" => "5000"}}]
+               })
+    end
+
+    test "an unknown extension name is refused without being interned" do
+      name = "on_never_declared_#{System.unique_integer([:positive])}"
+
+      assert {:error, {:unknown_extension, ^name}} =
+               Table.canonicalise(@catalog, %Plugin{
+                 id: "c",
+                 provider: MsgEcho,
+                 subscriptions: [{name, %{}}]
+               })
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(name) end
+    end
+
+    test "position: \"0\" is an integer on both ordered kinds, and a bad one never raises" do
+      table = Table.new(@catalog)
+
+      {:ok, table} =
+        Table.subscribe(table, "f", %Plugin{
+          id: "f",
+          provider: FoldA,
+          subscriptions: [{"on_operative_init", %{"position" => "0"}}]
+        })
+
+      {:ok, table} =
+        Table.subscribe(table, "t", %Plugin{
+          id: "t",
+          provider: TransformUpcase,
+          subscriptions: [{"on_input", %{"position" => "0"}}]
+        })
+
+      assert [%{position: 0}] = Map.fetch!(table.subs, :on_operative_init)
+      assert [%{position: 0}] = Map.fetch!(table.subs, :on_input)
+
+      for {provider, name} <- [{FoldA, "on_operative_init"}, {TransformUpcase, "on_input"}] do
+        assert {:error, {:invalid_subscription_opts, {:position, "first"}}} =
+                 Table.subscribe(table, "bad", %Plugin{
+                   id: "bad",
+                   provider: provider,
+                   subscriptions: [{name, %{"position" => "first"}}]
+                 })
+
+        assert {:error, {:invalid_subscription_opts, {:position, -1}}} =
+                 Table.subscribe(table, "bad", %Plugin{
+                   id: "bad",
+                   provider: provider,
+                   subscriptions: [{name, %{"position" => "-1"}}]
+                 })
+      end
+    end
+
+    test "on_error declared as text drives the empty-on-error fold behaviour" do
+      table = Table.new(@catalog)
+
+      {:ok, table} =
+        Table.subscribe(table, "e", %Plugin{
+          id: "e",
+          provider: FoldErr,
+          subscriptions: [{"on_operative_init", %{"on_error" => "empty"}}]
+        })
+
+      ctx = %Ctx.Init{operative_id: "p", namespace: :n, factory_id: "f", accumulated: %{}}
+
+      assert {:ok, %Ctx.Init{}} = Extension.run(table, :on_operative_init, ctx)
     end
   end
 
@@ -340,16 +474,22 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
                })
     end
 
-    test "position on fanout rejected" do
+    test "position on every unordered kind rejected" do
       table = Table.new(@catalog)
 
-      assert {:error, :position_not_applicable} =
-               Table.subscribe(table, "x", %Plugin{
-                 id: "x",
-                 provider: FanoutNotify,
-                 opts: %{pid: self()},
-                 subscriptions: [{:on_snapshot, [position: 0]}]
-               })
+      for {name, provider, opts} <- [
+            {:on_snapshot, FanoutNotify, [position: 0]},
+            {:on_message, MsgEcho, [key: "k", position: 0]},
+            {:on_interval, TimerPing, [interval_ms: 10, position: 0]}
+          ] do
+        assert {:error, :position_not_applicable} =
+                 Table.subscribe(table, "x", %Plugin{
+                   id: "x",
+                   provider: provider,
+                   opts: %{pid: self()},
+                   subscriptions: [{name, opts}]
+                 })
+      end
     end
 
     test "key conflict on :request rejected" do
@@ -359,14 +499,14 @@ defmodule FlezhaTest.Plugin.ExtensionTest do
         Table.subscribe(table, "a", %Plugin{
           id: "a",
           provider: MsgEcho,
-          subscriptions: [{:on_message, [key: :k]}]
+          subscriptions: [{:on_message, [key: "k"]}]
         })
 
-      assert {:error, {:key_conflict, :on_message, :k}} =
+      assert {:error, {:key_conflict, :on_message, "k"}} =
                Table.subscribe(table, "b", %Plugin{
                  id: "b",
                  provider: MsgEcho,
-                 subscriptions: [{:on_message, [key: :k]}]
+                 subscriptions: [{:on_message, [key: "k"]}]
                })
     end
 

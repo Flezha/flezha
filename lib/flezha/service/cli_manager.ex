@@ -470,10 +470,12 @@ defmodule Flezha.Service.CliManager do
     end
   end
 
-  # Build subscriptions from the legacy `--trigger=on_input` shape (single
-  # trigger) OR the new `--extension=on_input` repeatable shape. The legacy
-  # trigger values `:proactive` and `:interval` both map onto `:on_interval`.
-  defp extract_subscriptions(plugin_flags, opts) do
+  @doc """
+  Build subscriptions from the legacy `--trigger=on_input` shape (single
+  trigger) OR the `--extension=on_input` repeatable shape. The legacy trigger
+  values `proactive` and `interval` both map onto `:on_interval`.
+  """
+  def extract_subscriptions(plugin_flags, opts) do
     extensions =
       plugin_flags
       |> Map.get("extensions")
@@ -485,8 +487,10 @@ defmodule Flezha.Service.CliManager do
         else: extensions
 
     if extensions != [] do
+      # Raw text, both halves: `Extension.Table.canonicalise/2` resolves the
+      # name and types every value against the declaration for its kind.
       Enum.map(extensions, fn e ->
-        {String.to_atom(Map.get(e, "name")), atomize_keyword(Map.get(e, "opts", %{}))}
+        {Map.get(e, "name"), Map.get(e, "opts", %{})}
       end)
     else
       trigger = Map.get(opts, "trigger") || Map.get(plugin_flags, "trigger")
@@ -511,12 +515,6 @@ defmodule Flezha.Service.CliManager do
   def trigger_to_subscription("interval"), do: [{:on_interval, [interval_ms: 5_000]}]
   def trigger_to_subscription("proactive"), do: [{:on_interval, [interval_ms: 5_000]}]
   def trigger_to_subscription(_), do: [{:on_input, []}]
-
-  defp atomize_keyword(map) when is_map(map) do
-    Enum.map(map, fn {k, v} -> {(is_binary(k) && String.to_atom(k)) || k, v} end)
-  end
-
-  defp atomize_keyword(_), do: []
 
   defp listen_loop(plugin_id) do
     receive do

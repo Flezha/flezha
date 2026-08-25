@@ -33,7 +33,7 @@ PluginManager.enable_plugin(
     operative_id: "orders-aggregator",
     provider: MessageForward,
     opts: %{},
-    subscriptions: [{:on_message, [key: :fetch_init_state]}]
+    subscriptions: [{:on_message, [key: "fetch_init_state"]}]
   )
 )
 ```
@@ -49,6 +49,11 @@ flz operative start orders-aggregator order_aggregator --plugins \
 | `key` missing | `{:error, {:invalid_subscription_opts, :missing_key}}` |
 | `key` already registered on that operative | `{:error, {:key_conflict, :on_message, key}}`; the existing handler is left untouched |
 | `position` given | `{:error, :position_not_applicable}` — a request has one subscriber, not a chain |
+| any other sub-option | `{:error, {:unknown_subscription_opt, :request, name}}` |
+
+`key` is a **string** — in the subscription and in the request envelope alike,
+so an operator-chosen key is never interned as an atom. It may be written as an
+atom at construction time; the table stores the string.
 
 Conflicts surface at enable time, not at dispatch time. When `operative_id`
 names a partition group, `enable_plugin/2` fans out once per member, injecting

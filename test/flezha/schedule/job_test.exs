@@ -182,7 +182,9 @@ defmodule Flezha.Schedule.JobTest do
       assert plugin.operative_id == "job@2026-07-27T08:01:00Z"
       assert plugin.namespace == "default"
       assert plugin.provider == Flezha.Plugin.Provider.Kafka.Producer
-      assert plugin.subscriptions == [{:on_output, []}]
+      # The decoded form is the boundary shape; `Extension.Table.canonicalise/2`
+      # resolves the name against the host catalog at subscribe time.
+      assert plugin.subscriptions == [{"on_output", []}]
       assert plugin.opts == %{topic: "ai.reports.v1"}
     end
 

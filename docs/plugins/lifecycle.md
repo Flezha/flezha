@@ -58,6 +58,35 @@ stayed up 60 s, so a provider that fails fast keeps backing off. A provider with
 without returns to `:running` directly. `activate/1` therefore runs on every restart and
 every bind.
 
+## Subscription sub-options
+
+`opts` is declared per dispatch kind in `Flezha.Plugin.Extension.Table`, which is
+the sole authority on which sub-options exist and what type each carries:
+
+| Kind | Sub-options |
+| --- | --- |
+| `:fold` | `position` (integer), `timeout_ms` (integer), `on_error` (`"fail"` or `"empty"`) |
+| `:transform` | `position` (integer) |
+| `:request` | `key` (string) |
+| `:timer` | `interval_ms` (integer) |
+| `:fanout` | — |
+
+`Extension.Table.canonicalise/2` types the whole declaration before it is
+validated, so the same subscription can be written from Elixir, from
+`--extension=NAME --NAME.key=value`, from a `--plugins` spec or from an
+installed package manifest and mean the same thing: an extension name may be
+text or an atom and `opts` a map or a keyword list, and every value is coerced
+to its declared type. What the table stores — and what `flz plugin enable`
+persists as declared intent — is the canonical `{atom, keyword}` form.
+
+Nothing an operator types is interned. A name that resolves to no extension is
+`{:error, {:unknown_extension, name}}`, a sub-option the kind does not declare
+is `{:error, {:unknown_subscription_opt, kind, name}}` (`position` on an
+unordered kind keeps its own `{:error, :position_not_applicable}`), and a value
+that cannot be coerced is `{:error, {:invalid_subscription_opts, {name,
+value}}}`. All three are refused at declaration time, before any durable record
+of the plugin exists.
+
 ## Callbacks
 
 A subscription `{extension, opts}` requires the export `<extension>/2`
@@ -139,8 +168,11 @@ handling. Two rules:
 
 ## Enabling: claim, then subscribe
 
-`Flezha.Service.PluginManager` serialises only the id claim; the caller writes the cspec
-row and subscribes on the host, and a failed enable releases the claim. Ids whose enable is
+`Flezha.Service.PluginManager` canonicalises and type-checks the subscriptions against the
+host catalog first, so an ill-typed, undeclared or unknown one is refused before any
+durable record exists and the convergence loop is never handed intent that can never be
+satisfied. It then serialises only the id claim; the caller writes the cspec row and
+subscribes on the host, and a failed enable releases the claim. Ids whose enable is
 in flight are reported by `PluginManager.pending_ids/0` and are not healed by convergence.
 
 Re-enabling an id already registered for the **same** operative in the same namespace is a

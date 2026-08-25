@@ -96,7 +96,8 @@ is rejected with `{:error, :non_literal_ast}`.
 | `:description`, `:author` | `binary` | no | shown by `flz plugin info` |
 
 Each `:provides` entry: `:id` (binary), `:provider` (a module listed in `:modules`),
-`:subscriptions` (non-empty list of `{extension :: atom, opts :: keyword}`), `:scope`
+`:subscriptions` (non-empty list of `{extension :: atom, opts :: keyword}`, type-checked
+against the declaration for that extension's kind when the plugin is subscribed), `:scope`
 (only `:operative`), and optional `:default_opts` (a map, the provider opts at enable).
 Violations return `{:error, {:manifest_invalid, reason}}` naming the first one.
 

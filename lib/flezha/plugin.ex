@@ -7,10 +7,16 @@ defmodule Flezha.Plugin do
   Each entry in `subscriptions` is a `{extension_name, sub_opts}` tuple; the
   provider module MUST export a callback for each subscribed extension kind
   (e.g. `on_input/2`, `on_message/2`, `on_operative_init/2`, ...).
+
+  At the boundary the name may be text or an atom and the opts a map or a
+  keyword list — the shapes the CLI, the operative-start spec, an installed
+  package manifest and direct construction produce.
+  `Flezha.Plugin.Extension.Table.canonicalise/2` reduces all of them to
+  `{atom, keyword}` with typed values, which is what every later reader sees.
   """
 
-  @type extension_name :: atom()
-  @type sub_opts :: keyword()
+  @type extension_name :: atom() | binary()
+  @type sub_opts :: keyword() | map()
   @type subscription :: {extension_name(), sub_opts()}
 
   @type t() :: %__MODULE__{

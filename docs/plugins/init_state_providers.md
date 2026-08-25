@@ -37,7 +37,7 @@ operative = %Builder{
         id: "defaults",
         provider: MyApp.DefaultOverlay,
         opts: %{defaults: %{"retries" => 0}},
-        subscriptions: [{:on_operative_init, [on_error: :empty]}]
+        subscriptions: [{:on_operative_init, [on_error: "empty"]}]
       )
     ]
   ]
@@ -45,7 +45,8 @@ operative = %Builder{
 ```
 
 The same two plugins on the CLI, where a provider is named by its registered
-provider id and subscription opts arrive as strings and are atomised:
+provider id and subscription opts arrive as strings — each is coerced to the
+type its option declares:
 
 ```bash
 flz operative start orders-42 order_aggregator --plugins '[
@@ -65,12 +66,14 @@ EXTENSIONS" when the provider exports the callback.
 | Option | Default | Meaning |
 |---|---|---|
 | `timeout_ms` | `5_000` | per-provider budget; a positive integer |
-| `on_error` | `:fail` | `:fail` aborts the start, `:empty` skips this provider |
-| `position` | append order | explicit place in the chain |
+| `on_error` | `"fail"` | `"fail"` aborts the start, `"empty"` skips this provider |
+| `position` | append order | explicit place in the chain; a non-negative integer |
 
-Any other value fails the subscribe — and so the start — with
-`{:invalid_subscription_opts, {:timeout_ms, value}}` or
-`{:invalid_subscription_opts, {:on_error, value}}`.
+Each option is coerced to its declared type, so `"2000"` and `2000` mean the
+same thing from every entry point. A value that cannot be coerced fails the
+subscribe — and so the start — with `{:invalid_subscription_opts, {option,
+value}}`, and an option `:fold` does not declare fails with
+`{:unknown_subscription_opt, :fold, name}`.
 
 ## Provider callback
 
@@ -126,8 +129,8 @@ task exit does:
 
 | `on_error` | Effect |
 |---|---|
-| `:fail` (default) | the chain halts with `{:error, reason}` and the start fails — `OperativeManager.start_operative/3` returns `{:error, %{reason: reason, …}}` and the SDK never receives `AddOperative` |
-| `:empty` | logged at debug; the accumulator passes through unchanged to the next provider |
+| `"fail"` (default) | the chain halts with `{:error, reason}` and the start fails — `OperativeManager.start_operative/3` returns `{:error, %{reason: reason, …}}` and the SDK never receives `AddOperative` |
+| `"empty"` | logged at debug; the accumulator passes through unchanged to the next provider |
 
 A provider that exceeds `timeout_ms` is killed (`Task.shutdown/2`,
 `:brutal_kill`) and reported as `:timeout`; an exception is captured as

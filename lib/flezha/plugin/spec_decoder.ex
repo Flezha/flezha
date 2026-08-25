@@ -146,23 +146,28 @@ defmodule Flezha.Plugin.SpecDecoder do
   defp build_subscriptions([]), do: {:error, {:invalid_subscription, :empty}}
   defp build_subscriptions(_), do: {:error, {:invalid_subscription, :not_a_list}}
 
+  # Name and opts pass through as the JSON carried them.
+  # `Extension.Table.canonicalise/2` resolves the name against the host catalog
+  # and types every value against the declaration for its kind — the wire format
+  # loses those types, and guessing them here is what made the two entry points
+  # disagree.
   defp build_subscription([name, opts]) when is_binary(name) and is_map(opts) do
-    {:ok, {String.to_atom(name), atomize_sub_opts(opts)}}
+    {:ok, {name, opts}}
   end
 
   defp build_subscription([name]) when is_binary(name) do
-    {:ok, {String.to_atom(name), []}}
+    {:ok, {name, []}}
   end
 
   defp build_subscription(name) when is_binary(name) do
-    {:ok, {String.to_atom(name), []}}
+    {:ok, {name, []}}
   end
 
   defp build_subscription(%{"name" => name} = sub) when is_binary(name) do
     opts = Map.get(sub, "opts", %{})
 
     if is_map(opts) do
-      {:ok, {String.to_atom(name), atomize_sub_opts(opts)}}
+      {:ok, {name, opts}}
     else
       {:error, {:invalid_subscription, {:opts_not_a_map, name}}}
     end
@@ -170,20 +175,4 @@ defmodule Flezha.Plugin.SpecDecoder do
 
   defp build_subscription(other),
     do: {:error, {:invalid_subscription, {:unrecognised_shape, other}}}
-
-  # Subscription opts carry both atom-keyed keys and atom-valued flags
-  # (e.g. `on_error: :empty`). The JSON wire format loses both — keys and
-  # values arrive as strings. Atomise both so the downstream
-  # `Table.validate_on_error/1` sees the shape it expects.
-  defp atomize_sub_opts(map) when is_map(map) do
-    Enum.map(map, fn {k, v} ->
-      {atomize_binary(k), atomize_sub_opt_value(v)}
-    end)
-  end
-
-  defp atomize_binary(s) when is_binary(s), do: String.to_atom(s)
-  defp atomize_binary(other), do: other
-
-  defp atomize_sub_opt_value(v) when is_binary(v), do: String.to_atom(v)
-  defp atomize_sub_opt_value(v), do: v
 end

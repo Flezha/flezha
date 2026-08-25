@@ -72,23 +72,23 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
 
   test "valid key routes to plugin and replies {:ok, bytes}" do
     pid = start_operative("mh_dispatch_ok")
-    :ok = enable_handler(pid, "plugin-ok", :echo, OkProvider)
+    :ok = enable_handler(pid, "plugin-ok", "echo", OkProvider)
 
-    assert {:ok, "ok:hi"} = request(pid, :echo, "hi")
+    assert {:ok, "ok:hi"} = request(pid, "echo", "hi")
   end
 
   test "unknown key replies {:error, {:unknown_key, :on_message, key}}" do
     pid = start_operative("mh_dispatch_unknown")
 
-    assert {:error, {:unknown_key, :on_message, :nope}} = request(pid, :nope, <<>>)
+    assert {:error, {:unknown_key, :on_message, "nope"}} = request(pid, "nope", <<>>)
   end
 
   test "long-running handler runs off-Overwatch and does not block IO casts" do
     pid = start_operative("mh_dispatch_nonblocking")
-    :ok = enable_handler(pid, "plugin-slow", :slow, SlowProvider)
+    :ok = enable_handler(pid, "plugin-slow", "slow", SlowProvider)
 
     ref = make_ref()
-    send(pid, {:flezha_request, :slow, "x", self(), ref})
+    send(pid, {:flezha_request, "slow", "x", self(), ref})
 
     GenServer.cast(pid, {:io_in, "probe", %{}})
     assert :pong = GenServer.call(pid, :ping, 100)
@@ -98,39 +98,39 @@ defmodule FlezhaTest.Plugin.MessageHandlerDispatchTest do
 
   test "duplicate key returns conflict and keeps existing handler" do
     pid = start_operative("mh_dispatch_conflict")
-    :ok = enable_handler(pid, "plugin-a", :shared, OkProvider)
+    :ok = enable_handler(pid, "plugin-a", "shared", OkProvider)
 
-    assert {:error, {:key_conflict, :on_message, :shared}} =
-             enable_handler(pid, "plugin-b", :shared, ErrorProvider)
+    assert {:error, {:key_conflict, :on_message, "shared"}} =
+             enable_handler(pid, "plugin-b", "shared", ErrorProvider)
 
-    assert {:ok, "ok:ping"} = request(pid, :shared, "ping")
+    assert {:ok, "ok:ping"} = request(pid, "shared", "ping")
   end
 
   test "handler that raises surfaces as {:error, {:exception, _, _}} and Overwatch stays up" do
     pid = start_operative("mh_dispatch_raise")
-    :ok = enable_handler(pid, "plugin-raise", :boom, RaisingProvider)
-    :ok = enable_handler(pid, "plugin-ok", :ok, OkProvider)
+    :ok = enable_handler(pid, "plugin-raise", "boom", RaisingProvider)
+    :ok = enable_handler(pid, "plugin-ok", "ok", OkProvider)
 
-    assert {:error, {:exception, :error, %RuntimeError{}}} = request(pid, :boom, "x")
+    assert {:error, {:exception, :error, %RuntimeError{}}} = request(pid, "boom", "x")
 
-    assert {:ok, "ok:after"} = request(pid, :ok, "after")
+    assert {:ok, "ok:after"} = request(pid, "ok", "after")
     assert :pong = GenServer.call(pid, :ping)
   end
 
   test "handler returning {:error, reason} is propagated verbatim" do
     pid = start_operative("mh_dispatch_error")
-    :ok = enable_handler(pid, "plugin-err", :err, ErrorProvider)
+    :ok = enable_handler(pid, "plugin-err", "err", ErrorProvider)
 
-    assert {:error, :deliberate} = request(pid, :err, <<>>)
+    assert {:error, :deliberate} = request(pid, "err", <<>>)
   end
 
   test "sending after the old Overwatch pid dies surfaces as caller timeout" do
     pid = start_operative("mh_dispatch_dead_pid")
-    :ok = enable_handler(pid, "plugin-ok", :echo, OkProvider)
+    :ok = enable_handler(pid, "plugin-ok", "echo", OkProvider)
 
     :ok = OperativeManager.stop_operative(@namespace, "mh_dispatch_dead_pid")
     refute Process.alive?(pid)
 
-    assert {:error, :test_timeout} = request(pid, :echo, "x", 100)
+    assert {:error, :test_timeout} = request(pid, "echo", "x", 100)
   end
 end

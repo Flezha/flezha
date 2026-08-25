@@ -20,6 +20,13 @@ The system SHALL declare every extension point exposed by a host module (e.g. `F
 
 The system SHALL represent a plugin as a single `%Flezha.Plugin{}` struct with fields `id` (string), `provider` (a module implementing the relevant extension callbacks), `opts` (a map of provider configuration), and `subscriptions` (a list of `{extension_name, subscription_opts}` tuples). A single `%Flezha.Plugin{}` MAY subscribe to multiple extension points.
 
+At the boundary, an extension name MAY be supplied as text or as an atom and
+subscription opts MAY be supplied as a map or a keyword list — the shapes the
+CLI, the operative-start spec, an installed package manifest and direct
+construction produce. `Extension.Table.subscribe/3` SHALL canonicalise all of
+them to `{atom, keyword}` with typed values; the canonical form is what the
+table stores and what every later reader observes.
+
 #### Scenario: Plugin subscribes to multiple extensions
 - **WHEN** a plugin is constructed with `subscriptions: [{:on_input, [position: 0]}, {:on_interval, [interval_ms: 5_000]}, {:on_terminate, []}]` and enabled via `Extension.Table.subscribe/3`
 - **THEN** the provider module's `on_input/2`, `on_interval/2`, and `on_terminate/2` callbacks MUST each be invoked on the corresponding dispatch event
@@ -28,6 +35,10 @@ The system SHALL represent a plugin as a single `%Flezha.Plugin{}` struct with f
 #### Scenario: Provider missing a subscribed callback
 - **WHEN** a plugin subscribes to `{:on_input, _}` but its `provider` module does not export `on_input/2`
 - **THEN** `Extension.Table.subscribe/3` MUST return `{:error, {:missing_callback, :on_input}}` and state MUST NOT be mutated
+
+#### Scenario: A boundary shape is canonicalised
+- **WHEN** a plugin is constructed with `subscriptions: [{"on_interval", %{"interval_ms" => "5000"}}]`
+- **THEN** the table MUST store `{:on_interval, [interval_ms: 5000]}`
 
 ### Requirement: Fold-kind dispatch
 
@@ -83,11 +94,15 @@ The system SHALL dispatch `:fanout`-kind extensions by invoking every subscriber
 
 ### Requirement: Request-kind dispatch with keyed uniqueness
 
-The system SHALL dispatch `:request`-kind extensions by looking up exactly one subscriber by a request key supplied in the ctx. Multiple plugins MUST NOT be permitted to subscribe to the same `:request`-kind extension with the same key on the same host. The subscriber's callback MUST be invoked in a short-lived Task supervised by a host-owned supervisor so the host's mailbox is not blocked by the callback.
+The system SHALL dispatch `:request`-kind extensions by looking up exactly one subscriber by a request key supplied in the ctx. The request key SHALL be a string, both in the subscription's `key` sub-option and in the dispatch ctx, so an operator-supplied key is never interned as an atom. Multiple plugins MUST NOT be permitted to subscribe to the same `:request`-kind extension with the same key on the same host. The subscriber's callback MUST be invoked in a short-lived Task supervised by a host-owned supervisor so the host's mailbox is not blocked by the callback.
 
 #### Scenario: Request routes to the keyed subscriber
 - **WHEN** `Extension.run/3` is called for a `:request` extension with a ctx whose key matches a registered subscriber
 - **THEN** that subscriber's callback MUST be invoked with the ctx inside a Task, and the reply MUST be sent via the ctx's reply mechanism
+
+#### Scenario: A key declared on the CLI is reachable at dispatch
+- **WHEN** a plugin is enabled with `--extension=on_message --on_message.key=orders` and a request is dispatched with key `"orders"`
+- **THEN** that subscriber's callback MUST be invoked
 
 #### Scenario: Duplicate key subscription rejected
 - **WHEN** a plugin attempts to subscribe to a `:request` extension with a key already in use by another plugin on the same host
@@ -154,11 +169,15 @@ The system SHALL place all subscriber-owned runtime state — monitor refs for s
 
 ### Requirement: Subscription ordering for ordered kinds
 
-The system SHALL honor a `position` option in subscription opts for `:fold` and `:transform` extensions. Subscribers MUST be invoked in ascending position order. When a new subscriber's position collides with an existing one, subsequent subscribers MUST be shifted upward and renumbered contiguously. `:fanout`, `:request`, and `:timer` kinds MUST reject `position` in subscription opts with `{:error, :position_not_applicable}`.
+The system SHALL honor a `position` option in subscription opts for `:fold` and `:transform` extensions. `position` SHALL be an integer once canonicalised; a value that cannot be coerced to one MUST be refused with an error naming `position`, and MUST NOT reach chain insertion. Subscribers MUST be invoked in ascending position order. When a new subscriber's position collides with an existing one, subsequent subscribers MUST be shifted upward and renumbered contiguously. `:fanout`, `:request`, and `:timer` kinds MUST reject `position` in subscription opts with `{:error, :position_not_applicable}`.
 
 #### Scenario: Position-based insertion shifts followers
 - **WHEN** three subscribers exist at positions 0, 1, 2 and a fourth is added with `position: 1`
 - **THEN** the new subscriber occupies position 1, the previous position-1 subscriber is renumbered to 2, and the previous position-2 subscriber is renumbered to 3
+
+#### Scenario: A position declared on the CLI orders the chain
+- **WHEN** a plugin is enabled with `--extension=on_output --on_output.position=0`
+- **THEN** the subscription is inserted at position 0 of that extension's chain
 
 #### Scenario: Position on fanout-kind rejected
 - **WHEN** a plugin subscribes to a `:fanout` extension with `position: 0` in subscription opts
@@ -381,6 +400,7 @@ not running is a divergence" in `convergence-self-healing`).
 - **WHEN** `Table.health/1` is queried
 - **THEN** the verdict SHALL be `:healthy`
 - **AND** the plugin SHALL NOT be reported as running to any consumer that asks which plugins are running
+
 ### Requirement: Recovered operatives SHALL NOT reuse dead or parked plugin workers
 
 When an operative is recovered/respawned, plugin re-application SHALL NOT reuse a stale
@@ -495,4 +515,81 @@ otherwise indistinguishable from a healthy one at every layer of the system.
 - **WHEN** `Table.health/1` is queried
 - **THEN** that verdict SHALL be returned
 - **AND** no fail-open telemetry SHALL be emitted
+
+### Requirement: Subscription sub-options SHALL have a declared type per extension kind
+
+The system SHALL declare, in a single per-kind table owned by
+`Flezha.Plugin.Extension.Table`, the name and type of every subscription
+sub-option each dispatch kind accepts: `:timer` accepts `interval_ms` (integer);
+`:fold` accepts `position` (integer), `timeout_ms` (integer) and `on_error` (one
+of `"fail"`, `"empty"`); `:transform` accepts `position` (integer); `:request`
+accepts `key` (string); `:fanout` accepts none. That declaration SHALL be the
+sole authority on which sub-options exist and what type each carries.
+
+`Extension.Table.subscribe/3` SHALL canonicalise a `%Flezha.Plugin{}` against
+that declaration before validating it, coercing each value to its declared type
+and rejecting a value that cannot be coerced with an error naming the
+sub-option. The canonical struct SHALL be what the table stores, so a provider
+restart, an unsubscribe and a handover all observe typed values. Canonicalising
+an already-typed subscription SHALL leave it unchanged.
+
+A sub-option not present in the declaration for that kind SHALL be refused with
+`{:error, {:unknown_subscription_opt, kind, name}}`. A kind that carries a
+sub-option other kinds accept SHALL declare it refused, naming its own error, so
+the declaration answers every name for every kind — `position` on `:fanout`,
+`:request` and `:timer` answers `{:error, :position_not_applicable}`.
+
+#### Scenario: A sub-option declared as text reaches the table as its declared type
+- **WHEN** a plugin is enabled with `--extension=on_interval --on_interval.interval_ms=5000`
+- **THEN** the plugin is subscribed with `{:on_interval, [interval_ms: 5000]}` and the enable succeeds
+
+#### Scenario: The same declaration works from the operative-start spec
+- **WHEN** an operative is started with a `--plugins` spec whose subscription opts are `{"interval_ms": "5000"}`
+- **THEN** the plugin is subscribed with `{:on_interval, [interval_ms: 5000]}`
+
+#### Scenario: An ill-typed sub-option is refused, never raised
+- **WHEN** a plugin subscribes to a `:fold` or `:transform` extension with `position: "first"`
+- **THEN** `Extension.Table.subscribe/3` MUST return an error naming `position`, MUST NOT raise, and state MUST NOT be mutated
+
+#### Scenario: An undeclared sub-option is refused
+- **WHEN** a plugin subscribes to a `:timer` extension with a sub-option the declaration does not list
+- **THEN** `Extension.Table.subscribe/3` MUST return `{:error, {:unknown_subscription_opt, :timer, name}}` and state MUST NOT be mutated
+
+#### Scenario: Canonicalisation is idempotent
+- **WHEN** a subscription whose values are already of their declared types is canonicalised
+- **THEN** the resulting subscription MUST be identical to the input
+
+### Requirement: Operator-supplied subscription text SHALL NOT create atoms
+
+The system SHALL resolve an extension name supplied by an operator against the
+host catalog as text, and a sub-option name against the declaration for that
+kind, without interning either. No sub-option value supplied by an operator
+SHALL be converted to an atom. A name that resolves to nothing SHALL be refused
+rather than created.
+
+#### Scenario: An unknown extension name is refused without being interned
+- **WHEN** a plugin is enabled naming an extension absent from the host catalog
+- **THEN** the enable MUST be refused with `{:error, {:unknown_extension, name}}` and no atom MUST be created for that name
+
+#### Scenario: A closed-set sub-option is matched as text
+- **WHEN** a plugin subscribes to a `:fold` extension with `on_error` set to `"empty"`
+- **THEN** the subscription MUST be accepted and the fold chain MUST apply the empty-on-error behaviour
+
+### Requirement: An invalid subscription SHALL be refused before any durable write
+
+The system SHALL canonicalise and type-check a plugin's subscriptions against
+the host catalog before writing declared intent for that plugin. An enable
+refused for an ill-typed, undeclared or unknown subscription SHALL leave no
+durable record, so the convergence loop is never handed intent that can never be
+satisfied. The declared intent that is written SHALL hold canonical, typed
+values.
+
+#### Scenario: A refused enable persists nothing
+- **WHEN** `flz plugin enable` is issued with a sub-option that cannot be coerced to its declared type
+- **THEN** the command MUST fail with an error naming the sub-option
+- **AND** no plugin entry MUST be written to the operative's declared plugin manifest
+
+#### Scenario: A stored declaration holds typed values
+- **WHEN** an enable succeeds with a sub-option supplied as text
+- **THEN** the durable declared intent for that plugin MUST hold the coerced value, not the text
 
