@@ -202,7 +202,11 @@ defmodule Flezha.Runner.FleetManager do
   reported as a factory that does not exist.
   """
   @spec placement_refusal(String.t(), String.t(), timeout()) ::
-          :none | :no_such_factory | {:language, byte() | nil}
+          :none
+          | :no_such_factory
+          | :ambiguous_language
+          | :no_language_declared
+          | {:language, byte()}
   def placement_refusal(namespace, factory_id, timeout \\ @lookup_timeout_ms) do
     GenServer.call(__MODULE__, {:placement_refusal, namespace, factory_id}, timeout)
   end
@@ -345,13 +349,25 @@ defmodule Flezha.Runner.FleetManager do
 
   @impl true
   def handle_call({:placement_refusal, namespace, factory_id}, _from, state) do
-    {_info, advertising} = advertising_runners(state, namespace, factory_id)
+    {info, advertising} = advertising_runners(state, namespace, factory_id)
 
+    # The message must read the same derivation as the decision, or the two
+    # drift exactly where the record is missing and the operator is told a
+    # factory is established at a language nobody ever established.
     refusal =
       cond do
-        not Enum.empty?(placeable_runners(state, namespace, factory_id)) -> :none
-        not Enum.empty?(advertising) -> {:language, ClassRegistry.sdk_lang(namespace, factory_id)}
-        true -> :no_such_factory
+        not Enum.empty?(placeable_runners(state, namespace, factory_id)) ->
+          :none
+
+        Enum.empty?(advertising) ->
+          :no_such_factory
+
+        true ->
+          case established_lang(namespace, factory_id, info, advertising) do
+            {:ok, lang} -> {:language, lang}
+            :ambiguous -> :ambiguous_language
+            :none -> :no_language_declared
+          end
       end
 
     {:reply, refusal, state}
@@ -1156,9 +1172,18 @@ defmodule Flezha.Runner.FleetManager do
   # factory id's implementations must never mix.
   defp placeable_runners(state, namespace, factory_id) do
     {info, candidates} = advertising_runners(state, namespace, factory_id)
-    established = established_lang(namespace, factory_id, info, candidates)
 
-    MapSet.filter(candidates, &(Map.get(info.langs, &1, @sdk_lang_unspecified) == established))
+    case established_lang(namespace, factory_id, info, candidates) do
+      # An entry carrying no language never makes its runner a candidate, and
+      # disagreeing advertisements with nothing recorded leave the controller
+      # unable to say which language owns the state. Neither places: durable
+      # State/Change bodies are per-SDK and are never decoded across languages.
+      reason when reason in [:none, :ambiguous] ->
+        MapSet.new()
+
+      {:ok, established} ->
+        MapSet.filter(candidates, &(Map.get(info.langs, &1, @sdk_lang_unspecified) == established))
+    end
   end
 
   # The stored entry and the ACTIVE runners advertising `factory_id` at any
@@ -1189,12 +1214,13 @@ defmodule Flezha.Runner.FleetManager do
     case ClassRegistry.sdk_lang(namespace, factory_id) do
       nil ->
         case advertised_langs(info, candidates) do
-          [lang] -> lang
-          _none_or_conflicting -> nil
+          [] -> :none
+          [lang] -> {:ok, lang}
+          _conflicting -> :ambiguous
         end
 
       recorded ->
-        recorded
+        {:ok, recorded}
     end
   end
 

@@ -295,6 +295,17 @@ defmodule Mix.Tasks.Bench do
       "Operative creation took: #{operative_creation_time / 1000} ms for #{length(operative_infos)} operatives"
     )
 
+    # Every start failed. Proceeding sends no inputs and then waits for
+    # replies that nothing can produce, so the run dies in a warmup receive
+    # and reports a timeout instead of the refusal that actually stopped it.
+    if operative_infos == [] do
+      Mix.raise(
+        "no operatives started — every start was refused. The refusal is logged above; " <>
+          "a placement refusal naming an sdk_lang means this namespace's factory state " <>
+          "disagrees with the runners you started."
+      )
+    end
+
     recv_pid = self()
 
     {plugin_setup_time, _} =
@@ -418,8 +429,10 @@ defmodule Mix.Tasks.Bench do
     end)
   end
 
+  defp await_responses(expected, _phase) when expected <= 0, do: []
+
   defp await_responses(expected, phase) do
-    for x <- 1..expected do
+    for x <- 1..expected//1 do
       receive do
         {:message_forward, _msg} ->
           :ok

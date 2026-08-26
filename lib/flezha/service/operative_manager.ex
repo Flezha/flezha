@@ -187,6 +187,17 @@ defmodule Flezha.Service.OperativeManager do
           "cannot read its state — start a runner of that language, or clear the " <>
           "factory's durable state so it re-establishes"
 
+      :no_language_declared ->
+        "factory #{factory_id} in namespace #{namespace} is advertised without an sdk_lang " <>
+          "declaration; a runner that does not declare its language is never a placement " <>
+          "candidate, because durable state is per-SDK — declare sdk_lang in the runner's " <>
+          "factory advertisement"
+
+      :ambiguous_language ->
+        "factory #{factory_id} in namespace #{namespace} is advertised at more than one " <>
+          "sdk_lang with none established; the controller cannot tell which language owns " <>
+          "its state — run one language's runners, or clear the factory's durable state"
+
       _ ->
         absent
     end
