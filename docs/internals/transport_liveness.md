@@ -72,25 +72,34 @@ branch). `StreamAcceptor` registers each per-runner data-stream server
 array per channel (`{runner_id, name}`) and per operative, registered in a public ETS table and pruned
 of dead owners on `snapshot_all/0`. Channel slots: `io_in_received`, `send_frame_calls`, `nil_drops`,
 `flz_data_received`, `last_send_ms`, `hb_count`, `hb_dispatches`, `hb_credit_parked`, `hb_blocked_parks`,
-`hb_drops_newest`, `hb_drops_oldest`, `credit_active`,
+`hb_drops_newest`, `hb_drops_oldest`, `hb_pending_pushes`, `hb_pending_push_oldest_ms`, `credit_active`,
 `credit_ledger_level`, `credit_overrun_total`, `stale_writer_refused`. Operative slots: `io_in_received`,
 `forwarded`, `filtered_nil`.
 
 **Runner dispatch self-report** (all three SDKs): every `data_heartbeat` frame on a secondary stream
 carries `dispatches` (process-global payloads dispatched through the poll engine), `blocked_parks`,
-`drops_newest`, `drops_oldest` and, from `flz_core`, `credit_parked`. The heartbeat thread
+`drops_newest`, `drops_oldest`, `pending_pushes`, `pending_push_oldest_ms` and, from `flz_core`,
+`credit_parked`. The heartbeat thread
 outlives a wedged dispatch pool, so without the counter a runner can look alive while processing
 nothing. The secondary `StreamChannel` mirrors each into its `hb_*` slot and bumps `hb_count`; the
 per-stream `output_stall` heartbeat check runs only on secondary channels — primary streams are
 send-only.
 
-`blocked_parks` counts a producer's **wait iterations** on a full entity mailbox, not contiguous
+`blocked_parks` counts every `DropNothing` admission that found the mailbox full, not contiguous
 episodes — the same choice `credit_parked` makes on the sender side, and for the same reason: a
 runner held in one long episode would show a frozen dispatch count beside a frozen block count,
 byte for byte the picture a wedged runner shows. That is exactly the pair `runner_pool_wedged`
-reads, so the two are only separable while the block counter keeps moving. The two drop counters
-are the only way an operator can see what a shedding operative discarded; both were written by the
-kernel and read by nothing before this.
+reads, so the two are only separable while the block counter keeps moving. It is the **entry
+path** that parks a thread for those iterations; a producing Entity does not park at all — its
+push is held and it is handed no further work — and each attempt on that path counts here too,
+so the counter keeps moving under either mechanism.
+
+`pending_pushes` and `pending_push_oldest_ms` are the deferred-push half of that picture:
+Entities currently holding an undelivered inter-procedure output, and the age of the oldest. A
+gated producer holds no handout, so `hb_inflight` is blind to it — under the parking mechanism it
+was at least visible as a growing handout age. The two drop counters are the only way an operator
+can see what a shedding operative discarded; all of these were written by the kernel and read by
+nothing before this.
 
 **Metric emission** (`Observability.OtpBackend.TransportSource`, ~1 Hz): driver stats per transport
 (`:driver_loop_iterations`, `:driver_loop_age_ms`, `:driver_cmd_queue_depth`, `:driver_write_buffer_bytes`,
@@ -130,6 +139,7 @@ reads as a stall. Defaults: `driver_freeze_ms` 5 000, `stall_ms` 30 000, `queue_
 | `:runner_pool_wedged` | per runner: `send_frame_calls` and `hb_count` advancing, self-reported `hb_dispatches` > 0 and frozen, **and `hb_blocked_parks` flat** — a frozen dispatch count with the block counter climbing is backpressure, not a wedge |
 | `:channel_not_sending` | channel `io_in_received` advancing, `send_frame_calls` and `nil_drops` flat |
 | `:operative_not_forwarding` | operative `io_in_received` advancing, `forwarded` flat, the gap not explained by `filtered_nil` |
+| `:producer_push_stalled` | per runner: `hb_pending_pushes` > 0 and `hb_pending_push_oldest_ms` > `entity_stall_ms` — an Entity withheld work because a consumer will not take its output. **Declares no scope**: the thing that is behind is the CONSUMER, and rebinding the producer would move the congestion rather than clear it, so this is a report and mints no op. The runner names both ends in its own `flezha::mailbox` log; the heartbeat carries counters, not identities |
 
 Each layer declares its **scope** (`StallClassifier.layer_scope/1`) beside the check that mints it, so
 every verdict has exactly one consumer. The verdict is passed into `Diff.compute/3` in-process on the

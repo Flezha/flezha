@@ -31,6 +31,12 @@ defmodule Flezha.Convergence.StallClassifier do
     * `:entity_dispatch_stalled` — the runner is completing work, but one
       activation it took has been outstanding past the threshold: a handout its
       host lost, which per-entity exclusivity would otherwise retire silently
+    * `:producer_push_stalled` — an Entity has been withheld work past the
+      threshold because a consumer will not take its output. Detection only:
+      it declares NO scope, so it mints no heal op, because the thing that is
+      behind is the CONSUMER and the remedy for a wedged producer (a rebind)
+      would move the congestion rather than clear it. The runner names both
+      ends in its own log; the heartbeat carries counters, not identities
 
   Each check has a built-in "is it actually being fed?" precondition (a count
   that must be *advancing* between ticks), so an idle operative never reads as a
@@ -70,7 +76,10 @@ defmodule Flezha.Convergence.StallClassifier do
     runner_pool_wedged: :runner,
     channel_not_sending: :connection,
     operative_not_forwarding: :operative,
-    entity_dispatch_stalled: :operative
+    entity_dispatch_stalled: :operative,
+    # Declared with no scope on purpose: a producer withheld work is evidence
+    # about the consumer, and every scope here resolves to a heal op.
+    producer_push_stalled: nil
   }
 
   @doc "The layer a verdict names, or `nil` for `:ok`."
@@ -102,6 +111,7 @@ defmodule Flezha.Convergence.StallClassifier do
       channel_not_sending(current, previous) ||
       operative_not_forwarding(current, previous) ||
       entity_dispatch_stalled(current, previous, o) ||
+      producer_push_stalled(current, previous, o) ||
       :ok
   end
 
@@ -200,6 +210,28 @@ defmodule Flezha.Convergence.StallClassifier do
     end)
   end
 
+  # A producer that cannot deliver no longer holds a thread — it holds its own
+  # round and is handed no further work — so it is invisible to every check
+  # above: it owns no handout for `entity_dispatch_stalled` to age, and the
+  # runner's dispatch counter keeps climbing on every other Entity.
+  #
+  # Ranked last, and scope-less, because it is a report rather than a fault:
+  # the Entity named here is WAITING, and the one to look at is whatever is
+  # downstream of it. Shares `entity_stall_ms` with the handout check — a push
+  # held that long is the same order of pathology.
+  defp producer_push_stalled(current, previous, o) do
+    find_runner(current, previous, fn runner_id, cur, _prev ->
+      if cur.hb_pending_pushes > 0 and cur.hb_pending_push_oldest_ms > o.entity_stall_ms do
+        {:producer_push_stalled,
+         %{
+           runner_id: runner_id,
+           pending_pushes: cur.hb_pending_pushes,
+           oldest_ms: cur.hb_pending_push_oldest_ms
+         }}
+      end
+    end)
+  end
+
   # Per-channel facts: one runner's channels each count their own.
   @summed_slots [:send_frame_calls, :hb_count]
   # Runner self-report: process-global on the runner, so every channel of one
@@ -207,7 +239,14 @@ defmodule Flezha.Convergence.StallClassifier do
   # that does not send the self-report never advances these, so they read 0 —
   # "no handout is outstanding", which never stalls, and "no producer is
   # blocked", which leaves the wedge check as it was.
-  @reported_slots [:hb_dispatches, :hb_blocked_parks, :hb_inflight, :hb_inflight_oldest_ms]
+  @reported_slots [
+    :hb_dispatches,
+    :hb_blocked_parks,
+    :hb_inflight,
+    :hb_inflight_oldest_ms,
+    :hb_pending_pushes,
+    :hb_pending_push_oldest_ms
+  ]
 
   # Aggregate per-channel counters to one row per runner. Adding a reported
   # counter is one entry above, not two lists to keep in step.

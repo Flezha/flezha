@@ -98,3 +98,10 @@ docs/dev_notes/state-evolution.md:over a bounded$
 docs/plugins/http_poll.md:would be unbounded$
 openspec/specs/controller-packaging/spec.md:available and bounded$
 test/apps/rust_runner/src/main.rs:shape with a bounded$
+
+# --- capacity / plain English: the push holdback's bound and its fallback wake
+docs/sdk/poll_core.md:a bounded fallback wake
+docs/sdk/poll_core.md:holdback is \*\*bounded\*\*
+flz_core/src/flusher.rs:Bounded — a gated Entity
+flz_core/src/poll_core.rs:the bounded fallback the entry-path
+flz_core/src/poll_core.rs:The bounded fallback for a gated producer

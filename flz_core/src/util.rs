@@ -55,6 +55,17 @@ pub fn env_parse<T: FromStr>(key: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+/// A default-OFF boolean knob: set and not spelled as a negative means on.
+/// Unset, empty or an explicit negative means off.
+pub fn env_flag(key: &str) -> bool {
+    std::env::var(key).is_ok_and(|v| {
+        !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "off" | "no"
+        )
+    })
+}
+
 /// Like [`env_parse`] for `usize`, additionally rejecting `0` (treated as
 /// "unset") so a `0` override falls back to `default`.
 pub fn env_parse_positive(key: &str, default: usize) -> usize {

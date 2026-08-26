@@ -234,7 +234,7 @@ fn c_abi_full_scenario() {
         // The channel's own entry wrapper — the same one the wire path runs.
         let wrap = entry.wrap_input.as_ref().expect("entry wrapper");
         let value = wrap(payload).expect("bytes passthrough cannot fail");
-        flz_core::routing::route_to_consumers(&instance, entry, &value, &stream, None, false);
+        flz_core::routing::route_to_consumers(&instance, entry, &value, &stream, None, false, None);
     }
 
     let (status, act) = abi_poll(ctx, 2_000);
@@ -535,6 +535,7 @@ fn c_abi_full_scenario() {
         &stream,
         Some(7),
         false,
+        None,
     );
     let (status, _) = abi_poll(ctx, 300);
     assert_eq!(
@@ -549,6 +550,7 @@ fn c_abi_full_scenario() {
         &stream,
         Some(8),
         false,
+        None,
     );
     let (status, act) = abi_poll(ctx, 2_000);
     assert_eq!(status, FLZ_POLL_ACTIVATION, "offset 8 dispatches");

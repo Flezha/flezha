@@ -346,22 +346,6 @@ on them.
 - **WHEN** the oldest-age counter grows without bound
 - **THEN** the SDK SHALL take no action of its own — no reclaim, no re-hand, no pool change
 
-### Requirement: A DropNothing push drains the consumer inline only from a pool thread
-
-When a `DropNothing`-policy push finds its consumer's mailbox full, the core SHALL serve that consumer inline on the pushing thread only while the thread is marked as a serving pool thread — one running an activation — the only producer that may be the lone thread able to run the consumer's round (parking there self-deadlocks a fully blocked pool). The host SHALL run every activation, including one it serves inline, inside the core's activation scope so the rule can tell the two apart. Any other producer — the transport reader feeding every operative on the runner, a host thread outside that scope — SHALL park, bounded and woken per pop, while the pool drains the consumer; a reader SHALL never run one consumer's round while every other operative on its connection waits on it.
-
-A poller promoting a due deferred wake SHALL NOT be one of those producers: it neither serves inline nor parks, per "A due wake that cannot be delivered stays on the wake list".
-
-#### Scenario: A pool worker blocked on a full consumer serves it inline
-
-- **WHEN** an activation's emit pushes under `DropNothing` into a consumer whose mailbox is full and whose round no worker is serving
-- **THEN** the pushing worker assembles and runs the consumer's round itself, then completes its push — the one-worker pool makes progress
-
-#### Scenario: A transport reader parks instead of serving
-
-- **WHEN** the runner's stream reader pushes an entry-channel frame under `DropNothing` into a full mailbox
-- **THEN** the reader parks until a pop frees a slot and a pool worker drains the consumer; the reader runs no procedure code
-
 ### Requirement: A due wake that cannot be delivered stays on the wake list
 
 When servicing the deferred-wake list, the core SHALL NOT hold a thread waiting for room in the target's mailbox. If the wake's item cannot be admitted, the entry SHALL be re-recorded at a later due time and the servicing pass SHALL continue; the wake list itself is the holdback. No poller SHALL park inside `poll` waiting on a mailbox, because a poller inside `poll` is counted by `pollers_inside` and therefore reads to the starvation wait as a thread about to take work — so a parked poller both stops the runner and hides that it has.
@@ -390,4 +374,104 @@ The supervisor SHALL NOT be claimed to cover the conformance `pool_wedge` condit
 
 - **WHEN** work is queued, no Java fetcher is inside `poll`, and the dwell elapses
 - **THEN** the Java host SHALL start one more fetcher, up to its configured ceiling, and SHALL log the growth
+
+### Requirement: No core call blocks a host thread
+
+A call into the core SHALL NOT park the calling host thread waiting for a
+condition only host code can satisfy. The core cannot know how many threads a
+host has, whether it can create more, or whether its "threads" pin a shared
+carrier — so a park that is safe on one host is a permanent stop on another. A
+single-threaded host is a supported shape, and it is supported by the core never
+blocking, not by the host promising to bring more threads.
+
+Backpressure SHALL therefore be expressed by **withholding work from the
+producer**, never by holding the producer's caller.
+
+The one park that remains is the transport reader's on the entry path. It is
+permitted because the reader is a core-owned thread that no host language
+observes, it has no producing entity to withhold work from, and its stalling is
+what carries ingress backpressure to the controller.
+
+#### Scenario: A single-threaded host completes an activation that cannot deliver
+
+- **WHEN** a host with exactly one thread completes an activation whose
+  inter-procedure output cannot be admitted to a full consumer mailbox
+- **THEN** the completion call SHALL return without waiting, and that thread
+  SHALL be free to poll again
+
+### Requirement: An undeliverable inter-procedure output defers and gates its producer
+
+An inter-procedure output that cannot be admitted SHALL be appended to the
+producing entity's push holdback, and that entity's handout gates SHALL stay
+held until the holdback drains. The producing
+thread SHALL return immediately.
+
+While a producing entity's holdback is non-empty, no durable record of that
+entity SHALL be shipped. An inter-procedure output has no durable copy, so the
+only thing that can re-produce it is the producer re-running its input: a
+consumed offset that became durable ahead of the delivery it derives from would
+leave the replay floor skipping that input with the consumer never fed.
+
+The holdback SHALL be re-attempted when the consumer frees room, driven by the
+same wait list the entry path's park uses and by the same release-and-rearm path
+a retry backoff uses.
+
+Ordering SHALL be preserved by two rules, which together reproduce exactly what
+a parked producing thread achieved:
+
+- An entity with a non-empty push holdback SHALL NOT be handed a new activation.
+- A push made while that entity's holdback is non-empty SHALL be appended to it
+  rather than attempted. This is the rule that stops a batch's later items
+  overtaking a deferred earlier one.
+
+The second rule SHALL be evaluated through a lock-free flag, never by inspecting the
+holdback under a lock: the check runs on every push including the overwhelming
+majority that succeed, where an atomic load is free and a mutex acquisition is
+not.
+
+The holdback SHALL be bounded. A single invocation that emits past the bound
+SHALL wait for its own earlier pushes to land — parking its calling thread as a
+last resort, and never admitting past what it already holds, so the bound cannot
+reorder the sequence it exists to bound — a case only the in-process typed
+host can reach, because an FFI host's outputs are already materialized before the
+core sees them, and the typed host is the one with a supervised worker pool
+behind it. Reaching the bound SHALL be reported.
+
+#### Scenario: Per-producer emit order survives a deferral
+
+- **WHEN** one activation emits `e1` into a full consumer and then emits `e2` on
+  the same channel
+- **THEN** the consumer SHALL receive `e1` before `e2`, and the producing entity
+  SHALL run no further activation until both have been admitted
+
+#### Scenario: A batch's later items do not overtake a deferred earlier one
+
+- **WHEN** a host reports effects for items 1..N in one completion and item 1's
+  edge output cannot be admitted
+- **THEN** items 2..N's outputs for that consumer SHALL be appended behind item
+  1's and delivered in that order
+
+#### Scenario: A gated producer is not evicted
+
+- **WHEN** a dynamic-mode entity's idle TTL elapses while its push holdback is
+  non-empty
+- **THEN** the reaper SHALL skip it and SHALL NOT delete its state
+
+#### Scenario: A gated producer is reported, and is not diagnosed as a wedge
+
+- **WHEN** an entity has held an undelivered push for longer than the reporting
+  threshold
+- **THEN** the data-channel heartbeat SHALL carry a pending-push count and the
+  age of the oldest, and the controller's classifier SHALL report the condition
+  without minting a heal op — the entity named by the count is the one WAITING,
+  and the remedy for a producer whose consumer is behind is never to rebind the
+  producer
+
+#### Scenario: The consumer that is behind is named where an identity can be carried
+
+- **WHEN** a producing entity has held pushes against one consumer past the
+  holdback bound
+- **THEN** the runner SHALL log one throttled line naming BOTH the producing
+  entity and the consumer that is behind, because the heartbeat's cross-SDK
+  contract carries counters and not identities
 

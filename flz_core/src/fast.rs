@@ -542,6 +542,13 @@ fn heartbeat_metadata() -> HashMap<String, String> {
         // state.
         ("inflight", core.outstanding_count() as u64),
         ("inflight_oldest_ms", core.outstanding_oldest_age_ms()),
+        // Backpressure that withholds work instead of holding a thread. A
+        // gated producer holds no handout, so `inflight` cannot see it; these
+        // two are what keep it from reading as a wedged pool, and a climbing
+        // count with `dispatches` frozen is the consumer being behind — the
+        // remedy for which is never a rebind of the producer.
+        ("pending_pushes", core.pending_push_count() as u64),
+        ("pending_push_oldest_ms", core.pending_push_oldest_age_ms()),
         // Wake-list occupancy: a runaway registration shows here long before it
         // is fatal, and a `timers_fired` that stops moving while `timers_armed`
         // climbs is promotion wedged rather than the Operative idle.
@@ -773,6 +780,9 @@ impl OperativeDispatchHandle {
             }
         };
 
+        // The entry path has no producing Entity to withhold work from, so a
+        // `DropNothing` push here parks this reader — the one park the core
+        // keeps, and what carries ingress backpressure to the controller.
         crate::routing::route_to_consumers(
             &instance,
             channel,
@@ -780,6 +790,7 @@ impl OperativeDispatchHandle {
             &stream,
             consumed_offset,
             replay,
+            None,
         );
     }
 }
@@ -795,7 +806,13 @@ mod heartbeat_tests {
     #[test]
     fn the_heartbeat_carries_every_overflow_counter() {
         let before = super::heartbeat_metadata();
-        for key in ["blocked_parks", "drops_newest", "drops_oldest"] {
+        for key in [
+            "blocked_parks",
+            "drops_newest",
+            "drops_oldest",
+            "pending_pushes",
+            "pending_push_oldest_ms",
+        ] {
             assert!(before.contains_key(key), "the heartbeat must carry {key}");
         }
 

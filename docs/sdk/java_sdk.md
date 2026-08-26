@@ -28,6 +28,17 @@ each new fetcher's own `poll` entry restarts the core's dwell. What it does not
 buy is a thread against user code that never returns — that is the conformance
 `pool_wedge` condition, and no ceiling outruns it.
 
+**`complete` no longer parks on a full consumer** (`FLEZHA_DROP_NOTHING_NONPARKING`,
+default off during rollout). The kernel holds an undeliverable inter-procedure
+output in the producing Entity's push holdback and withholds work from that
+Entity instead, so the completion returns and the virtual thread — and the
+carrier it pinned — is released. This SDK carries **no Java-side code for it**:
+`flz_core_complete` is the seam, so the change arrives below it. The
+`pending_pushes` / `pending_push_oldest_ms` heartbeat keys it adds are minted by
+`flz_core`'s heartbeat, which this SDK also uses unchanged. The starvation
+supervisor stays exactly as load-bearing: with the flag off it is still the only
+rescue, and it is what the holdback's bound falls back on.
+
 | Knob | Meaning | Default |
 | --- | --- | --- |
 | `FLEZHA_WORKER_POOL_SIZE` | Fetchers started at boot | 2 |

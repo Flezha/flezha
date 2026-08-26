@@ -40,6 +40,11 @@ defmodule Flezha.Transport.LivenessCounters do
   # incremented): dispatches frozen with blocked_parks climbing is healthy
   # backpressure, dispatches frozen with it flat is a wedge, and the two drop
   # counters are the only outside handle on a shedding operative's loss.
+  # `hb_pending_pushes` and `hb_pending_push_oldest_ms` mirror the runner's
+  # deferred-push self-report (set, not incremented): Entities whose producer
+  # is being withheld work because a consumer is full. A gated producer holds
+  # no handout, so `hb_inflight` is blind to it and backpressure that
+  # withholds work would otherwise read as a runner doing nothing.
   # `stale_writer_refused` counts durable-write forwards refused on a fenced
   # (takeover-superseded) channel.
   @channel_slots [
@@ -56,6 +61,8 @@ defmodule Flezha.Transport.LivenessCounters do
     :hb_blocked_parks,
     :hb_drops_newest,
     :hb_drops_oldest,
+    :hb_pending_pushes,
+    :hb_pending_push_oldest_ms,
     :credit_active,
     :credit_ledger_level,
     :credit_overrun_total,

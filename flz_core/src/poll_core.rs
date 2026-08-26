@@ -14,7 +14,7 @@
 //! consumed-floor skip, replay-slice buffering and event-time ordering,
 //! late-input admission and classification, event-time due-timer generation,
 //! stale-timer validation, and the retry→park ladder's counting/backoff/
-//! re-hand. The host half (`operative::poll_pool::serve_slot`) runs one
+//! re-hand. The host half (`operative::dispatcher::run_activation`) runs one
 //! attempt per item and reports the disposition.
 //!
 //! An event-time-clocked class is handed ONE admitted input per activation:
@@ -26,9 +26,14 @@
 //! The core never runs host code: scheduled rounds queue on `ready` and host
 //! workers — the typed layer's poll threads
 //! (`operative::poll_pool`), or a C-ABI host's own —
-//! block in [`PollCore::poll`] and answer with completions. A host may also
-//! serve one slot inline (`try_assemble` + complete), which is how a
-//! DropNothing-policy producer drains a full consumer on its own thread.
+//! block in [`PollCore::poll`] and answer with completions. **No call into the
+//! core blocks a host thread**: a `DropNothing` push a producing entity cannot
+//! deliver is held in that entity's push holdback and the entity is handed no
+//! further activation until it lands ([`PollCore::release_and_rearm`]), which
+//! is the same state a retry backoff puts it in. The one park the core keeps
+//! is the transport reader's on the entry path — a core-owned thread with no
+//! producing entity, whose stalling carries ingress backpressure to the
+//! controller.
 //!
 //! It also owns the one answer to "do something with this entity at time T":
 //! the [`DeferredWake`] list, holding retry backoffs and processing-time timer
@@ -195,6 +200,12 @@ enum Wake {
     /// Finish a deferred re-arm: the slot's holdback is already filled and
     /// both its gates are still held.
     Retry(Arc<EntitySlot>),
+    /// Re-attempt a gated producer's undelivered pushes. The consumer's wait
+    /// list is the primary wake; this is the bounded fallback the entry-path
+    /// park has in `BLOCK_PARK_TIMEOUT`, so a lost wake degrades to a retry
+    /// loop rather than a permanent hold. Firing on a producer that already
+    /// drained is a no-op — the claim lives in the flag, not here.
+    PushRetry(Arc<EntitySlot>),
     /// A processing-time deadline. `Weak` so an idle-evicted Entity's timers
     /// die with it: the upgrade fails and the firing is dropped, which is the
     /// D6 contract. The stream is the one captured at arming, so `on_timer`'s
@@ -324,6 +335,11 @@ struct Outstanding {
     handed_at: Instant,
 }
 
+/// One Entity gated on its push holdback.
+struct PendingPushes {
+    since: Instant,
+}
+
 pub struct PollCore {
     ready: Mutex<VecDeque<Arc<EntitySlot>>>,
     /// Command and workflow-step activations, handed out ahead of `ready`.
@@ -339,6 +355,12 @@ pub struct PollCore {
     /// the host lost is how long it has been out — which the core reports
     /// and never acts on (`outstanding_oldest_age_ms`).
     outstanding: DashMap<u64, Outstanding>,
+    /// Entities whose gates are held for an undelivered push, by identity.
+    /// The same shape as `outstanding` and reported beside it: a gated
+    /// producer holds no handout, so `inflight` cannot see it, and without its
+    /// own report backpressure that withholds work would be invisible where
+    /// backpressure that parks was at least visible as a growing handout age.
+    deferred_pushes: DashMap<Arc<Vec<u8>>, PendingPushes>,
     wakes: DeferredWake,
     next_wake: AtomicU64,
     /// Work activations underway. `outstanding.len()` would answer it too,
@@ -395,6 +417,11 @@ const STARVATION_DWELL: Duration = Duration::from_millis(100);
 /// deferred.
 const WAKE_RETRY_BACKOFF_MS: u64 = 5;
 
+/// The bounded fallback for a gated producer, mirroring the entry path's
+/// `BLOCK_PARK_TIMEOUT`: the consumer's wait list is what normally re-arms it,
+/// and this only bounds how long a lost wake could hold it.
+const PUSH_RETRY_BACKOFF_MS: u64 = 50;
+
 impl PollCore {
     pub fn new() -> Self {
         Self::with_max_inflight(crate::util::env_parse_positive(
@@ -413,6 +440,7 @@ impl PollCore {
             shutting_down: AtomicBool::new(false),
             next_token: AtomicU64::new(0),
             outstanding: DashMap::new(),
+            deferred_pushes: DashMap::new(),
             wakes: DeferredWake::new(),
             next_wake: AtomicU64::new(0),
             outstanding_count: AtomicUsize::new(0),
@@ -594,6 +622,10 @@ impl PollCore {
             let (slot, item, retry) = match wake {
                 Wake::Retry(slot) => {
                     self.release_and_rearm(&slot);
+                    continue;
+                }
+                Wake::PushRetry(slot) => {
+                    self.rearm_deferred_pushes(&slot);
                     continue;
                 }
                 // A close silently dropped would hold the interval's outputs
@@ -924,6 +956,15 @@ impl PollCore {
     /// observes inflight=false can immediately become the next drainer; a
     /// losing CAS means a producer already scheduled the round.
     fn release_and_rearm(&self, slot: &Arc<EntitySlot>) {
+        // An Entity owing an undelivered push is handed no new activation: the
+        // gates it already holds stay held, exactly as they do across a retry
+        // backoff, and nothing else could have drained it then either. The
+        // producing thread is long gone — this is what replaces holding it.
+        if (slot.push_gated.load(Ordering::Acquire) || slot.push_deferred.load(Ordering::Acquire))
+            && self.hold_or_release_pushes(slot)
+        {
+            return;
+        }
         slot.drain_active.store(false, Ordering::Release);
         slot.mailbox.release_inflight();
         if !slot.mailbox.is_empty() {
@@ -945,6 +986,82 @@ impl PollCore {
         {
             self.schedule(slot);
         }
+    }
+
+    /// Decide what an Entity's holdback owes its gates. `true` means the gates
+    /// stay held — either for the holdback, or because another thread has
+    /// taken the claim and is releasing them itself.
+    ///
+    /// `push_gated` is the single claim on releasing them, and it is published
+    /// on EVERY entry, unconditionally, before anything is read. A consumer
+    /// freeing room can empty the holdback at any instant — including between
+    /// this call's caller testing `push_deferred` and this call re-testing it —
+    /// and a claim published only on the deferred branch would leave that
+    /// interleaving with a `swap(false)` of `false` meaning "nobody ever
+    /// claimed it" rather than "somebody else is releasing". Both sides then
+    /// return "held" and the Entity's gates leak: `drain_active` stays true
+    /// with no handout outstanding, and every later push to it queues behind a
+    /// round that will never run.
+    fn hold_or_release_pushes(&self, slot: &Arc<EntitySlot>) -> bool {
+        slot.push_gated.store(true, Ordering::Release);
+        if slot.push_deferred.load(Ordering::Acquire) {
+            self.deferred_pushes
+                .entry(Arc::clone(&slot.entity_identity))
+                .or_insert_with(|| PendingPushes {
+                    since: Instant::now(),
+                });
+            crate::routing::drain_push_holdback(slot);
+            if slot.push_deferred.load(Ordering::Acquire) {
+                // The consumer's wait list is what normally brings us back;
+                // this only bounds how long a lost wake could hold the Entity.
+                self.wakes.record(
+                    WakeKey {
+                        due_at_ms: crate::util::wall_now_ms() + PUSH_RETRY_BACKOFF_MS,
+                        tiebreak: WakeTiebreak::Retry(
+                            self.next_wake.fetch_add(1, Ordering::Relaxed),
+                        ),
+                    },
+                    Wake::PushRetry(Arc::clone(slot)),
+                );
+                self.notify_waiters();
+                return true;
+            }
+        }
+        if !slot.push_gated.swap(false, Ordering::AcqRel) {
+            // Another thread took the claim and is doing the release. Sound
+            // only because the store above is unconditional: a `false` here
+            // can no longer mean "no claim was ever made".
+            return true;
+        }
+        self.deferred_pushes.remove(&slot.entity_identity);
+        false
+    }
+
+    /// Re-attempt a producer's held pushes — a consumer freed room, or the
+    /// fallback wake came due. A producer still inside its own activation
+    /// releases itself at completion, so nothing is released here unless the
+    /// gates are already being held FOR the holdback.
+    pub(crate) fn rearm_deferred_pushes(&self, slot: &Arc<EntitySlot>) {
+        crate::routing::drain_push_holdback(slot);
+        if !slot.push_deferred.load(Ordering::Acquire) && slot.push_gated.load(Ordering::Acquire) {
+            self.release_and_rearm(slot);
+        }
+    }
+
+    /// Entities currently holding an undelivered inter-procedure push.
+    pub fn pending_push_count(&self) -> usize {
+        self.deferred_pushes.len()
+    }
+
+    /// How long the oldest held push has gone undelivered, in milliseconds;
+    /// `0` when none is.
+    pub fn pending_push_oldest_age_ms(&self) -> u64 {
+        let now = Instant::now();
+        self.deferred_pushes
+            .iter()
+            .map(|e| now.saturating_duration_since(e.since).as_millis() as u64)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Queue a non-work payload (command interaction, workflow step, prepare

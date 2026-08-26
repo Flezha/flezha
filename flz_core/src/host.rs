@@ -1057,6 +1057,7 @@ fn build_host_entity_slot(
             args.persistence_enabled,
             Arc::clone(&parts.change_seq),
             header,
+            Arc::clone(&parts.push_deferred),
         )
     });
     let dispatcher = Arc::new(HostDispatcher {
@@ -1158,6 +1159,7 @@ impl ProcedureDispatcher for HostDispatcher {
     fn dispatch_item(
         &self,
         _work: WorkItem,
+        _slot: &Arc<EntitySlot>,
         _state: &mut Box<dyn Any + Send>,
         _flush_buffer: &mut Box<dyn FlushableBuffer>,
         _timers: &mut PendingTimers,
@@ -1798,19 +1800,27 @@ fn resolve_item(
                     event_time: output.event_time,
                     metadata: output.metadata,
                 });
-                if let Err(e) = crate::routing::deliver_host_output(
+                match crate::routing::deliver_host_output(
                     &instance,
                     channel,
                     consumer,
                     &value,
                     &stream,
                     consumed_offset,
+                    slot,
                 ) {
-                    tracing::warn!(
+                    // A push this Entity could not deliver is HELD, not lost:
+                    // it sits in the producer's holdback and the Entity is
+                    // handed no further work until it lands. The remaining
+                    // outputs of this completion still route — rule 2 appends
+                    // them behind the held one rather than letting them
+                    // overtake it.
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(
                         target: "flezha::host",
                         entity = slot.dispatcher.entity_label(),
                         "edge output dropped: {e}"
-                    );
+                    ),
                 }
             }
         }
@@ -2280,6 +2290,7 @@ fn deliver_prepared(
         &entry.stream,
         entry.consumed_offset,
         entry.replay,
+        None,
     );
 }
 
@@ -2875,11 +2886,10 @@ mod edge_output_ordering_tests {
     use std::any::Any;
     use std::sync::Arc;
 
-    use super::{resolve_item, schema, BytesBuffer, HostPayload};
+    use super::{resolve_item, schema, HostPayload};
     use crate::entity::{EntityItem, EntityPayload, EntitySlot};
     use crate::operative::instance::StreamInstance;
     use crate::poll_core::WorkItem;
-    use crate::util::LockRecover;
 
     fn stream() -> Arc<flz_transport::transport::FlezhaStream> {
         let (sock, _peer) = std::os::unix::net::UnixStream::pair().expect("pair");
@@ -2978,27 +2988,22 @@ mod edge_output_ordering_tests {
         (work, effect)
     }
 
-    /// Freeze the producer's buffer so the two states either side of the push
-    /// are observable. The `flezha-flusher` thread drains every registered
-    /// buffer every ~5 ms — which is exactly the window the ordering bug lived
-    /// in, and also short enough to race any assertion about buffer contents.
-    fn detach_from_flusher(slot: &Arc<EntitySlot>) {
-        let id = slot
-            .flusher_entry_id
-            .expect("a persistent class registers with the flusher");
-        crate::flusher::EntityFlusher::instance().deregister(id);
+    /// Records this Entity has actually SHIPPED. `drain_to_frames` fetch-adds
+    /// the per-Entity seq once per drained record, so the counter advancing is
+    /// exactly "a record left for the controller" — the one observable that
+    /// means the same thing whichever mechanism carried the backpressure. A
+    /// parked producer folds nothing; a deferring producer folds into a buffer
+    /// the flusher will not drain while the push is outstanding.
+    fn shipped(slot: &Arc<EntitySlot>) -> u64 {
+        crate::flusher::EntityFlusher::instance().drain_now_for_tests();
+        slot.change_seq.load(std::sync::atomic::Ordering::Acquire)
     }
 
-    /// Effect records sitting in the producer's flush buffer — what the flusher
-    /// would ship, held still by `detach_from_flusher`.
-    fn buffered_records(slot: &Arc<EntitySlot>) -> usize {
-        let mut buffer = slot.flush_buffer.lock_recover();
-        buffer
-            .as_any_mut()
-            .downcast_mut::<BytesBuffer>()
-            .expect("a persistent class buffers bytes")
-            .effects
-            .len()
+    /// One free slot on the consumer, announced exactly as a drain announces
+    /// it: pop, then serve the waiter the room is owed to.
+    fn free_one_slot(slot: &Arc<EntitySlot>) {
+        assert!(slot.mailbox.pop().is_some());
+        slot.block_parker.unpark_one();
     }
 
     #[test]
@@ -3006,9 +3011,9 @@ mod edge_output_ordering_tests {
         let id = format!("edge_order_{}", std::process::id());
         let instance = instance(&id, &[1]);
         let producer = Arc::clone(&instance.entities[0][0]);
-        detach_from_flusher(&producer);
         let consumer = Arc::clone(&instance.entities[1][0]);
         saturate(&consumer);
+        let before = shipped(&producer);
 
         let (work, effect) = work_and_effect(7, &[1]);
         let resolving = {
@@ -3016,25 +3021,30 @@ mod edge_output_ordering_tests {
             std::thread::spawn(move || resolve_item(&producer, &work, effect, None))
         };
 
-        // The push has nowhere to go, so the item is unresolved — and an
-        // unresolved item contributes nothing durable.
+        // The push has nowhere to go, so nothing this item produced is durable
+        // — including the offset that would make a replay skip its input.
         std::thread::sleep(std::time::Duration::from_millis(250));
         assert_eq!(
-            buffered_records(&producer),
-            0,
+            shipped(&producer),
+            before,
             "the offset must not be durable while its edge output is undelivered"
         );
-        assert!(!resolving.is_finished());
+        assert_eq!(
+            consumer.mailbox.len(),
+            1,
+            "only the saturating item is queued"
+        );
 
         // Room appears: the push lands and the record follows it.
-        assert!(consumer.mailbox.pop().is_some());
+        free_one_slot(&consumer);
         resolving.join().expect("resolution completes");
-        assert_eq!(buffered_records(&producer), 1);
+        crate::poll_core::global().rearm_deferred_pushes(&producer);
         assert_eq!(
             consumer.mailbox.len(),
             1,
             "the edge value reached the consumer's mailbox"
         );
+        assert!(shipped(&producer) > before, "the record follows the push");
     }
 
     #[test]
@@ -3042,9 +3052,9 @@ mod edge_output_ordering_tests {
         let id = format!("edge_fanout_{}", std::process::id());
         let instance = instance(&id, &[1, 2, 3]);
         let producer = Arc::clone(&instance.entities[0][0]);
-        detach_from_flusher(&producer);
         let full = Arc::clone(&instance.entities[3][0]);
         saturate(&full);
+        let before = shipped(&producer);
 
         let (work, effect) = work_and_effect(11, &[1, 2, 3]);
         let resolving = {
@@ -3060,14 +3070,16 @@ mod edge_output_ordering_tests {
         );
         assert_eq!(instance.entities[2][0].mailbox.len(), 1);
         assert_eq!(
-            buffered_records(&producer),
-            0,
+            shipped(&producer),
+            before,
             "one undelivered consumer holds the whole record"
         );
 
-        assert!(full.mailbox.pop().is_some());
+        free_one_slot(&full);
         resolving.join().expect("resolution completes");
-        assert_eq!(buffered_records(&producer), 1);
+        crate::poll_core::global().rearm_deferred_pushes(&producer);
+        assert_eq!(full.mailbox.len(), 1, "the last consumer got its value");
+        assert!(shipped(&producer) > before);
     }
 }
 

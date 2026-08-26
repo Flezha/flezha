@@ -2,6 +2,83 @@
 
 ## Unreleased
 
+### Changed — `DropNothing` withholds work instead of holding a host thread (`nonblocking-drop-nothing-backpressure`)
+
+Under `DropNothing`, a push into a full consumer mailbox parked the **calling
+host thread** in a bounded retry loop. Room only appears when somebody runs the
+consumer's round, so if the parked thread was the only one that could have run
+it, the process stopped. The typed Rust host escaped through
+`routing::install_inline_serve` — a Rust `fn` pointer, so it could not cross
+the C ABI and no FFI host ever had it. Measured with the hook claimed by a
+no-op, exactly the state a C-ABI host leaves it in: **0 of 20 payloads
+delivered, wedged 15 s** on a one-worker host.
+
+A push a producing Entity cannot deliver is now appended to that Entity's
+**push holdback**, its handout gates stay held until the holdback drains, and
+the producing thread returns immediately — the state
+`PollCore::retry_after_failure` already put an entity in during a backoff
+window, re-armed by the consumer's own wait list. Ordering is preserved by
+construction: a gated Entity is handed no further activation, and a push made
+while its holdback is non-empty appends rather than attempting. While an Entity
+owes a push the flusher holds its durable records, so a consumed offset can
+never become durable ahead of an edge output derived from it.
+
+`INLINE_SERVE`, `install_inline_serve`, `serve_inline`, `ACTIVATION_DEPTH`,
+`in_activation` and `poll_pool::serve_slot` are deleted, and with them three
+latent defects the hook carried: an inline serve called `try_assemble` directly
+and so bypassed `FLEZHA_MAX_INFLIGHT_ACTIVATIONS`; it re-entered an activation
+on the producing thread with no depth bound, so a chain of full mailboxes
+nested; and it ran a consumer's completion, durable record included, inside the
+producer's still-outstanding activation.
+
+Reaches Rust and Java below the seam (both complete through `flz_core`). The
+Elixir SDK needs no mechanism change and that is a decision, not a gap — it
+already defers the caller's reply into a `waiters` FIFO — but it takes the
+reporting half, because heartbeat keys are a cross-SDK contract. The data
+heartbeat gains `pending_pushes` and `pending_push_oldest_ms` on all three
+SDKs; a gated producer holds no handout, so `inflight` is blind to it.
+
+**Behind `FLEZHA_DROP_NOTHING_NONPARKING`, default off** — a rollout switch,
+not a fourth policy: nothing an author declared changes either way. With the
+flag off the producer parks as before, minus the inline serve, and the
+starvation supervisor is the rescue. The entry-path transport reader keeps
+parking in both: it has no producing Entity, and its stalling is what carries
+ingress backpressure to the controller.
+
+**In plain terms, for whoever meets this at 3am.** A `DropNothing` channel
+discards nothing, so a push into a full consumer mailbox has to wait — this
+change moves *what* waits. Flag off (the default): the pushing thread parks
+until room appears, and if that thread was the only one that could have run the
+consumer, nothing ever frees the slot. Flag on: the value goes onto a
+per-producer holdback queue, the thread returns immediately, and the producing
+Entity is handed no further work until the queue drains. Nothing is discarded
+and order is preserved either way. **The default is off; nothing changes until
+someone sets it.** Turn it on where a thread cannot be spared — a PHP
+`SyncExecutor`, a Node host on the event loop, where the park is not a risk but
+a guaranteed freeze and no supervisor can rescue a runtime with no spare thread
+to buy. Do not turn it on for speed.
+
+**The mechanism buys the freed thread and costs throughput under saturation.**
+Measured (`hybrid_channel_throughput`, 5 000 messages per iteration): at the
+default mailbox capacity the flag costs nothing (7.19 ms with it on against
+7.36 ms off, p = 0.46), but at `FLEZHA_MAILBOX_CAPACITY=4` — a mailbox
+saturated continuously — it is **30–36% slower than the park** (25.78 ms
+against 18.92 ms for one consumer, 59.75 ms against 46.10 ms for three). The
+proposal predicted the opposite; its figure was measured single-threaded and
+excluded what dominates here, that the re-arm is a scheduling round-trip where
+the park was a futex wake straight back into the emit. This is why the flag
+ships **off** and why flipping its default is gated on three things, all named
+in `docs/dev_notes/nonblocking-drop-nothing-backpressure.md`: a ≥ 2 h soak with
+it on against a workload that actually saturates a consumer, the Java
+round-trip bench run under both settings (**owed** — not run in this change, so
+the numbers above prove one runtime only), and that 30–36% cost either closed
+or accepted in writing.
+
+Two windows this does **not** close, both named in
+`docs/resilience/data_durability.md`: the consumer's volatile mailbox between a
+landed push and the consumer's own durable record, and the controller's send
+buffer, which still discards the newest frame when a runner stops reading.
+
 ### Fixed — a due wake no longer wedges a poll host (`close-overflow-silent-failures`)
 
 `PollCore::promote_due` runs *inside* `poll` and pushed a due timer or an

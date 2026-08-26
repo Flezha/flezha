@@ -88,7 +88,7 @@ Each channel declared via `c.input::<T>(...)` (entry) or `c.channel::<T>(...).fr
 `OverflowPolicy` SHALL be an enum with exactly three variants, each naming what
 the policy discards:
 
-- `DropNothing` — nothing is discarded; the producer's rate is coupled to the consumer's instead. Ordering is preserved.
+- `DropNothing` — nothing is discarded. The producer's rate is coupled to the consumer's, and ordering is preserved. **How** that coupling is realized depends on the channel kind and is not part of the declaration: on an inter-procedure channel the producing Entity is withheld further work until the push lands; on an entry channel the shared transport reader stalls, which carries the backpressure to the controller. Neither realization discards anything, which is what the author declared.
 - `DropNewest` — the incoming item SHALL be discarded; the consumer's `drops_newest_total` counter SHALL be incremented by 1.
 - `DropOldest` — the consumer's mailbox SHALL atomically pop its oldest item and push the incoming one (best-effort under MPMC contention); the consumer's `drops_oldest_total` counter SHALL be incremented by 1.
 
@@ -101,6 +101,12 @@ The policy SHALL be declared via the channel-builder method `.on_full(OverflowPo
 - **WHEN** an inter-procedure channel declares `.on_full(OverflowPolicy::DropNothing)`, the consumer's mailbox is full, and a producer calls `ctx.emit::<C>(value)`
 - **THEN** the value SHALL be delivered to the consumer's mailbox once room appears, in the order the producer emitted it; no item SHALL be discarded and neither `drops_newest_total` nor `drops_oldest_total` SHALL change
 - **AND** the producer's call to `ctx.emit::<C>(value)` SHALL eventually return `Ok(())` (no `ProcedureError` is produced for the backpressure event)
+- **AND** no host thread SHALL be held for the duration; the producing Entity is withheld further work instead
+
+#### Scenario: An author's declaration does not change with the mechanism
+
+- **WHEN** the non-parking realization of `DropNothing` is enabled or disabled by deployment configuration
+- **THEN** no authoring surface, wire literal, declared default or conformance fixture SHALL change, and the guarantee observed by the author — nothing discarded, order preserved — SHALL be identical in both
 
 #### Scenario: DropNewest discards the incoming item
 - **WHEN** an entry channel declares `.on_full(OverflowPolicy::DropNewest)` and a wire frame arrives while the consumer's mailbox is full
@@ -113,11 +119,6 @@ The policy SHALL be declared via the channel-builder method `.on_full(OverflowPo
 #### Scenario: Plugin-bound channel rejects on_full at compile time
 - **WHEN** a Operative declares `c.channel::<Vec<u8>>("p").from::<S>().to_plugin("kafka").on_full(OverflowPolicy::DropNothing)`
 - **THEN** the Rust compiler SHALL emit a "no method named `on_full`" error and the program MUST NOT build
-
-#### Scenario: The retired spelling does not build
-
-- **WHEN** any source file, `HostClassDecl` payload, `#[flezha::procedure]` attribute or conformance manifest names the policy `Block` / `BLOCK` / `"block"` / `:block`
-- **THEN** the build or the declaration SHALL fail, and `scripts/check-overflow-naming.sh` SHALL report the offending file and line
 
 ### Requirement: Default overflow policy by channel kind
 When a channel does not call `.on_full(...)`, the runtime SHALL apply a default policy determined by the channel's kind:

@@ -96,6 +96,25 @@ kind in both SDKs and the FFI host; an operative that prefers to shed declares
 `.on_full(DropNewest)` or `.on_full(DropOldest)`. The Kafka producer's `:queue_overflow` defaults to `:block` for every
 record. Non-keyed channels are plain at-least-once.
 
+*What `DropNothing` guarantees, per channel kind.* On an **inter-procedure** channel the
+producing Entity is withheld further work until the push lands — its push holdback holds the
+value, its gates stay held, and the flusher holds its durable records with it, so the consumed
+offset can never become durable ahead of an edge output derived from it. On an **entry**
+channel the shared transport reader stalls instead, which carries the backpressure to the
+controller. On a **plugin-bound** channel there is no SDK-side mailbox at all and the policy is
+a compile error. Nothing is discarded in any of them.
+
+Two windows this does **not** close, both named so nobody reads more into the guarantee:
+
+- **The consumer's volatile mailbox.** Once a push lands, the value lives only there until the
+  consumer's own record is durable, and a tier-class restore clears the mailbox
+  (`discard_queued_input_on_restore`); the controller re-forwards to the *entry* channel, where
+  the producer's own floor skips it. Closing it needs `OutputTarget::Edge` in the transactional
+  outbox.
+- **The controller's send buffer**, which still discards the newest frame when a runner stops
+  reading (`flz_nif/src/uds_driver.rs`). The backpressure chain is complete inside the runner
+  and breaks at its last hop.
+
 ### Effectively-once tier (opt-in, `effectively_once()` on the channel builder)
 
 The built-in composition *at-least-once delivery + deterministic key + idempotent sink =

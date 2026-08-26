@@ -389,7 +389,7 @@ c.input::<Vec<u8>>("trade.raw")
 
 | `OverflowPolicy` | Behaviour |
 |---|---|
-| `DropNothing` (default, every kind) | Nothing is discarded: the producer retries after a bounded 50 ms park on the consumer's `BlockParker`, woken per pop. A producer that is itself a pool thread first drains the full mailbox inline when no drainer is active (a parked pool worker could be the only thread able to serve the queued round); any other producer — the wire reader above all — only parks. Preserves ordering, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
+| `DropNothing` (default, every kind) | Nothing is discarded, and **how** that is realized depends on who produced the value. A producing Entity's `ctx.emit` never parks: the push is held in that Entity's push holdback, the Entity is handed no further activation until it drains, and the consumer's next free slot drains it. The wire reader, which has no producing Entity, retries after a bounded 50 ms park on the consumer's `BlockParker`, woken per pop — the one park left, and what carries ingress backpressure to the controller. Preserves ordering either way, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
 | `DropNewest` | The incoming item is discarded; `drops_newest_total` += 1. |
 | `DropOldest` | The mailbox pops its oldest item and accepts the new one (`force_push`); `drops_oldest_total` += 1 **and `pushes_total` += 1** — the force-push admitted, so it is a successful enqueue by that counter's definition. Which item is evicted is best-effort under MPMC contention; the evicted one is named in a `flezha::mailbox` debug line. |
 
@@ -426,7 +426,8 @@ process-wide aggregate of each overflow outcome beside `DISPATCHES_COMPLETED`:
 | Counter | Bumped on | Readable |
 |---|---|---|
 | `pushes_total` | every admission, `DropOldest`'s force-push included | `slot.counters()` |
-| `pushes_blocked_total` | every `DropNothing` wait iteration | `slot.counters()`; process-wide via `entity::pushes_blocked_total()` → heartbeat `blocked_parks` |
+| `pushes_blocked_total` | every `DropNothing` admission that found the mailbox full — a wait iteration on the entry path, an emit deferred or re-attempted on the producer path | `slot.counters()`; process-wide via `entity::pushes_blocked_total()` → heartbeat `blocked_parks` |
+| pending pushes | Entities currently holding an undelivered inter-procedure output, and the age of the oldest | `poll_core::global().pending_push_count()` / `pending_push_oldest_age_ms()` → heartbeat `pending_pushes`, `pending_push_oldest_ms` |
 | `drops_newest_total` | every drop under `DropNewest` | `slot.counters()`; process-wide via `entity::drops_newest_total()` → heartbeat `drops_newest` |
 | `drops_oldest_total` | every eviction under `DropOldest` | `slot.counters()`; process-wide via `entity::drops_oldest_total()` → heartbeat `drops_oldest` |
 
@@ -435,12 +436,16 @@ process is the aggregate, carried in the data-channel heartbeat's metadata
 beside `dispatches`, `credit_parked` and `inflight`. A per-Entity breakdown on
 that path would need a registry walk per heartbeat.
 
-`blocked_parks` counts **wait iterations, not episodes**. A runner held in one
-long block episode would otherwise show a frozen dispatch count beside a frozen
-block count — byte for byte the picture a wedged runner shows — and that
-distinction is exactly what the controller's `runner_pool_wedged` verdict hangs
-off: dispatches frozen with blocks climbing is backpressure, dispatches frozen
-with blocks flat is a wedge.
+`blocked_parks` counts **every full-mailbox admission, not episodes**. A runner
+held in one long block episode would otherwise show a frozen dispatch count
+beside a frozen block count — byte for byte the picture a wedged runner shows —
+and that distinction is exactly what the controller's `runner_pool_wedged`
+verdict hangs off: dispatches frozen with blocks climbing is backpressure,
+dispatches frozen with blocks flat is a wedge. The entry path pays those as
+wait iterations of a parked thread; a producing Entity pays them as a deferral
+and its re-attempts, and reports the standing condition separately through
+`pending_pushes` / `pending_push_oldest_ms` — it holds no handout, so
+`inflight` is blind to it.
 
 ### Worker pool
 
@@ -542,9 +547,11 @@ port: [`state_persistence.md`](state_persistence.md).
 - **`remove_*` cannot see a suspended durable workflow instance**: the removal
   succeeds and rehydration fails placement.
 - **Only the overflow aggregates leave the process** — `blocked_parks`,
-  `drops_newest` and `drops_oldest` ride the data heartbeat; the per-Entity
-  breakdown and the dynamic-entity counters stay in-process, unexported to a
-  metrics backend.
+  `drops_newest`, `drops_oldest`, `pending_pushes` and `pending_push_oldest_ms`
+  ride the data heartbeat; the per-Entity breakdown and the dynamic-entity
+  counters stay in-process, unexported to a metrics backend. Which Entity is
+  behind is named only in the runner's own `flezha::mailbox` log — the
+  heartbeat carries counters, not identities.
 - **`max_entities` is a soft cap** and `DropOldest` is best-effort under
   contention; the Java SDK has no `maxEntities` knob at all.
 

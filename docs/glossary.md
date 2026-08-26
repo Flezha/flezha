@@ -221,8 +221,12 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Overflow policy** — what a channel discards when the consumer Entity's bounded mailbox is
   full, and the only question the enum answers: `DropNothing` (nothing — the producer waits for
   room, the default for every channel kind on every SDK), `DropNewest` (the arriving item) or
-  `DropOldest` (the queued head). Declared per channel with `.on_full(...)` / `.onFull(...)` and
-  frozen at registration — an authoring declaration, never operator config. Not to be confused
+  `DropOldest` (the queued head). **How** `DropNothing`'s waiting is realized depends on the
+  channel kind and is not part of the declaration: on an inter-procedure channel the producing
+  Entity is withheld further work until the push lands; on an entry channel the shared transport
+  reader stalls, which carries the backpressure to the controller. Neither discards anything,
+  which is what the author declared. Declared per channel with `.on_full(...)` / `.onFull(...)`
+  and frozen at registration — an authoring declaration, never operator config. Not to be confused
   with the Kafka producer's `:queue_overflow`, the observability bus's per-sink `overflow:`, or
   the transport write buffer: separate mechanisms with their own vocabulary.
 - **Deferred wake** — the one ordered list in the poll core holding retry backoffs and

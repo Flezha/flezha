@@ -65,6 +65,13 @@ struct FlusherEntry {
     persistence_enabled: bool,
     change_seq: Arc<AtomicU64>,
     header: HeaderTemplate,
+    /// This Entity's push-holdback flag (`EntitySlot::push_deferred`). While it
+    /// is set the drain pass skips the buffer: an inter-procedure output has no
+    /// durable copy, so shipping a record — and with it the consumed offset —
+    /// while the output derived from it is still undelivered would let a crash
+    /// leave the offset durable, the replay floor skipping that input, and the
+    /// consumer never fed.
+    push_deferred: Arc<AtomicBool>,
 }
 
 /// Encode `(operative_class, procedure_id, entity_key)` into the wire-format
@@ -504,6 +511,7 @@ impl EntityFlusher {
         persistence_enabled: bool,
         change_seq: Arc<AtomicU64>,
         header: HeaderTemplate,
+        push_deferred: Arc<AtomicBool>,
     ) -> FlusherEntryId {
         let id = FlusherEntryId(self.next_entry_id.fetch_add(1, Ordering::Relaxed));
         self.entries.insert(
@@ -514,6 +522,7 @@ impl EntityFlusher {
                 persistence_enabled,
                 change_seq,
                 header,
+                push_deferred,
             },
         );
         id
@@ -536,6 +545,13 @@ impl EntityFlusher {
     fn drain_pass(&self) {
         for entry_ref in self.entries.iter() {
             let entry = entry_ref.value();
+            // An Entity owing an undelivered inter-procedure push keeps its
+            // records: the offset must not become durable ahead of the edge
+            // delivery it derives from. Bounded — a gated Entity is handed no
+            // further work, so at most one item's record waits here.
+            if entry.push_deferred.load(Ordering::Acquire) {
+                continue;
+            }
             let mut guard = entry.buffer.lock_recover();
             flush_one(
                 &mut **guard,

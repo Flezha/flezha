@@ -71,6 +71,21 @@ the other:
 | Rust | A base pool of poll workers plus one supervisor thread parked in the core's **starvation wait**. Each observation spawns one more worker up to the ceiling; workers above the base retire after an idle streak, so a workload that never starves observes exactly the base pool. | `FLEZHA_WORKER_POOL_SIZE` (default: available parallelism, 2 if unknown), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
 | Java | A small fixed set of platform *fetcher* threads loop `poll → decode → hand off → poll`; one **virtual thread** per activation runs the dispatch and completes it (`Executors.newVirtualThreadPerTaskExecutor()`), plus one platform **supervisor** thread parked in the starvation wait that starts one more fetcher per observation, up to the ceiling. | `FLEZHA_WORKER_POOL_SIZE` (default 2, `FlezhaEnv.DEFAULT_FETCHER_COUNT`), `FLEZHA_WORKER_POOL_MAX` (default 10× the count, never below it) |
 
+**No core call blocks a host thread.** The core cannot know how many threads a
+host has, whether it can create more, or whether its "threads" pin a shared
+carrier — a Node host on the event loop has one, a PHP `SyncExecutor` has one,
+a Java virtual thread pins its carrier on a native frame. So the rule is not
+"park only when it is safe to": backpressure is expressed by **withholding work
+from the producer**, never by holding the producer's caller. A single-threaded
+host is a supported shape, and it is supported by the core never blocking, not
+by the host promising to bring more threads.
+
+The one park that remains is the **transport reader's**, on the entry path. It
+is permitted because that reader is a core-owned thread no host language
+observes, it has no producing Entity to withhold work from, and its stalling is
+what carries ingress backpressure to the controller. See "Backpressure without
+holding a thread" below.
+
 **A poll host brings a supervisor.** Not "may": a host that ships a fixed
 worker count and never parks a thread in `wait_starvation` has no answer at all
 when every worker is held — it processes nothing, recovers from nothing, and
@@ -151,6 +166,55 @@ closed replay slice drains one member per round): chained timer registrations
 land only at completion, so wider batches would make due-firing interleave
 depend on batch timing — and a correction replay must fold firings at the same
 positions the live run did. Wall/logical classes batch freely.
+
+### Backpressure without holding a thread
+
+Under `DropNothing` a push into a full consumer mailbox has to wait for
+something. What waits differs by who produced the value:
+
+| producer | what waits |
+| --- | --- |
+| an activation's `ctx.emit`, or a host completion's edge outputs | the **producing Entity**: the push is appended to its push holdback and it is handed no further activation until the holdback drains |
+| a due wake (a timer firing, an interval close) | the **wake list**: the entry is re-recorded at a later due time (see "The deferred-wake list") |
+| the shared transport reader on an entry channel | the **reader thread**, which parks — the one exception, and the thing that carries ingress backpressure to the controller |
+
+A producing Entity's gates stay held across the holdback exactly as they stay
+held across a retry backoff: nothing else could drain that Entity then either,
+and producers just enqueue. The consumer's next free slot serves whoever is
+owed it — a parked thread, or a gated Entity whose holdback is then drained —
+and a bounded fallback wake means a lost signal degrades to a retry rather than
+a hold. Because a gated Entity keeps its round claimed, the dynamic-mode reaper
+skips it with no check of its own, and a restore or a compaction waits on it
+the way it waits on a retry window.
+
+**Ordering is preserved by construction**, by two rules that together reproduce
+exactly what a parked producing thread achieved:
+
+1. an Entity with a non-empty push holdback is handed no new activation;
+2. a push made while that Entity's holdback is non-empty is **appended** to it
+   rather than attempted — this is what stops item 2 of a completion's batch
+   from overtaking item 1's held output.
+
+Rule 2 is evaluated on every push, including the overwhelming majority that
+succeed, so it reads a lock-free flag and never inspects the holdback under its
+lock: measured, the atomic load is free (14.39 ns against 14.79 ns for a bare
+`try_push`) and a mutex acquisition costs +64%.
+
+**A held push holds its durable record too.** An inter-procedure output has no
+durable copy, so the only thing that can re-produce it is the producer
+re-running its input. While an Entity owes a push, the flusher skips its buffer
+— the consumed offset must not become durable ahead of the edge delivery it
+derives from, or a crash would leave the replay floor skipping that input with
+the consumer never fed.
+
+The holdback is **bounded** (`FLEZHA_PUSH_HOLDBACK_MAX`, default 4096). An
+invocation that emits past the bound waits for its own earlier pushes to land
+— the one park left on an emit path, and one only the in-process typed host can
+reach, because an FFI host's outputs are materialized as bytes before the core
+sees them. That host is also the one with a supervised worker pool behind it.
+
+A gated producer holds no handout, so `inflight` is blind to it; it is reported
+instead as `pending_pushes` and `pending_push_oldest_ms` on the data heartbeat.
 
 ### The host answers every activation exactly once
 

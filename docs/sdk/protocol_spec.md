@@ -231,8 +231,12 @@ to inter-procedure consumers.
 while connected, so an idle-but-healthy Operative keeps the controller's
 per-channel liveness clock fresh. Its metadata is the runner's self-report:
 `dispatches` (completed dispatches — what the `runner_pool_wedged` classifier
-reads), `blocked_parks`, `credit_parked`, `restore_discarded_inputs`,
-`timers_armed`, `timers_fired`. The controller reads `dispatches` and
+reads), `blocked_parks`, `drops_newest`, `drops_oldest`, `inflight`,
+`inflight_oldest_ms`, `pending_pushes`, `pending_push_oldest_ms` (Entities
+withheld work because a consumer will not take their output, and the age of the
+oldest such push — a gated producer holds no handout, so `inflight` cannot see
+it), `credit_parked`, `restore_discarded_inputs`, `timers_armed`,
+`timers_fired`. The controller reads `dispatches` and
 `credit_parked`, bumps `hb_count`, and treats any inbound frame as liveness; a
 bound channel silent past `:io_stream_liveness_threshold_ms` (default 30 s) is
 flagged as a stall.
@@ -242,7 +246,9 @@ flagged as a stall.
 The runner's per-Entity mailbox is a fixed-capacity queue
 (`crossbeam::queue::ArrayQueue`) sized at Operative startup. A frame for a
 full mailbox takes the channel's declared `OverflowPolicy`: `DropNothing`
-(nothing is discarded — the producer waits for a slot; the default for every
+(nothing is discarded — the producer waits for a slot, which on an
+inter-procedure channel means the producing Entity is withheld further work and
+on an entry channel means the reader stalls; the default for every
 channel kind in every SDK), `DropNewest` or `DropOldest` (a counter is
 bumped). Under `DropNothing` a saturated entry channel parks the **wire-reader
 thread** and sibling Operatives on that connection wait with it; the reader

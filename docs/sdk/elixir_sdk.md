@@ -93,6 +93,14 @@ primary-stream router delays every operative fed by that stream. `on_full(:drop_
 instead, and every shed item is counted: `drops_newest` / `drops_oldest` ride the heartbeat
 beside `dispatches` and `blocked_parks`, the same keys the other SDKs report, and the
 `[:flezha, :sdk, :mailbox]` telemetry event stays the in-node handle on the same drop.
+
+**This SDK was the reference design for how `flz_core` now waits.** A full mailbox never blocks
+a scheduler here: `handle_call({:enqueue, …})` DEFERS its reply and holds the value in a
+`waiters` FIFO that `admit_waiter/1` drains in order. `flz_core` held the producing OS thread
+instead until `nonblocking-drop-nothing-backpressure` gave it the same shape (a push holdback on
+the producing Entity). So this SDK needed no mechanism change — only the reporting half, because
+heartbeat keys are a cross-SDK contract: `pending_pushes` / `pending_push_oldest_ms` count the
+Entities holding an unqueued push and the age of the oldest.
 In native mode the Entity bound is a dispatch-concurrency bound, not a memory bound;
 a frozen `dispatches` with `blocked_parks` climbing is backpressure, and frozen with it flat is
 a stall (`data_heartbeat` every ~10 s per data stream, `control_ping` every 15 s, echoed by the

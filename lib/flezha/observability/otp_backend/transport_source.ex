@@ -131,6 +131,7 @@ defmodule Flezha.Observability.OtpBackend.TransportSource do
     emit_sum(:mailbox_blocked, channels, :hb_blocked_parks)
     emit_sum(:mailbox_drops_newest, channels, :hb_drops_newest)
     emit_sum(:mailbox_drops_oldest, channels, :hb_drops_oldest)
+    emit_sum(:mailbox_pending_pushes, channels, :hb_pending_pushes)
 
     ledger =
       Enum.reduce(channels, 0, fn row, acc -> acc + Map.get(row, :credit_ledger_level, 0) end)

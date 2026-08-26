@@ -47,8 +47,9 @@ keyword list) validates `kind`, rejects non-atom `source`/`name` and non-plain-m
   `channel_io_in_received`, `channel_send_frame_calls`, `channel_nil_drops`,
   `channel_flz_data_received`, `operative_io_in_received`, `operative_forwarded`,
   `operative_filtered_nil`, `credit_active_sessions`, `credit_overrun_total`, `credit_parked`,
-  `mailbox_blocked`, `mailbox_drops_newest`, `mailbox_drops_oldest` (the runner's overflow
-  self-report: producers held on full entity mailboxes, and what a shedding operative
+  `mailbox_blocked`, `mailbox_drops_newest`, `mailbox_drops_oldest`, `mailbox_pending_pushes`
+  (the runner's overflow self-report: producers held on full entity mailboxes, Entities
+  withheld work because a consumer will not take their output, and what a shedding operative
   discarded — the only handle on that loss from outside the runner);
   gauge `credit_ledger_level`. No bytes in/out. Reading them:
   [../internals/transport_liveness.md](../internals/transport_liveness.md).

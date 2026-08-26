@@ -217,6 +217,8 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_WORKER_POOL_SIZE` | Rust: host parallelism; Java: `2` fetchers | `flezha_runner::operative::poll_pool`, `FlezhaEnv` |
 | `FLEZHA_WORKER_POOL_MAX` | `10 × FLEZHA_WORKER_POOL_SIZE` (derived, never below it) | Rust and Java — ceiling the starvation supervisor may grow the worker/fetcher set to (`flezha_runner::operative::poll_pool`, `FlezhaEnv`) |
 | `FLEZHA_MAX_INFLIGHT_ACTIVATIONS` | `1024` | `flz_core::poll_core` |
+| `FLEZHA_DROP_NOTHING_NONPARKING` | off | **Temporary rollout switch** (`flz_core::routing`). On, a `DropNothing` push a producing Entity cannot deliver is held in that Entity's push holdback and the Entity is handed no further work until it lands, instead of parking the calling host thread. Off, the producer parks as before. Reaches Rust and Java (both complete through `flz_core`); the Elixir SDK already defers and reads nothing here. Nothing an author declared changes either way — the guarantee is "nothing discarded, order preserved" in both. **It buys the freed thread and costs throughput under saturation**: free at the default mailbox capacity (p = 0.46), but **30–36% slower than the park** on a mailbox held continuously full (measured at `FLEZHA_MAILBOX_CAPACITY=4`). Turn it on where a host cannot afford to hold a thread — a single-threaded FFI host, a Java carrier pinned by a native frame — not for speed. Flipping the DEFAULT is gated on three things: a ≥ 2 h soak with it on against a genuinely saturated consumer, the Java round-trip bench under both settings (owed), and that 30–36% cost closed or accepted in writing; the flag is deleted in the change that flips it or the next one (`docs/dev_notes/nonblocking-drop-nothing-backpressure.md`) |
+| `FLEZHA_PUSH_HOLDBACK_MAX` | `4096` | `flz_core::routing` — how many undelivered pushes one producing Entity may hold before an emit waits for its own earlier ones to land. Only an in-process typed emit loop can reach it; an FFI host's outputs are materialized before the core sees them. Reaching it logs one throttled `flezha::mailbox` warning naming the producer and the consumer |
 | `FLEZHA_FLUSH_LINGER_MS` | `5` | `flz_core::flusher` |
 | `FLEZHA_FLUSH_BEFORE_EMIT` | on | Rust dispatcher; `0`/`false`/`off`/`no` reverts to inline emit |
 | `FLEZHA_REAP_INTERVAL_MS` | `min(entity_idle_ttl / 4, 30 s)` (derived) | `flz_core::dynamic` — idle-Entity reaper cadence |
@@ -227,6 +229,62 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | `flz_core::workflow::driver` — inbox-loop park hysteresis |
 | `FLEZHA_WORKFLOW_DRIVER_STACK_KIB` | platform default | `flz_core::workflow::driver` — driver-thread stack size; address space only |
 | `FLEZHA_NATIVE_LIB_DIR` | `java.io.tmpdir` | Java `NativeLibraryLoader` — where the bundled `flz_core_ffi` library is extracted |
+
+### `FLEZHA_DROP_NOTHING_NONPARKING` — read this before you set it
+
+**What it does.** A `DropNothing` channel never discards anything, so a push
+into a full consumer mailbox has to wait. This flag changes *what* waits.
+
+- **Off (the default):** the thread doing the push parks until the consumer
+  frees a slot. That thread is stuck. If it happens to be the only thread that
+  could have run the consumer, nothing ever frees the slot and the process is
+  finished.
+- **On:** the value goes onto a per-producer holdback queue and the pushing
+  thread returns immediately. The *producing Entity* is handed no further work
+  until its queue drains. Nothing is discarded and order is preserved either
+  way — only the waiting moves, from the thread to the Entity.
+
+**The default is off. Nothing changes until someone sets it.** Setting it is a
+deployment decision, not an authoring one: no channel declaration, wire literal
+or conformance fixture differs between the two.
+
+**What it costs.** Measured, not estimated: **30–36% slower under sustained
+saturation**. On a mailbox pinned full (`FLEZHA_MAILBOX_CAPACITY=4`, 5 000
+messages per iteration) one consumer went 18.92 ms → 25.78 ms and three
+consumers 46.10 ms → 59.75 ms. Read that narrowly — it is the cost when a
+mailbox is *continuously* full. At the default capacity of 1024 it is within
+noise (7.36 ms → 7.19 ms, p = 0.46). It is not a general slowdown.
+
+The reason is structural: parking woke the producer straight back into its
+emit, while the holdback re-arm is a scheduling round-trip — consumer pops,
+wait list fires, holdback drains, gates go back, the producer's round is
+rescheduled, a poller picks it up.
+
+**What it buys.** The producing thread is never held. That is the entire point,
+and for some hosts it is the difference between backpressure and a dead
+process. A host that cannot grow a thread — PHP's `SyncExecutor`, a Node host on
+the event loop — turns the default park into a guaranteed freeze, every time,
+not sometimes. The starvation supervisor cannot rescue those: it buys threads,
+and a single-threaded runtime has none to sell. Turn this on where a thread
+cannot be spared. Do not turn it on for speed.
+
+**Debugging note.** With the flag on, a producer waiting on a full consumer
+holds no activation, so `inflight` / `inflight_oldest_ms` cannot see it. Look at
+`pending_pushes` and `pending_push_oldest_ms` on the data heartbeat instead, and
+at the runner's own `flezha::mailbox` warning, which names both the producer and
+the consumer that is behind.
+
+**Before the default is ever flipped**, three things have to be true, and none
+of them is true today:
+
+1. the Java round-trip bench run under both settings (owed — the numbers above
+   are Rust-only, and one runtime proves one runtime);
+2. a soak of at least two hours with the flag on, against a workload that
+   genuinely saturates a consumer, at 100% data integrity;
+3. the 30–36% saturation cost either closed or accepted in writing.
+
+The flag is deleted in the change that flips it, or the next one. Details and
+the deletion checklist: `docs/dev_notes/nonblocking-drop-nothing-backpressure.md`.
 
 ## Layer 2: application env keys
 

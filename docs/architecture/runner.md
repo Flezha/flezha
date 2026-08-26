@@ -377,11 +377,24 @@ The rule, normative for every binding:
   worker set to starve. And every host reports handout liveness — `inflight` and
   `inflight_oldest_ms` in the data heartbeat — because that is the only thing that makes ONE
   wedged Entity visible while the runner keeps completing work; likewise every overflow outcome
-  (`blocked_parks`, `drops_newest`, `drops_oldest`) rides the same heartbeat, because a drop no
-  operator can count is a silent data loss. The obligations and the seam
+  (`blocked_parks`, `drops_newest`, `drops_oldest`, and the deferred-push pair `pending_pushes`
+  / `pending_push_oldest_ms`) rides the same heartbeat, because a drop no operator can count is
+  a silent data loss — and neither is backpressure that withholds work, which holds no handout
+  for `inflight` to see. The obligations and the seam
   are in [`../sdk/poll_core.md`](../sdk/poll_core.md); `pool_wedge` is a required conformance
   capability precisely so no SDK can carry them on review alone — and the supervisor does not
   satisfy it, since no ceiling outruns user code that never returns.
+- **No core call blocks a host thread.** Backpressure is expressed by withholding work from
+  the producer, never by holding the producer's caller: the core cannot know how many threads a
+  host has, whether it can make more, or whether its "threads" pin a shared carrier, so a park
+  that is safe on one host is a permanent stop on another. The single exception is the
+  transport reader's park on the entry path — a core-owned thread with no producing Entity,
+  whose stalling is what carries ingress backpressure to the controller. This one reaches Rust
+  and Java **below the seam**, because both complete through `flz_core`; the **Elixir SDK needs
+  nothing, and that blank is a decision, not an oversight** — `Flezha.SDK.Entity` already
+  defers the caller's reply into a `waiters` FIFO instead of blocking a scheduler, which is the
+  design `flz_core` was brought up to. Elixir did take the reporting half (`pending_pushes`),
+  because that is a heartbeat key and heartbeat keys are a cross-SDK contract.
 - **Deferred is named, never silent.** An SDK that cannot carry a capability yet is recorded as
   deferred *by name* — in the change's spec delta and in that SDK's scope matrix
   (that SDK's `conformance.json` `deferred` list, and
