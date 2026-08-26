@@ -32,6 +32,7 @@ on:
           - rust
           - java
           - elixir
+          - node
 
 env:
   CARGO_TERM_COLOR: always
@@ -50,9 +51,9 @@ jobs:
       - id: pick
         run: |
           case "${{ github.event.inputs.runtime }}" in
-            rust|java|elixir) echo "runtimes=[\"${{ github.event.inputs.runtime }}\"]" >> "$GITHUB_OUTPUT" ;;
-            all)              echo 'runtimes=["rust","java","elixir"]' >> "$GITHUB_OUTPUT" ;;
-            *)                echo 'runtimes=["rust","java"]' >> "$GITHUB_OUTPUT" ;;
+            rust|java|elixir|node) echo "runtimes=[\"${{ github.event.inputs.runtime }}\"]" >> "$GITHUB_OUTPUT" ;;
+            all)                   echo 'runtimes=["rust","java","elixir","node"]' >> "$GITHUB_OUTPUT" ;;
+            *)                     echo 'runtimes=["rust","java"]' >> "$GITHUB_OUTPUT" ;;
           esac
 
   e2e:
@@ -63,9 +64,23 @@ jobs:
       fail-fast: false
       matrix:
         runtime: ${{ fromJSON(needs.matrix.outputs.runtimes) }}
+        # The Node SDK's dispatch topology is an axis of the RUN, not a
+        # property of a fixture file: one test app, run under the single-loop
+        # default and under a worker-thread pool. Every other runtime has one
+        # topology, so the second arm is excluded for them.
+        workers: [0, 4]
+        exclude:
+          - runtime: rust
+            workers: 4
+          - runtime: java
+            workers: 4
+          - runtime: elixir
+            workers: 4
+    name: e2e (${{ matrix.runtime }}${{ matrix.workers != 0 && format(', {0} workers', matrix.workers) || '' }})
     env:
       FLEZHA_E2E_RUNTIME: ${{ matrix.runtime }}
-      CONFORMANCE_OUT: conformance-${{ matrix.runtime }}.json
+      FLEZHA_NODE_WORKERS: ${{ matrix.workers }}
+      CONFORMANCE_OUT: conformance-${{ matrix.runtime }}-w${{ matrix.workers }}.json
     steps:
       - uses: actions/checkout@v5
 
@@ -75,6 +90,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
+
+      - name: Set up Node 22
+        if: matrix.runtime == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Set up Erlang + Elixir
         uses: erlef/setup-beam@v1
@@ -128,6 +149,12 @@ jobs:
             --manifest-path=test/apps/rust_runner/Cargo.toml \
             --target-dir=./target
 
+      - name: Pre-build the Node SDK and its test app
+        if: matrix.runtime == 'node'
+        # The addon, the dual-format package and the test app's dependency
+        # link. No connect budget covers building a cdylib on first launch.
+        run: scripts/build-node-sdk.sh
+
       - name: Pre-build the Elixir test runner
         if: matrix.runtime == 'elixir'
         # The standalone runner app compiles a whole flezha on its first
@@ -154,8 +181,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: conformance-${{ matrix.runtime }}
-          path: conformance-${{ matrix.runtime }}.json
+          name: conformance-${{ matrix.runtime }}-w${{ matrix.workers }}
+          path: conformance-${{ matrix.runtime }}-w${{ matrix.workers }}.json
           retention-days: 14
           if-no-files-found: ignore
 
@@ -163,7 +190,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-app-data-${{ matrix.runtime }}
+          name: e2e-app-data-${{ matrix.runtime }}-w${{ matrix.workers }}
           path: |
             app_data/
           retention-days: 7

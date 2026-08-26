@@ -13,6 +13,11 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # JNI exports for the Java SDK's `FlzCore` class — same binary, same ABI,
 # the JNI layer is a one-to-one veneer over the C entry points.
 jni = ["dep:jni"]
+# N-API exports for the Node SDK's native binding — same binary, same ABI,
+# the napi layer is a one-to-one veneer over the C entry points. Additive:
+# the crate's `cdylib` / `staticlib` / `rlib` artifacts and the `jni` build
+# are unchanged, and the `.node` addon is the `cdylib` under another name.
+napi = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
 
 [dependencies]
 flz_core = { path = "../flz_core" }
@@ -22,6 +27,20 @@ serde_json = "1.0"
 dashmap = "6"
 crossbeam = "0.8"
 jni = { version = "0.21", optional = true }
+# `napi9` is the N-API version floor: Node 20 is the oldest release in the
+# SDK's support window and every release in it speaks 9 or better.
+# `dyn-symbols` resolves the N-API symbols from the host at load time instead
+# of at link time, which is what lets the veneer's mapping be exercised from
+# an ordinary Rust test binary. Deliberately NOT `async`: that feature is
+# tokio, and the blocking entry points run on this host's own pool.
+napi = { version = "3.12", default-features = false, features = [
+    "napi9",
+    "dyn-symbols",
+], optional = true }
+napi-derive = { version = "3.6", default-features = false, optional = true }
+
+[build-dependencies]
+napi-build = { version = "2.4", optional = true }
 
 [dev-dependencies]
 prost = "0.13.5"

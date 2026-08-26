@@ -113,7 +113,8 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         java:
           {"sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java",
            ~r/SDK_LANG_JAVA = (\d+);/},
-        elixir: {"lib/flezha/sdk/codec.ex", ~r/@sdk_lang (\d+)/}
+        elixir: {"lib/flezha/sdk/codec.ex", ~r/@sdk_lang (\d+)/},
+        node: {"sdk/node/src/graph.ts", ~r/SDK_LANG_NODE = (\d+)/}
       }
 
       for runtime <- runtimes() do

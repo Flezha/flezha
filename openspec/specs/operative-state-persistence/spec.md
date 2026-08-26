@@ -283,16 +283,18 @@ When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot
 
 Every WAL record and snapshot file SHALL carry a 16-byte header preceding the payload bytes:
 
-- bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir. Values `4–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
+- bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node. Values `5–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
 - bytes 1:5 — `sdk_version: u32 BE` (semver-encoded)
 - bytes 5:9 — `schema_version: u32 BE` (per-Procedure, user-controlled)
-- bytes 9:10 — `format_id: u8` (1 = postcard, 2 = bincode, 3 = rkyv-zerocopy, 4 = kryo-registered)
+- bytes 9:10 — `format_id: u8` (1 = postcard, 2 = bincode, 3 = rkyv-zerocopy, 4 = kryo-registered, 5 = msgpack). A `format_id` names the codec that wrote the body and MAY be shared by SDKs that write the same codec, because the cross-language gate is `sdk_lang` and not this byte.
 - bytes 10:12 — reserved, MUST be zero
 - bytes 12:16 — `crc32: u32 BE` over the payload bytes (change_bytes for WAL records; snapshot_bytes for snapshot files)
 
 The agent SHALL stamp the header at write time using the SDK-supplied values (the SDK ships the header pre-stamped in the wire frame; the agent writes it verbatim). The agent SHALL treat an unknown `sdk_lang` or `format_id` as opaque — it stores and re-ships such records unchanged and SHALL NOT reject them, so allocating a new SDK's value requires no agent change. The agent SHALL, however, **read** byte 0 to resolve a factory's established language for the placement guard; that read is a routing decision, not a validation of the body.
 
 The SDK SHALL verify the header at read time on **every** restore path — the typed path and the host path alike — before any body reaches a codec. A record whose `sdk_lang` is not the reading SDK's own value SHALL be refused with a language-mismatch error naming both values; the SDK SHALL NOT attempt to decode it, and SHALL NOT fall back to a partial or empty state. The agent SHALL NOT verify the header except for the leading WAL record-framing crc32 over `header + change_bytes`.
+
+**The language is resolved before the format.** A record from another SDK is neither a format question nor a schema one, so the language gate SHALL be applied first and its refusal SHALL name both languages. Reading the format byte first makes a record written by an SDK with a different codec report as a malformed header, naming neither.
 
 #### Scenario: Header stamped verbatim from SDK
 
@@ -318,6 +320,16 @@ The SDK SHALL verify the header at read time on **every** restore path — the t
 
 - **WHEN** the allocation table is read
 - **THEN** each shipped SDK SHALL hold exactly one value and no value SHALL be held by two SDKs, including SDKs whose implementation is still only proposed
+
+#### Scenario: A record written by a differently-encoded SDK is refused by language, not by format
+
+- **WHEN** a record stamped with the Node SDK's `sdk_lang` and the MessagePack `format_id` reaches an SDK that writes postcard
+- **THEN** the restore SHALL be refused with a language-mismatch error naming both languages, and SHALL NOT be reported as a malformed or unknown-format header
+
+#### Scenario: The MessagePack identifier is shared, not minted
+
+- **WHEN** the Node SDK writes a durable record
+- **THEN** its `format_id` SHALL be the one already allocated to MessagePack, and an SDK that writes the same codec SHALL reuse it rather than take a new value
 
 ### Requirement: Idempotent emits with stable dedup keys
 

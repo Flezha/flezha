@@ -14,9 +14,52 @@ WAL-format change.
 The sugar exists in the Rust and Java SDKs. The Elixir SDK exposes the
 `Flezha.SDK.Procedure` behaviour directly (`name/0`, `init_state/1`, `run/3`,
 `entity_keys/0`, `entities_for/1`, …) and has no derive layer — see
-[`elixir_sdk.md`](elixir_sdk.md). A surface one binding gains, every binding
-gains in the same change or defers by name:
+[`elixir_sdk.md`](elixir_sdk.md). The Node SDK exposes factory functions —
+`defineProcedure`, `defineOperative`, `defineWorkflow`, wired by a fluent
+channel builder — and no decorators, because a decorator needs a build step,
+does not apply to a plain function, and cannot reshape the decorated type,
+which is what a typed graph needs ([`node_sdk.md`](node_sdk.md)). A surface one
+binding gains, every binding gains in the same change or defers by name:
 [`../architecture/runner.md` → "One change, every SDK"](../architecture/runner.md#one-change-every-sdk).
+
+**This contract binds every SDK** — the declaration surface, the invocation
+context, the reserved metadata namespace, the deterministic effect rules, the
+registration-time refusal set, and the state-mutation discipline. Where a
+language allows a stronger enforcement than the contract's minimum, that SDK
+takes it, and the two tables below record the level each one actually supplies
+rather than one it intends to.
+
+### State-mutation enforcement, per SDK
+
+Declared state is mutated only through declared changes, because the change log
+IS how an entity is rebuilt: a field mutated outside one is live now and gone
+after a restart, and nothing reports the difference until the restart.
+
+| SDK | Mechanism it ships |
+| --- | --- |
+| Rust | The borrow checker. `StateHandle` hands out the generated mutators and `apply`; there is no `&mut S` to assign through, so an unrecorded mutation does not compile. |
+| Java | The generated `<State>Handle`. The state object is reachable, so an unrecorded mutation is possible in principle and prevented by the generated surface being the only one an author is given. |
+| Elixir | Immutability. `run/3` returns the next state, and the SDK journals what it was handed — an unrecorded mutation has no way to exist. |
+| Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
+
+`replay_equals` / `replayEquals()` is the gate for all four: it folds the
+recorded change log against a freshly constructed initial state and requires
+the result to equal the live one.
+
+### Compile-time refusal of a wrong edge
+
+Where an SDK's language can reject a mismatched channel wiring before the
+program runs, it does, and pins the refusal with fixtures expected to fail
+compilation — so a refusal that stops working fails the build rather than
+silently becoming a runtime check. Registration-time refusals remain the
+backstop for what typing cannot see.
+
+| SDK | Compile-time edge typing | Where the refusals are pinned |
+| --- | --- | --- |
+| Rust | yes | 25 compile-fail tests in `sdk/rust/tests/ui/` |
+| Java | yes, through the generic `Procedure<…>` arguments | `sdk/java/.../StreamOperativeConfigurationException` cases |
+| Node | yes, through the channel builder's type parameters | `@ts-expect-error` fixtures in `sdk/node/types-tests/`, compiled under `tsc --noEmit`, plus a negative control that strips the directives and requires each pinned line to still produce a diagnostic |
+| Elixir | no — the language cannot | registration-time refusals only |
 
 Before writing a new SDK, read
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads):

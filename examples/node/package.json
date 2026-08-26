@@ -1,0 +1,15 @@
+{
+  "name": "flezha-node-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A worked Flezha Node operative: state, keying, a timer and an emit",
+  "scripts": {
+    "start": "node run.mjs",
+    "start:workers": "FLEZHA_NODE_WORKERS=4 node run.mjs",
+    "test": "node --test session.test.mjs"
+  },
+  "dependencies": {
+    "@flezha/sdk": "file:../../sdk/node"
+  }
+}

@@ -54,9 +54,25 @@ The core SHALL accept `poll` from any host thread and SHALL accept `complete` fr
 host thread, including a different thread than the one that polled the activation. The
 core SHALL NOT require thread affinity from the host.
 
+The converse binds the host. A host whose unit of concurrency cannot migrate between threads, such
+as an event loop, SHALL keep every blocking ABI entry point off that thread. The blocking entry
+points are the poll, the starvation wait, the completion, the workflow receive, the workflow spawn
+and the runner start, and such a host SHALL reach them only from threads whose blocking cannot stall
+its dispatch.
+
+The completion is what makes this a correctness rule rather than a latency one: under the default
+overflow policy it waits until the consumer's mailbox drains, and the consumer drains only when its
+handler runs. A host that blocks the one thread able to run that handler cannot recover, because the
+inline-drain escape the crate host uses takes a host function pointer and is by construction
+unreachable over the ABI.
+
 #### Scenario: Complete from a different thread
 - **WHEN** worker A polls an activation and hands it to worker B, which completes it
 - **THEN** the completion SHALL be accepted and the entity released, identically to same-thread completion
+
+#### Scenario: The rule is recorded for the next binding
+- **WHEN** a new host binding is designed whose concurrency primitive is bound to one thread
+- **THEN** the ABI documentation SHALL state this constraint and name the completion entry point as the reason
 
 ### Requirement: The C ABI cannot lag the crate API
 
@@ -65,9 +81,23 @@ CI SHALL drive at least one full runner scenario through `flz_core_ffi` itself. 
 capability reachable through the crate API but not through the C ABI is a defect of
 this capability, not a backlog item.
 
+Every host language binding SHALL be built from this crate and SHALL be a one-to-one veneer over its
+entry points, including a binding added under its own feature on the crate. A binding SHALL NOT
+re-express dispatch, ordering, overflow, the retry ladder, durability or the workflow driver, SHALL
+NOT reach a kernel capability the C ABI does not expose, and SHALL NOT alter the artifacts the other
+bindings consume when its feature is enabled.
+
 #### Scenario: FFI parity is tested, not assumed
 - **WHEN** the SDK test suite runs in CI
 - **THEN** it SHALL include a scenario that connects, processes input activations, fires a timer, and shuts down entirely through the C ABI, failing if any required entry point is missing
+
+#### Scenario: A binding adds no ABI surface
+- **WHEN** a host binding's exported surface is compared with the C ABI's
+- **THEN** each export SHALL correspond to an existing entry point or SHALL reach none at all, and the comparison SHALL be asserted rather than reviewed
+
+#### Scenario: A binding's feature is additive
+- **WHEN** the crate is built with and without a binding's feature
+- **THEN** the existing artifacts SHALL be unchanged and the other bindings' exports SHALL be unaffected
 
 ### Requirement: The declaration surface covers the full host layer
 

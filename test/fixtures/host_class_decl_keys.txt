@@ -1,13 +1,14 @@
 # Every key of the `HostClassDecl` JSON the SDKs send the poll core, one per
-# line, `section.key` for the nested declarations. Two readers pin it: a
+# line, `section.key` for the nested declarations. Three readers pin it: a
 # `flz_core` test serialises a fully populated declaration and asserts its key
-# set is exactly this, and `HostClassDeclarationTest` asserts the Java builder
-# emits every key here. A key the core learns that Java cannot spell is a red
-# Java build; a key Java invents that the core never learned already fails at
-# `deny_unknown_fields`.
+# set is exactly this; `HostClassDeclarationTest` asserts the Java builder emits
+# every key here; and `sdk/node/test/decl-keys.test.mjs` asserts the same of the
+# Node builder. A key the core learns that a builder cannot spell is a red build
+# for that SDK; a key a builder invents that the core never learned already
+# fails at `deny_unknown_fields`.
 #
-# Adding a key: teach the core, add it here, teach the Rust builder and the Java
-# builder — one change, every SDK (docs/architecture/runner.md).
+# Adding a key: teach the core, add it here, teach the Rust, Java and Node
+# builders — one change, every SDK (docs/architecture/runner.md).
 class.factory_id
 class.persistent
 class.sdk_lang

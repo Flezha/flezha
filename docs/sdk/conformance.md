@@ -7,6 +7,11 @@ test app the harness spawns; nothing under `test/system/` names a runtime.
 mix test --include system                              # rust, the default
 FLEZHA_E2E_RUNTIME=java mix test --include system      # the whole suite on Java
 FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke   # the two-minute inner loop
+
+# A runtime whose dispatch topology is a run-time choice is run under each. The
+# Node SDK's is the only one today: the fixtures are identical, the run is not.
+FLEZHA_E2E_RUNTIME=node mix test --include system
+FLEZHA_E2E_RUNTIME=node FLEZHA_NODE_WORKERS=4 mix test --include system
 ```
 
 A full cross-SDK check is one run per runtime. `mix test` on its own spawns no
@@ -193,6 +198,10 @@ What the gate enforces, in the order it checks — a pull request adding
 6. Every carried capability's fixture ids equal the Rust reference's.
 7. The runtime is a `workflow_dispatch` option of `.github/workflows/nightly-e2e.yml`.
 8. The `docs` page exists and references the manifest by path.
+9. Where the SDK spells its language byte is added to the gate's one
+   source-of-truth table (`test/sdk_conformance/gate_test.exs`), so the manifest
+   can be checked against the constant rather than trusted. That row is data,
+   not a clause: nothing else about admitting a runtime touches the harness.
 
 ### `sdk_lang`
 
@@ -241,4 +250,4 @@ green.
 
 - [`authoring_contract.md`](authoring_contract.md) — what a conforming authoring surface expands to
 - [`../architecture/runner.md`](../architecture/runner.md) — the kernel split and the "one change, every SDK" rule
-- [`elixir_sdk.md`](elixir_sdk.md), [`java_sdk.md`](java_sdk.md) — the per-SDK scope pages
+- [`elixir_sdk.md`](elixir_sdk.md), [`java_sdk.md`](java_sdk.md), [`node_sdk.md`](node_sdk.md) — the per-SDK scope pages

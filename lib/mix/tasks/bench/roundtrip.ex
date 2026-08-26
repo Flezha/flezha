@@ -97,7 +97,7 @@ defmodule Mix.Tasks.Bench.Roundtrip do
 
     IO.puts("""
     === bench.roundtrip ===
-    engine:      #{cfg.engine}#{if cfg.engine == :flezha, do: " (#{cfg.runtime})", else: ""}
+    engine:      #{cfg.engine}#{if cfg.engine == :flezha, do: " (#{cfg.runtime}#{dispatch_note(cfg.runtime)})", else: ""}
     workload:    #{cfg.workload}
     durability:  #{cfg.durability}
     pipelines:   #{cfg.pipelines} (== partitions)
@@ -1068,22 +1068,46 @@ defmodule Mix.Tasks.Bench.Roundtrip do
   # no-persist twin is the correct partner for an un-checkpointed Flink job.
   # An impossible axis is refused before a runner starts, by name: every SDK
   # that carries a tier has the fixture for it, and one that defers the tier has
-  # nothing to measure.
+  # nothing to measure. Read from the SDK's own manifest rather than a clause
+  # per runtime, so a new SDK's refusals arrive with its manifest.
   defp parse_runtime(nil, _durability), do: :rust
 
   defp parse_runtime(name, durability) do
-    runtime = parse_enum(name, ~w(rust java elixir), "--runtime")
+    runtimes = Enum.map(Flezha.Service.PortPilot.runtimes(), &Atom.to_string/1)
+    runtime = parse_enum(name, runtimes, "--runtime")
+    needed = durability_capability(durability)
+    deferred = Flezha.Service.PortPilot.manifest(runtime)["deferred"] || []
 
-    if runtime == :elixir and durability != :off do
+    if needed && Atom.to_string(needed) in deferred do
       Mix.raise(
-        "--runtime elixir carries only --durability off: the Elixir SDK v1 defers state " <>
-          "persistence and the effectively-once tier (see docs/sdk/elixir_sdk.md and " <>
-          "test/apps/elixir_runner/conformance.json)"
+        "--runtime #{runtime} carries no --durability #{durability}: its SDK defers " <>
+          "#{needed} (#{Flezha.Service.PortPilot.manifest_path(runtime)}), so there is no " <>
+          "fixture to measure"
       )
     end
 
     runtime
   end
+
+  # A runtime whose dispatch topology is a run-time choice reports which one a
+  # number was taken under: a Node number from the single-loop default and one
+  # from a worker pool are different measurements of the same fixture, and a
+  # report that did not say which is not attributable.
+  defp dispatch_note(:node) do
+    case System.get_env("FLEZHA_NODE_WORKERS") do
+      nil -> ", main-loop dispatch"
+      "0" -> ", main-loop dispatch"
+      n -> ", #{n} dispatch workers"
+    end
+  end
+
+  defp dispatch_note(_runtime), do: ""
+
+  # The capability a durability posture needs a fixture for.
+  defp durability_capability(:off), do: nil
+  defp durability_capability(:state), do: :state_persistence
+  defp durability_capability(:on), do: :effectively_once
+  defp durability_capability(:checkpoint), do: :effectively_once
 
   defp flezha_factory(%{workload: :identity}), do: "bench_echo"
   defp flezha_factory(%{workload: :keyed, durability: :off}), do: "bench_keyed_nopersist"

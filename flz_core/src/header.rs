@@ -45,7 +45,7 @@ pub enum RestoreError {
 }
 
 /// The `sdk_lang` allocation table: 0 unspecified, 1 Rust, 2 Java, 3 Elixir,
-/// `4..=254` free in landing order, 255 reserved.
+/// 4 Node, `5..=254` free in landing order, 255 reserved.
 ///
 /// Durable `State`/`Change` bodies are per-SDK below the shared envelope, so
 /// this byte is what keeps one language's records from reaching another's
@@ -60,8 +60,10 @@ pub const SDK_LANG_JAVA: u8 = 2;
 /// Elixir SDK. Persists no Entity state in v1, but advertises the byte so its
 /// factories are taggable at the placement seam.
 pub const SDK_LANG_ELIXIR: u8 = 3;
+/// Node SDK (N-API over this core).
+pub const SDK_LANG_NODE: u8 = 4;
 /// Lowest value not yet allocated to an SDK.
-pub const SDK_LANG_NEXT_FREE: u8 = 4;
+pub const SDK_LANG_NEXT_FREE: u8 = 5;
 /// Reserved; never allocated to an SDK.
 pub const SDK_LANG_RESERVED: u8 = 255;
 
@@ -71,6 +73,7 @@ pub const SDK_LANG_ALLOCATED: &[(u8, &str)] = &[
     (SDK_LANG_RUST, "rust"),
     (SDK_LANG_JAVA, "java"),
     (SDK_LANG_ELIXIR, "elixir"),
+    (SDK_LANG_NODE, "node"),
 ];
 
 /// Whether `lang` is a value the allocation table hands to an SDK. `0` and
@@ -96,6 +99,11 @@ pub const FORMAT_ID_POSTCARD: u8 = 1;
 /// bytes a format-1 record would carry. The durable marker that lets mixed
 /// WALs (plain change records + effect records) stay readable.
 pub const FORMAT_ID_EFFECT_RECORD: u8 = 2;
+
+/// MessagePack format id: the body is a MessagePack-encoded `State`/`Change`.
+/// Shared by every SDK whose codec is MessagePack rather than minted per SDK —
+/// the byte names the encoding, and the cross-language gate is `sdk_lang`.
+pub const FORMAT_ID_MSGPACK: u8 = 5;
 
 /// Timer-ops format id: the body is a postcard `Vec<TimerOp>` mutating the
 /// Entity's pending-timer set. Rides the ordinary `entity_state_change`
@@ -245,13 +253,17 @@ pub fn resolve_record(
     expected: &HeaderTemplate,
     min_readable: u32,
 ) -> Result<(RecordKind, SchemaDecision), RestoreError> {
+    refuse_foreign_language(header, expected)?;
     let kind = match header.format_id {
         FORMAT_ID_EFFECT_RECORD => RecordKind::EffectRecord,
         FORMAT_ID_TIMER_OPS => RecordKind::TimerOps,
         id if id == expected.format_id => RecordKind::Change,
         _ => return Err(RestoreError::HeaderInvalid),
     };
-    Ok((kind, resolve_version(header, expected, min_readable)?))
+    Ok((
+        kind,
+        decide_schema(header.schema_version, expected.schema_version, min_readable)?,
+    ))
 }
 
 /// Resolve the header of a state snapshot. A snapshot has no kind of its own:
@@ -261,26 +273,29 @@ pub fn resolve_state(
     expected: &HeaderTemplate,
     min_readable: u32,
 ) -> Result<SchemaDecision, RestoreError> {
+    refuse_foreign_language(header, expected)?;
     if header.format_id != expected.format_id {
         return Err(RestoreError::HeaderInvalid);
     }
-    resolve_version(header, expected, min_readable)
+    decide_schema(header.schema_version, expected.schema_version, min_readable)
 }
 
-/// Language first, then version: a record from another SDK is not a schema
-/// question at all.
-fn resolve_version(
+/// Language before anything else: a record from another SDK is neither a
+/// format question nor a schema one, and the refusal has to name both
+/// languages to be actionable. SDKs that share a codec would otherwise be
+/// told their header is malformed — the answer a differing format byte gives
+/// when it is read first.
+fn refuse_foreign_language(
     header: &DecodedHeader,
     expected: &HeaderTemplate,
-    min_readable: u32,
-) -> Result<SchemaDecision, RestoreError> {
+) -> Result<(), RestoreError> {
     if header.sdk_lang != expected.sdk_lang {
         return Err(RestoreError::LangMismatch {
             expected: expected.sdk_lang,
             found: header.sdk_lang,
         });
     }
-    decide_schema(header.schema_version, expected.schema_version, min_readable)
+    Ok(())
 }
 
 /// Parse `CARGO_PKG_VERSION` into the `(major << 16) | (minor << 8) | patch`
@@ -341,8 +356,27 @@ mod tests {
         assert_eq!(SDK_LANG_RUST, 1);
         assert_eq!(SDK_LANG_JAVA, 2);
         assert_eq!(SDK_LANG_ELIXIR, 3);
+        assert_eq!(SDK_LANG_NODE, 4);
         assert_eq!(sdk_lang_name(SDK_LANG_JAVA), "java");
+        assert_eq!(sdk_lang_name(SDK_LANG_NODE), "node");
         assert_eq!(sdk_lang_name(SDK_LANG_NEXT_FREE), "unallocated");
+    }
+
+    /// A format id names the codec, not the SDK, so MessagePack has one value
+    /// every MessagePack SDK shares. What must stay unique is the set: two
+    /// codecs on one byte would make a mixed WAL unreadable.
+    #[test]
+    fn format_ids_are_distinct() {
+        let ids = [
+            FORMAT_ID_POSTCARD,
+            FORMAT_ID_EFFECT_RECORD,
+            FORMAT_ID_TIMER_OPS,
+            FORMAT_ID_MSGPACK,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            assert!(seen.insert(id), "format_id {id} is allocated twice");
+        }
     }
 
     #[test]
@@ -432,7 +466,7 @@ mod tests {
     #[test]
     fn the_expected_format_comes_from_the_running_procedure() {
         let kryo = HeaderTemplate {
-            sdk_lang: 2,
+            sdk_lang: SDK_LANG_JAVA,
             sdk_version: 1,
             schema_version: 1,
             format_id: 4,
@@ -443,7 +477,12 @@ mod tests {
             (RecordKind::Change, SchemaDecision::Decode)
         );
 
-        let postcard = HeaderTemplate::new(1, 1);
+        // Same SDK, different declared format: the refusal has to be the
+        // format one, so the language is held constant here.
+        let postcard = HeaderTemplate {
+            format_id: FORMAT_ID_POSTCARD,
+            ..kryo
+        };
         assert!(matches!(
             resolve_record(&stamped, &postcard, 1).unwrap_err(),
             RestoreError::HeaderInvalid

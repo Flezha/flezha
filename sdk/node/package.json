@@ -1,0 +1,58 @@
+{
+  "name": "@flezha/sdk",
+  "version": "0.1.0",
+  "description": "Flezha SDK for Node — a poll host over the flz_core runner kernel",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alfetahe/flezha.git",
+    "directory": "sdk/node"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
+    },
+    "./testing": {
+      "types": "./dist/types/testing.d.ts",
+      "import": "./dist/esm/testing.js",
+      "require": "./dist/cjs/testing.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:native": "cargo build -p flz_core_ffi --features napi --release && node scripts/install-native.mjs",
+    "build:native:debug": "cargo build -p flz_core_ffi --features napi && node scripts/install-native.mjs --debug",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:expected-failures": "node scripts/expected-failures.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run build && npm run typecheck && npm run typecheck:expected-failures && npm test"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.3"
+  },
+  "optionalDependencies": {
+    "@flezha/sdk-linux-x64-gnu": "0.1.0",
+    "@flezha/sdk-linux-arm64-gnu": "0.1.0",
+    "@flezha/sdk-darwin-x64": "0.1.0",
+    "@flezha/sdk-darwin-arm64": "0.1.0",
+    "@flezha/sdk-win32-x64-msvc": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

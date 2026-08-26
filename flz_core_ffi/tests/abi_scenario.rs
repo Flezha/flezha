@@ -4,6 +4,13 @@
 //! One sequential `#[test]`: the context, the engine and the fake controller
 //! are process-global state, so the phases run in order inside a single
 //! test fn (the `runner_lifecycle` pattern).
+//!
+//! Under `--features napi` the same scenario also proves the Node veneer,
+//! with no Node process involved: every activation is mapped through
+//! `activation_to_js` and every completion is built in the shape JavaScript
+//! answers with and mapped back through `result_from_js`. A veneer that lost
+//! or transposed a field would fail the phase that reads it, rather than a
+//! separate suite that has to be kept in step with this one.
 
 use std::ffi::CString;
 use std::os::unix::net::UnixListener;
@@ -102,10 +109,14 @@ fn abi_poll(ctx: *mut FlzContext, timeout_ms: u64) -> (i32, Option<schema::Activ
     let bytes = unsafe { std::slice::from_raw_parts(buf, len) }.to_vec();
     unsafe { flz_core_buf_free(buf, len) };
     let act = schema::decode_activation(&bytes).expect("activation decodes");
+    #[cfg(feature = "napi")]
+    napi_veneer::assert_activation_maps(&act);
     (status, Some(act))
 }
 
 fn abi_complete(ctx: *mut FlzContext, result: &schema::ActivationResult) {
+    #[cfg(feature = "napi")]
+    let result = &napi_veneer::through_veneer(result);
     let bytes = schema::encode_result(result);
     let status = unsafe { flz_core_complete(ctx, bytes.as_ptr(), bytes.len()) };
     if status != FLZ_OK {
@@ -788,4 +799,310 @@ fn c_abi_full_scenario() {
     );
 
     unsafe { flz_core_context_free(ctx) };
+}
+
+/// The Node veneer, driven from Rust. Every mapping the addon performs is
+/// exercised by the scenario above; these helpers are the two directions.
+#[cfg(feature = "napi")]
+mod napi_veneer {
+    use flz_core::schema;
+    use flz_core_ffi::napi_glue::*;
+    use napi::bindgen_prelude::{BigInt, Buffer};
+
+    fn big(v: u64) -> BigInt {
+        BigInt::from(v)
+    }
+
+    fn u64_of(v: &BigInt) -> u64 {
+        let (_, value, lossless) = v.get_u64();
+        assert!(lossless, "a u64 field lost precision crossing the veneer");
+        value
+    }
+
+    /// Assert the decoded activation reaches JavaScript intact. Checked
+    /// field by field rather than by a round trip, because the veneer has no
+    /// inverse in production — nothing ever maps JavaScript back to an
+    /// `Activation`, so an inverse written here could agree with a wrong
+    /// forward mapping.
+    pub fn assert_activation_maps(act: &schema::Activation) {
+        let js = activation_to_js(act.clone());
+        assert_eq!(u64_of(&js.token), act.token);
+        assert_eq!(js.operative, act.target.operative);
+        assert_eq!(js.procedure, act.target.procedure);
+        assert_eq!(js.entity_key, act.target.entity_key);
+        assert_eq!(u64_of(&js.change_seq), act.change_seq);
+        assert_eq!(js.factory, act.factory);
+        match &act.kind {
+            schema::ActivationKind::Work(items) => {
+                assert_eq!(js.kind, "work");
+                let mapped = js.items.expect("a work activation carries items");
+                assert_eq!(mapped.len(), items.len());
+                for (js_item, item) in mapped.iter().zip(items) {
+                    match item {
+                        schema::WorkItem::Input(i) => {
+                            assert_eq!(js_item.kind, "input");
+                            assert_eq!(js_item.channel, Some(i.channel));
+                            assert_eq!(
+                                js_item.payload.as_ref().expect("payload").to_vec(),
+                                i.payload
+                            );
+                            let meta: Vec<(String, String)> = js_item
+                                .metadata
+                                .as_ref()
+                                .expect("metadata")
+                                .iter()
+                                .map(|m| (m.key.clone(), m.value.clone()))
+                                .collect();
+                            assert_eq!(meta, i.metadata);
+                            assert_eq!(
+                                js_item.consumed_offset.as_ref().map(u64_of),
+                                i.consumed_offset
+                            );
+                            assert_eq!(js_item.replay, Some(i.replay));
+                            assert_eq!(js_item.now.as_ref().map(u64_of), Some(i.now));
+                        }
+                        schema::WorkItem::Timer(t) => {
+                            assert_eq!(js_item.kind, "timer");
+                            assert_eq!(js_item.timer_kind.as_deref(), Some(t.kind.as_str()));
+                            assert_eq!(
+                                js_item.scheduled_at.as_ref().map(u64_of),
+                                Some(t.scheduled_at)
+                            );
+                            // A timer firing's `now` IS its scheduled time,
+                            // so a handler reads one field for both kinds.
+                            assert_eq!(js_item.now.as_ref().map(u64_of), Some(t.scheduled_at));
+                        }
+                    }
+                }
+            }
+            schema::ActivationKind::RestoreFold(fold) => {
+                assert_eq!(js.kind, "restore_fold");
+                assert_eq!(
+                    js.snapshot.as_ref().map(|b| b.bytes.to_vec()),
+                    fold.snapshot.as_ref().map(|b| b.bytes.clone())
+                );
+                let changes = js.changes.expect("a restore fold carries changes");
+                assert_eq!(changes.len(), fold.changes.len());
+                for (js_body, body) in changes.iter().zip(&fold.changes) {
+                    assert_eq!(js_body.bytes.to_vec(), body.bytes);
+                    assert_eq!(js_body.from_version, body.from_version);
+                }
+            }
+            schema::ActivationKind::SnapshotRequest => assert_eq!(js.kind, "snapshot_request"),
+            schema::ActivationKind::LiveStateRead => assert_eq!(js.kind, "live_state_read"),
+            schema::ActivationKind::ApplyState { state_json } => {
+                assert_eq!(js.kind, "apply_state");
+                assert_eq!(js.state_json.expect("state json").to_vec(), *state_json);
+            }
+            schema::ActivationKind::MigrationSerialize => {
+                assert_eq!(js.kind, "migration_serialize")
+            }
+            schema::ActivationKind::KeyRequest(req) => {
+                assert_eq!(js.kind, "key_request");
+                let mapped = js.key_request.expect("a key request carries its payloads");
+                assert_eq!(mapped.channel, req.channel);
+                assert_eq!(mapped.want_keys, req.want_keys);
+                assert_eq!(mapped.want_event_time, req.want_event_time);
+                let payloads: Vec<Vec<u8>> = mapped.payloads.iter().map(|p| p.to_vec()).collect();
+                assert_eq!(payloads, req.payloads);
+            }
+            schema::ActivationKind::WorkflowRun { args } => {
+                assert_eq!(js.kind, "workflow_run");
+                assert_eq!(js.args.expect("workflow args").to_vec(), *args);
+            }
+            schema::ActivationKind::CompensateRun { outputs } => {
+                assert_eq!(js.kind, "compensate_run");
+                let mapped: Vec<Vec<u8>> = js
+                    .outputs
+                    .expect("compensate outputs")
+                    .iter()
+                    .map(|o| o.to_vec())
+                    .collect();
+                assert_eq!(mapped, *outputs);
+            }
+        }
+    }
+
+    /// Build the result in the shape JavaScript answers with, map it back
+    /// through the veneer, and assert nothing changed. The scenario then
+    /// completes with the mapped value, so a lossy field fails the phase that
+    /// depends on it and not only this equality.
+    pub fn through_veneer(result: &schema::ActivationResult) -> schema::ActivationResult {
+        let mapped = result_from_js(js_result(result)).expect("the veneer maps the result back");
+        assert_eq!(&mapped, result, "the veneer changed the result");
+        mapped
+    }
+
+    fn js_meta(pairs: &[(String, String)]) -> Vec<JsMeta> {
+        pairs
+            .iter()
+            .map(|(key, value)| JsMeta {
+                key: key.clone(),
+                value: value.clone(),
+            })
+            .collect()
+    }
+
+    fn js_output(o: &schema::Output) -> JsOutput {
+        let (target, channel, consumer, plugin_channel) = match &o.target {
+            schema::OutputTarget::Edge { channel, consumer } => {
+                ("edge", Some(*channel), Some(*consumer), None)
+            }
+            schema::OutputTarget::Plugin { channel } => {
+                ("plugin", None, None, Some(channel.clone()))
+            }
+        };
+        JsOutput {
+            target: target.to_string(),
+            channel,
+            consumer,
+            plugin_channel,
+            key: o.key.clone(),
+            event_time: o.event_time.map(big),
+            metadata: Some(js_meta(&o.metadata)),
+            payload: Buffer::from(o.payload.clone()),
+        }
+    }
+
+    fn js_effect(e: &schema::ItemEffect) -> JsItemEffect {
+        let (verdict, message) = match &e.verdict {
+            schema::Verdict::Ok => ("ok", None),
+            schema::Verdict::RetryableError { message } => ("retryable", Some(message.clone())),
+            schema::Verdict::NonRetryableError { message } => {
+                ("non_retryable", Some(message.clone()))
+            }
+        };
+        JsItemEffect {
+            verdict: verdict.to_string(),
+            message,
+            changes: Some(e.changes.iter().cloned().map(Buffer::from).collect()),
+            outputs: Some(e.outputs.iter().map(js_output).collect()),
+            consumed_offset: e.consumed_offset.map(big),
+            event_time: big(e.event_time),
+            timers: Some(
+                e.timers
+                    .iter()
+                    .map(|t| JsTimerOp {
+                        kind: t.kind.as_str().to_string(),
+                        scheduled_at: big(t.scheduled_at),
+                        register: t.register,
+                    })
+                    .collect(),
+            ),
+            checkpoint: Some(e.checkpoint),
+            dlq: e.dlq.as_ref().map(|d| JsDlqEntry {
+                channel: d.channel.clone(),
+                error: d.error.clone(),
+                attempts: d.attempts,
+                payload: d.payload.clone().map(Buffer::from),
+            }),
+        }
+    }
+
+    fn js_result(r: &schema::ActivationResult) -> JsActivationResult {
+        let mut out = JsActivationResult {
+            token: big(r.token),
+            outcome: String::new(),
+            effects: None,
+            state: None,
+            json: None,
+            prepared: None,
+            error: None,
+            non_retryable: None,
+            workflow_completed: None,
+            workflow_result: None,
+        };
+        match &r.outcome {
+            schema::ActivationOutcome::Work(effects) => {
+                out.outcome = "work".into();
+                out.effects = Some(effects.iter().map(js_effect).collect());
+            }
+            schema::ActivationOutcome::Restored => out.outcome = "restored".into(),
+            schema::ActivationOutcome::Snapshot { state } => {
+                out.outcome = "snapshot".into();
+                out.state = Some(Buffer::from(state.clone()));
+            }
+            schema::ActivationOutcome::StateJson { json } => {
+                out.outcome = "state_json".into();
+                out.json = Some(Buffer::from(json.clone()));
+            }
+            schema::ActivationOutcome::StateApplied => out.outcome = "state_applied".into(),
+            schema::ActivationOutcome::MigrationState { json } => {
+                out.outcome = "migration_state".into();
+                out.json = Some(Buffer::from(json.clone()));
+            }
+            schema::ActivationOutcome::Prepared(answers) => {
+                out.outcome = "prepared".into();
+                out.prepared = Some(
+                    answers
+                        .iter()
+                        .map(|a| match a {
+                            Ok(answer) => JsPrepareAnswer {
+                                keys: Some(answer.keys.clone()),
+                                event_time: answer.event_time.map(big),
+                                error: None,
+                                non_retryable: None,
+                            },
+                            Err(e) => JsPrepareAnswer {
+                                keys: None,
+                                event_time: None,
+                                error: Some(e.message.clone()),
+                                non_retryable: Some(e.non_retryable),
+                            },
+                        })
+                        .collect(),
+                );
+            }
+            schema::ActivationOutcome::Failed(e) => {
+                out.outcome = "failed".into();
+                out.error = Some(e.message.clone());
+                out.non_retryable = Some(e.non_retryable);
+            }
+            schema::ActivationOutcome::WorkflowDone { completed, result } => {
+                out.outcome = "workflow_done".into();
+                out.workflow_completed = Some(*completed);
+                out.workflow_result = Some(Buffer::from(result.clone()));
+            }
+        }
+        out
+    }
+
+    /// The addon exports exactly what the surface table names, every blocking
+    /// entry point is a promise, and neither `poll` nor `waitStarvation` is
+    /// among them. Asserted here as well as from Node, because this is the
+    /// side that can go wrong without anyone installing the package.
+    #[test]
+    fn the_native_surface_is_the_declared_one() {
+        let surface = native_surface();
+        let blocking: Vec<&str> = surface
+            .iter()
+            .filter(|e| e.blocking)
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(
+            blocking,
+            [
+                "start",
+                "complete",
+                "workflowRecv",
+                "spawnWorkflow",
+                "stopHost"
+            ]
+        );
+        for name in ["poll", "waitStarvation"] {
+            assert!(
+                !surface.iter().any(|e| e.name == name),
+                "{name} must not be exported to JavaScript"
+            );
+        }
+        for entry in &surface {
+            if let Some(abi) = &entry.abi {
+                assert!(
+                    abi.starts_with("flz_core_"),
+                    "{} names {abi}, which is not a C ABI entry point",
+                    entry.name
+                );
+            }
+        }
+    }
 }

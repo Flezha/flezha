@@ -11,6 +11,16 @@
 
 #[cfg(feature = "jni")]
 mod jni_glue;
+// `napi-derive` emits the module-registration constructor only outside
+// `cfg(test)`, so under the test harness every exported entry point looks
+// unreferenced. The allow is scoped to that build, and to these two modules,
+// so genuinely dead code elsewhere still reports.
+#[cfg_attr(test, allow(dead_code))]
+#[cfg(feature = "napi")]
+pub mod napi_glue;
+#[cfg_attr(test, allow(dead_code))]
+#[cfg(feature = "napi")]
+mod napi_host;
 
 use std::ffi::{c_char, CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -223,7 +223,8 @@ impl<'a> Iterator for ChangeLogIter<'a> {
 mod tests {
     use super::*;
     use crate::header::{
-        HeaderTemplate, FORMAT_ID_POSTCARD, SDK_LANG_ELIXIR, SDK_LANG_JAVA, SDK_LANG_RUST,
+        HeaderTemplate, FORMAT_ID_MSGPACK, FORMAT_ID_POSTCARD, SDK_LANG_ELIXIR, SDK_LANG_JAVA,
+        SDK_LANG_NODE, SDK_LANG_RUST,
     };
 
     /// Collects what the walk hands it, so a test can assert that a refused
@@ -281,6 +282,62 @@ mod tests {
             sink.changes.is_empty(),
             "a refused record must not reach the host codec"
         );
+    }
+
+    /// The gate reads the language byte and nothing else, so a MessagePack
+    /// body is refused by a postcard SDK on the language and never reaches the
+    /// point where the format byte could be mistaken for a readable one.
+    #[test]
+    fn a_node_record_is_refused_by_a_postcard_sdk() {
+        let node = HeaderTemplate {
+            sdk_lang: SDK_LANG_NODE,
+            sdk_version: 1,
+            schema_version: 1,
+            format_id: FORMAT_ID_MSGPACK,
+        };
+        let log = record(0, &node, b"msgpack-bytes");
+        let mut sink = RecordingSink::default();
+
+        let err = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink).unwrap_err();
+
+        match err {
+            RestoreError::LangMismatch { expected, found } => {
+                assert_eq!(expected, SDK_LANG_RUST);
+                assert_eq!(found, SDK_LANG_NODE);
+            }
+            other => panic!("expected a language mismatch, got {other:?}"),
+        }
+        assert!(sink.changes.is_empty());
+        let message = fold_change_log(&log, &template(SDK_LANG_JAVA), 1, &mut sink)
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("node"), "{message}");
+        assert!(message.contains("java"), "{message}");
+    }
+
+    /// And the other direction: a postcard record reaching the Node codec is
+    /// refused on the same byte, so neither side can decode the other's bytes.
+    #[test]
+    fn a_postcard_record_is_refused_by_the_node_sdk() {
+        let node = HeaderTemplate {
+            sdk_lang: SDK_LANG_NODE,
+            sdk_version: 1,
+            schema_version: 1,
+            format_id: FORMAT_ID_MSGPACK,
+        };
+        let log = record(0, &template(SDK_LANG_RUST), b"postcard-bytes");
+        let mut sink = RecordingSink::default();
+
+        let err = fold_change_log(&log, &node, 1, &mut sink).unwrap_err();
+
+        match err {
+            RestoreError::LangMismatch { expected, found } => {
+                assert_eq!(expected, SDK_LANG_NODE);
+                assert_eq!(found, SDK_LANG_RUST);
+            }
+            other => panic!("expected a language mismatch, got {other:?}"),
+        }
+        assert!(sink.changes.is_empty());
     }
 
     /// The error text names both SDKs, not only their bytes — the reason

@@ -176,7 +176,7 @@ pub struct HostClassDecl {
     /// refuses the declaration rather than substituting a default.
     pub sdk_lang: u8,
     /// Header format byte the host's plain change bodies claim
-    /// (postcard = 1, Kryo = 4).
+    /// (postcard = 1, Kryo = 4, MessagePack = 5).
     #[serde(default = "default_change_format")]
     pub change_format_id: u8,
     /// Effectively-once delivery tier.
@@ -3325,6 +3325,35 @@ mod sdk_lang_declaration_tests {
             crate::operative::registry::sdk_lang_for_factory("never_declared"),
             crate::header::SDK_LANG_UNSPECIFIED,
             "an undeclared factory advertises no language rather than a guess"
+        );
+    }
+
+    /// The same path for the Node SDK, which is the first to declare a format
+    /// byte that is neither postcard nor Kryo: the class's own template is
+    /// what a restore compares against, so the format has to survive the
+    /// declaration alongside the language.
+    #[test]
+    fn a_node_class_declares_its_language_and_the_msgpack_format() {
+        let id = format!("host_lang_node_{}", std::process::id());
+        super::register_host_class_json(
+            decl(&id, r#""sdk_lang":4,"change_format_id":5,"#).as_bytes(),
+        )
+        .expect("a Node-declared class registers");
+
+        let topology = crate::operative::registry::get_class(&id).expect("class registered");
+        assert_eq!(topology.sdk_lang, crate::header::SDK_LANG_NODE);
+
+        let header = topology.procedures[0]
+            .host_facts
+            .as_ref()
+            .expect("a host class carries host facts")
+            .header();
+        assert_eq!(header.sdk_lang, crate::header::SDK_LANG_NODE);
+        assert_eq!(header.format_id, crate::header::FORMAT_ID_MSGPACK);
+
+        assert_eq!(
+            crate::operative::registry::sdk_lang_for_factory(&id),
+            crate::header::SDK_LANG_NODE
         );
     }
 }

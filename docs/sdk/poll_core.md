@@ -63,13 +63,14 @@ caller. They are also what a queued direct activation with no thread inside
 
 **The SDK brings the threads**, with whatever its runtime does best. The count
 is a servicing detail, not a limit on concurrency — that limit is the core's
-one number. The two shipped hosts differ completely and neither knows about
-the other:
+one number. The shipped hosts differ completely and none knows about the
+others:
 
 | Host | Threading model | Knobs |
 | ---- | --------------- | ----- |
 | Rust | A base pool of poll workers plus one supervisor thread parked in the core's **starvation wait**. Each observation spawns one more worker up to the ceiling; workers above the base retire after an idle streak, so a workload that never starves observes exactly the base pool. | `FLEZHA_WORKER_POOL_SIZE` (default: available parallelism, 2 if unknown), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
 | Java | A small fixed set of platform *fetcher* threads loop `poll → decode → hand off → poll`; one **virtual thread** per activation runs the dispatch and completes it (`Executors.newVirtualThreadPerTaskExecutor()`), plus one platform **supervisor** thread parked in the starvation wait that starts one more fetcher per observation, up to the ceiling. | `FLEZHA_WORKER_POOL_SIZE` (default 2, `FlezhaEnv.DEFAULT_FETCHER_COUNT`), `FLEZHA_WORKER_POOL_MAX` (default 10× the count, never below it) |
+| Node | Java's shape, with a hard constraint where Java has a choice. Native fetcher threads the SDK owns — never libuv's shared pool — loop `poll → decode → hand off → poll` and hand each activation to one **event loop**: the main one by default, or one of N `worker_threads`. Blocking calls run on a **growable** native pool, because `complete` parks under `DropNothing` and a fixed pool whose every thread parks pushing to one consumer has no thread left for the completion that would drain it. One supervisor parks in the starvation wait. | `FLEZHA_NODE_WORKERS` (default 0 = the main loop), `FLEZHA_WORKER_POOL_SIZE` (default 2), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
 
 **No core call blocks a host thread.** The core cannot know how many threads a
 host has, whether it can create more, or whether its "threads" pin a shared
@@ -348,6 +349,19 @@ Context lifecycle: `flz_core_context_new(shim_schema_version)` →
   impossible.
 - **Any host thread may poll; any host thread may complete**, including a
   different one than the thread that polled. No affinity.
+- **A host whose unit of concurrency is bound to one thread must keep every
+  blocking entry point off that thread.** The blocking ones are the poll, the
+  starvation wait, the completion, the workflow receive, the workflow spawn and
+  the runner start. An event loop is the case this rule exists for, and
+  `flz_core_complete` is what makes it a correctness rule rather than a latency
+  one: under the default overflow policy it parks until the consumer's mailbox
+  drains, and the consumer drains only when its handler runs. A host that parks
+  the one thread able to run that handler cannot recover — the inline-drain
+  escape the crate host uses (`routing::install_inline_serve`) takes a host
+  function pointer and is by construction unreachable over the ABI. The Node
+  veneer draws that boundary once, in the binding: `flz_core_poll` is not
+  exported to JavaScript at all, and the four remaining blocking entry points
+  are promises resolved from the host's own threads.
 - **`flz_core_abandon(ctx, token)` exists because no unwind crosses the ABI.**
   A veneer whose host language throws, or whose thread dies, has no way to
   reach `flz_core_complete`, and per-entity exclusivity would then retire that
@@ -465,6 +479,29 @@ refuses a shim/core version mismatch before any controller connection.
 2. Java-owned arrays handed into native methods (`declareClass`, `complete`,
    `workflowEmit`, …) are copied into Rust-side buffers before the call
    returns; the JVM retains ownership.
+
+## The Node binding
+
+The Node SDK is a poll host over the same crate, built with the `napi` feature
+beside the `jni` one — one binary, two veneers, no second copy of the ABI. The
+napi layer is one-to-one with the C entry points and its exported surface is
+asserted against a declared table (`nativeSurface()`), so an export that named
+no C entry point, or a blocking one reachable synchronously, fails a test
+rather than a review.
+
+Two things differ from the Java binding, both following from the event loop:
+
+1. **`poll` and `wait_starvation` are not exported to JavaScript.** They are
+   driven from native fetcher threads inside the binding, which is also what
+   keeps them off the runtime's shared I/O threadpool — four threads that
+   `fs`, `dns` and `crypto` also use.
+2. **The activation is decoded on the Rust side** and reaches JavaScript as a
+   structured object rather than bytes, so the SDK carries no second
+   implementation of the postcard contract. Payload `Vec`s move into `Buffer`s
+   without copying, and every core buffer is freed through `flz_core_buf_free`
+   before the fetcher's turn ends.
+
+`docs/sdk/node_sdk.md` states the host's parallelism model as arithmetic.
 
 ## What stays per-language
 

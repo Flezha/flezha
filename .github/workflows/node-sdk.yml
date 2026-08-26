@@ -1,0 +1,205 @@
+name: Node SDK
+
+on:
+  pull_request:
+    paths:
+      - "sdk/node/**"
+      - "examples/node/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
+      - "flz_transport/**"
+      - "test/apps/node_runner/**"
+      - "test/fixtures/host_class_decl_keys.txt"
+      - "scripts/build-node-sdk.sh"
+      - ".github/workflows/node-sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/node/**"
+      - "examples/node/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
+      - "flz_transport/**"
+      - "test/apps/node_runner/**"
+      - "test/fixtures/host_class_decl_keys.txt"
+      - "scripts/build-node-sdk.sh"
+      - ".github/workflows/node-sdk.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The package's own suite. Everything here runs against a freshly built
+  # addon, so a veneer change and a package change fail together rather than
+  # one of them passing against a stale binary.
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The N-API version floor is what makes one binary serve every
+        # supported release; both ends of the support window prove it.
+        node: [20, 24]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: Build the addon and the package
+        run: scripts/build-node-sdk.sh
+
+      - name: Type-check, including the fixtures expected to fail
+        working-directory: sdk/node
+        # `tsc --noEmit` fails when a `@ts-expect-error` directive goes unused,
+        # which is exactly what a compile-time refusal that stopped working
+        # looks like. The second command is the negative control: with the
+        # directives stripped, each pinned line must still produce a
+        # diagnostic, so a fixture cannot pass for the wrong reason.
+        run: |
+          npm run typecheck
+          npm run typecheck:expected-failures
+
+      - name: Unit tests
+        working-directory: sdk/node
+        run: npm test
+
+      - name: The worked example's own test
+        working-directory: examples/node
+        run: |
+          npm install --no-audit --no-fund
+          npm test
+
+  # The veneer, from the Rust side. `--features napi` must stay additive: the
+  # crate's other artifacts and the Java shim are built from the same source.
+  veneer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - name: The ABI scenario, driven through the Node veneer
+        run: cargo test -p flz_core_ffi --features napi
+
+      - name: The feature is additive
+        # Enabling `napi` adds one exported symbol and removes none, and the
+        # JNI exports are untouched when both features are on. Asserted rather
+        # than reviewed, because the Java SDK ships a binary built from this
+        # crate.
+        run: |
+          set -euo pipefail
+          syms() { nm -D --defined-only "$1" | awk '{print $3}' | grep -v '^$' | sort; }
+          cargo build -p flz_core_ffi
+          syms target/debug/libflz_core_ffi.so > /tmp/sym.default
+          cargo build -p flz_core_ffi --features napi
+          syms target/debug/libflz_core_ffi.so > /tmp/sym.napi
+          cargo build -p flz_core_ffi --features jni,napi
+          syms target/debug/libflz_core_ffi.so > /tmp/sym.both
+          removed=$(comm -23 /tmp/sym.default /tmp/sym.napi)
+          if [ -n "$removed" ]; then
+            echo "the napi feature removed exported symbols:"; echo "$removed"; exit 1
+          fi
+          added=$(comm -13 /tmp/sym.default /tmp/sym.napi)
+          if [ "$added" != "napi_register_module_v1" ]; then
+            echo "the napi feature added more than the module registration: $added"; exit 1
+          fi
+          grep -q Java_com_flezha_sdk_native_1_FlzCore_poll /tmp/sym.both \
+            || { echo "the JNI exports are missing when both features are on"; exit 1; }
+
+  # The native binaries the per-platform packages carry. Cross-built rather
+  # than one runner per platform: N-API is ABI-stable across Node versions, so
+  # one binary per platform serves every supported release.
+  binaries:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            package: linux-x64-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            package: linux-arm64-gnu
+            cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            package: darwin-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            package: darwin-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            package: win32-x64-msvc
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install the cross linker
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: cargo build -p flz_core_ffi --features napi --release --target ${{ matrix.target }}
+
+      - name: Build the per-platform package
+        shell: bash
+        # The artifact IS the publishable package: `@flezha/sdk` resolves its
+        # binary through `optionalDependencies`, so publishing is `npm publish`
+        # over these directories and nothing else.
+        run: |
+          set -euo pipefail
+          addon=""
+          for name in libflz_core_ffi.so libflz_core_ffi.dylib flz_core_ffi.dll; do
+            built="target/${{ matrix.target }}/release/$name"
+            if [ -f "$built" ]; then addon="$built"; fi
+          done
+          test -n "$addon"
+          node sdk/node/scripts/platform-package.mjs "${{ matrix.package }}" "$addon" artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flezha-sdk-${{ matrix.package }}
+          path: artifacts/
+          retention-days: 14

@@ -1,0 +1,70 @@
+{
+  "runtime": "node",
+  "sdk_lang": 4,
+  "command": {
+    "test": "node {artifact} {namespace}",
+    "bench": "node {artifact} {namespace}"
+  },
+  "artifacts": {
+    "test": [
+      "index.mjs"
+    ],
+    "bench": [
+      "index.mjs"
+    ]
+  },
+  "build": {
+    "test": "scripts/build-node-sdk.sh",
+    "bench": "scripts/build-node-sdk.sh --release"
+  },
+  "connect_timeout_ms": 60000,
+  "transports": [
+    "uds",
+    "quic"
+  ],
+  "deferred": [
+    "state_persistence",
+    "effectively_once",
+    "entity_timers",
+    "correction_window",
+    "keyed_channels",
+    "workflow",
+    "dynamic_entity",
+    "entry_idle",
+    "schema_evolution"
+  ],
+  "fixtures": {
+    "runner_lifecycle": [
+      "do_nothing",
+      "compare_filter",
+      "bench_echo"
+    ],
+    "graph_builder": [
+      "sugar_do_nothing",
+      "sugar_store_input",
+      "sugar_static_entity",
+      "static_entity",
+      "mixed_operative",
+      "hybrid_channel",
+      "entity_stress",
+      "bench_keyed_nopersist"
+    ],
+    "liveness": [
+      "wedge_probe"
+    ],
+    "retry_ladder": [
+      "poison_probe",
+      "bounded_mailbox_drop_nothing",
+      "bounded_mailbox_drop_newest",
+      "bounded_mailbox_drop_oldest"
+    ],
+    "partitioned": [
+      "partition_relay",
+      "dynamic_entity"
+    ],
+    "pool_wedge": [
+      "wedge_probe"
+    ]
+  },
+  "docs": "docs/sdk/node_sdk.md"
+}

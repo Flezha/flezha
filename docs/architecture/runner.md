@@ -347,8 +347,9 @@ documented in-process forms of what the byte boundary removes for FFI hosts.
 
 ## One change, every SDK
 
-The kernel has exactly two hosts today: the Rust SDK (the crate) and the Java SDK
-(`flz_core_ffi` over JNI). **The Elixir SDK is the deliberate exception.** It is not a poll
+The kernel has three hosts today: the Rust SDK (the crate), the Java SDK
+(`flz_core_ffi` over JNI) and the Node SDK (the same crate over N-API, under its own feature —
+one binary, two veneers). **The Elixir SDK is the deliberate exception.** It is not a poll
 host ([`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md)): it re-expresses dispatch, overflow, the
 retry→park ladder and the partition guard in Elixir and inherits *nothing* from `flz_core`. So
 a change below the seam reaches Rust and Java for free and reaches Elixir only when someone
@@ -372,9 +373,11 @@ The rule, normative for every binding:
   fixed worker count with no supervisor is a defect of that SDK, not a configuration choice —
   with every worker held such a host processes nothing, recovers from nothing and reports
   nothing (Java shipped that shape and measured 0 of 20 payloads delivered). Rust and Java both
-  carry it, keyed alike by `FLEZHA_WORKER_POOL_SIZE` / `FLEZHA_WORKER_POOL_MAX`; the Elixir SDK
-  is exempt for the same reason it is exempt from the seam — a BEAM process per Entity has no
-  worker set to starve. And every host reports handout liveness — `inflight` and
+  carry it, keyed alike by `FLEZHA_WORKER_POOL_SIZE` / `FLEZHA_WORKER_POOL_MAX`, and so does
+  Node (whose replaceable unit is a dispatch worker thread, which is the reason its multi-loop
+  configuration is the recommended production posture — a wedged main thread cannot be
+  replaced); the Elixir SDK is exempt for the same reason it is exempt from the seam — a BEAM
+  process per Entity has no worker set to starve. And every host reports handout liveness — `inflight` and
   `inflight_oldest_ms` in the data heartbeat — because that is the only thing that makes ONE
   wedged Entity visible while the runner keeps completing work; likewise every overflow outcome
   (`blocked_parks`, `drops_newest`, `drops_oldest`, and the deferred-push pair `pending_pushes`
@@ -387,7 +390,12 @@ The rule, normative for every binding:
 - **No core call blocks a host thread.** Backpressure is expressed by withholding work from
   the producer, never by holding the producer's caller: the core cannot know how many threads a
   host has, whether it can make more, or whether its "threads" pin a shared carrier, so a park
-  that is safe on one host is a permanent stop on another. The single exception is the
+  that is safe on one host is a permanent stop on another. The converse binds the host: a host
+  whose unit of concurrency cannot migrate between threads keeps every blocking ABI call off
+  that thread. `flz_core_complete` is what makes that a correctness rule — under the default
+  overflow policy it parks until the consumer's mailbox drains, and the consumer drains only
+  when its handler runs, so a host that parks the one thread able to run that handler cannot
+  recover. The single exception is the
   transport reader's park on the entry path — a core-owned thread with no producing Entity,
   whose stalling is what carries ingress backpressure to the controller. This one reaches Rust
   and Java **below the seam**, because both complete through `flz_core`; the **Elixir SDK needs
@@ -418,7 +426,8 @@ The rule, normative for every binding:
   | 1 | Rust | yes (postcard) |
   | 2 | Java | yes (Kryo) |
   | 3 | Elixir | no (v1 persists nothing) |
-  | 4–254 | free, allocated in landing order | — |
+  | 4 | Node | yes (MessagePack) |
+  | 5–254 | free, allocated in landing order | — |
   | 255 | reserved | — |
 
   One value per SDK, taken when that SDK lands; a proposal never asserts a value it has not been
@@ -437,9 +446,11 @@ capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conf
 
 Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
-the reference every other is checked against — and the Elixir SDK (v1) defers the persistence
-family, the effectively-once tier, timers, correction windows, keyed channels, the workflow
-kind, dynamic-Entity eviction and the entry-idle observer.
+the reference every other is checked against. The Elixir SDK (v1) and the Node SDK (v1) both
+defer the persistence family, the effectively-once tier, timers, correction windows, keyed
+channels, the workflow kind, dynamic-Entity eviction and the entry-idle observer, for different
+reasons: Elixir has no per-Entity persistence at all, while the Node SDK implements every one of
+them and has not yet proved them fixture by fixture against the reference.
 
 ---
 
