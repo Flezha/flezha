@@ -398,11 +398,14 @@ The guard protects a runner that is merely *observed* healthy against a stale sn
 
 ### Requirement: Runner liveness is session liveness, derived from one signal
 
+
 Runner liveness SHALL be a property of the control-channel **session**, derived from a single signal: the inbound control-frame stream. The controller's `Flezha.Runner.ControlChannel` SHALL stamp a monotonic `last_seen` on every inbound control frame — including the keepalive ping the SDK already sends (formerly echoed and discarded) — and SHALL run one jittered watchdog that treats **sustained silence past a configurable window** as a connection close, routing it through the existing `{:flz_closed}` → `Flezha.Runner.FleetManager` `{:runner_disconnected}` path. A real socket close SHALL continue to drop the runner immediately and unconditionally (wrapped so side-effect failures cannot leave a ghost).
 
 The window SHALL be **generous** (default 45 s, i.e. 3× the keepalive interval) and jittered, and the action SHALL be connection-close, NOT a redistribute sweep. There SHALL be NO controller-initiated periodic ping-sweep and NO eviction triggered by a *single* missed ping: a live-but-busy runner (whose independent keepalive timer keeps sending) and a briefly frozen runner (GC / host contention shorter than the window) MUST NOT be declared dead. The `ControlUnit` reply-watchdog SHALL NOT perform liveness eviction; its `fail_stuck_refs` behaviour MAY remain solely to unblock stuck callers.
 
 QUIC SHALL enforce the same window via an explicit `max_idle_timeout` (no longer inheriting the transport library's default), so UDS and QUIC declare death within the same configured window.
+
+**A close the controller itself initiated SHALL be diagnosed as expected, and diagnosed differently from a close it did not.** Before issuing a disconnect the controller SHALL record a deadline-bounded *retiring* mark for that runner id, and SHALL clear it when the disconnect completes. The mark SHALL ride the same TTL-bounded marks mechanism the runner-session fence already uses, pruned by the same periodic tick, and SHALL be readable without a process hop — a channel asking a GenServer whether its own close was expected would be asking the process that is busy tearing it down. The close handlers SHALL read the mark and report accordingly: an expected close SHALL be logged at `:info` naming the runner, and an unexpected close SHALL keep its existing `:warning`. The mark SHALL bound the difference to **reporting alone** — a marked close and an unmarked close SHALL drop the runner, clear the stream binding and reset credit identically, so the unconditional-drop guarantee above holds in both cases. The mark SHALL expire after a configurable window so that a stale mark cannot silence the diagnosis of a later, genuine close of the same reused runner id.
 
 #### Scenario: an idle wedged-but-connected runner is detected on the control plane
 
@@ -425,6 +428,24 @@ QUIC SHALL enforce the same window via an explicit `max_idle_timeout` (no longer
 - **WHEN** a keepalive ping arrives
 - **THEN** the controller SHALL update `last_seen` for that session
 - **AND** the watchdog SHALL NOT fire while pings continue to arrive within the window
+
+#### Scenario: a controller-initiated disconnect reports as expected
+
+- **GIVEN** a runner the controller is deliberately disconnecting (`disconnect_runner`, `stop_namespace`, or a bench fleet teardown above them)
+- **WHEN** its control and data sockets close
+- **THEN** each close SHALL be logged at `:info` naming the runner, no `:warning` SHALL be emitted for it, and no incident telemetry SHALL be raised on account of the close
+
+#### Scenario: an expected close drops the runner exactly like an unexpected one
+
+- **GIVEN** two runners, one marked retiring and one not
+- **WHEN** each one's socket closes
+- **THEN** both SHALL be dropped from the active set immediately, both SHALL have their stream binding cleared and credit reset, and the only observable difference SHALL be the severity of the log line and the absence of the incident emit
+
+#### Scenario: a stale mark does not silence a real close
+
+- **GIVEN** a runner marked retiring whose mark was never cleared and has passed its expiry window
+- **WHEN** that runner id reconnects and later closes unexpectedly
+- **THEN** the close SHALL be reported as unexpected, at `:warning`, with its incident telemetry intact
 
 ### Requirement: Controller resolves a reconnect by swapping the binding, not minting-and-evicting
 

@@ -4,6 +4,7 @@ defmodule Mix.Tasks.Bench.Workflow do
   alias Flezha.Operative.Builder
   alias Flezha.Service.OperativeManager
   alias Mix.Tasks.Bench.Fleet
+  alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Tally
 
   @shortdoc "Workflow operative benchmark: spawn, commit, turn, sleep, wake"
@@ -83,9 +84,7 @@ defmodule Mix.Tasks.Bench.Workflow do
     cfg = config(opts)
     runtime = parse_runtime(opts[:runtime])
 
-    log_level = String.to_atom(System.get_env("BENCH_LOG_LEVEL", "warning"))
-    Logger.configure(level: log_level)
-    Application.put_env(:logger, :level, log_level)
+    Report.apply_log_level()
 
     if cfg.scenario != :sleep_boot, do: reset_namespace()
 
@@ -99,7 +98,7 @@ defmodule Mix.Tasks.Bench.Workflow do
 
     boot_t0 = now_ns()
     Mix.Task.run("app.start")
-    Logger.configure(level: log_level)
+    Report.apply_log_level()
     Fleet.preload_code()
     Process.put(:bench_runtime, runtime)
 
@@ -233,18 +232,26 @@ defmodule Mix.Tasks.Bench.Workflow do
   end
 
   defp print_header(cfg) do
-    IO.puts("""
-    Flezha workflow bench
-      scenario:     #{cfg.scenario}
-      factory:      #{cfg.factory}
-      instances:    #{cfg.n}
-      turns/inst:   #{if cfg.scenario == :turns, do: cfg.turns, else: "-"}
-      concurrency:  #{if cfg.concurrency > 0, do: cfg.concurrency, else: "burst (≤#{cfg.spawn_concurrency} starts in flight)"}
-      rate:         #{if cfg.rate == 0, do: "unpaced", else: "#{cfg.rate}/s"}
-      runtime:      #{Process.get(:bench_runtime, :rust)}
-      runners:      #{cfg.runners}
-      park idle:    #{cfg.park_idle_ms} ms#{if cfg.wake_after_ms, do: ", wake after #{cfg.wake_after_ms} ms", else: ""}
-    """)
+    runtime = Fleet.runtime()
+
+    Report.open("bench.workflow", [
+      {"runtime", "#{runtime} (#{Report.dispatch_note(runtime)})"},
+      {"toolchain", Report.toolchain(runtime)},
+      {"runners", to_string(cfg.runners)},
+      {"scenario", to_string(cfg.scenario)},
+      {"factory", cfg.factory},
+      {"instances", to_string(cfg.n)},
+      {"turns/instance", if(cfg.scenario == :turns, do: to_string(cfg.turns), else: "-")},
+      {"concurrency",
+       if(cfg.concurrency > 0,
+         do: to_string(cfg.concurrency),
+         else: "burst (≤#{cfg.spawn_concurrency} starts in flight)"
+       )},
+      {"rate", if(cfg.rate == 0, do: "unpaced", else: "#{cfg.rate}/s")},
+      {"park idle",
+       "#{cfg.park_idle_ms} ms#{if cfg.wake_after_ms, do: ", wake after #{cfg.wake_after_ms} ms", else: ""}"},
+      {"mix env", to_string(Mix.env())}
+    ])
   end
 
   defp reset_namespace do
@@ -323,6 +330,7 @@ defmodule Mix.Tasks.Bench.Workflow do
 
   defp run_chain(cfg, counters) do
     Fleet.setup(@namespace, cfg.runners, runner_env(cfg))
+    Report.emit()
 
     try do
       sink = sink(self())
@@ -363,22 +371,29 @@ defmodule Mix.Tasks.Bench.Workflow do
       Process.sleep(2_000)
       {tick_us, _} = :timer.tc(fn -> Flezha.Convergence.Loop.tick_now() end)
 
-      IO.puts("""
-
-      === chain summary: #{cfg.factory}, n=#{cfg.n}, #{mode} ===
-      spawned:              #{st.spawned} ok, #{st.spawn_errors} errors, in #{fmt_ms(spawn_window)} ms → #{rate(cfg.n, spawn_window)} spawns/s
-      start_operative call: #{Tally.latency_line(st.spawn)}
-      seed → sink output:   #{Tally.latency_line(st.out)}
-      seed → completed:     #{Tally.latency_line(st.done)}
-      completed:            #{st.completed - cfg.warmup} in #{fmt_ms(whole_window)} ms → #{rate(cfg.n, whole_window)} workflows/s
-      sink outputs:         #{st.out.received} measured, #{st.out.duplicates} dup, #{missing} missing, #{st.out.foreign} foreign
-      proc commits:         #{c1.proc - c0.proc} (#{Float.round((c1.proc - c0.proc) / max(cfg.n, 1), 2)}/workflow) → #{rate(c1.proc - c0.proc, whole_window)} commits/s; failed=#{c1.failed - c0.failed}
-      state dir:            #{Tally.state_dir_summary(@namespace)}; fsync p99 #{Tally.fsync_p99_ms()} ms
-      beam:                 #{mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes
-      convergence tick:     #{fmt_ms(tick_us * 1_000)} ms with #{st.completed} completed instances retained on disk
-      process kinds:        #{process_breakdown(process_sample())}
-      #{verdict(st, missing)}
-      """)
+      Report.section(
+        "chain summary: #{cfg.factory}, n=#{cfg.n}, #{mode}",
+        Report.kv([
+          {"spawned",
+           "#{st.spawned} ok, #{st.spawn_errors} errors, in #{fmt_ms(spawn_window)} ms → #{rate(cfg.n, spawn_window)} spawns/s"},
+          {"start_operative call", Tally.latency_line(st.spawn)},
+          {"seed → sink output", Tally.latency_line(st.out)},
+          {"seed → completed", Tally.latency_line(st.done)},
+          {"completed",
+           "#{st.completed - cfg.warmup} in #{fmt_ms(whole_window)} ms → #{rate(cfg.n, whole_window)} workflows/s"},
+          {"sink outputs",
+           "#{st.out.received} measured, #{st.out.duplicates} dup, #{missing} missing, #{st.out.foreign} foreign"},
+          {"proc commits",
+           "#{c1.proc - c0.proc} (#{Float.round((c1.proc - c0.proc) / max(cfg.n, 1), 2)}/workflow) → #{rate(c1.proc - c0.proc, whole_window)} commits/s; failed=#{c1.failed - c0.failed}"},
+          {"state dir",
+           "#{Tally.state_dir_summary(@namespace)}; fsync p99 #{Tally.fsync_p99_ms()} ms"},
+          {"beam", "#{mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes"},
+          {"convergence tick",
+           "#{fmt_ms(tick_us * 1_000)} ms with #{st.completed} completed instances retained on disk"},
+          {"process kinds", process_breakdown(process_sample())},
+          {"result", verdict(st, missing)}
+        ])
+      )
 
       emit_result(
         scenario: :chain,
@@ -398,6 +413,7 @@ defmodule Mix.Tasks.Bench.Workflow do
 
   defp run_turns(cfg, counters) do
     Fleet.setup(@namespace, cfg.runners, runner_env(cfg))
+    Report.emit()
 
     try do
       sink = sink(self())
@@ -446,18 +462,29 @@ defmodule Mix.Tasks.Bench.Workflow do
       measured = n * cfg.turns
       missing = total - st.out.seen
 
-      IO.puts("""
-
-      === turns summary: n=#{n} loops × #{cfg.turns} turns, #{if cfg.rate == 0, do: "unpaced", else: "#{cfg.rate}/s"} ===
-      turn → reply:         #{Tally.latency_line(st.out)}
-      throughput:           #{st.out.received} replies in #{fmt_ms(window)} ms → #{rate(st.out.received, window)} turns/s
-      integrity:            #{st.out.duplicates} dup, #{missing} missing, #{st.out.foreign} foreign
-      parks / wakes:        #{st.suspended} parked, #{st.rehydrating} rehydrated during the turns
-      commits:              #{c1.proc - c0.proc} proc (#{Float.round((c1.proc - c0.proc) / max(measured, 1), 2)}/turn), #{c1.iter - c0.iter} iter (#{Float.round((c1.iter - c0.iter) / max(measured, 1), 2)}/turn) → #{rate(c1.proc - c0.proc, window)} proc commits/s; failed=#{c1.failed - c0.failed}
-      #{kill_line(st)}state dir:            #{Tally.state_dir_summary(@namespace)}; fsync p99 #{Tally.fsync_p99_ms()} ms
-      beam:                 #{mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes
-      #{verdict(st, missing)}
-      """)
+      Report.section(
+        "turns summary: n=#{n} loops × #{cfg.turns} turns, #{if cfg.rate == 0, do: "unpaced", else: "#{cfg.rate}/s"}",
+        Report.kv(
+          [
+            {"turn → reply", Tally.latency_line(st.out)},
+            {"throughput",
+             "#{st.out.received} replies in #{fmt_ms(window)} ms → #{rate(st.out.received, window)} turns/s"},
+            {"integrity",
+             "#{st.out.duplicates} dup, #{missing} missing, #{st.out.foreign} foreign"},
+            {"parks / wakes",
+             "#{st.suspended} parked, #{st.rehydrating} rehydrated during the turns"},
+            {"commits",
+             "#{c1.proc - c0.proc} proc (#{Float.round((c1.proc - c0.proc) / max(measured, 1), 2)}/turn), #{c1.iter - c0.iter} iter (#{Float.round((c1.iter - c0.iter) / max(measured, 1), 2)}/turn) → #{rate(c1.proc - c0.proc, window)} proc commits/s; failed=#{c1.failed - c0.failed}"}
+          ] ++
+            kill_rows(st) ++
+            [
+              {"state dir",
+               "#{Tally.state_dir_summary(@namespace)}; fsync p99 #{Tally.fsync_p99_ms()} ms"},
+              {"beam", "#{mib(:erlang.memory(:total))} MiB, #{length(Process.list())} processes"},
+              {"result", verdict(st, missing)}
+            ]
+        )
+      )
 
       emit_result(
         scenario: :turns,
@@ -475,6 +502,7 @@ defmodule Mix.Tasks.Bench.Workflow do
 
   defp run_sleep(cfg, counters) do
     Fleet.setup(@namespace, cfg.runners, runner_env(cfg))
+    Report.emit()
 
     try do
       sink = sink(self())
@@ -537,6 +565,7 @@ defmodule Mix.Tasks.Bench.Workflow do
     # children — starts when the first runner connects, so the restore is
     # measured from that connect, not from the VM start.
     Fleet.setup(@namespace, cfg.runners, runner_env(cfg))
+    Report.emit()
     connected_at = now_ns()
 
     IO.puts(
@@ -577,19 +606,26 @@ defmodule Mix.Tasks.Bench.Workflow do
     sample = process_sample()
     n = max(n, 1)
 
-    IO.puts("""
-
-    === resting cost: #{n} suspended #{cfg.factory} ===
-    beam total:           #{mib(mem0.total)} → #{mib(mem1.total)} MiB (+#{Float.round((mem1.total - mem0.total) / n / 1024, 1)} KiB/sleeper)
-    beam processes heap:  #{mib(mem0.processes)} → #{mib(mem1.processes)} MiB (+#{Float.round((mem1.processes - mem0.processes) / n / 1024, 1)} KiB/sleeper)
-    beam ets:             #{mib(mem0.ets)} → #{mib(mem1.ets)} MiB
-    processes:            #{mem0.count} → #{mem1.count} (+#{Float.round((mem1.count - mem0.count) / n, 2)}/sleeper); #{process_breakdown(sample)}
-    largest processes:    #{largest_processes(sample)}
-    beam binary:          #{mib(:erlang.memory(:binary))} MiB; an Overwatch heap: #{overwatch_heap_kib()} KiB; its journal writer: #{writer_heap_kib()} KiB
-    state dir:            #{div(bytes, 1024)} KiB (#{Float.round(bytes / n / 1024, 1)} KiB/sleeper), #{wals} wal, #{snaps} snap
-    convergence tick:     #{Enum.map_join(ticks, " / ", &"#{fmt_ms(&1 * 1_000)} ms")} (3 samples)
-    commits so far:       #{c.proc} proc, #{c.iter} iter
-    """)
+    Report.section(
+      "resting cost: #{n} suspended #{cfg.factory}",
+      Report.kv([
+        {"beam total",
+         "#{mib(mem0.total)} → #{mib(mem1.total)} MiB (+#{Float.round((mem1.total - mem0.total) / n / 1024, 1)} KiB/sleeper)"},
+        {"beam processes heap",
+         "#{mib(mem0.processes)} → #{mib(mem1.processes)} MiB (+#{Float.round((mem1.processes - mem0.processes) / n / 1024, 1)} KiB/sleeper)"},
+        {"beam ets", "#{mib(mem0.ets)} → #{mib(mem1.ets)} MiB"},
+        {"processes",
+         "#{mem0.count} → #{mem1.count} (+#{Float.round((mem1.count - mem0.count) / n, 2)}/sleeper); #{process_breakdown(sample)}"},
+        {"largest processes", largest_processes(sample)},
+        {"beam binary",
+         "#{mib(:erlang.memory(:binary))} MiB; an Overwatch heap: #{overwatch_heap_kib()} KiB; its journal writer: #{writer_heap_kib()} KiB"},
+        {"state dir",
+         "#{div(bytes, 1024)} KiB (#{Float.round(bytes / n / 1024, 1)} KiB/sleeper), #{wals} wal, #{snaps} snap"},
+        {"convergence tick",
+         "#{Enum.map_join(ticks, " / ", &"#{fmt_ms(&1 * 1_000)} ms")} (3 samples)"},
+        {"commits so far", "#{c.proc} proc, #{c.iter} iter"}
+      ])
+    )
   end
 
   # `--no-wake` ends a sleep cell at the resting report — a `--keep` that
@@ -624,13 +660,19 @@ defmodule Mix.Tasks.Bench.Workflow do
     t1 = now_ns()
     c1 = commits(counters)
 
-    IO.puts("""
-      casts out in #{fmt_ms(sent_dt)} ms; last reply #{fmt_ms(t1 - t0)} ms after the first cast → #{rate(n, t1 - t0)} wakes/s
-      wake → reply:         #{Tally.latency_line(st.out)}
-      rehydrations:         #{st.rehydrating} (expect #{n}); replies #{st.out.received}, dup #{st.out.duplicates}, missing #{n - st.out.seen}
-      commits:              #{c1.proc - c0.proc} proc, #{c1.iter - c0.iter} iter
-      #{if st.stalled, do: "RESULT: STALLED", else: ""}
-    """)
+    Report.section(
+      "wake storm",
+      Report.kv(
+        [
+          {"casts out",
+           "#{fmt_ms(sent_dt)} ms; last reply #{fmt_ms(t1 - t0)} ms after the first cast → #{rate(n, t1 - t0)} wakes/s"},
+          {"wake → reply", Tally.latency_line(st.out)},
+          {"rehydrations",
+           "#{st.rehydrating} (expect #{n}); replies #{st.out.received}, dup #{st.out.duplicates}, missing #{n - st.out.seen}"},
+          {"commits", "#{c1.proc - c0.proc} proc, #{c1.iter - c0.iter} iter"}
+        ] ++ if(st.stalled, do: [{"result", "STALLED"}], else: [])
+      )
+    )
 
     emit_result(
       scenario: :sleep,
@@ -669,11 +711,16 @@ defmodule Mix.Tasks.Bench.Workflow do
             end
           end)
 
-        IO.puts("""
-          timer wakes:          #{length(st.timer_wakes)} of #{n} in #{fmt_ms(t1 - t0)} ms; rehydrations #{st.rehydrating}
-          deadline → reply:     #{Tally.latency_line(late)}
-          #{if st.stalled, do: "RESULT: STALLED", else: ""}
-        """)
+        Report.section(
+          "timer wakes",
+          Report.kv(
+            [
+              {"timer wakes",
+               "#{length(st.timer_wakes)} of #{n} in #{fmt_ms(t1 - t0)} ms; rehydrations #{st.rehydrating}"},
+              {"deadline → reply", Tally.latency_line(late)}
+            ] ++ if(st.stalled, do: [{"result", "STALLED"}], else: [])
+          )
+        )
       end
     end
   end
@@ -850,16 +897,19 @@ defmodule Mix.Tasks.Bench.Workflow do
     end
   end
 
-  defp kill_line(%{killed_at: nil}), do: ""
+  defp kill_rows(%{killed_at: nil}), do: []
 
-  defp kill_line(st) do
+  defp kill_rows(st) do
     recovered =
       case st.first_out_after_kill do
         nil -> "no reply after the kill"
         at -> "first reply #{fmt_ms(at - st.killed_at)} ms after the kill"
       end
 
-    "runner kill:          os pid #{st.killed_pid} at +#{st.cfg.kill_runner_at} s; #{recovered}; #{st.rehydrating} rehydrations after it\n"
+    [
+      {"runner kill",
+       "os pid #{st.killed_pid} at +#{st.cfg.kill_runner_at} s; #{recovered}; #{st.rehydrating} rehydrations after it"}
+    ]
   end
 
   # --------------------------------------------------------------- collect --
@@ -1115,7 +1165,17 @@ defmodule Mix.Tasks.Bench.Workflow do
     # sampler, no /proc, no observer effect.
     kv = kv ++ [peak_mb: mem_peak_mb(), fsync_p99_ms: Tally.fsync_p99_ms()]
     fields = Enum.map_join(kv, " ", fn {k, v} -> "#{k}=#{fmt_field(v)}" end)
+    # `bench/acceptance/run.sh` parses this line; the JSON report below is the
+    # newer contract, and both name the same numbers.
     IO.puts("BENCH_RESULT #{fields}")
+
+    scenario = Keyword.get(kv, :scenario, :workflow)
+    runtime = Fleet.runtime()
+
+    Report.finish(
+      "workflow-#{runtime}-#{scenario}",
+      %{metrics: Map.new(kv, fn {k, v} -> {k, fmt_field(v)} end)}
+    )
   end
 
   defp fmt_field(v) when is_float(v), do: Float.round(v, 2)

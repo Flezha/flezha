@@ -21,6 +21,12 @@ defmodule Flezha.Runner.FleetManager do
   # the periodic cleanup tick.
   @superseded_table :flezha_superseded_sessions
   @superseded_ttl_ms 600_000
+  # Runners the controller is itself closing, so the close their sockets report
+  # is diagnosed as expected rather than as an incident. Same mechanism as the
+  # fence above — a TTL-bounded mark on an identity string, pruned on the
+  # cleanup tick — and deliberately a separate table: the fence decides
+  # correctness, this decides only what gets reported.
+  @retiring_table :flezha_retiring_runners
   @lookup_timeout_ms 5_000
 
   # An advertisement carrying no language. Never places: the runner most likely
@@ -167,7 +173,7 @@ defmodule Flezha.Runner.FleetManager do
   """
   @spec mark_session_superseded(binary()) :: :ok
   def mark_session_superseded(session_token) when is_binary(session_token) do
-    ensure_superseded_table()
+    ensure_marks_table(@superseded_table)
     :ets.insert(@superseded_table, {session_token, :erlang.monotonic_time(:millisecond)})
     :ok
   end
@@ -178,6 +184,48 @@ defmodule Flezha.Runner.FleetManager do
     :ets.whereis(@superseded_table) != :undefined and
       :ets.member(@superseded_table, session_token)
   end
+
+  @doc """
+  Record that the controller is itself closing `runner_id`, so the close its
+  sockets report is diagnosed as expected rather than as an incident.
+
+  Read from the `{:flz_closed, …}` clauses, which is why it is a bare ETS read
+  and not a call: a channel asking this GenServer whether its own close was
+  expected would be asking the process that is busy tearing it down.
+
+  The mark expires. `runner_id` is a durable stable identity that survives
+  reconnects, so a mark that outlived its disconnect would silence the
+  diagnosis of a later, genuine close of the same runner.
+  """
+  @spec mark_runner_retiring(binary()) :: :ok
+  def mark_runner_retiring(runner_id) when is_binary(runner_id) do
+    ensure_marks_table(@retiring_table)
+    :ets.insert(@retiring_table, {runner_id, :erlang.monotonic_time(:millisecond)})
+    :ok
+  end
+
+  @doc "Whether the controller asked for `runner_id`'s close, within the mark's TTL."
+  @spec runner_retiring?(binary()) :: boolean()
+  def runner_retiring?(runner_id) when is_binary(runner_id) do
+    with true <- :ets.whereis(@retiring_table) != :undefined,
+         [{_, marked_at}] <- :ets.lookup(@retiring_table, runner_id) do
+      :erlang.monotonic_time(:millisecond) - marked_at < retiring_ttl_ms()
+    else
+      _ -> false
+    end
+  end
+
+  @doc "Drop `runner_id`'s retiring mark; the disconnect it covered is done."
+  @spec clear_runner_retiring(binary()) :: :ok
+  def clear_runner_retiring(runner_id) when is_binary(runner_id) do
+    if :ets.whereis(@retiring_table) != :undefined,
+      do: :ets.delete(@retiring_table, runner_id)
+
+    :ok
+  end
+
+  defp retiring_ttl_ms(),
+    do: Application.get_env(:flezha, :runner_retiring_mark_ttl_ms, 30_000)
 
   @doc """
   Returns active compute engines in `namespace` that advertise `factory_id`.
@@ -298,7 +346,7 @@ defmodule Flezha.Runner.FleetManager do
 
     # Own the fence table from this permanent process so marks survive the
     # transient readers (WalWriters) that consult them.
-    ensure_superseded_table()
+    ensure_marks_table(@superseded_table)
 
     {:ok,
      %{
@@ -322,6 +370,10 @@ defmodule Flezha.Runner.FleetManager do
       _ ->
         Logger.info("Disconnecting runner #{runner_id} from namespace #{namespace}")
 
+        # Marked BEFORE the close is issued: the mark has to be committed by
+        # the time `{:flz_closed, …}` reaches the channels, or they diagnose
+        # a teardown we asked for as one we did not.
+        mark_runner_retiring(runner_id)
         Flezha.Runner.ControlUnit.disconnect(runner_id)
 
         {:reply, :ok, state}
@@ -384,6 +436,7 @@ defmodule Flezha.Runner.FleetManager do
           runner_ids = get_runner_ids(state, namespace, :active)
 
           Enum.each(runner_ids, fn runner_id ->
+            mark_runner_retiring(runner_id)
             FleetSupervisor.stop_runner_sup(runner_id)
           end)
 
@@ -513,7 +566,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   defp runner_cleanup(state) do
-    prune_superseded_sessions()
+    prune_marks()
 
     now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
     keep_alive = get_runner_keepalive()
@@ -634,11 +687,11 @@ defmodule Flezha.Runner.FleetManager do
         do: pid
   end
 
-  defp ensure_superseded_table() do
-    case :ets.whereis(@superseded_table) do
+  defp ensure_marks_table(table) do
+    case :ets.whereis(table) do
       :undefined ->
         try do
-          :ets.new(@superseded_table, [:set, :public, :named_table, read_concurrency: true])
+          :ets.new(table, [:set, :public, :named_table, read_concurrency: true])
         rescue
           ArgumentError -> :ok
         end
@@ -650,10 +703,14 @@ defmodule Flezha.Runner.FleetManager do
     end
   end
 
-  defp prune_superseded_sessions() do
-    if :ets.whereis(@superseded_table) != :undefined do
-      cutoff = :erlang.monotonic_time(:millisecond) - @superseded_ttl_ms
-      :ets.select_delete(@superseded_table, [{{:_, :"$1"}, [{:<, :"$1", cutoff}], [true]}])
+  defp prune_marks() do
+    for {table, ttl} <- [
+          {@superseded_table, @superseded_ttl_ms},
+          {@retiring_table, retiring_ttl_ms()}
+        ],
+        :ets.whereis(table) != :undefined do
+      cutoff = :erlang.monotonic_time(:millisecond) - ttl
+      :ets.select_delete(table, [{{:_, :"$1"}, [{:<, :"$1", cutoff}], [true]}])
     end
 
     :ok
@@ -722,6 +779,7 @@ defmodule Flezha.Runner.FleetManager do
   end
 
   defp do_handle_runner_disconnect(state, namespace, runner_id) do
+    clear_runner_retiring(runner_id)
     FleetSupervisor.stop_runner_sup(runner_id)
 
     state =
@@ -1182,7 +1240,10 @@ defmodule Flezha.Runner.FleetManager do
         MapSet.new()
 
       {:ok, established} ->
-        MapSet.filter(candidates, &(Map.get(info.langs, &1, @sdk_lang_unspecified) == established))
+        MapSet.filter(
+          candidates,
+          &(Map.get(info.langs, &1, @sdk_lang_unspecified) == established)
+        )
     end
   end
 

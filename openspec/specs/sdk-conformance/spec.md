@@ -21,9 +21,14 @@ The end-to-end harness SHALL resolve the SDK runtime for a run from `FLEZHA_E2E_
 
 ### Requirement: Every SDK test app carries a conformance manifest
 
-Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conformance.json` declaring: `runtime` (the name `FLEZHA_E2E_RUNTIME` selects it by); `command` (a launch template over `{artifact}`, `{app_dir}`, `{repo}`, `{namespace}` and the absolute-path placeholders `{socket_dir}`, `{ca_cert}`, `{client_cert}`, `{client_key}`); `artifacts` with a `test` and a `bench` profile, each an ordered list of paths relative to the app directory; `build` with the one command that produces each profile's artifact; `connect_timeout_ms`; `transports` (the subset of `uds`, `quic` the SDK's standalone runner supports); `deferred` (capabilities from the shared vocabulary the SDK does not carry); `fixtures` (a map from capability to the factory ids the app registers for it); and `docs` (the path of the page that documents the SDK's scope). Every vocabulary capability SHALL appear in a manifest exactly once — under `deferred` or as a `fixtures` key — so a capability can be neither forgotten nor both; the required capabilities (`runner_lifecycle`, `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge` — the surface every SDK carries) SHALL NOT appear under `deferred`. The page named by `docs` SHALL exist and SHALL reference the manifest by path rather than restate its scope. The Rust test app's manifest SHALL be the reference: a fixture id exists for a capability if and only if the reference lists it there. Both spawners — the test harness (`test` profile) and the bench fleet (`bench` profile) — SHALL render the launch line from the manifest and SHALL carry no per-runtime launch clause of their own. The first artifact in a profile's list that exists SHALL be used; using a later one SHALL log a warning naming the first; none existing SHALL raise with the profile's `build` command.
+
+Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conformance.json` declaring: `runtime` (the name `FLEZHA_E2E_RUNTIME` selects it by); `command` (a launch template over `{artifact}`, `{app_dir}`, `{repo}`, `{namespace}` and the absolute-path placeholders `{socket_dir}`, `{ca_cert}`, `{client_cert}`, `{client_key}`); `artifacts` with a `test` and a `bench` profile, each an ordered list of paths relative to the app directory; `build` with the one command that produces each profile's artifact; `connect_timeout_ms`; `transports` (the subset of `uds`, `quic` the SDK's standalone runner supports); `dispatch` (how the SDK's host executes activations — see below); `toolchain` (the shell command that prints its toolchain's version); `deferred` (capabilities from the shared vocabulary the SDK does not carry); `fixtures` (a map from capability to the factory ids the app registers for it); and `docs` (the path of the page that documents the SDK's scope). Every vocabulary capability SHALL appear in a manifest exactly once — under `deferred` or as a `fixtures` key — so a capability can be neither forgotten nor both; the required capabilities (`runner_lifecycle`, `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge` — the surface every SDK carries) SHALL NOT appear under `deferred`. The page named by `docs` SHALL exist and SHALL reference the manifest by path rather than restate its scope. The Rust test app's manifest SHALL be the reference: a fixture id exists for a capability if and only if the reference lists it there. Both spawners — the test harness (`test` profile) and the bench fleet (`bench` profile) — SHALL render the launch line from the manifest and SHALL carry no per-runtime launch clause of their own. The first artifact in a profile's list that exists SHALL be used; using a later one SHALL log a warning naming the first; none existing SHALL raise with the profile's `build` command.
 
 `pool_wedge` becomes required because a host that cannot be wedged on demand cannot prove it recovers: the fixture is what exercises the abandon path, the worker replacement and the classifier's verdict on that SDK rather than on Rust alone.
+
+`dispatch` SHALL declare `model` — a slug from a closed vocabulary held in one place in the harness (`thread-pool`, `event-loop`, `process-per-entity`) — `detail`, one sentence describing how activations are executed, and `env`, a map from each environment variable that selects the SDK's dispatch topology to a description of what it selects. A runtime whose topology is fixed SHALL declare an empty `env`. Every SDK's manifest SHALL carry it, because a throughput number taken under one dispatch topology and one taken under another are different measurements of the same fixture, and only the manifest knows which. `toolchain` SHALL be the shell command that prints the version of the toolchain that runs the SDK, so a bench header can name it. A command that does not run SHALL report the toolchain as unavailable rather than fail the caller.
+
+A consumer that reports a runtime's dispatch topology or toolchain version SHALL read it from the manifest and SHALL carry no per-runtime clause of its own — the same rule the launch line already follows. A per-runtime clause is a list a new SDK has to remember to join; the manifest is where a runtime already says what it is.
 
 #### Scenario: Adding an SDK touches no harness code
 - **WHEN** a new `test/apps/<sdk>_runner/` directory with a valid manifest is added and `FLEZHA_E2E_RUNTIME=<sdk> mix test --include sdk_smoke` is run
@@ -48,6 +53,18 @@ Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conforman
 #### Scenario: The bench and the test harness launch the same app the same way
 - **WHEN** `mix bench --runtime java` and `FLEZHA_E2E_RUNTIME=java mix test --include sdk_smoke` each spawn a runner
 - **THEN** both launch lines are rendered from `test/apps/java_runner/conformance.json`, differing only in the artifact profile
+
+#### Scenario: A manifest without a dispatch declaration fails the gate
+- **WHEN** a manifest omits `dispatch`, or declares a `model` outside the vocabulary
+- **THEN** the static gate fails naming the manifest, the missing or unknown value, and the vocabulary
+
+#### Scenario: A manifest without a toolchain command fails the gate
+- **WHEN** a manifest omits `toolchain`
+- **THEN** the static gate fails naming the manifest and what the field is for
+
+#### Scenario: The dispatch topology is reported from the manifest, not from a clause
+- **WHEN** a bench is run against a runtime whose manifest declares a `dispatch.env` entry
+- **THEN** the run header names the declared model and the current value of that variable, and no bench task contains a per-runtime dispatch clause
 
 ### Requirement: A scenario has one fixture id in every SDK
 

@@ -17,8 +17,15 @@ defmodule Flezha.Convergence.StallClassifier do
   Verdicts, in priority order (a lower layer being wedged explains every layer
   above it, so the deepest wins):
 
-    * `:driver_loop_frozen`     — the flz-uds-driver thread stopped looping
-    * `:nif_queue_backing_up`   — commands enqueued but the driver isn't draining them
+    * `:driver_loop_frozen`     — the flz-uds-driver thread stopped looping.
+      Judged only against a baseline that shows an established driver (a
+      non-zero iteration count and a stamped loop clock) whose counter has
+      not gone backwards, so a thread that has not started yet — and a fresh
+      thread re-registered at the same transport key — is not a frozen one
+    * `:nif_queue_backing_up`   — commands enqueued but the driver isn't
+      draining them. Judged only once the driver has demonstrably written,
+      so "nothing written since" means it stopped rather than that there was
+      nothing to drain
     * `:socket_write_blocked`   — driver writing into a buffer the peer won't drain
     * `:runner_not_consuming` — controller sending fine, runner reads nothing back
     * `:runner_pool_wedged`   — runner alive (heartbeats flowing) and fed, but its
@@ -121,7 +128,8 @@ defmodule Flezha.Convergence.StallClassifier do
     find_driver(current, previous, fn d, prev ->
       age = age(d.now_ms, d.last_loop_ms)
 
-      if d.loop_iterations == prev.loop_iterations and age > o.driver_freeze_ms do
+      if established?(d, prev) and d.loop_iterations == prev.loop_iterations and
+           age > o.driver_freeze_ms do
         {:driver_loop_frozen, %{transport: d.transport, loop_age_ms: age}}
       end
     end)
@@ -132,11 +140,35 @@ defmodule Flezha.Convergence.StallClassifier do
       written = total_written(d.streams)
       prev_written = total_written(prev.streams)
 
-      if d.cmd_queue_depth > o.queue_high and d.cmd_queue_depth > prev.cmd_queue_depth and
+      # `prev_written > 0` is this check's form of the fed precondition: a
+      # driver that has never written has nothing to have stopped draining,
+      # so "written flat" would be true of every driver in its first seconds.
+      if established?(d, prev) and prev_written > 0 and
+           d.cmd_queue_depth > o.queue_high and d.cmd_queue_depth > prev.cmd_queue_depth and
            written == prev_written do
         {:nif_queue_backing_up, %{transport: d.transport, cmd_queue_depth: d.cmd_queue_depth}}
       end
     end)
+  end
+
+  # The fed precondition in its driver-global form. A verdict says something
+  # that WAS working stopped, so the baseline must show it working: a driver
+  # that has never completed an iteration reports `last_loop_ms == 0`, whose
+  # age is `:infinity`, and a stream set that did not exist reports zero
+  # progress — both satisfy "no progress" vacuously.
+  #
+  # The monotonic clause guards the pairing itself: `find_driver` pairs by
+  # transport key, and a reconnect registers a NEW driver under the same key
+  # whose counters restart. A count that went backwards is a different thread,
+  # not a frozen one.
+  #
+  # The rule holds on BOTH samples, because the age a verdict reports is taken
+  # from the current one: judge a stamp only where there is a stamp. That is
+  # also what makes an infinite loop age unreportable — the one value that
+  # identified this family of false positive.
+  defp established?(d, prev) do
+    prev.loop_iterations > 0 and prev.last_loop_ms > 0 and
+      d.last_loop_ms > 0 and d.loop_iterations >= prev.loop_iterations
   end
 
   # ---------- driver per-stream checks ----------

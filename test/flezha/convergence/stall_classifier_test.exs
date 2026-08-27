@@ -24,11 +24,59 @@ defmodule Flezha.Convergence.StallClassifierTest do
 
   test "driver_loop_frozen: loop counter frozen and heartbeat stale" do
     prev = snapshot(drivers: [driver(loop_iterations: 500)])
-    curr = snapshot(drivers: [driver(loop_iterations: 500, last_loop_ms: 0)])
+    curr = snapshot(drivers: [driver(loop_iterations: 500, last_loop_ms: @now - 20_000)])
 
     assert {:driver_loop_frozen, ctx} = StallClassifier.classify(curr, prev)
     assert ctx.transport == :uds
     assert ctx.loop_age_ms > 5_000
+  end
+
+  test "driver_loop_frozen: a driver that has never looped is not frozen" do
+    # `last_loop_ms == 0` means "no iteration has completed", whose age is
+    # `:infinity` — the signature of a driver registered moments ago, not of
+    # one that stopped. Two consecutive polls of it must stay quiet.
+    prev = snapshot(drivers: [driver(loop_iterations: 0, last_loop_ms: 0)])
+    curr = snapshot(drivers: [driver(loop_iterations: 0, last_loop_ms: 0)])
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
+  test "driver_loop_frozen: a re-created driver at the same key is not frozen" do
+    # A reconnect registers a fresh driver under the same transport key; its
+    # counters restart. A count that went backwards is a different thread.
+    prev = snapshot(drivers: [driver(loop_iterations: 500)])
+    curr = snapshot(drivers: [driver(loop_iterations: 3, last_loop_ms: 0)])
+
+    assert StallClassifier.classify(curr, prev) == :ok
+  end
+
+  test "driver_loop_frozen can never report an infinite loop age" do
+    # The value that identified the false positive is unreachable by
+    # construction: an established baseline plus a counter that has not gone
+    # backwards is the same driver instance, and every iteration stamps the
+    # clock. Sweep the whole (iterations, stamp) space that could produce one.
+    for prev_iters <- [0, 1, 500],
+        prev_stamp <- [0, @now],
+        curr_iters <- [0, 1, 500, 999] do
+      prev = snapshot(drivers: [driver(loop_iterations: prev_iters, last_loop_ms: prev_stamp)])
+      curr = snapshot(drivers: [driver(loop_iterations: curr_iters, last_loop_ms: 0)])
+
+      refute match?(
+               {:driver_loop_frozen, %{loop_age_ms: :infinity}},
+               StallClassifier.classify(curr, prev)
+             )
+    end
+  end
+
+  test "nif_queue_backing_up: a driver that has never written is not backed up" do
+    # Fleet bring-up: the command queue fills past the high-water mark while
+    # the stream set is still empty, so "nothing written since" is vacuous.
+    prev = snapshot(drivers: [driver(loop_iterations: 1, cmd_queue_depth: 0, streams: [])])
+
+    curr =
+      snapshot(drivers: [driver(loop_iterations: 2, cmd_queue_depth: 808, streams: [stream()])])
+
+    assert StallClassifier.classify(curr, prev) == :ok
   end
 
   test "nif_queue_backing_up: queue high and rising, no frames drained" do
@@ -290,7 +338,7 @@ defmodule Flezha.Convergence.StallClassifierTest do
 
     curr =
       snapshot(
-        drivers: [driver(loop_iterations: 5, last_loop_ms: 0)],
+        drivers: [driver(loop_iterations: 5, last_loop_ms: @now - 20_000)],
         channels: [channel(io_in_received: 30, send_frame_calls: 10)]
       )
 

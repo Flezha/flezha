@@ -122,6 +122,18 @@ defmodule Flezha.Service.PortPilot do
   def sdk_lang(runtime), do: manifest(runtime)["sdk_lang"]
 
   @doc """
+  How `runtime`'s host executes activations: `%{"model" => …, "detail" => …,
+  "env" => %{var => what it selects}}`.
+
+  A throughput number taken under one dispatch topology and one taken under
+  another are different measurements of the same fixture, and only the
+  manifest knows which — so a reporter reads this rather than carrying a
+  clause per runtime, exactly as the launch line already does.
+  """
+  @spec dispatch(atom()) :: map()
+  def dispatch(runtime), do: manifest(runtime)["dispatch"] || %{}
+
+  @doc """
   The shell line that launches `runtime`'s test app for `profile` (`:test` or
   `:bench`) into `namespace`, rendered from the manifest's command template.
 
@@ -145,8 +157,10 @@ defmodule Flezha.Service.PortPilot do
 
     socket_dir = absolute(Application.get_env(:flezha, :socket_files_path, "app_data/sockets/"))
 
+    {artifact, _resolution} = resolve_artifact(runtime, profile)
+
     vars = %{
-      "artifact" => resolve_artifact(runtime, profile_key, app_dir, manifest),
+      "artifact" => artifact,
       "app_dir" => app_dir,
       "repo" => repo,
       "namespace" => namespace,
@@ -166,6 +180,22 @@ defmodule Flezha.Service.PortPilot do
     end)
   end
 
+  @doc """
+  The artifact `runtime`'s `profile` actually launches, and how it was found:
+  `{path, :first}` or `{path, {:fallback, first_choice}}`.
+
+  Public because a run has to be able to REPORT what it launched, and a second
+  derivation is a second answer that can disagree with the first. One
+  resolution, two readers: the launch line and the provenance block.
+  """
+  @spec resolve_artifact(atom(), :test | :bench) ::
+          {String.t(), :first | {:fallback, String.t()}}
+  def resolve_artifact(runtime, profile) when profile in [:test, :bench] do
+    manifest = manifest(runtime)
+    app_dir = Path.join([File.cwd!(), @apps_root, "#{runtime}_runner"])
+    resolve_artifact(runtime, Atom.to_string(profile), app_dir, manifest)
+  end
+
   defp resolve_artifact(runtime, profile, app_dir, manifest) do
     candidates = Enum.map(manifest["artifacts"][profile], &Path.expand(&1, app_dir))
 
@@ -175,7 +205,7 @@ defmodule Flezha.Service.PortPilot do
                 "#{inspect(candidates)} exists); build it with `#{manifest["build"][profile]}`"
 
       0 ->
-        hd(candidates)
+        {hd(candidates), :first}
 
       index ->
         # A fallback is only real if the command launches the artifact it was
@@ -196,7 +226,7 @@ defmodule Flezha.Service.PortPilot do
             "#{hd(candidates)} does not exist; build it with `#{manifest["build"][profile]}`"
         )
 
-        Enum.at(candidates, index)
+        {Enum.at(candidates, index), {:fallback, hd(candidates)}}
     end
   end
 

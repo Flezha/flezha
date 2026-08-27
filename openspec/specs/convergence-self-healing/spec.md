@@ -327,9 +327,17 @@ When an SDK runner process restarts and presents `previous_runner_id`, the contr
 
 ### Requirement: Data-plane stall verdicts feed the convergence pipeline
 
+
 The classifier verdict the Loop already computes each tick SHALL be consumed by the Diff → Planner → Heal seams — passed in-process alongside the Probe snapshot, with NO new telemetry subscription or side channel — and mapped by remedy: runner-scoped verdicts (`runner_not_consuming`, `runner_pool_wedged`) to `evict_runner` (planner ordering already rebinds an evicted runner's operatives); connection-scoped verdicts (`socket_write_blocked`, `channel_not_sending`) to `resync_runner`; operative-scoped verdicts (`operative_not_forwarding`, `entity_dispatch_stalled`) to `rebind_operative` for the operative named by the verdict metadata. Ops SHALL ride the standard per-target backoff, and the active-runner rebind guard SHALL NOT protect a target the classifier proved wedged. The classifier returns one deepest-wins verdict per tick; the pipeline SHALL heal that layer and let the next tick surface any remaining layer. No new self-healing module SHALL be introduced.
 
 `entity_dispatch_stalled` SHALL be minted from the runner's self-reported handout liveness — a non-zero outstanding count whose oldest-age exceeds the configured threshold — under the same "is it actually being fed?" precondition every other check carries, and SHALL rank *shallower* than every runner-scoped verdict, since a wedged runner explains a wedged entity and not the reverse. Its detail SHALL carry the reported age so a false positive is diagnosable from the log alone.
+
+**The precondition is universal, and the two driver-global checks SHALL carry it in their own form.** A verdict is a statement that something which was working has stopped, so a layer SHALL NOT be judged from a baseline that never showed it working:
+
+* `driver_loop_frozen` SHALL be minted only when the *previous* sample shows an established driver — a non-zero loop-iteration count and a stamped last-loop time — and the current sample's iteration count has not gone backwards. A driver that has never completed a loop iteration SHALL NOT be reported frozen, and a counter that decreased SHALL be read as a re-created driver at the same transport key rather than as a frozen one. In consequence a reported `driver_loop_frozen` can never carry an infinite loop age.
+* `nif_queue_backing_up` SHALL be minted only when the driver has demonstrably written before — a non-zero written count in the previous sample — so that "nothing was written since" means the driver stopped draining rather than that there was nothing to drain. This is the same exemption `runner_not_consuming` already applies to a stream that has never been read.
+
+A close the controller itself initiated SHALL NOT mint an `output_stall` for the operatives mapped to the closing stream, so a planned teardown SHALL NOT enter the loop as a divergence to heal. An unexpected close SHALL continue to emit it unchanged.
 
 #### Scenario: A wedged runner pool is evicted from a classifier verdict
 - **WHEN** the classifier reports `runner_pool_wedged` (heartbeats flowing, dispatch counter frozen) for a runner that remains in the active set
@@ -351,6 +359,31 @@ The classifier verdict the Loop already computes each tick SHALL be consumed by 
 #### Scenario: A wedged runner outranks a stalled entity
 - **WHEN** a runner reports both a frozen dispatch counter and an aged outstanding activation
 - **THEN** the classifier SHALL report only `runner_pool_wedged`, and the entity-scoped verdict SHALL surface on a later tick only if it survives the runner-level remedy
+
+#### Scenario: A driver that has not started yet is not frozen
+- **GIVEN** a data-stream driver registered moments ago, whose previous sample carries a zero loop-iteration count and no stamped last-loop time
+- **WHEN** the classifier runs against that pair of samples
+- **THEN** the verdict SHALL be `:ok`, no `driver_loop_frozen` SHALL be logged or emitted, and `/healthz` SHALL NOT move toward a fabric `503`
+
+#### Scenario: A re-created driver at the same transport key is not frozen
+- **GIVEN** a runner that reconnects, registering a fresh driver under the same transport key, whose iteration count restarts below the previous sample's
+- **WHEN** the classifier runs against that pair of samples
+- **THEN** the decreased counter SHALL be read as a new driver and the verdict SHALL be `:ok`
+
+#### Scenario: A bring-up queue burst is not a backed-up queue
+- **GIVEN** a driver whose previous sample shows no frames written at all, and whose command-queue depth has risen past the high-water mark during fleet bring-up
+- **WHEN** the classifier runs against that pair of samples
+- **THEN** no `nif_queue_backing_up` SHALL be minted, because the driver has never been observed writing
+
+#### Scenario: A genuinely frozen driver is still caught
+- **GIVEN** a driver established across earlier samples, with frames written and a stamped last-loop time
+- **WHEN** its iteration count stops advancing and its last loop ages past the freeze threshold
+- **THEN** `driver_loop_frozen` SHALL be minted exactly as before, with a finite loop age in its detail
+
+#### Scenario: A planned teardown is not a divergence
+- **GIVEN** a runner the controller has marked retiring because it initiated the disconnect
+- **WHEN** the runner's data streams close and the close reaches the stream channel
+- **THEN** no `output_stall` SHALL be emitted for the operatives mapped to that stream, and the convergence loop SHALL plan no rebind on account of the close
 
 ### Requirement: Sensor freshness is visible
 

@@ -13,6 +13,21 @@
 #   ./scripts/bench.sh --shape entity --pool-sizes 1,8
 #   FLEZHA_NODE_WORKERS=4 ./scripts/bench.sh -r node  # node on four dispatch loops
 #
+# Every run opens with a header naming the runtime and its dispatch model, the
+# machine, and the artifact it launched, followed by any preflight warning that
+# qualifies the number (a non-performance CPU governor, a contended box, a
+# dirty tree, a skipped build). The run always proceeds.
+#
+# The headline throughput is the END-TO-END window (first input to last
+# response); the receive-only window is reported beside it. They differ by the
+# send window and are not interchangeable.
+#
+# Every run also writes bench/reports/bench-<runtime>-<shape>-<run_id>.json
+# with every header, warning and metric field. That report is the machine
+# contract — CI reads metrics.throughput_msg_per_sec from it.
+#
+# FLEZHA_BENCH_LOG sets the logger level for the run (default: warning).
+#
 # Compare two runs:
 #   ./scripts/bench.sh -r rust -n 100 -m 1000 | tee bench-rust.txt
 #   ./scripts/bench.sh -r java -n 100 -m 1000 | tee bench-java.txt
@@ -62,6 +77,14 @@ Options:
   -w, --warmup <N>                   Untimed warmup messages per operative before
                                      the measured phase (default: 10, 0 disables)
   -h, --help                         Show this help
+
+Environment:
+  FLEZHA_BENCH_LOG        Logger level for the run (default: warning)
+  FLEZHA_BENCH_SKIP_BUILD 1 skips the runtime's bench build; the run warns
+  FLEZHA_DURABILITY_BACKEND  Defaults to `none` here; the run warns
+
+Every run writes bench/reports/bench-<runtime>-<shape>-<run_id>.json, which
+carries the header, the warnings and every metric. It is what CI reads.
 
 Switching combinations are independent:
   -r picks the SDK (rust or java)
@@ -114,10 +137,8 @@ ARGS=(--runtime "$RUNTIME")
 
 if [[ "$SHAPE" == "entity" ]]; then
     [[ -n "$POOL_SIZES" ]] && ARGS+=(--pool-sizes "$POOL_SIZES")
-    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT shape=entity pool-sizes=${POOL_SIZES:-1,8}"
 else
     ARGS+=(--num-operatives "$NUM_OPERATIVES" --messages-per-operative "$MESSAGES_PER_OPERATIVE")
-    echo "Running bench: runtime=$RUNTIME transport=$TRANSPORT operatives=$NUM_OPERATIVES msg/operative=$MESSAGES_PER_OPERATIVE"
 fi
 
 export FLEZHA_TRANSPORT="$TRANSPORT"

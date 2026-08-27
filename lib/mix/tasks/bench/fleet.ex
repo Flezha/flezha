@@ -16,6 +16,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   alias Flezha.Runner.FleetManager
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PortPilot
+  alias Mix.Tasks.Bench.Report
 
   @doc "True when `namespace` already has at least one connected runner."
   def runners_available?(namespace) do
@@ -32,7 +33,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   process — how `--pool-sizes` threads `FLEZHA_WORKER_POOL_SIZE` through.
   """
   def setup(namespace, count, extra_env) do
-    runtime = Process.get(:bench_runtime, :rust)
+    runtime = runtime()
     transport = Application.get_env(:flezha, :transport, :uds)
 
     if runtime in [:rust, :java] and transport == :native do
@@ -67,23 +68,28 @@ defmodule Mix.Tasks.Bench.Fleet do
 
   `FLEZHA_BENCH_SKIP_BUILD=1` opts out for someone iterating on the harness
   rather than on a number.
+
+  Returns `:built`, `:skipped` or `:none` so the run can report which — an
+  artifact that exists tells the reader nothing about whether it is current.
   """
+  @spec ensure_built(atom()) :: :built | :skipped | :none
   def ensure_built(runtime) do
     command = PortPilot.manifest(runtime)["build"]["bench"]
 
     cond do
       System.get_env("FLEZHA_BENCH_SKIP_BUILD") in ["1", "true"] ->
         IO.puts("Skipping the #{runtime} bench build (FLEZHA_BENCH_SKIP_BUILD)")
+        :skipped
 
       is_nil(command) ->
-        :ok
+        :none
 
       true ->
         IO.puts("Building the #{runtime} bench runner: #{command}")
 
         case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
           {_output, 0} ->
-            :ok
+            :built
 
           {output, status} ->
             raise "the #{runtime} bench build failed (exit #{status}); a bench against a " <>
@@ -91,6 +97,10 @@ defmodule Mix.Tasks.Bench.Fleet do
         end
     end
   end
+
+  @doc "The runtime this bench run is measuring, set once by the calling task."
+  @spec runtime() :: atom()
+  def runtime(), do: Process.get(:bench_runtime, :rust)
 
   # Start the Elixir SDK in-process, advertising the bench factory trio, and
   # block until it connects over the native transport.
@@ -182,8 +192,13 @@ defmodule Mix.Tasks.Bench.Fleet do
 
   @doc "Spawn `count` runner processes and return their connected runner ids."
   def start_runners(namespace, count, extra_env) do
-    runtime = Process.get(:bench_runtime, :rust)
-    ensure_built(runtime)
+    runtime = runtime()
+    build = ensure_built(runtime)
+
+    Report.record_artifact(
+      Report.artifact(runtime, PortPilot.resolve_artifact(runtime, :bench), build)
+    )
+
     connect_timeout = PortPilot.manifest(runtime)["connect_timeout_ms"]
 
     Flezha.Service.EventManager.add_handler(:runner_connected_event)

@@ -22,6 +22,14 @@
     "uds",
     "quic"
   ],
+  "dispatch": {
+    "model": "event-loop",
+    "detail": "Activations run on JavaScript event loops; the veneer owns its executor rather than libuv's pool.",
+    "env": {
+      "FLEZHA_NODE_WORKERS": "dispatch loops (0 \u2014 the default \u2014 runs on the main event loop)"
+    }
+  },
+  "toolchain": "node --version",
   "deferred": [
     "state_persistence",
     "effectively_once",

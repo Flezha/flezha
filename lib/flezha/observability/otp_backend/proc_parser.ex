@@ -60,41 +60,79 @@ defmodule Flezha.Observability.OtpBackend.ProcParser do
   """
   @spec parse_status(String.t()) :: {:ok, map()} | {:error, :unparseable}
   def parse_status(text) when is_binary(text) do
-    result =
-      text
-      |> String.split("\n")
-      |> Enum.reduce(%{}, fn line, acc ->
-        case String.split(line, ":", parts: 2) do
-          [key, value] -> Map.put(acc, String.trim(key), String.trim(value))
-          _ -> acc
-        end
-      end)
+    fields = fields(text)
 
-    vm_rss_bytes =
-      case Map.get(result, "VmRSS") do
-        nil ->
-          nil
+    {:ok, %{vm_rss_bytes: kib_field(fields, "VmRSS"), fd_size: int_field(fields, "FDSize")}}
+  end
 
-        v ->
-          case Integer.parse(v) do
-            {kb, _rest} -> kb * 1024
-            _ -> nil
-          end
+  @doc """
+  Parse `/proc/cpuinfo`. Returns `:model` (the first `model name`, which is
+  uniform across cores on every machine this runs on) and `:cores` (how many
+  processor entries the file lists).
+  """
+  @spec parse_cpuinfo(String.t()) :: {:ok, map()} | {:error, :unparseable}
+  def parse_cpuinfo(text) when is_binary(text) do
+    model = fields(text)["model name"]
+    # Counted rather than read from the field map, which keeps one entry per
+    # key: the file repeats every field once per core.
+    cores = Enum.count(String.split(text, "\n"), &(key_of(&1) == "processor"))
+
+    if model || cores > 0 do
+      {:ok, %{model: model, cores: cores}}
+    else
+      {:error, :unparseable}
+    end
+  end
+
+  @doc """
+  Parse `/proc/meminfo`. Returns `:mem_total_bytes` from the `MemTotal` line,
+  which the file reports in kibibytes.
+  """
+  @spec parse_meminfo(String.t()) :: {:ok, map()} | {:error, :unparseable}
+  def parse_meminfo(text) when is_binary(text) do
+    case kib_field(fields(text), "MemTotal") do
+      nil -> {:error, :unparseable}
+      total -> {:ok, %{mem_total_bytes: total}}
+    end
+  end
+
+  # Every `/proc` file here but `loadavg` is `key: value` lines. First entry
+  # wins, because a repeated key (`/proc/cpuinfo` repeats every field per core)
+  # names the same value each time and the first is the one a reader expects.
+  defp fields(text) do
+    text
+    |> String.split("\n")
+    |> Enum.reduce(%{}, fn line, acc ->
+      case String.split(line, ":", parts: 2) do
+        [key, value] -> Map.put_new(acc, String.trim(key), String.trim(value))
+        _ -> acc
       end
+    end)
+  end
 
-    fd_size =
-      case Map.get(result, "FDSize") do
-        nil ->
-          nil
+  defp key_of(line) do
+    case String.split(line, ":", parts: 2) do
+      [key, _] -> String.trim(key)
+      _ -> nil
+    end
+  end
 
-        v ->
-          case Integer.parse(v) do
-            {n, _} -> n
-            _ -> nil
-          end
-      end
+  # A leading integer, or `nil` when the field is absent or unparseable.
+  defp int_field(fields, key) do
+    with value when is_binary(value) <- Map.get(fields, key),
+         {n, _rest} <- Integer.parse(value) do
+      n
+    else
+      _ -> nil
+    end
+  end
 
-    {:ok, %{vm_rss_bytes: vm_rss_bytes, fd_size: fd_size}}
+  # `/proc` reports memory in kibibytes; callers want bytes.
+  defp kib_field(fields, key) do
+    case int_field(fields, key) do
+      nil -> nil
+      kib -> kib * 1024
+    end
   end
 
   @doc """

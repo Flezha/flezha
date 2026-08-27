@@ -275,9 +275,18 @@ defmodule Flezha.Runner.ControlChannel do
   end
 
   defp handle_connection_closed(state) do
-    Logger.warning(
-      "Connection closed for control socket for #{state.runner_id} on #{state.namespace}"
-    )
+    # Severity only. The eviction below runs identically either way — see
+    # `runner-controller-connection-healing`: a real socket close drops the
+    # runner immediately and unconditionally.
+    if FleetManager.runner_retiring?(state.runner_id) do
+      Logger.info(
+        "Control socket closed for retiring runner #{state.runner_id} on #{state.namespace}"
+      )
+    else
+      Logger.warning(
+        "Connection closed for control socket for #{state.runner_id} on #{state.namespace}"
+      )
+    end
 
     GenServer.call(FleetManager, {
       :runner_disconnected,

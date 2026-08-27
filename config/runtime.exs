@@ -220,6 +220,8 @@ config :flezha,
   #
   # The default is 30 seconds.
   runner_keepalive: System.get_env("FLEZHA_RUNNER_KEEPALIVE", "30000") |> String.to_integer(),
+  runner_retiring_mark_ttl_ms:
+    System.get_env("FLEZHA_RUNNER_RETIRING_MARK_TTL_MS", "30000") |> String.to_integer(),
 
   # ------------------------------------------------------------------------------------------------
   # Control-plane liveness watchdog (runner-controller-connection-healing).

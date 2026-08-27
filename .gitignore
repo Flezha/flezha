@@ -104,6 +104,7 @@ stash/*
 # compose/job/scripts — stays trackable.
 /bench/workflow/reports/
 /bench/flink/reports/
+/bench/reports/
 /bench/flink/job/target/
 /bench/acceptance/results.*.tsv
 /bench/acceptance/summary.*.md

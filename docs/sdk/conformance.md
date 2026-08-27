@@ -35,6 +35,8 @@ Each SDK's test app carries `test/apps/<sdk>_runner/conformance.json`:
 | `build` | The one command that produces each profile's artifact |
 | `connect_timeout_ms` | How long the harness waits for the runner's handshake |
 | `transports` | The subset of `uds`, `quic` the standalone runner supports |
+| `dispatch` | How this host executes activations: `model` (one of `thread-pool`, `event-loop`, `process-per-entity`), `detail` (one sentence), and `env` (each environment variable that selects the topology → what it selects; `{}` when fixed) |
+| `toolchain` | The shell command that prints this SDK's toolchain version, e.g. `rustc --version` |
 | `deferred` | Capabilities this SDK does not carry, by name |
 | `fixtures` | Factory ids the app registers, grouped by capability |
 | `docs` | The page documenting this SDK's scope, which must point back here |
@@ -45,6 +47,15 @@ Two profiles, two spawners, one file: the e2e harness renders `test` and
 
 The Rust manifest is the **reference**: a fixture id exists for a capability if
 and only if `test/apps/rust_runner/conformance.json` lists it there.
+
+`dispatch` and `toolchain` exist so a bench header can say what a number was
+taken under. A throughput figure from one dispatch topology and one from
+another are different measurements of the same fixture, and only the manifest
+knows which — so a reporter reads them from here and carries **no per-runtime
+clause of its own**, the same rule the launch line already follows. A
+per-runtime clause is a list a new SDK has to remember to join; the manifest is
+where a runtime already says what it is. The gate fails a manifest that omits
+either, or that names a `model` outside the vocabulary.
 
 ## Capabilities
 

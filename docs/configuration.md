@@ -109,6 +109,7 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | Variable | Default | Sets / notes |
 |---|---|---|
 | `FLEZHA_RUNNER_KEEPALIVE` | `30000` | `:runner_keepalive`; how long a disconnected runner is kept before removal, `0` removes at once |
+| `FLEZHA_RUNNER_RETIRING_MARK_TTL_MS` | `30000` | `:runner_retiring_mark_ttl_ms`; how long a controller-initiated disconnect stays marked, so the close it produces is reported as expected rather than as an incident. A runner id is reused across reconnects, so the mark expires: past this window a close is diagnosed as unexpected again |
 | `FLEZHA_MIGRATION_CONSENT_TIMEOUT_MS` | `5000` | `:migration_consent[:consent_timeout_ms]` |
 | `FLEZHA_MIGRATION_RETRY_INTERVAL_MS` | `2000` | `:migration_consent[:retry_interval_ms]` |
 | `FLEZHA_MIGRATION_MAX_DEFER_MS` | unset → the graceful-shutdown timeout (derived) | `:migration_consent[:max_defer_ms]` |

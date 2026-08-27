@@ -3,6 +3,7 @@ defmodule Mix.Tasks.Bench do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
+  alias Mix.Tasks.Bench.Report
 
   @shortdoc "Run performance tests for Flezha operatives"
   @moduledoc """
@@ -33,7 +34,7 @@ defmodule Mix.Tasks.Bench do
     * `--pool-sizes` - Comma-separated worker-pool sizes (default: `"1,8"`),
       only honored when `--shape entity`. Each value spawns a fresh
       Rust runner binary with `FLEZHA_WORKER_POOL_SIZE=<N>` and
-      reports throughput per-size; the final scaling summary is parsed by CI.
+      reports throughput per-size; the scaling ratio is carried in the report.
     * `--warmup` / `-w` - Untimed messages per operative sent (and their
       responses drained) before the measured phase, so one-time runner
       cold-start — class loading, JIT, lazy codec init — stays out of the
@@ -46,8 +47,22 @@ defmodule Mix.Tasks.Bench do
 
   The runtime selector only governs how the compute engine processes are
   launched — the controller, protocol, and measurement code are identical
-  across runs, so the Throughput / Message processing numbers are directly
-  comparable.
+  across runs, so the throughput figures are directly comparable.
+
+  ## Output
+
+  Every run opens with a header naming the runtime and its dispatch model, the
+  machine, and the artifact it launched, followed by any preflight warning that
+  qualifies the number. Results are tables; the headline throughput is the
+  **end-to-end** window (first input to last response) and the receive-only
+  window is reported beside it.
+
+  Every run also writes `bench/reports/bench-<runtime>-<shape>-<run_id>.json`,
+  which carries every header, warning and metric field. That report is the
+  machine contract — CI reads `metrics.throughput_msg_per_sec` from it rather
+  than matching a line of printed output.
+
+  `FLEZHA_BENCH_LOG` sets the logger level for the run (default `warning`).
   """
 
   @default_namespace "default"
@@ -79,19 +94,24 @@ defmodule Mix.Tasks.Bench do
 
     {num_operatives, messages_per_operative} = dimensions_for_shape(shape, opts)
 
-    IO.puts("Starting Flezha performance test...")
-    IO.puts("Runtime: #{runtime}#{dispatch_note(runtime)}")
-    IO.puts("Shape: #{shape}")
-    IO.puts("Operatives: #{num_operatives}")
-    IO.puts("Messages per operative: #{messages_per_operative}")
-    IO.puts("Warmup per operative: #{warmup}")
-    if shape == :entity, do: IO.puts("Pool sizes: #{Enum.join(pool_sizes, ",")}")
-    IO.puts("")
-
     Process.put(:bench_runtime, runtime)
 
-    Logger.configure(level: :warning)
-    Application.put_env(:logger, :level, :warning)
+    Report.open(
+      "mix bench",
+      [
+        {"runtime", "#{runtime} (#{Report.dispatch_note(runtime)})"},
+        {"runner", runner_mode()},
+        {"toolchain", Report.toolchain(runtime)},
+        {"transport", to_string(Application.get_env(:flezha, :transport, :uds))},
+        {"shape", to_string(shape)},
+        {"durability", durability_backend()},
+        {"operatives", to_string(num_operatives)},
+        {"messages/operative", to_string(messages_per_operative)},
+        {"warmup/operative", to_string(warmup)}
+      ] ++
+        if(shape == :entity, do: [{"pool sizes", Enum.join(pool_sizes, ",")}], else: []) ++
+        [{"mix env", to_string(Mix.env())}]
+    )
 
     # A run killed mid-flight (a timeout, Ctrl-C) never reaches the `after`
     # block, so its operatives stay in the hub's declared set and their state
@@ -103,7 +123,7 @@ defmodule Mix.Tasks.Bench do
     reset_bench_namespace()
 
     Mix.Task.run("app.start")
-    Logger.configure(level: :warning)
+    Report.apply_log_level()
 
     case shape do
       :regression ->
@@ -148,7 +168,12 @@ defmodule Mix.Tasks.Bench do
       end
 
     try do
-      run_performance_test(namespace, num_operatives, messages_per_operative, shape, warmup)
+      Report.emit(%{durability: durability_backend()})
+
+      metrics =
+        run_performance_test(namespace, num_operatives, messages_per_operative, shape, warmup)
+
+      Report.finish(report_name(shape), %{metrics: metrics})
     after
       if namespace == @bench_namespace do
         Fleet.cleanup(namespace)
@@ -161,14 +186,16 @@ defmodule Mix.Tasks.Bench do
   defp run_entity_shape(num_operatives, messages_per_operative, pool_sizes, warmup) do
     results =
       Enum.map(pool_sizes, fn pool ->
-        IO.puts("\n=== Entity Stress: pool=#{pool} ===")
         # Always bring up a fresh bench namespace per pool size — the default
         # namespace's compute engines were started without FLEZHA_WORKER_POOL_SIZE
         # threaded through, so they can't be reused for the per-pool sweep.
         Fleet.setup(@bench_namespace, 2, [{"FLEZHA_WORKER_POOL_SIZE", pool}])
 
         try do
-          throughput =
+          Report.emit(%{durability: durability_backend()})
+          IO.puts("\nentity stress: worker pool = #{pool}\n")
+
+          metrics =
             run_performance_test(
               @bench_namespace,
               num_operatives,
@@ -177,35 +204,54 @@ defmodule Mix.Tasks.Bench do
               warmup
             )
 
-          {pool, throughput}
+          {pool, metrics}
         after
           Fleet.cleanup(@bench_namespace)
         end
       end)
 
-    print_scaling_summary(results)
+    Report.finish(report_name(:entity), %{
+      metrics: %{
+        per_pool: Map.new(results, fn {pool, m} -> {Integer.to_string(pool), m} end),
+        scaling_ratio: print_scaling_summary(results)
+      }
+    })
   end
 
+  # The ratio the informational CI job reads. Taken over the end-to-end window
+  # like every other headline here, so a pool comparison and a floor check are
+  # the same measurement at different pool sizes.
   defp print_scaling_summary(results) do
-    IO.puts("\n=== Scaling Summary ===")
+    throughputs = Enum.map(results, fn {_pool, m} -> m.throughput_msg_per_sec end)
 
-    Enum.each(results, fn {pool, throughput} ->
-      IO.puts("pool=#{pool}: #{Float.round(throughput, 2)} msg/s")
-    end)
+    ratio = Report.ratio(throughputs)
 
-    throughputs = Enum.map(results, fn {_pool, t} -> t end)
+    Report.section(
+      "scaling (end-to-end window)",
+      Report.table(
+        ["worker pool", "msg/s"],
+        Enum.map(results, fn {pool, m} ->
+          [Integer.to_string(pool), Report.rate(m.throughput_msg_per_sec)]
+        end),
+        [:right, :right]
+      ) <> "\n\nratio (max/min): #{ratio || "n/a (single pool size)"}"
+    )
 
-    case throughputs do
-      [_single] ->
-        IO.puts("ratio (max/min): n/a (single pool size)")
-
-      _ ->
-        max_t = Enum.max(throughputs)
-        min_t = Enum.min(throughputs)
-        ratio = if min_t > 0, do: max_t / min_t, else: 0.0
-        IO.puts("ratio (max/min): #{Float.round(ratio, 2)}")
-    end
+    ratio
   end
+
+  # `:native` is the in-process Elixir SDK: there is no runner process to
+  # spawn, and the distinction is a property of the transport, not of the SDK.
+  defp runner_mode() do
+    if Application.get_env(:flezha, :transport, :uds) == :native,
+      do: "embedded (in-process)",
+      else: "spawned"
+  end
+
+  defp durability_backend(), do: System.get_env("FLEZHA_DURABILITY_BACKEND") || "none"
+
+  # `bench-<runtime>-<shape>`; `Report.finish/2` stamps the run id and places it.
+  defp report_name(shape), do: "bench-#{Fleet.runtime()}-#{shape}"
 
   # Every SDK with a test-app manifest can serve this bench: the three shapes
   # drive `do_nothing`, `entity_stress` and `dynamic_entity`, which the
@@ -221,19 +267,6 @@ defmodule Mix.Tasks.Bench do
       raise "Unknown --runtime value: #{inspect(name)}. Expected one of: " <>
               Enum.map_join(runtimes, ", ", &inspect/1)
   end
-
-  # A runtime whose dispatch topology is a run-time choice reports which one a
-  # number was taken under: a Node number from the single-loop default and one
-  # from a worker pool are different measurements of the same fixture.
-  defp dispatch_note(:node) do
-    case System.get_env("FLEZHA_NODE_WORKERS") do
-      nil -> " (main-loop dispatch)"
-      "0" -> " (main-loop dispatch)"
-      n -> " (#{n} dispatch workers)"
-    end
-  end
-
-  defp dispatch_note(_runtime), do: ""
 
   defp parse_shape(nil), do: :regression
   defp parse_shape("regression"), do: :regression
@@ -286,7 +319,7 @@ defmodule Mix.Tasks.Bench do
 
   defp run_performance_test(namespace, num_operatives, test_messages_per_operative, shape, warmup) do
     factory = factory_for_shape(shape)
-    IO.puts("Starting flow test with #{num_operatives} operatives (factory=#{factory})...")
+    IO.puts("Starting #{num_operatives} operatives (factory=#{factory})...")
 
     {operative_creation_time, operative_infos} =
       :timer.tc(fn ->
@@ -309,10 +342,6 @@ defmodule Mix.Tasks.Bench do
         end)
         |> Enum.filter(&(&1 != nil))
       end)
-
-    IO.puts(
-      "Operative creation took: #{operative_creation_time / 1000} ms for #{length(operative_infos)} operatives"
-    )
 
     # Every start failed. Proceeding sends no inputs and then waits for
     # replies that nothing can produce, so the run dies in a warmup receive
@@ -356,71 +385,52 @@ defmodule Mix.Tasks.Bench do
         end)
       end)
 
-    IO.puts(
-      "Plugin setup took: #{plugin_setup_time / 1000} ms for #{length(operative_infos)} operatives"
-    )
+    warmup_time =
+      if warmup > 0 do
+        warmup_total = length(operative_infos) * warmup
 
-    if warmup > 0 do
-      warmup_total = length(operative_infos) * warmup
+        {elapsed, _} =
+          :timer.tc(fn ->
+            send_inputs(operative_infos, shape, warmup)
+            await_responses(expected_responses(shape, warmup_total), "warmup")
+          end)
 
-      {warmup_time, _} =
-        :timer.tc(fn ->
-          send_inputs(operative_infos, shape, warmup)
-          await_responses(expected_responses(shape, warmup_total), "warmup")
-        end)
-
-      IO.puts(
-        "Warmup: #{warmup_total} messages in #{warmup_time / 1000} ms (excluded from measurements)"
-      )
-    end
+        elapsed
+      end
 
     total_messages = length(operative_infos) * test_messages_per_operative
 
-    IO.puts(
-      "Sending #{total_messages} total messages (#{test_messages_per_operative} per operative)..."
-    )
+    IO.puts("Sending #{total_messages} inputs (#{test_messages_per_operative} per operative)...")
 
     {message_send_time, _} =
       :timer.tc(fn -> send_inputs(operative_infos, shape, test_messages_per_operative) end)
-
-    IO.puts("Message sending took: #{message_send_time / 1000} ms")
 
     expected_responses = expected_responses(shape, total_messages)
 
     {message_receive_time, _} =
       :timer.tc(fn -> await_responses(expected_responses, "message") end)
 
-    IO.puts(
-      "Message processing took: #{message_receive_time / 1000} ms for #{expected_responses} messages"
-    )
-
-    total_time =
-      operative_creation_time + plugin_setup_time + message_send_time + message_receive_time
-
-    throughput_msgs_per_sec = total_messages * 1_000_000 / message_receive_time
-
-    # The send and receive `:timer.tc` blocks run back to back, so their sum
-    # is the wall time from first cast to last response — the honest window,
-    # since responses already stream in while the send loop is still casting.
+    # The send and receive `:timer.tc` blocks run back to back, so their sum is
+    # the wall time from the first input to the last response. That is the
+    # honest window — responses stream in while the send loop is still casting,
+    # so the receive window alone credits work the send window paid for.
     end_to_end_time = message_send_time + message_receive_time
 
-    IO.puts("\n=== Performance Summary ===")
-    IO.puts("Operatives created: #{length(operative_infos)}")
-    IO.puts("Total inputs dispatched: #{total_messages}")
-    IO.puts("Plugin-forwarded responses received: #{expected_responses}")
-    IO.puts("Operative creation: #{operative_creation_time / 1000} ms")
-    IO.puts("Plugin setup: #{plugin_setup_time / 1000} ms")
-    IO.puts("Message sending: #{message_send_time / 1000} ms")
-    IO.puts("Message processing: #{message_receive_time / 1000} ms")
-    IO.puts("Total time: #{total_time / 1000} ms")
-    IO.puts("Throughput: #{Float.round(throughput_msgs_per_sec, 2)} messages/second")
+    metrics = %{
+      operatives: length(operative_infos),
+      inputs_dispatched: total_messages,
+      responses_received: expected_responses,
+      operative_creation_ms: rounded_ms(operative_creation_time),
+      plugin_setup_ms: rounded_ms(plugin_setup_time),
+      warmup_ms: warmup_time && rounded_ms(warmup_time),
+      send_ms: rounded_ms(message_send_time),
+      receive_ms: rounded_ms(message_receive_time),
+      end_to_end_ms: rounded_ms(end_to_end_time),
+      throughput_msg_per_sec: round(total_messages * 1_000_000 / end_to_end_time),
+      receive_window_msg_per_sec: round(total_messages * 1_000_000 / message_receive_time)
+    }
 
-    IO.puts(
-      "End-to-end (first send -> last response): #{end_to_end_time / 1000} ms, " <>
-        "#{Float.round(total_messages * 1_000_000 / end_to_end_time, 2)} messages/second"
-    )
-
-    IO.puts("Average time per operative: #{total_time / length(operative_infos) / 1000} ms")
+    print_results(metrics, warmup)
 
     OperativeManager.stop_all_operatives(namespace)
 
@@ -432,9 +442,68 @@ defmodule Mix.Tasks.Bench do
       exit("No messages were processed")
     end
 
-    IO.puts("\nPerformance test completed successfully!")
+    metrics
+  end
 
-    throughput_msgs_per_sec
+  defp rounded_ms(microseconds), do: Float.round(microseconds / 1000, 1)
+
+  # Both windows are reported, each labelled with what it measures: they differ
+  # by the send window and are not interchangeable, and only the label says
+  # which one a quoted figure came from.
+  defp print_results(m, warmup) do
+    IO.puts("")
+
+    Report.section(
+      "totals",
+      Report.kv([
+        {"operatives", Integer.to_string(m.operatives)},
+        {"inputs dispatched", Report.rate(m.inputs_dispatched)},
+        {"responses received", Report.rate(m.responses_received)}
+      ])
+    )
+
+    phases =
+      [
+        {"operative creation", m.operative_creation_ms, ""},
+        {"plugin setup", m.plugin_setup_ms, ""}
+      ] ++
+        if(m.warmup_ms,
+          do: [{"warmup", m.warmup_ms, "#{warmup}/operative, excluded from the windows below"}],
+          else: []
+        ) ++
+        [
+          {"input send", m.send_ms, ""},
+          {"response drain", m.receive_ms, ""}
+        ]
+
+    Report.section(
+      "phases",
+      Report.table(
+        ["phase", "elapsed", "note"],
+        Enum.map(phases, fn {name, ms, note} -> [name, "#{ms} ms", note] end),
+        [:left, :right, :left]
+      )
+    )
+
+    Report.section(
+      "throughput",
+      Report.table(
+        ["window", "elapsed", "msg/s"],
+        [
+          [
+            "end-to-end (first input → last response)",
+            "#{m.end_to_end_ms} ms",
+            Report.rate(m.throughput_msg_per_sec)
+          ],
+          [
+            "receive only (send loop returned → last response)",
+            "#{m.receive_ms} ms",
+            Report.rate(m.receive_window_msg_per_sec)
+          ]
+        ],
+        [:left, :right, :right]
+      )
+    )
   end
 
   defp send_inputs(operative_infos, shape, messages_per_operative) do

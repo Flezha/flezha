@@ -23,7 +23,11 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   @docs_section "docs/sdk/conformance.md § Adding an SDK to the conformance suite"
 
   # A manifest must declare all of these.
-  @required_fields ~w(runtime sdk_lang command artifacts build connect_timeout_ms transports deferred fixtures docs)
+  @required_fields ~w(runtime sdk_lang command artifacts build connect_timeout_ms transports dispatch toolchain deferred fixtures docs)
+
+  # How a host executes activations. The vocabulary is closed and lives here,
+  # so a new SDK either fits an existing model or extends this list on purpose.
+  @dispatch_models ~w(thread-pool event-loop process-per-entity)
 
   defp runtimes, do: PortPilot.runtimes()
 
@@ -69,6 +73,49 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
         unless manifest["artifacts"]["test"] != [] and manifest["artifacts"]["bench"] != [] do
           fail("#{path}: an artifacts profile is empty")
+        end
+      end
+    end
+
+    test "each declares how its host dispatches and how to ask its toolchain's version" do
+      for runtime <- runtimes() do
+        path = PortPilot.manifest_path(runtime)
+        dispatch = PortPilot.dispatch(runtime)
+
+        unless dispatch["model"] in @dispatch_models do
+          fail(
+            "#{path} declares dispatch.model #{inspect(dispatch["model"])}; expected one of " <>
+              "#{inspect(@dispatch_models)} — a number taken under one dispatch topology and " <>
+              "one taken under another are different measurements of the same fixture"
+          )
+        end
+
+        unless is_binary(dispatch["detail"]) and dispatch["detail"] != "" do
+          fail("#{path} declares no dispatch.detail sentence")
+        end
+
+        unless is_map(dispatch["env"]) do
+          fail(
+            "#{path} declares dispatch.env #{inspect(dispatch["env"])}; expected a map from " <>
+              "each environment variable that selects the topology to what it selects " <>
+              "(empty when the topology is fixed)"
+          )
+        end
+
+        unless is_binary(manifest(runtime)["toolchain"]) and
+                 manifest(runtime)["toolchain"] != "" do
+          fail(
+            "#{path} declares no toolchain version command — a bench header names the " <>
+              "toolchain a number was taken under, and reads it from here rather than " <>
+              "from a per-runtime clause of its own"
+          )
+        end
+
+        for {var, means} <- dispatch["env"] do
+          unless is_binary(var) and String.starts_with?(var, "FLEZHA_") and
+                   is_binary(means) and means != "" do
+            fail("#{path}: dispatch.env entry #{inspect({var, means})} is not FLEZHA_VAR => text")
+          end
         end
       end
     end

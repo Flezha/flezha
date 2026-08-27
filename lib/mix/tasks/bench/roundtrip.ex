@@ -4,6 +4,7 @@ defmodule Mix.Tasks.Bench.Roundtrip do
   alias Flezha.Service.OperativeManager
   alias Flezha.Service.PluginManager
   alias Mix.Tasks.Bench.Fleet
+  alias Mix.Tasks.Bench.Report
   alias Mix.Tasks.Bench.Tally
 
   @shortdoc "Kafka round-trip benchmark: Flezha vs Apache Flink"
@@ -95,28 +96,23 @@ defmodule Mix.Tasks.Bench.Roundtrip do
 
     cfg = build_config(opts)
 
-    IO.puts("""
-    === bench.roundtrip ===
-    engine:      #{cfg.engine}#{if cfg.engine == :flezha, do: " (#{cfg.runtime}#{dispatch_note(cfg.runtime)})", else: ""}
-    workload:    #{cfg.workload}
-    durability:  #{cfg.durability}
-    pipelines:   #{cfg.pipelines} (== partitions)
-    messages:    #{cfg.messages_per_pipeline} per pipeline (#{cfg.total} total)
-    payload:     #{cfg.payload_bytes} bytes
-    rate:        #{if cfg.rate == 0, do: "unpaced", else: "#{cfg.rate}/s/partition"}
-    broker:      #{cfg.broker_host}:#{cfg.broker_port}
-    """)
-
-    # `FLEZHA_BENCH_LOG=info` surfaces the controller's own diagnostics (credit
-    # handshake, rebinds) which are otherwise below the bench's noise floor.
-    log_level =
-      case System.get_env("FLEZHA_BENCH_LOG") do
-        nil -> :warning
-        level -> String.to_existing_atom(level)
-      end
-
-    Logger.configure(level: log_level)
-    Application.put_env(:logger, :level, log_level)
+    Report.open("bench.roundtrip", [
+      {"engine", to_string(cfg.engine)},
+      {"runtime",
+       if(cfg.engine == :flezha,
+         do: "#{cfg.runtime} (#{Report.dispatch_note(cfg.runtime)})",
+         else: "n/a"
+       )},
+      {"toolchain", if(cfg.engine == :flezha, do: Report.toolchain(cfg.runtime), else: "n/a")},
+      {"workload", to_string(cfg.workload)},
+      {"durability", to_string(cfg.durability)},
+      {"pipelines", "#{cfg.pipelines} (== partitions)"},
+      {"messages", "#{cfg.messages_per_pipeline} per pipeline (#{cfg.total} total)"},
+      {"payload", "#{cfg.payload_bytes} bytes"},
+      {"rate", if(cfg.rate == 0, do: "unpaced", else: "#{cfg.rate}/s/partition")},
+      {"broker", "#{cfg.broker_host}:#{cfg.broker_port}"},
+      {"mix env", to_string(Mix.env())}
+    ])
 
     # A run killed mid-flight (a timeout, a crash) never reaches teardown, so its
     # operatives stay in the hub's declared set and their state dirs stay on
@@ -139,7 +135,7 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     end
 
     Mix.Task.run("app.start")
-    Logger.configure(level: log_level)
+    Report.apply_log_level()
     {:ok, _} = Application.ensure_all_started(:inets)
 
     Process.put(:bench_runtime, cfg.runtime)
@@ -156,6 +152,7 @@ defmodule Mix.Tasks.Bench.Roundtrip do
       # decision. `prepare` is that pre-existing world; only `start_engine` is
       # inside the timed window.
       prepared = prepare_engine(cfg)
+      Report.emit(%{durability: cfg.durability})
 
       # Records wait in the input topic before the engine exists, so time to
       # first record out measures bring-up, not generator warmup. Both engines
@@ -726,18 +723,24 @@ defmodule Mix.Tasks.Bench.Roundtrip do
 
     IO.puts("  total traced: #{div(total_us, 1000)} ms")
 
-    rows
-    |> Enum.sort_by(&(-elem(&1, 3)))
-    |> Enum.take(50)
-    |> Enum.each(fn {m, {f, a}, calls, us, per_call, pct} ->
-      IO.puts(
-        "  #{String.pad_trailing("#{inspect(m)}.#{f}/#{a}", 58)} " <>
-          "#{String.pad_leading(Integer.to_string(calls), 9)} " <>
-          "#{String.pad_leading(Integer.to_string(us), 9)}us " <>
-          "#{String.pad_leading(:erlang.float_to_binary(per_call * 1.0, decimals: 2), 8)} " <>
-          "#{:erlang.float_to_binary(pct * 1.0, decimals: 1)}%"
+    IO.puts(
+      Report.table(
+        ["function", "calls", "us", "us/call", "%"],
+        rows
+        |> Enum.sort_by(&(-elem(&1, 3)))
+        |> Enum.take(50)
+        |> Enum.map(fn {m, {f, a}, calls, us, per_call, pct} ->
+          [
+            "#{inspect(m)}.#{f}/#{a}",
+            Integer.to_string(calls),
+            Integer.to_string(us),
+            :erlang.float_to_binary(per_call * 1.0, decimals: 2),
+            :erlang.float_to_binary(pct * 1.0, decimals: 1)
+          ]
+        end),
+        [:left, :right, :right, :right, :right]
       )
-    end)
+    )
 
     :tprof.stop()
   end
@@ -825,10 +828,14 @@ defmodule Mix.Tasks.Bench.Roundtrip do
   end
 
   defp print_top(map) do
-    map
-    |> Enum.sort_by(fn {_k, v} -> -v end)
-    |> Enum.take(8)
-    |> Enum.each(fn {k, v} -> IO.puts("  #{String.pad_trailing(to_string(k), 60)} #{v}") end)
+    IO.puts(
+      Report.kv(
+        map
+        |> Enum.sort_by(fn {_k, v} -> -v end)
+        |> Enum.take(8)
+        |> Enum.map(fn {k, v} -> {to_string(k), to_string(v)} end)
+      )
+    )
   end
 
   # ---------------------------------------------------------------- report --
@@ -847,105 +854,139 @@ defmodule Mix.Tasks.Bench.Roundtrip do
     window_ns = m.generate_ns + m.drain_ns
     throughput = if window_ns > 0, do: received * 1_000_000_000 / window_ns, else: 0.0
 
-    IO.puts(
-      "\n\n=== Round-trip summary (#{cfg.engine} / #{cfg.workload} / durability=#{cfg.durability}) ==="
-    )
-
-    IO.puts("Records sent:        #{cfg.total}")
-
-    IO.puts(
-      "Records received:    #{received}#{if lost != 0, do: "  ** #{lost} LOST **", else: ""}"
-    )
-
-    IO.puts("Time to first out:   #{fmt_ms(m.first_out_ns)} ms")
-    IO.puts("Generate window:     #{fmt_ms(m.generate_ns)} ms")
-    IO.puts("Drain window:        #{fmt_ms(m.drain_ns)} ms")
-
-    IO.puts(
-      "Throughput:          #{Float.round(throughput, 2)} rec/s" <>
-        if(cfg.rate > 0, do: " (rate-capped at ~#{cfg.rate * cfg.pipelines}/s)", else: "")
-    )
-
-    if m.skipped > 0 do
-      IO.puts("Non-payload records: #{m.skipped} (transaction control markers)")
-    end
-
     retries = :counters.get(produce_retry_counter(), 1)
-    if retries > 0, do: IO.puts("Generator retries:   #{retries} (transient produce failures)")
+    pct = Tally.percentiles(tally, [0.50, 0.95, 0.99, 0.999])
+
+    IO.puts("")
+
+    Report.section(
+      "records",
+      Report.kv(
+        [
+          {"sent", Report.rate(cfg.total)},
+          {"received",
+           "#{Report.rate(received)}#{if lost != 0, do: "  ** #{lost} LOST **", else: ""}"}
+        ] ++
+          if(m.skipped > 0,
+            do: [{"non-payload", "#{m.skipped} (transaction control markers)"}],
+            else: []
+          ) ++
+          if(retries > 0,
+            do: [{"generator retries", "#{retries} (transient produce failures)"}],
+            else: []
+          ) ++
+          if(tally.duplicates > 0,
+            do: [{"duplicates", "#{tally.duplicates}#{explained_dups(cfg)}"}],
+            else: []
+          ) ++
+          if(tally.foreign > 0,
+            do: [{"foreign", "#{tally.foreign} (seq outside this run)"}],
+            else: []
+          )
+      )
+    )
 
     if tally.duplicates > retries * cfg.batch do
       IO.puts(
-        "  ** #{tally.duplicates - retries * cfg.batch} DUPLICATES the generator cannot explain **"
+        "  ** #{tally.duplicates - retries * cfg.batch} DUPLICATES the generator cannot explain **\n"
       )
     end
 
-    if tally.duplicates > 0 do
-      IO.puts("Duplicates:          #{tally.duplicates}#{explained_dups(cfg)}")
-    end
+    Report.section(
+      "phases",
+      Report.table(
+        ["phase", "elapsed"],
+        [
+          ["time to first record out", "#{Report.ms_from_ns(m.first_out_ns)} ms"],
+          ["generate window", "#{Report.ms_from_ns(m.generate_ns)} ms"],
+          ["drain window", "#{Report.ms_from_ns(m.drain_ns)} ms"]
+        ],
+        [:left, :right]
+      )
+    )
 
-    if tally.foreign > 0 do
-      IO.puts("Foreign records:     #{tally.foreign} (seq outside this run)")
-    end
-
-    pct = Tally.percentiles(tally, [0.50, 0.95, 0.99, 0.999])
+    Report.section(
+      "throughput",
+      Report.table(
+        ["window", "elapsed", "rec/s"],
+        [
+          [
+            "end-to-end (generate + drain)#{if cfg.rate > 0, do: " — rate-capped at ~#{cfg.rate * cfg.pipelines}/s", else: ""}",
+            "#{Report.ms_from_ns(window_ns)} ms",
+            Report.rate(throughput)
+          ]
+        ],
+        [:left, :right, :right]
+      )
+    )
 
     if received > 0 do
-      IO.puts("Latency p50:         #{fmt_ms(pct[0.50])} ms")
-      IO.puts("Latency p95:         #{fmt_ms(pct[0.95])} ms")
-      IO.puts("Latency p99:         #{fmt_ms(pct[0.99])} ms")
-      IO.puts("Latency p99.9:       #{fmt_ms(pct[0.999])} ms")
-      IO.puts("Latency max:         #{fmt_ms(tally.max_ns)} ms")
+      Report.section(
+        "latency",
+        Report.table(
+          ["percentile", "ms"],
+          [
+            ["p50", Report.ms_from_ns(pct[0.50])],
+            ["p95", Report.ms_from_ns(pct[0.95])],
+            ["p99", Report.ms_from_ns(pct[0.99])],
+            ["p99.9", Report.ms_from_ns(pct[0.999])],
+            ["max", Report.ms_from_ns(tally.max_ns)]
+          ],
+          [:left, :right]
+        )
+      )
     end
 
     write_report(cfg, m, tally, pct, received, lost, throughput)
   end
 
   defp write_report(cfg, m, tally, pct, received, lost, throughput) do
-    path =
+    Report.finish(
+      # A fixed location: `bench/flink/bench.sh` and `lib/summarize.py` read it.
       Path.join(
         "bench/flink/reports",
         "#{cfg.engine}-#{cfg.workload}-#{cfg.durability}-#{cfg.run_id}.json"
-      )
-
-    File.mkdir_p!(Path.dirname(path))
-
-    payload = %{
-      engine: cfg.engine,
-      workload: cfg.workload,
-      durability: cfg.durability,
-      pipelines: cfg.pipelines,
-      messages_per_pipeline: cfg.messages_per_pipeline,
-      payload_bytes: cfg.payload_bytes,
-      rate: cfg.rate,
-      # `bench.sh` stamps every report of one sweep, so `summarize.py` can fold
-      # a `--repeat` series into one median row and keep stray runs apart.
-      sweep: System.get_env("FLZ_BENCH_SWEEP"),
-      sent: cfg.total,
-      received: received,
-      lost: lost,
-      duplicates: tally.duplicates,
-      generator_retries: :counters.get(produce_retry_counter(), 1),
-      first_out_ms: fmt_ms(m.first_out_ns),
-      engine_startup: inspect(m.engine_startup),
-      generate_ms: fmt_ms(m.generate_ns),
-      drain_ms: fmt_ms(m.drain_ns),
-      throughput_per_sec: Float.round(throughput, 2),
-      non_payload_records: m.skipped,
-      latency_ms:
-        if(received > 0,
-          do: %{
-            p50: fmt_ms(pct[0.50]),
-            p95: fmt_ms(pct[0.95]),
-            p99: fmt_ms(pct[0.99]),
-            p999: fmt_ms(pct[0.999]),
-            max: fmt_ms(tally.max_ns)
-          },
-          else: nil
-        )
-    }
-
-    File.write!(path, Jason.encode!(payload, pretty: true))
-    IO.puts("\nReport: #{path}")
+      ),
+      %{
+        config: %{
+          engine: cfg.engine,
+          workload: cfg.workload,
+          durability: cfg.durability,
+          pipelines: cfg.pipelines,
+          messages_per_pipeline: cfg.messages_per_pipeline,
+          payload_bytes: cfg.payload_bytes,
+          rate: cfg.rate,
+          # `bench.sh` stamps every report of one sweep, so `summarize.py` can
+          # fold a `--repeat` series into one median row and keep stray runs
+          # apart.
+          sweep: System.get_env("FLZ_BENCH_SWEEP")
+        },
+        metrics: %{
+          sent: cfg.total,
+          received: received,
+          lost: lost,
+          duplicates: tally.duplicates,
+          generator_retries: :counters.get(produce_retry_counter(), 1),
+          first_out_ms: fmt_ms(m.first_out_ns),
+          engine_startup: inspect(m.engine_startup),
+          generate_ms: fmt_ms(m.generate_ns),
+          drain_ms: fmt_ms(m.drain_ns),
+          throughput_per_sec: Float.round(throughput, 2),
+          non_payload_records: m.skipped,
+          latency_ms:
+            if(received > 0,
+              do: %{
+                p50: fmt_ms(pct[0.50]),
+                p95: fmt_ms(pct[0.95]),
+                p99: fmt_ms(pct[0.99]),
+                p999: fmt_ms(pct[0.999]),
+                max: fmt_ms(tally.max_ns)
+              },
+              else: nil
+            )
+        }
+      }
+    )
   end
 
   defp fmt_ms(ns), do: Float.round(ns / 1_000_000, 3)
@@ -1088,20 +1129,6 @@ defmodule Mix.Tasks.Bench.Roundtrip do
 
     runtime
   end
-
-  # A runtime whose dispatch topology is a run-time choice reports which one a
-  # number was taken under: a Node number from the single-loop default and one
-  # from a worker pool are different measurements of the same fixture, and a
-  # report that did not say which is not attributable.
-  defp dispatch_note(:node) do
-    case System.get_env("FLEZHA_NODE_WORKERS") do
-      nil -> ", main-loop dispatch"
-      "0" -> ", main-loop dispatch"
-      n -> ", #{n} dispatch workers"
-    end
-  end
-
-  defp dispatch_note(_runtime), do: ""
 
   # The capability a durability posture needs a fixture for.
   defp durability_capability(:off), do: nil

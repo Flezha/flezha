@@ -28,8 +28,8 @@ gate.
 ```
 
 Compare two runs — the controller, protocol and measurement code are identical,
-only the launched SDK process and the wire change, so the `Throughput:` line
-is directly comparable:
+only the launched SDK process and the wire change, so the throughput rows are
+directly comparable:
 
 ```sh
 ./scripts/bench.sh -r rust -n 100 -m 1000 | tee bench-rust.txt
@@ -59,11 +59,80 @@ are spawned into the scratch namespace `bench`, which the task wipes
 controller boots. A Rust runner binary is built on demand; build
 `cargo build -p rust_runner --release` first for representative numbers.
 
-## Shapes
+## What a run prints
 
-Every shape prints `Throughput:` (responses over the receive window — the
-gate metric) and `End-to-end (first send -> last response)` (the honest
-number, since responses stream in while the send loop is still casting).
+Every run opens with three header blocks, then any preflight warning, then the
+result tables.
+
+- **run** — the runtime and its dispatch model (read from the SDK's
+  `conformance.json` `dispatch` key, with the current value of every
+  environment variable that selects the topology), whether the runner is
+  embedded or spawned, the transport, shape, durability backend, dimensions
+  and `MIX_ENV`.
+- **system** — CPU model, logical cores and governor; memory; 1-minute load
+  average; OTP/Elixir and the launched runtime's own toolchain version; the
+  git SHA and whether the tree is dirty. A field the host cannot supply reads
+  `unavailable`; nothing here can fail a run.
+- **artifacts** — the artifact each runtime actually launched, its size and
+  mtime, whether it was the profile's first choice or a fallback, and whether
+  the manifest `build` command ran or was skipped.
+
+### Preflight warnings
+
+Printed above the numbers and carried in the report. **None of them abort the
+run** — a number produced on an unfit box is still that box's number, and the
+report says what was wrong with it.
+
+| Warning                   | Why it matters                                                       |
+| ------------------------- | -------------------------------------------------------------------- |
+| CPU governor not `performance` | Clock scaling makes the number irreproducible run to run.        |
+| Load average above cores  | The box is contended; the bench is not the only thing running.        |
+| `MIX_ENV` not `prod`      | The controller is not running the code it ships.                      |
+| Dirty working tree        | The number cannot be attributed to a commit.                          |
+| `FLEZHA_BENCH_SKIP_BUILD` | The artifact measured is whatever was on disk, not necessarily this tree. |
+| Fallback artifact         | The profile's own artifact is missing; a different build was launched. |
+| Debug-profile artifact    | Not a bench artifact.                                                 |
+| Durability backend off    | The number excludes the cost of persisting anything (the wrapper's default). |
+
+### Throughput windows
+
+Two rates are reported and each row names the window it measures. They differ
+by the send window and are **not** interchangeable:
+
+- **end-to-end (first input → last response)** — the **headline**. Responses
+  stream in while the send loop is still casting, so this is the whole cost of
+  moving a message through the system.
+- **receive only (send loop returned → last response)** — the drain rate, and
+  the number `BENCH_FLOOR_MSG_PER_SEC` gates. It credits work the send window
+  paid for, so it reads several times higher; the gate uses it because that
+  requirement is about *SDK dispatch* and the send window it excludes is the
+  controller's own cast overhead.
+
+There is no `Average time per operative`: it divided total elapsed time across
+four unrelated phases by a count of concurrently-running operatives and
+measured nothing.
+
+### The structured report
+
+Every run writes `bench/reports/bench-<runtime>-<shape>-<run_id>.json`
+(`bench.roundtrip` keeps writing `bench/flink/reports/`, which
+`bench/flink/lib/summarize.py` reads). It carries the `run`, `system`,
+`artifacts` and `warnings` blocks plus a `metrics` block with every measured
+value.
+
+**The report is the machine contract.** CI reads its named fields rather than
+matching printed prose, so the rendering above can change without touching a
+merge-blocking gate: `metrics.receive_window_msg_per_sec` for the regression
+floor, `metrics.scaling_ratio` for the entity sweep.
+`metrics.throughput_msg_per_sec` is the end-to-end headline.
+`bench/reports/` is gitignored.
+
+`FLEZHA_BENCH_LOG` sets the logger level for a run (default `warning`).
+Nothing in the harness filters or rewrites a log line: a warning a bench
+provokes is either a real condition to fix at its source, or evidence that a
+classifier is wrong.
+
+## Shapes
 
 ### `regression` (default, merge-blocking)
 
@@ -74,8 +143,13 @@ at `-n 100 -m 10000`.
 ### `entity` (scaling check, informational)
 
 8 operatives × 20K msg against factory `entity_stress` (4 procedures, 8 entity
-keys, fan-out then fan-in). Sweeps `--pool-sizes` and prints a
-`=== Scaling Summary ===` block ending with `ratio (max/min)`.
+keys, fan-out then fan-in). Sweeps `--pool-sizes` and prints a `scaling` table
+ending with `ratio (max/min)`; the same ratio is the report's
+`metrics.scaling_ratio`, which the informational CI job reads.
+
+A small worker pool cannot drain this shape's 8× fan-out: on a 4-core box
+`--pool-sizes 1` and `2` stall partway through the drain and the run times out,
+while `8` completes. Sweep sizes the host can actually serve.
 
 ```sh
 ./scripts/bench.sh --shape entity --pool-sizes 1,8
@@ -188,7 +262,7 @@ Each task's `@moduledoc` carries the workload details and pass criteria.
 
 | Constant                          | Value           | What it gates                                                                                          |
 | --------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------ |
-| `BENCH_FLOOR_MSG_PER_SEC`         | **480000** msg/s | The `Throughput:` line of `mix bench --runtime rust --shape regression -n 100 -m 10000`. Merge-blocking via `bench-regression`. |
+| `BENCH_FLOOR_MSG_PER_SEC`         | **480000** msg/s | `metrics.receive_window_msg_per_sec` in the report of `mix bench --runtime rust --shape regression -n 100 -m 10000` — the **receive** window, because this gates dispatch throughput. Merge-blocking via `bench-regression`. |
 | `SINGLE_ENTITY_FLOOR_MSG_PER_SEC` | **700000** msg/s | `cargo bench … throughput_single_entity`. Informational; used to triage where a regression sits.       |
 
 `BENCH_FLOOR_MSG_PER_SEC = 480_000`
@@ -200,8 +274,8 @@ desktop, 8+ cores), rounded down to the nearest 5K — 482 550 msg/s (range
 477K–513K) for the regression floor, 714K elem/s for the single-entity
 microbench. `mix bench.floor` prints `BENCH_FLOOR_MSG_PER_SEC` from this file
 to stdout; the `bench-regression` job's sync step parses it together with the
-`at least **N messages/second**` clause of the dispatch spec file it names and
-fails on disagreement.
+`at least **N messages/second**` clause of `openspec/specs/rust-sdk-dispatch/spec.md`
+and fails on disagreement.
 
 The dynamic-entity steady-state floor (`steady_state_1k_entities`) is
 **~520K inputs/s** (median ~383 ms for 200K inputs) on the reference host. It
@@ -211,7 +285,7 @@ is a trend signal, not a CI gate.
 
 | Workflow                    | Trigger                                                                                                                                                            | What it runs                                                                                                                                                                                                                                                                                  |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `bench.yml`                 | PRs touching `sdk/rust/**`, `flz_transport/**`, `flz_nif/**`, `lib/flezha/**`, `lib/mix/tasks/bench**`, `protobufs/**`, `test/apps/rust_runner/**`, this doc, the spec, the workflow | **`bench-regression`** (merge-blocking): spec/doc floor sync check, then `mix bench --runtime rust --shape regression -n 100 -m 10000`; fails below `0.9 × BENCH_FLOOR_MSG_PER_SEC`, warns when below the floor but inside the band. **`bench-entity-scaling`** (informational, `continue-on-error`): `--shape entity --pool-sizes 1,8`, reports `ratio (max/min)`; GitHub runners do not reliably expose 8 physical cores, so the 4× target is validated on real hardware. |
+| `bench.yml`                 | PRs touching `sdk/rust/**`, `flz_transport/**`, `flz_nif/**`, `lib/flezha/**`, `lib/mix/tasks/bench**`, `protobufs/**`, `test/apps/rust_runner/**`, this doc, `openspec/specs/rust-sdk-dispatch/spec.md`, the workflow | **`bench-regression`** (merge-blocking): spec/doc floor sync check, then `mix bench --runtime rust --shape regression -n 100 -m 10000`; reads `metrics.receive_window_msg_per_sec` from the run's JSON report (not from printed output), re-emits every preflight warning as a job annotation, fails below `0.9 × BENCH_FLOOR_MSG_PER_SEC`, warns when below the floor but inside the band, and uploads `bench/reports/` with the log. **`bench-entity-scaling`** (informational, `continue-on-error`): `--shape entity --pool-sizes 1,8`, reads `metrics.scaling_ratio`; GitHub runners do not reliably expose 8 physical cores, so the 4× target is validated on real hardware. |
 | `rust-sdk-perf.yml`         | PRs and `main` pushes touching `sdk/rust/**`, `flz_transport/**`, `Cargo.toml`, `Cargo.lock`                                                                         | Runs the `correctness` bench (any invariant violation fails) and the `dispatch` bench with `--save-baseline`; on PRs compares against the cached `main` baseline and fails if any bench's estimated change exceeds 10%.                                                                      |
 | `rust-sdk-bench-cron.yml`   | Mondays 03:00 UTC, `workflow_dispatch`                                                                                                                              | Non-blocking drift detector: `mix bench -n 100 -m 10000` across rust/java × uds/quic, plus Criterion `dispatch` (`regression_` group only) and `dynamic_entity_steady_state`; posts a step summary.                                                                                           |
 

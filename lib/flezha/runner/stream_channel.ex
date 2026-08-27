@@ -1,6 +1,7 @@
 defmodule Flezha.Runner.StreamChannel do
   alias Flezha.Runner.ControlChannel
   alias Flezha.Runner.ControlUnit
+  alias Flezha.Runner.FleetManager
   alias Flezha.Operative.ClassRegistry
   alias Flezha.State.CreditLedger
   alias Flezha.State.PersistenceResolver
@@ -394,12 +395,21 @@ defmodule Flezha.Runner.StreamChannel do
   # the dead ref. The acceptor will pick this channel up via :stream_ref_status
   # on the next incoming data stream for the same runner_id.
   def handle_info({:flz_closed, _stream_id, _reason}, state) do
-    Logger.warning("Connection closed for IO socket.")
+    # A close the controller itself asked for is not an incident: it is
+    # reported, not diagnosed. Only the REPORTING sits inside this branch —
+    # the binding clear and the credit reset below are unconditional, because
+    # a real socket close drops the runner either way.
+    if FleetManager.runner_retiring?(state.runner_id) do
+      Logger.info("IO socket closed for retiring runner #{state.runner_id}.")
+    else
+      Logger.warning("Connection closed for IO socket.")
 
-    # Emit output_stall immediately for every operative in the mapping so the
-    # convergence Loop triggers a rebind tick rather than waiting for the
-    # Watchdog's 60s grace period to detect the dead socket.
-    emit_output_stall(state.operative_mapping)
+      # Emit output_stall immediately for every operative in the mapping so the
+      # convergence Loop triggers a rebind tick rather than waiting for the
+      # Watchdog's 60s grace period to detect the dead socket.
+      emit_output_stall(state.operative_mapping)
+    end
+
     publish_stream(state.name, nil, state.liveness_ref)
 
     {:noreply, %{state | stream_ref: nil} |> reset_credit()}
