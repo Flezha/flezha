@@ -20,7 +20,7 @@ nothing from `flz_core` ([`../architecture/runner.md`](../architecture/runner.md
 `:native` is the default and is **not** env-derived: a controller sets `FLEZHA_TRANSPORT=uds`
 for its *server*, and an env-following in-node SDK would dial its own node over a socket.
 Standalone deployments pass `:uds` / `:quic` explicitly; connection parameters come from the
-env the Rust client reads (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_QUIC_ADDRESS`,
+env the Rust client reads (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_QUIC_ADDRESSES`,
 `FLEZHA_CA_CERT_PATH`).
 
 ## Registration

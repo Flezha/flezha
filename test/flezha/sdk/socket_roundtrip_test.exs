@@ -42,15 +42,31 @@ defmodule Flezha.SDK.SocketRoundtripTest do
     end
   end
 
+  test "the SDK and the controller resolve one directory, from the one ladder" do
+    # The Elixir SDK derives no path of its own: both roles ask
+    # `flz_transport` through the NIF, which is the same code a Rust, Java or
+    # Node runner reaches through `flz_core`. That a Rust runner started in the
+    # same environment lands on the same directory is proven end to end by
+    # `test/system/connect_discovery_e2e_test.exs`, under every runtime.
+    configured = Flezha.Socket.Support.socket_dir()
+
+    assert {:ok, runner_dir, _quic} =
+             Flezha.Transport.Native.resolve_connect("runner", configured, nil)
+
+    assert {:ok, controller_dir, _quic} =
+             Flezha.Transport.Native.resolve_connect("controller", configured, nil)
+
+    assert runner_dir == controller_dir
+    assert runner_dir == configured
+    assert Path.type(runner_dir) == :absolute
+  end
+
   setup do
     # The standalone SDK reads FLEZHA_SOCKET_FILES_PATH; point it at the
     # controller's own listener path so the same-node dial finds it.
     prev = System.get_env("FLEZHA_SOCKET_FILES_PATH")
 
-    System.put_env(
-      "FLEZHA_SOCKET_FILES_PATH",
-      Application.fetch_env!(:flezha, :socket_files_path)
-    )
+    System.put_env("FLEZHA_SOCKET_FILES_PATH", Flezha.Socket.Support.socket_dir())
 
     ns = "sdk_socket_#{System.unique_integer([:positive])}"
     Process.register(self(), @probe)

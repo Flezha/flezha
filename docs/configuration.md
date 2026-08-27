@@ -40,14 +40,15 @@ variables accept `1`/`true`/`yes`/`on` as true unless a narrower list is given.
 | `FLEZHA_TRANSPORT` | `uds` | `:transport`. `uds`, `quic` or `native` (the in-node Elixir SDK transport, never chosen implicitly); any other value is refused at boot |
 | `FLEZHA_TRANSPORTS` | the value of `FLEZHA_TRANSPORT` (`uds,quic` in test) | `:transports`, comma list validated against the same three names |
 | `FLEZHA_TRANSPORT_AUTH` | required | `:transport_auth_required`; `off`/`false`/`0`/`no` disables peer authentication and is warned on every boot |
-| `FLEZHA_QUIC_ADDRESS` | `0.0.0.0:4433` | `:quic_listen_address` |
+| `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` | `:quic_listen_address`, the address the controller listens on (a runner's dial list is `FLEZHA_QUIC_ADDRESSES`, below) |
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | `:ca_cert_path` |
 | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/server.pem` | `:server_cert_path` |
 | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/server.key` | `:server_key_path` |
 | `FLEZHA_CLIENT_CERT_PATH` | `app_data/certs/client.pem` | `:client_cert_path` |
 | `FLEZHA_CLIENT_KEY_PATH` | `app_data/certs/client.key` | `:client_key_path` |
 | `FLEZHA_QUIC_CLIENT_CA` | `app_data/certs/ca.pem` | `:quic_client_ca_path`, trust anchor for QUIC client certificates |
-| `FLEZHA_SOCKET_FILES_PATH` | `app_data/sockets/` | `:socket_files_path` |
+| `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder (below) | the UDS socket directory. Set, it is used outright; unset, the controller creates the first ladder candidate it can |
+| `FLEZHA_SOCKET_DIR_GROUP` | unset (owner-only) | widens UDS traversal to one named group: the directory becomes `0750` owned by that group, warned on every boot. A group the controller's user does not belong to refuses the boot |
 | `FLEZHA_CONCURRENT_CHANNEL_COUNT` | `0` | `:concurrent_channel_count` |
 | `FLEZHA_EXTERNAL_PROCESSES` | `""` | `:external_processes`, comma list of commands the controller spawns (test mode hard-codes the Rust test runner) |
 | `FLEZHA_CONTROLLER_ENABLED` | `true` | `:controller_enabled`; `false`/`0`/`no`/`off` boots a runner-only node with no controller tree |
@@ -204,9 +205,9 @@ crate also reads its rows inside the controller's NIF.
 |---|---|---|
 | `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | `flz_core::persistent_id`, `Flezha.SDK.PersistentId` — the durable stable identity; an unwritable path degrades to a fresh per-boot id with one warning, never a refusal |
 | `FLEZHA_MAILBOX_CAPACITY` | `1024` (range `1..1_048_576`) | per-Entity mailbox bound in all three SDKs; a Procedure that overrides `mailbox_capacity()` wins over it |
-| `FLEZHA_SOCKET_FILES_PATH` | `app_data/sockets` | `flz_transport` path helper, `Flezha.SDK.Transport` |
+| `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder (below) | `flz_transport` path helper — every SDK reaches it, Elixir through `flz_nif` |
 | `FLEZHA_TRANSPORT` | `uds` | `flz_transport` (`quic` is the only other value) |
-| `FLEZHA_QUIC_ADDRESS` | `127.0.0.1:4433` | `flz_transport`, `Flezha.SDK.Transport` — the address to dial |
+| `FLEZHA_QUIC_ADDRESSES` | `127.0.0.1:4433` | `flz_transport` — a comma list of controller endpoints, each a name or a literal with an optional port (default `4433`), re-resolved on **every** attempt. `FLEZHA_QUIC_ADDRESS` is not honoured and, set alone, refuses startup naming this one |
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | `flz_transport`, `Flezha.SDK.Transport` |
 | `FLEZHA_QUIC_CLIENT_CERT` / `FLEZHA_QUIC_CLIENT_KEY` | `app_data/certs/client.pem` / `app_data/certs/client.key` | `flz_transport` — the client pair presented to a QUIC server that requires peer authentication |
 | `FLEZHA_MAX_FRAME_BYTES` | `67108864` (64 MiB) | `flz_transport` — pre-auth frame-length limit enforced by both frame parsers, cached on first read |
@@ -230,6 +231,45 @@ crate also reads its rows inside the controller's NIF.
 | `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | `flz_core::workflow::driver` — inbox-loop park hysteresis |
 | `FLEZHA_WORKFLOW_DRIVER_STACK_KIB` | platform default | `flz_core::workflow::driver` — driver-thread stack size; address space only |
 | `FLEZHA_NATIVE_LIB_DIR` | `java.io.tmpdir` | Java `NativeLibraryLoader` — where the bundled `flz_core_ffi` library is extracted |
+
+### The socket-directory ladder
+
+Where the UDS control and data sockets live is one question with one answer,
+resolved by `flz_transport` and shared by every SDK — Rust, Java and Node reach
+it through `flz_core`, Elixir through `flz_nif`, and the controller through the
+same NIF. The candidates, in order:
+
+| # | Candidate | When |
+|---|---|---|
+| 1 | `$FLEZHA_SOCKET_FILES_PATH` | whenever it is set — **used outright, with no fallback to any later candidate** |
+| 2 | `$XDG_RUNTIME_DIR/flezha` | when `XDG_RUNTIME_DIR` is set (every systemd and desktop session sets it) |
+| 3 | `/run/flezha` | a controller running as a system service |
+| 4 | `app_data/sockets` | the repository, so the development loop needs no configuration |
+
+The **controller** takes the first candidate it can create, stepping over one
+another controller is already listening in — taking that directory would wipe a
+live controller's sockets and strand its fleet. An explicit
+`FLEZHA_SOCKET_FILES_PATH` is still taken unconditionally: it is what the
+operator named. A **runner** takes
+the first holding a live control socket, and when two candidates hold one and
+no variable says which is meant, it **refuses to connect and names both** rather
+than attaching to a controller the operator did not choose. Every path is
+reported absolutely, whichever candidate produced it.
+
+Two consequences worth knowing:
+
+- Sockets are runtime state, so they are no longer under `app_data/` by
+  default — that directory holds certificates, credentials and durable state.
+- `$XDG_RUNTIME_DIR` is per user, so the zero-configuration case is
+  same-user. Across users, set `FLEZHA_SOCKET_FILES_PATH` explicitly on both
+  sides and use `FLEZHA_SOCKET_DIR_GROUP` on the controller.
+
+A UDS path must fit `SUN_LEN` (108 bytes) including the socket file name, which
+is another reason to prefer a short runtime directory over a deep checkout.
+
+`flz runner check` runs this resolution and its probe from a shell, with no
+runner code and no running controller; see
+[`operations/deployment.md`](operations/deployment.md).
 
 ### `FLEZHA_DROP_NOTHING_NONPARKING` — read this before you set it
 

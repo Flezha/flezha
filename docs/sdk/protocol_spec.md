@@ -61,8 +61,10 @@ All sockets are `SOCK_STREAM`. The controller listens, the runner connects.
 | Primary stream (per runner, ×N) | `{base}/primary_stream_{runner_id}.sock` | controller → runner |
 | Secondary stream (per runner, ×N) | `{base}/secondary_stream_{runner_id}.sock` | runner → controller |
 
-`{base}` is `FLEZHA_SOCKET_FILES_PATH` (controller default `app_data/sockets/`,
-runner default `app_data/sockets`; a trailing slash is tolerated). The
+`{base}` is the socket directory both sides resolve from one ladder —
+`FLEZHA_SOCKET_FILES_PATH` when set, then `$XDG_RUNTIME_DIR/flezha`,
+`/run/flezha`, `app_data/sockets` — always reported absolutely, and never
+re-derived per SDK (see [`../configuration.md`](../configuration.md)). The
 per-runner listeners are created after the runner has its session token and
 are served by a `StreamAcceptor` per stream pair.
 
@@ -73,8 +75,8 @@ multiplexes every channel over bidirectional streams inside it.
 
 | Setting | Env var | Default |
 |---------|---------|---------|
-| Controller listen address | `FLEZHA_QUIC_ADDRESS` | `0.0.0.0:4433` |
-| Runner connect address | `FLEZHA_QUIC_ADDRESS` (runner side) | `127.0.0.1:4433` |
+| Controller listen address | `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` |
+| Runner connect addresses | `FLEZHA_QUIC_ADDRESSES` — a comma list of names or literals, re-resolved every attempt | `127.0.0.1:4433` |
 | CA certificate | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` |
 | Server certificate / key | `FLEZHA_SERVER_CERT_PATH` / `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/server.pem` / `server.key` |
 | Generated client identity (controller side) | `FLEZHA_CLIENT_CERT_PATH` / `FLEZHA_CLIENT_KEY_PATH` | `app_data/certs/client.pem` / `client.key` |

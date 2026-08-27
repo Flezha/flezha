@@ -67,11 +67,12 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # Disable the testnet for the peer node.
     :erpc.call(node_name, Application, :put_env, [:flezha, :testnet_enabled, false])
 
-    # Overwrite the socket files path for the peer node.
+    # Overwrite the socket files path for the peer node — beside this node's,
+    # so both stay under the one short runtime base `config/test.exs` chose.
     :erpc.call(node_name, Application, :put_env, [
       :flezha,
       :socket_files_path,
-      "app_data/sockets/#{node_name}/"
+      Path.join(Path.dirname(Flezha.Socket.Support.socket_dir()), "#{node_name}")
     ])
 
     # Peer nodes only need UDS transport (avoids QUIC port conflicts).
@@ -209,6 +210,7 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   # row of the runner matrix in `docs/architecture/runner.md`.
   @capabilities [
     :runner_lifecycle,
+    :connect_discovery,
     :graph_builder,
     :liveness,
     :pool_wedge,

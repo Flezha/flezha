@@ -61,9 +61,10 @@ either, or that names a `model` outside the vocabulary.
 
 The vocabulary is one list in `FlezhaTest.Helper.NodeTestHelper.capabilities/0`:
 
-`runner_lifecycle`, `graph_builder`, `liveness`, `pool_wedge`, `retry_ladder`,
-`state_persistence`, `effectively_once`, `entity_timers`, `correction_window`,
-`keyed_channels`, `workflow`, `dynamic_entity`, `entry_idle`, `partitioned`.
+`runner_lifecycle`, `connect_discovery`, `graph_builder`, `liveness`,
+`pool_wedge`, `retry_ladder`, `state_persistence`, `effectively_once`,
+`entity_timers`, `correction_window`, `keyed_channels`, `workflow`,
+`dynamic_entity`, `entry_idle`, `partitioned`.
 
 A capability can carry no fixtures at all — `pool_wedge` and `entry_idle` are
 `[]` everywhere. `pool_wedge` is the wedged-dispatch signature the convergence
@@ -125,7 +126,7 @@ uses an id belonging to a capability it did not declare.
 | `FLEZHA_E2E_RUNTIME` | the harness | Which SDK the conformance suite runs against (default `rust`). Unknown values raise, naming the manifests that exist |
 | `FLEZHA_E2E_SNAPSHOT=update` | the smoke tier | Rewrite the golden declaration snapshots. Refused unless the runtime is the reference |
 | `CONFORMANCE_OUT` | the formatter | Path to write the capability report as JSON |
-| `FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESS` | every test app | Injected by `PortPilot.open_port/2`; a test app must honour them |
+| `FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES` | every test app | Injected by `PortPilot.open_port/2`; a test app must honour them, and an entry a scenario supplies replaces the injected one of the same name. `FLEZHA_QUIC_ADDRESS` is retired: an app reading it fails the gate |
 | `FLEZHA_RUNNER_ID_PATH` | every test app | Where the runner persists its stable identity. Two runners in one namespace need two paths, or the second replaces the first |
 | `FLEZHA_WORKFLOW_E2E_RELEASE` | workflow fixtures | Releases a parked crash-resume fixture — see the contract below |
 
@@ -143,6 +144,24 @@ on every pull request with no runner. It asserts every rule above, plus: no
 every fixture id a file drives belongs to a capability that file declares; every manifest runtime is a `workflow_dispatch` option of
 `nightly-e2e.yml`; every `docs` page exists and names its manifest. A
 vocabulary entry with no tagged module is printed, not failed.
+
+It also pins the half a fixture cannot express. `test/fixtures/runner_connect_env.txt`
+holds the environment contract every SDK's connect path reads — the
+socket-directory variable, the QUIC address-list variable, the group variable
+and the ladder candidates **in order** — in the shape
+`test/fixtures/host_class_decl_keys.txt` uses for declaration keys. Three
+readers hold it: a `flz_transport` test asserts the ladder's own constants and
+rung order against it, and the gate asserts that no SDK's connect path reads a
+socket or address variable the file does not pin, that the one implementation
+walks the rungs in the pinned order, and that no SDK and no test app honours a
+retired name. The one file allowed to name a retired variable is the one that
+refuses it.
+
+`connect_discovery` is in the vocabulary but not in the required set: an SDK
+whose transport is not the shared `flz_transport` may defer it by name. Every
+other SDK — Rust, Java and Node through `flz_core`, Elixir through `flz_nif` —
+carries it, and `test/system/connect_discovery_e2e_test.exs` drives it under
+whichever runtime the run selects.
 
 ## Golden declaration snapshots
 
@@ -163,7 +182,7 @@ Every SDK test app SHALL:
 - take its namespace from `argv[1]`;
 - exit when stdin reaches EOF — that is how the harness tears a runner down;
 - honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`,
-  `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESS`, plus
+  `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, plus
   whatever its own template renders);
 - park a **pool worker** — never the driver thread — until
   `FLEZHA_WORKFLOW_E2E_RELEASE` appears, in every workflow fixture a

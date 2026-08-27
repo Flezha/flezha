@@ -1,0 +1,33 @@
+# The environment contract every SDK's connect path reads, pinned as data —
+# the half a fixture cannot express, in the shape
+# `test/fixtures/host_class_decl_keys.txt` uses for declaration keys.
+#
+# Three readers pin it: a `flz_transport` test asserts the ladder's own
+# constants and rung order are exactly these; the static gate asserts no SDK's
+# connect path reads a socket or address variable this file does not list, and
+# that the rungs appear here in the order the ladder walks them; and both
+# assert no SDK and no test app honours a retired name.
+#
+# Adding a variable: teach `flz_transport`, add it here, and account for it in
+# every SDK — one change, every SDK (docs/architecture/runner.md).
+#
+# Columns are whitespace-separated: `kind`, then the value(s) for that kind.
+
+# Variables the connect path reads.
+variable  FLEZHA_SOCKET_FILES_PATH
+variable  FLEZHA_QUIC_ADDRESSES
+variable  FLEZHA_SOCKET_DIR_GROUP
+variable  XDG_RUNTIME_DIR
+
+# Names that are no longer honoured. An SDK or test app reading one of these is
+# a gate failure: a silent ignore looks exactly like the bug the replacement
+# exists to remove. The one file allowed to name a retired variable is the one
+# that refuses it, `flz_transport/src/transport/config.rs`.
+retired   FLEZHA_QUIC_ADDRESS
+
+# The socket-directory ladder, in the order it is walked. The first rung, when
+# set, is used outright — no later rung is tried.
+ladder    1  explicit      $FLEZHA_SOCKET_FILES_PATH
+ladder    2  xdg_runtime   $XDG_RUNTIME_DIR/flezha
+ladder    3  run           /run/flezha
+ladder    4  repository    app_data/sockets

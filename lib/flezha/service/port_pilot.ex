@@ -19,7 +19,7 @@ defmodule Flezha.Service.PortPilot do
   port and re-deriving this environment).
   """
   def open_port(command, opts \\ []) do
-    socket_files_path = Application.fetch_env!(:flezha, :socket_files_path)
+    socket_files_path = Flezha.Socket.Support.socket_dir()
 
     transport =
       Keyword.get(opts, :transport, Application.get_env(:flezha, :transport, :uds))
@@ -35,7 +35,7 @@ defmodule Flezha.Service.PortPilot do
       {~c"FLEZHA_SOCKET_FILES_PATH", String.to_charlist(socket_files_path)},
       {~c"FLEZHA_TRANSPORT", String.to_charlist(transport)},
       {~c"FLEZHA_CA_CERT_PATH", String.to_charlist(ca_cert_path)},
-      {~c"FLEZHA_QUIC_ADDRESS", String.to_charlist(client_address)}
+      {~c"FLEZHA_QUIC_ADDRESSES", String.to_charlist(client_address)}
     ]
 
     extra_env =
@@ -45,7 +45,14 @@ defmodule Flezha.Service.PortPilot do
         {String.to_charlist(to_string(k)), String.to_charlist(to_string(v))}
       end)
 
-    env = base_env ++ extra_env
+    # An entry the caller supplies REPLACES the base one of the same name rather
+    # than trailing it, so a scenario can point a runner somewhere else — or
+    # blank a variable to make it walk the ladder — without depending on how
+    # the OS resolves a duplicate.
+    env =
+      Enum.reduce(extra_env, base_env, fn {name, value}, acc ->
+        List.keystore(acc, name, 0, {name, value})
+      end)
 
     port =
       Port.open(
@@ -155,7 +162,7 @@ defmodule Flezha.Service.PortPilot do
     repo = File.cwd!()
     app_dir = Path.join([repo, @apps_root, "#{runtime}_runner"])
 
-    socket_dir = absolute(Application.get_env(:flezha, :socket_files_path, "app_data/sockets/"))
+    socket_dir = absolute(Flezha.Socket.Support.socket_dir())
 
     {artifact, _resolution} = resolve_artifact(runtime, profile)
 
@@ -165,7 +172,6 @@ defmodule Flezha.Service.PortPilot do
       "repo" => repo,
       "namespace" => namespace,
       "socket_dir" => socket_dir,
-      "socket_dir_rel" => Path.relative_to(socket_dir, app_dir, force: true),
       "ca_cert" => absolute(Application.get_env(:flezha, :ca_cert_path, "app_data/certs/ca.pem")),
       "client_cert" =>
         absolute(Application.get_env(:flezha, :client_cert_path, "app_data/certs/client.pem")),

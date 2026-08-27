@@ -22,6 +22,32 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   @nightly ".github/workflows/nightly-e2e.yml"
   @docs_section "docs/sdk/conformance.md § Adding an SDK to the conformance suite"
 
+  # The environment contract every SDK's connect path reads, pinned as data the
+  # way declaration keys are. `flz_transport` pins its own constants against
+  # this file; here it is measured against every SDK.
+  @connect_env_fixture "test/fixtures/runner_connect_env.txt"
+
+  # Where each SDK decides where its controller is. Rust, Java and Node reach
+  # the shared ladder through `flz_core`, so their own sources should name no
+  # connect variable at all; Elixir asks the same ladder through `flz_nif`.
+  @connect_sources %{
+    rust: [
+      "flz_transport/src/utility/path_helper.rs",
+      "flz_transport/src/transport/config.rs",
+      "flz_core/src/control_unit.rs"
+    ],
+    java: Path.wildcard("sdk/java/**/*.java"),
+    node: Path.wildcard("sdk/node/src/**/*.ts"),
+    elixir: ["lib/flezha/sdk/transport.ex", "lib/flezha/transport/native.ex"]
+  }
+
+  # A variable this contract governs: the socket directory, the QUIC endpoints,
+  # the group boundary. Anything else an SDK reads is its own business.
+  @connect_env_shape ~r/FLEZHA_(?:[A-Z0-9_]*SOCKET[A-Z0-9_]*|QUIC_ADDRESS(?:ES)?)/
+
+  # The one file allowed to name a retired variable is the one that refuses it.
+  @retired_refusal_site "flz_transport/src/transport/config.rs"
+
   # A manifest must declare all of these.
   @required_fields ~w(runtime sdk_lang command artifacts build connect_timeout_ms transports dispatch toolchain deferred fixtures docs)
 
@@ -367,6 +393,99 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         )
       end
     end
+  end
+
+  describe "connect discovery" do
+    test "the pinned contract names the variables and the ladder, in order" do
+      %{variables: variables, retired: retired, ladder: ladder} = connect_env()
+
+      assert "FLEZHA_SOCKET_FILES_PATH" in variables
+      assert "FLEZHA_QUIC_ADDRESSES" in variables
+      assert "FLEZHA_SOCKET_DIR_GROUP" in variables
+      assert retired == ["FLEZHA_QUIC_ADDRESS"]
+
+      assert Enum.map(ladder, &elem(&1, 0)) == ["explicit", "xdg_runtime", "run", "repository"]
+    end
+
+    test "no SDK's connect path reads a connect variable the fixture does not pin" do
+      %{variables: variables, retired: retired} = connect_env()
+      pinned = MapSet.new(variables ++ retired)
+
+      for {runtime, sources} <- @connect_sources,
+          file <- sources,
+          File.exists?(file),
+          [found] <- Regex.scan(@connect_env_shape, File.read!(file)),
+          not MapSet.member?(pinned, found) do
+        fail(
+          "#{runtime} reads #{found} in #{file}, which #{@connect_env_fixture} does not pin — " <>
+            "a variable spelled differently in one SDK is a variable the others cannot honour"
+        )
+      end
+    end
+
+    test "the ladder is walked in the pinned order by the one implementation that walks it" do
+      %{ladder: ladder} = connect_env()
+      source = File.read!("flz_transport/src/utility/path_helper.rs")
+
+      body =
+        case Regex.run(~r/fn candidates_from\(.*?\n\}/s, source) do
+          [body] -> body
+          nil -> fail("flz_transport no longer builds the ladder in candidates_from/2")
+        end
+
+      walked =
+        for [_, rung] <- Regex.scan(~r/Rung::(\w+)/, body), uniq: true, do: rung
+
+      expected = for {rung, _value} <- ladder, do: Macro.camelize(rung)
+
+      unless walked == expected do
+        fail(
+          "flz_transport walks the ladder as #{inspect(walked)} but " <>
+            "#{@connect_env_fixture} pins #{inspect(expected)}"
+        )
+      end
+    end
+
+    test "no SDK and no test app honours a retired name" do
+      %{retired: retired} = connect_env()
+
+      apps =
+        for runtime <- runtimes(),
+            file <-
+              Path.wildcard(
+                "#{@apps_root}/#{runtime}_runner/**/*.{rs,java,ex,exs,ts,js,mjs,json}"
+              ),
+            do: {runtime, file}
+
+      sdks = for {runtime, files} <- @connect_sources, file <- files, do: {runtime, file}
+
+      for {runtime, file} <- sdks ++ apps,
+          file != @retired_refusal_site,
+          File.exists?(file),
+          name <- retired,
+          # The replacement contains the retired name as a prefix, so only a
+          # whole-word match is a reading of the retired one.
+          File.read!(file) =~ ~r/#{name}(?![A-Z0-9_])/ do
+        fail("#{runtime} reads the retired #{name} in #{file}; set FLEZHA_QUIC_ADDRESSES instead")
+      end
+    end
+  end
+
+  # The fixture, parsed once per test: whitespace-separated rows, `#` comments.
+  defp connect_env do
+    rows =
+      @connect_env_fixture
+      |> File.read!()
+      |> String.split("\n")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == "" or String.starts_with?(&1, "#")))
+      |> Enum.map(&String.split/1)
+
+    %{
+      variables: for(["variable", name] <- rows, do: name),
+      retired: for(["retired", name] <- rows, do: name),
+      ladder: for(["ladder", _index, rung, value] <- rows, do: {rung, value})
+    }
   end
 
   defp system_sources do

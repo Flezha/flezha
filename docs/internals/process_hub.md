@@ -271,9 +271,9 @@ cspec persists *which* plugins, the WAL persists *how far* an Entity has progres
 
 - A runner connects to exactly one controller and never fails over to another.
 - UDS discovery is filesystem co-location: the runner opens the controller's control socket under
-  `FLEZHA_SOCKET_FILES_PATH` (controller default `app_data/sockets/`; the Kubernetes DaemonSet
+  `FLEZHA_SOCKET_FILES_PATH` (unset, the socket ladder resolves it; the Kubernetes DaemonSet
   mounts the `flezha-sockets` hostPath at `/flezha/sockets`). QUIC runners dial
-  `FLEZHA_QUIC_ADDRESS` (SDK default `127.0.0.1:4433`).
+  `FLEZHA_QUIC_ADDRESSES` (SDK default `127.0.0.1:4433`).
 - The reconnect loop (`flz_core/src/control_unit.rs`, shared by Rust and Java) retries forever
   with full-jitter exponential backoff `100 ms * 2^min(n, 8)`, capped at 30 s.
 - One control channel carries the handshake and protobuf commands; primary and secondary data

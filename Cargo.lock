@@ -428,6 +428,7 @@ dependencies = [
 name = "flz"
 version = "0.1.0"
 dependencies = [
+ "flz_transport",
  "serde_json",
  "tempfile",
 ]
@@ -491,6 +492,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "crossbeam",
+ "libc",
  "mio",
  "prost",
  "quinn-proto",
@@ -498,6 +500,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
+ "tempfile",
  "tracing",
 ]
 

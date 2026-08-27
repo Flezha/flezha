@@ -381,11 +381,11 @@ FLEZHA_E2E_RUNTIME=java mix test --include system   # from repo root: the shared
 | Variable | Default | Notes |
 |---|---|---|
 | `FLEZHA_TRANSPORT` | `uds` | `uds` or `quic`. |
-| `FLEZHA_QUIC_ADDRESS` | `127.0.0.1:4433` | QUIC only. |
+| `FLEZHA_QUIC_ADDRESSES` | `127.0.0.1:4433` | QUIC only. Comma list of names or literals, re-resolved every attempt. |
 | `FLEZHA_CA_CERT_PATH` | `app_data/certs/ca.pem` | QUIC only. |
 | `FLEZHA_SERVER_CERT_PATH` | `app_data/certs/cert.pem` | Server mode only. |
 | `FLEZHA_SERVER_KEY_PATH` | `app_data/certs/key.pem` | Server mode only. |
-| `FLEZHA_SOCKET_FILES_PATH` | `app_data/sockets` | UDS only. |
+| `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder | UDS only. Set, it wins outright; unset, the ladder walks `$XDG_RUNTIME_DIR/flezha`, `/run/flezha`, `app_data/sockets`. |
 | `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | Durable stable identity. Unwritable ⇒ a fresh id per boot and lost bindings. |
 | `FLEZHA_WORKER_POOL_SIZE` | `availableProcessors()` | Shared runner draining every Entity mailbox. |
 | `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Where `libflz_transport` is extracted. Set it on containers where `/tmp` is `noexec`. |

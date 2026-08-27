@@ -205,9 +205,11 @@ the control channel frames once, in Rust, through `send_frame(ref, "control_comm
 named `Flezha.Transport.Server.Uds | .Quic | .Native`:
 
 - UDS: `Native.start_uds_server(path, self())` on
-  `<FLEZHA_SOCKET_FILES_PATH>/runner_control_channel.sock` (default `app_data/sockets/`).
+  `<socket dir>/runner_control_channel.sock`, the directory resolved by the
+  shared ladder (`FLEZHA_SOCKET_FILES_PATH`, then `$XDG_RUNTIME_DIR/flezha`,
+  `/run/flezha`, `app_data/sockets` — see [`../configuration.md`](../configuration.md)).
 - QUIC: `Flezha.Transport.CertGenerator.ensure_certs()`, then `Native.start_quic_server/5` on
-  `FLEZHA_QUIC_ADDRESS` (default `0.0.0.0:4433`) with `FLEZHA_SERVER_CERT_PATH` /
+  `FLEZHA_QUIC_LISTEN_ADDRESS` (default `0.0.0.0:4433`) with `FLEZHA_SERVER_CERT_PATH` /
   `FLEZHA_SERVER_KEY_PATH` and the client CA `FLEZHA_QUIC_CLIENT_CA` (default
   `app_data/certs/ca.pem`), or `""` when `FLEZHA_TRANSPORT_AUTH=off`.
 

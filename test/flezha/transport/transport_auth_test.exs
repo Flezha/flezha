@@ -19,6 +19,23 @@ defmodule Flezha.Transport.TransportAuthTest do
     :ok
   end
 
+  # Point the controller's socket directory at a scratch path, optionally under
+  # the group mode, and put both back afterwards.
+  defp with_socket_dir(name, group, fun) do
+    previous = Application.fetch_env!(:flezha, :socket_files_path)
+    base = Path.join(@tmp_base, name)
+
+    Application.put_env(:flezha, :socket_files_path, base)
+    if group, do: System.put_env("FLEZHA_SOCKET_DIR_GROUP", group)
+
+    try do
+      fun.(base)
+    after
+      System.delete_env("FLEZHA_SOCKET_DIR_GROUP")
+      Application.put_env(:flezha, :socket_files_path, previous)
+    end
+  end
+
   defp mode_bits(path) do
     %File.Stat{mode: mode} = File.stat!(path)
     Bitwise.band(mode, 0o777)
@@ -39,16 +56,68 @@ defmodule Flezha.Transport.TransportAuthTest do
       end
     end
 
-    test "prepare_socket_dir creates the base path owner-only" do
-      previous = Application.fetch_env!(:flezha, :socket_files_path)
-      base = Path.join(@tmp_base, "prepared_sockets")
-      Application.put_env(:flezha, :socket_files_path, base)
+    test "the group mode widens the boundary to one named group, warns, and never further" do
+      group = String.trim(elem(System.cmd("id", ["-gn"]), 0))
+      gid = String.to_integer(String.trim(elem(System.cmd("id", ["-g"]), 0)))
 
-      try do
+      with_socket_dir("group_sockets", group, fn base ->
+        warning =
+          AuthTestHelper.capture_log_at(:warning, fn ->
+            Flezha.Socket.Support.prepare_socket_dir()
+          end)
+
+        # A member of the group reaches the directory...
+        assert mode_bits(base) == 0o750
+        assert File.stat!(base).gid == gid
+        # ...and nobody outside it does: no setting makes the directory
+        # world-readable or world-traversable.
+        assert Bitwise.band(mode_bits(base), 0o007) == 0
+        assert warning =~ "FLEZHA_SOCKET_DIR_GROUP=#{group}"
+      end)
+    end
+
+    test "an unusable group refuses the boot, naming the group" do
+      with_socket_dir("bad_group_sockets", "flezha_no_such_group", fn _base ->
+        assert_raise RuntimeError, ~r/flezha_no_such_group/, fn ->
+          Flezha.Socket.Support.prepare_socket_dir()
+        end
+      end)
+    end
+
+    test "prepare_socket_dir creates the base path owner-only" do
+      with_socket_dir("prepared_sockets", nil, fn base ->
         Flezha.Socket.Support.prepare_socket_dir()
         assert mode_bits(base) == 0o700
+      end)
+    end
+  end
+
+  describe "the attach line" do
+    test "names the absolute socket directory and the assignment that reaches it" do
+      with_socket_dir("attach_sockets", nil, fn base ->
+        # An operator can paste the line: the directory it names is absolute
+        # even when the configured value is not.
+        assert Path.type(base) == :relative
+        resolved = Flezha.Socket.Support.socket_dir()
+
+        assert Path.type(resolved) == :absolute
+        assert Flezha.BootLoader.attach_line() =~ "FLEZHA_SOCKET_FILES_PATH=#{resolved}"
+      end)
+    end
+
+    test "names the QUIC listen address when QUIC is enabled, and nothing when neither is" do
+      previous = Application.get_env(:flezha, :transports, [:uds])
+
+      try do
+        Application.put_env(:flezha, :transports, [:uds, :quic])
+
+        assert Flezha.BootLoader.attach_line() =~
+                 "QUIC listening on #{Application.get_env(:flezha, :quic_listen_address)}"
+
+        Application.put_env(:flezha, :transports, [])
+        refute Flezha.BootLoader.attach_line()
       after
-        Application.put_env(:flezha, :socket_files_path, previous)
+        Application.put_env(:flezha, :transports, previous)
       end
     end
   end

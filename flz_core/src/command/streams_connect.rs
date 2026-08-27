@@ -211,7 +211,10 @@ fn listen_incoming_quic(
 
 #[cfg(unix)]
 fn connect_unix(runner_id: &str, stream_type: String) -> UnixStream {
-    let socket_path = path_helper::stream_socket_path(runner_id, stream_type);
+    // Resolved from the directory the control channel actually reached, so a
+    // data socket can never land in a different one.
+    let socket_path = path_helper::stream_socket_path(runner_id, stream_type)
+        .unwrap_or_else(|e| panic!("Cannot resolve the data socket directory: {}", e));
 
     // The controller binds the per-runner data sockets immediately before
     // sending ConnectSocket, but bind+connect can race on busy CI. Retry with

@@ -9,9 +9,7 @@ UDS socket and directory), the Erlang distribution (operator-provisioned
 cookie, optional TLS distribution), and the CLI (verifiable token identity
 threaded into the service wrappers). Running without authentication requires an
 explicit opt-out that is warned on every boot.
-
 ## Requirements
-
 ### Requirement: Runner transport authenticates its peer
 
 The runner transport (QUIC and UDS) SHALL authenticate the connecting peer before
@@ -19,6 +17,13 @@ accepting any control or data frame. The QUIC server SHALL verify a client
 certificate against a configured trust anchor; the UDS control socket SHALL be
 created with owner-only permissions on a directory not world-writable. A connection
 that fails authentication SHALL be refused and the refusal SHALL be observable.
+
+The UDS access boundary MAY be widened to a single named group, and only so, by setting
+`FLEZHA_SOCKET_DIR_GROUP` to a group the controller's user belongs to: the socket directory is
+then created group-readable and group-executable (`0750`) and owned by that group, and the
+controller SHALL log a warning naming the group on every boot while the variable is set. Unset,
+the directory remains owner-only. No setting SHALL make the directory world-readable or
+world-writable.
 
 #### Scenario: Unauthenticated QUIC peer is refused
 
@@ -30,7 +35,20 @@ that fails authentication SHALL be refused and the refusal SHALL be observable.
 #### Scenario: UDS socket is not world-accessible
 
 - **WHEN** the controller creates the runner control socket
-- **THEN** the socket and its parent directory permit access only to the owning user
+- **THEN** the socket and its parent directory permit access only to the owning user, unless the
+  group mode is configured, and in no case to any other user
+
+#### Scenario: The group mode is explicit and warned
+
+- **WHEN** the controller boots with `FLEZHA_SOCKET_DIR_GROUP` naming a group
+- **THEN** the socket directory is created `0750` owned by that group, a warning naming the group
+  is logged, and a runner whose user is in that group connects while a user outside it is refused
+
+#### Scenario: An unusable group is refused at boot
+
+- **WHEN** `FLEZHA_SOCKET_DIR_GROUP` names a group that does not exist or that the controller's
+  user does not belong to
+- **THEN** the controller does not boot, and the refusal names the group
 
 ### Requirement: Erlang distribution is not trust-by-constant-cookie
 
@@ -78,3 +96,4 @@ authentication SHALL require an explicit opt-out that logs a warning on every bo
 - **WHEN** an operator disables transport authentication
 - **THEN** the disable requires an explicit setting and a warning is emitted on each
   boot for as long as it remains disabled
+

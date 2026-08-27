@@ -37,7 +37,7 @@ flz reset [OPTIONS]
 | `--yes`                  | Required to apply. Without it the command prints the plan and exits 1.        |
 | `--dry-run`              | Print the plan without touching the filesystem; exits 0.                      |
 | `--include-certs`        | Also clear `app_data/certs/*`.                                                 |
-| `--include-sockets`      | Also clear `app_data/sockets/*`.                                               |
+| `--include-sockets`      | Also clear `app_data/sockets/*`. It clears that directory under the data root, not wherever the socket ladder resolved — a controller using `$XDG_RUNTIME_DIR/flezha` or `/run/flezha` leaves its sockets there, and they are runtime state a restart replaces anyway. |
 | `--all`                  | `--include-certs --include-sockets`.                                           |
 | `--app-data-root <PATH>` | Override the `app_data/` root (precedence over `FLEZHA_APP_DATA_ROOT`).        |
 | `--probe-timeout-ms <N>` | Live-node probe timeout in ms (default `1000`).                                |

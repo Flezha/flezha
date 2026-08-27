@@ -46,7 +46,23 @@ use TLS distribution when Controller nodes cross a trust boundary.
 ## Transport certificates (QUIC)
 
 UDS deployments need no certificates: the socket is created `0600` inside a
-`0700` directory, so a local same-uid peer is the node owner.
+`0700` directory, so a local same-uid peer is the node owner. Traversal of that
+directory *is* the authentication, which is why a runner run by another user
+gets `access denied` rather than a connection — and why the diagnosis it prints
+names the directory's owning uid and mode next to the caller's.
+
+That boundary may be widened to exactly one named group, and only so. Setting
+`FLEZHA_SOCKET_DIR_GROUP=<group>` on the controller creates the socket directory
+`0750` owned by that group, and logs a warning naming it on every boot while the
+variable is set — the posture `FLEZHA_TRANSPORT_AUTH=off` already establishes
+for a deliberate loosening. A group the controller's user does not belong to
+refuses the boot naming the group. Unset, the directory stays owner-only; no
+setting makes it world-readable or world-writable.
+
+This is a real loosening and it is on purpose: the alternative on offer is
+running the runner as the controller's account, which is a broader grant than
+the group, granted invisibly. See
+[`deployment.md` § Two users on one machine](deployment.md).
 
 For QUIC the server requires a client certificate chaining to the trust anchor
 at `FLEZHA_QUIC_CLIENT_CA`. On first boot the Controller generates a complete

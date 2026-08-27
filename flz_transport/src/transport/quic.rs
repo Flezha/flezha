@@ -142,7 +142,10 @@ impl QuicClient {
     /// Connect to a QUIC server at the given address using the CA cert for
     /// verification. When the configured client cert/key pair exists on disk
     /// it is presented for mutual TLS — the server requires it by default.
-    pub fn connect(address: &str, ca_cert_path: &str) -> io::Result<QuicClient> {
+    /// Dial one already-resolved address. Resolution is the caller's, and
+    /// happens per attempt: an address parsed once at startup is the failure
+    /// the candidate list exists to remove.
+    pub fn connect(addr: SocketAddr, ca_cert_path: &str) -> io::Result<QuicClient> {
         // --- TLS config ---
         let root_store = super::tls::load_root_store(ca_cert_path)?;
         let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
@@ -179,13 +182,6 @@ impl QuicClient {
         client_config.transport_config(Arc::new(transport));
 
         // --- UDP socket + mio Poll ---
-        let addr: SocketAddr = address.parse().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("Invalid address: {}", e),
-            )
-        })?;
-
         let std_udp = std::net::UdpSocket::bind("0.0.0.0:0")?;
         std_udp.set_nonblocking(true)?;
         let mut udp = UdpSocket::from_std(std_udp);

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
+use std::net::SocketAddr;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex, RwLock};
@@ -8,11 +9,13 @@ use std::time::Duration;
 
 use crossbeam::channel::Sender;
 use flz_transport::service::payloader;
-use flz_transport::transport::config::{get_transport_type, TransportType};
+use flz_transport::transport::config::{
+    self as transport_config, get_transport_type, TransportType,
+};
 use flz_transport::transport::liveness::{self, ControlLiveness, ReadAction};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
-#[cfg(unix)]
+use flz_transport::utility::last_good::LastGood;
 use flz_transport::utility::path_helper;
 use prost::Message;
 use serde::Serialize;
@@ -20,6 +23,10 @@ use serde::Serialize;
 use crate::pb::Ping;
 use crate::runner::{ClientResponseMessage, RunnerMessage};
 use crate::util::nonce_suffix;
+
+/// The QUIC address this process last connected through — the UDS side keeps
+/// the same preference over its socket directory (`path_helper`).
+static LAST_GOOD_QUIC: LastGood<SocketAddr> = LastGood::new();
 
 /// Reader-thread handle + write stream + optional QUIC client returned by
 /// every control-channel open path.
@@ -79,6 +86,7 @@ fn open_with_retry(
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> ControlConn {
     let mut attempt = 0u32;
+    let mut diagnosis = OnceOnly::pending();
     let max_backoff = Duration::from_secs(30);
 
     loop {
@@ -96,6 +104,12 @@ fn open_with_retry(
             }
             Err(e) => {
                 attempt += 1;
+                // Once, on entry to the retry loop: which of the four
+                // situations this is and what fixes it. Repeating it every
+                // backoff teaches the operator to skip the line that matters.
+                if let Some(text) = diagnosis.first(connect_diagnosis) {
+                    eprintln!("[flezha] {}", text);
+                }
                 // Full jitter on the exponential backoff so a controller
                 // restart that drops the whole fleet doesn't produce a
                 // synchronized reconnect storm (shared with the Java SDK via
@@ -111,6 +125,25 @@ fn open_with_retry(
                 thread::sleep(backoff);
             }
         }
+    }
+}
+
+/// The once-per-retry-loop gate on the diagnosis. A message repeated every
+/// 30 s is a message an operator learns to skip, so the terse per-attempt line
+/// is what repeats and this is what does not.
+struct OnceOnly(bool);
+
+impl OnceOnly {
+    fn pending() -> Self {
+        OnceOnly(false)
+    }
+
+    fn first<F: FnOnce() -> String>(&mut self, produce: F) -> Option<String> {
+        if self.0 {
+            return None;
+        }
+        self.0 = true;
+        Some(produce())
     }
 }
 
@@ -142,10 +175,14 @@ fn try_open_uds(
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> Result<(thread::JoinHandle<()>, Arc<FlezhaStream>), String> {
-    let socket_path = path_helper::control_socket_path();
+    let socket_path = path_helper::control_socket_path().map_err(|e| e.to_string())?;
 
     let stream = UnixStream::connect(socket_path.clone())
         .map_err(|e| format!("Failed to connect to control socket {}: {}", socket_path, e))?;
+
+    // The directory that answered is where this runner's data sockets are
+    // opened, and where a reconnect returns to.
+    path_helper::note_connected(&socket_path);
 
     let stream_box = Arc::new(FlezhaStream::Unix(stream));
 
@@ -158,23 +195,77 @@ fn try_open_quic(
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> Result<ControlConn, String> {
-    let address = flz_transport::transport::config::quic_address();
-    let ca_cert_path = flz_transport::transport::config::ca_cert_path();
+    let ca_cert_path = transport_config::ca_cert_path();
+    let (candidates, unresolved) = quic_candidates()?;
 
-    let client = QuicClient::connect(&address, &ca_cert_path)
-        .map_err(|e| format!("Failed to connect to QUIC server: {}", e))?;
+    let mut failures = unresolved;
+    for addr in candidates {
+        // A control stream this candidate cannot open is this candidate
+        // failing, not the attempt failing — the next one still gets its turn,
+        // and only a candidate that carried a control stream is remembered.
+        let dialled = QuicClient::connect(addr, &ca_cert_path)
+            .map(Arc::new)
+            .and_then(|client| client.open_bidi_stream().map(|stream| (client, stream)));
 
-    let client = Arc::new(client);
+        match dialled {
+            Ok((client, control_stream)) => {
+                LAST_GOOD_QUIC.note(addr);
 
-    let control_stream = client
-        .open_bidi_stream()
-        .map_err(|e| format!("Failed to open QUIC control stream: {}", e))?;
+                let stream_box = Arc::new(FlezhaStream::Quic(control_stream));
+                let (handle, stream) = sock_conn(namespace, declared, stream_box, itx, otx);
 
-    let stream_box = Arc::new(FlezhaStream::Quic(control_stream));
+                return Ok((handle, stream, Some(client)));
+            }
+            // Every failure names the address it was dialled against — a
+            // failure that names no address cannot be acted on.
+            Err(e) => failures.push(format!("{}: {}", addr, e)),
+        }
+    }
 
-    let (handle, stream) = sock_conn(namespace, declared, stream_box, itx, otx);
+    Err(format!(
+        "Failed to connect to a QUIC controller — {}",
+        failures.join("; ")
+    ))
+}
 
-    Ok((handle, stream, Some(client)))
+/// Every address the configured list resolves to on THIS attempt, ordered
+/// last-good first with the remainder shuffled, plus the entries that failed
+/// to resolve — one failed candidate each, never a fatal error.
+fn quic_candidates() -> Result<(Vec<SocketAddr>, Vec<String>), String> {
+    let entries = transport_config::quic_addresses()?;
+    let mut resolved: Vec<SocketAddr> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+
+    for entry in &entries {
+        match entry.resolve() {
+            // A name may resolve to several addresses; the flattened set is
+            // what one attempt walks.
+            Ok(addrs) => {
+                for addr in addrs {
+                    if !resolved.contains(&addr) {
+                        resolved.push(addr);
+                    }
+                }
+            }
+            Err(e) => unresolved.push(format!("{}: {}", entry, e)),
+        }
+    }
+
+    if resolved.is_empty() {
+        return Err(format!(
+            "no {} entry resolved — {}",
+            transport_config::QUIC_ADDRESSES_VAR,
+            unresolved.join("; ")
+        ));
+    }
+
+    Ok((LAST_GOOD_QUIC.prefer(resolved), unresolved))
+}
+
+/// The one diagnosis a runner emits before it starts retrying, rendered where
+/// every SDK and `flz runner check` render it.
+fn connect_diagnosis() -> String {
+    path_helper::connect_diagnosis(get_transport_type(), None, None)
 }
 
 fn sock_conn(
@@ -640,5 +731,32 @@ mod tests {
         assert_eq!(payload_id, liveness::CONTROL_PING_PAYLOAD_ID);
         let ping = Ping::decode(message.as_slice()).expect("ping decodes");
         assert!(ping.nonce.starts_with("ka-"));
+    }
+
+    #[test]
+    fn the_diagnosis_is_produced_once_however_many_backoffs_follow() {
+        let produced = std::cell::Cell::new(0u32);
+        let produce = || {
+            produced.set(produced.get() + 1);
+            "why the connect failed".to_string()
+        };
+
+        let mut gate = OnceOnly::pending();
+        assert_eq!(
+            gate.first(produce).as_deref(),
+            Some("why the connect failed")
+        );
+        for _ in 0..5 {
+            assert_eq!(gate.first(produce), None);
+        }
+        assert_eq!(
+            produced.get(),
+            1,
+            "the probe itself must not run again either"
+        );
+
+        // A later reconnect is a new retry loop, and diagnoses again.
+        assert!(OnceOnly::pending().first(produce).is_some());
+        assert_eq!(produced.get(), 2);
     }
 }

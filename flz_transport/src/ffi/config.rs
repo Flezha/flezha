@@ -2,6 +2,8 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use super::types::FlezhaTransport;
+use crate::transport::config::DEFAULT_QUIC_ADDRESSES;
+use crate::utility::path_helper::REPOSITORY_CANDIDATE;
 
 /// Configuration struct passed to `flezha_context_new`.
 ///
@@ -12,15 +14,18 @@ use super::types::FlezhaTransport;
 pub struct FlezhaConfig {
     /// Transport type: UDS or QUIC.
     pub transport: FlezhaTransport,
-    /// QUIC server address (e.g., "127.0.0.1:4433"). Ignored for UDS.
-    pub quic_address: *const c_char,
+    /// Comma-separated QUIC controller endpoints (e.g.,
+    /// "controller.internal,127.0.0.1:4433"), each a name or a literal with an
+    /// optional port. Ignored for UDS.
+    pub quic_addresses: *const c_char,
     /// Path to CA certificate PEM file. Ignored for UDS.
     pub ca_cert_path: *const c_char,
     /// Path to server certificate PEM file (server mode only).
     pub cert_path: *const c_char,
     /// Path to server private key PEM file (server mode only).
     pub key_path: *const c_char,
-    /// Base path for UDS socket files. Ignored for QUIC.
+    /// Base path for UDS socket files; null resolves it from the socket ladder
+    /// (`utility::path_helper`). Ignored for QUIC.
     pub socket_base_path: *const c_char,
     /// Number of worker pool threads. 0 = auto-detect from CPU cores.
     pub worker_pool_size: u16,
@@ -34,7 +39,7 @@ pub struct FlezhaConfig {
 #[allow(dead_code)]
 pub(crate) struct FlezhaConfigOwned {
     pub transport: FlezhaTransport,
-    pub quic_address: String,
+    pub quic_addresses: String,
     pub ca_cert_path: String,
     pub cert_path: String,
     pub key_path: String,
@@ -51,11 +56,11 @@ impl FlezhaConfigOwned {
     pub(crate) unsafe fn from_c(config: &FlezhaConfig) -> Self {
         FlezhaConfigOwned {
             transport: config.transport,
-            quic_address: ptr_to_string(config.quic_address, "127.0.0.1:4433"),
+            quic_addresses: ptr_to_string(config.quic_addresses, DEFAULT_QUIC_ADDRESSES),
             ca_cert_path: ptr_to_string(config.ca_cert_path, "app_data/certs/ca.pem"),
             cert_path: ptr_to_string(config.cert_path, "app_data/certs/cert.pem"),
             key_path: ptr_to_string(config.key_path, "app_data/certs/key.pem"),
-            socket_base_path: ptr_to_string(config.socket_base_path, "app_data/sockets"),
+            socket_base_path: ptr_to_string(config.socket_base_path, REPOSITORY_CANDIDATE),
             worker_pool_size: config.worker_pool_size,
             concurrent_channel_count: config.concurrent_channel_count,
         }
@@ -78,7 +83,7 @@ unsafe fn ptr_to_string(ptr: *const c_char, default: &str) -> String {
 pub extern "C" fn flezha_config_default() -> FlezhaConfig {
     FlezhaConfig {
         transport: FlezhaTransport::Uds,
-        quic_address: std::ptr::null(),
+        quic_addresses: std::ptr::null(),
         ca_cert_path: std::ptr::null(),
         cert_path: std::ptr::null(),
         key_path: std::ptr::null(),

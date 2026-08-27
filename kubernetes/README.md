@@ -116,6 +116,14 @@ mount. Those are:
 | `/flezha/tmp` | emptyDir | `RELEASE_TMP` — the Mix release materialises its merged runtime config here on **every** boot; without it the controller does not start |
 | `/tmp` | emptyDir | general scratch |
 
+The socket directory is one of the paths a runner can also discover on its own,
+through the ladder in [`../docs/configuration.md`](../docs/configuration.md).
+These manifests need no change for that: both the DaemonSet and
+`service-template.yaml` set `FLEZHA_SOCKET_FILES_PATH` explicitly, which is the
+ladder's first rung and wins outright — a default moving underneath them
+changes nothing. Keep both sides naming the same path; the discovery ladder is
+for hosts that configure neither.
+
 Anything whose path defaults to `app_data/*` (relative to the image working dir)
 therefore has to be redirected onto the persistent volume, which is what
 `FLEZHA_STATE_DIR`, `FLEZHA_DLQ_DIR` and `FLEZHA_SNAPSHOT_DIR` in the ConfigMap do. **If

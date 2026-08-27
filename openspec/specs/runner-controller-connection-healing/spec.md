@@ -398,7 +398,6 @@ The guard protects a runner that is merely *observed* healthy against a stale sn
 
 ### Requirement: Runner liveness is session liveness, derived from one signal
 
-
 Runner liveness SHALL be a property of the control-channel **session**, derived from a single signal: the inbound control-frame stream. The controller's `Flezha.Runner.ControlChannel` SHALL stamp a monotonic `last_seen` on every inbound control frame — including the keepalive ping the SDK already sends (formerly echoed and discarded) — and SHALL run one jittered watchdog that treats **sustained silence past a configurable window** as a connection close, routing it through the existing `{:flz_closed}` → `Flezha.Runner.FleetManager` `{:runner_disconnected}` path. A real socket close SHALL continue to drop the runner immediately and unconditionally (wrapped so side-effect failures cannot leave a ghost).
 
 The window SHALL be **generous** (default 45 s, i.e. 3× the keepalive interval) and jittered, and the action SHALL be connection-close, NOT a redistribute sweep. There SHALL be NO controller-initiated periodic ping-sweep and NO eviction triggered by a *single* missed ping: a live-but-busy runner (whose independent keepalive timer keeps sending) and a briefly frozen runner (GC / host contention shorter than the window) MUST NOT be declared dead. The `ControlUnit` reply-watchdog SHALL NOT perform liveness eviction; its `fail_stuck_refs` behaviour MAY remain solely to unblock stuck callers.
@@ -463,4 +462,141 @@ On any runner reconnect the controller SHALL resolve identity by the runner's pr
 - **GIVEN** a runner whose control stream dropped but whose process survived, holding operatives `[r1]`
 - **WHEN** it reconnects and the controller's view and the runner's view of bindings diverge
 - **THEN** the controller SHALL re-bind `r1` onto the new session (not rely on a no-op reissue plus a later convergence tick)
+
+### Requirement: A runner resolves its UDS socket directory from an ordered ladder
+
+The socket directory SHALL be resolved by one implementation shared by every SDK, walking these
+candidates in order:
+
+1. `FLEZHA_SOCKET_FILES_PATH` when set — used outright, with no fallback to any later candidate;
+2. `$XDG_RUNTIME_DIR/flezha` when `XDG_RUNTIME_DIR` is set;
+3. `/run/flezha`;
+4. `app_data/sockets`, relative to the working directory.
+
+The controller SHALL take the first candidate it can create; a runner SHALL take the first
+candidate holding a live control socket. When no variable is set and more than one candidate
+holds a live control socket, a runner SHALL refuse to connect and SHALL name every candidate it
+found, rather than selecting one.
+
+A relative candidate SHALL be reported as its resolved absolute path wherever it is named to an
+operator.
+
+#### Scenario: Two processes with no configuration find each other
+- **WHEN** a controller and a runner are started as separate processes by the same user with no Flezha environment variables set, from different working directories
+- **THEN** both resolve the same candidate and the runner's control channel reaches the controller
+
+#### Scenario: An explicit path never falls back
+- **WHEN** `FLEZHA_SOCKET_FILES_PATH` names a directory holding no control socket, and a live control socket exists at a later ladder candidate
+- **THEN** the runner does not connect, and its diagnosis names the configured path only
+
+#### Scenario: Two live candidates are refused, not ranked
+- **WHEN** no socket-path variable is set and live control sockets exist at both `$XDG_RUNTIME_DIR/flezha` and `/run/flezha`
+- **THEN** the runner refuses to connect and reports both absolute paths and the variable that resolves the ambiguity
+
+#### Scenario: A relative candidate is reported absolutely
+- **WHEN** a runner resolves the `app_data/sockets` candidate and reports the path
+- **THEN** the reported path is absolute
+
+### Requirement: A QUIC runner dials a list of addresses re-resolved on every attempt
+
+`FLEZHA_QUIC_ADDRESSES` SHALL accept a comma-separated list whose entries are each either a
+literal address or a host name, with an optional port defaulting to `4433`. Every entry SHALL be
+resolved on **every** connection attempt, never cached from a previous attempt or from startup,
+and the resolved addresses SHALL be flattened into the candidate set that attempt walks. An entry
+that fails to resolve SHALL count as one failed candidate and SHALL NOT abort the attempt.
+
+`FLEZHA_QUIC_ADDRESS` SHALL NOT be honoured. Set alone, it SHALL be refused at startup naming the
+replacement.
+
+A failed QUIC connection SHALL name the address it dialled.
+
+#### Scenario: A name is resolved rather than parsed
+- **WHEN** `FLEZHA_QUIC_ADDRESSES` names a host that resolves to a controller's address
+- **THEN** the runner connects, having performed a name resolution rather than an address parse
+
+#### Scenario: A moved controller is followed without reconfiguration
+- **WHEN** a connected runner's controller restarts at a different address behind the same name
+- **THEN** the runner re-resolves the name on a subsequent attempt and connects to the new address with no configuration change
+
+#### Scenario: An unresolvable entry does not mask a healthy one
+- **WHEN** the list holds one name that does not resolve and one that resolves to a live controller
+- **THEN** the runner connects through the second entry
+
+#### Scenario: The retired variable is refused, not ignored
+- **WHEN** `FLEZHA_QUIC_ADDRESS` is set and `FLEZHA_QUIC_ADDRESSES` is not
+- **THEN** startup is refused with a message naming `FLEZHA_QUIC_ADDRESSES`
+
+#### Scenario: A QUIC failure names its address
+- **WHEN** a QUIC connection attempt fails
+- **THEN** the reported error contains the address that was dialled
+
+### Requirement: A reconnect prefers the address it last connected through
+
+A runner that has connected at least once SHALL attempt that address first on every subsequent
+attempt, and SHALL order the remaining candidates randomly. The preference SHALL be held for the
+process lifetime and SHALL NOT be persisted across a runner restart.
+
+Reconnecting to the controller that already holds a runner's bindings is a binding swap; a
+reconnect elsewhere is a fresh connect that leaves the previous controller to heal that runner's
+operatives independently.
+
+#### Scenario: A reconnect returns to the same controller
+- **WHEN** a runner connected through one of several candidates loses its connection and the same controller is reachable again
+- **THEN** the first attempt of the reconnect is against that address, and the controller resolves the reconnect as a binding swap
+
+#### Scenario: A fleet-wide restart does not converge on one candidate
+- **WHEN** several runners sharing a candidate list reconnect after their controllers restart and no last-good address is reachable
+- **THEN** the order in which each runner walks the remaining candidates is randomised per runner
+
+### Requirement: A failed connection is diagnosed once before it is retried
+
+Before entering its retry loop a runner SHALL emit exactly one diagnosis distinguishing these
+situations and naming the fix for each:
+
+| Observation | Reported meaning |
+|---|---|
+| socket directory absent | no controller has used this path |
+| directory present, control socket absent | controller not running, or still starting |
+| control socket present, access denied | the socket directory is the access boundary |
+| control socket present, connection refused | a stale socket from a controller that died |
+
+The access-denied diagnosis SHALL name the directory's owning uid and mode, the caller's uid, and
+both remedies — running as the owning user, or the opt-in group mode. Every diagnosis SHALL name
+the candidates walked. The diagnosis SHALL NOT be repeated on each retry.
+
+#### Scenario: A permission failure is distinguished from a controller that is down
+- **WHEN** a runner is started by a user who cannot traverse the socket directory of a running controller
+- **THEN** the diagnosis reports the access boundary with both uids and the directory mode, and does not report the controller as not running
+
+#### Scenario: A stale socket is distinguished from a missing one
+- **WHEN** a control socket file exists but no process is listening on it
+- **THEN** the diagnosis reports a stale socket, not an absent controller
+
+#### Scenario: The diagnosis is emitted once
+- **WHEN** a runner retries an unreachable controller across several backoff intervals
+- **THEN** the diagnosis appears once and the subsequent retries do not repeat it
+
+### Requirement: `flz runner check` reports controller reachability from a shell
+
+The CLI SHALL provide `flz runner check`, running the same probe a runner runs and printing the
+same diagnosis, with an exit status distinguishing reachable from unreachable. It SHALL require
+no runner code, no running runner and no controller.
+
+#### Scenario: The check names the resolved path and the verdict
+- **WHEN** `flz runner check` is run on a host with a running controller the caller can reach
+- **THEN** it prints the resolved absolute socket directory and a reachable verdict, and exits zero
+
+#### Scenario: The check reports the same diagnosis a runner would
+- **WHEN** `flz runner check` is run by a user who cannot traverse the socket directory
+- **THEN** it prints the access-boundary diagnosis and exits non-zero
+
+### Requirement: The controller prints its attach line on boot
+
+On reaching ready the controller SHALL log one line naming the absolute socket directory it
+established and the environment assignment a runner uses to attach to it. When QUIC is enabled
+the line SHALL also name the listen address.
+
+#### Scenario: The operator is told how to attach without consulting documentation
+- **WHEN** a controller boots successfully
+- **THEN** its log contains the resolved absolute socket directory and the `FLEZHA_SOCKET_FILES_PATH` assignment that attaches a runner to it
 

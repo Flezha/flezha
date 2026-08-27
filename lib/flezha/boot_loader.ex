@@ -28,8 +28,43 @@ defmodule Flezha.BootLoader do
   def handle_continue(:boot, state) do
     run_post_hooks()
     await_namespace_hubs()
+    log_attach_line()
 
     {:noreply, Map.put(state, :boot_ready, true)}
+  end
+
+  defp log_attach_line() do
+    case attach_line() do
+      nil -> :ok
+      line -> Logger.info(line)
+    end
+  end
+
+  @doc """
+  How a runner reaches this controller: the absolute socket directory and the
+  assignment that attaches to it, plus the QUIC listen address when QUIC is
+  enabled. Logged on reaching ready so an operator never has to find the
+  documentation. `nil` when this node listens on no runner transport.
+  """
+  @spec attach_line() :: String.t() | nil
+  def attach_line() do
+    transports = Application.get_env(:flezha, :transports, [:uds])
+
+    parts =
+      Enum.concat([
+        if(:uds in transports,
+          do: [
+            "runners attach with FLEZHA_SOCKET_FILES_PATH=#{Flezha.Socket.Support.socket_dir()}"
+          ],
+          else: []
+        ),
+        if(:quic in transports,
+          do: ["QUIC listening on #{Application.get_env(:flezha, :quic_listen_address)}"],
+          else: []
+        )
+      ])
+
+    if parts != [], do: "[flezha] " <> Enum.join(parts, "; ")
   end
 
   # Wait for every namespace hub to leave the ProcessHub recovery state

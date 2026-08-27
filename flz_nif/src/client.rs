@@ -19,9 +19,11 @@ use std::time::{Duration, Instant};
 
 use crossbeam::channel::unbounded;
 use flz_transport::service::payloader::{build_from_binary_into, extract_payload};
+use flz_transport::transport::config::{self as transport_config, QuicEntry, TransportType};
 use flz_transport::transport::protocol::{STREAM_TYPE_PRIMARY, STREAM_TYPE_SECONDARY};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
+use flz_transport::utility::path_helper::{self, Role};
 use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
 use crate::atoms;
@@ -52,6 +54,11 @@ fn client_connect_uds<'a>(
 ) -> NifResult<Term<'a>> {
     match connect_uds_with_retry(&socket_path) {
         Ok(stream) => {
+            // The directory that answered is where this runner's later sockets
+            // are opened, and where a reconnect returns to — the same slot the
+            // Rust client records.
+            path_helper::note_connected(&socket_path);
+
             let handle = spawn_client_stream(FlezhaStream::Unix(stream), owner_pid);
             Ok((atoms::ok(), handle).encode(env))
         }
@@ -59,20 +66,98 @@ fn client_connect_uds<'a>(
     }
 }
 
+/// Where this process's controller is: the resolved absolute socket directory
+/// for `role` ("controller" or "runner") and the QUIC candidate list, both from
+/// `flz_transport`. The Elixir SDK and the controller ask for the answer here
+/// rather than deriving it, so the ladder exists once for every SDK.
+///
+/// `socket_dir` and `quic_addresses` carry the CALLER's reading of the two
+/// variables: the BEAM keeps its own environment table, so a value set with
+/// `System.put_env/2` is invisible to `std::env::var` here. Passing them keeps
+/// the rule in one place while letting the caller's environment win.
+#[rustler::nif(schedule = "DirtyIo")]
+fn resolve_connect<'a>(
+    env: Env<'a>,
+    role: String,
+    socket_dir: Option<String>,
+    quic_addresses: Option<String>,
+) -> NifResult<Term<'a>> {
+    let role = match role.as_str() {
+        "controller" => Role::Controller,
+        "runner" => Role::Runner,
+        other => {
+            return Ok((
+                atoms::error(),
+                format!(
+                    "unknown role {:?}; expected \"controller\" or \"runner\"",
+                    other
+                ),
+            )
+                .encode(env))
+        }
+    };
+
+    let resolved_dir = match path_helper::resolve_socket_dir(role, socket_dir.as_deref()) {
+        Ok(resolved) => resolved.path.display().to_string(),
+        Err(e) => return Ok((atoms::error(), e.to_string()).encode(env)),
+    };
+
+    let entries = match transport_config::quic_addresses_with(quic_addresses.as_deref()) {
+        Ok(entries) => entries.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
+        Err(e) => return Ok((atoms::error(), e).encode(env)),
+    };
+
+    Ok((atoms::ok(), resolved_dir, entries).encode(env))
+}
+
+/// Why this node cannot reach a controller over `transport`, in the words the
+/// Rust runner and `flz runner check` use. `socket_dir` and `quic_addresses`
+/// carry the caller's environment view, as in `resolve_connect/3`.
+#[rustler::nif(schedule = "DirtyIo")]
+fn connect_diagnosis(
+    transport: String,
+    socket_dir: Option<String>,
+    quic_addresses: Option<String>,
+) -> String {
+    let transport = match transport.as_str() {
+        "quic" => TransportType::Quic,
+        _ => TransportType::Uds,
+    };
+
+    path_helper::connect_diagnosis(transport, socket_dir.as_deref(), quic_addresses.as_deref())
+}
+
 /// Open a QUIC client connection, verifying the server against `ca_cert_path`.
+/// The entry is resolved here, on this attempt — never parsed once and cached.
 #[rustler::nif(schedule = "DirtyIo")]
 fn client_connect_quic<'a>(
     env: Env<'a>,
     address: String,
     ca_cert_path: String,
 ) -> NifResult<Term<'a>> {
-    match QuicClient::connect(&address, &ca_cert_path) {
-        Ok(client) => {
-            let conn = ResourceArc::new(QuicClientConn { client });
-            Ok((atoms::ok(), conn).encode(env))
+    let resolved = QuicEntry::parse(&address).and_then(|entry| {
+        entry
+            .resolve()
+            .map_err(|e| format!("{} did not resolve: {}", entry, e))
+    });
+
+    let addrs = match resolved {
+        Ok(addrs) => addrs,
+        Err(e) => return Ok((atoms::error(), e).encode(env)),
+    };
+
+    let mut failures = Vec::new();
+    for addr in addrs {
+        match QuicClient::connect(addr, &ca_cert_path) {
+            Ok(client) => {
+                let conn = ResourceArc::new(QuicClientConn { client });
+                return Ok((atoms::ok(), conn).encode(env));
+            }
+            Err(e) => failures.push(format!("{}: {}", addr, e)),
         }
-        Err(e) => Ok((atoms::error(), e.to_string()).encode(env)),
     }
+
+    Ok((atoms::error(), failures.join("; ")).encode(env))
 }
 
 /// Open a bidirectional QUIC stream and write the 2-byte `[type, index]` preamble

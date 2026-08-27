@@ -77,13 +77,18 @@ pub fn jittered(base: Duration) -> Duration {
         return base;
     }
     let half = ms / 2;
-    // Dependency-free jitter: the monotonic clock's sub-millisecond noise is
-    // plenty to decorrelate a fleet; we don't need cryptographic randomness.
-    let noise = std::time::SystemTime::now()
+    Duration::from_millis(half + (noise() % (half + 1)))
+}
+
+/// Dependency-free decorrelation noise: the clock's sub-millisecond jitter is
+/// plenty to spread a fleet; we don't need cryptographic randomness. Shared
+/// with `utility::last_good`, which decorrelates choice the way this
+/// decorrelates delay.
+pub(crate) fn noise() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(0);
-    Duration::from_millis(half + (noise % (half + 1)))
+        .unwrap_or(0)
 }
 
 /// What the control reader should do after a read error, given the deadline

@@ -21,7 +21,6 @@ The end-to-end harness SHALL resolve the SDK runtime for a run from `FLEZHA_E2E_
 
 ### Requirement: Every SDK test app carries a conformance manifest
 
-
 Each SDK's test app directory `test/apps/<sdk>_runner/` SHALL contain `conformance.json` declaring: `runtime` (the name `FLEZHA_E2E_RUNTIME` selects it by); `command` (a launch template over `{artifact}`, `{app_dir}`, `{repo}`, `{namespace}` and the absolute-path placeholders `{socket_dir}`, `{ca_cert}`, `{client_cert}`, `{client_key}`); `artifacts` with a `test` and a `bench` profile, each an ordered list of paths relative to the app directory; `build` with the one command that produces each profile's artifact; `connect_timeout_ms`; `transports` (the subset of `uds`, `quic` the SDK's standalone runner supports); `dispatch` (how the SDK's host executes activations — see below); `toolchain` (the shell command that prints its toolchain's version); `deferred` (capabilities from the shared vocabulary the SDK does not carry); `fixtures` (a map from capability to the factory ids the app registers for it); and `docs` (the path of the page that documents the SDK's scope). Every vocabulary capability SHALL appear in a manifest exactly once — under `deferred` or as a `fixtures` key — so a capability can be neither forgotten nor both; the required capabilities (`runner_lifecycle`, `graph_builder`, `liveness`, `retry_ladder`, `partitioned`, `pool_wedge` — the surface every SDK carries) SHALL NOT appear under `deferred`. The page named by `docs` SHALL exist and SHALL reference the manifest by path rather than restate its scope. The Rust test app's manifest SHALL be the reference: a fixture id exists for a capability if and only if the reference lists it there. Both spawners — the test harness (`test` profile) and the bench fleet (`bench` profile) — SHALL render the launch line from the manifest and SHALL carry no per-runtime launch clause of their own. The first artifact in a profile's list that exists SHALL be used; using a later one SHALL log a warning naming the first; none existing SHALL raise with the profile's `build` command.
 
 `pool_wedge` becomes required because a host that cannot be wedged on demand cannot prove it recovers: the fixture is what exercises the abandon path, the worker replacement and the classifier's verdict on that SDK rather than on Rust alone.
@@ -160,7 +159,9 @@ The smoke tier SHALL bind one fixture per declaration key the controller reads (
 
 ### Requirement: Every SDK test app honours the test-app contract
 
-A test app SHALL take its namespace from the first command-line argument; SHALL exit when its standard input reaches end-of-file; SHALL honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESS`, and whatever its own manifest template renders); SHALL, in every workflow fixture that participates in a crash-resume scenario, park a pool worker — never the driver thread — until `FLEZHA_WORKFLOW_E2E_RELEASE` is present in the environment; and SHALL cap its own logging at error level unless overridden. Its manifest's `build` commands SHALL be the only commands needed to produce its artifacts.
+A test app SHALL take its namespace from the first command-line argument; SHALL exit when its standard input reaches end-of-file; SHALL honour the harness-injected environment (`FLEZHA_SOCKET_FILES_PATH`, `FLEZHA_TRANSPORT`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_QUIC_ADDRESSES`, and whatever its own manifest template renders); SHALL, in every workflow fixture that participates in a crash-resume scenario, park a pool worker — never the driver thread — until `FLEZHA_WORKFLOW_E2E_RELEASE` is present in the environment; and SHALL cap its own logging at error level unless overridden. Its manifest's `build` commands SHALL be the only commands needed to produce its artifacts.
+
+A test app SHALL NOT read `FLEZHA_QUIC_ADDRESS`; the harness renders `FLEZHA_QUIC_ADDRESSES` and an app honouring the retired name is a gate failure.
 
 #### Scenario: Closing stdin terminates the runner
 - **WHEN** the harness closes the port it launched a test app through
@@ -169,6 +170,10 @@ A test app SHALL take its namespace from the first command-line argument; SHALL 
 #### Scenario: The release gate holds a workflow mid-run
 - **WHEN** a crash-resume scenario starts a workflow fixture without `FLEZHA_WORKFLOW_E2E_RELEASE` set
 - **THEN** the fixture's blocking procedure does not complete until the runner is respawned with the variable set, and the runner keeps answering control pings meanwhile
+
+#### Scenario: The retired QUIC variable is not honoured
+- **WHEN** a test app's connect path is checked against the pinned environment fixture
+- **THEN** an app reading `FLEZHA_QUIC_ADDRESS` fails the gate naming the app and the replacement
 
 ### Requirement: The suite has a smoke tier and a full tier
 
@@ -278,4 +283,31 @@ The scenario SHALL be the only place two SDKs coexist in a run; the one-runtime-
 - **GIVEN** the operative above running on the Rust runner
 - **WHEN** the Rust runner is killed while the Java runner stays connected
 - **THEN** the operative SHALL NOT bind to the Java runner, and the refusal reason SHALL name the language mismatch
+
+### Requirement: The connect-discovery contract is a capability and a pinned fixture
+
+The capability vocabulary SHALL gain `connect_discovery`, so that every conformance manifest —
+those that exist and every one a future SDK adds — accounts for it under `fixtures` or
+`deferred`, and the existing rollout gate makes an omission a red pull request rather than a
+backlog item. It SHALL NOT be added to the required set: an SDK whose transport is not the shared
+`flz_transport` may defer it by name.
+
+`test/fixtures/runner_connect_env.txt` SHALL pin the environment-variable contract every SDK's
+connect path reads — the socket-directory variable, the QUIC address-list variable, the group
+variable and the ladder candidates in order. The static gate SHALL compare each SDK's connect
+path against it, in the manner `test/fixtures/host_class_decl_keys.txt` is compared for
+declaration keys, so a variable renamed, added or spelled differently in one SDK is a failure on
+every other.
+
+#### Scenario: A new SDK cannot omit the capability
+- **WHEN** a `test/apps/<sdk>_runner/conformance.json` is added listing `connect_discovery` neither under `fixtures` nor under `deferred`
+- **THEN** the static gate fails naming the manifest and `connect_discovery`
+
+#### Scenario: A variable spelled differently in one SDK is caught
+- **WHEN** one SDK's connect path reads a socket-directory variable under a name the pinned fixture does not list
+- **THEN** the static gate fails naming the SDK and the variable
+
+#### Scenario: The ladder order is pinned, not just its members
+- **WHEN** an SDK resolves the ladder candidates in an order other than the pinned one
+- **THEN** the gate fails naming the SDK and the expected order
 

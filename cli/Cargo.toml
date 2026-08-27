@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 serde_json = "1.0"
+# `flz runner check` runs the runner's own probe, not a second copy of it.
+flz_transport = { path = "../flz_transport" }
 
 [dev-dependencies]
 tempfile = "3"

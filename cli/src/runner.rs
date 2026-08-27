@@ -1,5 +1,8 @@
 use std::process::{exit, Command};
 
+use flz_transport::transport::config::{get_transport_type, TransportType};
+use flz_transport::utility::path_helper;
+
 use crate::utils::{get_flezha_command, get_namespace, get_output_format};
 
 pub fn handle_runner_command(args: &[String]) {
@@ -10,10 +13,11 @@ pub fn handle_runner_command(args: &[String]) {
 
     match args[0].as_str() {
         "list" => handle_list(args),
+        "check" => handle_check(),
         "help" | "--help" | "-h" => print_runner_help(),
         _ => {
             eprintln!(
-                "Error: Invalid argument '{}'. Use 'list' or 'help'.",
+                "Error: Invalid argument '{}'. Use 'list', 'check' or 'help'.",
                 args[0]
             );
             exit(1);
@@ -53,6 +57,30 @@ fn handle_list(args: &[String]) {
     }
 }
 
+/// Where this host's controller is, and why a runner cannot reach it — the
+/// same ladder and the same probe a runner walks, from a shell, with no runner
+/// code, no running runner and no controller needed.
+fn handle_check() {
+    if get_transport_type() == TransportType::Quic {
+        println!("note: FLEZHA_TRANSPORT=quic — this check covers the UDS socket directory only");
+    }
+
+    // The runner's own words, not a second rendering of them.
+    match path_helper::diagnose(None) {
+        Ok(diagnosis) => {
+            println!("{}", diagnosis);
+
+            if !diagnosis.reach.reachable() {
+                exit(1);
+            }
+        }
+        Err(refusal) => {
+            println!("{}", refusal);
+            exit(1);
+        }
+    }
+}
+
 fn print_runner_help() {
     println!("flz runner - Runner management commands");
     println!();
@@ -61,6 +89,7 @@ fn print_runner_help() {
     println!();
     println!("COMMANDS:");
     println!("    list    List runners");
+    println!("    check   Report whether a runner on this host can reach a controller");
     println!("    help    Show this help message");
     println!();
     println!("Use 'flz runner <COMMAND> --help' for more information on a specific command.");

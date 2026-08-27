@@ -164,7 +164,7 @@ config :flezha,
      end),
 
   # QUIC transport settings.
-  quic_listen_address: System.get_env("FLEZHA_QUIC_ADDRESS", "0.0.0.0:4433"),
+  quic_listen_address: System.get_env("FLEZHA_QUIC_LISTEN_ADDRESS", "0.0.0.0:4433"),
   ca_cert_path: System.get_env("FLEZHA_CA_CERT_PATH", "app_data/certs/ca.pem"),
   server_cert_path: System.get_env("FLEZHA_SERVER_CERT_PATH", "app_data/certs/server.pem"),
   server_key_path: System.get_env("FLEZHA_SERVER_KEY_PATH", "app_data/certs/server.key"),
@@ -185,7 +185,12 @@ config :flezha,
 
   # ------------------------------------------------------------------------------------------------
   # Socket configurations.
-  socket_files_path: System.get_env("FLEZHA_SOCKET_FILES_PATH", "app_data/sockets/"),
+  #
+  # `:socket_files_path` is deliberately absent: the UDS socket directory is
+  # resolved by the ladder every SDK shares (`FLEZHA_SOCKET_FILES_PATH`, then
+  # `$XDG_RUNTIME_DIR/flezha`, `/run/flezha`, `app_data/sockets`) at boot, in
+  # `Flezha.Socket.Support`. Setting the key here would make this file a second
+  # reader of a variable the ladder already owns.
 
   # ------------------------------------------------------------------------------------------------
   # Configuration for external processes.

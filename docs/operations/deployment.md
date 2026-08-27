@@ -21,6 +21,77 @@ run from the project root.
 | `FLEZHA_GRACEFUL_SHUTDOWN_TIMEOUT_MS` | Defaults to `60000`, but the orchestrator's stop grace period must be this plus 15 s (`stop_grace_period: 75s`, `terminationGracePeriodSeconds: 75` in the shipped files). Bump them in lockstep. See [`graceful_shutdown.md`](graceful_shutdown.md). |
 | `FLEZHA_AUTHZ_ENABLED`, `FLEZHA_TRANSPORT_AUTH`, `FLEZHA_DIST_TLS_OPTFILE`, `FLEZHA_CA_CERT_PATH`, `FLEZHA_SERVER_CERT_PATH`, `FLEZHA_SERVER_KEY_PATH`, `FLEZHA_QUIC_CLIENT_CA` | Authz enforcement is on by default in prod and peer authentication is required by default; turning either off warns on every boot. The TLS material under the cert paths must persist across restarts. Provisioning the cookie, the TLS distribution option file, the QUIC certificates and the bootstrap claim: [`authn_authz.md`](authn_authz.md). |
 
+## Bare metal: two ordinary processes
+
+Neither the controller nor a runner needs configuration to find the other on
+one machine, as the same user. Start the controller, then start the runner;
+the controller prints the line that attaches one:
+
+```
+[flezha] runners attach with FLEZHA_SOCKET_FILES_PATH=/run/user/1000/flezha
+```
+
+Both sides resolve the socket directory from the same ladder —
+`$FLEZHA_SOCKET_FILES_PATH`, then `$XDG_RUNTIME_DIR/flezha`, `/run/flezha`,
+`app_data/sockets` — so two processes started from two different working
+directories land on the same place. The controller creates the first candidate
+it can; a runner attaches to the first holding a live control socket, and
+refuses rather than guessing when two do. The full table, and why the default
+moved off `app_data/`, is in
+[`../configuration.md` § The socket-directory ladder](../configuration.md).
+
+### Two users on one machine
+
+Directory traversal is the UDS authentication boundary, so a runner run by a
+different user cannot reach a controller's socket directory. Two arrangements
+work:
+
+- **Same user.** Run the runner as the controller's user. Nothing to configure.
+- **A shared group.** Start the controller with
+  `FLEZHA_SOCKET_DIR_GROUP=<group>`, a group both users belong to. The socket
+  directory becomes `0750` owned by that group, and the controller logs a
+  warning naming it on every boot. The boundary is then "that group" instead of
+  "one user"; no setting makes the directory reachable by anyone else. A group
+  the controller's user does not belong to refuses the boot naming the group.
+
+Point both sides at an explicit `FLEZHA_SOCKET_FILES_PATH` in this arrangement:
+`$XDG_RUNTIME_DIR` differs per user, so the zero-configuration path is
+same-user only.
+
+### When a runner cannot connect
+
+`flz runner check` runs exactly the probe a runner runs — no runner code, no
+running runner, no controller needed — and prints the resolved directory, the
+candidates walked, the verdict and the fix. It exits zero only when a
+controller answered. A runner prints the same diagnosis once, before it starts
+retrying; the terse line that repeats every backoff is the retry notice, not
+the diagnosis.
+
+| Verdict | What it means | Fix |
+|---|---|---|
+| `socket directory absent` | no controller has ever used this path | start the controller, or set `FLEZHA_SOCKET_FILES_PATH` to the directory it established |
+| `control socket absent` | the directory is there, the controller is not | start it, or wait for it to finish booting |
+| `access denied` | the socket directory is the access boundary and this user is outside it — the diagnosis names the directory's owning uid and mode and the caller's uid | run the runner as the owning user, or use the group mode above |
+| `stale control socket` | a socket file nobody is listening on: a controller that died hard | clears on the next controller start |
+| `more than one controller is listening` | two ladder candidates hold a live socket and none was named | set `FLEZHA_SOCKET_FILES_PATH` to the one this runner should attach to |
+
+### A remote runner over QUIC
+
+`FLEZHA_QUIC_ADDRESSES` is a comma list; each entry is a name or a literal
+address with an optional port (default `4433`). Every entry is resolved through
+DNS on **every** connection attempt, so a controller that moves behind its name
+is followed with no reconfiguration, and an entry that fails to resolve is one
+failed candidate rather than a fatal error. A runner that has connected once
+dials that address first on every later attempt — reconnecting to the same
+controller is a binding swap, reconnecting elsewhere strands the previous
+controller's operatives until its own convergence loop heals them — and orders
+the remaining candidates randomly so a fleet-wide restart does not converge on
+one node.
+
+`FLEZHA_QUIC_ADDRESS` is retired and not aliased: set alone it refuses startup
+naming the replacement. The controller's own listen address is
+`FLEZHA_QUIC_LISTEN_ADDRESS`.
+
 ## Images
 
 | Tag | Built from | Purpose |
@@ -262,7 +333,7 @@ The DaemonSet loads `flezha-config` via `envFrom`, then sets per-pod values:
 | `FLEZHA_CLUSTER_DISCOVERY` | `k8s_pod_discovery` |
 | `FLEZHA_K8S_IP_LOOKUP_MODE` / `FLEZHA_K8S_MASTER_NAME` / `FLEZHA_K8S_MASTER_PORT` | `pods` / `kubernetes.default.svc` / `443` |
 | `FLEZHA_RECONNECT_INTERVAL` / `FLEZHA_MAX_RECONNECTS` / `FLEZHA_RUNNER_KEEPALIVE` | `2000` / `10` / `30000` |
-| `FLEZHA_QUIC_ADDRESS` | `0.0.0.0:4433` |
+| `FLEZHA_QUIC_LISTEN_ADDRESS` | `0.0.0.0:4433` |
 | `FLEZHA_CA_CERT_PATH` / `FLEZHA_SERVER_CERT_PATH` / `FLEZHA_SERVER_KEY_PATH` | `/flezha/app_data/certs/{ca.pem,server.pem,server.key}` — persisted on the `flezha-certs` hostPath |
 | `FLEZHA_LOG_PATH` | `/var/log/flezha/flezha.log` |
 | `FLEZHA_AUTO_RESTORE_ENABLED` / `FLEZHA_BOOT_REPLAY_TIMEOUT_MS` | `true` / `60000` |

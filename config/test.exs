@@ -139,8 +139,14 @@ config :flezha,
       Flezha.Service.EventManager.add_handler(:runner_connected_event)
     end,
     fn ->
-      # Update the socket files path.
-      Application.put_env(:flezha, :socket_files_path, "app_data/sockets/#{node()}/")
+      # A runtime directory, not `app_data/`, and a SHORT one: the resolved
+      # socket path is absolute, and a UDS path must fit `SUN_LEN` (108 bytes) —
+      # a deep checkout plus a long stream-socket name does not.
+      Application.put_env(
+        :flezha,
+        :socket_files_path,
+        Path.join([System.tmp_dir!(), "flezha_sockets", "#{node()}"])
+      )
     end
   ],
   post_hooks: [

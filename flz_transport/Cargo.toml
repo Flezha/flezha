@@ -23,5 +23,13 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pemfile = "2"
 tracing = "0.1"
 
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(unix)'.dependencies]
+# Already in the graph via mio; the direct dependency is one call, `getuid`,
+# for the access-denied diagnosis.
+libc = "0.2"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
