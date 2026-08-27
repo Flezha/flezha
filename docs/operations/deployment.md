@@ -92,6 +92,80 @@ one node.
 naming the replacement. The controller's own listen address is
 `FLEZHA_QUIC_LISTEN_ADDRESS`.
 
+### Several controllers on one machine
+
+A machine may host more than one controller. Every resource a controller owns
+is already selected by a variable, so two instances coexist with no code change
+and no filename suffix: give each its own values, and each owns a directory
+tree and a node name that no other instance touches.
+
+| Variable | What the instance owns |
+|---|---|
+| `FLEZHA_SOCKET_FILES_PATH` | The socket directory. Also the UDS access boundary, so separate directories give separate permission scopes. |
+| `FLEZHA_STATE_DIR` | The per-Entity WAL, snapshot and outbox trees. Claimed exclusively at boot — see below. |
+| `FLEZHA_PROCESS_HUB_REGISTRY_ROOT` | The durable hub registry. `<root>/<hub_id>/registry.dets` is not keyed by node, so two instances over one root open one file. |
+| `FLEZHA_DLQ_DIR` | The parked-record store. |
+| `FLEZHA_NODE_NAME` (with `FLEZHA_NODE_HOST`) | The node name. Two BEAMs on one host cannot share one. |
+| `FLEZHA_HEALTHZ_PORT` | The probe listener, when `FLEZHA_HEALTHZ_ENABLED` is on. |
+| `FLEZHA_QUIC_LISTEN_ADDRESS` | The QUIC listener, when QUIC is enabled. |
+| `FLEZHA_AUTHZ_DIR`, `FLEZHA_SCHEDULE_DIR`, `FLEZHA_AUDIT_DIR`, `FLEZHA_PLUGIN_ROOT`, `FLEZHA_LOG_PATH` | The remaining durable trees, where their subsystems are enabled. |
+
+`flz reset` resolves its roots as `<app_data root>/<name>` and does not consult
+these per-store overrides, so on a co-located controller it clears nothing that
+controller owns. Clear a relocated tree by path, with the controller down.
+
+The unit of separation is the **directory**, not a filename inside a shared
+one. A suffix on `runner_control_channel.sock` would let two controllers share
+a directory, and the directory is what carries the permission boundary
+(`0700`, or `0750` for one named group): sharing it would put both instances
+inside one scope and leave each controller's `rm_rf` reaching the other's
+sockets. A runner also keeps naming a directory rather than learning an
+instance identifier.
+
+Two guards make a missed variable a refusal rather than damage:
+
+- **A live peer's socket directory is refused.** Before preparing its
+  directory a controller probes any control socket there — the same probe
+  `flz runner check` runs. A peer that answers is live, so the controller
+  refuses without removing anything, naming the path, the socket that answered
+  and `FLEZHA_SOCKET_FILES_PATH`. A socket nobody answers is a controller that
+  died hard, and is cleared as before, so a crash still needs no cleanup.
+- **The state root is claimed exclusively.** A controller takes an advisory
+  lock on `<state root>/.instance.lock` at boot and holds it for its lifetime.
+  Two controllers over one state root are two unsynchronised writers on one
+  entity WAL tree, which corrupts it silently; the refusal names the state
+  root, the process holding it and `FLEZHA_STATE_DIR`. The kernel releases the
+  lock when the holder exits, so a controller that was killed leaves nothing
+  to clear.
+
+#### A peer controller is capacity, not durability
+
+A second controller buys capacity and isolation. It is **not** a failover
+target, and adding one is not a substitute for the remote durability tier:
+
+- The hub's redundancy strategy is `Singularity` — each operative runs on
+  exactly one node, with no replicas — so no peer shadows another's
+  operatives.
+- Cross-controller state transfer (`Flezha.State.WalTransfer`) is
+  destination-driven over `:erpc` against the source node, so a controller that
+  died with its disk answers nothing and the adopting controller starts cold.
+
+A controller that dies with its disk takes its operatives' state, and the
+registry record of their existence, with it. The mechanism that survives that
+is the remote durability tier: see
+[`remote_durability_tier.md`](remote_durability_tier.md). An operator running
+two controllers believing they cover each other is worse off than one running a
+single controller with the tier on.
+
+### When a controller refuses to start
+
+| Refusal | What it means | Fix |
+|---|---|---|
+| `… is another controller's socket directory` | a live controller answered on the control socket in the directory this one was told to prepare | give this controller its own `FLEZHA_SOCKET_FILES_PATH`, or stop the controller listening there. Nothing was removed |
+| `state root … is already claimed (held by pid N)` | another controller holds the advisory lock on that state root | give this controller its own `FLEZHA_STATE_DIR`, or stop pid N. If the holder is gone, the lock is gone with it — the message names a live process |
+| `no socket directory could be created` | no ladder candidate was writable | set `FLEZHA_SOCKET_FILES_PATH` to a directory this user can write |
+| `FLEZHA_SOCKET_DIR_GROUP=<group>: no such group` | the group does not exist, or this controller's user is not in it | use a group both users belong to, or drop the variable for owner-only |
+
 ## Images
 
 | Tag | Built from | Purpose |

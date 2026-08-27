@@ -32,10 +32,25 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
   # of consuming the whole test.
   @peer_boot_timeout_ms 45_000
 
-  def start_peer_node(name) do
+  # The `:flezha` env keys naming a resource one controller instance owns
+  # exclusively. `start_peer_node/2` gives a peer its own of each, and
+  # `owned_resources/0` is what a co-location scenario asserts is disjoint —
+  # so a resource added here is covered without touching the scenario.
+  @owned_resources [:socket_files_path, :state_root, :process_hub_registry_root]
+
+  @doc "The `:flezha` env keys naming a resource one controller owns alone."
+  @spec owned_resources() :: [atom()]
+  def owned_resources(), do: @owned_resources
+
+  @doc """
+  A peer BEAM carrying this node's code paths and nothing else started on it —
+  the cheapest second OS process on this host, for a scenario about what two
+  processes may hold at once rather than about two controllers.
+  `start_peer_node/2` is this plus a controller.
+  """
+  def start_bare_peer(name) do
     args = ~c"-loader inet -hosts 127.0.0.1 -setcookie \"#{:erlang.get_cookie()}\""
 
-    # Start the peer node.
     {:ok, peer_pid, node_name} =
       :peer.start_link(%{
         host: ~c"127.0.0.1",
@@ -43,8 +58,17 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
         args: [args]
       })
 
-    # Add current nodes code path to the peer node.
     :erpc.call(node_name, :code, :add_paths, [:code.get_path()])
+
+    # A test that fails mid-way must not leak the peer BEAM; `stop_peer_node`
+    # already checks liveness, so an explicit stop makes this a no-op.
+    on_exit(fn -> if Process.alive?(peer_pid), do: tolerate(fn -> :peer.stop(peer_pid) end) end)
+
+    {peer_pid, node_name}
+  end
+
+  def start_peer_node(name, opts \\ []) do
+    {peer_pid, node_name} = start_bare_peer(name)
 
     # Adjust the environment for the peer node.
     :erpc.call(node_name, :application, :set_env, [:flezha, :env, :test])
@@ -67,13 +91,17 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # Disable the testnet for the peer node.
     :erpc.call(node_name, Application, :put_env, [:flezha, :testnet_enabled, false])
 
-    # Overwrite the socket files path for the peer node — beside this node's,
-    # so both stay under the one short runtime base `config/test.exs` chose.
-    :erpc.call(node_name, Application, :put_env, [
-      :flezha,
-      :socket_files_path,
-      Path.join(Path.dirname(Flezha.Socket.Support.socket_dir()), "#{node_name}")
-    ])
+    # A peer BEAM is a second controller on this host, so it gets its own of
+    # every resource one instance owns exclusively: two controllers over one
+    # entity WAL tree are two unsynchronised writers, and `<hub registry
+    # root>/<hub_id>` is not keyed by node either, so one root is one
+    # `registry.dets`. A caller may hand it this node's value instead — a
+    # cross-controller state transfer needs the peer to hold this node's files,
+    # and a co-location scenario drives the misconfiguration deliberately.
+    for key <- @owned_resources do
+      value = Keyword.get_lazy(opts, key, fn -> own_resource(key, node_name) end)
+      :erpc.call(node_name, Application, :put_env, [:flezha, key, value])
+    end
 
     # Peer nodes only need UDS transport (avoids QUIC port conflicts).
     :erpc.call(node_name, Application, :put_env, [:flezha, :transports, [:uds]])
@@ -83,17 +111,10 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     # both `:external_processes` runners have connected, which is what makes a
     # busy machine miss the boot budget; the runners themselves stay, because
     # the peer only joins the `default` hub cluster once one connects, and
-    # callers already wait for that. `:pre_hooks` would additionally wipe
-    # `:process_hub_registry_root`, a path the peer shares with the live host.
+    # callers already wait for that.
     for key <- [:pre_hooks, :post_hooks] do
       :erpc.call(node_name, Application, :put_env, [:flezha, key, []])
     end
-
-    # A test that fails mid-way must not leak the peer BEAM; `stop_peer_node`
-    # already checks liveness, so an explicit stop makes this a no-op.
-    on_exit(fn ->
-      if Process.alive?(peer_pid), do: catch_exit(:peer.stop(peer_pid))
-    end)
 
     # Start the flezha application on the peer node.
     :erpc.call(node_name, Application, :ensure_all_started, [:flezha], @peer_boot_timeout_ms)
@@ -109,13 +130,38 @@ defmodule FlezhaTest.Helper.NodeTestHelper do
     {peer_pid, node_name}
   end
 
+  # The socket directory stays beside this node's, so both stay under the one
+  # short runtime base `config/test.exs` chose (a UDS path must fit `SUN_LEN`).
+  defp own_resource(:socket_files_path, node_name),
+    do: Path.join(Path.dirname(Flezha.Socket.Support.socket_dir()), "#{node_name}")
+
+  defp own_resource(:state_root, node_name), do: peer_dir(node_name, "state")
+  defp own_resource(:process_hub_registry_root, node_name), do: peer_dir(node_name, "hub")
+
+  # A durable tree this peer alone owns, cleared with the test that spawned it.
+  defp peer_dir(node_name, purpose) do
+    dir = Path.join(System.tmp_dir!(), "flezha_peer_#{purpose}_#{node_name}")
+    on_exit(fn -> File.rm_rf(dir) end)
+    dir
+  end
+
   def stop_peer_node(peer_pid, peer_node) do
     if Process.alive?(peer_pid) do
       # Gracefully stop the peer node to allow migration.
-      :erpc.call(peer_node, :application, :stop, [:flezha])
-
-      :peer.stop(peer_pid)
+      tolerate(fn -> :erpc.call(peer_node, :application, :stop, [:flezha]) end)
+      tolerate(fn -> :peer.stop(peer_pid) end)
     end
+  end
+
+  # A peer BEAM is linked to the test process, so by the time a teardown runs
+  # the node may already be on its way down: the control process outlives the
+  # distribution connection by a moment, and every way of asking a gone node to
+  # stop reports something different. A node that cannot be reached is a node
+  # that needs no stopping.
+  defp tolerate(fun) do
+    fun.()
+  catch
+    _, _ -> :ok
   end
 
   def start_runner_remote(node, namespace) do

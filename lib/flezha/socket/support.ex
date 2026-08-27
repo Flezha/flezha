@@ -15,9 +15,22 @@ defmodule Flezha.Socket.Support do
   alias Flezha.Transport.Native
 
   @group_var "FLEZHA_SOCKET_DIR_GROUP"
+  @dir_var "FLEZHA_SOCKET_FILES_PATH"
 
+  @doc """
+  Establish this controller's socket directory, clearing whatever a previous
+  controller left in it.
+
+  Refuses when a live peer is already listening there: the directory is one
+  instance's, and clearing it would take that instance's control socket and
+  every attached runner's stream socket with it. A socket nobody answers is a
+  controller that died hard and is cleared as normal, so a restart needs no
+  manual cleanup.
+  """
   def prepare_socket_dir() do
     base_path = socket_dir()
+
+    refuse_live_peer!(base_path)
 
     File.rm_rf(base_path)
     result = File.mkdir_p(base_path)
@@ -62,6 +75,17 @@ defmodule Flezha.Socket.Support do
 
   def stream_socket_path(runner_id, type) when is_binary(runner_id) do
     socket_dir() <> "/#{Atom.to_string(type)}_stream_#{runner_id}.sock"
+  end
+
+  # Liveness is `flz_transport`'s probe, the one every runner's diagnosis asks:
+  # a second implementation here would be a second answer to drift from.
+  defp refuse_live_peer!(path) do
+    if Native.socket_dir_live(path) do
+      raise "#{path} is another controller's socket directory: #{control_socket_path()} " <>
+              "answered a connect, so a controller is live there. Set #{@dir_var} to a " <>
+              "directory of this controller's own — one directory tree per controller — " <>
+              "or stop the controller listening there. Nothing was removed."
+    end
   end
 
   defp resolve_socket_dir() do

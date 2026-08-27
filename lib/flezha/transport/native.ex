@@ -131,6 +131,38 @@ defmodule Flezha.Transport.Native do
   defp socket_dir_env, do: System.get_env("FLEZHA_SOCKET_FILES_PATH")
   defp quic_env, do: System.get_env("FLEZHA_QUIC_ADDRESSES")
 
+  # --- Instance claims ---
+  #
+  # What one controller instance owns exclusively on a host: the socket
+  # directory it listens in, asked of `flz_transport`'s probe, and the state
+  # root it writes, asked of the kernel. They live on this module because
+  # rustler binds one Elixir module per NIF library.
+
+  @doc """
+  Whether a controller is listening in `socket_dir` right now — `flz_transport`'s
+  probe, the same one a runner's diagnosis asks, from the controller's side. A
+  directory a live peer answers in belongs to that peer; one holding a socket
+  nobody answers was left by a controller that died hard.
+  """
+  @spec socket_dir_live(String.t()) :: boolean()
+  def socket_dir_live(_socket_dir), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
+  Claim `state_root` for this controller with an exclusive advisory lock on a
+  file inside it, held for the OS process lifetime and released by the kernel
+  when it exits. `{:ok, lock_file}`, or `{:error, holder}` naming the process
+  that holds it.
+  """
+  @spec lock_state_root(String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def lock_state_root(_state_root), do: :erlang.nif_error(:not_loaded)
+
+  @doc """
+  The lock file this OS process holds, `""` before it has claimed one — asked
+  of the claim itself rather than of a copy kept beside it.
+  """
+  @spec held_state_root() :: String.t()
+  def held_state_root(), do: :erlang.nif_error(:not_loaded)
+
   @doc """
   Connect a UDS client stream to `socket_path`, retrying the connect on a
   deadline (exponential from 10 ms, cap 500 ms, ~3 s total). Frames arrive at

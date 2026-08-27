@@ -31,6 +31,11 @@ defmodule Flezha.Application do
   end
 
   defp start_controller() do
+    # Before any state path is opened: a second controller over this state root
+    # is two unsynchronised writers on one entity WAL tree, and the claim is
+    # what makes that a refusal rather than corruption.
+    _ = Flezha.Boot.StateRootLock.claim!()
+
     _ = Flezha.Boot.StatePathMigrator.migrate()
 
     # `[]` unless a remote durability backend is configured. Ahead of
@@ -103,11 +108,15 @@ defmodule Flezha.Application do
       end
 
     opts = [strategy: :one_for_one, name: Flezha.Supervisor]
-    result = Supervisor.start_link(children, opts)
 
-    validate_boot_ready()
-
-    result
+    # A child that refused to start already carries the reason an operator
+    # needs — a claimed socket directory names the peer and the variable. Only
+    # a tree that came up is asked whether it reached ready; asking a
+    # supervisor that never started replaces that reason with `:noproc`.
+    with {:ok, _pid} = result <- Supervisor.start_link(children, opts) do
+      validate_boot_ready()
+      result
+    end
   end
 
   @impl true

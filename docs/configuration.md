@@ -249,8 +249,13 @@ same NIF. The candidates, in order:
 The **controller** takes the first candidate it can create, stepping over one
 another controller is already listening in — taking that directory would wipe a
 live controller's sockets and strand its fleet. An explicit
-`FLEZHA_SOCKET_FILES_PATH` is still taken unconditionally: it is what the
-operator named. A **runner** takes
+`FLEZHA_SOCKET_FILES_PATH` is still resolved unconditionally: it is what the
+operator named. It is not *prepared* unconditionally, though — a controller
+probes the directory it resolved before clearing it, and refuses to start when
+a live peer answers there, naming the path and this variable. A socket nobody
+answers is a controller that died hard and is cleared as normal. See
+[`operations/deployment.md` § Several controllers on one
+machine](operations/deployment.md). A **runner** takes
 the first holding a live control socket, and when two candidates hold one and
 no variable says which is meant, it **refuses to connect and names both** rather
 than attaching to a controller the operator did not choose. Every path is

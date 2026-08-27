@@ -18,6 +18,18 @@ binds an Operative whose local state is absent. It is **not** a pluggable WAL: e
 gates on local fsync, the local files stay authoritative, shipping never mutates or deletes
 them, and turning the tier off is a complete rollback.
 
+## Another controller is not a substitute
+
+Adding a controller — a peer on another machine, or a second on this one — buys capacity and
+isolation and does **not** protect the state on this controller's disk. The hub's redundancy
+strategy is `Singularity`: each Operative runs on exactly one node with no replicas, so no
+peer shadows another's Operatives. And when a peer does adopt them,
+`Flezha.State.WalTransfer` pulls destination-driven over `:erpc` against the source node, so a
+controller that died with its disk answers nothing and the adopting controller starts cold.
+This tier is the mechanism that survives that loss. Co-locating controllers on one host is
+documented in [`deployment.md` § Several controllers on one machine](deployment.md), which
+carries the same statement.
+
 ## A production controller must choose
 
 `FLEZHA_DURABILITY_BACKEND` has no production default. A prod release with it unset refuses

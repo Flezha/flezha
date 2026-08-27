@@ -36,6 +36,7 @@ ControlChannel    <- {:flz_data, ...}           per stream: bytes -> FrameBuffer
 | `driver_stats.rs` | the UDS driver's self-reported liveness |
 | `uds_driver.rs`, `quic_driver.rs` | one mio event-loop thread per server |
 | `client.rs` | standalone-SDK client connects returning the same `StreamHandle` |
+| `instance_claim.rs` | what one controller instance owns alone on a host: the socket directory it listens in, the state root it writes |
 
 From `flz_transport` it reuses `service::payloader`, `transport::config` (`max_frame_bytes`,
 `max_write_buffer_bytes`), `transport::liveness`, `transport::tls`, `transport::protocol` and `transport::quic`.
@@ -186,6 +187,9 @@ an opaque handle with its later events.
 | `controlling_process` | `(handle, pid) -> :ok` | transfers ownership |
 | `stream_id` | `(handle) -> integer` | driver-assigned id |
 | `client_connect_uds` / `client_connect_quic` / `client_open_stream` | see above | standalone SDK only |
+| `socket_dir_live` | `(socket_dir) -> boolean` | `path_helper::probe` from the controller's side: a live peer's directory is not this instance's to clear |
+| `lock_state_root` | `(state_root) -> {:ok, lock_file} \| {:error, holder}` | `fcntl` record lock held for the OS process lifetime; `F_GETLK` names the holder |
+| `held_state_root` | `() -> string` | the lock file this process holds, `""` before it has claimed one |
 
 Every stream NIF enqueues a `ServerCommand` and wakes the driver; none blocks.
 

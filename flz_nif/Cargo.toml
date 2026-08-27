@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 flz_transport = { path = "../flz_transport" }
 rustler = "0.35"
 crossbeam = "0.8"
+libc = "0.2"
 mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
 quinn-proto = "0.11"
 bytes = "1"

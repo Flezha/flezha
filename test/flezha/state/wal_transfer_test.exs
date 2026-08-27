@@ -85,11 +85,14 @@ defmodule FlezhaTest.State.WalTransferTest do
     source_bytes = File.read!(Registry.wal_path(source))
     destination = {class <> "_moved", procedure, key}
 
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:waltransfer2)
+    {peer_pid, peer_node} =
+      NodeTestHelper.start_peer_node(:waltransfer2, state_root: Registry.state_root())
+
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 
-    # The peer inherited the old root, so the files live there and nowhere here.
+    # The peer took the root this node was on, so the files live there and
+    # nowhere here once this node moves off it.
     refute File.exists?(Registry.wal_path(source))
 
     assert {:ok, files} = WalTransfer.move_entity(peer_node, source, destination)
@@ -112,7 +115,10 @@ defmodule FlezhaTest.State.WalTransferTest do
   @tag :multi_node
   test "a move whose pull fails leaves the peer's copy alone" do
     source = seed_entity("movefail")
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:waltransfer3)
+
+    {peer_pid, peer_node} =
+      NodeTestHelper.start_peer_node(:waltransfer3, state_root: Registry.state_root())
+
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 
@@ -139,10 +145,12 @@ defmodule FlezhaTest.State.WalTransferTest do
     entity_id = {class, _, _} = seed_entity("xnode")
     source_bytes = File.read!(Registry.wal_path(entity_id))
 
-    # The peer inherits the CURRENT state_root, so it is the node holding the
+    # The peer is handed the CURRENT state_root, so it is the node holding the
     # files. Moving this node's root afterwards makes the pull a genuine
     # cross-tree copy rather than a file onto itself.
-    {peer_pid, peer_node} = NodeTestHelper.start_peer_node(:waltransfer1)
+    {peer_pid, peer_node} =
+      NodeTestHelper.start_peer_node(:waltransfer1, state_root: Registry.state_root())
+
     dest_root = TestHelpers.tmp_app_data_dir()
     on_exit(fn -> File.rm_rf(dest_root) end)
 

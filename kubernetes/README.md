@@ -165,6 +165,18 @@ top-level [README.md](../README.md#failure-recovery) for the per-provider
 recoverability table and the semantics of the recovery window
 (`FLEZHA_RECOVERY_WINDOW_MS`).
 
+### One controller per node
+
+A DaemonSet is one pod per node by construction, so every controller here has the
+node's `/var/lib/flezha` to itself and none of the co-location variables need
+per-instance values. Running several controllers on one machine is a bare-metal and
+Docker arrangement; the variable set each instance must own is in
+[`../docs/operations/deployment.md` § Several controllers on one
+machine](../docs/operations/deployment.md). A second pod landing on a node — a
+mis-scaled Deployment beside the DaemonSet, or two DaemonSets sharing one `hostPath`
+— refuses to boot rather than sharing the state root, naming the process that holds
+it.
+
 ### hostPath vs a PersistentVolume
 
 A DaemonSet cannot use `volumeClaimTemplates`, so node-local storage is the pragmatic

@@ -3,6 +3,7 @@ mod client;
 mod driver_msg;
 mod driver_stats;
 mod frame_buffer;
+mod instance_claim;
 mod quic_driver;
 mod resources;
 mod server;

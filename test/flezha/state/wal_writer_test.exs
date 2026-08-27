@@ -492,7 +492,10 @@ defmodule Flezha.State.WalWriterTest do
       :ok = Supervisor.close_writers(class)
 
       refute Process.alive?(pid)
-      assert Supervisor.live_writers(class) == []
+      # The writer is registered in an Elixir `Registry`, which unregisters a
+      # dead process on its own `:DOWN` — so it leaves the list after it dies,
+      # not with it.
+      assert wait_until(fn -> Supervisor.live_writers(class) == [] end, 2_000)
       assert File.exists?(Registry.wal_path(entity_id))
     end
   end
