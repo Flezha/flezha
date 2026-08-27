@@ -11,6 +11,7 @@
 #   ./scripts/bench.sh -t quic                        # rust SDK over quic
 #   ./scripts/bench.sh -r java -t quic -n 100 -m 1000 # java + quic, bigger run
 #   ./scripts/bench.sh --shape entity --pool-sizes 1,8
+#   FLEZHA_NODE_WORKERS=4 ./scripts/bench.sh -r node  # node on four dispatch loops
 #
 # Compare two runs:
 #   ./scripts/bench.sh -r rust -n 100 -m 1000 | tee bench-rust.txt
@@ -18,10 +19,14 @@
 #   diff bench-rust.txt bench-java.txt
 #
 # Prerequisites:
-#   - rust runtime: nothing extra (test/apps/rust_runner is built on demand)
-#   - java runtime: `mvn -f test/apps/java_runner/pom.xml package` once
-#     (the manifest's `bench` build command)
+#   - none: `mix bench` runs each runtime's own `bench` build command from
+#     test/apps/<runtime>_runner/conformance.json before it measures, because
+#     an artifact that exists is not an artifact that is current. Set
+#     FLEZHA_BENCH_SKIP_BUILD=1 to skip it.
 #   - quic transport: certs auto-generated at app_data/certs/ on first run
+#   - node: FLEZHA_NODE_WORKERS selects the dispatch topology (0 = the main
+#     event loop, the default). It is inherited by the runner, and the bench
+#     header reports which one a number was taken under.
 #
 # Full reference: docs/operations/benchmarking.md
 set -e
@@ -40,7 +45,8 @@ usage() {
 Usage: ./scripts/bench.sh [OPTIONS]
 
 Options:
-  -r, --runtime <rust|java>          SDK runtime (default: rust)
+  -r, --runtime <name>               SDK runtime (default: rust). Any SDK with
+                                     a test/apps/<name>_runner/conformance.json
   -t, --transport <uds|quic>         Wire transport (default: uds)
   -s, --shape <regression|entity|dynamic>
                                      Bench shape (default: regression).
@@ -78,9 +84,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-case "$RUNTIME" in rust|java|elixir) ;; *)
-    echo "Error: --runtime must be 'rust', 'java' or 'elixir', got '$RUNTIME'"; exit 1 ;;
-esac
+# The runtimes are the SDK test apps that exist, not a list kept in step by
+# hand: a new SDK is benchable the moment its manifest is there.
+RUNTIMES=()
+for manifest in "$(dirname "$0")/../test/apps/"*_runner/conformance.json; do
+    [[ -e "$manifest" ]] || continue
+    app="$(basename "$(dirname "$manifest")")"
+    RUNTIMES+=("${app%_runner}")
+done
+if [[ ! " ${RUNTIMES[*]} " == *" $RUNTIME "* ]]; then
+    echo "Error: --runtime must be one of: ${RUNTIMES[*]} — got '$RUNTIME'"; exit 1
+fi
 case "$TRANSPORT" in uds|quic|native) ;; *)
     echo "Error: --transport must be 'uds', 'quic' or 'native', got '$TRANSPORT'"; exit 1 ;;
 esac

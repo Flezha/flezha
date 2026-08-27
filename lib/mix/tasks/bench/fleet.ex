@@ -55,6 +55,43 @@ defmodule Mix.Tasks.Bench.Fleet do
     end
   end
 
+  @doc """
+  Run the runtime's own bench build before measuring with it.
+
+  An artifact that EXISTS is not an artifact that is CURRENT, and nothing else
+  in this path can tell the difference: a runner built against a two-day-old
+  kernel connects, serves, and produces a plausible number. Every manifest's
+  build command is incremental, and each one — cargo, maven, mix, npm — knows
+  its own dependency graph, which no mtime heuristic here could. So the cheap
+  correct move is to run it every time.
+
+  `FLEZHA_BENCH_SKIP_BUILD=1` opts out for someone iterating on the harness
+  rather than on a number.
+  """
+  def ensure_built(runtime) do
+    command = PortPilot.manifest(runtime)["build"]["bench"]
+
+    cond do
+      System.get_env("FLEZHA_BENCH_SKIP_BUILD") in ["1", "true"] ->
+        IO.puts("Skipping the #{runtime} bench build (FLEZHA_BENCH_SKIP_BUILD)")
+
+      is_nil(command) ->
+        :ok
+
+      true ->
+        IO.puts("Building the #{runtime} bench runner: #{command}")
+
+        case System.cmd("sh", ["-c", command], stderr_to_stdout: true) do
+          {_output, 0} ->
+            :ok
+
+          {output, status} ->
+            raise "the #{runtime} bench build failed (exit #{status}); a bench against a " <>
+                    "stale artifact is not a measurement.\n\n#{command}\n\n#{output}"
+        end
+    end
+  end
+
   # Start the Elixir SDK in-process, advertising the bench factory trio, and
   # block until it connects over the native transport.
   defp start_native_sdk(namespace) do
@@ -146,6 +183,7 @@ defmodule Mix.Tasks.Bench.Fleet do
   @doc "Spawn `count` runner processes and return their connected runner ids."
   def start_runners(namespace, count, extra_env) do
     runtime = Process.get(:bench_runtime, :rust)
+    ensure_built(runtime)
     connect_timeout = PortPilot.manifest(runtime)["connect_timeout_ms"]
 
     Flezha.Service.EventManager.add_handler(:runner_connected_event)

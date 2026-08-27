@@ -80,7 +80,7 @@ defmodule Mix.Tasks.Bench do
     {num_operatives, messages_per_operative} = dimensions_for_shape(shape, opts)
 
     IO.puts("Starting Flezha performance test...")
-    IO.puts("Runtime: #{runtime}")
+    IO.puts("Runtime: #{runtime}#{dispatch_note(runtime)}")
     IO.puts("Shape: #{shape}")
     IO.puts("Operatives: #{num_operatives}")
     IO.puts("Messages per operative: #{messages_per_operative}")
@@ -207,14 +207,33 @@ defmodule Mix.Tasks.Bench do
     end
   end
 
+  # Every SDK with a test-app manifest can serve this bench: the three shapes
+  # drive `do_nothing`, `entity_stress` and `dynamic_entity`, which the
+  # conformance gate already requires every runtime to carry or defer by name.
+  # Read from the manifests rather than a clause per runtime, so a new SDK is
+  # benchable the moment its app exists.
   defp parse_runtime(nil), do: :rust
-  defp parse_runtime("rust"), do: :rust
-  defp parse_runtime("java"), do: :java
-  defp parse_runtime("elixir"), do: :elixir
 
-  defp parse_runtime(other) do
-    raise "Unknown --runtime value: #{inspect(other)}. Expected \"rust\", \"java\" or \"elixir\"."
+  defp parse_runtime(name) do
+    runtimes = Flezha.Service.PortPilot.runtimes()
+
+    Enum.find(runtimes, &(Atom.to_string(&1) == name)) ||
+      raise "Unknown --runtime value: #{inspect(name)}. Expected one of: " <>
+              Enum.map_join(runtimes, ", ", &inspect/1)
   end
+
+  # A runtime whose dispatch topology is a run-time choice reports which one a
+  # number was taken under: a Node number from the single-loop default and one
+  # from a worker pool are different measurements of the same fixture.
+  defp dispatch_note(:node) do
+    case System.get_env("FLEZHA_NODE_WORKERS") do
+      nil -> " (main-loop dispatch)"
+      "0" -> " (main-loop dispatch)"
+      n -> " (#{n} dispatch workers)"
+    end
+  end
+
+  defp dispatch_note(_runtime), do: ""
 
   defp parse_shape(nil), do: :regression
   defp parse_shape("regression"), do: :regression

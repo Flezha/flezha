@@ -178,6 +178,19 @@ defmodule Flezha.Service.PortPilot do
         hd(candidates)
 
       index ->
+        # A fallback is only real if the command launches the artifact it was
+        # given. A template that never mentions `{artifact}` — one that names
+        # its own build profile inline, say — runs the same thing whichever
+        # candidate matched, so "falling back" would print a reassuring line
+        # and then fail somewhere less obvious. Refuse instead, naming the
+        # build that is actually missing.
+        unless String.contains?(manifest["command"][profile], "{artifact}") do
+          raise "the #{runtime} #{profile} runner needs #{hd(candidates)}, which does not " <>
+                  "exist; its launch command does not take an artifact, so the later " <>
+                  "candidates cannot serve in its place — build it with " <>
+                  "`#{manifest["build"][profile]}`"
+        end
+
         Logger.warning(
           "the #{runtime} #{profile} runner is #{Enum.at(candidates, index)} because " <>
             "#{hd(candidates)} does not exist; build it with `#{manifest["build"][profile]}`"
