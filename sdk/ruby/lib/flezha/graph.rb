@@ -100,7 +100,7 @@ module Flezha
 
     def check_keying(spec)
       dynamic = spec.procedures.select { |node| node.definition.entity_mode == :dynamic }
-                     .map(&:index).to_h { |index| [index, true] }
+                    .map(&:index).to_h { |index| [index, true] }
 
       spec.channels.each do |channel|
         channel.consumers.each do |consumer|

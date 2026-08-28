@@ -31,6 +31,7 @@ class ConcurrencyTest < Minitest::Test
 
     def poll(timeout_ms)
       return :shutting_down if @stopping
+
       unless @pending.empty?
         @lock.synchronize { @handed_out = true }
         return @pending.pop(true)
@@ -340,6 +341,7 @@ class ConcurrencyTest < Minitest::Test
       File.readlines(path).each_with_index do |line, index|
         next if line.lstrip.start_with?("#")
         next unless line.match?(/(^|[^$\w])\$[a-z_]\w*\s*=(?!=)/) || line.match?(/@@\w+/)
+
         # `$stdin` / `$stderr` are read, never rebound, by the logger and the
         # stdin watcher; the pattern above only matches an assignment.
         (found[path] ||= []) << index + 1

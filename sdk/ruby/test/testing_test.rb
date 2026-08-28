@@ -9,6 +9,7 @@ class TestingTest < Minitest::Test
   class Counter < Flezha::Procedure
     procedure_name "harness_counter"
     def initial_state(_entity_key) = { total: 0, seen: [] }
+
     def apply_change(state, change)
       state[:total] += change[:by]
       state[:seen] << change[:by]

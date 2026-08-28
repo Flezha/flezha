@@ -34,6 +34,7 @@ class RunnerTest < Minitest::Test
     end
 
     def start(_namespace) = @events << :start
+
     def poll(timeout_ms)
       @events << :poll
       @polled.push(:polled)

@@ -13,6 +13,7 @@ class DispatchTest < Minitest::Test
     procedure_name "counter"
     def initial_state(_key) = { total: 0, seen: [] }
     def apply_change(state, change) = state[:total] += change[:by]
+
     def process(input, ctx)
       ctx.change({ by: Integer(input) })
       "total=#{ctx.state[:total]}"

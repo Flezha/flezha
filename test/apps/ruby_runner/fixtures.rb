@@ -81,6 +81,7 @@ module Fixtures
     entity_keys(*STATIC_KEYS)
     def initial_state(_entity_key) = { seen: [] }
     def apply_change(state, change) = state[:seen] << change[:push]
+
     def process(input, ctx)
       ctx.change({ push: input })
       input
@@ -158,6 +159,7 @@ module Fixtures
     procedure_name "sugar_store_input"
     def initial_state(_entity_key) = { text_inputs: [] }
     def apply_change(state, change) = state[:text_inputs] << change[:push]
+
     def process(input, ctx)
       ctx.change({ push: input })
       input
@@ -269,6 +271,7 @@ module Fixtures
     procedure_name "tier_store_procedure"
     def initial_state(_entity_key) = { values: {} }
     def apply_change(state, change) = state[:values][change[:key]] = change[:value]
+
     def process(input, ctx)
       key, value = input.to_s.split(":", 2)
       raise "poison value" if value == "poison"
@@ -355,6 +358,7 @@ module Fixtures
     mailbox_capacity 4
     def initial_state(_entity_key) = { processed: 0 }
     def apply_change(state, _change) = state[:processed] += 1
+
     def process(input, ctx)
       ctx.change({ processed: true })
       input
@@ -390,6 +394,7 @@ module Fixtures
     dynamic_entities
     def initial_state(_entity_key) = { seen: [] }
     def apply_change(state, change) = state[:seen] << change[:push]
+
     def process(input, ctx)
       ctx.change({ push: input })
       ctx.emit(input, key: PREFIX.call(input))
@@ -413,6 +418,7 @@ module Fixtures
     dynamic_entities idle_ttl_ms: (ENV["DYN_TEST_TTL_MS"].to_i if ENV["DYN_TEST_TTL_MS"].to_i.positive?)
     def initial_state(_entity_key) = { seen: [] }
     def apply_change(state, change) = state[:seen] << change[:push]
+
     def process(input, ctx)
       ctx.change({ push: input })
       input
