@@ -41,7 +41,7 @@ Homepage = "https://github.com/alfetahe/flezha"
 Documentation = "https://github.com/alfetahe/flezha/blob/main/docs/sdk/python_sdk.md"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pyright>=1.1.390", "msgpack>=1.0"]
+dev = ["pytest>=8.0", "pyright>=1.1.390", "msgpack>=1.0", "ruff==0.16.5"]
 
 [tool.maturin]
 # The veneer is a feature of the shared ABI crate, never a crate of its own —

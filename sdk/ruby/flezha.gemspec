@@ -33,6 +33,7 @@ Gem::Specification.new do |spec|
   spec.extensions = ["ext/flz_core_ffi/extconf.rb"]
 
   spec.add_dependency "msgpack", "~> 1.7"
+  spec.add_development_dependency "rubocop", "1.90.0"
 
   spec.metadata = {
     "source_code_uri" => spec.homepage,

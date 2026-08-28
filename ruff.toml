@@ -1,0 +1,4 @@
+# Ruff is the Python SDK's formatter (`ruff format`); the width matches
+# rustfmt.toml. Pinned in sdk/python/pyproject.toml's dev group.
+line-length = 100
+target-version = "py311"
