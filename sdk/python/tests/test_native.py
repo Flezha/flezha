@@ -209,7 +209,10 @@ def test_the_dispatcher_releases_every_view_an_activation_carried() -> None:
         "changes": [{"bytes": _view_of(b"c")}],
     }
     _release_views(activation)
-    for value in (*[item["payload"] for item in activation["items"]], activation["changes"][0]["bytes"]):
+    for value in (
+        *[item["payload"] for item in activation["items"]],
+        activation["changes"][0]["bytes"],
+    ):
         with pytest.raises(Exception):
             memoryview(value)
 

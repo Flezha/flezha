@@ -278,7 +278,9 @@ class Procedure(Generic[I, O]):
         # but never mutated has nothing to journal, and `ctx.change` already
         # refuses at the point of use. A fold with no state to fold into is not.
         if self.initial_state is None and self.apply_change is not None:
-            self._refuse("declares apply_change but no initial_state; there is nothing to fold into")
+            self._refuse(
+                "declares apply_change but no initial_state; there is nothing to fold into"
+            )
         if self.clock not in ("wall", "logical", "event_time"):
             self._refuse(
                 f"declares clock {self.clock!r}; the declared clocks are wall, logical and event_time"

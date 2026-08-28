@@ -113,9 +113,7 @@ def _check_channels(spec: ClassSpec) -> None:
 
 
 def _check_keying(spec: ClassSpec) -> None:
-    dynamic = {
-        node.index for node in spec.procedures if node.proc.entity_mode == "dynamic"
-    }
+    dynamic = {node.index for node in spec.procedures if node.proc.entity_mode == "dynamic"}
 
     for channel in spec.channels:
         for consumer in channel.consumers:
@@ -140,7 +138,9 @@ def _check_keying(spec: ClassSpec) -> None:
 
 def _check_tier_and_window(spec: ClassSpec) -> None:
     if spec.effectively_once and not spec.persistent:
-        _refuse(spec, None, "declares effectively_once without persistence: the tier IS durable state")
+        _refuse(
+            spec, None, "declares effectively_once without persistence: the tier IS durable state"
+        )
     if spec.ack_granularity == "checkpoint" and not spec.effectively_once:
         _refuse(
             spec,
@@ -166,7 +166,9 @@ def _check_tier_and_window(spec: ClassSpec) -> None:
     if spec.correction_window_ms is None:
         return
     if spec.correction_window_ms == 0:
-        _refuse(spec, None, "declares a correction window of zero; a zero window can correct nothing")
+        _refuse(
+            spec, None, "declares a correction window of zero; a zero window can correct nothing"
+        )
     if not spec.effectively_once:
         _refuse(
             spec,

@@ -111,9 +111,7 @@ def test_timers_are_recorded_and_fired() -> None:
     proc = flezha.procedure(Timed)
     harness: ProcedureTestHarness[None] = ProcedureTestHarness(proc)
     outcome = harness.feed("x", now=500)
-    assert outcome.timers == [
-        {"kind": "processing_time", "scheduled_at": 1500, "register": True}
-    ]
+    assert outcome.timers == [{"kind": "processing_time", "scheduled_at": 1500, "register": True}]
     harness.fire_timer("processing_time", 1500)
     assert fired == [1500]
 

@@ -185,7 +185,11 @@ def _from_plain(annotation: Any, value: Any) -> Any:
         return {_from_plain(key, k): _from_plain(item, v) for k, v in value.items()}
 
     if isinstance(annotation, type) and isinstance(value, dict):
-        if _is_pydantic(annotation) or dataclasses.is_dataclass(annotation) or _is_attrs(annotation):
+        if (
+            _is_pydantic(annotation)
+            or dataclasses.is_dataclass(annotation)
+            or _is_attrs(annotation)
+        ):
             return _build(annotation, value)
         if _is_escape(annotation):
             return annotation.from_dict(value)  # type: ignore[attr-defined]

@@ -170,7 +170,9 @@ def _operative(
     factory_id: str, kind: str, options: dict[str, Any]
 ) -> Callable[[Callable[..., Any]], Operative]:
     def decorate(declaration: Callable[..., Any]) -> Operative:
-        if kind == "workflow" and not (_is_run_body(declaration) or _declares_channels(declaration)):
+        if kind == "workflow" and not (
+            _is_run_body(declaration) or _declares_channels(declaration)
+        ):
             raise DeclarationError(
                 factory_id,
                 getattr(declaration, "__name__", "<declaration>"),

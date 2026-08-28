@@ -354,7 +354,11 @@ async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, An
         if kind == "restore_fold":
             return _restore_fold(entity, activation)
         if kind == "snapshot_request":
-            return {"token": token, "outcome": "snapshot", "state": entity.proc.encode_state(entity.state)}
+            return {
+                "token": token,
+                "outcome": "snapshot",
+                "state": entity.proc.encode_state(entity.state),
+            }
         # Two names for one read: a live query and a migration handover both
         # want the state as JSON, and only the outcome key differs.
         if kind in ("live_state_read", "migration_serialize"):
@@ -600,7 +604,6 @@ async def dispatch(activation: dict[str, Any], core: Any, deps: DispatchDeps) ->
                     error_message(error),
                 )
         _release_views(activation)
-
 
 
 def dispatch_now(activation: dict[str, Any], core: Any, deps: DispatchDeps) -> None:

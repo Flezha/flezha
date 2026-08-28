@@ -111,9 +111,7 @@ class Ctx(Generic[S]):
         if self._identity is None:
             # Lazily, because most invocations never ask and the identity is
             # the one part of the derivation that costs an allocation.
-            self._identity = entity_identity(
-                self._operative, self._node.name, self.entity_key
-            )
+            self._identity = entity_identity(self._operative, self._node.name, self.entity_key)
         answer = stable_id(self._identity, self._change_seq, self._ordinal)
         self._ordinal += 1
         return answer
@@ -145,9 +143,7 @@ class Ctx(Generic[S]):
 
         ``channel`` selects one when the procedure produces on several.
         """
-        targets = (
-            [c for c in self._outgoing if c.name == channel] if channel else self._outgoing
-        )
+        targets = [c for c in self._outgoing if c.name == channel] if channel else self._outgoing
         if not targets:
             raise EmitError(
                 f"{self._node.name}: emits on channel `{channel}`, which it does not produce on"

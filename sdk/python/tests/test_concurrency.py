@@ -146,7 +146,10 @@ def test_a_block_policy_wedge_recovers_on_a_base_pool_of_one() -> None:
     """
     drained = threading.Event()
     core = FakeCore(
-        [work_activation(1, "producer", factory="solo"), work_activation(2, "consumer", factory="solo")],
+        [
+            work_activation(1, "producer", factory="solo"),
+            work_activation(2, "consumer", factory="solo"),
+        ],
         starve_after=0.02,
     )
     # The first completion parks until a second worker gets far enough to
@@ -210,9 +213,7 @@ def test_ordering_is_identical_under_either_executor(kind: str) -> None:
         for index, payload in enumerate(payloads):
             core._activations.append(work_activation(index, payload, factory="solo"))
             assert _until(lambda index=index: len(core.completed) == index + 1)
-        served = [
-            _payload_of(result) for result in core.completed
-        ]
+        served = [_payload_of(result) for result in core.completed]
         assert served == payloads
     finally:
         pool.stop()

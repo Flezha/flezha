@@ -192,9 +192,7 @@ class ProcedureTestHarness(Generic[S]):
             "entity_key": self._entity_key,
             "change_seq": self._change_seq,
         }
-        ctx, returned = run_now(
-            invoke(self._entity, activation, self._deps, now, replay, body)
-        )
+        ctx, returned = run_now(invoke(self._entity, activation, self._deps, now, replay, body))
         # A returned value is emitted, exactly as the dispatcher's work arm does.
         if returned is not None:
             ctx.emit(returned)
@@ -209,7 +207,9 @@ class ProcedureTestHarness(Generic[S]):
         )
 
 
-def replay_equals(proc: Procedure[Any, Any], inputs: Iterable[Any], *, entity_key: str | None = None) -> bool:
+def replay_equals(
+    proc: Procedure[Any, Any], inputs: Iterable[Any], *, entity_key: str | None = None
+) -> bool:
     """Drive ``proc`` over ``inputs`` and assert the replay agrees."""
     harness: ProcedureTestHarness[Any] = ProcedureTestHarness(proc, entity_key=entity_key)
     harness.apply_inputs(inputs)

@@ -131,7 +131,12 @@ def every_workflow_key(args: dict[str, str], ctx: flezha.WorkflowCtx) -> str:
 
 def _emitted() -> dict[str, set[str]]:
     """Every key the Python builder can produce, over the fixtures above."""
-    emitted: dict[str, set[str]] = {"class": set(), "channel": set(), "procedure": set(), "workflow": set()}
+    emitted: dict[str, set[str]] = {
+        "class": set(),
+        "channel": set(),
+        "procedure": set(),
+        "workflow": set(),
+    }
     for operative in (every_key, static_key, every_workflow_key):
         decl = graph.to_host_class_decl(operative.spec)
         emitted["class"] |= set(decl)
@@ -174,7 +179,11 @@ def test_the_fixture_names_the_python_builder_as_a_reader() -> None:
 
 @pytest.mark.parametrize(
     "operative,factory",
-    [(every_key, "every_key"), (static_key, "static_key"), (every_workflow_key, "every_workflow_key")],
+    [
+        (every_key, "every_key"),
+        (static_key, "static_key"),
+        (every_workflow_key, "every_workflow_key"),
+    ],
 )
 def test_each_declaration_carries_the_python_language_byte(
     operative: flezha.Operative, factory: str

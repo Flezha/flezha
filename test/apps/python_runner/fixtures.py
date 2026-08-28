@@ -79,9 +79,7 @@ do_nothing = passthrough("do_nothing_procedure")
 
 @flezha.stream_operative("do_nothing")
 def do_nothing_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(do_nothing).named("echo").sink(
-        "do_nothing_echo", encode=raw
-    )
+    c.input("input", decode=text).into(do_nothing).named("echo").sink("do_nothing_echo", encode=raw)
 
 
 @flezha.stream_operative("bench_echo")
@@ -154,9 +152,7 @@ class StaticEntry(SeenLog):
         return [first if first in STATIC_KEYS else "d"]
 
 
-static_entry = flezha.procedure(
-    StaticEntry, name="static_entry_procedure", entity_keys=STATIC_KEYS
-)
+static_entry = flezha.procedure(StaticEntry, name="static_entry_procedure", entity_keys=STATIC_KEYS)
 macro_static_entry = flezha.procedure(
     StaticEntry, name="macro_static_entry_procedure", entity_keys=STATIC_KEYS
 )
@@ -170,18 +166,18 @@ macro_static_downstream = passthrough("macro_static_downstream_procedure")
 
 @flezha.stream_operative("static_entity")
 def static_entity_operative(c: flezha.Channels) -> None:
-    c.input("input", decode=text).into(static_entry).named("hop").into(
-        static_downstream
-    ).named("kafka").sink("test_kafka", encode=raw)
+    c.input("input", decode=text).into(static_entry).named("hop").into(static_downstream).named(
+        "kafka"
+    ).sink("test_kafka", encode=raw)
 
 
 @flezha.stream_operative("sugar_static_entity")
 def sugar_static_entity_operative(c: flezha.Channels) -> None:
     """The reference pipeline sugar leaves the hop unnamed and names the plugin
     channel after the plugin."""
-    c.input("input", decode=text).into(macro_static_entry).into(
-        macro_static_downstream
-    ).named("test_kafka").sink("test_kafka", encode=raw)
+    c.input("input", decode=text).into(macro_static_entry).into(macro_static_downstream).named(
+        "test_kafka"
+    ).sink("test_kafka", encode=raw)
 
 
 mixed_macro_entry = passthrough("mixed_macro_entry_procedure")
@@ -639,9 +635,6 @@ class BenchCheckpoint(KeyedUpsert):
 bench_checkpoint = flezha.procedure(BenchCheckpoint, name="bench_checkpoint_procedure")
 
 
-
-
-
 @flezha.stream_operative("bench_checkpoint")
 def bench_checkpoint_operative(c: flezha.Channels) -> None:
     c.effectively_once().checkpoint_every(_env_int("FLEZHA_BENCH_CHECKPOINT_EVERY", 500) or 500)
@@ -688,9 +681,7 @@ candle = flezha.procedure(Candle, name="candle_procedure", clock="event_time")
 @flezha.stream_operative("candle")
 def candle_operative(c: flezha.Channels) -> None:
     c.effectively_once().correction_window(600_000)
-    c.input("input", decode=text).into(candle).named("sink").keyed().sink(
-        "tier_sink", encode=raw
-    )
+    c.input("input", decode=text).into(candle).named("sink").keyed().sink("tier_sink", encode=raw)
 
 
 # -- poison_probe / wedge_probe ----------------------------------------------
@@ -750,9 +741,6 @@ def wedge_probe_operative(c: flezha.Channels) -> None:
 # deadline out, and the firing closes the session. Single-entity so the e2e's
 # crash-resume half exercises a durable Entity. The timeout is read from
 # `TIMER_TEST_TIMEOUT_MS` (the e2e sets it short).
-
-
-
 
 
 class SessionTimeout:
@@ -862,9 +850,6 @@ class DynamicEntity(SeenLog):
     def process(self, value: str, ctx: flezha.Ctx[dict[str, Any]]) -> str:
         ctx.change({"push": value})
         return value
-
-
-
 
 
 dynamic_entity = flezha.procedure(
