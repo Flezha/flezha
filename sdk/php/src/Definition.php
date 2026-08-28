@@ -236,19 +236,28 @@ final class Definition
     private function refuseContradictions(): void
     {
         if ($this->decl->entityKeys !== null && $this->decl->dynamicEntities) {
-            throw new DeclarationException($this->class, $this->name,
-                'declares both a static key set and dynamic entities; the two modes are exclusive');
+            throw new DeclarationException(
+                $this->class,
+                $this->name,
+                'declares both a static key set and dynamic entities; the two modes are exclusive'
+            );
         }
         if ($this->decl->entityKeys === []) {
-            throw new DeclarationException($this->class, $this->name,
-                'declares an empty static key set; a static procedure names its entities');
+            throw new DeclarationException(
+                $this->class,
+                $this->name,
+                'declares an empty static key set; a static procedure names its entities'
+            );
         }
         // State without a fold is legitimate: a value seeded at start and read
         // but never mutated has nothing to journal, and `Ctx::change()` already
         // refuses at the point of use. A fold with no state to fold into is not.
         if (!$this->declares('state') && $this->declares('applyChange')) {
-            throw new DeclarationException($this->class, $this->name,
-                'declares applyChange but no state; there is nothing for a change to fold into');
+            throw new DeclarationException(
+                $this->class,
+                $this->name,
+                'declares applyChange but no state; there is nothing for a change to fold into'
+            );
         }
     }
 

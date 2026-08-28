@@ -62,16 +62,22 @@ final class Validate
                 }
                 $sinks[$channel->name] = true;
             } elseif ($channel->keyed) {
-                self::refuse($spec, $channel->name,
+                self::refuse(
+                    $spec,
+                    $channel->name,
                     'is declared keyed but has no plugin wire; output identity stamps only exist '
-                    . 'on plugin-bound frames, so add a sink(...) or drop the keyed');
+                    . 'on plugin-bound frames, so add a sink(...) or drop the keyed'
+                );
             }
 
             if ($spec->effectivelyOnce && $channel->kind === 'plugin' && !$channel->keyed) {
-                self::refuse($spec, $channel->name,
+                self::refuse(
+                    $spec,
+                    $channel->name,
                     'has a plugin wire but is not declared keyed; the effectively-once tier '
                     . 'deduplicates by output identity, so every plugin-bound channel of a class '
-                    . 'that declares effectivelyOnce must opt in with keyed');
+                    . 'that declares effectivelyOnce must opt in with keyed'
+                );
             }
 
             if ($channel->overflow !== Overflow::DropNothing) {
@@ -94,17 +100,23 @@ final class Validate
             }
 
             if ($channel->retryMax === 0) {
-                self::refuse($spec, $channel->name,
+                self::refuse(
+                    $spec,
+                    $channel->name,
                     'declares retryMax(0); at least one attempt is required — raise a '
-                    . 'non-retryable error to park without retries');
+                    . 'non-retryable error to park without retries'
+                );
             }
 
             if ($channel->kind === 'entry' && $channel->consumers === []) {
                 self::refuse($spec, $channel->name, 'is an entry channel that names no consumer');
             }
             if ($channel->kind === 'inter_proc' && $channel->consumers === []) {
-                self::refuse($spec, $channel->name,
-                    'is an inter-procedure channel that names no consumer');
+                self::refuse(
+                    $spec,
+                    $channel->name,
+                    'is an inter-procedure channel that names no consumer'
+                );
             }
         }
     }
@@ -143,9 +155,12 @@ final class Validate
             $clock = $decl->clock;
 
             if ($clock === Clock::EventTime && !$definition->declares('eventTime')) {
-                self::refuse($spec, $node->name,
+                self::refuse(
+                    $spec,
+                    $node->name,
                     'declares an event_time clock but no eventTime method; the core evaluates '
-                    . 'the declared clock per input and has nothing to evaluate');
+                    . 'the declared clock per input and has nothing to evaluate'
+                );
             }
             if ($clock !== Clock::EventTime && $definition->declares('eventTime')) {
                 self::refuse($spec, $node->name, sprintf(
@@ -155,14 +170,20 @@ final class Validate
                 ));
             }
             if ($clock === Clock::Logical && !$definition->declares('state')) {
-                self::refuse($spec, $node->name,
+                self::refuse(
+                    $spec,
+                    $node->name,
                     'declares a logical clock but no state; logical time IS the durable change '
-                    . 'sequence, which never advances for a procedure that records no changes');
+                    . 'sequence, which never advances for a procedure that records no changes'
+                );
             }
             if ($definition->entityMode() === 'static' && !$definition->declares('entitiesFor')) {
-                self::refuse($spec, $node->name,
+                self::refuse(
+                    $spec,
+                    $node->name,
                     'declares a static key set without an entitiesFor; static keying needs the '
-                    . 'method that says which declared entities an input belongs to');
+                    . 'method that says which declared entities an input belongs to'
+                );
             }
 
             $capacity = $decl->mailboxCapacity;
@@ -174,9 +195,12 @@ final class Validate
                 ));
             }
             if ($decl->maxEntities === 0) {
-                self::refuse($spec, $node->name,
+                self::refuse(
+                    $spec,
+                    $node->name,
                     'declares maxEntities 0; a dynamic procedure that may hold no entity can '
-                    . 'process nothing');
+                    . 'process nothing'
+                );
             }
 
             $floor = $decl->minReadableSchemaVersion;
@@ -205,47 +229,68 @@ final class Validate
     private static function tierAndWindow(ClassSpec $spec): void
     {
         if ($spec->effectivelyOnce && !$spec->persistent) {
-            self::refuse($spec, null,
-                'declares effectivelyOnce without persistence: the tier IS durable state');
+            self::refuse(
+                $spec,
+                null,
+                'declares effectivelyOnce without persistence: the tier IS durable state'
+            );
         }
         if ($spec->ackGranularity === AckGranularity::Checkpoint && !$spec->effectivelyOnce) {
-            self::refuse($spec, null,
+            self::refuse(
+                $spec,
+                null,
                 'declares checkpoint acknowledgement without effectivelyOnce; the checkpoint is '
                 . "where the tier's consumed offset advances, and a class without the tier has "
-                . 'no durable offset to hold back');
+                . 'no durable offset to hold back'
+            );
         }
         if ($spec->checkpointEvery === 0) {
-            self::refuse($spec, null,
+            self::refuse(
+                $spec,
+                null,
                 'declares checkpointEvery(0); an interval that closes every zero inputs is not '
-                . 'an interval — omit it to close only on an explicit checkpoint');
+                . 'an interval — omit it to close only on an explicit checkpoint'
+            );
         }
         if ($spec->checkpointOutputs === CheckpointOutputs::AtCheckpoint
             && $spec->checkpointMaxDelayMs === null) {
-            self::refuse($spec, null,
+            self::refuse(
+                $spec,
+                null,
                 'declares outputsAtCheckpoint with no maximum delay; an interval that never '
-                . 'closes would hold its outputs forever on a quiet entity');
+                . 'closes would hold its outputs forever on a quiet entity'
+            );
         }
         if ($spec->correctionWindowMs === null) {
             return;
         }
         if ($spec->correctionWindowMs === 0) {
-            self::refuse($spec, null,
-                'declares a correction window of zero; a zero window can correct nothing');
+            self::refuse(
+                $spec,
+                null,
+                'declares a correction window of zero; a zero window can correct nothing'
+            );
         }
         if (!$spec->effectivelyOnce) {
-            self::refuse($spec, null,
+            self::refuse(
+                $spec,
+                null,
                 'declares a correction window without effectivelyOnce; correction replays the '
                 . 'input log against a rewound baseline, and only the tier journals inputs '
-                . 'before forwarding them');
+                . 'before forwarding them'
+            );
         }
         foreach ($spec->procedures as $node) {
             if ($node->definition->decl->clock === Clock::EventTime) {
                 return;
             }
         }
-        self::refuse($spec, null,
+        self::refuse(
+            $spec,
+            null,
             'declares a correction window but no procedure declares an event_time clock; '
-            . 'correction orders a replayed slice by event time');
+            . 'correction orders a replayed slice by event time'
+        );
     }
 
     /** Every procedure reachable from an entry channel, and no cycle among them. */
@@ -257,8 +302,11 @@ final class Validate
         ));
 
         if ($spec->kind === 'stream' && $entries === []) {
-            self::refuse($spec, null,
-                'declares no entry channel; a stream class is fed by the controller');
+            self::refuse(
+                $spec,
+                null,
+                'declares no entry channel; a stream class is fed by the controller'
+            );
         }
         if ($spec->procedures === []) {
             if ($spec->kind === 'stream') {
@@ -300,9 +348,12 @@ final class Validate
                 return;
             }
             if ($seen === 'grey') {
-                self::refuse($spec, $spec->procedures[$index]->name,
+                self::refuse(
+                    $spec,
+                    $spec->procedures[$index]->name,
                     'is on a cycle; an operative topology is a DAG — a node\'s output may never '
-                    . 'reach its own input');
+                    . 'reach its own input'
+                );
             }
             $colour[$index] = 'grey';
             foreach ($successors[$index] as $next) {
@@ -325,10 +376,13 @@ final class Validate
     {
         if ($spec->kind !== 'workflow') {
             if ($spec->syncDurability) {
-                self::refuse($spec, null,
+                self::refuse(
+                    $spec,
+                    null,
                     'declares syncDurability on a stream class; a stream class acknowledges at '
                     . 'input rates, and a remote round trip per acknowledgement is not a '
-                    . 'guarantee it can keep');
+                    . 'guarantee it can keep'
+                );
             }
 
             return;
@@ -341,8 +395,11 @@ final class Validate
             self::refuse($spec, null, 'is a workflow class and cannot declare a correction window');
         }
         if ($spec->run !== null && $spec->channels !== []) {
-            self::refuse($spec, null,
-                'declares a run body and channels; a run-sugar workflow is one imperative body');
+            self::refuse(
+                $spec,
+                null,
+                'declares a run body and channels; a run-sugar workflow is one imperative body'
+            );
         }
         if ($spec->syncDurability && !$spec->persistent) {
             self::refuse($spec, null, 'declares syncDurability without persistence');

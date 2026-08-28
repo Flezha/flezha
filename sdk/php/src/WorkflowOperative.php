@@ -32,12 +32,18 @@ abstract class WorkflowOperative extends Operative
             ->getDeclaringClass()->getName() !== Operative::class;
 
         if ($hasRun && $hasChannels) {
-            throw new DeclarationException($declaration->factoryId, null,
-                'declares both a run body and a channels graph; a workflow is one or the other');
+            throw new DeclarationException(
+                $declaration->factoryId,
+                null,
+                'declares both a run body and a channels graph; a workflow is one or the other'
+            );
         }
         if (!$hasRun && !$hasChannels) {
-            throw new DeclarationException($declaration->factoryId, null,
-                'declares neither a run body nor a channels graph');
+            throw new DeclarationException(
+                $declaration->factoryId,
+                null,
+                'declares neither a run body nor a channels graph'
+            );
         }
 
         $builder = static::builder($declaration);

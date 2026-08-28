@@ -138,9 +138,12 @@ final class Builder
             if ($node->class === $class) {
                 return $node;
             }
-            throw new DeclarationException($this->factoryId, $identity,
+            throw new DeclarationException(
+                $this->factoryId,
+                $identity,
                 'two different procedures claim this node identity; name one of them on the '
-                . '`into(...)` so each node has its own');
+                . '`into(...)` so each node has its own'
+            );
         }
 
         $node = new ProcNode(count($this->procedures), $identity, $class, $definition);

@@ -150,8 +150,11 @@ final class Edge
     public function sink(string $name, ?callable $encode = null): void
     {
         if ($this->from[0] !== 'procedure') {
-            throw new DeclarationException($this->builder->factoryId, $name,
-                'a plugin sink is fed by a procedure; wire the entry channel into one first');
+            throw new DeclarationException(
+                $this->builder->factoryId,
+                $name,
+                'a plugin sink is fed by a procedure; wire the entry channel into one first'
+            );
         }
 
         $this->channel('plugin', $name, [], $encode);
