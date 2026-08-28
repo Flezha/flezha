@@ -116,7 +116,7 @@ docs/sdk/ruby_sdk.md:bounded to one core
 docs/sdk/ruby_sdk.md:bounded by a timeout
 sdk/ruby/test/native_test.rb:a bounded poll
 test/apps/ruby_runner/fixtures.rb:the same bounded procedure
-flz_core_ffi/src/ruby_glue.rs:an unbounded coordinator send
+flz_core_ffi/src/:an unbounded coordinator send
 sdk/ruby/lib/flezha/executor.rb:Bounded so a fetcher
 
 # --- plain English: a drain with a time bound on it

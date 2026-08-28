@@ -123,7 +123,7 @@ it is the one that makes three of the design's claims true for free:
   which spins on `drain_active`. A gated Entity blocks them exactly as a
   retry-backoff Entity does — and exactly as a PARKED producer did, since a
   parked producer's activation was still outstanding. Same precedent, same
-  behaviour, unbounded in both.
+  behaviour, with no time limit in either.
 - **`try_assemble` needs no guard at all.** Nothing can win `drain_active` while
   the Entity is gated, so rule 1 is structural. `tasks.md` 2.2 put the holdback
   drain in `try_assemble`/`assemble_batch`; that is the wrong place under

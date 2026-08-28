@@ -23,7 +23,7 @@ defmodule Flezha.Runner.FleetManager do
   @superseded_ttl_ms 600_000
   # Runners the controller is itself closing, so the close their sockets report
   # is diagnosed as expected rather than as an incident. Same mechanism as the
-  # fence above — a TTL-bounded mark on an identity string, pruned on the
+  # fence above — a TTL-expiring mark on an identity string, pruned on the
   # cleanup tick — and deliberately a separate table: the fence decides
   # correctness, this decides only what gets reported.
   @retiring_table :flezha_retiring_runners

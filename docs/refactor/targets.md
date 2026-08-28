@@ -1,0 +1,965 @@
+# Refactor targets (measured at `42ac2a19`)
+
+Rendered by `scripts/refactor_metrics.py --targets`; the ceilings are charter §7.
+
+
+## Files over 800 lines (52)
+
+- `sdk/rust/src/workflow/mod.rs (4280)` — sdk/rust
+- `lib/flezha/service/cli_manager.ex (4262)` — lib/flezha/service
+- `test/apps/rust_runner/src/main.rs (3517)` — test/apps
+- `flz_core/src/host.rs (3389)` — flz_core
+- `sdk/rust/tests/operative_dispatch.rs (2628)` — sdk/rust
+- `flz_core_ffi/tests/abi_scenario.rs (2128)` — flz_core_ffi
+- `lib/flezha/state/wal_writer.ex (2019)` — lib/flezha/state
+- `sdk/rust/src/operative/dispatcher.rs (2012)` — sdk/rust
+- `test/plugin/kafka/producer_worker_test.exs (1639)` — test
+- `sdk/rust/src/channel/builder.rs (1619)` — sdk/rust
+- `flz_core/src/poll_core.rs (1567)` — flz_core
+- `flz_core/src/workflow/driver.rs (1518)` — flz_core
+- `lib/flezha/plugin/provider/kafka/producer_worker.ex (1515)` — lib/flezha/plugin
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java (1484)` — sdk/java
+- `test/flezha/convergence/convergence_test.exs (1465)` — test
+- `lib/flezha/plugin/extension/table.ex (1419)` — lib/flezha/plugin
+- `lib/flezha/runner/fleet_manager.ex (1338)` — lib/flezha/runner
+- `lib/mix/tasks/bench/roundtrip.ex (1324)` — lib/mix
+- `sdk/rust/tests/entity_timers.rs (1301)` — sdk/rust
+- `test/system/workflow_crash_resume_e2e_test.exs (1291)` — test
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java (1281)` — sdk/java
+- `lib/mix/tasks/bench/workflow.ex (1271)` — lib/mix
+- `lib/flezha/service/operative_manager.ex (1188)` — lib/flezha/service
+- `sdk/rust/src/runner/poll_core_tests.rs (1153)` — sdk/rust
+- `lib/flezha/service/hub_manager.ex (1116)` — lib/flezha/service
+- `sdk/java/flezha-sdk-processor/src/main/java/com/flezha/sdk/processor/FlezhaProcessor.java (1075)` — sdk/java
+- `lib/flezha/plugin/provider/websocket.ex (1055)` — lib/flezha/plugin
+- `flz_core_ffi/src/python_glue.rs (1010)` — flz_core_ffi
+- `flz_core_ffi/src/napi_host.rs (1008)` — flz_core_ffi
+- `flz_core/src/entity.rs (985)` — flz_core
+- `test/flezha_test.exs (979)` — test
+- `cli/src/reset.rs (954)` — cli
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationDispatcher.java (952)` — sdk/java
+- `lib/flezha/state/proc_journal.ex (945)` — lib/flezha/state
+- `test/flezha/state/wal_writer_outbox_test.exs (936)` — test
+- `sdk/rust/src/operative/builder.rs (935)` — sdk/rust
+- `flz_transport/src/utility/path_helper.rs (922)` — flz_transport
+- `flz_core_ffi/src/ruby_glue.rs (916)` — flz_core_ffi
+- `test/apps/python_runner/fixtures.py (904)` — test/apps
+- `flz_core/src/routing.rs (903)` — flz_core
+- `test/plugin/provider/websocket_subscription_source_test.exs (899)` — test
+- `flz_core_ffi/src/napi_glue.rs (890)` — flz_core_ffi
+- `flz_core/src/flusher.rs (886)` — flz_core
+- `lib/flezha/operative/lifecycle.ex (873)` — lib/flezha/operative
+- `flz_core/src/fast.rs (866)` — flz_core
+- `flz_nif/src/quic_driver.rs (864)` — flz_nif
+- `test/plugin/provider/http_poll_test.exs (856)` — test
+- `sdk/rust/tests/operative_topology.rs (824)` — sdk/rust
+- `lib/flezha/state/input_log.ex (822)` — lib/flezha/state
+- `sdk/rust/src/lib.rs (821)` — sdk/rust
+- `lib/flezha/runner/stream_channel.ex (806)` — lib/flezha/runner
+- `lib/flezha/convergence/loop.ex (804)` — lib/flezha/convergence
+
+## Production functions over 50 lines (147)
+
+- `flz_core/src/host.rs:335 register_host_class (502)` — flz_core
+- `flz_nif/src/quic_driver.rs:130 driver_loop (451)` — flz_nif
+- `sdk/java/flezha-sdk-processor/src/main/java/com/flezha/sdk/processor/FlezhaProcessor.java:569 generateProcedure (290)` — sdk/java
+- `sdk/rust/src/operative/builder.rs:125 build_topology_with_persistence (282)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:246 invoke_once (249)` — sdk/rust
+- `flz_core/src/host.rs:1705 resolve_item (228)` — flz_core
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:255 build (225)` — sdk/java
+- `flz_nif/src/uds_driver.rs:157 driver_loop (200)` — flz_nif
+- `sdk/java/flezha-sdk-processor/src/main/java/com/flezha/sdk/processor/FlezhaProcessor.java:101 generateState (194)` — sdk/java
+- `flezha-macros/src/state.rs:46 expand (179)` — flezha-macros
+- `flz_transport/src/transport/quic.rs:446 driver_loop (174)` — flz_transport
+- `lib/flezha/plugin/provider_behaviour.ex:329 __using__ (171)` — lib/flezha/plugin
+- `flz_core/src/fast.rs:259 start (161)` — flz_core
+- `flz_core/src/fast.rs:636 dispatch (160)` — flz_core
+- `sdk/rust/src/operative/dispatcher.rs:540 dispatch_item (160)` — sdk/rust
+- `lib/flezha/healthz/server.ex:148 compute_health (147)` — lib/flezha/healthz
+- `flz_core/src/routing.rs:624 deliver_to_consumer (137)` — flz_core
+- `sdk/java/flezha-sdk-processor/src/main/java/com/flezha/sdk/processor/FlezhaProcessor.java:308 expandJournalField (132)` — sdk/java
+- `flz_core/src/workflow/driver.rs:409 drive_chain (131)` — flz_core
+- `flz_nif/src/quic_driver.rs:584 drain_readable (127)` — flz_nif
+- `lib/mix/tasks/bench.ex:321 run_performance_test (127)` — lib/mix
+- `lib/mix/tasks/bench/roundtrip.ex:92 run (124)` — lib/mix
+- `sdk/rust/src/workflow/spec.rs:152 build_dag (116)` — sdk/rust
+- `cli/src/controller.rs:107 handle_stop (114)` — cli
+- `flz_core/src/command/operative_start.rs:157 metadata_response (113)` — flz_core
+- `lib/mix/tasks/bench/extension.ex:104 run_kafka_chain_scenario (110)` — lib/mix
+- `cli/src/reset.rs:134 handle_reset_command (107)` — cli
+- `flz_core/src/host.rs:1529 apply_result (107)` — flz_core
+- `flz_core/src/workflow/driver.rs:583 run_iteration (106)` — flz_core
+- `sdk/rust/src/workflow/spec.rs:16 build_spec (106)` — sdk/rust
+- `flz_core/src/command/entity_state.rs:142 serialize_selected_state (102)` — flz_core
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/workflow/WorkflowSpec.java:157 build (101)` — sdk/java
+- `lib/mix/tasks/bench/roundtrip.ex:843 report (99)` — lib/mix
+- `flz_core/src/command/mod.rs:208 handle_command (98)` — flz_core
+- `flz_core/src/operative/instance.rs:116 with_options (97)` — flz_core
+- `flz_core/src/poll_core.rs:1193 assemble_batch (96)` — flz_core
+- `flz_core/src/command/mod.rs:101 get_handler (96)` — flz_core
+- `flz_core_ffi/src/python_glue.rs:362 activation_to_python (95)` — flz_core_ffi
+- `flz_core/src/command/entity_state.rs:381 apply_init_values (94)` — flz_core
+- `sdk/rust/src/operative/dispatcher.rs:1630 build_entity_slot (93)` — sdk/rust
+- `flz_core_ffi/src/napi_glue.rs:312 activation_to_js (93)` — flz_core_ffi
+- `flz_core_ffi/src/ruby_glue.rs:318 activation_to_ruby (93)` — flz_core_ffi
+- `flz_core/src/host.rs:859 build_host_dag (92)` — flz_core
+- `lib/mix/tasks/bench/workflow.ex:635 wake_storms (92)` — lib/mix
+- `sdk/rust/src/operative/dispatcher.rs:1527 run_activation (89)` — sdk/rust
+- `lib/flezha/application.ex:33 start_controller (88)` — lib/flezha
+- `lib/mix/tasks/bench/workflow.ex:414 run_turns (88)` — lib/mix
+- `flz_core/src/command/operative_start.rs:10 handle (88)` — flz_core
+- `cli/src/plugin.rs:162 handle_enable (87)` — cli
+- `flz_core/src/host.rs:1367 to_schema (86)` — flz_core
+- `flz_core/src/control_unit.rs:271 sock_conn (86)` — flz_core
+- `flezha-macros/src/operative.rs:23 parse (85)` — flezha-macros
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/workflow/WorkflowSpec.java:276 topologicalOrder (85)` — sdk/java
+- `lib/flezha/operative/lifecycle.ex:180 complete_init (84)` — lib/flezha/operative
+- `lib/mix/tasks/bench/workflow.ex:331 run_chain (82)` — lib/mix
+- `flz_nif/src/client.rs:211 spawn_client_stream (80)` — flz_nif
+- `cli/src/reset.rs:242 parse_flags (79)` — cli
+- `sdk/php/src/Graph/Validate.php:150 procedures (78)` — sdk/php
+- `flz_transport/src/transport/quic.rs:363 drive_handshake (78)` — flz_transport
+- `lib/mix/tasks/bench/roundtrip.ex:219 build_config (78)` — lib/mix
+- `lib/flezha/service/operative_manager.ex:858 finalize_init_operative (77)` — lib/flezha/service
+- `sdk/php/src/Graph/Validate.php:297 topology (77)` — sdk/php
+- `sdk/node/src/graph.ts:146 checkProcedures (76)` — sdk/node
+- `sdk/rust/src/operative/dispatcher.rs:775 run_collecting (75)` — sdk/rust
+- `sdk/php/src/Graph/Validate.php:48 channels (75)` — sdk/php
+- `flz_transport/src/transport/quic.rs:148 connect (74)` — flz_transport
+- `lib/flezha/service/cli_manager.ex:2387 do_controller_stop (74)` — lib/flezha/service
+- `flz_core/src/flusher.rs:241 fold (74)` — flz_core
+- `sdk/rust/src/operative/dispatcher.rs:851 compensate_collecting (74)` — sdk/rust
+- `lib/flezha/plugin/installer.ex:194 do_upgrade (73)` — lib/flezha/plugin
+- `lib/flezha/cluster/k8s_pod_discovery.ex:23 get_nodes (72)` — lib/flezha/cluster
+- `sdk/node/src/graph.ts:44 checkChannels (72)` — sdk/node
+- `flz_core/src/shutdown.rs:105 run_graceful_shutdown (72)` — flz_core
+- `flz_core/src/poll_core.rs:1306 stage_popped_item (70)` — flz_core
+- `lib/flezha/convergence/diff.ex:62 compute (69)` — lib/flezha/convergence
+- `flz_nif/src/frame_buffer.rs:67 feed (69)` — flz_nif
+- `flz_core/src/host.rs:2200 apply_prepare_outcome (69)` — flz_core
+- `lib/mix/tasks/bench.ex:72 run (68)` — lib/mix
+- `lib/mix/tasks/flezha.bench.observability.ex:21 run (68)` — lib/mix
+- `flz_core/src/command/compact.rs:26 handle (67)` — flz_core
+- `cli/src/utils.rs:385 extract_opts_with_default_namespace (67)` — cli
+- `flz_core/src/routing.rs:67 enqueue (67)` — flz_core
+- `flz_nif/src/uds_driver.rs:444 accept_connections (66)` — flz_nif
+- `sdk/php/src/Graph/Validate.php:229 tierAndWindow (66)` — sdk/php
+- `flz_core/src/workflow/driver.rs:227 run (66)` — flz_core
+- `cli/src/operative.rs:36 handle_start (65)` — cli
+- `lib/flezha/service/cli_manager.ex:2745 print_mem_top_text (65)` — lib/flezha/service
+- `lib/flezha/runner/control_channel.ex:396 handle_workflow_completed (65)` — lib/flezha/runner
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/StableId.java:19 StableId (65)` — sdk/java
+- `sdk/rust/src/operative/dispatcher.rs:973 snapshot_frame (65)` — sdk/rust
+- `lib/flezha/convergence/loop.ex:236 do_run_tick (65)` — lib/flezha/convergence
+- `lib/flezha/observability/audit_log/writer.ex:388 do_rotate (64)` — lib/flezha/observability
+- `flz_transport/src/utility/path_helper.rs:691 the_pinned_environment_contract_is_what_the_ladder_reads (64)` — flz_transport
+- `flz_nif/src/quic_driver.rs:801 build_quic_server_config (64)` — flz_nif
+- `flz_core/src/host.rs:2433 restore_fold_exclusive (62)` — flz_core
+- `lib/mix/tasks/bench/workflow.ex:171 config (62)` — lib/mix
+- `lib/flezha/plugin/provider/kafka/worker_registry.ex:219 handle_call (62)` — lib/flezha/plugin
+- `flz_core/src/workflow/driver.rs:768 next_iteration_seed (61)` — flz_core
+- `sdk/python/src/flezha/graph.py:52 _check_channels (61)` — sdk/python
+- `flz_core_ffi/src/lib.rs:446 flz_core_spawn_workflow (61)` — flz_core_ffi
+- `lib/flezha/plugin/provider/kafka/producer_worker.ex:188 init (61)` — lib/flezha/plugin
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:787 wireConsumer (60)` — sdk/java
+- `flz_transport/src/ffi/api.rs:111 flezha_frame_build (60)` — flz_transport
+- `sdk/python/src/flezha/dispatch.py:317 answer (60)` — sdk/python
+- `flz_nif/src/uds_driver.rs:93 init_and_run (59)` — flz_nif
+- `cli/src/reset.rs:710 print_reset_help (59)` — cli
+- `lib/flezha/plugin/provider_behaviour.ex:389 help (59)` — lib/flezha/plugin
+- `sdk/node/src/graph.ts:278 checkTopology (58)` — sdk/node
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/GraphShape.java:40 order (58)` — sdk/java
+- `flz_core_ffi/src/python_glue.rs:480 effect_in (58)` — flz_core_ffi
+- `flz_core/src/poll_core.rs:616 promote_due (57)` — flz_core
+- `flz_core_ffi/src/napi_glue.rs:471 effect_in (57)` — flz_core_ffi
+- `flz_transport/src/service/payloader.rs:91 extract_payload_non_blocking (56)` — flz_transport
+- `flz_core_ffi/src/ruby_glue.rs:440 effect_in (56)` — flz_core_ffi
+- `sdk/java/flezha-sdk-native/src/main/java/com/flezha/sdk/native_/NativeLibraryLoader.java:35 loadNativeLibrary (56)` — sdk/java
+- `flz_core/src/host.rs:1988 run_workflow_sugar (56)` — flz_core
+- `lib/flezha/runner/runner_supervisor.ex:16 init (55)` — lib/flezha/runner
+- `lib/mix/tasks/bench.ex:454 print_results (55)` — lib/mix
+- `lib/mix/tasks/bench/workflow.ex:503 run_sleep (55)` — lib/mix
+- `lib/flezha/runner/fleet_manager.ex:568 runner_cleanup (55)` — lib/flezha/runner
+- `flz_core/src/host.rs:1103 fold_workflow_outcome (54)` — flz_core
+- `sdk/ruby/lib/flezha/dispatch.rb:167 run_work (54)` — sdk/ruby
+- `lib/flezha/plugin/provider_behaviour.ex:334 build (54)` — lib/flezha/plugin
+- `sdk/node/src/runner.ts:197 run (54)` — sdk/node
+- `flz_core/src/workflow/driver.rs:1213 ship_and_await (54)` — flz_core
+- `lib/flezha/boot/state_path_migrator.ex:239 resolve_collision (54)` — lib/flezha/boot
+- `lib/flezha/convergence/diff.ex:264 plugin_divergence (54)` — lib/flezha/convergence
+- `sdk/rust/src/lib.rs:640 remove (54)` — sdk/rust
+- `sdk/ruby/lib/flezha/graph.rb:46 check_channels (54)` — sdk/ruby
+- `sdk/rust/src/channel/builder.rs:714 register_node (53)` — sdk/rust
+- `flz_nif/src/uds_driver.rs:526 read_stream_data (53)` — flz_nif
+- `sdk/ruby/lib/flezha/graph.rb:124 check_procedures (53)` — sdk/ruby
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:546 registerNode (53)` — sdk/java
+- `cli/src/utils.rs:279 extract_extension_flags (53)` — cli
+- `sdk/node/src/graph.ts:223 checkTierAndWindow (53)` — sdk/node
+- `flz_core/src/restore.rs:82 fold_change_log (53)` — flz_core
+- `flz_core/src/routing.rs:204 admit_from_entity (52)` — flz_core
+- `lib/flezha/plugin/installer.ex:128 do_install (52)` — lib/flezha/plugin
+- `lib/flezha/observability/registry.ex:394 do_register_sink (52)` — lib/flezha/observability
+- `lib/flezha/plugin/extension/table.ex:1028 remove_subscription (52)` — lib/flezha/plugin
+- `sdk/python/src/flezha/runner.py:143 start (52)` — sdk/python
+- `lib/flezha/plugin/provider/kafka/producer_worker.ex:1232 classify_result (51)` — lib/flezha/plugin
+- `flz_core/src/command/restore.rs:28 handle (51)` — flz_core
+- `flz_core/src/fast.rs:511 heartbeat_metadata (51)` — flz_core
+- `lib/flezha/state/wal_writer.ex:584 handle_call (51)` — lib/flezha/state
+- `flz_core/src/dynamic.rs:122 reap_sweep (51)` — flz_core
+- `lib/flezha/service/operative_manager.ex:788 init_operative (51)` — lib/flezha/service
+
+## Production names over 32 characters (38)
+
+- `cli/src/utils.rs:385 extract_opts_with_default_namespace` — cli
+- `flz_core/src/command/streams_connect.rs:108 install_entity_state_sink_from_pairs` — flz_core
+- `flz_core/src/host.rs:267 default_workflow_retry_backoff_ms` — flz_core
+- `flz_core/src/workflow/driver.rs:1434 reconstruct_completed_from_intents` — flz_core
+- `flz_core_ffi/src/lib.rs:524 flz_core_entry_last_delivery_nanos` — flz_core_ffi
+- `flz_transport/src/utility/path_helper.rs:612 each_rung_answers_when_it_is_the_only_live_one` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:642 an_explicit_path_never_falls_back_to_a_live_candidate` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:661 two_live_candidates_are_refused_and_both_are_named` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:691 the_pinned_environment_contract_is_what_the_ladder_reads` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:757 an_unset_runtime_dir_falls_through_to_the_later_rungs` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:774 a_relative_candidate_is_reported_absolutely` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:788 nothing_live_reports_the_candidate_with_the_most_to_say` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:804 the_controller_takes_the_first_candidate_it_can_create` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:824 a_controller_steps_over_a_directory_another_controller_is_listening_in` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:843 the_probe_tells_the_four_situations_apart` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:880 a_recorded_directory_settles_an_ambiguity_a_first_connect_would_refuse` — flz_transport
+- `flz_transport/src/utility/path_helper.rs:901 the_socket_predicate_recognises_the_names_this_module_creates` — flz_transport
+- `lib/flezha/authz/bootstrap/on_boot.ex:80 consume_marker_then_admin_exists?` — lib/flezha/authz
+- `lib/flezha/runner/control_channel.ex:372 handle_runner_shutdown_notification` — lib/flezha/runner
+- `lib/flezha/runner/control_unit.ex:150 decode_operative_message_response` — lib/flezha/runner
+- `lib/flezha/state/persistence_resolver.ex:117 workflow_completed_retention_hours` — lib/flezha/state
+- `lib/flezha/state/persistence_resolver.ex:156 class_or_global_compact_after_bytes` — lib/flezha/state
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/StreamOperativeConfigurationException.java:22 StreamOperativeConfigurationException` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/StreamOperativeConfigurationException.java:29 StreamOperativeConfigurationException` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/operative/StreamOperativeConfigurationException.java:36 StreamOperativeConfigurationException` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/ProcedureException.java:133 EventTimeTimerWithoutEventTimeClock` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/ProcedureException.java:27 MetadataNotAllowedOnInterProcedureChannel` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/workflow/WorkflowOperativeConfigurationException.java:55 WorkflowOperativeConfigurationException` — sdk/java
+- `sdk/java/flezha-sdk-processor/src/main/java/com/flezha/sdk/processor/FlezhaProcessor.java:860 generateSingleProcedureStreamOperative` — sdk/java
+- `sdk/rust/src/channel/route_latest/tests.rs:109 only_keys_proven_by_traffic_are_emitted` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:131 router_state_replays_deterministically` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:156 traffic_before_the_first_document_delivers_nothing` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:221 the_block_expands_to_one_single_entity_node_fed_by_both_streams` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:313 a_second_router_needs_a_node_name` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:351 one_channel_cannot_be_both_streams` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:49 a_changed_document_reaches_each_key_on_its_own_next_traffic` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:74 a_repeated_identical_document_is_inert` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:91 a_first_seen_key_receives_the_current_document_once` — sdk/rust
+
+## Cross-file duplicate pairs (jscpd, ≥ 40 tokens) (712)
+
+- `cli/src/audit.rs:161-180 <-> cli/src/observe.rs:132-151 (111 tokens)` — cli
+- `cli/src/audit.rs:20-32 <-> cli/src/observe.rs:20-32 (50 tokens)` — cli
+- `cli/src/boot.rs:28-36 <-> cli/src/cluster.rs:30-38 (40 tokens)` — cli
+- `cli/src/boot.rs:28-37 <-> cli/src/controller.rs:49-58 (42 tokens)` — cli
+- `cli/src/boot.rs:28-37 <-> cli/src/operative.rs:88-105 (54 tokens)` — cli
+- `cli/src/boot.rs:28-37 <-> cli/src/plugin.rs:124-140 (54 tokens)` — cli
+- `cli/src/boot.rs:28-37 <-> cli/src/plugin.rs:235-250 (54 tokens)` — cli
+- `cli/src/boot.rs:28-37 <-> cli/src/plugin.rs:277-291 (54 tokens)` — cli
+- `cli/src/boot.rs:28-37 <-> cli/src/plugin.rs:302-316 (54 tokens)` — cli
+- `cli/src/boot.rs:28-37 <-> cli/src/plugin.rs:46-60 (54 tokens)` — cli
+- `cli/src/boot.rs:30-39 <-> cli/src/utils.rs:9-18 (45 tokens)` — cli
+- `cli/src/cluster.rs:22-27 <-> cli/src/operative.rs:397-402 (46 tokens)` — cli
+- `cli/src/cluster.rs:22-27 <-> cli/src/operative.rs:432-437 (46 tokens)` — cli
+- `cli/src/cluster.rs:30-44 <-> cli/src/plugin.rs:341-355 (53 tokens)` — cli
+- `cli/src/cluster.rs:32-42 <-> cli/src/operative.rs:131-141 (42 tokens)` — cli
+- `cli/src/cluster.rs:32-44 <-> cli/src/namespace.rs:45-60 (52 tokens)` — cli
+- `cli/src/namespace.rs:42-60 <-> cli/src/operative.rs:417-432 (55 tokens)` — cli
+- `cli/src/namespace.rs:8-15 <-> cli/src/runner.rs:8-15 (46 tokens)` — cli
+- `cli/src/operative.rs:131-137 <-> cli/src/utils.rs:9-15 (40 tokens)` — cli
+- `cli/src/operative.rs:394-402 <-> cli/src/runner.rs:25-33 (50 tokens)` — cli
+- `cli/src/operative.rs:415-432 <-> cli/src/runner.rs:45-63 (57 tokens)` — cli
+- `cli/tests/cluster.rs:8-17 <-> cli/tests/schedule.rs:8-17 (52 tokens)` — cli
+- `flezha-macros/src/operative.rs:131-135 <-> flezha-macros/src/procedure.rs:333-337 (52 tokens)` — flezha-macros
+- `flezha-macros/src/operative.rs:140-149 <-> flezha-macros/src/procedure.rs:340-349 (60 tokens)` — flezha-macros
+- `flz_core/src/command/compact.rs:25-32 <-> flz_core/src/command/operative_start.rs:9-16 (40 tokens)` — flz_core
+- `flz_core/src/command/compact.rs:25-32 <-> flz_core/src/command/restore.rs:27-34 (40 tokens)` — flz_core
+- `flz_core/src/command/entity_apply_state.rs:11-18 <-> flz_core/src/command/operative_stop.rs:5-12 (40 tokens)` — flz_core
+- `flz_core/src/command/operative_message.rs:17-24 <-> flz_core/src/command/ping.rs:16-23 (42 tokens)` — flz_core
+- `flz_core/src/command/runner_assign.rs:5-17 <-> flz_core/src/command/runner_disconnect.rs:5-12 (41 tokens)` — flz_core
+- `flz_core/src/control_unit.rs:236-243 <-> flz_transport/src/utility/path_helper.rs:344-348 (44 tokens)` — flz_core
+- `flz_core/src/control_unit.rs:236-243 <-> flz_transport/src/utility/path_helper.rs:344-348 (44 tokens)` — flz_transport
+- `flz_core/src/flusher.rs:154-168 <-> sdk/rust/src/entity/flusher.rs:30-58 (52 tokens)` — flz_core
+- `flz_core/src/flusher.rs:154-168 <-> sdk/rust/src/entity/flusher.rs:30-58 (52 tokens)` — sdk/rust
+- `flz_core/src/host.rs:1054-1058 <-> sdk/rust/src/operative/dispatcher.rs:1700-1704 (44 tokens)` — flz_core
+- `flz_core/src/host.rs:1054-1058 <-> sdk/rust/src/operative/dispatcher.rs:1700-1704 (44 tokens)` — sdk/rust
+- `flz_core/src/host.rs:1335-1347 <-> sdk/rust/src/entity/flusher.rs:132-144 (47 tokens)` — flz_core
+- `flz_core/src/host.rs:1335-1347 <-> sdk/rust/src/entity/flusher.rs:132-144 (47 tokens)` — sdk/rust
+- `flz_core/src/host.rs:2413-2422 <-> sdk/rust/src/entity/restore.rs:102-111 (40 tokens)` — flz_core
+- `flz_core/src/host.rs:2413-2422 <-> sdk/rust/src/entity/restore.rs:102-111 (40 tokens)` — sdk/rust
+- `flz_core/src/retry.rs:52-55 <-> flz_transport/src/transport/liveness.rs:88-91 (41 tokens)` — flz_core
+- `flz_core/src/retry.rs:52-55 <-> flz_transport/src/transport/liveness.rs:88-91 (41 tokens)` — flz_transport
+- `flz_core/src/retry.rs:52-55 <-> sdk/rust/src/testing/tests/harness_smoke.rs:114-117 (43 tokens)` — flz_core
+- `flz_core/src/retry.rs:52-55 <-> sdk/rust/src/testing/tests/harness_smoke.rs:114-117 (43 tokens)` — sdk/rust
+- `flz_core_ffi/src/jni_glue.rs:35-46 <-> flz_core_ffi/src/python_glue.rs:83-95 (63 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/jni_glue.rs:361-367 <-> flz_core_ffi/src/napi_glue.rs:755-761 (50 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/jni_glue.rs:37-46 <-> flz_core_ffi/src/napi_glue.rs:80-89 (62 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/jni_glue.rs:65-74 <-> flz_core_ffi/src/napi_glue.rs:596-605 (57 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/jni_glue.rs:66-74 <-> flz_core_ffi/src/python_glue.rs:664-672 (49 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/napi_glue.rs:298-302 <-> flz_core_ffi/src/python_glue.rs:344-348 (43 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/napi_glue.rs:592-606 <-> flz_core_ffi/src/ruby_glue.rs:590-604 (81 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/napi_glue.rs:614-619 <-> flz_core_ffi/src/ruby_glue.rs:611-616 (49 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/napi_glue.rs:693-698 <-> flz_core_ffi/src/python_glue.rs:788-793 (45 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/napi_glue.rs:693-698 <-> flz_core_ffi/src/ruby_glue.rs:729-734 (44 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/napi_glue.rs:796-810 <-> flz_core_ffi/src/ruby_glue.rs:817-831 (83 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/python_glue.rs:336-344 <-> flz_core_ffi/src/ruby_glue.rs:292-300 (50 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/python_glue.rs:344-348 <-> flz_core_ffi/src/ruby_glue.rs:300-304 (40 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/python_glue.rs:483-492 <-> flz_core_ffi/src/ruby_glue.rs:444-453 (77 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/python_glue.rs:572-578 <-> flz_core_ffi/src/ruby_glue.rs:535-541 (43 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/python_glue.rs:82-97 <-> flz_core_ffi/src/ruby_glue.rs:99-114 (70 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/python_glue.rs:852-861 <-> flz_core_ffi/src/ruby_glue.rs:787-796 (42 tokens)` — flz_core_ffi
+- `flz_core_ffi/src/python_glue.rs:900-910 <-> flz_core_ffi/src/ruby_glue.rs:206-216 (100 tokens)` — flz_core_ffi
+- `flz_core_ffi/tests/abi_scenario.rs:241-246 <-> sdk/rust/tests/runner_lifecycle.rs:204-212 (65 tokens)` — flz_core_ffi
+- `flz_core_ffi/tests/abi_scenario.rs:241-246 <-> sdk/rust/tests/runner_lifecycle.rs:204-212 (65 tokens)` — sdk/rust
+- `flz_core_ffi/tests/abi_scenario.rs:43-48 <-> sdk/rust/tests/runner_lifecycle.rs:109-114 (63 tokens)` — flz_core_ffi
+- `flz_core_ffi/tests/abi_scenario.rs:43-48 <-> sdk/rust/tests/runner_lifecycle.rs:109-114 (63 tokens)` — sdk/rust
+- `flz_core_ffi/tests/abi_scenario.rs:51-56 <-> sdk/rust/tests/runner_lifecycle.rs:115-120 (45 tokens)` — flz_core_ffi
+- `flz_core_ffi/tests/abi_scenario.rs:51-56 <-> sdk/rust/tests/runner_lifecycle.rs:115-120 (45 tokens)` — sdk/rust
+- `flz_core_ffi/tests/abi_scenario.rs:63-70 <-> sdk/rust/tests/runner_lifecycle.rs:124-131 (45 tokens)` — flz_core_ffi
+- `flz_core_ffi/tests/abi_scenario.rs:63-70 <-> sdk/rust/tests/runner_lifecycle.rs:124-131 (45 tokens)` — sdk/rust
+- `flz_core_ffi/tests/abi_scenario.rs:93-109 <-> sdk/rust/tests/runner_lifecycle.rs:135-152 (122 tokens)` — flz_core_ffi
+- `flz_core_ffi/tests/abi_scenario.rs:93-109 <-> sdk/rust/tests/runner_lifecycle.rs:135-152 (122 tokens)` — sdk/rust
+- `flz_nif/src/driver_msg.rs:71-77 <-> flz_nif/src/quic_driver.rs:780-786 (45 tokens)` — flz_nif
+- `flz_nif/src/quic_driver.rs:106-112 <-> flz_transport/src/transport/quic.rs:189-195 (61 tokens)` — flz_nif
+- `flz_nif/src/quic_driver.rs:106-112 <-> flz_transport/src/transport/quic.rs:189-195 (61 tokens)` — flz_transport
+- `flz_nif/src/quic_driver.rs:182-196 <-> flz_transport/src/transport/quic.rs:390-404 (95 tokens)` — flz_nif
+- `flz_nif/src/quic_driver.rs:182-196 <-> flz_transport/src/transport/quic.rs:390-404 (95 tokens)` — flz_transport
+- `flz_nif/src/quic_driver.rs:197-203 <-> flz_transport/src/transport/quic.rs:488-494 (40 tokens)` — flz_nif
+- `flz_nif/src/quic_driver.rs:197-203 <-> flz_transport/src/transport/quic.rs:488-494 (40 tokens)` — flz_transport
+- `flz_nif/src/quic_driver.rs:553-557 <-> flz_nif/src/uds_driver.rs:320-324 (42 tokens)` — flz_nif
+- `flz_nif/src/quic_driver.rs:740-761 <-> flz_transport/src/transport/quic.rs:715-736 (197 tokens)` — flz_nif
+- `flz_nif/src/quic_driver.rs:740-761 <-> flz_transport/src/transport/quic.rs:715-736 (197 tokens)` — flz_transport
+- `flz_nif/src/quic_driver.rs:842-852 <-> flz_transport/src/transport/quic.rs:167-175 (45 tokens)` — flz_nif
+- `flz_nif/src/quic_driver.rs:842-852 <-> flz_transport/src/transport/quic.rs:167-175 (45 tokens)` — flz_transport
+- `flz_nif/src/quic_driver.rs:852-858 <-> flz_transport/src/transport/quic.rs:175-181 (56 tokens)` — flz_nif
+- `flz_nif/src/quic_driver.rs:852-858 <-> flz_transport/src/transport/quic.rs:175-181 (56 tokens)` — flz_transport
+- `flz_nif/src/uds_driver.rs:590-603 <-> flz_transport/src/transport/quic.rs:771-778 (68 tokens)` — flz_nif
+- `flz_nif/src/uds_driver.rs:590-603 <-> flz_transport/src/transport/quic.rs:771-778 (68 tokens)` — flz_transport
+- `lib/flezha/authz/bootstrap/on_boot.ex:27-41 <-> lib/flezha/authz/source_registration.ex:16-30 (68 tokens)` — lib/flezha/authz
+- `lib/flezha/authz/namespace_store.ex:88-94 <-> lib/flezha/schedule/store.ex:106-112 (48 tokens)` — lib/flezha/authz
+- `lib/flezha/authz/namespace_store.ex:88-94 <-> lib/flezha/schedule/store.ex:106-112 (48 tokens)` — lib/flezha/schedule
+- `lib/flezha/authz/role_store.ex:52-55 <-> lib/flezha/authz/token_store.ex:50-53 (46 tokens)` — lib/flezha/authz
+- `lib/flezha/cluster/orchestrator.ex:66-72 <-> lib/flezha/shutdown/coordinator.ex:127-135 (44 tokens)` — lib/flezha/cluster
+- `lib/flezha/cluster/orchestrator.ex:66-72 <-> lib/flezha/shutdown/coordinator.ex:127-135 (44 tokens)` — lib/flezha/shutdown
+- `lib/flezha/healthz/server.ex:119-134 <-> lib/flezha/observability/export/prometheus_http.ex:88-98 (79 tokens)` — lib/flezha/healthz
+- `lib/flezha/healthz/server.ex:119-134 <-> lib/flezha/observability/export/prometheus_http.ex:88-98 (79 tokens)` — lib/flezha/observability
+- `lib/flezha/healthz/server.ex:57-70 <-> lib/flezha/observability/export/otlp_client.ex:26-39 (61 tokens)` — lib/flezha/healthz
+- `lib/flezha/healthz/server.ex:57-70 <-> lib/flezha/observability/export/otlp_client.ex:26-39 (61 tokens)` — lib/flezha/observability
+- `lib/flezha/healthz/server.ex:57-70 <-> lib/flezha/observability/export/otlp_sink.ex:42-55 (60 tokens)` — lib/flezha/healthz
+- `lib/flezha/healthz/server.ex:57-70 <-> lib/flezha/observability/export/otlp_sink.ex:42-55 (60 tokens)` — lib/flezha/observability
+- `lib/flezha/healthz/server.ex:57-71 <-> lib/flezha/observability/export/prometheus_registry.ex:63-76 (63 tokens)` — lib/flezha/healthz
+- `lib/flezha/healthz/server.ex:57-71 <-> lib/flezha/observability/export/prometheus_registry.ex:63-76 (63 tokens)` — lib/flezha/observability
+- `lib/flezha/healthz/server.ex:57-82 <-> lib/flezha/observability/export/prometheus_http.ex:25-50 (129 tokens)` — lib/flezha/healthz
+- `lib/flezha/healthz/server.ex:57-82 <-> lib/flezha/observability/export/prometheus_http.ex:25-50 (129 tokens)` — lib/flezha/observability
+- `lib/flezha/healthz/server.ex:84-118 <-> lib/flezha/observability/export/prometheus_http.ex:53-87 (207 tokens)` — lib/flezha/healthz
+- `lib/flezha/healthz/server.ex:84-118 <-> lib/flezha/observability/export/prometheus_http.ex:53-87 (207 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/retention.ex:23-34 <-> lib/flezha/observability/otp_backend/source.ex:25-36 (59 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/retention.ex:23-36 <-> lib/flezha/observability/audit_log/rotation.ex:17-30 (61 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/retention.ex:23-36 <-> lib/flezha/observability/audit_log/sink.ex:69-82 (61 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/sink.ex:149-160 <-> lib/flezha/observability/export/otlp_sink.ex:175-186 (52 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/sink.ex:58-72 <-> lib/flezha/observability/export/otlp_sink.ex:31-45 (91 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/sink.ex:58-73 <-> lib/flezha/observability/pubsub_sink.ex:25-40 (94 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/sink.ex:58-79 <-> lib/flezha/observability/ring_buffer_sink.ex:35-59 (122 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/sink.ex:65-82 <-> lib/flezha/observability/audit_log/writer.ex:48-65 (62 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/audit_log/supervisor.ex:22-29 <-> lib/flezha/observability/otp_backend/supervisor.ex:34-41 (40 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/export/otlp_sink.ex:173-184 <-> lib/flezha/observability/export/prometheus_sink.ex:77-90 (44 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/export/otlp_sink.ex:38-56 <-> lib/flezha/observability/export/prometheus_sink.ex:36-54 (74 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/logger_handler.ex:30-44 <-> lib/flezha/observability/telemetry_bridge.ex:90-104 (66 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/otp_backend/beam_vm_source.ex:36-46 <-> lib/flezha/observability/otp_backend/host_source.ex:36-46 (61 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/otp_backend/bounded_mailbox_source.ex:59-68 <-> lib/flezha/observability/otp_backend/process_hub_source.ex:40-49 (41 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/otp_backend/bounded_mailbox_source.ex:59-68 <-> lib/flezha/observability/otp_backend/transport_source.ex:54-63 (41 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/otp_backend/process_hub_source.ex:31-39 <-> lib/flezha/observability/otp_backend/transport_source.ex:44-52 (44 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/otp_backend/process_hub_source.ex:95-106 <-> lib/flezha/observability/otp_backend/transport_source.ex:147-158 (44 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/otp_backend/supervisor.ex:43-52 <-> lib/flezha/observability/supervisor.ex:67-76 (42 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/sink.ex:55-62 <-> lib/flezha/observability/source.ex:68-75 (51 tokens)` — lib/flezha/observability
+- `lib/flezha/observability/sink_supervisor.ex:8-34 <-> lib/flezha/observability/source_supervisor.ex:8-34 (84 tokens)` — lib/flezha/observability
+- `lib/flezha/operative/class_registry.ex:70-76 <-> lib/flezha/transport/liveness_counters.ex:87-97 (54 tokens)` — lib/flezha/operative
+- `lib/flezha/operative/class_registry.ex:70-76 <-> lib/flezha/transport/liveness_counters.ex:87-97 (54 tokens)` — lib/flezha/transport
+- `lib/flezha/operative/plugins.ex:94-97 <-> lib/flezha/service/hub_manager.ex:729-732 (42 tokens)` — lib/flezha/operative
+- `lib/flezha/operative/plugins.ex:94-97 <-> lib/flezha/service/hub_manager.ex:729-732 (42 tokens)` — lib/flezha/service
+- `lib/flezha/plugin/extension/ctx/io.ex:4-10 <-> lib/flezha/plugin/extension/ctx/snapshot.ex:4-10 (45 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/extension/ctx/io.ex:4-10 <-> lib/flezha/plugin/extension/ctx/terminate.ex:4-10 (43 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/extension/ctx/io.ex:5-10 <-> lib/flezha/plugin/extension/ctx/tick.ex:5-10 (42 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/extension/table.ex:608-615 <-> lib/flezha/plugin/spec_decoder.ex:137-144 (41 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/installer/checksums.ex:130-136 <-> lib/flezha/plugin/installer/compiler.ex:64-70 (42 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/installer/checksums.ex:130-136 <-> lib/flezha/plugin/installer/package.ex:202-208 (41 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/beam_msg_forward.ex:30-35 <-> lib/flezha/plugin/provider/monitored_io_forward.ex:41-46 (61 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/beam_msg_forward.ex:30-35 <-> lib/flezha/plugin/provider/operative_forward.ex:158-163 (57 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/http_fetch.ex:157-167 <-> lib/flezha/plugin/provider/http_poll.ex:225-233 (70 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/kafka.ex:43-52 <-> lib/flezha/plugin/provider/postgres.ex:31-40 (41 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/kafka/producer_sup.ex:15-20 <-> lib/flezha/plugin/provider/operative_forward/forward_sup.ex:14-19 (61 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/kafka/producer_sup.ex:15-22 <-> lib/flezha/plugin/provider/postgres/sink_sup.ex:13-19 (70 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/kafka/producer_worker.ex:203-206 <-> test/plugin/kafka/producer_worker_test.exs:33-36 (41 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/kafka/producer_worker.ex:203-206 <-> test/plugin/kafka/producer_worker_test.exs:33-36 (41 tokens)` — test
+- `lib/flezha/plugin/provider/operative_forward/forward_worker.ex:95-103 <-> lib/flezha/plugin/provider/postgres/sink_worker.ex:115-120 (47 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/postgres.ex:169-173 <-> lib/flezha/state/durability_tier/backend/postgres.ex:193-197 (68 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/postgres.ex:169-173 <-> lib/flezha/state/durability_tier/backend/postgres.ex:193-197 (68 tokens)` — lib/flezha/state
+- `lib/flezha/plugin/provider/worker_sup.ex:68-73 <-> lib/flezha/state/supervisor.ex:71-76 (48 tokens)` — lib/flezha/plugin
+- `lib/flezha/plugin/provider/worker_sup.ex:68-73 <-> lib/flezha/state/supervisor.ex:71-76 (48 tokens)` — lib/flezha/state
+- `lib/flezha/runner/control_channel.ex:82-88 <-> lib/flezha/sdk/codec.ex:46-52 (45 tokens)` — lib/flezha/runner
+- `lib/flezha/runner/control_channel.ex:82-88 <-> lib/flezha/sdk/codec.ex:46-52 (45 tokens)` — lib/flezha/sdk
+- `lib/flezha/service/audit_log.ex:192-202 <-> lib/flezha/service/observability.ex:203-213 (96 tokens)` — lib/flezha/service
+- `lib/flezha/service/audit_log.ex:203-219 <-> lib/flezha/service/observability.ex:213-229 (82 tokens)` — lib/flezha/service
+- `lib/flezha/service/audit_log.ex:30-38 <-> lib/flezha/service/observability.ex:28-34 (53 tokens)` — lib/flezha/service
+- `lib/flezha/service/audit_log.ex:39-43 <-> lib/flezha/service/observability.ex:111-115 (51 tokens)` — lib/flezha/service
+- `lib/flezha/service/audit_log.ex:39-43 <-> lib/flezha/service/observability.ex:133-140 (42 tokens)` — lib/flezha/service
+- `lib/flezha/service/audit_log.ex:39-43 <-> lib/flezha/service/observability.ex:43-48 (42 tokens)` — lib/flezha/service
+- `lib/flezha/service/audit_log.ex:39-44 <-> lib/flezha/service/observability.ex:121-126 (58 tokens)` — lib/flezha/service
+- `lib/flezha/service/audit_log.ex:59-63 <-> lib/flezha/service/observability.ex:93-97 (50 tokens)` — lib/flezha/service
+- `lib/flezha/service/cli_manager.ex:2409-2412 <-> test/flezha/shutdown/coordinator_test.exs:275-278 (43 tokens)` — lib/flezha/service
+- `lib/flezha/service/cli_manager.ex:2409-2412 <-> test/flezha/shutdown/coordinator_test.exs:275-278 (43 tokens)` — test
+- `lib/flezha/service/cli_manager.ex:2722-2726 <-> lib/flezha/state/durability_tier/backend/local_path.ex:134-138 (40 tokens)` — lib/flezha/service
+- `lib/flezha/service/cli_manager.ex:2722-2726 <-> lib/flezha/state/durability_tier/backend/local_path.ex:134-138 (40 tokens)` — lib/flezha/state
+- `lib/flezha/state/fsync_batcher.ex:29-46 <-> lib/flezha/state/retention.ex:42-54 (52 tokens)` — lib/flezha/state
+- `lib/flezha/state/fsync_batcher.ex:33-46 <-> lib/flezha/state/watchdog.ex:81-89 (52 tokens)` — lib/flezha/state
+- `lib/flezha/state/supervisor.ex:71-74 <-> lib/flezha/transport/server.ex:126-134 (41 tokens)` — lib/flezha/state
+- `lib/flezha/state/supervisor.ex:71-74 <-> lib/flezha/transport/server.ex:126-134 (41 tokens)` — lib/flezha/transport
+- `lib/flezha/state/wire.ex:218-222 <-> test/helpers/credit_test_helper.ex:19-23 (48 tokens)` — lib/flezha/state
+- `lib/flezha/state/wire.ex:218-222 <-> test/helpers/credit_test_helper.ex:19-23 (48 tokens)` — test
+- `lib/flezha/transport/cert_generator.ex:152-179 <-> test/support/cert_fixtures.ex:84-98 (91 tokens)` — lib/flezha/transport
+- `lib/flezha/transport/cert_generator.ex:152-179 <-> test/support/cert_fixtures.ex:84-98 (91 tokens)` — test
+- `lib/flezha/transport/cert_generator.ex:196-214 <-> test/support/cert_fixtures.ex:110-128 (71 tokens)` — lib/flezha/transport
+- `lib/flezha/transport/cert_generator.ex:196-214 <-> test/support/cert_fixtures.ex:110-128 (71 tokens)` — test
+- `lib/mix/tasks/bench/elixir_factories.ex:134-145 <-> test/apps/elixir_runner/lib/factories.ex:465-474 (61 tokens)` — lib/mix
+- `lib/mix/tasks/bench/elixir_factories.ex:134-145 <-> test/apps/elixir_runner/lib/factories.ex:465-474 (61 tokens)` — test/apps
+- `lib/mix/tasks/bench/elixir_factories.ex:139-145 <-> test/apps/elixir_runner/lib/factories.ex:50-56 (44 tokens)` — lib/mix
+- `lib/mix/tasks/bench/elixir_factories.ex:139-145 <-> test/apps/elixir_runner/lib/factories.ex:50-56 (44 tokens)` — test/apps
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/apps/elixir_runner/lib/factories.ex:129-139 (45 tokens)` — lib/mix
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/apps/elixir_runner/lib/factories.ex:129-139 (45 tokens)` — test/apps
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/apps/elixir_runner/lib/factories.ex:143-153 (45 tokens)` — lib/mix
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/apps/elixir_runner/lib/factories.ex:143-153 (45 tokens)` — test/apps
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/apps/elixir_runner/lib/factories.ex:177-187 (45 tokens)` — lib/mix
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/apps/elixir_runner/lib/factories.ex:177-187 (45 tokens)` — test/apps
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/apps/elixir_runner/lib/factories.ex:60-70 (43 tokens)` — lib/mix
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/apps/elixir_runner/lib/factories.ex:60-70 (43 tokens)` — test/apps
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/flezha/sdk/dispatch_test.exs:18-28 (43 tokens)` — lib/mix
+- `lib/mix/tasks/bench/elixir_factories.ex:18-28 <-> test/flezha/sdk/dispatch_test.exs:18-28 (43 tokens)` — test
+- `lib/mix/tasks/bench/roundtrip.ex:123-128 <-> lib/mix/tasks/bench/workflow.ex:258-263 (41 tokens)` — lib/mix
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/EntitiesFor.java:1-16 <-> sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/Journal.java:1-27 (57 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/EntitiesFor.java:1-16 <-> sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/Procedure.java:1-32 (57 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/EntitiesFor.java:1-17 <-> sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/EntityKey.java:1-17 (62 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/EntitiesFor.java:1-17 <-> sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/InitState.java:1-24 (62 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/EntitiesFor.java:1-17 <-> sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/State.java:1-21 (62 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/EntitiesFor.java:1-17 <-> sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/authoring/StreamOperative.java:1-21 (62 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/channel/ChannelBuilder.java:121-125 <-> sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:152-156 (48 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:4-11 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/ClockAndKeyedValidationTest.java:14-20 (61 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:4-8 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:16-20 (43 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:4-9 <-> sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/ProcedureDefaultsTest.java:8-13 (50 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:4-9 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:8-13 (52 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:4-9 <-> test/apps/java_runner/src/main/java/com/flezha/test/ChatSteps.java:6-11 (50 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:4-9 <-> test/apps/java_runner/src/main/java/com/flezha/test/ChatSteps.java:6-11 (50 tokens)` — test/apps
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:4-9 <-> test/apps/java_runner/src/main/java/com/flezha/test/HybridChannelStreamOperative.java:7-12 (50 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:4-9 <-> test/apps/java_runner/src/main/java/com/flezha/test/HybridChannelStreamOperative.java:7-12 (50 tokens)` — test/apps
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:5-10 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E02_StatefulCounter.java:9-14 (48 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:5-11 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E10_StreamTransforms.java:8-57 (51 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:5-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/CounterProcedure.java:5-18 (49 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/main/java/com/flezha/sdk/procedure/Procedure.java:5-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/CounterProcedure.java:5-18 (49 tokens)` — test/apps
+- `sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/ProcedureDefaultsTest.java:1-7 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/builder/MailboxCapacityResolverTest.java:1-7 (41 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/ProcedureDefaultsTest.java:4-9 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/ClockAndKeyedValidationTest.java:7-11 (41 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:3-11 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E04_LateInputCorrection.java:3-11 (87 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:3-34 <-> test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:1-13 (114 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:3-34 <-> test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:1-13 (114 tokens)` — test/apps
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:3-9 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E02_StatefulCounter.java:1-8 (65 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:3-9 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:3-10 (63 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:5-10 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/ClockAndKeyedValidationTest.java:8-13 (54 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:5-13 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E05_WorkflowSaga.java:3-11 (79 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:5-13 <-> sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/LatestDocumentRouter.java:4-12 (83 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:5-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-10 (81 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:5-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-10 (81 tokens)` — test/apps
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:5-31 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E08_SpawnWorkflowWorker.java:5-13 (87 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:5-34 <-> sdk/java/flezha-sdk-testing/src/test/java/com/flezha/sdk/testing/ProcedureTestHarnessSmokeTest.java:3-14 (93 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:5-9 <-> sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationDispatcher.java:7-11 (41 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:6-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:3-7 (43 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E01_Echo.java:6-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:3-7 (43 tokens)` — test/apps
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E02_StatefulCounter.java:1-11 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E12_SessionTimeout.java:1-11 (104 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E02_StatefulCounter.java:1-12 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E11_LiveStateRead.java:1-12 (109 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E02_StatefulCounter.java:1-14 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E09_MergedInput.java:1-44 (127 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E02_StatefulCounter.java:1-40 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E03_EffectivelyOnce.java:1-43 (134 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E02_StatefulCounter.java:1-9 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E10_StreamTransforms.java:1-9 (82 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E05_WorkflowSaga.java:1-12 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E06_DurableChatLoop.java:1-12 (107 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E05_WorkflowSaga.java:1-7 <-> test/apps/java_runner/src/main/java/com/flezha/test/HybridChannelStreamOperative.java:1-7 (52 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E05_WorkflowSaga.java:1-7 <-> test/apps/java_runner/src/main/java/com/flezha/test/HybridChannelStreamOperative.java:1-7 (52 tokens)` — test/apps
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E05_WorkflowSaga.java:7-11 <-> sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E06_DurableChatLoop.java:8-12 (43 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E08_SpawnWorkflowWorker.java:11-17 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:21-27 (57 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E08_SpawnWorkflowWorker.java:12-17 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/HostClassDeclarationTest.java:17-22 (46 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E10_StreamTransforms.java:7-62 <-> test/apps/java_runner/src/main/java/com/flezha/test/SchemaEvolutionStreamOperatives.java:8-27 (71 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E10_StreamTransforms.java:7-62 <-> test/apps/java_runner/src/main/java/com/flezha/test/SchemaEvolutionStreamOperatives.java:8-27 (71 tokens)` — test/apps
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E12_SessionTimeout.java:8-14 <-> test/apps/java_runner/src/main/java/com/flezha/test/SessionTimeoutProcedure.java:5-11 (57 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-examples/src/main/java/com/flezha/examples/E12_SessionTimeout.java:8-14 <-> test/apps/java_runner/src/main/java/com/flezha/test/SessionTimeoutProcedure.java:5-11 (57 tokens)` — test/apps
+- `sdk/java/flezha-sdk-native/src/test/java/com/flezha/sdk/native_/FlzCoreJniTest.java:1-7 <-> sdk/java/flezha-sdk-native/src/test/java/com/flezha/sdk/native_/NativeLibraryLoaderTest.java:1-7 (57 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationCodec.java:320-326 <-> sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/state/TimerOp.java:38-44 (57 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationDispatcher.java:11-15 <-> sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:15-19 (51 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationDispatcher.java:14-18 <-> sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java:5-9 (49 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationDispatcher.java:27-31 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:18-22 (41 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/ActivationDispatcher.java:6-12 <-> sdk/java/flezha-sdk-testing/src/main/java/com/flezha/sdk/testing/ProcedureTestHarness.java:1-8 (65 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/core/HostClassDeclaration.java:6-11 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/HostClassDeclarationTest.java:11-16 (62 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:10-15 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/RouteLatestExpansionTest.java:7-12 (54 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:12-16 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/ClockAndKeyedValidationTest.java:6-10 (41 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:12-18 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:7-13 (67 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/main/java/com/flezha/sdk/runtime/operative/builder/StreamOperativeTopologyBuilder.java:21-27 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/HostClassDeclarationTest.java:24-30 (41 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:1083-1092 <-> test/apps/java_runner/src/main/java/com/flezha/test/PoisonProbeProcedure.java:25-34 (51 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:1083-1092 <-> test/apps/java_runner/src/main/java/com/flezha/test/PoisonProbeProcedure.java:25-34 (51 tokens)` — test/apps
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:749-764 <-> test/apps/java_runner/src/main/java/com/flezha/test/SchemaEvolutionStreamOperatives.java:135-150 (45 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:749-764 <-> test/apps/java_runner/src/main/java/com/flezha/test/SchemaEvolutionStreamOperatives.java:135-150 (45 tokens)` — test/apps
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-864 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/HostClassDeclarationTest.java:526-536 (43 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-864 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:100-109 (43 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-864 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:253-263 (45 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-864 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:580-590 (45 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-866 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/HostClassDeclarationTest.java:579-590 (55 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-866 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:142-154 (49 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-866 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:323-335 (49 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-866 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:550-562 (49 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-866 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:565-577 (49 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-866 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/workflow/WorkflowSpecValidationTest.java:119-131 (49 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-870 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/HostClassDeclarationTest.java:544-559 (66 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:855-870 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/workflow/WorkflowSpecValidationTest.java:101-116 (66 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/ActivationDispatcherTest.java:948-958 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/HostClassDeclarationTest.java:335-345 (42 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/CoreSpawnRequesterTest.java:1-6 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/core/HostClassDeclarationTest.java:1-6 (40 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:1-7 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/ClockAndKeyedValidationTest.java:1-7 (57 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:1-7 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/RouteLatestExpansionTest.java:1-7 (59 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:1-7 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:1-7 (59 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:1-7 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/workflow/WorkflowSpecValidationTest.java:1-7 (47 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:10-14 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:12-16 (43 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:10-15 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/RouteLatestExpansionTest.java:14-19 (54 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:13-25 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/ClockAndKeyedValidationTest.java:18-33 (42 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/BoundedMailboxTopologyTest.java:7-11 <-> sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/RouteLatestExpansionTest.java:9-13 (41 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StatelessTestProcedure.java:1-16 <-> test/apps/java_runner/src/main/java/com/flezha/test/StatelessStep.java:1-15 (55 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StatelessTestProcedure.java:1-16 <-> test/apps/java_runner/src/main/java/com/flezha/test/StatelessStep.java:1-15 (55 tokens)` — test/apps
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:174-189 <-> test/apps/java_runner/src/main/java/com/flezha/test/StaticEntityStreamOperative.java:48-63 (58 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-runtime/src/test/java/com/flezha/sdk/runtime/operative/StreamOperativeTopologyBuilderTest.java:174-189 <-> test/apps/java_runner/src/main/java/com/flezha/test/StaticEntityStreamOperative.java:48-63 (58 tokens)` — test/apps
+- `sdk/java/flezha-sdk-testing/src/test/java/com/flezha/sdk/testing/ProcedureTestHarnessSmokeTest.java:1-14 <-> sdk/java/flezha-sdk-testing/src/test/java/com/flezha/sdk/testing/ReplayEmitsEqualTest.java:1-14 (115 tokens)` — sdk/java
+- `sdk/java/flezha-sdk-testing/src/test/java/com/flezha/sdk/testing/ProcedureTestHarnessSmokeTest.java:1-17 <-> sdk/java/flezha-sdk-testing/src/test/java/com/flezha/sdk/testing/StateMutationBypassTest.java:1-28 (137 tokens)` — sdk/java
+- `sdk/node/scripts/build.mjs:9-14 <-> sdk/node/scripts/install-native.mjs:6-11 (41 tokens)` — sdk/node
+- `sdk/node/scripts/build.mjs:9-14 <-> sdk/node/scripts/platform-package.mjs:12-17 (43 tokens)` — sdk/node
+- `sdk/php/examples/E01_Echo.php:13-23 <-> sdk/php/examples/E04_SessionTimeout.php:15-25 (47 tokens)` — sdk/php
+- `sdk/php/examples/E01_Echo.php:13-25 <-> sdk/php/examples/E03_EffectivelyOnce.php:15-27 (50 tokens)` — sdk/php
+- `sdk/php/examples/E01_Echo.php:21-34 <-> sdk/php/tests/Fixture.php:12-31 (44 tokens)` — sdk/php
+- `sdk/php/examples/E01_Echo.php:34-41 <-> sdk/php/tests/Fixture.php:80-87 (52 tokens)` — sdk/php
+- `sdk/php/examples/E01_Echo.php:39-44 <-> sdk/php/examples/E02_StatefulCounter.php:76-81 (48 tokens)` — sdk/php
+- `sdk/php/examples/E01_Echo.php:39-44 <-> sdk/php/examples/E03_EffectivelyOnce.php:64-69 (48 tokens)` — sdk/php
+- `sdk/php/examples/E01_Echo.php:39-44 <-> sdk/php/examples/E04_SessionTimeout.php:78-83 (48 tokens)` — sdk/php
+- `sdk/php/examples/E01_Echo.php:39-44 <-> sdk/php/examples/E05_WorkflowSaga.php:69-74 (46 tokens)` — sdk/php
+- `sdk/php/examples/E01_Echo.php:39-44 <-> sdk/php/examples/E06_DurableChatLoop.php:49-54 (47 tokens)` — sdk/php
+- `sdk/php/examples/E05_WorkflowSaga.php:33-39 <-> sdk/php/tests/Fixture.php:141-147 (46 tokens)` — sdk/php
+- `sdk/php/src/StreamOperative.php:19-29 <-> sdk/php/src/WorkflowOperative.php:54-64 (76 tokens)` — sdk/php
+- `sdk/php/src/StreamOperative.php:21-32 <-> sdk/php/tests/AuthoringTest.php:265-276 (87 tokens)` — sdk/php
+- `sdk/php/tests/AuthoringTest.php:1-11 <-> sdk/php/tests/Fixture.php:1-11 (42 tokens)` — sdk/php
+- `sdk/php/tests/AuthoringTest.php:303-314 <-> sdk/php/tests/DeclKeysTest.php:147-158 (41 tokens)` — sdk/php
+- `sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:121-133 (58 tokens)` — sdk/php
+- `sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:121-133 (58 tokens)` — test/apps
+- `sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:592-604 (58 tokens)` — sdk/php
+- `sdk/php/tests/DeclKeysTest.php:103-115 <-> test/apps/php_runner/fixtures.php:592-604 (58 tokens)` — test/apps
+- `sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:627-647 (98 tokens)` — sdk/php
+- `sdk/php/tests/DeclKeysTest.php:103-122 <-> test/apps/php_runner/fixtures.php:627-647 (98 tokens)` — test/apps
+- `sdk/php/tests/ExecutorTest.php:133-137 <-> sdk/php/tests/SwooleExecutorTest.php:70-74 (46 tokens)` — sdk/php
+- `sdk/php/tests/Fixture.php:42-47 <-> test/apps/php_runner/fixtures.php:601-606 (45 tokens)` — sdk/php
+- `sdk/php/tests/Fixture.php:42-47 <-> test/apps/php_runner/fixtures.php:601-606 (45 tokens)` — test/apps
+- `sdk/php/tests/Fixture.php:42-49 <-> test/apps/php_runner/fixtures.php:251-258 (42 tokens)` — sdk/php
+- `sdk/php/tests/Fixture.php:42-49 <-> test/apps/php_runner/fixtures.php:251-258 (42 tokens)` — test/apps
+- `sdk/python/tests/test_dispatch.py:330-336 <-> sdk/python/tests/test_testing.py:139-145 (44 tokens)` — sdk/python
+- `sdk/ruby/test/codec_test.rb:106-109 <-> sdk/ruby/test/concurrency_test.rb:340-343 (48 tokens)` — sdk/ruby
+- `sdk/rust/benches/correctness.rs:114-120 <-> sdk/rust/benches/hybrid_channel_throughput.rs:390-395 (43 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:116-122 <-> sdk/rust/benches/dispatch.rs:125-131 (52 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:27-33 <-> sdk/rust/benches/dispatch.rs:15-21 (71 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:27-57 <-> sdk/rust/benches/hybrid_channel_throughput.rs:18-47 (280 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:27-64 <-> sdk/rust/benches/dynamic_entity_steady_state.rs:6-38 (290 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:289-295 <-> sdk/rust/src/workflow/mod.rs:1737-1743 (40 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:289-295 <-> test/apps/rust_runner/src/main.rs:163-169 (40 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:289-295 <-> test/apps/rust_runner/src/main.rs:163-169 (40 tokens)` — test/apps
+- `sdk/rust/benches/correctness.rs:33-40 <-> sdk/rust/tests/operative_dispatch.rs:15-22 (89 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:33-46 <-> sdk/rust/benches/dispatch.rs:21-37 (102 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:36-40 <-> sdk/rust/tests/dynamic_entity.rs:15-19 (46 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:402-407 <-> sdk/rust/benches/hybrid_channel_throughput.rs:401-406 (41 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:411-415 <-> sdk/rust/benches/hybrid_channel_throughput.rs:410-414 (50 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:46-49 <-> sdk/rust/tests/common/mod.rs:22-25 (44 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:46-64 <-> sdk/rust/benches/dispatch.rs:48-66 (119 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:51-60 <-> sdk/rust/tests/common/mod.rs:28-37 (74 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:68-75 <-> sdk/rust/benches/dispatch.rs:189-196 (47 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:68-75 <-> sdk/rust/benches/dispatch.rs:220-227 (47 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:68-75 <-> sdk/rust/benches/dispatch.rs:251-258 (47 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:68-75 <-> sdk/rust/benches/dispatch.rs:282-289 (47 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:68-75 <-> sdk/rust/benches/dispatch.rs:70-77 (47 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:68-75 <-> sdk/rust/benches/hybrid_channel_throughput.rs:203-210 (47 tokens)` — sdk/rust
+- `sdk/rust/benches/correctness.rs:68-75 <-> sdk/rust/tests/ui/sealed_disallows_wiring.rs:33-40 (46 tokens)` — sdk/rust
+- `sdk/rust/benches/dispatch.rs:198-204 <-> test/apps/rust_runner/src/main.rs:2393-2399 (45 tokens)` — sdk/rust
+- `sdk/rust/benches/dispatch.rs:198-204 <-> test/apps/rust_runner/src/main.rs:2393-2399 (45 tokens)` — test/apps
+- `sdk/rust/benches/dispatch.rs:198-204 <-> test/apps/rust_runner/src/main.rs:2423-2429 (56 tokens)` — sdk/rust
+- `sdk/rust/benches/dispatch.rs:198-204 <-> test/apps/rust_runner/src/main.rs:2423-2429 (56 tokens)` — test/apps
+- `sdk/rust/benches/dispatch.rs:198-214 <-> test/apps/rust_runner/src/main.rs:2453-2473 (117 tokens)` — sdk/rust
+- `sdk/rust/benches/dispatch.rs:198-214 <-> test/apps/rust_runner/src/main.rs:2453-2473 (117 tokens)` — test/apps
+- `sdk/rust/benches/dispatch.rs:198-214 <-> test/apps/rust_runner/src/main.rs:2483-2502 (117 tokens)` — sdk/rust
+- `sdk/rust/benches/dispatch.rs:198-214 <-> test/apps/rust_runner/src/main.rs:2483-2502 (117 tokens)` — test/apps
+- `sdk/rust/benches/hybrid_channel_throughput.rs:89-96 <-> test/apps/rust_runner/src/main.rs:3001-3008 (42 tokens)` — sdk/rust
+- `sdk/rust/benches/hybrid_channel_throughput.rs:89-96 <-> test/apps/rust_runner/src/main.rs:3001-3008 (42 tokens)` — test/apps
+- `sdk/rust/examples/live_state_read.rs:61-64 <-> sdk/rust/examples/stream_transforms.rs:46-49 (52 tokens)` — sdk/rust
+- `sdk/rust/examples/live_state_read.rs:61-67 <-> sdk/rust/examples/merged_input.rs:32-40 (66 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:61-67 <-> sdk/rust/tests/entity_timers.rs:809-813 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:61-69 <-> test/apps/rust_runner/src/main.rs:1326-1332 (49 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:61-69 <-> test/apps/rust_runner/src/main.rs:1326-1332 (49 tokens)` — test/apps
+- `sdk/rust/examples/session_timeout.rs:63-69 <-> sdk/rust/tests/entity_timers.rs:121-126 (46 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:70-80 <-> test/apps/rust_runner/src/main.rs:1333-1342 (45 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:70-80 <-> test/apps/rust_runner/src/main.rs:1333-1342 (45 tokens)` — test/apps
+- `sdk/rust/examples/session_timeout.rs:70-80 <-> test/apps/rust_runner/src/main.rs:2326-2335 (42 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:70-80 <-> test/apps/rust_runner/src/main.rs:2326-2335 (42 tokens)` — test/apps
+- `sdk/rust/examples/session_timeout.rs:71-80 <-> test/apps/rust_runner/src/main.rs:908-916 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:71-80 <-> test/apps/rust_runner/src/main.rs:908-916 (41 tokens)` — test/apps
+- `sdk/rust/examples/session_timeout.rs:72-80 <-> sdk/rust/src/workflow/mod.rs:714-721 (40 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:72-80 <-> test/apps/rust_runner/src/main.rs:1186-1193 (40 tokens)` — sdk/rust
+- `sdk/rust/examples/session_timeout.rs:72-80 <-> test/apps/rust_runner/src/main.rs:1186-1193 (40 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/operative/builder.rs:479-486 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/runner/fast_tests.rs:18-25 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1159-1166 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1206-1213 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1269-1276 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1303-1310 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1341-1348 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1382-1389 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1471-1478 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1509-1516 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:1733-1740 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:2356-2363 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:302-309 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:340-347 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:364-371 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:500-507 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:535-542 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:652-659 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:765-772 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:789-796 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:871-878 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:908-915 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:946-953 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/src/workflow/mod.rs:972-979 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/tests/operative_topology.rs:114-121 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/tests/operative_topology.rs:161-168 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/tests/ui/stream_handle_cannot_escape.rs:13-20 (40 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/tests/workflow_scaling.rs:101-108 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> sdk/rust/tests/workflow_scaling.rs:68-75 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:1875-1882 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:1875-1882 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:1942-1949 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:1942-1949 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:2384-2391 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:2384-2391 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:2414-2421 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:2414-2421 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:2444-2451 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:2444-2451 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:507-514 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:507-514 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:641-648 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:641-648 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:720-727 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:720-727 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:812-819 (41 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:46-54 <-> test/apps/rust_runner/src/main.rs:812-819 (41 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-65 <-> sdk/rust/src/workflow/mod.rs:1215-1222 (53 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-65 <-> sdk/rust/src/workflow/mod.rs:1742-1749 (53 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-65 <-> sdk/rust/src/workflow/mod.rs:311-318 (53 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-65 <-> sdk/rust/src/workflow/mod.rs:544-551 (53 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-65 <-> sdk/rust/src/workflow/mod.rs:661-668 (53 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:1278-1286 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:1312-1320 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:1350-1358 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:1391-1399 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:1480-1488 (57 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:1529-1537 (56 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:349-357 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:373-381 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:509-517 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:774-782 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:798-806 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:917-925 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/src/workflow/mod.rs:981-989 (60 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> sdk/rust/tests/workflow_scaling.rs:110-120 (67 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:1884-1892 (55 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:1884-1892 (55 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:1951-1959 (57 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:1951-1959 (57 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:516-524 (54 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:516-524 (54 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:650-658 (56 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:650-658 (56 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:729-737 (54 tokens)` — sdk/rust
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-66 <-> test/apps/rust_runner/src/main.rs:729-737 (54 tokens)` — test/apps
+- `sdk/rust/examples/spawn_workflow_worker.rs:56-81 <-> sdk/rust/src/workflow/mod.rs:880-897 (118 tokens)` — sdk/rust
+- `sdk/rust/src/channel/route_latest/tests.rs:299-313 <-> sdk/rust/tests/stream_transforms.rs:426-436 (49 tokens)` — sdk/rust
+- `sdk/rust/src/entity/flusher.rs:352-360 <-> sdk/rust/src/entity/restore.rs:147-155 (62 tokens)` — sdk/rust
+- `sdk/rust/src/entity/flusher.rs:392-397 <-> sdk/rust/tests/entity_timers.rs:1276-1280 (40 tokens)` — sdk/rust
+- `sdk/rust/src/entity/flusher.rs:394-397 <-> sdk/rust/src/operative/dispatcher.rs:1989-1992 (48 tokens)` — sdk/rust
+- `sdk/rust/src/entity/restore.rs:122-130 <-> sdk/rust/src/operative/dispatcher.rs:1905-1913 (49 tokens)` — sdk/rust
+- `sdk/rust/src/entity/restore.rs:131-138 <-> sdk/rust/src/operative/dispatcher.rs:1914-1921 (46 tokens)` — sdk/rust
+- `sdk/rust/src/entity/restore.rs:140-149 <-> sdk/rust/tests/operative_dispatch.rs:1276-1285 (56 tokens)` — sdk/rust
+- `sdk/rust/src/entity/restore.rs:140-150 <-> sdk/rust/src/operative/dispatcher.rs:1923-1933 (58 tokens)` — sdk/rust
+- `sdk/rust/src/entity/restore.rs:349-356 <-> test/apps/rust_runner/src/main.rs:2145-2152 (44 tokens)` — sdk/rust
+- `sdk/rust/src/entity/restore.rs:349-356 <-> test/apps/rust_runner/src/main.rs:2145-2152 (44 tokens)` — test/apps
+- `sdk/rust/src/operative/builder.rs:465-473 <-> sdk/rust/src/operative/dispatcher.rs:1721-1729 (46 tokens)` — sdk/rust
+- `sdk/rust/src/operative/builder.rs:488-498 <-> sdk/rust/src/operative/instance_tests.rs:31-41 (60 tokens)` — sdk/rust
+- `sdk/rust/src/operative/builder.rs:488-498 <-> sdk/rust/tests/stream_transforms.rs:501-511 (60 tokens)` — sdk/rust
+- `sdk/rust/src/operative/builder.rs:488-500 <-> sdk/rust/src/runner/fast_tests.rs:27-39 (61 tokens)` — sdk/rust
+- `sdk/rust/src/operative/builder.rs:488-500 <-> sdk/rust/tests/operative_topology.rs:123-135 (61 tokens)` — sdk/rust
+- `sdk/rust/src/operative/builder.rs:489-495 <-> sdk/rust/tests/dynamic_entity.rs:87-93 (52 tokens)` — sdk/rust
+- `sdk/rust/src/operative/builder.rs:490-501 <-> sdk/rust/src/operative/dispatcher.rs:1930-1946 (46 tokens)` — sdk/rust
+- `sdk/rust/src/operative/builder.rs:646-653 <-> sdk/rust/tests/operative_dispatch.rs:2126-2133 (44 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1172-1181 <-> sdk/rust/src/procedure/ctx.rs:71-87 (49 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1172-1182 <-> sdk/rust/src/testing/harness.rs:603-610 (53 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1178-1182 <-> sdk/rust/src/procedure/ctx.rs:365-369 (42 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1178-1182 <-> sdk/rust/src/procedure/tests/determinism.rs:24-28 (43 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1726-1732 <-> sdk/rust/src/operative/poll_pool.rs:223-229 (67 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1781-1786 <-> sdk/rust/src/operative/poll_pool.rs:244-249 (43 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1788-1800 <-> sdk/rust/tests/operative_topology.rs:388-400 (61 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1928-1945 <-> sdk/rust/tests/state_evolution.rs:44-58 (50 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1929-1938 <-> sdk/rust/tests/dynamic_entity.rs:113-122 (42 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1929-1945 <-> sdk/rust/tests/operative_topology.rs:177-188 (43 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1929-1945 <-> sdk/rust/tests/state_serialize.rs:259-270 (43 tokens)` — sdk/rust
+- `sdk/rust/src/operative/dispatcher.rs:1988-1992 <-> sdk/rust/tests/operative_dispatch.rs:2362-2367 (65 tokens)` — sdk/rust
+- `sdk/rust/src/operative/instance_tests.rs:11-21 <-> sdk/rust/src/runner/poll_core_tests.rs:88-98 (87 tokens)` — sdk/rust
+- `sdk/rust/src/operative/instance_tests.rs:12-21 <-> sdk/rust/src/procedure/tests/trait_defaults.rs:4-13 (78 tokens)` — sdk/rust
+- `sdk/rust/src/operative/instance_tests.rs:13-18 <-> sdk/rust/src/testing/tests/harness_smoke.rs:12-17 (58 tokens)` — sdk/rust
+- `sdk/rust/src/operative/instance_tests.rs:22-29 <-> sdk/rust/tests/dynamic_entity.rs:36-43 (41 tokens)` — sdk/rust
+- `sdk/rust/src/operative/instance_tests.rs:22-29 <-> sdk/rust/tests/stream_transforms.rs:485-492 (42 tokens)` — sdk/rust
+- `sdk/rust/src/procedure/ctx.rs:1-5 <-> sdk/rust/src/testing/harness.rs:18-23 (41 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:1481-1491 <-> sdk/rust/tests/workflow_scaling.rs:111-121 (49 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:1730-1745 <-> test/apps/rust_runner/src/main.rs:205-220 (89 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:1730-1745 <-> test/apps/rust_runner/src/main.rs:205-220 (89 tokens)` — test/apps
+- `sdk/rust/src/workflow/mod.rs:2367-2376 <-> sdk/rust/tests/runner_lifecycle.rs:46-56 (42 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:455-463 <-> test/apps/rust_runner/src/main.rs:1117-1125 (42 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:455-463 <-> test/apps/rust_runner/src/main.rs:1117-1125 (42 tokens)` — test/apps
+- `sdk/rust/src/workflow/mod.rs:455-463 <-> test/apps/rust_runner/src/main.rs:848-856 (42 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:455-463 <-> test/apps/rust_runner/src/main.rs:848-856 (42 tokens)` — test/apps
+- `sdk/rust/src/workflow/mod.rs:455-468 <-> test/apps/rust_runner/src/main.rs:938-950 (71 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:455-468 <-> test/apps/rust_runner/src/main.rs:938-950 (71 tokens)` — test/apps
+- `sdk/rust/src/workflow/mod.rs:455-475 <-> test/apps/rust_runner/src/main.rs:963-980 (89 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:455-475 <-> test/apps/rust_runner/src/main.rs:963-980 (89 tokens)` — test/apps
+- `sdk/rust/src/workflow/mod.rs:713-721 <-> sdk/rust/tests/operative_dispatch.rs:1604-1612 (44 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:713-721 <-> test/apps/rust_runner/src/main.rs:173-181 (41 tokens)` — sdk/rust
+- `sdk/rust/src/workflow/mod.rs:713-721 <-> test/apps/rust_runner/src/main.rs:173-181 (41 tokens)` — test/apps
+- `sdk/rust/src/workflow/mod.rs:955-962 <-> sdk/rust/tests/workflow_scaling.rs:77-84 (53 tokens)` — sdk/rust
+- `sdk/rust/tests/common/mod.rs:137-142 <-> sdk/rust/tests/operative_dispatch.rs:2284-2289 (45 tokens)` — sdk/rust
+- `sdk/rust/tests/dlq_retry.rs:7-12 <-> sdk/rust/tests/partition_guard.rs:11-16 (47 tokens)` — sdk/rust
+- `sdk/rust/tests/dynamic_entity.rs:112-126 <-> sdk/rust/tests/state_evolution.rs:88-103 (48 tokens)` — sdk/rust
+- `sdk/rust/tests/dynamic_entity.rs:16-22 <-> sdk/rust/tests/merged_input.rs:18-24 (49 tokens)` — sdk/rust
+- `sdk/rust/tests/dynamic_entity.rs:62-65 <-> sdk/rust/tests/ui/stream_handle_cannot_escape.rs:21-25 (54 tokens)` — sdk/rust
+- `sdk/rust/tests/dynamic_entity.rs:62-66 <-> sdk/rust/tests/ui/wire_wrong_input.rs:25-32 (62 tokens)` — sdk/rust
+- `sdk/rust/tests/entity_timers.rs:126-135 <-> test/apps/rust_runner/src/main.rs:1332-1341 (57 tokens)` — sdk/rust
+- `sdk/rust/tests/entity_timers.rs:126-135 <-> test/apps/rust_runner/src/main.rs:1332-1341 (57 tokens)` — test/apps
+- `sdk/rust/tests/entry_idle.rs:29-32 <-> sdk/rust/tests/stream_transforms.rs:75-78 (41 tokens)` — sdk/rust
+- `sdk/rust/tests/entry_idle.rs:9-13 <-> sdk/rust/tests/stream_transforms.rs:14-18 (45 tokens)` — sdk/rust
+- `sdk/rust/tests/merged_input.rs:13-24 <-> sdk/rust/tests/stream_transforms.rs:15-27 (95 tokens)` — sdk/rust
+- `sdk/rust/tests/merged_input.rs:16-20 <-> sdk/rust/tests/operative_topology.rs:9-14 (45 tokens)` — sdk/rust
+- `sdk/rust/tests/merged_input.rs:308-317 <-> sdk/rust/tests/stream_transforms.rs:232-241 (45 tokens)` — sdk/rust
+- `sdk/rust/tests/nonparking_backpressure.rs:10-18 <-> sdk/rust/tests/nonparking_holdback_bound.rs:10-18 (65 tokens)` — sdk/rust
+- `sdk/rust/tests/operative_dispatch.rs:203-220 <-> test/apps/rust_runner/src/main.rs:2314-2331 (116 tokens)` — sdk/rust
+- `sdk/rust/tests/operative_dispatch.rs:203-220 <-> test/apps/rust_runner/src/main.rs:2314-2331 (116 tokens)` — test/apps
+- `sdk/rust/tests/operative_dispatch.rs:210-217 <-> test/apps/rust_runner/src/main.rs:3075-3082 (65 tokens)` — sdk/rust
+- `sdk/rust/tests/operative_dispatch.rs:210-217 <-> test/apps/rust_runner/src/main.rs:3075-3082 (65 tokens)` — test/apps
+- `sdk/rust/tests/operative_dispatch.rs:2160-2165 <-> test/apps/rust_runner/src/main.rs:1852-1857 (40 tokens)` — sdk/rust
+- `sdk/rust/tests/operative_dispatch.rs:2160-2165 <-> test/apps/rust_runner/src/main.rs:1852-1857 (40 tokens)` — test/apps
+- `sdk/rust/tests/operative_topology.rs:12-15 <-> sdk/rust/tests/state_serialize.rs:13-16 (41 tokens)` — sdk/rust
+- `sdk/rust/tests/operative_topology.rs:176-188 <-> sdk/rust/tests/state_serialize.rs:127-139 (44 tokens)` — sdk/rust
+- `sdk/rust/tests/operative_topology.rs:80-87 <-> sdk/rust/tests/state_serialize.rs:53-60 (40 tokens)` — sdk/rust
+- `sdk/rust/tests/state_serialize.rs:48-56 <-> test/apps/rust_runner/src/main.rs:2720-2728 (53 tokens)` — sdk/rust
+- `sdk/rust/tests/state_serialize.rs:48-56 <-> test/apps/rust_runner/src/main.rs:2720-2728 (53 tokens)` — test/apps
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:11-27 <-> sdk/rust/tests/ui/sealed_disallows_wiring.rs:13-29 (113 tokens)` — sdk/rust
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:15-22 <-> test/apps/rust_runner/src/main.rs:1380-1387 (43 tokens)` — sdk/rust
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:15-22 <-> test/apps/rust_runner/src/main.rs:1380-1387 (43 tokens)` — test/apps
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:15-22 <-> test/apps/rust_runner/src/main.rs:2342-2349 (44 tokens)` — sdk/rust
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:15-22 <-> test/apps/rust_runner/src/main.rs:2342-2349 (44 tokens)` — test/apps
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:15-22 <-> test/apps/rust_runner/src/main.rs:2474-2481 (44 tokens)` — sdk/rust
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:15-22 <-> test/apps/rust_runner/src/main.rs:2474-2481 (44 tokens)` — test/apps
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:15-22 <-> test/apps/rust_runner/src/main.rs:3113-3120 (44 tokens)` — sdk/rust
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:15-22 <-> test/apps/rust_runner/src/main.rs:3113-3120 (44 tokens)` — test/apps
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:24-31 <-> sdk/rust/tests/ui/wire_wrong_input.rs:42-49 (51 tokens)` — sdk/rust
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:24-34 <-> sdk/rust/tests/ui/sealed_disallows_wiring.rs:42-52 (65 tokens)` — sdk/rust
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:8-11 <-> sdk/rust/tests/ui/stream_handle_cannot_escape.rs:6-9 (45 tokens)` — sdk/rust
+- `sdk/rust/tests/ui/sealed_disallows_on_full.rs:8-11 <-> sdk/rust/tests/ui/wire_wrong_input.rs:6-10 (45 tokens)` — sdk/rust
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointProcedure.java:1-12 <-> test/apps/java_runner/src/main/java/com/flezha/test/CheckpointStoreProcedure.java:1-12 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointProcedure.java:1-12 <-> test/apps/java_runner/src/main/java/com/flezha/test/TierStoreProcedure.java:1-13 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointProcedure.java:23-26 <-> test/apps/java_runner/src/main/java/com/flezha/test/CheckpointStoreProcedure.java:27-30 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/BenchEchoStreamOperative.java:1-12 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/BenchKeyedNoPersistStreamOperative.java:1-12 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/BenchKeyedStreamOperative.java:1-12 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxDropNewestStreamOperative.java:1-8 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxDropNothingStreamOperative.java:1-8 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxDropOldestStreamOperative.java:1-8 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/DynamicEntityStreamOperative.java:1-13 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchCheckpointStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/TierStoreStreamOperative.java:1-14 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchKeyedNoPersistStreamOperative.java:21-33 <-> test/apps/java_runner/src/main/java/com/flezha/test/BenchKeyedStreamOperative.java:16-28 (53 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchLoopWorkflowOperative.java:17-32 <-> test/apps/java_runner/src/main/java/com/flezha/test/ChatLoopWorkflowOperative.java:19-38 (46 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchLoopWorkflowOperative.java:17-37 <-> test/apps/java_runner/src/main/java/com/flezha/test/StatelessLoopWorkflowOperative.java:20-40 (78 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BenchLoopWorkflowOperative.java:17-42 <-> test/apps/java_runner/src/main/java/com/flezha/test/ChatRewindWorkflowOperative.java:18-42 (96 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/CounterEntryProcedure.java:1-10 (93 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/DoNothingProcedure.java:1-10 (87 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/DurableStep.java:1-20 (88 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/PoisonProbeProcedure.java:1-11 (92 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/RollingWindowTwin.java:1-10 (89 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/TickProcedure.java:1-13 (90 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/CompareFilterProcedure.java:1-12 (94 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/StoreInputProcedure.java:1-13 (97 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-12 <-> test/apps/java_runner/src/main/java/com/flezha/test/TickEntryProcedure.java:1-18 (103 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-6 <-> test/apps/java_runner/src/main/java/com/flezha/test/CandleProcedure.java:1-6 (49 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-6 <-> test/apps/java_runner/src/main/java/com/flezha/test/CounterProcedure.java:1-6 (49 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-7 <-> test/apps/java_runner/src/main/java/com/flezha/test/ChatSteps.java:1-7 (60 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-8 <-> test/apps/java_runner/src/main/java/com/flezha/test/SessionTimeoutProcedure.java:1-8 (71 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:1-9 <-> test/apps/java_runner/src/main/java/com/flezha/test/DynamicEntityProcedure.java:1-9 (76 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:6-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/DoNothingProcedure.java:6-11 (48 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BoundedMailboxProcedure.java:6-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/DynamicEntityProcedure.java:5-10 (46 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:1-10 <-> test/apps/java_runner/src/main/java/com/flezha/test/RetryWorkflowOperative.java:1-10 (89 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:1-27 <-> test/apps/java_runner/src/main/java/com/flezha/test/UndoOutboxWorkflowOperative.java:1-21 (92 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:1-6 <-> test/apps/java_runner/src/main/java/com/flezha/test/TierCommitBlockWorkflowOperative.java:1-6 (49 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:1-7 <-> test/apps/java_runner/src/main/java/com/flezha/test/CommitBlockWorkflowOperative.java:3-8 (56 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:109-116 <-> test/apps/java_runner/src/main/java/com/flezha/test/DurableStep.java:36-43 (42 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:109-116 <-> test/apps/java_runner/src/main/java/com/flezha/test/TierCommitBlockWorkflowOperative.java:43-50 (40 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:109-117 <-> test/apps/java_runner/src/main/java/com/flezha/test/DiamondWorkflowOperative.java:100-108 (48 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:69-79 <-> test/apps/java_runner/src/main/java/com/flezha/test/SagaBlockWorkflowOperative.java:43-53 (40 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:69-80 <-> test/apps/java_runner/src/main/java/com/flezha/test/RetryWorkflowOperative.java:44-55 (44 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/BranchWorkflowOperative.java:69-80 <-> test/apps/java_runner/src/main/java/com/flezha/test/UndoOutboxWorkflowOperative.java:43-54 (46 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/ChatLoopWorkflowOperative.java:1-15 <-> test/apps/java_runner/src/main/java/com/flezha/test/ChatRewindWorkflowOperative.java:1-14 (57 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/ChatLoopWorkflowOperative.java:1-15 <-> test/apps/java_runner/src/main/java/com/flezha/test/StatelessLoopWorkflowOperative.java:1-16 (57 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CheckpointStoreProcedure.java:25-30 <-> test/apps/java_runner/src/main/java/com/flezha/test/TierStoreProcedure.java:25-30 (45 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CommitBlockWorkflowOperative.java:1-18 <-> test/apps/java_runner/src/main/java/com/flezha/test/DiamondWorkflowOperative.java:1-9 (74 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CommitBlockWorkflowOperative.java:1-18 <-> test/apps/java_runner/src/main/java/com/flezha/test/SagaBlockWorkflowOperative.java:1-9 (76 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CounterEntryProcedure.java:22-32 <-> test/apps/java_runner/src/main/java/com/flezha/test/MixedStreamOperative.java:44-54 (51 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CounterEntryProcedure.java:22-32 <-> test/apps/java_runner/src/main/java/com/flezha/test/TickEntryProcedure.java:23-33 (51 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CounterEntryProcedure.java:22-32 <-> test/apps/java_runner/src/main/java/com/flezha/test/WedgeProbeStreamOperative.java:51-61 (51 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CounterEntryProcedure.java:22-36 <-> test/apps/java_runner/src/main/java/com/flezha/test/StaticEntityStreamOperative.java:94-107 (67 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CounterProcedure.java:27-37 <-> test/apps/java_runner/src/main/java/com/flezha/test/ResumeProbeStreamOperative.java:44-56 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/CounterProcedure.java:37-46 <-> test/apps/java_runner/src/main/java/com/flezha/test/ResumeProbeStreamOperative.java:56-65 (44 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/DoNothingProcedure.java:18-27 <-> test/apps/java_runner/src/main/java/com/flezha/test/HybridChannelStreamOperative.java:42-51 (51 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/DynamicEntityProcedure.java:33-55 <-> test/apps/java_runner/src/main/java/com/flezha/test/PartitionRelayStreamOperative.java:50-72 (132 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/DynamicEntityProcedure.java:33-55 <-> test/apps/java_runner/src/main/java/com/flezha/test/StaticEntityStreamOperative.java:63-85 (136 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/DynamicEntityProcedure.java:43-55 <-> test/apps/java_runner/src/main/java/com/flezha/test/StoreInputProcedure.java:28-41 (88 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/PartitionRelayStreamOperative.java:1-21 (119 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/ResumeProbeStreamOperative.java:1-23 (119 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:1-13 <-> test/apps/java_runner/src/main/java/com/flezha/test/WedgeProbeStreamOperative.java:1-13 (124 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:1-14 <-> test/apps/java_runner/src/main/java/com/flezha/test/MixedStreamOperative.java:1-14 (131 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:1-14 <-> test/apps/java_runner/src/main/java/com/flezha/test/StaticEntityStreamOperative.java:1-14 (131 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:1-8 <-> test/apps/java_runner/src/main/java/com/flezha/test/SchemaEvolutionStreamOperatives.java:1-8 (71 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/EntityStressStreamOperative.java:135-144 <-> test/apps/java_runner/src/main/java/com/flezha/test/MixedStreamOperative.java:49-58 (43 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/KeyedCollectionsState.java:1-11 <-> test/apps/java_runner/src/main/java/com/flezha/test/WindowedState.java:1-11 (54 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/OptOutCommitBlockWorkflowOperative.java:1-15 <-> test/apps/java_runner/src/main/java/com/flezha/test/OutboxBlockWorkflowOperative.java:1-15 (41 tokens)` — test/apps
+- `test/apps/java_runner/src/main/java/com/flezha/test/OutboxBlockWorkflowOperative.java:19-28 <-> test/apps/java_runner/src/main/java/com/flezha/test/SyncDurableWorkflowOperative.java:23-32 (41 tokens)` — test/apps
+- `test/fixtures/plugins/build_fixtures.exs:218-229 <-> test/plugin/installer/cli_integration_test.exs:218-229 (42 tokens)` — test
+- `test/fixtures/plugins/build_fixtures.exs:218-236 <-> test/plugin/installer/release_cli_system_test.exs:190-207 (62 tokens)` — test
+- `test/flezha/authz/authz_test.exs:141-149 <-> test/flezha/authz/enforcement_test.exs:49-54 (63 tokens)` — test
+- `test/flezha/boot/recovery_hooks_test.exs:30-37 <-> test/flezha/runner/control_channel_workflow_completed_test.exs:34-42 (43 tokens)` — test
+- `test/flezha/convergence/convergence_test.exs:1262-1271 <-> test/flezha/state/wal_rewind_test.exs:16-25 (50 tokens)` — test
+- `test/flezha/convergence/convergence_test.exs:1273-1280 <-> test/flezha/state/delete_entity_test.exs:19-26 (40 tokens)` — test
+- `test/flezha/convergence/output_stall_drill_test.exs:33-39 <-> test/flezha/state/gap_recovery_test.exs:17-23 (40 tokens)` — test
+- `test/flezha/convergence/output_stall_drill_test.exs:33-48 <-> test/flezha/state/runner_restart_realign_test.exs:33-47 (81 tokens)` — test
+- `test/flezha/convergence/output_stall_drill_test.exs:33-48 <-> test/flezha/state/watchdog_test.exs:21-41 (84 tokens)` — test
+- `test/flezha/convergence/output_stall_drill_test.exs:68-71 <-> test/flezha/state/recovery_dispatch_test.exs:57-60 (40 tokens)` — test
+- `test/flezha/dlq/store_test.exs:11-16 <-> test/plugin/kafka/producer_worker_test.exs:1344-1349 (43 tokens)` — test
+- `test/flezha/observability/logger_handler_test.exs:15-23 <-> test/flezha/observability/telemetry_bridge_test.exs:9-16 (56 tokens)` — test
+- `test/flezha/observability/logger_handler_test.exs:70-97 <-> test/flezha/observability/telemetry_bridge_test.exs:246-273 (107 tokens)` — test
+- `test/flezha/operative/partition_group_rescale_test.exs:181-185 <-> test/flezha/operative/partition_group_test.exs:65-69 (49 tokens)` — test
+- `test/flezha/plugin/extension/table_health_test.exs:35-40 <-> test/flezha/service/hub_manager_recovery_test.exs:512-517 (43 tokens)` — test
+- `test/flezha/plugin/extension/table_health_test.exs:35-40 <-> test/flezha/service/hub_manager_registry_test.exs:22-27 (41 tokens)` — test
+- `test/flezha/plugin/extension/table_health_test.exs:62-66 <-> test/plugin/kafka/producer_sup_reap_test.exs:39-42 (44 tokens)` — test
+- `test/flezha/plugin/provider/operative_forward_test.exs:460-464 <-> test/flezha/service/plugin_manager_test.exs:236-240 (40 tokens)` — test
+- `test/flezha/runner/control_channel_proc_commit_test.exs:445-455 <-> test/flezha/runner/control_channel_shutdown_notification_test.exs:106-116 (49 tokens)` — test
+- `test/flezha/runner/control_channel_shutdown_notification_test.exs:109-126 <-> test/flezha/runner/control_channel_workflow_completed_test.exs:200-217 (85 tokens)` — test
+- `test/flezha/runner/control_channel_shutdown_notification_test.exs:50-59 <-> test/flezha/state/recovery_for_overwatch_test.exs:19-28 (49 tokens)` — test
+- `test/flezha/runner/control_unit_add_operative_test.exs:26-38 <-> test/flezha/runner/control_unit_partition_test.exs:27-39 (85 tokens)` — test
+- `test/flezha/runner/control_unit_add_operative_test.exs:30-33 <-> test/flezha/runner/control_unit_workflow_stop_test.exs:28-31 (43 tokens)` — test
+- `test/flezha/runner/fleet_manager_sdk_lang_test.exs:34-40 <-> test/flezha/runner/fleet_manager_sync_factories_test.exs:24-33 (45 tokens)` — test
+- `test/flezha/runner/io_stream_stale_ref_repro_test.exs:26-29 <-> test/flezha/runner/stream_channel_test.exs:9-12 (43 tokens)` — test
+- `test/flezha/runner/stream_channel_credit_test.exs:54-67 <-> test/flezha/state/wal_writer_credit_test.exs:18-28 (67 tokens)` — test
+- `test/flezha/runner/stream_channel_test.exs:111-118 <-> test/operative/overwatch_io_drop_test.exs:17-24 (59 tokens)` — test
+- `test/flezha/runner/stream_channel_test.exs:316-321 <-> test/flezha/service/hub_manager_test.exs:191-196 (43 tokens)` — test
+- `test/flezha/sdk/dispatch_test.exs:15-30 <-> test/flezha/sdk/liveness_reconnect_e2e_test.exs:17-32 (73 tokens)` — test
+- `test/flezha/sdk/dispatch_test.exs:24-37 <-> test/flezha/sdk/sdk_unit_test.exs:17-30 (50 tokens)` — test
+- `test/flezha/sdk/in_node_e2e_test.exs:18-24 <-> test/flezha/sdk/socket_roundtrip_test.exs:19-25 (41 tokens)` — test
+- `test/flezha/sdk/in_node_e2e_test.exs:26-36 <-> test/flezha/sdk/socket_roundtrip_test.exs:27-37 (40 tokens)` — test
+- `test/flezha/sdk/in_node_e2e_test.exs:78-84 <-> test/flezha/sdk/socket_roundtrip_test.exs:107-115 (42 tokens)` — test
+- `test/flezha/service/cli_manager_subscription_test.exs:123-132 <-> test/plugin/extension_test.exs:314-323 (50 tokens)` — test
+- `test/flezha/service/cli_manager_subscription_test.exs:124-132 <-> test/plugin/extension_test.exs:289-297 (44 tokens)` — test
+- `test/flezha/service/operative_info_test.exs:21-35 <-> test/flezha/service/operative_manager_request_stop_test.exs:28-42 (40 tokens)` — test
+- `test/flezha/state/durability_tier_postgres_test.exs:8-11 <-> test/plugin/provider/postgres_sink_test.exs:8-11 (48 tokens)` — test
+- `test/flezha/state/gap_recovery_test.exs:15-29 <-> test/flezha/state/recovery_dispatch_test.exs:12-26 (76 tokens)` — test
+- `test/flezha/state/gap_recovery_test.exs:17-31 <-> test/flezha/state/recovery_dispatch_test.exs:14-28 (74 tokens)` — test
+- `test/flezha/state/gap_recovery_test.exs:79-92 <-> test/flezha/state/runner_restart_realign_test.exs:278-291 (122 tokens)` — test
+- `test/flezha/state/input_log_test.exs:17-29 <-> test/flezha/state/restore_test.exs:4-16 (45 tokens)` — test
+- `test/flezha/state/restore_test.exs:4-16 <-> test/flezha/state/snapshot_test.exs:4-16 (59 tokens)` — test
+- `test/flezha/state/restore_test.exs:4-16 <-> test/flezha/state/time_travel_test.exs:4-16 (53 tokens)` — test
+- `test/flezha/state/restore_test.exs:4-16 <-> test/flezha/state/wal_writer_test.exs:6-19 (57 tokens)` — test
+- `test/flezha/state/restore_test.exs:46-51 <-> test/flezha/state/retention_test.exs:51-58 (45 tokens)` — test
+- `test/flezha/state/restore_test.exs:46-51 <-> test/flezha/state/retention_test.exs:69-74 (45 tokens)` — test
+- `test/flezha/state/restore_test.exs:46-51 <-> test/flezha/state/time_travel_test.exs:23-28 (62 tokens)` — test
+- `test/flezha/state/restore_test.exs:47-51 <-> test/flezha/state/retention_test.exs:125-129 (49 tokens)` — test
+- `test/flezha/state/restore_test.exs:48-68 <-> test/flezha/state/retention_test.exs:148-161 (144 tokens)` — test
+- `test/flezha/state/restore_test.exs:49-53 <-> test/flezha/state/snapshot_test.exs:29-33 (51 tokens)` — test
+- `test/flezha/state/retention_test.exs:30-35 <-> test/flezha/state/snapshot_test.exs:26-31 (45 tokens)` — test
+- `test/flezha/state/snapshot_test.exs:33-38 <-> test/flezha/state/wal_writer_test.exs:232-237 (64 tokens)` — test
+- `test/flezha/state/wal_rewind_test.exs:39-52 <-> test/flezha/state/wal_writer_outbox_test.exs:63-75 (83 tokens)` — test
+- `test/helpers/node_test_helper.ex:436-445 <-> test/system/control_plane_wedge_e2e_test.exs:318-326 (44 tokens)` — test
+- `test/helpers/node_test_helper.ex:436-445 <-> test/system/state_freshness_e2e_test.exs:183-192 (46 tokens)` — test
+- `test/load/credit_soak_test.exs:126-130 <-> test/system/credit_flow_e2e_test.exs:92-96 (50 tokens)` — test
+- `test/load/credit_soak_test.exs:128-133 <-> test/system/dynamic_entity_e2e_test.exs:149-156 (58 tokens)` — test
+- `test/load/credit_soak_test.exs:85-111 <-> test/system/credit_flow_e2e_test.exs:45-73 (96 tokens)` — test
+- `test/operative/overwatch_async_migrate_test.exs:23-32 <-> test/operative/overwatch_retry_test.exs:30-39 (56 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:204-217 <-> test/plugin/installer/release_cli_system_test.exs:176-189 (72 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:205-230 <-> test/plugin/installer/installer_test.exs:130-155 (111 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:216-231 <-> test/plugin/installer/public_service_api_test.exs:124-139 (55 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:219-233 <-> test/plugin/installer/public_service_api_test.exs:127-141 (44 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:221-237 <-> test/plugin/installer/release_cli_system_test.exs:193-209 (54 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:245-255 <-> test/plugin/installer/public_service_api_test.exs:151-161 (50 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:255-266 <-> test/plugin/installer/installer_test.exs:187-198 (64 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:257-266 <-> test/plugin/installer/public_service_api_test.exs:33-42 (47 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:257-267 <-> test/plugin/installer/example_hello_world_test.exs:117-127 (53 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:30-39 <-> test/plugin/installer/installer_test.exs:20-31 (54 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:30-42 <-> test/plugin/installer/loader_test.exs:15-26 (74 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:30-46 <-> test/plugin/installer/public_service_api_test.exs:15-31 (87 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:30-79 <-> test/plugin/installer/example_hello_world_test.exs:23-71 (231 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:32-40 <-> test/plugin/installer/fixtures_roundtrip_test.exs:27-35 (49 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:40-54 <-> test/plugin/installer/fixtures_roundtrip_test.exs:35-49 (77 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:52-56 <-> test/plugin/installer/public_service_api_test.exs:44-48 (47 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:54-76 <-> test/plugin/installer/fixtures_roundtrip_test.exs:51-73 (88 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:54-76 <-> test/plugin/installer/installer_test.exs:44-66 (85 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:58-79 <-> test/plugin/installer/loader_test.exs:33-54 (81 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:61-79 <-> test/plugin/installer/public_service_api_test.exs:60-78 (73 tokens)` — test
+- `test/plugin/installer/cli_integration_test.exs:62-79 <-> test/plugin/installer/supervision_tree_test.exs:41-58 (59 tokens)` — test
+- `test/plugin/installer/example_hello_world_test.exs:115-127 <-> test/plugin/installer/fixtures_roundtrip_test.exs:208-220 (54 tokens)` — test
+- `test/plugin/installer/installer_test.exs:169-187 <-> test/plugin/installer/package_test.exs:169-189 (77 tokens)` — test
+- `test/plugin/installer/installer_test.exs:9-20 <-> test/plugin/installer/public_service_api_test.exs:4-15 (48 tokens)` — test
+- `test/plugin/installer/loader_test.exs:220-243 <-> test/plugin/installer/store_test.exs:190-213 (97 tokens)` — test
+- `test/plugin/kafka/producer_worker_test.exs:902-909 <-> test/plugin/kafka_test.exs:343-350 (44 tokens)` — test
+- `test/plugin/provider/http_poll_test.exs:689-696 <-> test/plugin/provider/websocket_reconcile_live_test.exs:214-219 (66 tokens)` — test
+- `test/plugin/provider/websocket_idle_timeout_disabled_test.exs:22-34 <-> test/plugin/provider/websocket_idle_timeout_test.exs:22-34 (59 tokens)` — test
+- `test/plugin/provider/websocket_idle_timeout_disabled_test.exs:65-72 <-> test/plugin/provider/websocket_idle_timeout_test.exs:151-158 (43 tokens)` — test
+- `test/plugin/provider/websocket_idle_timeout_test.exs:36-46 <-> test/plugin/provider/websocket_subscription_source_test.exs:53-65 (46 tokens)` — test
+- `test/plugin/provider/websocket_idle_timeout_test.exs:44-57 <-> test/plugin/provider/websocket_watchdog_test.exs:28-41 (51 tokens)` — test
+- `test/plugin/provider/websocket_idle_timeout_test.exs:44-59 <-> test/plugin/provider/websocket_ignore_pattern_test.exs:27-42 (52 tokens)` — test
+- `test/plugin/provider/websocket_subscription_source_test.exs:120-134 <-> test/plugin/provider/websocket_watchdog_test.exs:41-55 (84 tokens)` — test
+- `test/system/checkpoint_batched_outputs_e2e_test.exs:19-29 <-> test/system/remote_durability_e2e_test.exs:34-44 (48 tokens)` — test
+- `test/system/checkpoint_batched_outputs_e2e_test.exs:19-30 <-> test/system/remote_durability_default_off_test.exs:13-24 (58 tokens)` — test
+- `test/system/checkpoint_batched_outputs_e2e_test.exs:46-59 <-> test/system/dlq_e2e_test.exs:126-139 (75 tokens)` — test
+- `test/system/checkpoint_batched_outputs_e2e_test.exs:46-65 <-> test/system/effectively_once_checkpoint_e2e_test.exs:44-63 (116 tokens)` — test
+- `test/system/checkpoint_batched_outputs_e2e_test.exs:49-59 <-> test/system/dlq_e2e_test.exs:64-74 (57 tokens)` — test
+- `test/system/checkpoint_batched_outputs_e2e_test.exs:49-59 <-> test/system/remote_durability_e2e_test.exs:151-161 (57 tokens)` — test
+- `test/system/checkpoint_batched_outputs_e2e_test.exs:49-64 <-> test/system/remote_durability_default_off_test.exs:49-64 (80 tokens)` — test
+- `test/system/checkpoint_batched_outputs_e2e_test.exs:53-75 <-> test/system/effectively_once_postgres_e2e_test.exs:83-106 (105 tokens)` — test
+- `test/system/compaction_e2e_test.exs:47-63 <-> test/system/dynamic_entity_e2e_test.exs:33-53 (44 tokens)` — test
+- `test/system/compaction_e2e_test.exs:72-82 <-> test/system/state_freshness_e2e_test.exs:61-74 (52 tokens)` — test
+- `test/system/control_plane_wedge_e2e_test.exs:47-59 <-> test/system/schema_evolution_e2e_test.exs:44-56 (41 tokens)` — test
+- `test/system/dlq_e2e_test.exs:139-149 <-> test/system/late_input_correction_e2e_test.exs:59-69 (55 tokens)` — test
+- `test/system/dlq_e2e_test.exs:141-152 <-> test/system/late_input_correction_e2e_test.exs:120-132 (47 tokens)` — test
+- `test/system/dlq_e2e_test.exs:56-79 <-> test/system/late_input_correction_e2e_test.exs:42-64 (124 tokens)` — test
+- `test/system/dynamic_entity_e2e_test.exs:172-191 <-> test/system/workflow_kind_e2e_test.exs:92-111 (74 tokens)` — test
+- `test/system/dynamic_entity_e2e_test.exs:174-188 <-> test/system/workflow_crash_resume_e2e_test.exs:1273-1287 (57 tokens)` — test
+- `test/system/dynamic_entity_e2e_test.exs:31-53 <-> test/system/state_freshness_e2e_test.exs:34-52 (51 tokens)` — test
+- `test/system/dynamic_entity_e2e_test.exs:31-53 <-> test/system/workflow_kind_e2e_test.exs:24-42 (51 tokens)` — test
+- `test/system/effectively_once_checkpoint_e2e_test.exs:18-28 <-> test/system/effectively_once_e2e_test.exs:15-25 (50 tokens)` — test
+- `test/system/effectively_once_checkpoint_e2e_test.exs:38-47 <-> test/system/remote_durability_e2e_test.exs:142-151 (48 tokens)` — test
+- `test/system/effectively_once_checkpoint_e2e_test.exs:42-65 <-> test/system/effectively_once_e2e_test.exs:40-68 (142 tokens)` — test
+- `test/system/effectively_once_checkpoint_e2e_test.exs:57-65 <-> test/system/remote_durability_e2e_test.exs:161-169 (48 tokens)` — test
+- `test/system/effectively_once_checkpoint_e2e_test.exs:99-108 <-> test/system/effectively_once_e2e_test.exs:82-91 (50 tokens)` — test
+- `test/system/effectively_once_e2e_test.exs:75-90 <-> test/system/effectively_once_postgres_e2e_test.exs:106-121 (79 tokens)` — test
+- `test/system/effectively_once_e2e_test.exs:91-107 <-> test/system/effectively_once_postgres_e2e_test.exs:121-131 (65 tokens)` — test
+- `test/system/effectively_once_postgres_e2e_test.exs:18-26 <-> test/system/remote_durability_e2e_test.exs:32-40 (58 tokens)` — test
+- `test/system/entity_timers_e2e_test.exs:132-145 <-> test/system/schema_evolution_e2e_test.exs:195-208 (61 tokens)` — test
+- `test/system/state_freshness_e2e_test.exs:133-158 <-> test/system/workflow_kind_e2e_test.exs:71-94 (93 tokens)` — test
+- `test/system/state_freshness_e2e_test.exs:180-192 <-> test/system/workflow_kind_e2e_test.exs:110-122 (49 tokens)` — test

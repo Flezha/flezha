@@ -15,6 +15,14 @@ resolver = "2"
 license = "Apache-2.0"
 repository = "https://github.com/alfetahe/flezha"
 
+# Every crate opts in with `[lints] workspace = true`. The clippy ceiling is
+# docs/refactor/charter.md §7; its threshold lives in clippy.toml.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)", "cfg(loom)"] }
+
+[workspace.lints.clippy]
+cognitive_complexity = "warn"
+
 # Debug artifacts are dominated by DWARF: without these, dependency debuginfo is
 # re-embedded in full into every test and example binary in the workspace.
 [profile.dev]

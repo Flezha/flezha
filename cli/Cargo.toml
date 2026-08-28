@@ -17,3 +17,6 @@ tempfile = "3"
 [[bin]]
 name = "flz"
 path = "src/main.rs"
+
+[lints]
+workspace = true

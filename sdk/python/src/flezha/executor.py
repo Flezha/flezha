@@ -8,8 +8,8 @@ complete early. That invariant is this seam's entire contract: an executor can
 affect throughput and latency; it cannot affect correctness.
 
 Three things are shared rather than written once per executor, because they are
-properties of the host and not of either member: the threads and their bounded
-drain (:class:`_Pool`), the fetch-and-run worker (:func:`_fetch_and_run`), and
+properties of the host and not of either member: the threads and their
+bounded drain (:class:`_Pool`), the fetch-and-run worker (:func:`_fetch_and_run`), and
 the starvation supervisor (:class:`_Supervisor`) — whose answer to an
 observation is one more fetch-and-run **thread** under either executor, because
 a thread is what a parked completion needs and a stalled loop cannot supply.
@@ -497,7 +497,7 @@ class AsyncioExecutor(_Host):
 
         Closing the loop with tasks still running would abandon activations the
         core is holding entities for, so the drain waits for them the way the
-        pool's join does — and is bounded the same way.
+        pool's join does — and is time-limited the same way.
         """
         while not self._stopping:
             await asyncio.sleep(POLL_TIMEOUT_MS / 1000)

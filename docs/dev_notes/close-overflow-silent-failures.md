@@ -197,7 +197,7 @@ files changed) on each, which is how they were found:
    omission there and the `REMOVED` block had to go. Both surviving scenarios
    were already carried across, per the trap `rename-block-to-drop-nothing`
    documented.
-2. **The `MODIFIED` header still said `A Block-policy push…`.** The main spec
+2. <!-- overflow-naming-record:begin -->**The `MODIFIED` header still said `A Block-policy push…`.**<!-- overflow-naming-record:end --> The main spec
    says `A DropNothing push…`. A `MODIFIED` header is matched verbatim, so a
    delta written against a pre-rename spec cannot apply.
 

@@ -38,7 +38,7 @@ so that no native buffer escapes into the JavaScript heap unmanaged.
 
 #### Scenario: No native buffer escapes
 - **WHEN** activations are dispatched and completed under sustained load
-- **THEN** native memory SHALL remain bounded and every core-allocated buffer SHALL have been freed
+- **THEN** native memory SHALL stay bounded and every core-allocated buffer SHALL have been freed
 
 ### Requirement: Errors and Panics Map Onto Host Errors
 

@@ -31,5 +31,5 @@ tempfile = "3"
 # for the access-denied diagnosis.
 libc = "0.2"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(rust_analyzer)"] }
+[lints]
+workspace = true

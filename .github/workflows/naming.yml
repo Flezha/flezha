@@ -9,6 +9,12 @@ name: Naming
 # Deliberately unfiltered by path — the invariants cover docs and specs as much
 # as code — and toolchain-free, so it costs nothing next to the Format gate.
 # Local equivalents: the `scripts/check-*.sh` invoked below.
+#
+# refactor-metrics is the structure ratchet (docs/refactor/charter.md §11):
+# non-blocking until an area is listed under `blocking` in
+# docs/refactor/baseline.json, and it uploads the measured JSON either way.
+# It needs only jscpd from sdk/node; the Elixir cycle count and the lint counts
+# are skipped without their toolchains and compared only when both sides have them.
 
 on:
   pull_request:
@@ -27,3 +33,25 @@ jobs:
         run: scripts/check-overflow-naming.sh
       - name: check-sdk-boundary
         run: scripts/check-sdk-boundary.sh
+
+  refactor-metrics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install jscpd (pinned in sdk/node/package.json)
+        run: npm ci --prefix sdk/node --ignore-scripts
+      - name: refactor_metrics --check
+        run: python3 scripts/refactor_metrics.py --check
+      - name: Measure
+        if: always()
+        run: python3 scripts/refactor_metrics.py --json > refactor-metrics.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: refactor-metrics
+          path: refactor-metrics.json

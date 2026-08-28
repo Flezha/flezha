@@ -548,7 +548,7 @@ final class DropOldestMailbox extends BoundedMailbox
 }
 
 #[Operative(factoryId: 'bounded_mailbox_drop_nothing')]
-final class BoundedDropNothingOperative extends StreamOperative
+final class BoundedMailboxDropNothingOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
@@ -559,7 +559,7 @@ final class BoundedDropNothingOperative extends StreamOperative
 }
 
 #[Operative(factoryId: 'bounded_mailbox_drop_newest')]
-final class BoundedDropNewestOperative extends StreamOperative
+final class BoundedMailboxDropNewestOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
@@ -570,7 +570,7 @@ final class BoundedDropNewestOperative extends StreamOperative
 }
 
 #[Operative(factoryId: 'bounded_mailbox_drop_oldest')]
-final class BoundedDropOldestOperative extends StreamOperative
+final class BoundedMailboxDropOldestOperative extends StreamOperative
 {
     public static function channels(Builder $c): void
     {
@@ -679,9 +679,9 @@ final class Fixtures
             BenchKeyedNoPersistOperative::class,
             PoisonProbeOperative::class,
             WedgeProbeOperative::class,
-            BoundedDropNothingOperative::class,
-            BoundedDropNewestOperative::class,
-            BoundedDropOldestOperative::class,
+            BoundedMailboxDropNothingOperative::class,
+            BoundedMailboxDropNewestOperative::class,
+            BoundedMailboxDropOldestOperative::class,
             PartitionRelayOperative::class,
             DynamicEntityOperative::class,
         ];

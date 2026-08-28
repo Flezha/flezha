@@ -1,0 +1,13 @@
+{
+  "minTokens": 40,
+  "minLines": 3,
+  "mode": "weak",
+  "format": ["rust", "elixir", "java", "typescript", "javascript", "python", "ruby", "php"],
+  "formatsExts": { "elixir": ["ex", "exs"], "javascript": ["js", "mjs", "cjs"], "typescript": ["ts", "mts"] },
+  "ignore": [
+    "**/node_modules/**", "**/target/**", "**/_build/**", "**/deps/**", "**/dist/**",
+    "**/vendor/**", "**/.venv/**", "**/generated/**", "**/*.d.ts", "**/pkg/**"
+  ],
+  "gitignore": true,
+  "reporters": ["json"]
+}

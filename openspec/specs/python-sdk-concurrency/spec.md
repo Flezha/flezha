@@ -31,10 +31,10 @@ The process's main thread SHALL NOT be a poll worker, because CPython runs signa
 
 ### Requirement: The starvation supervisor is required, not an optimisation
 
-The SDK SHALL NOT offer a pool configuration that omits the starvation supervisor, including a single-threaded mode. A completion can block: an emit onto a full `Block`-policy consumer mailbox parks the completing thread, and the inline-drain hook that rescues the in-process Rust host is not reachable through the C ABI. A host whose only thread is parked in a completion is therefore not entering `poll`, which is what the core reports as starvation, and the worker the supervisor starts is what drains the consumer and releases the producer.
+The SDK SHALL NOT offer a pool configuration that omits the starvation supervisor, including a single-threaded mode. A completion can block: an emit onto a full `DropNothing`-policy consumer mailbox parks the completing thread, and the inline-drain hook that rescues the in-process Rust host is not reachable through the C ABI. A host whose only thread is parked in a completion is therefore not entering `poll`, which is what the core reports as starvation, and the worker the supervisor starts is what drains the consumer and releases the producer.
 
-#### Scenario: A Block-policy wedge recovers on a base pool of one
-- **WHEN** the pool base is configured to one worker and a handler emits onto a full `Block`-policy consumer mailbox
+#### Scenario: A DropNothing-policy wedge recovers on a base pool of one
+- **WHEN** the pool base is configured to one worker and a handler emits onto a full `DropNothing`-policy consumer mailbox
 - **THEN** the supervisor SHALL observe starvation, start a worker, and that worker SHALL drain the consumer so the blocked completion returns
 
 #### Scenario: The supervisor cannot be configured away
@@ -54,7 +54,7 @@ The binding SHALL release the global interpreter lock for the duration of every 
 - **THEN** an unrelated Python thread SHALL run at full speed
 
 #### Scenario: A blocked completion does not freeze the interpreter
-- **WHEN** a completion parks behind a full `Block`-policy consumer mailbox
+- **WHEN** a completion parks behind a full `DropNothing`-policy consumer mailbox
 - **THEN** other Python threads SHALL continue to execute, including the worker that drains that consumer
 
 ### Requirement: The poll timeout is the documented interrupt granularity

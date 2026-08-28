@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-28 (supervisor session 1, setup)
+**Last updated**: 2026-08-28 23:48 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Phase 0 set up; no area started. Next action: run change `refactor-0-baseline`.
+Area 0a done (). Next: implement  (0b).
 
 ## Board
 
@@ -18,7 +18,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 
 | # | Area | Change id | Depends on | Status | Commit | Gates before → after |
 |---|------|-----------|------------|--------|--------|----------------------|
-| 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | proposed | | |
+| 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | implementing | | |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | proposed | | |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | pending | | |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | pending | | |
@@ -41,16 +41,19 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 None.
 
-Fields when one runs: change id · agent role (survey/implement) · started ·
-last seen (time, tasks ticked/total, `git diff --stat` tail) · resume note.
-
 ## Awaiting the user's decision
 
 Nothing.
 
 ## Found defects (not fixed inline — each becomes its own change)
 
-None yet.
+- 0a: `.github/workflows/format.yml` does not run the four veneer formatters, so CI
+  and `format-check.sh` no longer mirror each other for Node/Python/Ruby/PHP (owed).
+- 0a: `.formatter.exs` `inputs` miss `scripts/auto_restore_persistence_smoke.exs`
+  and `bench/acceptance/summarize.exs`.
+- 0a: `format-apply.sh` runs `cargo +nightly fmt` while CI pins `nightly-2026-05-07`.
+- 0a: `reuse` was not installed on this box, so `format-check.sh` could never have
+  been green locally before (now installed under `~/.local`).
 
 ## Decisions
 
@@ -65,6 +68,11 @@ None yet.
   one generic core only if the 1s spike shows no loss beyond noise.
 - 2026-08-28 File ceiling 800 lines; function ceiling 50.
 - 2026-08-28 Dialyzer is not a Phase 0 gate (PLT cost); revisit in area 8.
+- 2026-08-28 Elixir formatter version: CI moves to 1.20.2 (prod/dev images and
+  the box already are; OTP stays 28 in CI). Measured at `17bdcb9c`: 1.19.2 and
+  1.20.2 format the tree identically, so the "local vs CI disagree" claim was stale.
+- 2026-08-28 `sdk/node/types-tests/` is excluded from prettier (a reflow moves
+  `@ts-expect-error` off its line).
 
 ## Baseline (rough, pre-Phase-0 — replaced by `baseline.json` in 0a)
 
@@ -89,6 +97,5 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-1. Implement `refactor-0-baseline` (worker), verify, commit.
-2. Implement `refactor-0-tests`, verify, commit.
-3. Survey 1s, then 1.
+1. Implement  (0b), verify, commit.
+2. Survey 1s (dispatcher A/B spike), then 1.

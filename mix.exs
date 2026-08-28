@@ -102,6 +102,7 @@ defmodule Flezha.MixProject do
       {:postgrex, "~> 0.22"},
       {:protox, "~> 2.0"},
       {:mimic, "~> 1.11"},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:logger_file_backend, "~> 0.0.13"},
       {:logger_backends, "~> 1.0"},
       {:rustler, "~> 0.35"},

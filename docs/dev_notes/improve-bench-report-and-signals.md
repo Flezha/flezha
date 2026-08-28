@@ -59,7 +59,7 @@ not the first design: it started on `Shutdown.Coordinator`'s ETS table (which
 already held `shutting_down?/0`, the same kind of "this is expected" fact) and
 had to widen that table `:protected` → `:public` to let `FleetManager` write it.
 The refine pass found that `FleetManager` **already had the whole mechanism** —
-a public, TTL-bounded ETS marks table on a runner identity, with a prune on its
+a public, TTL-expiring ETS marks table on a runner identity, with a prune on its
 cleanup tick — so the second one was a parallel mechanism, and moving the fact
 to where its three producers already live let the `:public` widening be reverted
 entirely. The two tables stay separate on purpose: the fence decides

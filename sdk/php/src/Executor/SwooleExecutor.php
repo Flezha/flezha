@@ -257,7 +257,7 @@ final class SwooleExecutor implements Executor
     /**
      * Join every thread, and only then let the caller free the context.
      *
-     * Bounded for the reason every drain in this project is: a handler that
+     * The drain is bounded for the reason every drain in this project is: a handler that
      * never returns holds its thread forever, and a join that waited on it
      * would make a runner stopped by closing its pipes leak a process rather
      * than exit.

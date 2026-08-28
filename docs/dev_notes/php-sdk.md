@@ -104,7 +104,7 @@ that crosses. That is why:
 
 The supervisor is the **main thread**, not a fourth mechanism: `run()` blocks
 until the pool is done anyway, the main thread is otherwise idle, and it is the
-thread that owns the pool it grows. Its bounded `wait_starvation` is also where
+thread that owns the pool it grows. Its time-limited `wait_starvation` is also where
 the runner observes a stop request.
 
 ## Shutdown is polled, not asynchronous

@@ -53,6 +53,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "jscpd": "5.0.16",
     "prettier": "3.9.6",
     "typescript": "^5.7.0"
   }

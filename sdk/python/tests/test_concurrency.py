@@ -260,7 +260,7 @@ def test_an_async_handler_is_driven_under_either_executor(kind: str) -> None:
 
 
 @pytest.mark.parametrize("kind", ["thread", "asyncio"])
-def test_a_drain_is_bounded_and_says_what_it_abandoned(
+def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
     kind: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A handler that never returns must not keep the runner alive forever."""

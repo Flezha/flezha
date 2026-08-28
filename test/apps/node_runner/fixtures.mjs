@@ -336,7 +336,7 @@ export const wedgeProbe = defineOperative({
 
 // -- bounded_mailbox_{drop_nothing,drop_newest,drop_oldest} -----------------
 
-const bounded = (name) =>
+const boundedMailbox = (name) =>
   defineProcedure({
     name,
     mailboxCapacity: 4,
@@ -356,7 +356,7 @@ const boundedMailbox = (policy) =>
     channels: (c) => {
       c.input(`${policy}_input`, text)
         .onFull(policy)
-        .into(bounded(`${policy}_test_procedure`))
+        .into(boundedMailbox(`${policy}_test_procedure`))
         .named(`${policy}_echo`)
         .sink('bounded_mailbox_echo', bytes);
     },

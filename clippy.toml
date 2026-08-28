@@ -1,0 +1,3 @@
+# docs/refactor/charter.md §7: cognitive complexity ≤ 25 (clippy::cognitive_complexity is
+# enabled in Cargo.toml's [workspace.lints.clippy]).
+cognitive-complexity-threshold = 25

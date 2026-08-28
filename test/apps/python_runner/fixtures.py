@@ -791,7 +791,7 @@ class BoundedMailbox:
 
 
 def _bounded_mailbox(policy: str) -> flezha.Operative:
-    """One operative per overflow policy, over the same bounded procedure."""
+    """One operative per overflow policy, over the same bounded-mailbox procedure."""
     procedure = flezha.procedure(
         BoundedMailbox, name=f"{policy}_test_procedure", mailbox_capacity=4
     )

@@ -42,11 +42,27 @@ that needs it.
 `flz_core_ffi` → the veneer SDKs, `flz_nif` }. `cli` uses transport and core
 only. Nothing depends on `sdk/rust` except its test apps.
 
-**Elixir controller** (to be verified and corrected by Phase 0 with
-`mix xref graph --format cycles`): `transport` → `runner` → `operative` →
-`state` / `plugin` → `service` → `cli` / `http` / `healthz`. `observability`,
-`authz`, `convergence` are cross-cutting consumers, never dependencies of the
-layers below `service`.
+**Elixir controller** — the target order is `transport` → `runner` →
+`operative` → `state` / `plugin` → `service` → `cli` / `http` / `healthz`,
+with `observability`, `authz`, `convergence` as cross-cutting consumers that
+no layer below `service` names. Measured at `42ac2a19` (`mix xref graph
+--format cycles`, `--format dot` aggregated by subtree) the tree is not that:
+one 55-file cycle spans `state` (20 files), `runner` (9), `operative` (9),
+`service` (6), `convergence` (5), `shutdown` (2), `plugin` (2), `transport`
+(1) and `dlq` (1); six smaller cycles are supervisor ↔ worker pairs
+(`kafka`, `postgres`, `operative_forward`), the durability-tier backend
+behaviour ↔ its three backends, the `sdk` quartet and `observability`
+`bus` ↔ `registry`. Against the target order the lower layer names the
+higher one in 109 file-level references — `operative → state` 33,
+`operative → plugin` 16, `runner → state` 15, `runner → service` 13,
+`operative → service` 12, `plugin → service` 9, `runner → operative` 4,
+`state → service` 2, `transport → runner` 2, `transport → service` 2,
+`state → http` 1 — and the cross-cutting three are named from below
+`service` 12 times (`state → authz` 4, `runner → authz` 3, `runner →
+convergence` 2, `state → convergence` 2, `operative → authz` 1). The
+controller areas (5a–5e) each cut their part of that cycle; the charter's
+order is what they cut towards, and `refactor_metrics.py` ratchets the cycle
+count per area.
 
 **One host core.** The typed Rust dispatcher, the Java dispatcher and the
 erased host in `flz_core/src/host.rs` implement one contract. They converge on

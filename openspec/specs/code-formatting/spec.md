@@ -3,9 +3,7 @@
 ## Purpose
 
 The code-formatting capability defines a project-wide source-shape contract across all three authored languages: `rustfmt.toml` is the single source of truth for Rust style, `.formatter.exs` for Elixir, and Spotless (palantir-java-format) configured under `sdk/java/pom.xml` for Java. All three checks run in CI and block merge on drift; all three have matching `apply` commands developers can run locally. The capability is layered on top of `code-quality-baseline` (build/clippy/test hygiene): formatting governs source-file shape, not compile output.
-
 ## Requirements
-
 ### Requirement: Project SHALL pin Rust formatting via a project-root `rustfmt.toml`
 
 The project SHALL ship a `rustfmt.toml` at the repository root that pins the canonical Rust style. The file SHALL specify `edition = "2021"` and SHALL list every regenerated source path (e.g. `sdk/rust/src/generated`) in the `ignore` array so the formatter does not fight regenerators. Stable-only options SHALL appear above nightly-only options, with a comment block separating them so a stable `cargo fmt --all` invocation continues to work.
@@ -133,3 +131,18 @@ A formatter sweep landed under this capability SHALL NOT introduce semantic chan
 - **WHEN** a PR purports to be a format pass but a reviewer's reproduction step shows extra non-formatter changes
 - **THEN** the PR SHALL be rejected
 - **AND** the contributor SHALL split the semantic change into a separate PR
+
+### Requirement: Every language SHALL have a pinned formatter reachable through one command
+
+The Node, Ruby, PHP and Python SDKs SHALL each declare one formatter as a pinned development dependency, and `scripts/format-apply.sh` / `scripts/format-check.sh` SHALL invoke every language's formatter, so that one command formats or checks the whole repository. The Elixir formatter version SHALL be the same locally and in CI.
+
+#### Scenario: One command formats every language
+
+- **WHEN** `scripts/format-apply.sh` runs twice on a clean tree
+- **THEN** the second run SHALL change no file, and `scripts/format-check.sh` SHALL exit zero
+
+#### Scenario: Local and CI formatter output agree
+
+- **WHEN** `mix format --check-formatted` runs under the Elixir version CI pins and under the version the repository's toolchain pin names
+- **THEN** both SHALL report the same result on the same tree
+

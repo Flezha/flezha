@@ -312,7 +312,7 @@ fn targets() -> std::sync::MutexGuard<'static, Vec<DispatchTarget>> {
 pub fn register_dispatch(callback: Function<JsActivation, ()>) -> Result<u32> {
     let call: DispatchFn = callback
         .build_threadsafe_function()
-        // Unbounded: a bounded queue would make the hand-off a place a fetcher
+        // No cap: a bounded queue would make the hand-off a place a fetcher
         // can block, and a fetcher that blocks is a fetcher not in `poll`.
         .max_queue_size::<0>()
         .build()?;
