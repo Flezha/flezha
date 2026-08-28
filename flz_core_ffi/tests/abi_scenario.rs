@@ -1155,7 +1155,8 @@ mod napi_veneer {
 mod ruby_veneer {
     use flz_core::schema;
     use flz_core_ffi::ruby_glue::{activation_to_ruby, result_from_ruby, NATIVE_SURFACE};
-    use magnus::{prelude::*, IntoValue, RArray, RHash, RString, Ruby, TryConvert, Value};
+    use magnus::prelude::*;
+    use magnus::{IntoValue, RArray, RHash, RString, Ruby, TryConvert, Value};
 
     /// The handle of the VM `c_abi_full_scenario` booted. Every call below
     /// runs deeper in that test's stack, which is what makes it valid.

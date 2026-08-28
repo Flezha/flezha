@@ -3,34 +3,33 @@
 ## Purpose
 
 The cli-runtime-data-reset capability defines a top-level `flz reset` CLI subcommand that clears the Controller's durable runtime state on disk (per-Entity WAL/snapshot tree, ProcessHub durable registry; optionally certs and sockets) so an operator can deterministically start fresh from a clean slate. The capability owns the filesystem walk (clear *contents* of well-known `app_data/` subdirectories, never the parent itself), a hard live-node guard that refuses to run while the Controller is up, idempotent semantics over missing directories, scriptable flags (`--yes`, `--dry-run`, `--include-certs`, `--include-sockets`, `--all`, `--app-data-root`, `--json`), the audit-trail output enumerating cleared paths and byte counts, and the stable exit-code contract that lets scripts distinguish "refused" from "bad usage" from "I/O error".
-
 ## Requirements
-
 ### Requirement: `flz reset` clears Controller durable runtime data on disk
 
-The CLI SHALL provide a top-level `flz reset` subcommand that clears the Controller's durable runtime state under `app_data/` so an operator can deterministically start fresh. By default the command SHALL clear the contents of:
+The CLI SHALL provide a top-level `flz reset` subcommand that clears the Controller's durable runtime state so an operator can deterministically start fresh. By default the command SHALL clear the contents of:
 
 - `app_data/state/` — per-Entity WAL/snapshot/outbox files written by `operative-state-persistence`.
 - `app_data/process_hub/` — ProcessHub durable registries written by `auto-restore-on-boot`.
 
-The command SHALL leave `app_data/certs/` and `app_data/sockets/` intact unless explicitly requested via `--include-certs`, `--include-sockets`, or `--all`.
+The command SHALL leave `app_data/certs/` and the socket directory intact unless explicitly requested via `--include-certs`, `--include-sockets`, or `--all`. The socket directory is resolved through the shared ladder and is frequently not under `app_data/`.
 
-The command SHALL NEVER delete `app_data/` itself; it only clears the contents of the listed subdirectories. A path-equality assertion SHALL prevent unlinking `app_data/` or any of the cleared roots themselves.
+The command SHALL NEVER delete `app_data/` itself, nor the socket directory itself; it only clears the contents of the listed roots. A path-equality assertion SHALL prevent unlinking `app_data/` or any of the cleared roots themselves.
 
 The command SHALL be idempotent: a missing root directory is success, not error.
 
 #### Scenario: Default reset clears state and process_hub but keeps certs and sockets
 
-- **GIVEN** the Controller is not running and `app_data/` contains `state/`, `process_hub/`, `certs/`, and `sockets/` subdirectories with files
+- **GIVEN** the Controller is not running and `app_data/` contains `state/`, `process_hub/` and `certs/` with files, and the resolved socket directory holds socket files
 - **WHEN** the operator runs `flz reset --yes`
-- **THEN** `app_data/state/` is empty, `app_data/process_hub/` is empty, `app_data/certs/` is unchanged, `app_data/sockets/` is unchanged
+- **THEN** `app_data/state/` is empty, `app_data/process_hub/` is empty, `app_data/certs/` is unchanged, and the socket directory is unchanged
 - **AND** `app_data/` itself still exists with the same inode
 
-#### Scenario: `--all` clears every documented subdirectory
+#### Scenario: `--all` clears every documented root
 
-- **GIVEN** the Controller is not running and `app_data/` contains all four subdirectories
+- **GIVEN** the Controller is not running, `app_data/` contains `state/`, `process_hub/` and `certs/`, and the resolved socket directory holds Flezha sockets
 - **WHEN** the operator runs `flz reset --yes --all`
-- **THEN** all four subdirectories exist and are empty after the command returns
+- **THEN** the three `app_data/` subdirectories exist and are empty after the command returns
+- **AND** the Flezha sockets in the resolved socket directory are unlinked
 
 #### Scenario: Idempotent over a missing root
 
@@ -53,6 +52,8 @@ Detection SHALL use `flzvm rpc` against `Flezha.Service.CliManager.controller_st
 
 The probe SHALL be considered "Controller is up" when `flzvm rpc` exits 0 AND the RPC returns a parseable status reply. Any non-zero exit from `flzvm rpc` (no node, distribution refused, RPC timeout) SHALL be treated as "Controller is not up" and the reset SHALL proceed.
 
+This guard answers about **this** Controller's node, and SHALL NOT be widened to cover a Controller colocated on the same machine: a peer is a different node with its own durable state, and its state is not this reset's to protect. What the peer shares is the socket directory, and that is guarded where it is touched.
+
 The command SHALL NOT provide a `--force-while-live` (or equivalent) escape hatch that bypasses this guard.
 
 #### Scenario: Refuse when Controller is up
@@ -71,7 +72,7 @@ The command SHALL NOT provide a `--force-while-live` (or equivalent) escape hatc
 
 #### Scenario: Proceed when only stale sockets exist
 
-- **GIVEN** the Controller crashed leaving `app_data/sockets/runner_control_channel.sock` on disk but no live BEAM node
+- **GIVEN** the Controller crashed leaving a control socket in the resolved socket directory but no live BEAM node
 - **WHEN** the operator runs `flz reset --yes`
 - **THEN** the `flzvm rpc` probe exits non-zero (no live node)
 - **AND** the reset proceeds; the stale socket is cleared if `--include-sockets` or `--all` is also passed
@@ -105,6 +106,8 @@ With `--dry-run`, the command SHALL print the would-be plan with the verb `would
 
 `flz reset` SHALL print one human-readable line per inspected root, distinguishing `cleared` from `kept`, with file count and byte size, plus a final `reset complete in <N> ms` line. With `--json`, the same data SHALL be emitted as a single JSON object containing `cleared`, `kept`, `duration_ms`, and `dry_run` fields.
 
+The socket root SHALL be reported with the rung that produced it alongside its path, in the same words the connect diagnosis and `flz runner check` use for that rung. An operator who expected `app_data/sockets/` and sees a runtime directory needs to read the ladder answering, not the command going wrong.
+
 `--dry-run` (or absent `--yes`) SHALL substitute the verb `would clear` / `would keep` and the JSON `dry_run` flag SHALL be `true`.
 
 The walk that computes file counts and bytes SHALL be the same in dry-run and apply modes so the preview matches the action.
@@ -113,6 +116,12 @@ The walk that computes file counts and bytes SHALL be the same in dry-run and ap
 
 - **WHEN** the operator runs `flz reset --yes` against a populated `app_data/`
 - **THEN** stdout contains lines such as `cleared app_data/state/ (12 files, 4.3 MiB)` for each cleared root, `kept app_data/certs/ (use --include-certs to clear)` for each kept root, and a final `reset complete in <N> ms` line
+
+#### Scenario: The socket root names its rung
+
+- **GIVEN** the per-user runtime directory is what the ladder resolved
+- **WHEN** the operator runs `flz reset --dry-run --include-sockets`
+- **THEN** the socket root's line carries both the absolute path and the rung that produced it
 
 #### Scenario: `--json` output is a single object
 
@@ -166,3 +175,80 @@ The codes SHALL be documented in `flz reset --help` output.
 - **GIVEN** the Controller is running
 - **WHEN** the operator runs `flz reset --yes`
 - **THEN** the exit code is exactly 4 (not 1, not 3) so scripts can distinguish "controller still up" from "bad usage"
+
+### Requirement: `flz reset` resolves the socket directory from the same source as the Controller and its runners
+
+`flz reset` SHALL resolve the socket directory through the shared socket-directory ladder — the one implementation the Controller, every runner and `flz runner check` reach — rather than assuming a fixed subdirectory of the `app_data/` root. The ladder's rungs are, in order: the explicit socket-directory environment variable used outright if set; else the per-user runtime directory; else the system-wide runtime directory; else the repository fallback under `app_data/`.
+
+The resolved directory is therefore frequently NOT under the `app_data/` root, and `--app-data-root` SHALL NOT move it: the two are resolved from different sources because the Controller resolves them from different sources.
+
+When resolution refuses, `flz reset` SHALL report the socket root as kept with the refusal's reason and SHALL continue with the remaining roots. Not knowing which directory holds the sockets is not an I/O error on a path the command was asked to clear, and SHALL NOT change the exit code.
+
+#### Scenario: The per-user runtime directory is cleared, not `app_data/sockets/`
+
+- **GIVEN** the per-user runtime directory environment variable is set, and both that directory's `flezha/` subdirectory and `app_data/sockets/` contain socket files
+- **WHEN** the operator runs `flz reset --yes --include-sockets`
+- **THEN** the socket files under the per-user runtime directory are unlinked
+- **AND** `app_data/sockets/` is not reported as the cleared socket root
+
+#### Scenario: The explicit variable wins over every later rung
+
+- **GIVEN** the explicit socket-directory environment variable names a directory holding a stale control socket, and the per-user runtime directory also holds one
+- **WHEN** the operator runs `flz reset --yes --include-sockets`
+- **THEN** only the directory the explicit variable names is cleared
+
+#### Scenario: `--app-data-root` does not move the socket directory
+
+- **GIVEN** the per-user runtime directory is set and the operator passes `--app-data-root /tmp/test-root`
+- **WHEN** the operator runs `flz reset --yes --include-sockets`
+- **THEN** `/tmp/test-root/state/` and `/tmp/test-root/process_hub/` are cleared
+- **AND** the socket root cleared is the one the ladder resolved, not `/tmp/test-root/sockets/`
+
+#### Scenario: A resolution refusal keeps the socket root and clears the rest
+
+- **WHEN** the ladder cannot resolve a socket directory
+- **THEN** the socket root is reported as kept with the reason, `app_data/state/` and `app_data/process_hub/` are still cleared, and the exit code is unchanged
+
+### Requirement: `flz reset` never unlinks a live controller's socket
+
+Because the socket directory may be shared, `flz reset` SHALL probe the resolved directory for a control socket before unlinking anything in it, using the same probe the connect diagnosis and `flz runner check` use.
+
+When the probe finds a control socket that answers, `flz reset` SHALL keep the socket root — reporting it kept, naming the directory and the rung that produced it — and SHALL proceed with the remaining roots. It SHALL NOT refuse the whole run: several Controllers may share a machine and therefore a runtime directory, a peer's durable state is not under this reset's `app_data/` root, and refusing would make the command unusable wherever colocation is in use.
+
+This probe is IN ADDITION TO the live-node guard, never a replacement for it. The live-node guard asks whether **this** Controller's node is up; the probe asks whether **any** Controller is serving in the directory about to be cleared. A peer Controller is a different node, so the live-node guard truthfully answers "not up" while the peer serves.
+
+A control socket that is present but does not answer — a Controller that died hard — SHALL NOT keep the socket root: that is the stale socket the command exists to clear. A directory this user may not enter, or a socket that refuses for another reason, SHALL be reported and skipped rather than forced.
+
+#### Scenario: A live peer Controller's socket directory is kept, and the rest is cleared
+
+- **GIVEN** two Controllers share a runtime directory, the peer is serving, and this Controller's node is down
+- **WHEN** the operator runs `flz reset --yes --include-sockets`
+- **THEN** the live-node guard passes, because the peer is a different node
+- **AND** the socket root is reported kept, naming the directory and its rung
+- **AND** `app_data/state/` and `app_data/process_hub/` are still cleared, and the exit code is 0
+
+#### Scenario: A stale socket is cleared, not kept
+
+- **GIVEN** a Controller died hard leaving a control socket nothing is listening on
+- **WHEN** the operator runs `flz reset --yes --include-sockets`
+- **THEN** the probe reports the socket stale, and the socket files are unlinked
+
+#### Scenario: A directory this user cannot enter is reported, not forced
+
+- **GIVEN** the resolved socket directory belongs to another user and is not enterable
+- **WHEN** the operator runs `flz reset --yes --include-sockets`
+- **THEN** the socket root is reported kept with the reason, no unlink is attempted there, and the remaining roots are cleared
+
+### Requirement: `flz reset` unlinks only the socket files Flezha creates
+
+Within the resolved socket directory, `flz reset` SHALL unlink only the socket files Flezha itself creates — the control socket and the per-runner stream sockets — identified by the same naming the transport uses to create them. Every other entry SHALL be left in place.
+
+The other clearable roots are subdirectories of an `app_data/` root the command owns, so clearing their whole contents is safe. The socket directory may be one an operator named through the explicit environment variable, and a directory an operator chose is not one `flz reset` may empty.
+
+#### Scenario: Unrelated files in the socket directory survive
+
+- **GIVEN** the resolved socket directory holds a stale Flezha control socket, a Flezha stream socket, and a file Flezha did not create
+- **WHEN** the operator runs `flz reset --yes --include-sockets`
+- **THEN** both Flezha sockets are unlinked
+- **AND** the unrelated file is still present, and the directory itself still exists
+

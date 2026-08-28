@@ -182,10 +182,12 @@ all. The explicit rung is exempt: it is what the operator named.
   `mio`, so nothing is added to the build.
 - **`cli` now depends on `flz_transport`** so `flz runner check` runs the
   runner's probe rather than a second copy of it.
-- **OWED:** `flz reset --include-sockets` still clears `<data root>/sockets` and
-  knows nothing about the ladder. Harmless (sockets are runtime state a restart
-  replaces) but stale; `docs/operations/reset.md` says so rather than pretending
-  otherwise.
+- **DISCHARGED by `fix-reset-socket-dir-resolution`:** `flz reset
+  --include-sockets` used to clear `<data root>/sockets` and know nothing about
+  the ladder — so on any box with `XDG_RUNTIME_DIR` set it cleared a directory
+  nothing used and reported it cleared. It now resolves through
+  `resolve_socket_dir`, probes the result, and unlinks only Flezha's own socket
+  files there.
 - **Not proven here:** a controller whose NAME resolves to a new address. DNS
   cannot be moved under a test without root, so per-attempt resolution is proved
   by unit test and the list arm by the e2e scenario whose first entry does not

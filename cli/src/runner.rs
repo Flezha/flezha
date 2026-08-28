@@ -1,7 +1,7 @@
 use std::process::{exit, Command};
 
 use flz_transport::transport::config::{get_transport_type, TransportType};
-use flz_transport::utility::path_helper;
+use flz_transport::utility::path_helper::{self, Role};
 
 use crate::utils::{get_flezha_command, get_namespace, get_output_format};
 
@@ -66,7 +66,7 @@ fn handle_check() {
     }
 
     // The runner's own words, not a second rendering of them.
-    match path_helper::diagnose(None) {
+    match path_helper::diagnose(Role::Runner, None) {
         Ok(diagnosis) => {
             println!("{}", diagnosis);
 

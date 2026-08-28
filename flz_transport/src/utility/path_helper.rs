@@ -23,6 +23,9 @@ pub const RUN_CANDIDATE: &str = "/run/flezha";
 pub const REPOSITORY_CANDIDATE: &str = "app_data/sockets";
 
 const CONTROL_SOCKET_FILE: &str = "runner_control_channel.sock";
+/// A per-runner data socket is `<stream type>_stream_<runner id>.sock`.
+const STREAM_SOCKET_INFIX: &str = "_stream_";
+const SOCKET_SUFFIX: &str = ".sock";
 
 /// The directory a control channel connected through: it settles an ambiguity
 /// a first connect would refuse, and it is where the data sockets are opened,
@@ -275,8 +278,21 @@ pub fn stream_socket_path(runner_id: &str, stream_type: String) -> Result<String
 
     Ok(path_in(
         &dir,
-        &format!("{}_stream_{}.sock", stream_type, runner_id),
+        &format!(
+            "{}{}{}{}",
+            stream_type, STREAM_SOCKET_INFIX, runner_id, SOCKET_SUFFIX
+        ),
     ))
+}
+
+/// Whether a file in a socket directory is one Flezha itself created — the
+/// control socket every runner dials, or a per-runner data socket opened
+/// beside it. The directory may be one an operator named through
+/// `FLEZHA_SOCKET_FILES_PATH` and shared with something else, so a caller
+/// clearing it asks here rather than carrying its own spelling of these names.
+pub fn is_flezha_socket(file_name: &str) -> bool {
+    file_name == CONTROL_SOCKET_FILE
+        || (file_name.ends_with(SOCKET_SUFFIX) && file_name.contains(STREAM_SOCKET_INFIX))
 }
 
 /// Record the directory a control channel connected through, named by the
@@ -288,9 +304,12 @@ pub fn note_connected(control_socket: &str) {
 }
 
 /// Resolve and probe in one step — the single implementation behind the
-/// runner's pre-retry diagnosis and `flz runner check`.
-pub fn diagnose(explicit: Option<&str>) -> Result<Diagnosis, SocketDirError> {
-    let dir = resolve_socket_dir(Role::Runner, explicit)?;
+/// runner's pre-retry diagnosis, `flz runner check` and `flz reset`'s socket
+/// root. The role decides which directory is probed: a runner asks after the
+/// one that answers, a controller after the one it would establish, and a tool
+/// acting on a controller's own state asks the controller's question.
+pub fn diagnose(role: Role, explicit: Option<&str>) -> Result<Diagnosis, SocketDirError> {
+    let dir = resolve_socket_dir(role, explicit)?;
     let reach = probe(&dir.path);
 
     Ok(Diagnosis { dir, reach })
@@ -307,7 +326,7 @@ pub fn connect_diagnosis(
     quic_addresses: Option<&str>,
 ) -> String {
     match transport {
-        TransportType::Uds => match diagnose(socket_dir) {
+        TransportType::Uds => match diagnose(Role::Runner, socket_dir) {
             Ok(diagnosis) => diagnosis.to_string(),
             Err(refusal) => refusal.to_string(),
         },
@@ -876,5 +895,28 @@ mod tests {
 
         // Leave the process-wide slot as the rest of the binary expects it.
         LAST_GOOD_DIR.forget();
+    }
+
+    #[test]
+    fn the_socket_predicate_recognises_the_names_this_module_creates() {
+        assert!(is_flezha_socket(CONTROL_SOCKET_FILE));
+        for stream_type in ["primary", "secondary"] {
+            let name = format!(
+                "{}{}{}{}",
+                stream_type, STREAM_SOCKET_INFIX, "runner-1", SOCKET_SUFFIX
+            );
+            assert!(is_flezha_socket(&name), "{}", name);
+        }
+
+        // A directory an operator named through FLEZHA_SOCKET_FILES_PATH may
+        // hold anything else, and none of it is ours.
+        for theirs in [
+            "operator-notes.txt",
+            "postgres.sock",
+            "runner_control_channel.sock.bak",
+            "primary_stream_runner-1.sock.lock",
+        ] {
+            assert!(!is_flezha_socket(theirs), "{}", theirs);
+        }
     }
 }
