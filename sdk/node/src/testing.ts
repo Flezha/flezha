@@ -106,8 +106,7 @@ export class ProcedureTestHarness<TIn, TOut, TState, TChange> {
     options: HarnessOptions<TState> = {},
   ): ProcedureTestHarness<TIn, TOut, TState, TChange> {
     const initial =
-      options.state ??
-      (procedure.definition.initialState?.(options.entityKey) as TState);
+      options.state ?? (procedure.definition.initialState?.(options.entityKey) as TState);
     return new ProcedureTestHarness(procedure, options, initial);
   }
 
@@ -192,10 +191,7 @@ export class ProcedureTestHarness<TIn, TOut, TState, TChange> {
   }
 
   /** Fire a timer. `ctx.now()` inside the callback is the scheduled time. */
-  async fireTimer(
-    kind: TimerKind,
-    scheduledAt: bigint,
-  ): Promise<Invoked<TOut, TChange>> {
+  async fireTimer(kind: TimerKind, scheduledAt: bigint): Promise<Invoked<TOut, TChange>> {
     const onTimer = this.procedure.definition.onTimer;
     if (!onTimer) {
       throw new Error(
@@ -205,9 +201,7 @@ export class ProcedureTestHarness<TIn, TOut, TState, TChange> {
     }
     const firing: TimerFiring = { kind, scheduledAt };
     const ctx = this.context(scheduledAt);
-    await invocation.run({ procedure: this.procedure.name }, () =>
-      onTimer(firing, ctx as never),
-    );
+    await invocation.run({ procedure: this.procedure.name }, () => onTimer(firing, ctx as never));
     return this.collect(ctx, undefined);
   }
 

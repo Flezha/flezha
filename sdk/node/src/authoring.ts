@@ -248,9 +248,7 @@ class Builder implements ChannelBuilder {
 }
 
 /** Where a stream's values come from: an entry channel, or a procedure. */
-type Source =
-  | { source: 'entry'; channel: ChannelSpec }
-  | { source: 'procedure'; node: ProcNode };
+type Source = { source: 'entry'; channel: ChannelSpec } | { source: 'procedure'; node: ProcNode };
 
 class EdgeStream<T> implements Stream<T> {
   constructor(

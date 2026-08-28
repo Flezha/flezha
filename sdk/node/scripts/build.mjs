@@ -13,30 +13,45 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tsc = resolve(root, 'node_modules/.bin/tsc');
 
-const run = (args) =>
-  execFileSync(tsc, args, { cwd: root, stdio: 'inherit' });
+const run = (args) => execFileSync(tsc, args, { cwd: root, stdio: 'inherit' });
 
 rmSync(resolve(root, 'dist'), { recursive: true, force: true });
 
 // Types once, from the ESM pass; both outputs share them.
 run([
-  '--project', 'tsconfig.build.json',
-  '--module', 'ESNext',
-  '--moduleResolution', 'bundler',
-  '--outDir', 'dist/esm',
-  '--declaration', '--declarationDir', 'dist/types',
-  '--noEmit', 'false',
+  '--project',
+  'tsconfig.build.json',
+  '--module',
+  'ESNext',
+  '--moduleResolution',
+  'bundler',
+  '--outDir',
+  'dist/esm',
+  '--declaration',
+  '--declarationDir',
+  'dist/types',
+  '--noEmit',
+  'false',
 ]);
 run([
-  '--project', 'tsconfig.build.json',
-  '--module', 'CommonJS',
-  '--moduleResolution', 'node10',
-  '--outDir', 'dist/cjs',
-  '--declaration', 'false',
-  '--noEmit', 'false',
+  '--project',
+  'tsconfig.build.json',
+  '--module',
+  'CommonJS',
+  '--moduleResolution',
+  'node10',
+  '--outDir',
+  'dist/cjs',
+  '--declaration',
+  'false',
+  '--noEmit',
+  'false',
 ]);
 
-for (const [format, type] of [['esm', 'module'], ['cjs', 'commonjs']]) {
+for (const [format, type] of [
+  ['esm', 'module'],
+  ['cjs', 'commonjs'],
+]) {
   const out = resolve(root, 'dist', format);
   mkdirSync(out, { recursive: true });
   writeFileSync(resolve(out, 'package.json'), `${JSON.stringify({ type }, null, 2)}\n`);

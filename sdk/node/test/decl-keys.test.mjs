@@ -8,7 +8,12 @@ import { dirname, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { defineOperative, defineProcedure, defineWorkflow, toHostClassDecl } from '../dist/esm/index.js';
+import {
+  defineOperative,
+  defineProcedure,
+  defineWorkflow,
+  toHostClassDecl,
+} from '../dist/esm/index.js';
 
 const FIXTURE = resolve(
   dirname(fileURLToPath(import.meta.url)),

@@ -54,10 +54,13 @@ test('poll and the starvation wait are not reachable from JavaScript at all', ()
 
 test('every blocking entry point is asynchronous', () => {
   const blocking = native.nativeSurface().filter((entry) => entry.blocking);
-  assert.deepEqual(
-    blocking.map((entry) => entry.name).sort(),
-    ['complete', 'spawnWorkflow', 'start', 'stopHost', 'workflowRecv'],
-  );
+  assert.deepEqual(blocking.map((entry) => entry.name).sort(), [
+    'complete',
+    'spawnWorkflow',
+    'start',
+    'stopHost',
+    'workflowRecv',
+  ]);
   for (const entry of blocking) {
     assert.equal(typeof native[entry.name], 'function');
   }

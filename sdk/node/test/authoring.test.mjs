@@ -44,7 +44,10 @@ test('a graph builds and its topology reaches the declaration', () => {
       ['out', 'plugin'],
     ],
   );
-  assert.deepEqual(decl.procedures.map((p) => p.name), ['first', 'second']);
+  assert.deepEqual(
+    decl.procedures.map((p) => p.name),
+    ['first', 'second'],
+  );
   assert.equal(decl.sdk_lang, 4);
   assert.equal(decl.change_format_id, 5);
 });
@@ -65,7 +68,11 @@ test('keyBy declares a dynamic consumer and the key reaches the channel', () => 
   const spec = defineOperative({
     factoryId: 'keyed',
     channels: (c) => {
-      c.input('in').keyBy((value) => value.symbol).into(counter).keyed().sink('out');
+      c.input('in')
+        .keyBy((value) => value.symbol)
+        .into(counter)
+        .keyed()
+        .sink('out');
     },
   });
   validate(spec);
@@ -116,8 +123,7 @@ test('an unreachable procedure is refused by name', () => {
   });
   assert.throws(
     () => validate(spec),
-    (error) =>
-      error instanceof DeclarationError && /orphan: is not reachable/.test(error.message),
+    (error) => error instanceof DeclarationError && /orphan: is not reachable/.test(error.message),
   );
 });
 
@@ -132,8 +138,14 @@ test('a named edge names the channel, not the consuming node', () => {
   });
   validate(spec);
   const decl = toHostClassDecl(spec);
-  assert.deepEqual(decl.channels.map((channel) => channel.name), ['in', 'hop', 'out']);
-  assert.deepEqual(decl.procedures.map((p) => p.name), ['first', 'second']);
+  assert.deepEqual(
+    decl.channels.map((channel) => channel.name),
+    ['in', 'hop', 'out'],
+  );
+  assert.deepEqual(
+    decl.procedures.map((p) => p.name),
+    ['first', 'second'],
+  );
 });
 
 test('a second mention under its own node name is a second node', () => {
@@ -324,7 +336,12 @@ test('keyBy into a statically keyed procedure is refused', () => {
     });
     return defineOperative({
       factoryId: 'both_keyings',
-      channels: (c) => c.input('in').keyBy(() => 'a').into(statik).sink('out'),
+      channels: (c) =>
+        c
+          .input('in')
+          .keyBy(() => 'a')
+          .into(statik)
+          .sink('out'),
     });
   });
   assert.match(message, /one or the other, not both/);

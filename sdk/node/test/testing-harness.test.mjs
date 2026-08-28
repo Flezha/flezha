@@ -145,10 +145,10 @@ test('a payload stamped at an older version reaches the declared migration', () 
     },
     handle: () => undefined,
   });
-  const harness = ProcedureTestHarness.withPayload(
-    Migrating,
-    { snapshot: new Uint8Array([1, 2, 3]), fromVersion: 1 },
-  );
+  const harness = ProcedureTestHarness.withPayload(Migrating, {
+    snapshot: new Uint8Array([1, 2, 3]),
+    fromVersion: 1,
+  });
   assert.deepEqual(harness.currentState, { items: 3, currency: 'EUR' });
 });
 

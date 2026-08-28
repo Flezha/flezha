@@ -23,9 +23,7 @@ export type ToWorker = { type: 'declare'; specifier: string } | { type: 'stop' }
 
 /** What a worker sends back. */
 export type FromWorker =
-  | { type: 'ready' }
-  | { type: 'declared' }
-  | { type: 'failed'; message: string };
+  { type: 'ready' } | { type: 'declared' } | { type: 'failed'; message: string };
 
 interface Slot {
   worker: Worker;

@@ -41,9 +41,18 @@ try {
   try {
     execFileSync(
       tsc,
-      ['--noEmit', '--strict', '--target', 'ES2022', '--module', 'ESNext',
-       '--moduleResolution', 'bundler', '--skipLibCheck',
-       ...readdirSync(scratch).map((name) => resolve(scratch, name))],
+      [
+        '--noEmit',
+        '--strict',
+        '--target',
+        'ES2022',
+        '--module',
+        'ESNext',
+        '--moduleResolution',
+        'bundler',
+        '--skipLibCheck',
+        ...readdirSync(scratch).map((name) => resolve(scratch, name)),
+      ],
       { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
   } catch (failure) {

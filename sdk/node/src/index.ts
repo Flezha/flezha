@@ -9,7 +9,13 @@
 
 export { defineOperative, defineProcedure, defineWorkflow } from './authoring.js';
 export type { ChannelSpec, ClassSpec, ProcNode } from './authoring.js';
-export { assertRepresentable, decodeValue, encodeValue, msgpack, UnrepresentableValueError } from './codec.js';
+export {
+  assertRepresentable,
+  decodeValue,
+  encodeValue,
+  msgpack,
+  UnrepresentableValueError,
+} from './codec.js';
 export type { Codec } from './codec.js';
 export { FORMAT_ID_MSGPACK, SDK_LANG_NODE, toHostClassDecl, validate } from './graph.js';
 export { consoleLogger, setLogger } from './logger.js';

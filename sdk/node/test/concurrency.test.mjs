@@ -12,7 +12,13 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { Worker } from 'node:worker_threads';
 
-import { decodeValue, defineOperative, defineProcedure, encodeValue, loadNative } from '../dist/esm/index.js';
+import {
+  decodeValue,
+  defineOperative,
+  defineProcedure,
+  encodeValue,
+  loadNative,
+} from '../dist/esm/index.js';
 import { Registry, answer } from '../dist/esm/dispatch.js';
 
 const Accumulate = defineProcedure({
@@ -30,7 +36,13 @@ const Accumulate = defineProcedure({
 
 const Spec = defineOperative({
   factoryId: 'ordering',
-  channels: (c) => c.input('in').keyBy((v) => v.key).into(Accumulate).keyed().sink('out'),
+  channels: (c) =>
+    c
+      .input('in')
+      .keyBy((v) => v.key)
+      .into(Accumulate)
+      .keyed()
+      .sink('out'),
 });
 
 function deps() {
@@ -81,8 +93,7 @@ test('the dispatch path is one function, shared by both configurations', async (
   // appear by drift.
   const dispatchModule = await import('../dist/esm/dispatch.js');
   assert.equal(typeof dispatchModule.dispatch, 'function');
-  const read = (name) =>
-    readFileSync(new URL(`../dist/esm/${name}`, import.meta.url), 'utf8');
+  const read = (name) => readFileSync(new URL(`../dist/esm/${name}`, import.meta.url), 'utf8');
   for (const loop of ['runner.js', 'worker-entry.js']) {
     assert.match(
       read(loop),

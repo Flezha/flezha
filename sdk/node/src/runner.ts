@@ -42,9 +42,7 @@ const STDIN_EOF_GRACE_MS = 5_000;
 export async function importModule(specifier: string): Promise<unknown> {
   const resolved =
     specifier.startsWith('.') || specifier.startsWith('/')
-      ? pathToFileURL(
-          specifier.startsWith('/') ? specifier : `${process.cwd()}/${specifier}`,
-        ).href
+      ? pathToFileURL(specifier.startsWith('/') ? specifier : `${process.cwd()}/${specifier}`).href
       : specifier;
   try {
     return await import(resolved);

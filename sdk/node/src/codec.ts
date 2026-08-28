@@ -107,17 +107,21 @@ function describe(value: unknown): string | null {
     return 'a symbol has no durable form';
   }
   if (value instanceof Map || value instanceof Set) {
-    return `a ${value.constructor.name} decodes as a plain object or array; ` +
-      `declare a plain object or array, or supply a hand-written codec`;
+    return (
+      `a ${value.constructor.name} decodes as a plain object or array; ` +
+      `declare a plain object or array, or supply a hand-written codec`
+    );
   }
   if (value !== null && typeof value === 'object') {
     const proto = Object.getPrototypeOf(value);
     const plain = proto === Object.prototype || proto === null || Array.isArray(value);
     const known = value instanceof Date || ArrayBuffer.isView(value);
     if (!plain && !known) {
-      return `an instance of ${proto?.constructor?.name ?? 'an unnamed class'} decodes as a ` +
+      return (
+        `an instance of ${proto?.constructor?.name ?? 'an unnamed class'} decodes as a ` +
         `plain object, losing its prototype; declare a plain object or supply a ` +
-        `hand-written codec`;
+        `hand-written codec`
+      );
     }
   }
   return null;

@@ -86,7 +86,10 @@ test('a nested unrepresentable field names its path', () => {
 test('a cycle is refused rather than encoded', () => {
   const looped = { name: 'a' };
   looped.self = looped;
-  assert.throws(() => assertRepresentable('Node', looped), (e) => e.message.includes('itself'));
+  assert.throws(
+    () => assertRepresentable('Node', looped),
+    (e) => e.message.includes('itself'),
+  );
 });
 
 test('an undefined array element is refused, since a slot cannot be omitted', () => {

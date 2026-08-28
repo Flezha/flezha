@@ -49,13 +49,22 @@ function guard<T extends object>(procedure: string, target: T, path: string): T 
         return wrap(next, at ? `${at}.${String(property)}` : String(property));
       },
       set(_inner, property) {
-        throw new StateMutationError(procedure, at ? `${at}.${String(property)}` : String(property));
+        throw new StateMutationError(
+          procedure,
+          at ? `${at}.${String(property)}` : String(property),
+        );
       },
       defineProperty(_inner, property) {
-        throw new StateMutationError(procedure, at ? `${at}.${String(property)}` : String(property));
+        throw new StateMutationError(
+          procedure,
+          at ? `${at}.${String(property)}` : String(property),
+        );
       },
       deleteProperty(_inner, property) {
-        throw new StateMutationError(procedure, at ? `${at}.${String(property)}` : String(property));
+        throw new StateMutationError(
+          procedure,
+          at ? `${at}.${String(property)}` : String(property),
+        );
       },
     });
     cache.set(value, proxied);
@@ -145,7 +154,10 @@ export function foldRestore(
           'records no changes should have no durable records to fold',
       );
     }
-    definition.applyChange(state as never, decodeBody(definition, 'change', body, procedure) as never);
+    definition.applyChange(
+      state as never,
+      decodeBody(definition, 'change', body, procedure) as never,
+    );
   }
   return state;
 }

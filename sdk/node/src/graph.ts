@@ -191,8 +191,12 @@ function checkProcedures(spec: ClassSpec): void {
       }
     }
     if (def.dynamicEntities?.maxEntities === 0) {
-      refuse(spec, node.name, 'declares maxEntities 0; a dynamic procedure that may hold no ' +
-        'entity can process nothing');
+      refuse(
+        spec,
+        node.name,
+        'declares maxEntities 0; a dynamic procedure that may hold no ' +
+          'entity can process nothing',
+      );
     }
     if (def.minReadableSchemaVersion !== undefined) {
       const floor = def.minReadableSchemaVersion;

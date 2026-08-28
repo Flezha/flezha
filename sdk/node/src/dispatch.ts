@@ -55,7 +55,6 @@ export class RegisteredClass {
   setState(node: ProcNode, entityKey: string | undefined, state: unknown): void {
     this.entities.set(this.cellKey(node.index, entityKey), state);
   }
-
 }
 
 export class Registry {
@@ -431,8 +430,7 @@ async function compensate(
     node,
     deps,
     { now: 0n, replay: false },
-    async (ctx) =>
-      (definition.compensate as (o: unknown[], c: unknown) => unknown)(outputs, ctx),
+    async (ctx) => (definition.compensate as (o: unknown[], c: unknown) => unknown)(outputs, ctx),
   );
   return { token: activation.token, outcome: 'work', effects: [ctx.effect(undefined)] };
 }

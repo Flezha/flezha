@@ -151,7 +151,10 @@ export interface ProcedureDefinition<TIn, TOut, TState, TChange> {
    * is the warmup gate. A handler that emits more than once per input uses
    * `ctx.emit` and returns nothing.
    */
-  handle: (input: TIn, ctx: Ctx<TOut, TState, TChange>) => TOut | undefined | void | Promise<TOut | undefined | void>;
+  handle: (
+    input: TIn,
+    ctx: Ctx<TOut, TState, TChange>,
+  ) => TOut | undefined | void | Promise<TOut | undefined | void>;
 
   /** A per-entity deadline fired. `ctx.now()` is the scheduled time. */
   onTimer?: (firing: TimerFiring, ctx: Ctx<TOut, TState, TChange>) => void | Promise<void>;
@@ -257,11 +260,7 @@ export class DeclarationError extends Error {
     readonly handler: string | null,
     readonly defect: string,
   ) {
-    super(
-      handler
-        ? `${factoryId}: ${handler}: ${defect}`
-        : `${factoryId}: ${defect}`,
-    );
+    super(handler ? `${factoryId}: ${handler}: ${defect}` : `${factoryId}: ${defect}`);
     this.name = 'DeclarationError';
   }
 }

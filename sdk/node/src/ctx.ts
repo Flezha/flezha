@@ -132,9 +132,9 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
       throw new EmitError(
         options?.channel
           ? `${this.input.node.name}: emits on channel \`${options.channel}\`, which it does ` +
-            'not produce on'
+              'not produce on'
           : `${this.input.node.name}: emits but declares no output channel; wire its edge ` +
-            'with .into(...) or .sink(...)',
+              'with .into(...) or .sink(...)',
       );
     }
     for (const channel of targets) {
@@ -174,9 +174,7 @@ export class Invocation implements Ctx<unknown, unknown, unknown> {
     const extractor = consumerNode?.procedure.definition.eventTime;
     const eventTime = extractor ? BigInt(extractor(transformed)) : undefined;
 
-    const payload = channel.encode
-      ? channel.encode(transformed)
-      : encodeValue(transformed);
+    const payload = channel.encode ? channel.encode(transformed) : encodeValue(transformed);
 
     return {
       target: channel.kind === 'plugin' ? 'plugin' : 'edge',

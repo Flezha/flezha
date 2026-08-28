@@ -25,7 +25,11 @@ const Counter = defineProcedure({
 const Spec = defineOperative({
   factoryId: 'counters',
   channels: (c) => {
-    c.input('in').keyBy((value) => String(value)).into(Counter).keyed().sink('out');
+    c.input('in')
+      .keyBy((value) => String(value))
+      .into(Counter)
+      .keyed()
+      .sink('out');
   },
 });
 
@@ -237,7 +241,10 @@ test('a prepare crossing answers one key per payload, in order', async () => {
     fixture(),
   );
   assert.equal(result.outcome, 'prepared');
-  assert.deepEqual(result.prepared.map((answerFor) => answerFor.keys), [['7'], ['8']]);
+  assert.deepEqual(
+    result.prepared.map((answerFor) => answerFor.keys),
+    [['7'], ['8']],
+  );
 });
 
 test('one payload failing its prepare does not fail the others', async () => {
@@ -253,7 +260,13 @@ test('one payload failing its prepare does not fail the others', async () => {
   });
   const spec = defineOperative({
     factoryId: 'windowed_op',
-    channels: (c) => c.input('in').keyBy((v) => v.k).into(Windowed).keyed().sink('out'),
+    channels: (c) =>
+      c
+        .input('in')
+        .keyBy((v) => v.k)
+        .into(Windowed)
+        .keyed()
+        .sink('out'),
   });
   const registry = new Registry();
   registry.add(spec);
@@ -318,10 +331,11 @@ test('a module specifier is imported and its operatives registered', async () =>
       `export default defineOperative({ factoryId: 'from_specifier', channels: (c) => c.input('in').into(Echo).sink('out') });\n`,
   );
   const registry = await loadRegistry([module]);
-  assert.ok(registry.get('from_specifier'), 'the module\'s operative was registered');
-  assert.deepEqual(specsFrom(module, await importModule(module)).map((s) => s.factoryId), [
-    'from_specifier',
-  ]);
+  assert.ok(registry.get('from_specifier'), "the module's operative was registered");
+  assert.deepEqual(
+    specsFrom(module, await importModule(module)).map((s) => s.factoryId),
+    ['from_specifier'],
+  );
 });
 
 test('an unimportable specifier is named, with the original error chained', async () => {
