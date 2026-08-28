@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 0a done (). Next: implement  (0b).
+Area 0a done (`e8f81b8a`). Next: implement `refactor-0-tests` (0b).
 
 ## Board
 
@@ -18,7 +18,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 
 | # | Area | Change id | Depends on | Status | Commit | Gates before → after |
 |---|------|-----------|------------|--------|--------|----------------------|
-| 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | implementing | | |
+| 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | proposed | | |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | pending | | |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | pending | | |
@@ -54,6 +54,15 @@ Nothing.
 - 0a: `format-apply.sh` runs `cargo +nightly fmt` while CI pins `nightly-2026-05-07`.
 - 0a: `reuse` was not installed on this box, so `format-check.sh` could never have
   been green locally before (now installed under `~/.local`).
+- 0a: the Elixir controller has no layering today — one 55-file cycle across nine
+  subtrees (charter §3 records the measured graph; areas 5a–5e cut it).
+- 0a: credo strict reports 1349 issues, 967 of them `AliasUsage` and
+  `ParenthesesOnZeroArityDefs`, which contradict house style — area 5a decides
+  disable-or-adopt before the count is ratcheted as blocking.
+- 0a: `cargo clippy --workspace --all-targets` and `cargo test --workspace` are red
+  without `--features flezha_runner/bench-internals`.
+- 0a: `mix deps.get` reports packages with security advisories (pre-existing).
+- 0a: `.git/info/exclude` on this box hides `bench/flink/`; other boxes see reports.
 
 ## Decisions
 
@@ -73,6 +82,14 @@ Nothing.
   1.20.2 format the tree identically, so the "local vs CI disagree" claim was stale.
 - 2026-08-28 `sdk/node/types-tests/` is excluded from prettier (a reflow moves
   `@ts-expect-error` off its line).
+- 2026-08-28 jscpd is the one duplication detector for all seven languages
+  (Elixir via `formatsExts`); no script-side detector.
+- 2026-08-28 Lint measuring mode: credo strict + cyclomatic ≤ 10; clippy
+  `cognitive_complexity` warn at 25 through `[workspace.lints]`, every crate opted in.
+- 2026-08-28 Bench numbers are recorded, never ratcheted by `--check`; charter §8's
+  interleaved A/B is the only perf gate.
+- 2026-08-28 `baseline.json` keeps per-file production LOC / markers / sleeps /
+  refutes so a regression names its file.
 
 ## Baseline (rough, pre-Phase-0 — replaced by `baseline.json` in 0a)
 
@@ -97,5 +114,5 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-1. Implement  (0b), verify, commit.
+1. Implement `refactor-0-tests` (0b), verify, commit.
 2. Survey 1s (dispatcher A/B spike), then 1.
