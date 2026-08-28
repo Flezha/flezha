@@ -1,0 +1,106 @@
+{
+  "runtime": "python",
+  "sdk_lang": 7,
+  "command": {
+    "test": "{repo}/sdk/python/.venv/bin/python {artifact} {namespace}",
+    "bench": "{repo}/sdk/python/.venv/bin/python {artifact} {namespace}"
+  },
+  "artifacts": {
+    "test": [
+      "runner.py"
+    ],
+    "bench": [
+      "runner.py"
+    ]
+  },
+  "build": {
+    "test": "scripts/build-python-sdk.sh",
+    "bench": "scripts/build-python-sdk.sh --release"
+  },
+  "connect_timeout_ms": 60000,
+  "transports": [
+    "uds",
+    "quic"
+  ],
+  "dispatch": {
+    "model": "thread-pool",
+    "detail": "A base pool of Python threads each looping poll/dispatch/complete on itself, plus a supervisor parked in the starvation wait; the GIL is released around every blocking core call, so it bounds only handler bodies.",
+    "env": {
+      "FLEZHA_WORKER_POOL_SIZE": "base worker threads (default: the host's processor count)",
+      "FLEZHA_WORKER_POOL_MAX": "the ceiling the starvation supervisor grows to (default: ten times the base)",
+      "FLEZHA_PYTHON_EXECUTOR": "which executor dispatches: thread (the default) or asyncio"
+    }
+  },
+  "toolchain": "python3 --version",
+  "deferred": [
+    "workflow"
+  ],
+  "fixtures": {
+    "runner_lifecycle": [
+      "do_nothing",
+      "compare_filter",
+      "bench_echo"
+    ],
+    "connect_discovery": [
+      "do_nothing"
+    ],
+    "graph_builder": [
+      "sugar_do_nothing",
+      "sugar_store_input",
+      "sugar_static_entity",
+      "static_entity",
+      "mixed_operative",
+      "hybrid_channel",
+      "entity_stress",
+      "bench_keyed_nopersist"
+    ],
+    "liveness": [
+      "wedge_probe"
+    ],
+    "retry_ladder": [
+      "poison_probe",
+      "bounded_mailbox_drop_nothing",
+      "bounded_mailbox_drop_newest",
+      "bounded_mailbox_drop_oldest"
+    ],
+    "partitioned": [
+      "partition_relay",
+      "dynamic_entity"
+    ],
+    "pool_wedge": [
+      "wedge_probe"
+    ],
+    "keyed_channels": [
+      "partition_relay"
+    ],
+    "dynamic_entity": [
+      "dynamic_entity"
+    ],
+    "entry_idle": [],
+    "entity_timers": [
+      "session_timeout"
+    ],
+    "state_persistence": [
+      "store_input",
+      "stateful_counter",
+      "coalescing_counter",
+      "persistence_off_counter",
+      "resume_probe",
+      "bench_keyed"
+    ],
+    "schema_evolution": [
+      "schema_evolution_v1",
+      "schema_evolution_v2"
+    ],
+    "effectively_once": [
+      "tier_store",
+      "checkpoint_store",
+      "checkpoint_batched_store",
+      "bench_checkpoint"
+    ],
+    "correction_window": [
+      "candle"
+    ]
+  },
+  "docs": "docs/sdk/python_sdk.md"
+}

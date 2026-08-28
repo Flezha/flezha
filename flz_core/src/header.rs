@@ -45,7 +45,8 @@ pub enum RestoreError {
 }
 
 /// The `sdk_lang` allocation table: 0 unspecified, 1 Rust, 2 Java, 3 Elixir,
-/// 4 Node, 5 Ruby, 6 PHP, `7..=254` free in landing order, 255 reserved.
+/// 4 Node, 5 Ruby, 6 PHP, 7 Python, `8..=254` free in landing order, 255
+/// reserved.
 ///
 /// Durable `State`/`Change` bodies are per-SDK below the shared envelope, so
 /// this byte is what keeps one language's records from reaching another's
@@ -66,8 +67,10 @@ pub const SDK_LANG_NODE: u8 = 4;
 pub const SDK_LANG_RUBY: u8 = 5;
 /// PHP SDK (`ext-ffi` over this core's C ABI).
 pub const SDK_LANG_PHP: u8 = 6;
+/// Python SDK (PyO3 over this core).
+pub const SDK_LANG_PYTHON: u8 = 7;
 /// Lowest value not yet allocated to an SDK.
-pub const SDK_LANG_NEXT_FREE: u8 = 7;
+pub const SDK_LANG_NEXT_FREE: u8 = 8;
 /// Reserved; never allocated to an SDK.
 pub const SDK_LANG_RESERVED: u8 = 255;
 
@@ -80,6 +83,7 @@ pub const SDK_LANG_ALLOCATED: &[(u8, &str)] = &[
     (SDK_LANG_NODE, "node"),
     (SDK_LANG_RUBY, "ruby"),
     (SDK_LANG_PHP, "php"),
+    (SDK_LANG_PYTHON, "python"),
 ];
 
 /// Whether `lang` is a value the allocation table hands to an SDK. `0` and
@@ -375,10 +379,12 @@ mod tests {
         assert_eq!(SDK_LANG_NODE, 4);
         assert_eq!(SDK_LANG_RUBY, 5);
         assert_eq!(SDK_LANG_PHP, 6);
+        assert_eq!(SDK_LANG_PYTHON, 7);
         assert_eq!(sdk_lang_name(SDK_LANG_JAVA), "java");
         assert_eq!(sdk_lang_name(SDK_LANG_NODE), "node");
         assert_eq!(sdk_lang_name(SDK_LANG_RUBY), "ruby");
         assert_eq!(sdk_lang_name(SDK_LANG_PHP), "php");
+        assert_eq!(sdk_lang_name(SDK_LANG_PYTHON), "python");
         assert_eq!(sdk_lang_name(SDK_LANG_NEXT_FREE), "unallocated");
     }
 
@@ -562,6 +568,71 @@ mod tests {
         assert!(matches!(
             resolve_state(&stamped, &node, 1).unwrap_err(),
             RestoreError::LangMismatch { .. }
+        ));
+    }
+
+    /// Python is the third SDK to stamp MessagePack, so its records are
+    /// separated from Ruby's and Node's by the language byte alone. Both
+    /// directions are pinned: a Python record refuses at another msgpack SDK,
+    /// and a Ruby record refuses at Python.
+    #[test]
+    fn a_python_msgpack_record_is_refused_by_another_msgpack_sdk() {
+        let python = HeaderTemplate {
+            sdk_lang: SDK_LANG_PYTHON,
+            sdk_version: 1,
+            schema_version: 1,
+            format_id: FORMAT_ID_MSGPACK,
+        };
+        let stamped = decode_header(&python.stamp(b"body")).unwrap();
+        assert_eq!(
+            resolve_record(&stamped, &python, 1).unwrap(),
+            (RecordKind::Change, SchemaDecision::Decode)
+        );
+
+        let ruby = HeaderTemplate {
+            sdk_lang: SDK_LANG_RUBY,
+            ..python
+        };
+        assert!(matches!(
+            resolve_record(&stamped, &ruby, 1).unwrap_err(),
+            RestoreError::LangMismatch {
+                expected: SDK_LANG_RUBY,
+                found: SDK_LANG_PYTHON,
+            }
+        ));
+
+        let ruby_record = decode_header(&ruby.stamp(b"body")).unwrap();
+        assert!(matches!(
+            resolve_record(&ruby_record, &python, 1).unwrap_err(),
+            RestoreError::LangMismatch {
+                expected: SDK_LANG_PYTHON,
+                found: SDK_LANG_RUBY,
+            }
+        ));
+        assert!(matches!(
+            resolve_state(&ruby_record, &python, 1).unwrap_err(),
+            RestoreError::LangMismatch { .. }
+        ));
+    }
+
+    /// A Rust runner reconnecting to an entity a Python runner wrote must
+    /// refuse on the language byte rather than hand postcard a MessagePack
+    /// body.
+    #[test]
+    fn a_rust_sdk_refuses_a_python_written_entity() {
+        let python = HeaderTemplate {
+            sdk_lang: SDK_LANG_PYTHON,
+            sdk_version: 1,
+            schema_version: 1,
+            format_id: FORMAT_ID_MSGPACK,
+        };
+        let stamped = decode_header(&python.stamp(b"body")).unwrap();
+        assert!(matches!(
+            resolve_record(&stamped, &HeaderTemplate::new(1, 1), 1).unwrap_err(),
+            RestoreError::LangMismatch {
+                expected: SDK_LANG_RUST,
+                found: SDK_LANG_PYTHON,
+            }
         ));
     }
 

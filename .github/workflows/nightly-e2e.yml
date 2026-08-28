@@ -35,6 +35,7 @@ on:
           - node
           - ruby
           - php
+          - python
 
 env:
   CARGO_TERM_COLOR: always

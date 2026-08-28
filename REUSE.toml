@@ -23,6 +23,7 @@ path = [
   # Worked SDK examples are meant to be copied into a user's own project, so
   # they carry the SDK's licence rather than the controller's.
   "examples/node/**",
+  "examples/python/**",
 ]
 SPDX-FileCopyrightText = "2026 Anuar Alfetahe"
 SPDX-License-Identifier = "Apache-2.0"

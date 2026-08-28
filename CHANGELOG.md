@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### Added — Python SDK (`python-sdk`)
+
+A sixth host for `flz_core`, over PyO3: a `python` feature on `flz_core_ffi`
+beside `jni`, `napi` and `ruby`, not a crate of its own. `pip install flezha`
+needs no Rust toolchain — an `abi3` wheel per platform targeting the 3.11 floor,
+and per-version free-threaded wheels from `cp314t` (PyO3 refuses the
+free-threaded build below 3.14). Both tiers build from one source with one API,
+and the runner names the tier it is running in its startup line.
+
+The authoring surface is decorators — `@flezha.procedure`, `@flezha.state`,
+`@flezha.stream_operative`, `@flezha.workflow_operative` — over a handler that
+is a plain function when it is a transform and a class when it has hooks. **Type
+hints are the declaration**: the input, output, state and change types all come
+from the annotations, and the package ships `py.typed` with generic `Edge[T]` /
+`Procedure[I, O]`, so a wrong edge is a pyright error before it is a
+registration refusal. That pairing is what Python has in place of Rust's
+`tests/ui` compile-fail pins, and both halves are pinned — by a fixture that
+must fail type-checking and by a refusal that names the handler and the defect.
+
+Durable `State` and `Change` serialize as MessagePack from author-declared
+dataclasses, Pydantic models or attrs classes — **never `pickle`**, whose
+loading executes code and whose payloads embed class paths; its absence is
+asserted over the loaded source. A class declared `@flezha.state` rejects direct
+attribute assignment at runtime, naming the field and `ctx.change`, which is the
+enforcement level the authoring contract now records for Python.
+
+Concurrency is the Rust host's model, because CPython's situation is the Rust
+host's: a base pool of threads each looping `poll → dispatch → complete` on
+itself, plus a supervisor parked in the starvation wait, reusing
+`FLEZHA_WORKER_POOL_SIZE` / `FLEZHA_WORKER_POOL_MAX`. **Every blocking core call
+releases the GIL**, so the lock bounds only handler bodies — and the
+free-threaded tier lifts even that. An opt-in asyncio executor
+(`FLEZHA_PYTHON_EXECUTOR=asyncio`) hands each activation to one shared loop,
+fetching on real threads and completing on the loop thread; the suite runs under
+both and the ordering scenarios are identical. Under either executor the
+supervisor's answer to starvation is one more fetch-and-run **thread**, because
+a stalled loop cannot rescue itself. The SDK spawns no processes and refuses any
+core call after a fork, naming the rule.
+
+`test/apps/python_runner/` claims eight of the nine capability families every
+other veneer SDK defers — the persistence family, the effectively-once tier,
+timers, correction windows, keyed channels, dynamic-entity eviction, entry idle
+and schema evolution — each proved by the live suite over UDS and QUIC.
+Claiming `keyed_channels` required minting the `flz.entity` / `flz.seq` /
+`flz.key` identity stamps in the SDK, which Java does and Node, Ruby and PHP do
+not. `workflow` is deferred by name to `sdk-durable-fixture-parity`.
+`mix bench.roundtrip --runtime python` lands with the change.
+
+`examples/python/durable_agent/` is the worked example: a durable agent loop
+with a model call, a retry ladder, a compensation and a suspending workflow
+session.
+
 ### Added — PHP SDK (`add-php-sdk`)
 
 A fifth host for `flz_core`, and the first to consume the C ABI **as a C ABI**:

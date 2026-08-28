@@ -347,11 +347,12 @@ documented in-process forms of what the byte boundary removes for FFI hosts.
 
 ## One change, every SDK
 
-The kernel has five hosts today: the Rust SDK (the crate), the Java SDK (`flz_core_ffi` over
-JNI), the Node SDK (the same crate over N-API), the Ruby SDK (the same crate over magnus) and
-the PHP SDK — the first to consume the C ABI *as* a C ABI, through `ext-ffi`, with no compiled
-veneer of its own (PHP has no stable ABI across minor versions, so one library per platform is
-the only distribution that does not multiply by the PHP matrix).
+The kernel has six hosts today: the Rust SDK (the crate), the Java SDK (`flz_core_ffi` over
+JNI), the Node SDK (the same crate over N-API), the Ruby SDK (the same crate over magnus), the
+Python SDK (the same crate over PyO3) and the PHP SDK — the first to consume the C ABI *as* a C
+ABI, through `ext-ffi`, with no compiled veneer of its own (PHP has no stable ABI across minor
+versions, so one library per platform is the only distribution that does not multiply by the
+PHP matrix).
 **The Elixir SDK is the deliberate exception.** It is not a poll
 host ([`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md)): it re-expresses dispatch, overflow, the
 retry→park ladder and the partition guard in Elixir and inherits *nothing* from `flz_core`. So
@@ -379,7 +380,9 @@ The rule, normative for every binding:
   carry it, keyed alike by `FLEZHA_WORKER_POOL_SIZE` / `FLEZHA_WORKER_POOL_MAX`, and so do
   Node (whose replaceable unit is a dispatch worker thread, which is the reason its multi-loop
   configuration is the recommended production posture — a wedged main thread cannot be
-  replaced), Ruby, and the PHP SDK's `SwooleExecutor`. **The PHP SDK's default `SyncExecutor`
+  replaced), Ruby, Python (under *both* its executors — the supervisor's answer is a
+  fetch-and-run thread either way, because a stalled event loop cannot rescue itself), and the
+  PHP SDK's `SwooleExecutor`. **The PHP SDK's default `SyncExecutor`
   is exempt, by name**: a non-thread-safe PHP process runs one thread of PHP code, so it has
   one loop and no worker set to grow, and its replaceable unit is the process — which the
   orchestrator already owns and the SDK deliberately does not
@@ -437,7 +440,8 @@ The rule, normative for every binding:
   | 4 | Node | yes (MessagePack) |
   | 5 | Ruby | yes (MessagePack) |
   | 6 | PHP | yes (JSON) |
-  | 7–254 | free, allocated in landing order | — |
+  | 7 | Python | yes (MessagePack) |
+  | 8–254 | free, allocated in landing order | — |
   | 255 | reserved | — |
 
   One value per SDK, taken when that SDK lands; a proposal never asserts a value it has not been
@@ -456,12 +460,12 @@ capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conf
 
 Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
-the reference every other is checked against. The Elixir, Node, Ruby and PHP SDKs (v1) all
-defer the persistence family, the effectively-once tier, timers, correction windows, keyed
+the reference every other is checked against. The Elixir, Node, Ruby, PHP and Python SDKs (v1)
+all defer the persistence family, the effectively-once tier, timers, correction windows, keyed
 channels, the workflow kind, dynamic-Entity eviction, the entry-idle observer and schema
 evolution, for different reasons: Elixir has no per-Entity persistence at all, while the Node,
-Ruby and PHP SDKs implement every one of them and have not yet proved them fixture by fixture
-against the reference. Those three owe their fixture sets to the shared follow-up
+Ruby, PHP and Python SDKs implement every one of them and have not yet proved them fixture by
+fixture against the reference. Those four owe their fixture sets to the shared follow-up
 `sdk-durable-fixture-parity`.
 
 ---

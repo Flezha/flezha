@@ -111,7 +111,7 @@ The contract SHALL define exactly one topology that may be auto-wired — a sing
 - **THEN** startup fails with an error naming the colliding id
 
 ### Requirement: Contract binds all current and future SDKs
-The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby and PHP SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Computation` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
+The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node, Ruby, PHP and Python SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Computation` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
 
 An SDK whose authoring surface is a set of factory functions, or a set of classes, rather than macros or annotations SHALL be bound by the same contract: the sketch names the mechanism, and the inference rules, the refusal set and the invocation context are the same.
 
@@ -128,11 +128,11 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 #### Scenario: A declaration key lands in every SDK or is deferred by name
 
 - **WHEN** a change adds a key to `HostClassDecl` (for example a checkpoint option)
-- **THEN** the same change adds its spelling to the Rust, Java, Node, Ruby and PHP builders, and its spec delta records the Elixir SDK as either carrying it or deferring it to a named follow-up
+- **THEN** the same change adds its spelling to the Rust, Java, Node, Ruby, PHP and Python builders, and its spec delta records the Elixir SDK as either carrying it or deferring it to a named follow-up
 
 #### Scenario: A performance claim is measured per runtime
 
-- **WHEN** a change reports a throughput or latency result for a tier the Rust, Java, Elixir, Ruby and PHP runners all carry
+- **WHEN** a change reports a throughput or latency result for a tier the Rust, Java, Elixir, Ruby, PHP and Python runners all carry
 - **THEN** its notes report a number per runtime from the same bench protocol, and a runtime without a number is named as unmeasured rather than covered by the Rust number
 
 #### Scenario: The Ruby surface is bound by the contract, not beside it
@@ -149,6 +149,11 @@ An SDK whose authoring surface is a set of factory functions, or a set of classe
 
 - **WHEN** the PHP SDK's `#[Proc]` attribute and override-detected hooks are compared against the contract's inference rules
 - **THEN** they SHALL yield the same declaration a Rust macro or a Java annotation yields for the equivalent class, and a divergence SHALL be a defect of the PHP SDK rather than a contract exception
+
+#### Scenario: The Python surface is bound by the contract, not beside it
+
+- **WHEN** the Python SDK's authoring surface is compared against the contract's inference rules
+- **THEN** its decorator-based sugar SHALL expand to the same topology and associated-type mapping as the other SDKs', and a divergence SHALL be a defect of the Python SDK rather than a contract exception
 
 ### Requirement: Keyed and collection state journaling
 The authoring contract SHALL define journaling mutators for per-key map state so a stateful procedure whose state is a `HashMap`-of-values or `HashMap`-of-collections can be authored without a hand-written `Change` or `apply_change`. Every SDK realization SHALL generate, from a journal-annotated map field, named mutators whose calls are the journaled changes, and a generated change-application that replays them.
@@ -234,7 +239,7 @@ Both authoring surfaces SHALL be rooted in a shared `Computation` base — a Rus
 ### Requirement: Each SDK SHALL name the state-mutation enforcement level it actually provides
 The authoring contract SHALL record, per SDK, the state-mutation enforcement level that SDK actually provides, so that an asymmetry between SDKs is a deliberate documented choice rather than an accident of each language's ergonomics.
 
-The contract is written once and implemented per language, but the languages do not offer equal enforcement. Rust forecloses direct State mutation at compile time by withholding `DerefMut`. Java cannot — its handle must return a readable object — and today provides only convention plus opt-in test-time detection, while documenting the Rust guarantee. Elixir's state is immutable, so an unrecorded mutation cannot exist. Node rejects direct assignment at runtime, naming the field and the change-based path. Different enforcement levels honestly stated is correct; identical claims of which only some are true is not.
+The contract is written once and implemented per language, but the languages do not offer equal enforcement. Rust forecloses direct State mutation at compile time by withholding `DerefMut`. Java cannot — its handle must return a readable object — and today provides only convention plus opt-in test-time detection, while documenting the Rust guarantee. Elixir's state is immutable, so an unrecorded mutation cannot exist. Node and Python reject direct assignment at runtime, naming the field and the change-based path. Different enforcement levels honestly stated is correct; identical claims of which only some are true is not.
 
 #### Scenario: The contract records a level per SDK
 
@@ -257,6 +262,11 @@ The contract is written once and implemented per language, but the languages do 
 
 - **WHEN** the contract records the Node SDK's level
 - **THEN** it SHALL state that assigning to a declared state value from a handler is rejected at runtime, naming the field and the change-based path, while the change fold and the restore retain their ability to mutate
+
+#### Scenario: Python's level is recorded as supplied, not forthcoming
+
+- **WHEN** the contract's per-SDK table is read after the Python SDK lands
+- **THEN** Python's level SHALL read as runtime rejection of direct attribute assignment, with the reserved runtime path for applying changes and restoring state named as the exception
 
 ### Requirement: Sugared run may declare a context parameter for multi-emit
 

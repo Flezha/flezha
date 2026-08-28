@@ -150,11 +150,12 @@ required surface is missing.
 
 Every shim is a consumer of the C entry points, never a fork of them —
 whether it is a language veneer built from this crate (the JNI veneer behind
-the `jni` feature, the N-API one behind `napi`, the Ruby one behind `ruby`, and
-any later one) or a host that binds the exported symbols directly with no
-compiled veneer of its own, as the PHP SDK does through `ext-ffi`. A shim SHALL
-add no kernel path of its own, and a capability one shim's language can reach
-that bypasses the ABI SHALL be a defect of this capability.
+the `jni` feature, the N-API one behind `napi`, the Ruby one behind `ruby`, the
+PyO3 one behind `python`, and any later one) or a host that binds the exported
+symbols directly with no compiled veneer of its own, as the PHP SDK does through
+`ext-ffi`. A shim SHALL add no kernel path of its own, and a capability one
+shim's language can reach that bypasses the ABI SHALL be a defect of this
+capability.
 
 A shim that binds the ABI directly SHALL declare the exported functions it
 calls in one place, so its declared surface can be compared against the crate's
@@ -176,9 +177,17 @@ exported symbols the way a veneer's exports are.
 - **WHEN** the PHP SDK's FFI declarations are compared against the ABI's exported symbol set
 - **THEN** each SHALL name a `flz_core_ffi` entry point — any PHP-reachable kernel capability that bypasses the ABI is a defect of this capability
 
+#### Scenario: The Python veneer is a consumer, not a fork
+- **WHEN** the Python veneer's exported functions are compared against the ABI's exported symbol set
+- **THEN** each SHALL map onto a `flz_core_ffi` entry point — any Python-reachable kernel capability that bypasses the ABI is a defect of this capability
+
 #### Scenario: A host declares its language and change format
 - **WHEN** any shim declares a class through `flz_core_declare_class`
 - **THEN** the declaration SHALL carry that shim's `sdk_lang` and `change_format_id`, and the core SHALL stamp durable record headers with them so a record is self-describing to the host that later restores it
+
+#### Scenario: A host that cannot drain inline is still safe
+- **WHEN** a shim-based host completes an activation whose emit blocks on a full `DropNothing` consumer mailbox, and the inline-drain hook the in-process Rust host installs is unavailable to it
+- **THEN** the core SHALL report the condition through `flz_core_wait_starvation`, so a host that services that wait can recover without a per-host kernel path
 
 ### Requirement: The restore crossing carries each record's stamped schema version
 

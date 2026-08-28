@@ -13,10 +13,11 @@
 //! separate suite that has to be kept in step with this one.
 //!
 //! `--features ruby-embed` does the same for the Ruby veneer, through an
-//! embedded CRuby VM and with no Ruby process involved. Both arms hang off the
-//! same two hooks in `abi_poll` / `abi_complete`, so a veneer is proved by the
-//! scenario that already covers the capability rather than by a suite of its
-//! own that has to be kept in step.
+//! embedded CRuby VM and with no Ruby process involved, and `--features
+//! python` for the Python one, through an embedded CPython interpreter. Every
+//! arm hangs off the same two hooks in `abi_poll` / `abi_complete`, so a
+//! veneer is proved by the scenario that already covers the capability rather
+//! than by a suite of its own that has to be kept in step.
 
 use std::ffi::CString;
 use std::os::unix::net::UnixListener;
@@ -124,6 +125,11 @@ fn abi_poll(ctx: *mut FlzContext, timeout_ms: u64) -> (i32, Option<schema::Activ
     if magnus::Ruby::get().is_ok() {
         ruby_veneer::assert_activation_maps(&act);
     }
+    // No thread guard here: unlike an embedded CRuby VM, CPython attaches from
+    // any thread once the interpreter is initialised, so the spawned-thread
+    // phases exercise the mapping too.
+    #[cfg(feature = "python")]
+    python_veneer::assert_activation_maps(&act);
     (status, Some(act))
 }
 
@@ -140,6 +146,8 @@ fn through_veneers(result: &schema::ActivationResult) -> schema::ActivationResul
     let result = &napi_veneer::through_veneer(result);
     #[cfg(feature = "ruby-embed")]
     let result = &ruby_veneer::through_veneer(result);
+    #[cfg(feature = "python")]
+    let result = &python_veneer::through_veneer(result);
     result.clone()
 }
 
@@ -204,6 +212,12 @@ fn c_abi_full_scenario() {
     // SAFETY: once per process, higher up the stack than any Ruby call below.
     #[cfg(feature = "ruby-embed")]
     let _ruby_vm = unsafe { magnus::embed::init() };
+
+    // CPython is initialised here rather than on first use: initialisation
+    // belongs on the main thread, and two phases below poll and complete from
+    // spawned ones.
+    #[cfg(feature = "python")]
+    pyo3::Python::initialize();
 
     // ---------------------------------------------------------- version pin
     // A shim built against an incompatible schema is refused at creation,
@@ -1540,5 +1554,575 @@ mod ruby_veneer {
                 "{name} names {abi}, which is not a C ABI entry point"
             );
         }
+    }
+}
+
+/// The same scenario through the Python veneer, with no Python process
+/// involved: an embedded CPython interpreter, `activation_to_python` on the
+/// way out and `result_from_python` on the way back.
+#[cfg(feature = "python")]
+mod python_veneer {
+    use flz_core::schema;
+    use flz_core_ffi::python_glue::{
+        activation_to_python, result_from_python, Core, PayloadView, NATIVE_SURFACE,
+    };
+    use pyo3::prelude::*;
+    use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+    use pyo3::IntoPyObjectExt;
+
+    fn get<'py, T>(h: &Bound<'py, PyDict>, key: &str) -> Option<T>
+    where
+        T: for<'a> FromPyObject<'a, 'py>,
+    {
+        h.get_item(key)
+            .expect("dict lookup")
+            .filter(|v| !v.is_none())
+            .map(|v| {
+                v.extract()
+                    .unwrap_or_else(|_| panic!("`{key}` has the declared type"))
+            })
+    }
+
+    fn req<'py, T>(h: &Bound<'py, PyDict>, key: &str) -> T
+    where
+        T: for<'a> FromPyObject<'a, 'py>,
+    {
+        get(h, key).unwrap_or_else(|| panic!("the veneer dropped `{key}`"))
+    }
+
+    /// The bytes behind a payload, however the veneer chose to expose them.
+    ///
+    /// The hot paths cross as a [`PayloadView`] — a buffer with no
+    /// intermediate `bytes` — and the JSON one crosses as `bytes`, so the
+    /// reader accepts either and the assertions below are about the bytes
+    /// rather than about which wrapper carried them.
+    fn bytes_of_value(v: &Bound<'_, PyAny>) -> Vec<u8> {
+        if let Ok(view) = v.cast::<PayloadView>() {
+            let py = v.py();
+            return view
+                .call_method0("tobytes")
+                .expect("a view copies on request")
+                .extract::<Vec<u8>>()
+                .unwrap_or_else(|_| panic!("{:?}", py.None()));
+        }
+        v.extract::<Vec<u8>>().expect("a payload is bytes")
+    }
+
+    fn bytes_of(h: &Bound<'_, PyDict>, key: &str) -> Vec<u8> {
+        bytes_of_value(
+            &h.get_item(key)
+                .expect("dict lookup")
+                .unwrap_or_else(|| panic!("the veneer dropped `{key}`")),
+        )
+    }
+
+    fn rows<'py>(h: &Bound<'py, PyDict>, key: &str) -> Vec<Bound<'py, PyAny>> {
+        req::<Bound<'py, PyList>>(h, key).iter().collect()
+    }
+
+    fn as_dict<'py>(v: &Bound<'py, PyAny>) -> Bound<'py, PyDict> {
+        v.cast::<PyDict>().expect("the veneer emits dicts").clone()
+    }
+
+    fn meta_of(h: &Bound<'_, PyDict>, key: &str) -> Vec<(String, String)> {
+        rows(h, key)
+            .into_iter()
+            .map(|pair| {
+                let pair: Vec<String> = pair.extract().expect("a metadata pair is two strings");
+                (pair[0].clone(), pair[1].clone())
+            })
+            .collect()
+    }
+
+    /// Assert the decoded activation reaches Python intact. Checked field by
+    /// field rather than by a round trip, for the reason the Node and Ruby
+    /// arms give: the veneer has no inverse in production, so an inverse
+    /// written here could agree with a wrong forward mapping.
+    pub fn assert_activation_maps(act: &schema::Activation) {
+        Python::attach(|py| {
+            let h = activation_to_python(py, act.clone()).expect("the veneer maps the activation");
+            assert_eq!(req::<u64>(&h, "token"), act.token);
+            assert_eq!(req::<String>(&h, "operative"), act.target.operative);
+            assert_eq!(req::<u32>(&h, "procedure"), act.target.procedure);
+            assert_eq!(get::<String>(&h, "entity_key"), act.target.entity_key);
+            assert_eq!(req::<u64>(&h, "change_seq"), act.change_seq);
+            assert_eq!(req::<String>(&h, "factory"), act.factory);
+
+            match &act.kind {
+                schema::ActivationKind::Work(items) => {
+                    assert_eq!(req::<String>(&h, "kind"), "work");
+                    let mapped = rows(&h, "items");
+                    assert_eq!(mapped.len(), items.len());
+                    for (value, item) in mapped.into_iter().zip(items) {
+                        let m = as_dict(&value);
+                        match item {
+                            schema::WorkItem::Input(i) => {
+                                assert_eq!(req::<String>(&m, "kind"), "input");
+                                assert_eq!(req::<u32>(&m, "channel"), i.channel);
+                                assert_eq!(bytes_of(&m, "payload"), i.payload);
+                                // The user payload is the common decode path,
+                                // so it crosses as a buffer and not a `bytes`.
+                                assert!(
+                                    m.get_item("payload")
+                                        .unwrap()
+                                        .unwrap()
+                                        .cast::<PayloadView>()
+                                        .is_ok(),
+                                    "the input payload must cross as a borrowed view"
+                                );
+                                assert_eq!(meta_of(&m, "metadata"), i.metadata);
+                                assert_eq!(get::<u64>(&m, "consumed_offset"), i.consumed_offset);
+                                assert_eq!(req::<bool>(&m, "replay"), i.replay);
+                                assert_eq!(req::<u64>(&m, "now"), i.now);
+                            }
+                            schema::WorkItem::Timer(t) => {
+                                assert_eq!(req::<String>(&m, "kind"), "timer");
+                                assert_eq!(req::<String>(&m, "timer_kind"), t.kind.as_str());
+                                assert_eq!(req::<u64>(&m, "scheduled_at"), t.scheduled_at);
+                                // A timer firing's `now` IS its scheduled
+                                // time, so a handler reads one field for both.
+                                assert_eq!(req::<u64>(&m, "now"), t.scheduled_at);
+                            }
+                        }
+                    }
+                }
+                schema::ActivationKind::RestoreFold(fold) => {
+                    assert_eq!(req::<String>(&h, "kind"), "restore_fold");
+                    match &fold.snapshot {
+                        None => assert!(h.get_item("snapshot").unwrap().is_none()),
+                        Some(body) => {
+                            let s = as_dict(&req::<Bound<'_, PyAny>>(&h, "snapshot"));
+                            assert_eq!(bytes_of(&s, "bytes"), body.bytes);
+                            assert_eq!(get::<u32>(&s, "from_version"), body.from_version);
+                        }
+                    }
+                    let changes = rows(&h, "changes");
+                    assert_eq!(changes.len(), fold.changes.len());
+                    for (value, body) in changes.into_iter().zip(&fold.changes) {
+                        let c = as_dict(&value);
+                        assert_eq!(bytes_of(&c, "bytes"), body.bytes);
+                        assert_eq!(get::<u32>(&c, "from_version"), body.from_version);
+                    }
+                }
+                schema::ActivationKind::SnapshotRequest => {
+                    assert_eq!(req::<String>(&h, "kind"), "snapshot_request")
+                }
+                schema::ActivationKind::LiveStateRead => {
+                    assert_eq!(req::<String>(&h, "kind"), "live_state_read")
+                }
+                schema::ActivationKind::ApplyState { state_json } => {
+                    assert_eq!(req::<String>(&h, "kind"), "apply_state");
+                    assert_eq!(bytes_of(&h, "state_json"), *state_json);
+                }
+                schema::ActivationKind::MigrationSerialize => {
+                    assert_eq!(req::<String>(&h, "kind"), "migration_serialize")
+                }
+                schema::ActivationKind::KeyRequest(request) => {
+                    assert_eq!(req::<String>(&h, "kind"), "key_request");
+                    let k = as_dict(&req::<Bound<'_, PyAny>>(&h, "key_request"));
+                    assert_eq!(req::<u32>(&k, "channel"), request.channel);
+                    assert_eq!(req::<bool>(&k, "want_keys"), request.want_keys);
+                    assert_eq!(req::<bool>(&k, "want_event_time"), request.want_event_time);
+                    let payloads: Vec<Vec<u8>> =
+                        rows(&k, "payloads").iter().map(bytes_of_value).collect();
+                    assert_eq!(payloads, request.payloads);
+                }
+                schema::ActivationKind::WorkflowRun { args } => {
+                    assert_eq!(req::<String>(&h, "kind"), "workflow_run");
+                    assert_eq!(bytes_of(&h, "args"), *args);
+                }
+                schema::ActivationKind::CompensateRun { outputs } => {
+                    assert_eq!(req::<String>(&h, "kind"), "compensate_run");
+                    let mapped: Vec<Vec<u8>> =
+                        rows(&h, "outputs").iter().map(bytes_of_value).collect();
+                    assert_eq!(mapped, *outputs);
+                }
+            }
+        });
+    }
+
+    /// Build the result in the shape Python answers with, map it back through
+    /// the veneer, and assert nothing changed. The scenario then completes
+    /// with the mapped value, so a lossy field fails the phase that depends on
+    /// it and not only this equality.
+    pub fn through_veneer(result: &schema::ActivationResult) -> schema::ActivationResult {
+        Python::attach(|py| {
+            let mapped = result_from_python(&py_result(py, result))
+                .expect("the veneer maps the result back");
+            assert_eq!(&mapped, result, "the veneer changed the result");
+            mapped
+        })
+    }
+
+    fn dict<'py>(py: Python<'py>, pairs: Vec<(&str, Bound<'py, PyAny>)>) -> Bound<'py, PyDict> {
+        let d = PyDict::new(py);
+        for (key, value) in pairs {
+            d.set_item(key, value).expect("dict insert");
+        }
+        d
+    }
+
+    fn text<'py>(py: Python<'py>, v: &str) -> Bound<'py, PyAny> {
+        v.into_bound_py_any(py).expect("str")
+    }
+
+    fn raw<'py>(py: Python<'py>, v: &[u8]) -> Bound<'py, PyAny> {
+        PyBytes::new(py, v).into_any()
+    }
+
+    fn list<'py>(py: Python<'py>, values: Vec<Bound<'py, PyAny>>) -> Bound<'py, PyAny> {
+        PyList::new(py, values).expect("list").into_any()
+    }
+
+    fn opt<'py, T>(py: Python<'py>, v: &Option<T>) -> Bound<'py, PyAny>
+    where
+        T: Copy + for<'a> IntoPyObject<'a>,
+    {
+        match v {
+            None => py.None().into_bound(py),
+            Some(value) => (*value).into_bound_py_any(py).expect("scalar"),
+        }
+    }
+
+    fn py_meta<'py>(py: Python<'py>, pairs: &[(String, String)]) -> Bound<'py, PyAny> {
+        list(
+            py,
+            pairs
+                .iter()
+                .map(|(k, v)| {
+                    PyTuple::new(py, [k.as_str(), v.as_str()])
+                        .expect("tuple")
+                        .into_any()
+                })
+                .collect(),
+        )
+    }
+
+    fn py_output<'py>(py: Python<'py>, o: &schema::Output) -> Bound<'py, PyAny> {
+        let mut pairs = vec![
+            (
+                "key",
+                match &o.key {
+                    None => py.None().into_bound(py),
+                    Some(k) => text(py, k),
+                },
+            ),
+            ("metadata", py_meta(py, &o.metadata)),
+            ("payload", raw(py, &o.payload)),
+            ("event_time", opt(py, &o.event_time)),
+        ];
+        match &o.target {
+            schema::OutputTarget::Edge { channel, consumer } => {
+                pairs.push(("target", text(py, "edge")));
+                pairs.push((
+                    "channel",
+                    (*channel).into_bound_py_any(py).expect("channel"),
+                ));
+                pairs.push((
+                    "consumer",
+                    (*consumer).into_bound_py_any(py).expect("consumer"),
+                ));
+            }
+            schema::OutputTarget::Plugin { channel } => {
+                pairs.push(("target", text(py, "plugin")));
+                pairs.push(("plugin_channel", text(py, channel)));
+            }
+        }
+        dict(py, pairs).into_any()
+    }
+
+    fn py_effect<'py>(py: Python<'py>, e: &schema::ItemEffect) -> Bound<'py, PyAny> {
+        let (verdict, message) = match &e.verdict {
+            schema::Verdict::Ok => ("ok", None),
+            schema::Verdict::RetryableError { message } => ("retryable", Some(message.clone())),
+            schema::Verdict::NonRetryableError { message } => {
+                ("non_retryable", Some(message.clone()))
+            }
+        };
+        dict(
+            py,
+            vec![
+                ("verdict", text(py, verdict)),
+                (
+                    "message",
+                    match &message {
+                        None => py.None().into_bound(py),
+                        Some(m) => text(py, m),
+                    },
+                ),
+                (
+                    "changes",
+                    list(py, e.changes.iter().map(|c| raw(py, c)).collect()),
+                ),
+                (
+                    "outputs",
+                    list(py, e.outputs.iter().map(|o| py_output(py, o)).collect()),
+                ),
+                ("consumed_offset", opt(py, &e.consumed_offset)),
+                (
+                    "event_time",
+                    e.event_time.into_bound_py_any(py).expect("event time"),
+                ),
+                (
+                    "timers",
+                    list(
+                        py,
+                        e.timers
+                            .iter()
+                            .map(|t| {
+                                dict(
+                                    py,
+                                    vec![
+                                        ("kind", text(py, t.kind.as_str())),
+                                        (
+                                            "scheduled_at",
+                                            t.scheduled_at
+                                                .into_bound_py_any(py)
+                                                .expect("scheduled at"),
+                                        ),
+                                        (
+                                            "register",
+                                            t.register.into_bound_py_any(py).expect("register"),
+                                        ),
+                                    ],
+                                )
+                                .into_any()
+                            })
+                            .collect(),
+                    ),
+                ),
+                (
+                    "checkpoint",
+                    e.checkpoint.into_bound_py_any(py).expect("checkpoint"),
+                ),
+                (
+                    "dlq",
+                    match &e.dlq {
+                        None => py.None().into_bound(py),
+                        Some(d) => dict(
+                            py,
+                            vec![
+                                ("channel", text(py, &d.channel)),
+                                ("error", text(py, &d.error)),
+                                (
+                                    "attempts",
+                                    d.attempts.into_bound_py_any(py).expect("attempts"),
+                                ),
+                                (
+                                    "payload",
+                                    match &d.payload {
+                                        None => py.None().into_bound(py),
+                                        Some(p) => raw(py, p),
+                                    },
+                                ),
+                            ],
+                        )
+                        .into_any(),
+                    },
+                ),
+            ],
+        )
+        .into_any()
+    }
+
+    fn py_result<'py>(py: Python<'py>, r: &schema::ActivationResult) -> Bound<'py, PyDict> {
+        let mut pairs = vec![("token", r.token.into_bound_py_any(py).expect("token"))];
+        match &r.outcome {
+            schema::ActivationOutcome::Work(effects) => {
+                pairs.push(("outcome", text(py, "work")));
+                pairs.push((
+                    "effects",
+                    list(py, effects.iter().map(|e| py_effect(py, e)).collect()),
+                ));
+            }
+            schema::ActivationOutcome::Restored => pairs.push(("outcome", text(py, "restored"))),
+            schema::ActivationOutcome::Snapshot { state } => {
+                pairs.push(("outcome", text(py, "snapshot")));
+                pairs.push(("state", raw(py, state)));
+            }
+            schema::ActivationOutcome::StateJson { json } => {
+                pairs.push(("outcome", text(py, "state_json")));
+                pairs.push(("json", raw(py, json)));
+            }
+            schema::ActivationOutcome::StateApplied => {
+                pairs.push(("outcome", text(py, "state_applied")))
+            }
+            schema::ActivationOutcome::MigrationState { json } => {
+                pairs.push(("outcome", text(py, "migration_state")));
+                pairs.push(("json", raw(py, json)));
+            }
+            schema::ActivationOutcome::Prepared(answers) => {
+                pairs.push(("outcome", text(py, "prepared")));
+                pairs.push((
+                    "prepared",
+                    list(
+                        py,
+                        answers
+                            .iter()
+                            .map(|a| match a {
+                                Ok(answer) => dict(
+                                    py,
+                                    vec![
+                                        (
+                                            "keys",
+                                            list(
+                                                py,
+                                                answer.keys.iter().map(|k| text(py, k)).collect(),
+                                            ),
+                                        ),
+                                        ("event_time", opt(py, &answer.event_time)),
+                                    ],
+                                )
+                                .into_any(),
+                                Err(e) => dict(
+                                    py,
+                                    vec![
+                                        ("error", text(py, &e.message)),
+                                        (
+                                            "non_retryable",
+                                            e.non_retryable
+                                                .into_bound_py_any(py)
+                                                .expect("non retryable"),
+                                        ),
+                                    ],
+                                )
+                                .into_any(),
+                            })
+                            .collect(),
+                    ),
+                ));
+            }
+            schema::ActivationOutcome::Failed(e) => {
+                pairs.push(("outcome", text(py, "failed")));
+                pairs.push(("error", text(py, &e.message)));
+                pairs.push((
+                    "non_retryable",
+                    e.non_retryable
+                        .into_bound_py_any(py)
+                        .expect("non retryable"),
+                ));
+            }
+            schema::ActivationOutcome::WorkflowDone { completed, result } => {
+                pairs.push(("outcome", text(py, "workflow_done")));
+                pairs.push((
+                    "workflow_completed",
+                    (*completed).into_bound_py_any(py).expect("completed"),
+                ));
+                pairs.push(("workflow_result", raw(py, result)));
+            }
+        }
+        dict(py, pairs)
+    }
+
+    /// The extension exports exactly what the surface table names, every entry
+    /// names a C ABI entry point, and every blocking one is a call the veneer
+    /// runs with the GIL released. Asserted on this side because it is the
+    /// side that can go wrong without anyone installing the wheel.
+    #[test]
+    fn the_native_surface_is_the_declared_one() {
+        let blocking: Vec<&str> = NATIVE_SURFACE
+            .iter()
+            .filter(|(_, _, blocking)| *blocking)
+            .map(|(name, _, _)| *name)
+            .collect();
+        assert_eq!(
+            blocking,
+            [
+                "Core.start",
+                "Core.poll",
+                "Core.wait_starvation",
+                "Core.complete",
+                "Core.workflow_recv",
+                "Core.spawn_workflow"
+            ]
+        );
+        for (name, abi, _) in NATIVE_SURFACE {
+            assert!(
+                abi.starts_with("flz_core_"),
+                "{name} names {abi}, which is not a C ABI entry point"
+            );
+        }
+
+        // Every blocking export is a `py.detach` call site, so the GIL rule is
+        // asserted rather than reviewed: a new blocking entry point that
+        // forgot to release the lock fails here.
+        let source = include_str!("../src/python_glue.rs");
+        let released = source.matches("py.detach(").count();
+        assert_eq!(
+            released,
+            blocking.len(),
+            "every blocking export releases the GIL exactly once"
+        );
+    }
+
+    /// No mutable process-wide global holds the binding handle.
+    ///
+    /// This is the discipline that keeps a sub-interpreter executor a swap
+    /// rather than a rewrite, and it is exactly the kind of thing a later
+    /// change reintroduces by accident — a `static CONTEXT` is the shortest
+    /// path to "one context per process" and is what the Ruby and JNI veneers
+    /// use, because their runtime has one interpreter per process and CPython
+    /// does not.
+    #[test]
+    fn no_process_wide_global_holds_the_context() {
+        let source = include_str!("../src/python_glue.rs");
+        for (index, line) in source.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or("").trim();
+            if code.starts_with("static ") || code.starts_with("pub static ") {
+                panic!(
+                    "src/python_glue.rs:{} declares a static ({code}); the binding handle is a \
+                     #[pyclass] so that a sub-interpreter reaches only its own",
+                    index + 1
+                );
+            }
+        }
+        assert!(
+            source.contains("#[pyclass(module = \"flezha.flz_core_ffi\", name = \"Core\""),
+            "the context must stay an opaque pyclass"
+        );
+    }
+
+    /// A context is created, used and freed entirely through the object, and
+    /// freeing twice is a no-op rather than a double free.
+    #[test]
+    fn the_context_object_owns_its_lifetime() {
+        Python::attach(|py| {
+            // Constructed the way Python constructs it, so the test drives the
+            // surface the wheel exposes rather than the Rust constructor.
+            let core = py
+                .get_type::<Core>()
+                .call1((flz_core::SCHEMA_VERSION,))
+                .expect("context");
+            assert!(core
+                .call_method0("last_error")
+                .expect("last_error")
+                .is_none());
+            core.call_method0("free").expect("free");
+            core.call_method0("free").expect("free is idempotent");
+            // Every entry point refuses once the context is gone, rather than
+            // dereferencing a freed pointer.
+            assert!(core
+                .call_method1("declare_class", (b"{}".as_slice(),))
+                .is_err());
+        });
+    }
+
+    /// A build against another activation schema is refused at context
+    /// creation, naming both versions, before any connection is attempted.
+    #[test]
+    fn a_schema_mismatch_refuses_before_connecting() {
+        Python::attach(|py| {
+            let err = py
+                .get_type::<Core>()
+                .call1((flz_core::SCHEMA_VERSION + 1,))
+                .expect_err("must refuse");
+            let message = err.value(py).to_string();
+            assert!(
+                message.contains(&flz_core::SCHEMA_VERSION.to_string())
+                    && message.contains(&(flz_core::SCHEMA_VERSION + 1).to_string()),
+                "the refusal names both versions: {message}"
+            );
+            assert!(err.is_instance_of::<flz_core_ffi::python_glue::SchemaMismatch>(py));
+        });
     }
 }

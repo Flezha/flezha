@@ -27,9 +27,9 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # this file; here it is measured against every SDK.
   @connect_env_fixture "test/fixtures/runner_connect_env.txt"
 
-  # Where each SDK decides where its controller is. Rust, Java, Node, Ruby and
-  # PHP reach the shared ladder through `flz_core`, so their own sources should
-  # name no connect variable at all; Elixir asks the same ladder through
+  # Where each SDK decides where its controller is. Rust, Java, Node, Ruby, PHP
+  # and Python reach the shared ladder through `flz_core`, so their own sources
+  # should name no connect variable at all; Elixir asks the same ladder through
   # `flz_nif`.
   @connect_sources %{
     rust: [
@@ -41,6 +41,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
     node: Path.wildcard("sdk/node/src/**/*.ts"),
     ruby: Path.wildcard("sdk/ruby/lib/**/*.rb"),
     php: Path.wildcard("sdk/php/src/**/*.php"),
+    python: Path.wildcard("sdk/python/src/**/*.py"),
     elixir: ["lib/flezha/sdk/transport.ex", "lib/flezha/transport/native.ex"]
   }
 
@@ -192,8 +193,8 @@ defmodule FlezhaTest.SdkConformance.GateTest do
         elixir: {"lib/flezha/sdk/codec.ex", ~r/@sdk_lang (\d+)/},
         node: {"sdk/node/src/graph.ts", ~r/SDK_LANG_NODE = (\d+)/},
         ruby: {"sdk/ruby/lib/flezha/graph.rb", ~r/SDK_LANG_RUBY = (\d+)/},
-        php:
-          {"sdk/php/src/Graph/HostClassDecl.php", ~r/SDK_LANG_PHP = (\d+);/}
+        php: {"sdk/php/src/Graph/HostClassDecl.php", ~r/SDK_LANG_PHP = (\d+);/},
+        python: {"sdk/python/src/flezha/graph.py", ~r/SDK_LANG_PYTHON = (\d+)/}
       }
 
       for runtime <- runtimes() do

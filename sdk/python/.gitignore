@@ -1,0 +1,13 @@
+# The compiled veneer, installed here by scripts/build-python-sdk.sh so an
+# editable checkout imports it exactly as the wheel does.
+src/flezha/flz_core_ffi*.so
+src/flezha/flz_core_ffi*.pyd
+# Staged from the repository root by the build script.
+/LICENSE
+/THIRD_PARTY_NOTICES.md
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+dist/
+*.egg-info/

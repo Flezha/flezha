@@ -14,6 +14,8 @@ FLEZHA_E2E_RUNTIME=node mix test --include system
 FLEZHA_E2E_RUNTIME=node FLEZHA_NODE_WORKERS=4 mix test --include system
 FLEZHA_E2E_RUNTIME=php mix test --include system
 FLEZHA_E2E_RUNTIME=php FLEZHA_PHP_EXECUTOR=swoole mix test --include system
+FLEZHA_E2E_RUNTIME=python mix test --include system
+FLEZHA_E2E_RUNTIME=python FLEZHA_PYTHON_EXECUTOR=asyncio mix test --include system
 ```
 
 A full cross-SDK check is one run per runtime. `mix test` on its own spawns no
@@ -161,7 +163,7 @@ refuses it.
 
 `connect_discovery` is in the vocabulary but not in the required set: an SDK
 whose transport is not the shared `flz_transport` may defer it by name. Every
-other SDK — Rust, Java, Node, Ruby and PHP through `flz_core`, Elixir through
+other SDK — Rust, Java, Node, Ruby, PHP and Python through `flz_core`, Elixir through
 `flz_nif` — carries it, and `test/system/connect_discovery_e2e_test.exs` drives it under
 whichever runtime the run selects.
 
@@ -283,4 +285,5 @@ green.
 - [`authoring_contract.md`](authoring_contract.md) — what a conforming authoring surface expands to
 - [`../architecture/runner.md`](../architecture/runner.md) — the kernel split and the "one change, every SDK" rule
 - [`elixir_sdk.md`](elixir_sdk.md), [`java_sdk.md`](java_sdk.md), [`node_sdk.md`](node_sdk.md),
-  [`ruby_sdk.md`](ruby_sdk.md), [`php_sdk.md`](php_sdk.md) — the per-SDK scope pages
+  [`ruby_sdk.md`](ruby_sdk.md), [`php_sdk.md`](php_sdk.md),
+  [`python_sdk.md`](python_sdk.md) — the per-SDK scope pages

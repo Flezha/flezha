@@ -21,6 +21,8 @@ pub mod napi_glue;
 #[cfg_attr(test, allow(dead_code))]
 #[cfg(feature = "napi")]
 mod napi_host;
+#[cfg(feature = "python")]
+pub mod python_glue;
 #[cfg(feature = "ruby")]
 pub mod ruby_glue;
 

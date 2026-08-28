@@ -283,7 +283,7 @@ When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot
 
 Every WAL record and snapshot file SHALL carry a 16-byte header preceding the payload bytes:
 
-- bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP. Values `7–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
+- bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby, `6` PHP, `7` Python. Values `8–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
 - bytes 1:5 — `sdk_version: u32 BE` (semver-encoded)
 - bytes 5:9 — `schema_version: u32 BE` (per-Procedure, user-controlled)
 - bytes 9:10 — `format_id: u8` (1 = postcard, 2 = bincode, 3 = rkyv-zerocopy, 4 = kryo-registered, 5 = msgpack, 6 = json). A `format_id` names the codec that wrote the body and MAY be shared by SDKs that write the same codec, because the cross-language gate is `sdk_lang` and not this byte.
@@ -345,6 +345,16 @@ The SDK SHALL verify the header at read time on **every** restore path — the t
 
 - **WHEN** a PHP SDK is bound to an Entity whose WAL was written with any other SDK's `sdk_lang`
 - **THEN** the core's host restore fold SHALL refuse before any body reaches the PHP codec, and the controller SHALL leave the operative unbound rather than cold-starting it
+
+#### Scenario: A Python-written change is self-describing on restore
+
+- **WHEN** a Python SDK writes a change body and later restores the Entity
+- **THEN** the header SHALL carry the Python SDK's allocated `sdk_lang` and `format_id = 5`, and a Rust or Java SDK reconnecting to that Entity SHALL fail with the same cross-language-mismatch error rather than misreading the payload
+
+#### Scenario: A shared codec byte does not weaken the language gate
+
+- **WHEN** three SDKs write MessagePack bodies and therefore all stamp `format_id = 5`
+- **THEN** their records SHALL remain distinguishable by `sdk_lang`, and a restore SHALL refuse on that byte rather than on the codec byte
 
 ### Requirement: Idempotent emits with stable dedup keys
 

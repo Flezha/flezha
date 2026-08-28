@@ -29,6 +29,22 @@ ruby = ["dep:magnus", "dep:rb-sys", "dep:rb-sys-env"]
 # make every `cargo test --workspace` on a machine without Ruby fail to
 # build, and this crate's whole point is that it builds without any of them.
 ruby-embed = ["ruby", "magnus/embed"]
+# PyO3 exports for the `flezha` wheel's native module — same binary, same ABI,
+# the pyo3 layer is a one-to-one veneer over the C entry points. Additive in
+# exactly the way `napi` and `ruby` are: the `cdylib` the wheel loads is the
+# crate's ordinary one under another name. Deliberately WITHOUT
+# `pyo3/extension-module`, so a Rust test binary can link libpython and drive
+# the veneer with no Python process involved — the wheel build adds it.
+python = ["dep:pyo3", "dep:pyo3-build-config"]
+# What maturin builds: the veneer as a CPython extension module, which must not
+# link libpython itself. Its own feature rather than the default, because a
+# test binary built with it cannot resolve a single CPython symbol at link time.
+python-extension = ["python", "pyo3/extension-module"]
+# The `abi3` compatibility tier: one wheel per platform, targeting the declared
+# floor. The free-threaded tier builds without it — `abi3` has no free-threaded
+# form before CPython 3.15's `abi3t` — which is the whole reason the two tiers
+# are two cargo invocations rather than one.
+python-abi3 = ["python", "pyo3/abi3-py311"]
 
 [dependencies]
 flz_core = { path = "../flz_core" }
@@ -54,10 +70,19 @@ napi-derive = { version = "3.6", default-features = false, optional = true }
 # wrapper for releasing the GVL, and every blocking core call must.
 magnus = { version = "0.8", default-features = false, optional = true }
 rb-sys = { version = "0.9", optional = true }
+# `pyo3` is the CPython binding. `auto-initialize` is what lets an ordinary
+# Rust test binary start an interpreter, which is how the veneer's mapping is
+# proved with no Python process involved; it is inert in the wheel, where
+# CPython is already running.
+pyo3 = { version = "0.29", default-features = false, features = [
+    "macros",
+    "auto-initialize",
+], optional = true }
 
 [build-dependencies]
 napi-build = { version = "2.4", optional = true }
 rb-sys-env = { version = "0.2", optional = true }
+pyo3-build-config = { version = "0.29", optional = true }
 
 [dev-dependencies]
 prost = "0.13.5"

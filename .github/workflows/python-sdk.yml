@@ -1,0 +1,229 @@
+name: Python SDK
+
+on:
+  pull_request:
+    paths:
+      - "sdk/python/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
+      - "flz_transport/**"
+      - "test/apps/python_runner/**"
+      - "test/fixtures/host_class_decl_keys.txt"
+      - "scripts/build-python-sdk.sh"
+      - ".github/workflows/python-sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/python/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
+      - "flz_transport/**"
+      - "test/apps/python_runner/**"
+      - "test/fixtures/host_class_decl_keys.txt"
+      - "scripts/build-python-sdk.sh"
+      - ".github/workflows/python-sdk.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The package's own suite, on every supported interpreter INCLUDING a
+  # free-threaded one — the tier whose whole point is that handler bodies run in
+  # parallel, and an arm that only runs when someone remembers to set an
+  # environment variable is an arm that rots. Every run is against a freshly
+  # built library, so a core change and a package change fail together rather
+  # than one of them passing against a stale one.
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The declared floor, the newest stable, and a free-threaded build.
+        # The free-threaded arm is `3.14t` and not `3.13t`: PyO3 refuses the
+        # free-threaded build of CPython below 3.14, so 3.13t is not a target
+        # this SDK has — a local build against it fails at cargo, and pinning
+        # the wrong one here would have found that only after merge.
+        python: ["3.11", "3.14", "3.14t"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-python-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-python-${{ runner.os }}-
+
+      # The build script names the interpreter it builds the extension for, so
+      # the free-threaded arm gets a free-threaded module rather than the
+      # runner's default one.
+      - name: Build the library and the checkout-local environment
+        env:
+          FLEZHA_PYTHON: python
+        run: scripts/build-python-sdk.sh
+
+      - name: Install the test dependencies
+        run: sdk/python/.venv/bin/pip install --quiet pytest pyright
+
+      # The activation codec, the declaration refusals, the durable codec, the
+      # GIL-release discipline, the pool's growth and retirement, and the
+      # absence of pickle are behaviour here, not prose.
+      - name: Unit tests
+        working-directory: sdk/python
+        run: PYTHONPATH=src:tests PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest tests -q
+
+      # The wheel tier is never ambiguous in a report, so it is never ambiguous
+      # in CI either.
+      - name: Report the tier under test
+        working-directory: sdk/python
+        run: PYTHONPATH=src .venv/bin/python -c "from flezha import native; print('tier:', native.build_tier())"
+
+  # The graph is statically checkable or it is not; this is where that is
+  # decided. `test_typing.py` runs inside the suite above too, but a dedicated
+  # job means a type regression names itself rather than arriving as one of a
+  # hundred test failures.
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-python-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-python-${{ runner.os }}-
+
+      - name: Build the library and the checkout-local environment
+        run: scripts/build-python-sdk.sh
+
+      - name: Install pyright
+        run: sdk/python/.venv/bin/pip install --quiet pyright
+
+      - name: Type-check the public surface
+        working-directory: sdk/python
+        run: PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python src/flezha
+
+      # The fixture that MUST fail. A checker that stopped reporting the wrong
+      # edge would otherwise pass silently, and the registration-time refusal
+      # would be the only line of defence left.
+      - name: The wrong-edge fixture is still a type error
+        working-directory: sdk/python
+        run: |
+          set -euo pipefail
+          if PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python \
+              tests/typing_fixtures/wrong_edge.py; then
+            echo "wrong_edge.py type-checked clean; the edge generics have stopped working" >&2
+            exit 1
+          fi
+          PYTHONPATH=src .venv/bin/pyright --pythonpath .venv/bin/python \
+            tests/typing_fixtures/well_typed.py
+
+  # Both wheel tiers, from one source. The compatibility tier is one `abi3`
+  # wheel targeting the declared floor; the performance tier is per-version,
+  # because `abi3` has no free-threaded form before CPython 3.15's `abi3t`.
+  wheels:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tier: abi3
+            python: "3.11"
+            features: python-extension,python-abi3
+          - tier: free-threaded
+            python: "3.14t"
+            features: python-extension
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        run: pip install "maturin>=1.9,<2.0"
+
+      - name: Build the ${{ matrix.tier }} wheel
+        working-directory: sdk/python
+        run: |
+          set -euo pipefail
+          cp ../../LICENSES/Apache-2.0.txt LICENSE
+          cp ../../THIRD_PARTY_NOTICES.md THIRD_PARTY_NOTICES.md
+          maturin build --release --out dist --features ${{ matrix.features }}
+
+      # Installation must need no Rust toolchain. Proved by installing the
+      # wheel into an interpreter that has one on PATH but is not asked to use
+      # it — the wheel either carries the library or it does not.
+      - name: Install the wheel and import the extension
+        working-directory: sdk/python
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/wheel-check
+          /tmp/wheel-check/bin/pip install --quiet dist/*.whl
+          /tmp/wheel-check/bin/python -c "
+          import flezha
+          from flezha import native
+          print(flezha.__version__, native.build_tier())
+          assert native.load_extension().schema_version() == native.ACTIVATION_SCHEMA_VERSION
+          "
+
+      - name: Upload the ${{ matrix.tier }} wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: flezha-wheel-${{ matrix.tier }}
+          path: sdk/python/dist/*.whl
+
+  # The source distribution stays the fallback for a platform with no prebuilt
+  # wheel, so it has to build — with a toolchain, which is the whole difference.
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        run: pip install "maturin>=1.9,<2.0"
+
+      - name: Build the source distribution
+        working-directory: sdk/python
+        run: |
+          set -euo pipefail
+          cp ../../LICENSES/Apache-2.0.txt LICENSE
+          cp ../../THIRD_PARTY_NOTICES.md THIRD_PARTY_NOTICES.md
+          maturin sdist --out dist

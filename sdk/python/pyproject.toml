@@ -1,0 +1,66 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "flezha"
+version = "0.1.0"
+description = "The Flezha Python SDK — a poll host over flz_core"
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "Flezha contributors" }]
+# 3.11 rather than 3.10: 3.10 reaches end of life within months of this
+# landing, and the `abi3` tier targets the floor, so the choice decides the
+# compatibility wheel's reach for years.
+requires-python = ">=3.11"
+keywords = ["flezha", "streaming", "workflow", "durable", "orchestration"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+dependencies = ["msgpack>=1.0"]
+
+[project.optional-dependencies]
+# Every adapter is optional: the codec protocol ships dataclass support, which
+# needs nothing, and imports none of these unconditionally.
+pydantic = ["pydantic>=2.0"]
+attrs = ["attrs>=23.1"]
+# The asyncio executor uses uvloop when it is installed and the stdlib loop
+# when it is not; neither is required to run.
+uvloop = ["uvloop>=0.19"]
+
+[project.urls]
+Homepage = "https://github.com/alfetahe/flezha"
+Documentation = "https://github.com/alfetahe/flezha/blob/main/docs/sdk/python_sdk.md"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pyright>=1.1.390", "msgpack>=1.0"]
+
+[tool.maturin]
+# The veneer is a feature of the shared ABI crate, never a crate of its own —
+# `sdk-core-abi` makes that a requirement, not a preference. maturin builds it
+# from where it lives.
+manifest-path = "../../flz_core_ffi/Cargo.toml"
+module-name = "flezha.flz_core_ffi"
+python-source = "src"
+# `python-extension` and not `python`: the wheel's module must not link
+# libpython, while the Rust test binary that proves the veneer must.
+features = ["python-extension"]
+include = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::flezha.DeterminismWarning"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingImports = "warning"

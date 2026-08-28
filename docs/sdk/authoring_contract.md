@@ -28,7 +28,13 @@ a declaration and its implementation cannot disagree
 by the same fluent channel builder — with the scalar declarations in a
 `#[Proc]` attribute and the optional hooks read from the methods a procedure
 **overrides**, which is the closest PHP comes to Java's annotations without a
-build step ([`php_sdk.md`](php_sdk.md)). A surface one
+build step ([`php_sdk.md`](php_sdk.md)). The Python SDK exposes decorators —
+`@flezha.procedure`, `@flezha.state`, `@flezha.stream_operative`,
+`@flezha.workflow_operative`, wired by the same fluent channel builder — over a
+handler that is a plain function when it is a transform and a class when it has
+hooks, with the input, output, state and change types all read from the type
+hints, which is what makes a wrong edge a type-checker error before it is a
+registration one ([`python_sdk.md`](python_sdk.md)). A surface one
 binding gains, every binding gains in the same change or defers by name:
 [`../architecture/runner.md` → "One change, every SDK"](../architecture/runner.md#one-change-every-sdk).
 
@@ -53,8 +59,9 @@ after a restart, and nothing reports the difference until the restart.
 | Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
 | Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
 | PHP | Documented rule, no runtime check, for Ruby's reason. `$ctx->state` is writable, `$ctx->change()` is the path, and `Harness::assertReplayEquals()` is what makes the rule safe — it catches an unrecorded mutation and an impure fold alike. |
+| Python | Runtime rejection. A class declared `@flezha.state` refuses direct attribute assignment, naming the field and the change-based path; the runtime's own path — applying a change and folding a restore — is the one exception, opened per call on the calling thread. Mutation *through* a container a state field holds is not covered, exactly as Rust's interior mutability is not. |
 
-`replay_equals` / `replayEquals()` is the gate for all six: it folds the
+`replay_equals` / `replayEquals()` is the gate for all seven: it folds the
 recorded change log against a freshly constructed initial state and requires
 the result to equal the live one.
 
@@ -74,6 +81,7 @@ backstop for what typing cannot see.
 | Elixir | no — the language cannot | registration-time refusals only |
 | Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
 | PHP | no — the language cannot | registration-time refusals only, in `sdk/php/tests/AuthoringTest.php` |
+| Python | yes, through the generic `Edge[T]` / `Procedure[I, O]` parameters over a `py.typed` package | `sdk/python/tests/typing_fixtures/wrong_edge.py`, which `sdk/python/tests/test_typing.py` requires pyright to reject, against `well_typed.py` as the negative control |
 
 Before writing a new SDK, read
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads):
@@ -113,7 +121,7 @@ mutable-state parameter: `&mut S` in Rust; in Java either the `@State`-generated
 | `State` opts into change derivation                 | `type Change = <S>Change` (derived)                 |
 | `clock = T` (Rust) else unspecified                 | `type Clock = T`, default `WallClock`               |
 | unspecified                                         | `type Config = ()` / `Void`                         |
-| `id = "…"` else the declaration name                | `name()` — Rust: the function name; Java, Ruby and PHP: the class name in snake_case |
+| `id = "…"` else the declaration name                | `name()` — Rust and Python: the function name; Java, Ruby and PHP: the class name in snake_case |
 | `capacity = N` / `capacity = N`                     | `mailbox_capacity()` / `mailboxCapacity()` override |
 | `on_full = …` / `onFull = "…"`                      | overflow policy of the auto-wired entry channel (§5): `drop_nothing`, `drop_newest`, `drop_oldest` |
 

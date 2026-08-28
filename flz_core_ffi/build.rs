@@ -15,4 +15,11 @@ fn main() {
     // looks for an interpreter.
     #[cfg(feature = "ruby")]
     rb_sys_env::activate().expect("rb-sys could not read the Ruby on PATH");
+
+    // pyo3 derives `Py_GIL_DISABLED`, `Py_3_13` and the rest from the
+    // interpreter it is building against, and the veneer reads the first of
+    // them to report its wheel tier. Without this the cfg is unknown to
+    // rustc and the build warns on its own answer.
+    #[cfg(feature = "python")]
+    pyo3_build_config::use_pyo3_cfgs();
 }
