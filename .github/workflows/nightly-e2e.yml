@@ -33,6 +33,7 @@ on:
           - java
           - elixir
           - node
+          - ruby
 
 env:
   CARGO_TERM_COLOR: always

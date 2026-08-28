@@ -223,8 +223,8 @@ impl<'a> Iterator for ChangeLogIter<'a> {
 mod tests {
     use super::*;
     use crate::header::{
-        HeaderTemplate, FORMAT_ID_MSGPACK, FORMAT_ID_POSTCARD, SDK_LANG_ELIXIR, SDK_LANG_JAVA,
-        SDK_LANG_NODE, SDK_LANG_RUST,
+        HeaderTemplate, FORMAT_ID_MSGPACK, FORMAT_ID_POSTCARD, SDK_LANG_ALLOCATED, SDK_LANG_RUBY,
+        SDK_LANG_RUST,
     };
 
     /// Collects what the walk hands it, so a test can assert that a refused
@@ -261,98 +261,84 @@ mod tests {
         frame_record(seq, &writer.stamp(body), body)
     }
 
-    /// The host arm and the typed arm share this walk, so the language gate
-    /// they both inherit is proved once, here: a Java-written log read by a
-    /// Rust-declared class is refused before any body reaches the sink.
+    /// Every ordered pair of allocated languages, refused before any body is
+    /// collected.
+    ///
+    /// The host arm and the typed arm share this walk, so the gate they both
+    /// inherit is proved once here — as a sweep over the allocation table
+    /// rather than a test per pair, because a pair-per-test suite covers only
+    /// the pairs someone remembered to write, grows quadratically, and would
+    /// leave the next allocated language uncovered until someone noticed.
+    ///
+    /// Both sides declare the same format id here, so the language byte is
+    /// the only thing that differs between writer and reader and therefore
+    /// the only thing that can have refused the record.
     #[test]
     fn a_foreign_language_record_is_refused_before_any_body_is_collected() {
-        let log = record(0, &template(SDK_LANG_JAVA), b"kryo-bytes");
-        let mut sink = RecordingSink::default();
+        for (writer, writer_name) in SDK_LANG_ALLOCATED {
+            for (reader, reader_name) in SDK_LANG_ALLOCATED {
+                if writer == reader {
+                    continue;
+                }
+                let log = record(0, &template(*writer), b"body");
+                let mut sink = RecordingSink::default();
 
-        let err = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink).unwrap_err();
+                let err = fold_change_log(&log, &template(*reader), 1, &mut sink).unwrap_err();
 
-        match err {
-            RestoreError::LangMismatch { expected, found } => {
-                assert_eq!(expected, SDK_LANG_RUST);
-                assert_eq!(found, SDK_LANG_JAVA);
+                // The reason travels to the controller as a string, so it has
+                // to name both SDKs and not only their bytes.
+                let message = err.to_string();
+                assert!(message.contains(writer_name), "{message}");
+                assert!(message.contains(reader_name), "{message}");
+                match err {
+                    RestoreError::LangMismatch { expected, found } => {
+                        assert_eq!(expected, *reader);
+                        assert_eq!(found, *writer);
+                    }
+                    other => panic!("{writer_name} read by {reader_name}: {other:?}"),
+                }
+                assert!(
+                    sink.changes.is_empty(),
+                    "a refused record must not reach the host codec"
+                );
             }
-            other => panic!("expected a language mismatch, got {other:?}"),
         }
-        assert!(
-            sink.changes.is_empty(),
-            "a refused record must not reach the host codec"
-        );
     }
 
-    /// The gate reads the language byte and nothing else, so a MessagePack
-    /// body is refused by a postcard SDK on the language and never reaches the
-    /// point where the format byte could be mistaken for a readable one.
+    /// The language is read before the format, in both directions.
+    ///
+    /// Read the other way round, a MessagePack body reaching a postcard
+    /// reader would be reported as a malformed header, and the operator would
+    /// chase a corrupt WAL instead of the SDK that wrote it.
     #[test]
-    fn a_node_record_is_refused_by_a_postcard_sdk() {
-        let node = HeaderTemplate {
-            sdk_lang: SDK_LANG_NODE,
-            sdk_version: 1,
-            schema_version: 1,
+    fn the_language_is_read_before_the_format() {
+        let msgpack = HeaderTemplate {
+            sdk_lang: SDK_LANG_RUBY,
             format_id: FORMAT_ID_MSGPACK,
+            ..template(SDK_LANG_RUBY)
         };
-        let log = record(0, &node, b"msgpack-bytes");
-        let mut sink = RecordingSink::default();
+        let postcard = template(SDK_LANG_RUST);
 
-        let err = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink).unwrap_err();
+        for (writer, reader, expected, found) in [
+            (&msgpack, &postcard, SDK_LANG_RUST, SDK_LANG_RUBY),
+            (&postcard, &msgpack, SDK_LANG_RUBY, SDK_LANG_RUST),
+        ] {
+            let log = record(0, writer, b"body");
+            let mut sink = RecordingSink::default();
 
-        match err {
-            RestoreError::LangMismatch { expected, found } => {
-                assert_eq!(expected, SDK_LANG_RUST);
-                assert_eq!(found, SDK_LANG_NODE);
+            let err = fold_change_log(&log, reader, 1, &mut sink).unwrap_err();
+
+            match err {
+                RestoreError::LangMismatch {
+                    expected: e,
+                    found: f,
+                } => {
+                    assert_eq!((e, f), (expected, found));
+                }
+                other => panic!("expected a language mismatch, got {other:?}"),
             }
-            other => panic!("expected a language mismatch, got {other:?}"),
+            assert!(sink.changes.is_empty());
         }
-        assert!(sink.changes.is_empty());
-        let message = fold_change_log(&log, &template(SDK_LANG_JAVA), 1, &mut sink)
-            .unwrap_err()
-            .to_string();
-        assert!(message.contains("node"), "{message}");
-        assert!(message.contains("java"), "{message}");
-    }
-
-    /// And the other direction: a postcard record reaching the Node codec is
-    /// refused on the same byte, so neither side can decode the other's bytes.
-    #[test]
-    fn a_postcard_record_is_refused_by_the_node_sdk() {
-        let node = HeaderTemplate {
-            sdk_lang: SDK_LANG_NODE,
-            sdk_version: 1,
-            schema_version: 1,
-            format_id: FORMAT_ID_MSGPACK,
-        };
-        let log = record(0, &template(SDK_LANG_RUST), b"postcard-bytes");
-        let mut sink = RecordingSink::default();
-
-        let err = fold_change_log(&log, &node, 1, &mut sink).unwrap_err();
-
-        match err {
-            RestoreError::LangMismatch { expected, found } => {
-                assert_eq!(expected, SDK_LANG_NODE);
-                assert_eq!(found, SDK_LANG_RUST);
-            }
-            other => panic!("expected a language mismatch, got {other:?}"),
-        }
-        assert!(sink.changes.is_empty());
-    }
-
-    /// The error text names both SDKs, not only their bytes — the reason
-    /// travels to the controller as a string and has to be actionable there.
-    #[test]
-    fn the_refusal_names_both_languages() {
-        let log = record(0, &template(SDK_LANG_ELIXIR), b"body");
-        let mut sink = RecordingSink::default();
-
-        let message = fold_change_log(&log, &template(SDK_LANG_RUST), 1, &mut sink)
-            .unwrap_err()
-            .to_string();
-
-        assert!(message.contains("rust"), "{message}");
-        assert!(message.contains("elixir"), "{message}");
     }
 
     /// The gate is a language check, not a blanket refusal: a log written by

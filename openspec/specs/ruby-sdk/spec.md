@@ -1,0 +1,77 @@
+# ruby-sdk Specification
+
+## Purpose
+TBD - created by archiving change ruby-sdk. Update Purpose after archive.
+## Requirements
+### Requirement: The Ruby SDK is a poll host over `flz_core`
+
+The Ruby SDK SHALL drive `flz_core` through the poll boundary and SHALL contain no kernel code: transport, framing, ordering, per-entity exclusivity, durability, retries, the retry→park ladder, timers, credit, routing, the workflow driver and reconnect SHALL remain in the core. The SDK's responsibilities SHALL be limited to the authoring surface, the codec for user types, the threading host, and idiomatic errors.
+
+#### Scenario: No kernel surface is reimplemented in Ruby
+- **WHEN** the gem's source is inspected for a retry ladder, an outbox, a WAL writer, a credit window or a workflow driver
+- **THEN** none SHALL exist; every such behaviour SHALL be reached by calling the core
+
+#### Scenario: The runner connects, serves and shuts down through the core
+- **WHEN** a Ruby runner starts, binds an operative, processes input, fires a timer and receives a shutdown
+- **THEN** every step SHALL be driven by `poll` / `complete` against the core, and the runner SHALL exit with in-flight activations completed or reported
+
+### Requirement: Runner entry point and lifecycle
+
+The SDK SHALL expose one entry point that declares classes, claims a runner slot and serves until shutdown. Declaration SHALL complete before the first `poll`. Shutdown SHALL be observable from a signal, from closed stdin (the e2e teardown contract), and from a controller-requested shutdown, and SHALL drain in-flight activations before the process exits.
+
+#### Scenario: Declaration precedes serving
+- **WHEN** the entry point is invoked with two declared operative classes
+- **THEN** both class declarations SHALL reach the core before any activation is polled
+
+#### Scenario: Closed stdin ends the runner
+- **WHEN** the runner's stdin reaches EOF
+- **THEN** the runner SHALL begin shutdown, drain in-flight activations, and exit zero
+
+### Requirement: Class-based authoring surface with explicit registration
+
+Operatives and procedures SHALL be authored as Ruby classes. The SDK SHALL NOT scan packages, walk load paths, or autoload to discover them; the author SHALL name the classes that participate. A declaration that cannot be resolved to a valid topology SHALL be refused at registration time with an error naming the offending class and method — registration-time refusal replaces the Rust SDK's compile-time refusal.
+
+#### Scenario: An undeclared class never runs
+- **WHEN** a procedure class is defined but not registered
+- **THEN** it SHALL NOT be declared to the core, and no activation SHALL reach it
+
+#### Scenario: A bad topology is refused by name
+- **WHEN** a registered procedure emits to a channel no procedure consumes and the operative is not sealed on that edge
+- **THEN** registration SHALL raise naming the class, the method and the channel; no controller connection SHALL be attempted
+
+### Requirement: The authoring surface carries the shared vocabulary at full parity
+
+The Ruby authoring surface SHALL carry both operative kinds — stream and workflow — and the shared vocabulary the reference SDK carries: the graph/wiring DSL with `key_by` and transforms, `ctx` emits, `ctx.now` and `ctx.stable_id`, entity state and change journaling, static and dynamic entity modes, per-entity timers, tiers including effectively-once, multi-input procedures, procedure-requested spawn, workflow chains, loops, suspension and rewind. A capability the Ruby SDK does not carry SHALL be named as deferred in its conformance manifest together with the follow-up that owes it; silent absence SHALL be a defect.
+
+#### Scenario: The manifest defers nothing at v1
+- **WHEN** `test/apps/ruby_runner/conformance.json` is compared against the Rust reference manifest
+- **THEN** its `deferred` list SHALL be empty and its fixture set SHALL equal the reference's
+
+#### Scenario: A workflow class runs a durable chain
+- **WHEN** a Ruby workflow operative runs a chained loop with a suspension and is resumed after a runner restart
+- **THEN** the journal SHALL drive resume without re-running a committed procedure
+
+### Requirement: State and Change serialize through author-declared `to_h` / `from_h` over MessagePack
+
+State and Change types SHALL serialize through author-declared `to_h` and `from_h` methods encoded as MessagePack, carrying an author-controlled schema version. The SDK SHALL NOT use `Marshal` for any persisted or wire-bound value. The SDK SHALL raise at registration time when a declared State or Change type does not implement both methods.
+
+#### Scenario: `Marshal` is not reachable for persisted state
+- **WHEN** the gem's persistence and wire paths are inspected
+- **THEN** no call to `Marshal.dump` or `Marshal.load` SHALL appear on them
+
+#### Scenario: A class rename does not break restore
+- **WHEN** a State class is renamed and its `to_h` / `from_h` shape is unchanged
+- **THEN** an Entity restored from a WAL written before the rename SHALL fold successfully
+
+#### Scenario: A missing codec method is refused at registration
+- **WHEN** a State type declares `to_h` but not `from_h`
+- **THEN** registration SHALL raise naming the type and the missing method
+
+### Requirement: Ruby integers carry the schema's unsigned 64-bit values without narrowing
+
+Offsets, sequence numbers and timestamps crossing the boundary SHALL be represented as Ruby integers with no width policy, precision loss or float widening.
+
+#### Scenario: A high-bit sequence number round-trips
+- **WHEN** an activation carries a sequence number above 2^63
+- **THEN** the value observed in Ruby SHALL equal it exactly, and the value returned in the result SHALL round-trip byte-identically
+

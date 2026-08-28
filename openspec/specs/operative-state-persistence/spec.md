@@ -283,7 +283,7 @@ When `persistence_enabled = false`, the agent SHALL NOT allocate WAL or snapshot
 
 Every WAL record and snapshot file SHALL carry a 16-byte header preceding the payload bytes:
 
-- bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node. Values `5–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
+- bytes 0:1 — `sdk_lang: u8`, an **allocated identifier** with one table of record in `flz_core/src/header.rs`: `1` Rust, `2` Java, `3` Elixir, `4` Node, `5` Ruby. Values `6–254` are allocated to further SDKs **in landing order**, one value per SDK, and a proposal SHALL NOT assert a value it has not been allocated. `0` is reserved and means "unspecified"; `255` is reserved.
 - bytes 1:5 — `sdk_version: u32 BE` (semver-encoded)
 - bytes 5:9 — `schema_version: u32 BE` (per-Procedure, user-controlled)
 - bytes 9:10 — `format_id: u8` (1 = postcard, 2 = bincode, 3 = rkyv-zerocopy, 4 = kryo-registered, 5 = msgpack). A `format_id` names the codec that wrote the body and MAY be shared by SDKs that write the same codec, because the cross-language gate is `sdk_lang` and not this byte.
@@ -328,8 +328,13 @@ The SDK SHALL verify the header at read time on **every** restore path — the t
 
 #### Scenario: The MessagePack identifier is shared, not minted
 
-- **WHEN** the Node SDK writes a durable record
-- **THEN** its `format_id` SHALL be the one already allocated to MessagePack, and an SDK that writes the same codec SHALL reuse it rather than take a new value
+- **WHEN** the Node SDK and the Ruby SDK each write a durable record
+- **THEN** both `format_id` bytes SHALL be the one already allocated to MessagePack, and an SDK that writes the same codec SHALL reuse it rather than take a new value
+
+#### Scenario: Two SDKs sharing a codec are still separated by language
+
+- **WHEN** a Ruby SDK writes a change body and a Node SDK later reconnects to that Entity
+- **THEN** the header SHALL carry the Ruby SDK's allocated `sdk_lang` and `format_id = 5`, and the restore SHALL be refused with a language-mismatch error naming both SDKs — the shared `format_id` SHALL NOT let one SDK's codec read the other's bytes
 
 ### Requirement: Idempotent emits with stable dedup keys
 

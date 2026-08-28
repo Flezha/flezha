@@ -18,6 +18,17 @@ jni = ["dep:jni"]
 # the crate's `cdylib` / `staticlib` / `rlib` artifacts and the `jni` build
 # are unchanged, and the `.node` addon is the `cdylib` under another name.
 napi = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
+# Ruby exports for the `flezha` gem's native extension — same binary, same
+# ABI, the magnus layer is a one-to-one veneer over the C entry points.
+# Additive in exactly the way `napi` is: the `cdylib` the extension loads is
+# the crate's ordinary one under another name.
+ruby = ["dep:magnus", "dep:rb-sys", "dep:rb-sys-env"]
+# `ruby` plus an embedded CRuby VM, so the veneer's mapping is exercisable
+# from an ordinary Rust test binary with no Ruby process involved. Its own
+# feature rather than a dev-dependency: a dev-dependency on `magnus` would
+# make every `cargo test --workspace` on a machine without Ruby fail to
+# build, and this crate's whole point is that it builds without any of them.
+ruby-embed = ["ruby", "magnus/embed"]
 
 [dependencies]
 flz_core = { path = "../flz_core" }
@@ -38,9 +49,15 @@ napi = { version = "3.12", default-features = false, features = [
     "dyn-symbols",
 ], optional = true }
 napi-derive = { version = "3.6", default-features = false, optional = true }
+# `magnus` is the high-level CRuby binding; `rb-sys` is the raw one underneath
+# it, needed directly for `rb_thread_call_without_gvl` — magnus has no safe
+# wrapper for releasing the GVL, and every blocking core call must.
+magnus = { version = "0.8", default-features = false, optional = true }
+rb-sys = { version = "0.9", optional = true }
 
 [build-dependencies]
 napi-build = { version = "2.4", optional = true }
+rb-sys-env = { version = "0.2", optional = true }
 
 [dev-dependencies]
 prost = "0.13.5"

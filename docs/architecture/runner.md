@@ -427,7 +427,8 @@ The rule, normative for every binding:
   | 2 | Java | yes (Kryo) |
   | 3 | Elixir | no (v1 persists nothing) |
   | 4 | Node | yes (MessagePack) |
-  | 5–254 | free, allocated in landing order | — |
+  | 5 | Ruby | yes (MessagePack) |
+  | 6–254 | free, allocated in landing order | — |
   | 255 | reserved | — |
 
   One value per SDK, taken when that SDK lands; a proposal never asserts a value it has not been
@@ -446,11 +447,12 @@ capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conf
 
 Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
-the reference every other is checked against. The Elixir SDK (v1) and the Node SDK (v1) both
-defer the persistence family, the effectively-once tier, timers, correction windows, keyed
-channels, the workflow kind, dynamic-Entity eviction and the entry-idle observer, for different
-reasons: Elixir has no per-Entity persistence at all, while the Node SDK implements every one of
-them and has not yet proved them fixture by fixture against the reference.
+the reference every other is checked against. The Elixir, Node and Ruby SDKs (v1) all defer the
+persistence family, the effectively-once tier, timers, correction windows, keyed channels, the
+workflow kind, dynamic-Entity eviction and the entry-idle observer, for different reasons:
+Elixir has no per-Entity persistence at all, while the Node and Ruby SDKs implement every one of
+them and have not yet proved them fixture by fixture against the reference. Those two owe their
+fixture sets to the shared follow-up `sdk-durable-fixture-parity`.
 
 ---
 

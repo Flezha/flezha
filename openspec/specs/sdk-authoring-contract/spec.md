@@ -111,9 +111,9 @@ The contract SHALL define exactly one topology that may be auto-wired — a sing
 - **THEN** startup fails with an error naming the colliding id
 
 ### Requirement: Contract binds all current and future SDKs
-The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir and Node SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Computation` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
+The contract SHALL be the single source of truth for authoring sugar across the Rust, Java, Elixir, Node and Ruby SDKs and any future binding, including non-normative target sketches for bindings not yet built. Every SDK's stream and workflow authoring surfaces SHALL be rooted in the shared `Computation` base (see below). Beyond the sugar, every surface that more than one SDK carries SHALL change in lockstep: a change to the authoring or declaration surface (builder, ctx, the `HostClassDecl` keys), to the wire protocol or its metadata keys, to a default (overflow policy, retry ladder, mailbox capacity, heartbeat keys), or to a fixture that proves one of these (the regression and round-trip bench factories, the end-to-end runtime matrix) SHALL land in every SDK in the same change, or SHALL name in its spec delta the SDK it defers and the follow-up change that owes it. An SDK that carries a capability another SDK neither carries nor names as deferred is a defect of the change, not a backlog item. A performance change SHALL state in its notes which layer it changed (controller, shared kernel, or host SDK); a measurement taken with one runtime SHALL be reported as that runtime's number, and a claim that holds for every SDK SHALL be backed by the same bench run on each runtime that carries the tier.
 
-An SDK whose authoring surface is a set of factory functions rather than macros or annotations SHALL be bound by the same contract: the sketch names the mechanism, and the inference rules, the refusal set and the invocation context are the same.
+An SDK whose authoring surface is a set of factory functions, or a set of classes, rather than macros or annotations SHALL be bound by the same contract: the sketch names the mechanism, and the inference rules, the refusal set and the invocation context are the same.
 
 #### Scenario: Reference operative expands identically across SDKs
 
@@ -128,12 +128,17 @@ An SDK whose authoring surface is a set of factory functions rather than macros 
 #### Scenario: A declaration key lands in every SDK or is deferred by name
 
 - **WHEN** a change adds a key to `HostClassDecl` (for example a checkpoint option)
-- **THEN** the same change adds its spelling to the Rust builder, the Java builder and the Node builder, and its spec delta records the Elixir SDK as either carrying it or deferring it to a named follow-up
+- **THEN** the same change adds its spelling to the Rust builder, the Java builder and the Ruby builder, and its spec delta records the Elixir SDK as either carrying it or deferring it to a named follow-up
 
 #### Scenario: A performance claim is measured per runtime
 
-- **WHEN** a change reports a throughput or latency result for a tier the Rust, Java, Elixir and Node runners all carry
+- **WHEN** a change reports a throughput or latency result for a tier the Rust, Java, Elixir and Ruby runners all carry
 - **THEN** its notes report a number per runtime from the same bench protocol, and a runtime without a number is named as unmeasured rather than covered by the Rust number
+
+#### Scenario: The Ruby surface is bound by the contract, not beside it
+
+- **WHEN** the Ruby SDK's authoring surface is compared against the contract's inference rules
+- **THEN** its class-based sugar SHALL expand to the same topology and associated-type mapping as the other SDKs', and a divergence SHALL be a defect of the Ruby SDK rather than a contract exception
 
 ### Requirement: Keyed and collection state journaling
 The authoring contract SHALL define journaling mutators for per-key map state so a stateful procedure whose state is a `HashMap`-of-values or `HashMap`-of-collections can be authored without a hand-written `Change` or `apply_change`. Every SDK realization SHALL generate, from a journal-annotated map field, named mutators whose calls are the journaled changes, and a generated change-application that replays them.

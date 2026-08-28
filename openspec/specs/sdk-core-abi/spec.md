@@ -148,6 +148,12 @@ crossing, an effectively-once completion with offsets, and a workflow
 run-sugar lifecycle — all through the C entry points, failing if any
 required surface is missing.
 
+A language veneer built from this crate — the JNI veneer behind the `jni`
+feature, the Ruby veneer behind the `ruby` feature, and any later one — SHALL
+be a consumer of the C entry points, never a fork of them: it SHALL add no
+kernel path of its own, and a capability one veneer's language can reach that
+bypasses the ABI SHALL be a defect of this capability.
+
 #### Scenario: A restore fold crosses the ABI
 - **WHEN** the scenario suite ships a persisted change log for an ABI-declared entity and the controller path delivers `RestoreInitState`
 - **THEN** a `RestoreFold` activation SHALL be pollable through `flz_core_poll`, its completion SHALL unblock the entity, and the entity's next input activation SHALL observe the folded state's effects
@@ -155,6 +161,10 @@ required surface is missing.
 #### Scenario: The Java shim is a consumer, not a fork
 - **WHEN** the Java SDK's JNI bridge is compared against the ABI's exported symbol set
 - **THEN** it SHALL call only `flz_core_ffi` entry points — any Java-reachable kernel capability that bypasses the ABI is a defect of this capability
+
+#### Scenario: The Ruby veneer is a consumer, not a fork
+- **WHEN** the Ruby veneer's exported functions are compared against the ABI's exported symbol set
+- **THEN** each SHALL map onto a `flz_core_ffi` entry point — any Ruby-reachable kernel capability that bypasses the ABI is a defect of this capability
 
 ### Requirement: The restore crossing carries each record's stamped schema version
 

@@ -1,0 +1,207 @@
+name: Ruby SDK
+
+on:
+  pull_request:
+    paths:
+      - "sdk/ruby/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
+      - "flz_transport/**"
+      - "test/apps/ruby_runner/**"
+      - "test/fixtures/host_class_decl_keys.txt"
+      - "scripts/build-ruby-sdk.sh"
+      - ".github/workflows/ruby-sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/ruby/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
+      - "flz_transport/**"
+      - "test/apps/ruby_runner/**"
+      - "test/fixtures/host_class_decl_keys.txt"
+      - "scripts/build-ruby-sdk.sh"
+      - ".github/workflows/ruby-sdk.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The gem's own suite, on every supported Ruby. Everything here runs against
+  # a freshly built veneer, so a veneer change and a gem change fail together
+  # rather than one of them passing against a stale library.
+  gem:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the support window. 3.3 is the floor `Process.warmup`
+        # sets; the newest release is what most users will be on.
+        ruby: ["3.3", "3.4"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Ruby ${{ matrix.ruby }}
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # rb-sys runs bindgen over `ruby.h`, and bindgen needs clang's own
+      # builtin headers (`stdarg.h`, `stddef.h`). libclang alone is not enough:
+      # without this the build fails inside cargo with "'stdarg.h' file not
+      # found", which reads like a broken Ruby install and is not one.
+      - name: Install libclang and its builtin headers
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-ruby-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-ruby-${{ runner.os }}-
+
+      - name: Build the veneer and install it where the gem loads it from
+        run: scripts/build-ruby-sdk.sh
+
+      - name: Install the gem's dependencies
+        run: gem install --no-document msgpack async rake minitest
+
+      # The concurrency requirements are behaviour here, not prose: pool growth
+      # under blocked handlers, retirement afterwards, the GVL released around
+      # a blocking core call, a refused post-fork call, and identical ordering
+      # under both executors.
+      - name: Unit tests
+        working-directory: sdk/ruby
+        run: rake test
+
+      - name: The gem builds
+        working-directory: sdk/ruby
+        run: gem build flezha.gemspec
+
+  # The veneer, from the Rust side. `--features ruby` must stay additive: the
+  # crate's other artifacts and the Java and Node veneers are built from the
+  # same source.
+  veneer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install libclang and its builtin headers
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-ruby-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-ruby-${{ runner.os }}-
+
+      # The full ABI scenario, mapped through the Ruby veneer on an embedded
+      # CRuby VM, with no Ruby process involved. `--test-threads=1` because the
+      # VM's setup records the stack frame it is booted from.
+      - name: The ABI scenario, driven through the Ruby veneer
+        run: cargo test -p flz_core_ffi --features ruby-embed -- --test-threads=1
+
+      - name: The crate still builds without any veneer
+        # The point of the feature gate: a machine with no Ruby, no JVM and no
+        # Node still builds this crate.
+        run: cargo build -p flz_core_ffi
+
+      - name: The feature is additive
+        # Enabling `ruby` adds the extension's module registration and removes
+        # nothing, and the JNI exports are untouched when both features are on.
+        # Asserted rather than reviewed, because the Java SDK ships a binary
+        # built from this crate.
+        run: |
+          set -euo pipefail
+          syms() { nm -D --defined-only "$1" | awk '{print $3}' | grep -v '^$' | sort; }
+          cargo build -p flz_core_ffi
+          syms target/debug/libflz_core_ffi.so > /tmp/sym.default
+          cargo build -p flz_core_ffi --features ruby
+          syms target/debug/libflz_core_ffi.so > /tmp/sym.ruby
+          cargo build -p flz_core_ffi --features jni,ruby
+          syms target/debug/libflz_core_ffi.so > /tmp/sym.both
+          removed=$(comm -23 /tmp/sym.default /tmp/sym.ruby)
+          if [ -n "$removed" ]; then
+            echo "the ruby feature removed exported symbols:"; echo "$removed"; exit 1
+          fi
+          added=$(comm -13 /tmp/sym.default /tmp/sym.ruby | tr '\n' ' ')
+          if [ "$added" != "Init_flz_core_ffi ruby_abi_version " ]; then
+            echo "the ruby feature added more than the module registration: $added"; exit 1
+          fi
+          grep -q Java_com_flezha_sdk_native_1_FlzCore_poll /tmp/sym.both \
+            || { echo "the JNI exports are missing when both features are on"; exit 1; }
+
+  # The precompiled platform gems. Cross-built rather than one runner per
+  # platform, and this is what the end-to-end arm installs — a gem that only CI
+  # can build is a gem nobody has installed.
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - x86_64-linux
+          - x86_64-linux-musl
+          - aarch64-linux
+          - arm64-darwin
+          - x86_64-darwin
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+
+      - uses: oxidize-rb/actions/cross-gem@v1
+        id: cross-gem
+        with:
+          platform: ${{ matrix.platform }}
+          ruby-versions: "3.3,3.4"
+          working-directory: sdk/ruby
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flezha-${{ matrix.platform }}
+          path: ${{ steps.cross-gem.outputs.gem-path }}
+
+  # Installing the cross-built gem where no Rust toolchain exists. This is the
+  # requirement's whole point: an SDK that makes a Ruby team install Rust to
+  # evaluate it does not get evaluated.
+  install-without-rust:
+    runs-on: ubuntu-latest
+    needs: cross-build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: flezha-x86_64-linux
+          path: pkg
+
+      - name: Install and load it in an image with no Rust
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/pkg:/pkg" ruby:3.4-slim bash -lc '
+            ! command -v cargo || { echo "this image has a Rust toolchain; the test is void"; exit 1; }
+            gem install /pkg/*.gem --no-document
+            ruby -e "require \"flezha\"; Flezha::Core.load_extension; \
+                     abort(\"schema mismatch\") unless Flezha::Native.schema_version == Flezha::ACTIVATION_SCHEMA_VERSION; \
+                     puts \"the platform gem installs and loads with no Rust toolchain\""
+          '

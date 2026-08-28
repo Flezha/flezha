@@ -18,7 +18,12 @@ The sugar exists in the Rust and Java SDKs. The Elixir SDK exposes the
 `defineProcedure`, `defineOperative`, `defineWorkflow`, wired by a fluent
 channel builder — and no decorators, because a decorator needs a build step,
 does not apply to a plain function, and cannot reshape the decorated type,
-which is what a typed graph needs ([`node_sdk.md`](node_sdk.md)). A surface one
+which is what a typed graph needs ([`node_sdk.md`](node_sdk.md)). The Ruby SDK
+exposes classes — `Flezha::Procedure`, `Flezha::StreamOperative`,
+`Flezha::WorkflowOperative`, wired by the same fluent channel builder — and
+reads which optional hooks a procedure declares from the methods it defines, so
+a declaration and its implementation cannot disagree
+([`ruby_sdk.md`](ruby_sdk.md)). A surface one
 binding gains, every binding gains in the same change or defers by name:
 [`../architecture/runner.md` → "One change, every SDK"](../architecture/runner.md#one-change-every-sdk).
 
@@ -41,8 +46,9 @@ after a restart, and nothing reports the difference until the restart.
 | Java | The generated `<State>Handle`. The state object is reachable, so an unrecorded mutation is possible in principle and prevented by the generated surface being the only one an author is given. |
 | Elixir | Immutability. `run/3` returns the next state, and the SDK journals what it was handed — an unrecorded mutation has no way to exist. |
 | Node | Runtime rejection. `ctx.state` is a deep read-only view; an assignment throws naming the field and pointing at `ctx.change`. `applyChange` and the restore fold hold the value itself. |
+| Ruby | Documented rule, no runtime check. Node's guard is a `Proxy`; Ruby has no counterpart that does not cost an allocation per field read, so `ctx.change` is the path and the rule is stated rather than paid for on every access. |
 
-`replay_equals` / `replayEquals()` is the gate for all four: it folds the
+`replay_equals` / `replayEquals()` is the gate for all five: it folds the
 recorded change log against a freshly constructed initial state and requires
 the result to equal the live one.
 
@@ -60,6 +66,7 @@ backstop for what typing cannot see.
 | Java | yes, through the generic `Procedure<…>` arguments | `sdk/java/.../StreamOperativeConfigurationException` cases |
 | Node | yes, through the channel builder's type parameters | `@ts-expect-error` fixtures in `sdk/node/types-tests/`, compiled under `tsc --noEmit`, plus a negative control that strips the directives and requires each pinned line to still produce a diagnostic |
 | Elixir | no — the language cannot | registration-time refusals only |
+| Ruby | no — the language cannot | registration-time refusals only, in `sdk/ruby/test/authoring_test.rb` |
 
 Before writing a new SDK, read
 [`poll_core.md` → "The core decides, the SDK brings the threads"](poll_core.md#the-core-decides-the-sdk-brings-the-threads):

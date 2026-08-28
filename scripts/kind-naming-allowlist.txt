@@ -40,6 +40,10 @@
 *:[Bb]ounded[ -](Entity )?mailbox(es)?
 *:BoundedMailbox
 *:bounded_mailbox
+# The same capacity sense in camel and Pascal case, which the two entries above
+# (snake case, and the spaced/hyphenated phrase) do not reach.
+*:[Bb]ounded[Mm]ailbox
+*:BOUNDED_MAILBOX
 # historical archived-spec filename cited in a javadoc
 sdk/java/flezha-sdk-api/src/test/java/com/flezha/sdk/OldApiNotImportableTest.java:boundeds\.md
 
@@ -105,3 +109,19 @@ docs/sdk/poll_core.md:holdback is \*\*bounded\*\*
 flz_core/src/flusher.rs:Bounded — a gated Entity
 flz_core/src/poll_core.rs:the bounded fallback the entry-path
 flz_core/src/poll_core.rs:The bounded fallback for a gated producer
+
+# --- plain English / capacity: the Ruby SDK's parallelism ceiling, its
+# --- documented interrupt bound, and the bounded-capacity fixture
+docs/sdk/ruby_sdk.md:bounded to one core
+docs/sdk/ruby_sdk.md:bounded by a timeout
+sdk/ruby/test/native_test.rb:a bounded poll
+test/apps/ruby_runner/fixtures.rb:the same bounded procedure
+flz_core_ffi/src/ruby_glue.rs:an unbounded coordinator send
+sdk/ruby/lib/flezha/executor.rb:Bounded so a fetcher
+
+# --- plain English: a drain with a time bound on it
+*:[Uu]nbounded drain
+*:drain is bounded
+*:bounded drain
+*:drain had to be BOUNDED
+sdk/ruby/lib/flezha/executor.rb:Bounded for the reason

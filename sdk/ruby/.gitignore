@@ -1,0 +1,9 @@
+/lib/flezha/flz_core_ffi.*
+/ext/flz_core_ffi/Makefile
+/ext/flz_core_ffi/mkmf.log
+/pkg/
+/tmp/
+# Staged from the repository root by scripts/build-ruby-sdk.sh so the gem
+# carries them; the sources of record are LICENSES/ and the root notices.
+/LICENSE
+/THIRD_PARTY_NOTICES.md

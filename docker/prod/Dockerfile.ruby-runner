@@ -1,0 +1,76 @@
+# The reference runner image for the Ruby SDK.
+#
+# Two things it exists to fix, both of which a team would otherwise discover in
+# production:
+#
+#   * **jemalloc.** MRI's allocator fragments under long-lived workers, which
+#     is exactly the shape a runner is: the same threads serving activations
+#     for days, allocating and freeing objects of many sizes. Resident memory
+#     climbs without a leak. jemalloc is the standard answer, and preloading it
+#     is all it takes. It is NOT a hard requirement of the gem — the gem
+#     installs and runs without it, and its own suite does.
+#   * **No Rust toolchain.** The precompiled platform gem carries the native
+#     library, so this image needs no cargo, no bindgen and no clang.
+#
+# Build (from the repository root, after `rake native_gem` in `sdk/ruby`):
+#   docker build -f docker/prod/Dockerfile.ruby-runner -t flezha-ruby-runner .
+# `APP_DIR` is the directory holding your operative classes and the entry point
+# that registers them; it defaults to this repository's own test app, so the
+# image is buildable and runnable straight from a checkout.
+# Run (one runner per process; process count is the orchestrator's decision):
+#   docker run --rm -e FLEZHA_SOCKET_FILES_PATH=/sockets -v ...  flezha-ruby-runner
+
+# --- gems ------------------------------------------------------------------
+#
+# A builder stage, so the runtime image carries no compiler. The flezha
+# platform gem needs none — the native library is IN it, which is the whole
+# point — but `msgpack` publishes a source gem for this platform and builds its
+# own C extension at install time.
+FROM ruby:3.4-slim AS gems
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY sdk/ruby/pkg/*.gem /tmp/gems/
+RUN gem install --no-document /tmp/gems/*.gem && rm -rf /tmp/gems
+
+# --- runtime ---------------------------------------------------------------
+
+FROM ruby:3.4-slim
+
+# `libjemalloc2` is the library. No build toolchain and, deliberately, no
+# cargo: if this image ever needs one, the platform gem for its architecture is
+# missing and that is the thing to fix.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libjemalloc2 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=gems /usr/local/bundle /usr/local/bundle
+
+# Preloaded rather than linked, so the same image runs without it by unsetting
+# one variable — which is what makes "not a hard requirement" testable.
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+
+# YJIT is enabled by the SDK's entry point when the running Ruby has it; this
+# image's Ruby does. `MALLOC_ARENA_MAX` is glibc's knob and is left alone
+# deliberately: with jemalloc preloaded it does nothing, and setting it would
+# suggest the two are alternatives rather than one replacing the other.
+
+WORKDIR /app
+
+# The operative classes and the entry point that registers them.
+ARG APP_DIR=test/apps/ruby_runner
+COPY ${APP_DIR}/ /app/
+
+RUN useradd --system --create-home --uid 10001 flezha \
+    && chown -R flezha:flezha /app
+USER flezha
+
+# The SDK observes shutdown three ways: a signal, closed standard input, and
+# the controller's own stop. An orchestrator sends SIGTERM; the entry point
+# drains in-flight activations before the process exits.
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["ruby", "/app/runner.rb"]
+CMD ["default"]

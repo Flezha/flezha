@@ -53,6 +53,7 @@ test/*
 !test/apps
 test/apps/*
 !test/apps/rust_runner
+!test/apps/ruby_runner
 !test/apps/testnet
 test/apps/rust_runner/target
 test/apps/rust_runner/dist

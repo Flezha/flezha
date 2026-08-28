@@ -11,6 +11,12 @@
 //! answers with and mapped back through `result_from_js`. A veneer that lost
 //! or transposed a field would fail the phase that reads it, rather than a
 //! separate suite that has to be kept in step with this one.
+//!
+//! `--features ruby-embed` does the same for the Ruby veneer, through an
+//! embedded CRuby VM and with no Ruby process involved. Both arms hang off the
+//! same two hooks in `abi_poll` / `abi_complete`, so a veneer is proved by the
+//! scenario that already covers the capability rather than by a suite of its
+//! own that has to be kept in step.
 
 use std::ffi::CString;
 use std::os::unix::net::UnixListener;
@@ -111,12 +117,38 @@ fn abi_poll(ctx: *mut FlzContext, timeout_ms: u64) -> (i32, Option<schema::Activ
     let act = schema::decode_activation(&bytes).expect("activation decodes");
     #[cfg(feature = "napi")]
     napi_veneer::assert_activation_maps(&act);
+    // The shutdown phase polls from a spawned thread, where an embedded VM
+    // has no handle. It answers `SHUTTING_DOWN` and never reaches here, and
+    // the guard states that rather than relying on it.
+    #[cfg(feature = "ruby-embed")]
+    if magnus::Ruby::get().is_ok() {
+        ruby_veneer::assert_activation_maps(&act);
+    }
     (status, Some(act))
 }
 
-fn abi_complete(ctx: *mut FlzContext, result: &schema::ActivationResult) {
+/// Map a result through whichever veneers are built in, and assert none of
+/// them changed it.
+///
+/// Separate from [`abi_complete`] because one phase completes from a spawned
+/// thread: the ABI accepts a completion from any thread, but an embedded Ruby
+/// VM has no handle on a thread it did not create. So the mapping is what
+/// stays on the test's own thread, and only the ABI call crosses.
+#[allow(clippy::let_and_return)]
+fn through_veneers(result: &schema::ActivationResult) -> schema::ActivationResult {
     #[cfg(feature = "napi")]
     let result = &napi_veneer::through_veneer(result);
+    #[cfg(feature = "ruby-embed")]
+    let result = &ruby_veneer::through_veneer(result);
+    result.clone()
+}
+
+fn abi_complete(ctx: *mut FlzContext, result: &schema::ActivationResult) {
+    abi_complete_mapped(ctx, &through_veneers(result));
+}
+
+/// Hand an already-mapped result to the ABI. Callable from any thread.
+fn abi_complete_mapped(ctx: *mut FlzContext, result: &schema::ActivationResult) {
     let bytes = schema::encode_result(result);
     let status = unsafe { flz_core_complete(ctx, bytes.as_ptr(), bytes.len()) };
     if status != FLZ_OK {
@@ -165,6 +197,14 @@ fn ok_effect(consumed_offset: Option<u64>, timers: Vec<schema::TimerOp>) -> sche
 
 #[test]
 fn c_abi_full_scenario() {
+    // The embedded CRuby VM has to be started here rather than lazily: its
+    // setup records the current stack frame as the GC's scan root, so it must
+    // sit above every frame that touches a Ruby value. Held for the whole
+    // test — dropping it runs `ruby_cleanup`.
+    // SAFETY: once per process, higher up the stack than any Ruby call below.
+    #[cfg(feature = "ruby-embed")]
+    let _ruby_vm = unsafe { magnus::embed::init() };
+
     // ---------------------------------------------------------- version pin
     // A shim built against an incompatible schema is refused at creation,
     // with an error naming both versions, before any connection.
@@ -303,8 +343,9 @@ fn c_abi_full_scenario() {
         ]),
     };
     let ctx_addr = ctx as usize;
+    let result = through_veneers(&result);
     thread::spawn(move || {
-        abi_complete(ctx_addr as *mut FlzContext, &result);
+        abi_complete_mapped(ctx_addr as *mut FlzContext, &result);
     })
     .join()
     .expect("cross-thread complete");
@@ -1103,6 +1144,400 @@ mod napi_veneer {
                     entry.name
                 );
             }
+        }
+    }
+}
+
+/// The Ruby veneer, proved by the same scenario with no Ruby process
+/// involved: an embedded CRuby VM, `activation_to_ruby` on the way out and
+/// `result_from_ruby` on the way back.
+#[cfg(feature = "ruby-embed")]
+mod ruby_veneer {
+    use flz_core::schema;
+    use flz_core_ffi::ruby_glue::{activation_to_ruby, result_from_ruby, NATIVE_SURFACE};
+    use magnus::{prelude::*, IntoValue, RArray, RHash, RString, Ruby, TryConvert, Value};
+
+    /// The handle of the VM `c_abi_full_scenario` booted. Every call below
+    /// runs deeper in that test's stack, which is what makes it valid.
+    fn ruby() -> Ruby {
+        // SAFETY: the scenario booted the VM on this thread before reaching
+        // any code that calls this.
+        unsafe { Ruby::get_unchecked() }
+    }
+
+    fn get<T: TryConvert>(h: RHash, key: &str) -> Option<T> {
+        h.get(ruby().sym_new(key))
+            .filter(|v| !v.is_nil())
+            .map(|v| T::try_convert(v).expect("a veneer field has the declared type"))
+    }
+
+    fn req<T: TryConvert>(h: RHash, key: &str) -> T {
+        get(h, key).unwrap_or_else(|| panic!("the veneer dropped `{key}`"))
+    }
+
+    fn sym_of(h: RHash, key: &str) -> String {
+        req::<magnus::Symbol>(h, key).name().unwrap().into_owned()
+    }
+
+    fn bytes_of(h: RHash, key: &str) -> Vec<u8> {
+        let s: RString = req(h, key);
+        unsafe { s.as_slice() }.to_vec()
+    }
+
+    fn rows(h: RHash, key: &str) -> Vec<Value> {
+        let a: RArray = req(h, key);
+        unsafe { a.as_slice() }.to_vec()
+    }
+
+    fn as_hash(v: Value) -> RHash {
+        RHash::from_value(v).expect("the veneer emits Hashes")
+    }
+
+    fn meta_of(h: RHash, key: &str) -> Vec<(String, String)> {
+        rows(h, key)
+            .into_iter()
+            .map(|pair| {
+                let pair = RArray::from_value(pair).expect("a metadata pair is an Array");
+                let pair: Vec<String> = pair.to_vec().expect("metadata pairs are Strings");
+                (pair[0].clone(), pair[1].clone())
+            })
+            .collect()
+    }
+
+    /// Assert the decoded activation reaches Ruby intact. Checked field by
+    /// field rather than by a round trip, for the reason the Node arm gives:
+    /// the veneer has no inverse in production, so an inverse written here
+    /// could agree with a wrong forward mapping.
+    pub fn assert_activation_maps(act: &schema::Activation) {
+        let ruby = ruby();
+        let h = activation_to_ruby(&ruby, act.clone()).expect("the veneer maps the activation");
+        assert_eq!(req::<u64>(h, "token"), act.token);
+        assert_eq!(req::<String>(h, "operative"), act.target.operative);
+        assert_eq!(req::<u32>(h, "procedure"), act.target.procedure);
+        assert_eq!(get::<String>(h, "entity_key"), act.target.entity_key);
+        assert_eq!(req::<u64>(h, "change_seq"), act.change_seq);
+        assert_eq!(req::<String>(h, "factory"), act.factory);
+
+        match &act.kind {
+            schema::ActivationKind::Work(items) => {
+                assert_eq!(sym_of(h, "kind"), "work");
+                let mapped = rows(h, "items");
+                assert_eq!(mapped.len(), items.len());
+                for (value, item) in mapped.into_iter().zip(items) {
+                    let m = as_hash(value);
+                    match item {
+                        schema::WorkItem::Input(i) => {
+                            assert_eq!(sym_of(m, "kind"), "input");
+                            assert_eq!(req::<u32>(m, "channel"), i.channel);
+                            assert_eq!(bytes_of(m, "payload"), i.payload);
+                            assert_eq!(meta_of(m, "metadata"), i.metadata);
+                            assert_eq!(get::<u64>(m, "consumed_offset"), i.consumed_offset);
+                            assert_eq!(req::<bool>(m, "replay"), i.replay);
+                            assert_eq!(req::<u64>(m, "now"), i.now);
+                        }
+                        schema::WorkItem::Timer(t) => {
+                            assert_eq!(sym_of(m, "kind"), "timer");
+                            assert_eq!(sym_of(m, "timer_kind"), t.kind.as_str());
+                            assert_eq!(req::<u64>(m, "scheduled_at"), t.scheduled_at);
+                            // A timer firing's `now` IS its scheduled time,
+                            // so a handler reads one field for both kinds.
+                            assert_eq!(req::<u64>(m, "now"), t.scheduled_at);
+                        }
+                    }
+                }
+            }
+            schema::ActivationKind::RestoreFold(fold) => {
+                assert_eq!(sym_of(h, "kind"), "restore_fold");
+                match &fold.snapshot {
+                    None => assert!(get::<Value>(h, "snapshot").is_none()),
+                    Some(body) => {
+                        let s = as_hash(req(h, "snapshot"));
+                        assert_eq!(bytes_of(s, "bytes"), body.bytes);
+                        assert_eq!(get::<u32>(s, "from_version"), body.from_version);
+                    }
+                }
+                let changes = rows(h, "changes");
+                assert_eq!(changes.len(), fold.changes.len());
+                for (value, body) in changes.into_iter().zip(&fold.changes) {
+                    let c = as_hash(value);
+                    assert_eq!(bytes_of(c, "bytes"), body.bytes);
+                    assert_eq!(get::<u32>(c, "from_version"), body.from_version);
+                }
+            }
+            schema::ActivationKind::SnapshotRequest => {
+                assert_eq!(sym_of(h, "kind"), "snapshot_request")
+            }
+            schema::ActivationKind::LiveStateRead => {
+                assert_eq!(sym_of(h, "kind"), "live_state_read")
+            }
+            schema::ActivationKind::ApplyState { state_json } => {
+                assert_eq!(sym_of(h, "kind"), "apply_state");
+                assert_eq!(bytes_of(h, "state_json"), *state_json);
+            }
+            schema::ActivationKind::MigrationSerialize => {
+                assert_eq!(sym_of(h, "kind"), "migration_serialize")
+            }
+            schema::ActivationKind::KeyRequest(request) => {
+                assert_eq!(sym_of(h, "kind"), "key_request");
+                let k = as_hash(req(h, "key_request"));
+                assert_eq!(req::<u32>(k, "channel"), request.channel);
+                assert_eq!(req::<bool>(k, "want_keys"), request.want_keys);
+                assert_eq!(req::<bool>(k, "want_event_time"), request.want_event_time);
+                let payloads: Vec<Vec<u8>> = rows(k, "payloads")
+                    .into_iter()
+                    .map(|p| {
+                        unsafe {
+                            RString::from_value(p)
+                                .expect("a payload is a String")
+                                .as_slice()
+                        }
+                        .to_vec()
+                    })
+                    .collect();
+                assert_eq!(payloads, request.payloads);
+            }
+            schema::ActivationKind::WorkflowRun { args } => {
+                assert_eq!(sym_of(h, "kind"), "workflow_run");
+                assert_eq!(bytes_of(h, "args"), *args);
+            }
+            schema::ActivationKind::CompensateRun { outputs } => {
+                assert_eq!(sym_of(h, "kind"), "compensate_run");
+                let mapped: Vec<Vec<u8>> = rows(h, "outputs")
+                    .into_iter()
+                    .map(|o| {
+                        unsafe {
+                            RString::from_value(o)
+                                .expect("an output is a String")
+                                .as_slice()
+                        }
+                        .to_vec()
+                    })
+                    .collect();
+                assert_eq!(mapped, *outputs);
+            }
+        }
+    }
+
+    /// Build the result in the shape Ruby answers with, map it back through
+    /// the veneer, and assert nothing changed. The scenario then completes
+    /// with the mapped value, so a lossy field fails the phase that depends on
+    /// it and not only this equality.
+    pub fn through_veneer(result: &schema::ActivationResult) -> schema::ActivationResult {
+        let ruby = ruby();
+        let mapped =
+            result_from_ruby(&ruby, rb_result(result)).expect("the veneer maps the result back");
+        assert_eq!(&mapped, result, "the veneer changed the result");
+        mapped
+    }
+
+    fn hash(pairs: Vec<(&str, Value)>) -> RHash {
+        let ruby = ruby();
+        let h = ruby.hash_new();
+        for (key, value) in pairs {
+            h.aset(ruby.sym_new(key), value).expect("hash insert");
+        }
+        h
+    }
+
+    fn str_value(v: &[u8]) -> Value {
+        ruby().str_from_slice(v).as_value()
+    }
+
+    fn array(values: Vec<Value>) -> Value {
+        let a = ruby().ary_new_capa(values.len());
+        for v in values {
+            a.push(v).expect("array push");
+        }
+        a.as_value()
+    }
+
+    fn rb_meta(pairs: &[(String, String)]) -> Value {
+        array(
+            pairs
+                .iter()
+                .map(|(k, v)| array(vec![str_value(k.as_bytes()), str_value(v.as_bytes())]))
+                .collect(),
+        )
+    }
+
+    fn rb_output(o: &schema::Output) -> Value {
+        let ruby = ruby();
+        let mut pairs = vec![
+            ("key", o.key.clone().into_value_with(&ruby)),
+            ("metadata", rb_meta(&o.metadata)),
+            ("payload", str_value(&o.payload)),
+            ("event_time", o.event_time.into_value_with(&ruby)),
+        ];
+        match &o.target {
+            schema::OutputTarget::Edge { channel, consumer } => {
+                pairs.push(("target", str_value(b"edge")));
+                pairs.push(("channel", (*channel).into_value_with(&ruby)));
+                pairs.push(("consumer", (*consumer).into_value_with(&ruby)));
+            }
+            schema::OutputTarget::Plugin { channel } => {
+                pairs.push(("target", str_value(b"plugin")));
+                pairs.push(("plugin_channel", str_value(channel.as_bytes())));
+            }
+        }
+        hash(pairs).as_value()
+    }
+
+    fn rb_effect(e: &schema::ItemEffect) -> Value {
+        let ruby = ruby();
+        let (verdict, message) = match &e.verdict {
+            schema::Verdict::Ok => ("ok", None),
+            schema::Verdict::RetryableError { message } => ("retryable", Some(message.clone())),
+            schema::Verdict::NonRetryableError { message } => {
+                ("non_retryable", Some(message.clone()))
+            }
+        };
+        hash(vec![
+            ("verdict", str_value(verdict.as_bytes())),
+            ("message", message.into_value_with(&ruby)),
+            (
+                "changes",
+                array(e.changes.iter().map(|c| str_value(c)).collect()),
+            ),
+            ("outputs", array(e.outputs.iter().map(rb_output).collect())),
+            ("consumed_offset", e.consumed_offset.into_value_with(&ruby)),
+            ("event_time", e.event_time.into_value_with(&ruby)),
+            (
+                "timers",
+                array(
+                    e.timers
+                        .iter()
+                        .map(|t| {
+                            hash(vec![
+                                ("kind", str_value(t.kind.as_str().as_bytes())),
+                                ("scheduled_at", t.scheduled_at.into_value_with(&ruby)),
+                                ("register", t.register.into_value_with(&ruby)),
+                            ])
+                            .as_value()
+                        })
+                        .collect(),
+                ),
+            ),
+            ("checkpoint", e.checkpoint.into_value_with(&ruby)),
+            (
+                "dlq",
+                match &e.dlq {
+                    None => ruby.qnil().as_value(),
+                    Some(d) => hash(vec![
+                        ("channel", str_value(d.channel.as_bytes())),
+                        ("error", str_value(d.error.as_bytes())),
+                        ("attempts", d.attempts.into_value_with(&ruby)),
+                        (
+                            "payload",
+                            match &d.payload {
+                                None => ruby.qnil().as_value(),
+                                Some(p) => str_value(p),
+                            },
+                        ),
+                    ])
+                    .as_value(),
+                },
+            ),
+        ])
+        .as_value()
+    }
+
+    fn rb_result(r: &schema::ActivationResult) -> RHash {
+        let ruby = ruby();
+        let mut pairs = vec![("token", r.token.into_value_with(&ruby))];
+        match &r.outcome {
+            schema::ActivationOutcome::Work(effects) => {
+                pairs.push(("outcome", str_value(b"work")));
+                pairs.push(("effects", array(effects.iter().map(rb_effect).collect())));
+            }
+            schema::ActivationOutcome::Restored => pairs.push(("outcome", str_value(b"restored"))),
+            schema::ActivationOutcome::Snapshot { state } => {
+                pairs.push(("outcome", str_value(b"snapshot")));
+                pairs.push(("state", str_value(state)));
+            }
+            schema::ActivationOutcome::StateJson { json } => {
+                pairs.push(("outcome", str_value(b"state_json")));
+                pairs.push(("json", str_value(json)));
+            }
+            schema::ActivationOutcome::StateApplied => {
+                pairs.push(("outcome", str_value(b"state_applied")))
+            }
+            schema::ActivationOutcome::MigrationState { json } => {
+                pairs.push(("outcome", str_value(b"migration_state")));
+                pairs.push(("json", str_value(json)));
+            }
+            schema::ActivationOutcome::Prepared(answers) => {
+                pairs.push(("outcome", str_value(b"prepared")));
+                pairs.push((
+                    "prepared",
+                    array(
+                        answers
+                            .iter()
+                            .map(|a| match a {
+                                Ok(answer) => hash(vec![
+                                    (
+                                        "keys",
+                                        array(
+                                            answer
+                                                .keys
+                                                .iter()
+                                                .map(|k| str_value(k.as_bytes()))
+                                                .collect(),
+                                        ),
+                                    ),
+                                    ("event_time", answer.event_time.into_value_with(&ruby)),
+                                ])
+                                .as_value(),
+                                Err(e) => hash(vec![
+                                    ("error", str_value(e.message.as_bytes())),
+                                    ("non_retryable", e.non_retryable.into_value_with(&ruby)),
+                                ])
+                                .as_value(),
+                            })
+                            .collect(),
+                    ),
+                ));
+            }
+            schema::ActivationOutcome::Failed(e) => {
+                pairs.push(("outcome", str_value(b"failed")));
+                pairs.push(("error", str_value(e.message.as_bytes())));
+                pairs.push(("non_retryable", e.non_retryable.into_value_with(&ruby)));
+            }
+            schema::ActivationOutcome::WorkflowDone { completed, result } => {
+                pairs.push(("outcome", str_value(b"workflow_done")));
+                pairs.push(("workflow_completed", (*completed).into_value_with(&ruby)));
+                pairs.push(("workflow_result", str_value(result)));
+            }
+        }
+        hash(pairs)
+    }
+
+    /// The extension exports exactly what the surface table names, every entry
+    /// names a C ABI entry point, and every blocking one is a call the veneer
+    /// runs with the GVL released. Asserted on this side because it is the
+    /// side that can go wrong without anyone installing the gem.
+    #[test]
+    fn the_native_surface_is_the_declared_one() {
+        let blocking: Vec<&str> = NATIVE_SURFACE
+            .iter()
+            .filter(|(_, _, blocking)| *blocking)
+            .map(|(name, _, _)| *name)
+            .collect();
+        assert_eq!(
+            blocking,
+            [
+                "start",
+                "poll",
+                "wait_starvation",
+                "complete",
+                "workflow_recv",
+                "spawn_workflow"
+            ]
+        );
+        for (name, abi, _) in NATIVE_SURFACE {
+            assert!(
+                abi.starts_with("flz_core_"),
+                "{name} names {abi}, which is not a C ABI entry point"
+            );
         }
     }
 }
