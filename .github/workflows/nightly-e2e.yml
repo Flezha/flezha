@@ -34,6 +34,7 @@ on:
           - elixir
           - node
           - ruby
+          - php
 
 env:
   CARGO_TERM_COLOR: always
@@ -52,9 +53,10 @@ jobs:
       - id: pick
         run: |
           case "${{ github.event.inputs.runtime }}" in
-            rust|java|elixir|node) echo "runtimes=[\"${{ github.event.inputs.runtime }}\"]" >> "$GITHUB_OUTPUT" ;;
-            all)                   echo 'runtimes=["rust","java","elixir","node"]' >> "$GITHUB_OUTPUT" ;;
-            *)                     echo 'runtimes=["rust","java"]' >> "$GITHUB_OUTPUT" ;;
+            rust|java|elixir|node|ruby|php)
+              echo "runtimes=[\"${{ github.event.inputs.runtime }}\"]" >> "$GITHUB_OUTPUT" ;;
+            all) echo 'runtimes=["rust","java","elixir","node","ruby","php"]' >> "$GITHUB_OUTPUT" ;;
+            *)   echo 'runtimes=["rust","java"]' >> "$GITHUB_OUTPUT" ;;
           esac
 
   e2e:
@@ -77,6 +79,12 @@ jobs:
             workers: 4
           - runtime: elixir
             workers: 4
+          - runtime: ruby
+            workers: 4
+          # PHP's second arm is its executor, not a worker count, and it runs
+          # in `php-sdk.yml` on every change to the SDK rather than nightly.
+          - runtime: php
+            workers: 4
     name: e2e (${{ matrix.runtime }}${{ matrix.workers != 0 && format(', {0} workers', matrix.workers) || '' }})
     env:
       FLEZHA_E2E_RUNTIME: ${{ matrix.runtime }}
@@ -97,6 +105,21 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Set up Ruby 3.4
+        if: matrix.runtime == 'ruby'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+
+      - name: Set up PHP 8.4
+        if: matrix.runtime == 'php'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: ffi
+          ini-values: ffi.enable=true
+          tools: composer
 
       - name: Set up Erlang + Elixir
         uses: erlef/setup-beam@v1
@@ -155,6 +178,19 @@ jobs:
         # The addon, the dual-format package and the test app's dependency
         # link. No connect budget covers building a cdylib on first launch.
         run: scripts/build-node-sdk.sh
+
+      - name: Pre-build the Ruby SDK and its test app
+        if: matrix.runtime == 'ruby'
+        run: |
+          sudo apt-get update && sudo apt-get install -y libclang-dev
+          scripts/build-ruby-sdk.sh
+
+      - name: Pre-build the PHP SDK and its test app
+        if: matrix.runtime == 'php'
+        # The library the package loads through ext-ffi, and the autoloader the
+        # entry script requires. No connect budget covers building a cdylib on
+        # first launch.
+        run: scripts/build-php-sdk.sh
 
       - name: Pre-build the Elixir test runner
         if: matrix.runtime == 'elixir'

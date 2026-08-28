@@ -148,11 +148,17 @@ crossing, an effectively-once completion with offsets, and a workflow
 run-sugar lifecycle — all through the C entry points, failing if any
 required surface is missing.
 
-A language veneer built from this crate — the JNI veneer behind the `jni`
-feature, the Ruby veneer behind the `ruby` feature, and any later one — SHALL
-be a consumer of the C entry points, never a fork of them: it SHALL add no
-kernel path of its own, and a capability one veneer's language can reach that
-bypasses the ABI SHALL be a defect of this capability.
+Every shim is a consumer of the C entry points, never a fork of them —
+whether it is a language veneer built from this crate (the JNI veneer behind
+the `jni` feature, the N-API one behind `napi`, the Ruby one behind `ruby`, and
+any later one) or a host that binds the exported symbols directly with no
+compiled veneer of its own, as the PHP SDK does through `ext-ffi`. A shim SHALL
+add no kernel path of its own, and a capability one shim's language can reach
+that bypasses the ABI SHALL be a defect of this capability.
+
+A shim that binds the ABI directly SHALL declare the exported functions it
+calls in one place, so its declared surface can be compared against the crate's
+exported symbols the way a veneer's exports are.
 
 #### Scenario: A restore fold crosses the ABI
 - **WHEN** the scenario suite ships a persisted change log for an ABI-declared entity and the controller path delivers `RestoreInitState`
@@ -165,6 +171,14 @@ bypasses the ABI SHALL be a defect of this capability.
 #### Scenario: The Ruby veneer is a consumer, not a fork
 - **WHEN** the Ruby veneer's exported functions are compared against the ABI's exported symbol set
 - **THEN** each SHALL map onto a `flz_core_ffi` entry point — any Ruby-reachable kernel capability that bypasses the ABI is a defect of this capability
+
+#### Scenario: The PHP shim is a consumer, not a fork
+- **WHEN** the PHP SDK's FFI declarations are compared against the ABI's exported symbol set
+- **THEN** each SHALL name a `flz_core_ffi` entry point — any PHP-reachable kernel capability that bypasses the ABI is a defect of this capability
+
+#### Scenario: A host declares its language and change format
+- **WHEN** any shim declares a class through `flz_core_declare_class`
+- **THEN** the declaration SHALL carry that shim's `sdk_lang` and `change_format_id`, and the core SHALL stamp durable record headers with them so a record is self-describing to the host that later restores it
 
 ### Requirement: The restore crossing carries each record's stamped schema version
 

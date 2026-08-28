@@ -347,9 +347,12 @@ documented in-process forms of what the byte boundary removes for FFI hosts.
 
 ## One change, every SDK
 
-The kernel has three hosts today: the Rust SDK (the crate), the Java SDK
-(`flz_core_ffi` over JNI) and the Node SDK (the same crate over N-API, under its own feature —
-one binary, two veneers). **The Elixir SDK is the deliberate exception.** It is not a poll
+The kernel has five hosts today: the Rust SDK (the crate), the Java SDK (`flz_core_ffi` over
+JNI), the Node SDK (the same crate over N-API), the Ruby SDK (the same crate over magnus) and
+the PHP SDK — the first to consume the C ABI *as* a C ABI, through `ext-ffi`, with no compiled
+veneer of its own (PHP has no stable ABI across minor versions, so one library per platform is
+the only distribution that does not multiply by the PHP matrix).
+**The Elixir SDK is the deliberate exception.** It is not a poll
 host ([`../sdk/elixir_sdk.md`](../sdk/elixir_sdk.md)): it re-expresses dispatch, overflow, the
 retry→park ladder and the partition guard in Elixir and inherits *nothing* from `flz_core`. So
 a change below the seam reaches Rust and Java for free and reaches Elixir only when someone
@@ -373,11 +376,16 @@ The rule, normative for every binding:
   fixed worker count with no supervisor is a defect of that SDK, not a configuration choice —
   with every worker held such a host processes nothing, recovers from nothing and reports
   nothing (Java shipped that shape and measured 0 of 20 payloads delivered). Rust and Java both
-  carry it, keyed alike by `FLEZHA_WORKER_POOL_SIZE` / `FLEZHA_WORKER_POOL_MAX`, and so does
+  carry it, keyed alike by `FLEZHA_WORKER_POOL_SIZE` / `FLEZHA_WORKER_POOL_MAX`, and so do
   Node (whose replaceable unit is a dispatch worker thread, which is the reason its multi-loop
   configuration is the recommended production posture — a wedged main thread cannot be
-  replaced); the Elixir SDK is exempt for the same reason it is exempt from the seam — a BEAM
-  process per Entity has no worker set to starve. And every host reports handout liveness — `inflight` and
+  replaced), Ruby, and the PHP SDK's `SwooleExecutor`. **The PHP SDK's default `SyncExecutor`
+  is exempt, by name**: a non-thread-safe PHP process runs one thread of PHP code, so it has
+  one loop and no worker set to grow, and its replaceable unit is the process — which the
+  orchestrator already owns and the SDK deliberately does not
+  ([`../sdk/php_sdk.md`](../sdk/php_sdk.md#choosing-an-executor)). The Elixir SDK is exempt for
+  the same reason it is exempt from the seam — a BEAM process per Entity has no worker set to
+  starve. And every host reports handout liveness — `inflight` and
   `inflight_oldest_ms` in the data heartbeat — because that is the only thing that makes ONE
   wedged Entity visible while the runner keeps completing work; likewise every overflow outcome
   (`blocked_parks`, `drops_newest`, `drops_oldest`, and the deferred-push pair `pending_pushes`
@@ -428,7 +436,8 @@ The rule, normative for every binding:
   | 3 | Elixir | no (v1 persists nothing) |
   | 4 | Node | yes (MessagePack) |
   | 5 | Ruby | yes (MessagePack) |
-  | 6–254 | free, allocated in landing order | — |
+  | 6 | PHP | yes (JSON) |
+  | 7–254 | free, allocated in landing order | — |
   | 255 | reserved | — |
 
   One value per SDK, taken when that SDK lands; a proposal never asserts a value it has not been
@@ -447,12 +456,13 @@ capability report from the run itself. See [`../sdk/conformance.md`](../sdk/conf
 
 Today: Rust and Java carry the whole vocabulary — the Rust app's manifest,
 [`test/apps/rust_runner/conformance.json`](../../test/apps/rust_runner/conformance.json), is
-the reference every other is checked against. The Elixir, Node and Ruby SDKs (v1) all defer the
-persistence family, the effectively-once tier, timers, correction windows, keyed channels, the
-workflow kind, dynamic-Entity eviction and the entry-idle observer, for different reasons:
-Elixir has no per-Entity persistence at all, while the Node and Ruby SDKs implement every one of
-them and have not yet proved them fixture by fixture against the reference. Those two owe their
-fixture sets to the shared follow-up `sdk-durable-fixture-parity`.
+the reference every other is checked against. The Elixir, Node, Ruby and PHP SDKs (v1) all
+defer the persistence family, the effectively-once tier, timers, correction windows, keyed
+channels, the workflow kind, dynamic-Entity eviction, the entry-idle observer and schema
+evolution, for different reasons: Elixir has no per-Entity persistence at all, while the Node,
+Ruby and PHP SDKs implement every one of them and have not yet proved them fixture by fixture
+against the reference. Those three owe their fixture sets to the shared follow-up
+`sdk-durable-fixture-parity`.
 
 ---
 

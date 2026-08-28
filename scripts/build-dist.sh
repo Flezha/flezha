@@ -5,9 +5,11 @@
 #   1. flz_core_ffi cdylib (poll-core ABI + JNI, feature "jni") for all 5
 #      platforms ->
 #      sdk/java/flezha-sdk-native/src/main/resources/native/<sdk-dir>/libflz_core_ffi.<ext>
-#   2. SDK fat jar ->
+#   2. The same five libraries staged for the PHP package ->
+#      sdk/php/lib/<sdk-dir>/libflz_core_ffi.<ext>
+#   3. SDK fat jar ->
 #      sdk/java/flezha-sdk/dist/flezha-sdk.jar
-#   3. Test runner fat jar ->
+#   4. Test runner fat jar ->
 #      test/apps/java_runner/dist/java_runner.jar
 #
 # Two modes:
@@ -97,6 +99,10 @@ fi
 # Output paths
 # ---------------------------------------------------------------------------
 NATIVE_OUT="${REPO_ROOT}/sdk/java/flezha-sdk-native/src/main/resources/native"
+# The PHP package loads the same libraries through ext-ffi, from directories
+# named the same way. Not committed: they are build output the release job
+# stages, which is why `sdk/php/.gitignore` excludes them.
+PHP_NATIVE_OUT="${REPO_ROOT}/sdk/php/lib"
 SDK_DIST="${REPO_ROOT}/sdk/java/flezha-sdk/dist"
 TEST_APP_DIST="${REPO_ROOT}/test/apps/java_runner/dist"
 
@@ -232,6 +238,25 @@ build_native() {
 
 for t in "${TRIPLES[@]}"; do
   build_native flz_core_ffi jni "${t}"
+done
+
+# ---------------------------------------------------------------------------
+# 4b. Stage the same five binaries into the PHP package.
+#
+#     The PHP SDK loads the ABI through `ext-ffi`, so it needs the library
+#     itself rather than a JNI-carrying jar — and it is the SAME library, which
+#     is the point of D2: one binary per triple, not one per PHP version times
+#     thread-safety times triple. Copied from what step 4 already built rather
+#     than rebuilt, so the two distributions cannot carry different cores.
+# ---------------------------------------------------------------------------
+step "staging the native libraries into the PHP package"
+for t in "${TRIPLES[@]}"; do
+  dir="${TRIPLE_TO_DIR[${t}]}"
+  ext="${TRIPLE_TO_EXT[${t}]}"
+  mkdir -p "${PHP_NATIVE_OUT}/${dir}"
+  cp "${NATIVE_OUT}/${dir}/libflz_core_ffi.${ext}" \
+     "${PHP_NATIVE_OUT}/${dir}/${TRIPLE_TO_PREFIX[${t}]}flz_core_ffi.${ext}"
+  echo "  -> ${PHP_NATIVE_OUT}/${dir}"
 done
 
 # ---------------------------------------------------------------------------

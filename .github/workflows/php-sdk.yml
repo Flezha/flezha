@@ -1,0 +1,149 @@
+name: PHP SDK
+
+on:
+  pull_request:
+    paths:
+      - "sdk/php/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
+      - "flz_transport/**"
+      - "test/apps/php_runner/**"
+      - "test/fixtures/host_class_decl_keys.txt"
+      - "scripts/build-php-sdk.sh"
+      - "docker/dev/Dockerfile.php"
+      - ".github/workflows/php-sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/php/**"
+      - "flz_core/**"
+      - "flz_core_ffi/**"
+      - "flz_transport/**"
+      - "test/apps/php_runner/**"
+      - "test/fixtures/host_class_decl_keys.txt"
+      - "scripts/build-php-sdk.sh"
+      - "docker/dev/Dockerfile.php"
+      - ".github/workflows/php-sdk.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The package's own suite, on every PHP line still receiving support. Every
+  # run is against a freshly built library, so a core change and a package
+  # change fail together rather than one of them passing against a stale one.
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The declared floor, and the newest release. `ext-ffi` is stable from
+        # 8.0 and the authoring surface needs 8.1, so the span is the support
+        # window rather than a compatibility hunt.
+        php: ["8.1", "8.4"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: ffi
+          ini-values: ffi.enable=true
+          tools: composer
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-php-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-php-${{ runner.os }}-
+
+      - name: Build the library and install the package
+        run: scripts/build-php-sdk.sh
+
+      - name: Lint every source file
+        working-directory: sdk/php
+        run: |
+          set -euo pipefail
+          find src tests ../../test/apps/php_runner -name '*.php' -print0 \
+            | xargs -0 -n1 php -l > /dev/null
+
+      # The activation codec, the declaration refusals, the durable codec, the
+      # identity vectors and the containment of Swoole are behaviour here, not
+      # prose. `--fail-on-skipped` is deliberately NOT set: the threaded arm
+      # skips on this build and runs in the `threaded` job below.
+      - name: Unit tests
+        working-directory: sdk/php
+        run: vendor/bin/phpunit
+
+  # The threaded executor, on the build most distributions do not ship. Cached
+  # so a reproduction is a container away rather than a local source build, and
+  # run on every change to the SDK rather than nightly — an arm that only runs
+  # when someone remembers to set an environment variable is an arm that rots.
+  threaded:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-php-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-php-${{ runner.os }}-
+
+      - name: Build the library
+        run: cargo build -p flz_core_ffi
+
+      - name: Cache the ZTS PHP + Swoole image
+        uses: actions/cache@v5
+        with:
+          path: /tmp/php-zts-image
+          key: php-zts-${{ hashFiles('docker/dev/Dockerfile.php') }}
+
+      - name: Build or restore the ZTS image
+        run: |
+          set -euo pipefail
+          if [ -f /tmp/php-zts-image/image.tar ]; then
+            docker load -i /tmp/php-zts-image/image.tar
+          else
+            docker build -f docker/dev/Dockerfile.php --target zts -t flezha-php-zts .
+            mkdir -p /tmp/php-zts-image
+            docker save -o /tmp/php-zts-image/image.tar flezha-php-zts
+          fi
+
+      # `Swoole\Thread` is what the whole adapter rests on, and the floor the
+      # package's `suggest` names. Confirmed on the image rather than assumed.
+      - name: Confirm the threading floor
+        run: |
+          docker run --rm flezha-php-zts php -r '
+            assert(PHP_ZTS, "not a thread-safe build");
+            assert(class_exists("Swoole\\Thread"), "no Swoole\\Thread");
+            assert(ini_get("ffi.enable") === "1", "ffi.enable must be true inside a thread");
+            printf("php %s zts, swoole %s, %d cpus\n", PHP_VERSION, swoole_version(), swoole_cpu_num());
+          '
+
+      # The same suite, on the thread-safe build: the five threaded tests that
+      # skip elsewhere run here, and every other test runs twice.
+      - name: Unit tests on the thread-safe build
+        run: |
+          set -euo pipefail
+          mkdir -p sdk/php/lib/linux-x64
+          cp target/debug/libflz_core_ffi.so sdk/php/lib/linux-x64/
+          docker run --rm -v "$PWD:$PWD" -w "$PWD/sdk/php" flezha-php-zts \
+            sh -c 'composer install --no-interaction --no-progress && vendor/bin/phpunit'

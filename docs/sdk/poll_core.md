@@ -71,6 +71,7 @@ others:
 | Rust | A base pool of poll workers plus one supervisor thread parked in the core's **starvation wait**. Each observation spawns one more worker up to the ceiling; workers above the base retire after an idle streak, so a workload that never starves observes exactly the base pool. | `FLEZHA_WORKER_POOL_SIZE` (default: available parallelism, 2 if unknown), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
 | Java | A small fixed set of platform *fetcher* threads loop `poll → decode → hand off → poll`; one **virtual thread** per activation runs the dispatch and completes it (`Executors.newVirtualThreadPerTaskExecutor()`), plus one platform **supervisor** thread parked in the starvation wait that starts one more fetcher per observation, up to the ceiling. | `FLEZHA_WORKER_POOL_SIZE` (default 2, `FlezhaEnv.DEFAULT_FETCHER_COUNT`), `FLEZHA_WORKER_POOL_MAX` (default 10× the count, never below it) |
 | Node | Java's shape, with a hard constraint where Java has a choice. Native fetcher threads the SDK owns — never libuv's shared pool — loop `poll → decode → hand off → poll` and hand each activation to one **event loop**: the main one by default, or one of N `worker_threads`. Blocking calls run on a **growable** native pool, because `complete` parks under `DropNothing` and a fixed pool whose every thread parks pushing to one consumer has no thread left for the completion that would drain it. One supervisor parks in the starvation wait. | `FLEZHA_NODE_WORKERS` (default 0 = the main loop), `FLEZHA_WORKER_POOL_SIZE` (default 2), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it) |
+| PHP | Two shapes behind one seam, because a stock PHP process runs one thread of PHP code and only a thread-safe build lifts it. `SyncExecutor` (the default) loops `poll → dispatch → complete` on the calling thread — one loop, no supervisor, and cores come from more processes. `SwooleExecutor` runs the same loop on a pool of `Swoole\Thread`s over one shared context, each thread bootstrapping the entry script and *attaching* to the context by its address; the main thread is the supervisor, parked in the starvation wait, and adds a thread per observation. | `FLEZHA_PHP_EXECUTOR` (`sync` — the default — or `swoole`), `FLEZHA_MAX_ACTIVATIONS` (default unlimited) |
 | Ruby | The Rust host's shape, because MRI's situation is the Rust host's: an MRI thread is a real OS thread with a real stack, so hand-off would buy nothing and cost a thread per activation. A base pool of Ruby threads each loop `poll → dispatch → complete` **on themselves**, plus one supervisor parked in the starvation wait. Every blocking core call runs with the **GVL released**, so the lock bounds the handler body and nothing else. An opt-in `Fiber::Scheduler` executor hands off through a `Thread::Queue`, with the fetcher still a real thread. | `FLEZHA_WORKER_POOL_SIZE` (default: the machine's processor count), `FLEZHA_WORKER_POOL_MAX` (default 10× the base, never below it), `FLEZHA_RUBY_EXECUTOR` (`threads` — the default — or `fibers`) |
 
 **No core call blocks a host thread.** The core cannot know how many threads a
@@ -503,6 +504,36 @@ Two things differ from the Java binding, both following from the event loop:
    before the fetcher's turn ends.
 
 `docs/sdk/node_sdk.md` states the host's parallelism model as arithmetic.
+
+## The PHP binding
+
+The PHP SDK is the first host to consume the C ABI **as a C ABI** — through
+`ext-ffi`, with no compiled veneer of its own. PHP has no stable ABI across
+minor versions, so a native extension would be a 8.1/8.2/8.3/8.4 × NTS/ZTS ×
+5-triple matrix that grows with every release; `ext-ffi` needs one library per
+platform, the five that already exist for Java.
+
+Three things follow, and they are the whole of what is PHP-specific:
+
+1. **The activation codec is postcard in interpreted PHP**, pinned against the
+   hex fixtures in `flz_core/src/schema.rs` — read out of that file by the
+   test rather than copied, so a schema change is a red PHP build in the commit
+   that makes it. Only the two directions a host uses exist: activations decode,
+   results encode.
+2. **`u64` has no PHP representation above 2^63−1.** A field needing the 64th
+   bit raises a decode error naming it rather than silently widening to a
+   float, which would corrupt an offset comparison instead of failing.
+3. **The FFI handle resolves per interpreter, and so per thread.** `FFI::cdef`
+   builds inside the interpreter that calls it and a `Swoole\Thread` is a
+   separate interpreter, so a plain static is already per-thread on a ZTS
+   build. What does *not* follow the interpreter is the context: a worker
+   receives its address as an integer and re-casts it, and never frees what it
+   attached to.
+
+`docs/sdk/php_sdk.md` states the host's sizing model as arithmetic, and names
+the three requirements the threaded executor checks before the runner connects
+— a ZTS build, `Swoole\Thread`, and `ffi.enable=true` (the shipped `preload`
+permits FFI from the CLI SAPI, and a worker thread is not it).
 
 ## What stays per-language
 

@@ -10,7 +10,7 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Controller** — the Elixir control plane (`lib/flezha/`) and the source of truth: it owns the
   durable store, routes input, places every operative and heals the fleet. Nodes cluster over
   Erlang distribution, with one ProcessHub hub per namespace (`Flezha.Service.HubManager`).
-- **Runner** — the SDK process (Rust, Java or Elixir) where user code runs. It dials the
+- **Runner** — the SDK process (Rust, Java, Node, Ruby, PHP or Elixir) where user code runs. It dials the
   controller, never the reverse, and is disposable because every state change is mirrored to the
   controller. A process holds one **runner slot**, claimed at `start()` by compare-and-set.
   See [`architecture/runner.md`](architecture/runner.md).
@@ -207,11 +207,13 @@ owns the mechanism; for concepts, [`architecture/`](architecture/README.md) wins
 - **Poll core (`flz_core`)** — the one Rust kernel every host SDK drives through
   `poll() → Activation` / `complete(ActivationResult)`: transport, per-entity ordering, effect
   records, the retry→park ladder, timers, credit, routing and the workflow driver. Rust consumes
-  it as a crate, Java through the C ABI (`flz_core_ffi`); the Elixir SDK is its own core and
-  inherits nothing from it. See [`sdk/poll_core.md`](sdk/poll_core.md).
+  it as a crate; Java, Node and Ruby through compiled veneers over the C ABI (`flz_core_ffi`);
+  PHP through that same ABI directly, with `ext-ffi` and no veneer of its own. The Elixir SDK is
+  its own core and inherits nothing from it. See [`sdk/poll_core.md`](sdk/poll_core.md).
 - **Host class** — an operative class declared through the C ABI as data
   (`flz_core_declare_class`, JSON, unknown fields refused); its user code runs host-side and is
-  reached only through activations. Java classes are host classes; typed Rust classes are not.
+  reached only through activations. Java, Node, Ruby and PHP classes are host classes; typed
+  Rust classes are not.
 - **Activation / ActivationResult** — one unit of work the core hands a host, never two at once
   for the same entity (**per-entity exclusivity**, why user code needs no locks): an input batch
   with timer firings, one of five host-participating commands (restore fold, snapshot, live read,

@@ -1,0 +1,82 @@
+{
+  "runtime": "php",
+  "sdk_lang": 6,
+  "command": {
+    "test": "php {artifact} {namespace}",
+    "bench": "php -d opcache.enable_cli=1 {artifact} {namespace}"
+  },
+  "artifacts": {
+    "test": [
+      "runner.php"
+    ],
+    "bench": [
+      "runner.php"
+    ]
+  },
+  "build": {
+    "test": "scripts/build-php-sdk.sh",
+    "bench": "scripts/build-php-sdk.sh --release"
+  },
+  "connect_timeout_ms": 60000,
+  "transports": [
+    "uds",
+    "quic"
+  ],
+  "dispatch": {
+    "model": "thread-pool",
+    "detail": "One poll/dispatch/complete loop per thread over one shared context: a single loop on the calling thread under the default SyncExecutor, and a Swoole\\Thread pool that grows on the core's starvation signal under SwooleExecutor. Which one is an axis of the run, not a property of this app.",
+    "env": {
+      "FLEZHA_PHP_EXECUTOR": "which executor drives the loop: sync (the default, one loop, stock NTS PHP) or swoole (a thread pool, needs a ZTS build with Swoole\\Thread and ffi.enable=true). The entry script reads it from the environment, which is why the launch line names it nowhere: a runner inherits the run's environment, so the executor is an axis of the run rather than a property of this file",
+      "FLEZHA_MAX_ACTIVATIONS": "shut down cleanly after this many activations so a supervisor can recycle the process (default: unlimited)"
+    }
+  },
+  "toolchain": "php --version",
+  "deferred": [
+    "state_persistence",
+    "effectively_once",
+    "entity_timers",
+    "correction_window",
+    "keyed_channels",
+    "workflow",
+    "dynamic_entity",
+    "entry_idle",
+    "schema_evolution"
+  ],
+  "fixtures": {
+    "runner_lifecycle": [
+      "do_nothing",
+      "compare_filter",
+      "bench_echo"
+    ],
+    "connect_discovery": [
+      "do_nothing"
+    ],
+    "graph_builder": [
+      "sugar_do_nothing",
+      "sugar_store_input",
+      "sugar_static_entity",
+      "static_entity",
+      "mixed_operative",
+      "hybrid_channel",
+      "entity_stress",
+      "bench_keyed_nopersist"
+    ],
+    "liveness": [
+      "wedge_probe"
+    ],
+    "retry_ladder": [
+      "poison_probe",
+      "bounded_mailbox_drop_nothing",
+      "bounded_mailbox_drop_newest",
+      "bounded_mailbox_drop_oldest"
+    ],
+    "partitioned": [
+      "partition_relay",
+      "dynamic_entity"
+    ],
+    "pool_wedge": [
+      "wedge_probe"
+    ]
+  },
+  "docs": "docs/sdk/php_sdk.md"
+}

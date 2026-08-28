@@ -45,7 +45,7 @@ pub enum RestoreError {
 }
 
 /// The `sdk_lang` allocation table: 0 unspecified, 1 Rust, 2 Java, 3 Elixir,
-/// 4 Node, 5 Ruby, `6..=254` free in landing order, 255 reserved.
+/// 4 Node, 5 Ruby, 6 PHP, `7..=254` free in landing order, 255 reserved.
 ///
 /// Durable `State`/`Change` bodies are per-SDK below the shared envelope, so
 /// this byte is what keeps one language's records from reaching another's
@@ -64,8 +64,10 @@ pub const SDK_LANG_ELIXIR: u8 = 3;
 pub const SDK_LANG_NODE: u8 = 4;
 /// Ruby SDK (magnus over this core).
 pub const SDK_LANG_RUBY: u8 = 5;
+/// PHP SDK (`ext-ffi` over this core's C ABI).
+pub const SDK_LANG_PHP: u8 = 6;
 /// Lowest value not yet allocated to an SDK.
-pub const SDK_LANG_NEXT_FREE: u8 = 6;
+pub const SDK_LANG_NEXT_FREE: u8 = 7;
 /// Reserved; never allocated to an SDK.
 pub const SDK_LANG_RESERVED: u8 = 255;
 
@@ -77,6 +79,7 @@ pub const SDK_LANG_ALLOCATED: &[(u8, &str)] = &[
     (SDK_LANG_ELIXIR, "elixir"),
     (SDK_LANG_NODE, "node"),
     (SDK_LANG_RUBY, "ruby"),
+    (SDK_LANG_PHP, "php"),
 ];
 
 /// Whether `lang` is a value the allocation table hands to an SDK. `0` and
@@ -103,10 +106,20 @@ pub const FORMAT_ID_POSTCARD: u8 = 1;
 /// WALs (plain change records + effect records) stay readable.
 pub const FORMAT_ID_EFFECT_RECORD: u8 = 2;
 
+/// Kryo format id: the body is a Kryo-encoded `State`/`Change` against the
+/// class's registered type set. Java's codec; declared here because the table
+/// of record is what makes a new id provably free.
+pub const FORMAT_ID_KRYO: u8 = 4;
+
 /// MessagePack format id: the body is a MessagePack-encoded `State`/`Change`.
 /// Shared by every SDK whose codec is MessagePack rather than minted per SDK —
 /// the byte names the encoding, and the cross-language gate is `sdk_lang`.
 pub const FORMAT_ID_MSGPACK: u8 = 5;
+
+/// JSON format id: the body is a JSON-encoded `State`/`Change`. PHP's codec —
+/// author-declared `toArray()` / `fromArray()` over `json_encode`, so a class
+/// rename leaves the durable bytes readable.
+pub const FORMAT_ID_JSON: u8 = 6;
 
 /// Timer-ops format id: the body is a postcard `Vec<TimerOp>` mutating the
 /// Entity's pending-timer set. Rides the ordinary `entity_state_change`
@@ -361,9 +374,11 @@ mod tests {
         assert_eq!(SDK_LANG_ELIXIR, 3);
         assert_eq!(SDK_LANG_NODE, 4);
         assert_eq!(SDK_LANG_RUBY, 5);
+        assert_eq!(SDK_LANG_PHP, 6);
         assert_eq!(sdk_lang_name(SDK_LANG_JAVA), "java");
         assert_eq!(sdk_lang_name(SDK_LANG_NODE), "node");
         assert_eq!(sdk_lang_name(SDK_LANG_RUBY), "ruby");
+        assert_eq!(sdk_lang_name(SDK_LANG_PHP), "php");
         assert_eq!(sdk_lang_name(SDK_LANG_NEXT_FREE), "unallocated");
     }
 
@@ -376,7 +391,9 @@ mod tests {
             FORMAT_ID_POSTCARD,
             FORMAT_ID_EFFECT_RECORD,
             FORMAT_ID_TIMER_OPS,
+            FORMAT_ID_KRYO,
             FORMAT_ID_MSGPACK,
+            FORMAT_ID_JSON,
         ];
         let mut seen = std::collections::HashSet::new();
         for id in ids {

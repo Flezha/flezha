@@ -3356,4 +3356,34 @@ mod sdk_lang_declaration_tests {
             crate::header::SDK_LANG_NODE
         );
     }
+
+    /// The same path for the PHP SDK, whose format byte is JSON — the third
+    /// distinct change format a host has declared, and the one that proves the
+    /// declaration carries the format rather than the core inferring it from
+    /// the language.
+    #[test]
+    fn a_php_class_declares_its_language_and_the_json_format() {
+        let id = format!("host_lang_php_{}", std::process::id());
+        super::register_host_class_json(
+            decl(&id, r#""sdk_lang":6,"change_format_id":6,"#).as_bytes(),
+        )
+        .expect("a PHP-declared class registers");
+
+        let topology = crate::operative::registry::get_class(&id).expect("class registered");
+        assert_eq!(topology.sdk_lang, crate::header::SDK_LANG_PHP);
+
+        let header = topology.procedures[0]
+            .host_facts
+            .as_ref()
+            .expect("a host class carries host facts")
+            .header();
+        assert_eq!(header.sdk_lang, crate::header::SDK_LANG_PHP);
+        assert_eq!(header.format_id, crate::header::FORMAT_ID_JSON);
+
+        assert_eq!(
+            crate::operative::registry::sdk_lang_for_factory(&id),
+            crate::header::SDK_LANG_PHP,
+            "the advertisement reads the declared value from the core"
+        );
+    }
 }

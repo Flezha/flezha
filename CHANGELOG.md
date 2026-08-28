@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Added — PHP SDK (`add-php-sdk`)
+
+A fifth host for `flz_core`, and the first to consume the C ABI **as a C ABI**:
+`ext-ffi`, no compiled veneer. PHP has no stable ABI across minor versions, so a
+native extension would be a PHP-version × thread-safety × platform matrix that
+grows with every release; `ext-ffi` needs one library per platform — the five
+that already ship for Java.
+
+`composer require flezha/sdk` pulls nothing: `php >= 8.1` and `ext-ffi`, and
+that is the whole requirement. The authoring surface is a `#[Proc]` attribute
+for the scalar declarations and a fluent `channels()` builder for the graph,
+with the optional hooks read from the methods a procedure **overrides** so a
+declaration and its implementation cannot disagree. Durable `State` and
+`Change` serialize as JSON through author-declared `toArray()` / `fromArray()`
+— never PHP's `serialize()`, whose embedded class names and mangled property
+names turn a class rename into a broken restore.
+
+Two executors ship behind one seam that carries **loop multiplicity, not work
+distribution** (a `Swoole\Thread` cannot receive a closure, so `submit(callable)`
+has exactly one possible implementation). `SyncExecutor` is the default: one
+loop on the calling thread, on the non-thread-safe build every distribution
+ships. `SwooleExecutor` runs the same loop on a pool of threads over one shared
+context, growing on the core's own `flz_core_wait_starvation` signal, so a
+single operative can exceed one core. Which one is an axis of the *run*
+(`FLEZHA_PHP_EXECUTOR`), never a property of a file: no test, fixture or
+manifest entry exists in a per-executor variant.
+
+`SDK_LANG_PHP = 6` and a JSON change-format id join the allocation table in
+`flz_core/src/header.rs`; `FORMAT_ID_KRYO = 4` is recorded there too, so the
+table of record is what makes a new id provably free. The one Rust behaviour
+change is none — this is a constant, a test and a consumer.
+
+Measured, not assumed: `ffi.enable=preload` (PHP's default) permits FFI from the
+CLI SAPI, and a `Swoole\Thread` is a fresh interpreter that is not it, so the
+threaded executor requires `ffi.enable=true` and says so before the runner
+connects.
+
 ### Changed — `DropNothing` withholds work instead of holding a host thread (`nonblocking-drop-nothing-backpressure`)
 
 Under `DropNothing`, a push into a full consumer mailbox parked the **calling

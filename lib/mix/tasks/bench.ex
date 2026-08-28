@@ -19,8 +19,9 @@ defmodule Mix.Tasks.Bench do
 
     * `--num-operatives` / `-n` - Number of operatives to create (default: 100)
     * `--messages-per-operative` / `-m` - Number of messages to send per operative (default: 100)
-    * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default), `java`
-      or `elixir`. Each is launched from its test app's manifest
+    * `--runtime` / `-r` - Which SDK to benchmark: `rust` (default), or any
+      other SDK with a test-app manifest (`java`, `elixir`, `node`, `ruby`,
+      `php`). Each is launched from its test app's manifest
       (`test/apps/<runtime>_runner/conformance.json`, `bench` profile), which
       names the build command for a missing artifact.
     * `--shape` - Bench shape: `regression` (default; the apples-to-apples
