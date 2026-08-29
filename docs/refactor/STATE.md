@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 18:30 (supervisor session 2 — **AREA 2 DONE**)
+**Last updated**: 2026-08-29 18:40 (supervisor session 2 — area 3 surveying)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -46,7 +46,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | surveying | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -62,7 +62,9 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. **Area 2 is done** (`e3b6cab3`, archived as `2026-08-29-refactor-2-ffi-veneers`,
+`refactor-3-rust-sdk`, **survey** (read-only), fresh general-purpose worker, spawned
+2026-08-29 18:40. Writes `proposal.md`, `design.md`, `tasks.md`; changes no code.
+Area 2 is done (`e3b6cab3`, archived as `2026-08-29-refactor-2-ffi-veneers`,
 five areas flipped to blocking ratchets). Area 3 (`sdk/rust` + `flezha-macros`) is
 next and its dependency (area 1) is done.
 
