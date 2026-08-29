@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 04:21 (supervisor session 1)
+**Last updated**: 2026-08-29 04:23 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 1s verdict: converge. Closing 1s (dev notes in progress), then survey area 1.
+Phase 0 and 1s done (1s `3914b140`, verdict converge). Area 1 (`flz_core` + `flz_transport` + `flz_nif`) surveying.
 
 ## Board
 
@@ -20,8 +20,8 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 |---|------|-----------|------------|--------|--------|----------------------|
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
-| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | checkpoint | branch `spike/1s-dispatcher` | verdict converge; ≤ 1.45 % loss on every resolvable row |
-| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | pending | | |
+| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
+| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | surveying | | |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | pending | | |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
@@ -39,14 +39,10 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-1s-dispatcher-spike` · role implement · started 2026-08-29 02:53
-- all code edits happen in the worktree `<scratchpad>/spike` on branch
-  `spike/1s-dispatcher` (off tag `refactor-baseline-1s` = `948cba77`); the main
-  tree stays clean; the deliverable is the A/B table in the change's `design.md`
+- change `refactor-1-kernel` · role survey · started 2026-08-29 04:23
+- deliverable: proposal/design/tasks for area 1 (no code)
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
-- last seen: 2026-08-29 04:21 — spike complete, verified; worker writing dev notes
-- resume note: if this worker is gone, `git worktree list` shows whether the
-  worktree exists and `git log spike/1s-dispatcher` which arm is committed
+- last seen: 2026-08-29 04:23 (spawned)
 
 ## Awaiting the user's decision
 
@@ -228,8 +224,8 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-1. Survey 1s (spike proposal), approve, implement the spike, record the A/B verdict.
-2. Then area 1 (`flz_core` + transport + nif) — survey.
-3. Owed defect changes (user's priority call): F1 dlq watermark overwrite, the
-   first-input drop after `start_operative/2` — both before area 5a touches
-   `wal_writer`/`stream_channel`.
+1. Survey area 1 (kernel), approve, implement (the seam from `spike/1s-dispatcher`
+   is a named task; hot path → A/B rows 1–6 per the refactor-gates requirement).
+2. Then area 2 (FFI glue + veneers) or 5a (state), by board order: 2.
+3. Owed defect changes (user's priority call, see "Awaiting"): F1 dlq watermark,
+   first-input drop after `start_operative/2`.
