@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 19:19 (supervisor session 2 — segment A heartbeat 1, charter §11 amended)
+**Last updated**: 2026-08-29 19:31 (supervisor session 2 — segment A heartbeat 2)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -66,7 +66,12 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 hygiene, the benches onto `flz_core::bench_support`), fresh general-purpose worker,
 spawned 2026-08-29 19:16. Checkpoint 1 after batch 2. Stages nothing.
 
-- last seen 19:19: arms built under `$SCRATCH/area3/`, batches 1–2 in flight
+- last seen 19:31: batch 2 converting the benches (`dispatch`, `correctness`,
+  `dynamic_entity_steady_state`, `hybrid_channel_throughput`, `tests/common/mod.rs`).
+  Floors are running and **arm A′ is being minted** — the logs carry `row1-Ap-*` and
+  `row4-Ap-*`, so risk 1's mitigation is being executed as designed rather than
+  skipped. No stall.
+- previous 19:19: arms built under `$SCRATCH/area3/`, batches 1–2 in flight
   (`Cargo.toml`, both SDK benches, `flz_core/src/bench_support.rs`, and
   `flz_core_ffi/benches/alloc_counter.rs` deleted as the machinery moves down).
   **`--check` is RED on a blocking area and that is sanctioned**: `flz_core`
@@ -132,6 +137,29 @@ citation failed for exactly this reason: the existing `[Bb]ounded[Mm]ailbox` rul
 ate half the phrase first, leaving the bare word to trip the gate. The entry now
 matches the bare identifier and the comment beside it says why. Worth knowing before
 anyone writes another multi-token allowlist entry.
+
+### A/B policy changed 2026-08-29 — measure once per area
+
+The user's call, on the evidence that benchmarking was **61 % of area 2's closing
+segment** (66 of 108 minutes) against 30 % tests and 9 % builds. Charter §8 rewritten
+(`8d89f470`); every later area follows it:
+
+1. **Build every checkpoint, measure once.** A checkpoint builds and sha-keeps its
+   arm (~2 min); only the area's LAST checkpoint measures. A regression there is
+   attributed by a bisect over the kept arms, run only when there is something to
+   attribute. Area 2 measured three times and both decisive answers came from kept
+   arms — keeping arms buys attribution, re-measuring per checkpoint bought nothing.
+2. **An unchanged binary is not re-measured** — equal `sha256sum` across arms means
+   the row cannot have moved, and the sha is the evidence.
+3. **Three rounds detect, five confirm** — escalate only on an unbroken direction.
+   Area 2's real regression was 5/5 and would have shown at 3.
+4. **Only a gate row gets the long window** — each row is declared gate/guard/
+   direction with its floor in the area's `design.md`, which is now the charter's
+   mechanism rather than a convention.
+
+Expected effect: an area's bench cost falls from three measured passes at five rounds
+to one at three, plus a bisect only when a regression appears — roughly a 70 % cut
+with attribution preserved, because the arms are still kept at every checkpoint.
 
 ## Found defects (not fixed inline — each becomes its own change)
 
