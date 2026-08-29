@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-HANDOVER. Done: Phase 0, 1s, area 1 (kernel), area 2 segment A (`01f45d7d`). Next: area 2 segment B (batches 3–4) — the previous worker was interrupted at session end BEFORE editing any tracked file (tree clean at `b2230995`), so a fresh worker starts at task 3.1 with the segment-B brief. ~30 % of the programme done.
+HANDOVER. Done: Phase 0, 1s, area 1 (kernel), area 2 segment A (`01f45d7d`). Next: area 2 segment B (batches 3–4) — the previous worker was interrupted at session end BEFORE editing any tracked file (tree clean at `b2230995`), so a fresh worker starts at task 3.1 with the segment-B brief; read `design.md` → "Segment B handover notes" first. ~30 % of the programme done.
 
 ## Board
 
