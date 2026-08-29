@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 17:05 (supervisor session 2 — segment D committed `33efc794`)
+**Last updated**: 2026-08-29 18:30 (supervisor session 2 — **AREA 2 DONE**)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -15,7 +15,16 @@ C (`a4358e97`, plus the corrective `fmt(2)` `3249b6da`) and D (`33efc794`). All 
 areas now have no file over 800 lines and no function over 50; the area is
 **−93 production and −354 test lines**. NEXT: area 2 segment E — batch 9 only
 (verification, the final A/B on all three rows, artifacts, hand-over), which closes
-the area. ~45 % of the programme done.
+the area.
+
+**Progress, measured not estimated**: ~33 % by production LOC — 46.8 K of ~143 K
+touched (`flz_core` 18.2, `flz_transport`+`flz_nif` 6.3, `flz_core_ffi` 4.7, the four
+veneers 17.6). The 45 % figure this board carried earlier was my own count of board
+ROWS, which over-counts badly: the five controller areas still ahead are 66 K
+production lines on their own — 46 % of the codebase — and they also have to cut the
+55-file dependency cycle, which is the hardest work in the programme and has not
+started. Areas 3 (`sdk/rust`, 10.6 K + 20.1 K test) and 4 (`sdk/java`, 14.3 K) sit
+between here and there.
 
 **The history was rewritten outside the programme.** The user ran `fix.sh` (an
 untracked `git filter-branch` that shifts commit timestamps) at 14:52; every commit
@@ -36,7 +45,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `ea1f6f26` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
-| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794` | A–D: one veneer core, one shape, the ABI scenario by owner, validators by rule family; area production 15 285→15 192, test 8 769→8 415; **fn>50 0 and files>800 0 in all five areas**; narrative markers 0; both A/Bs clean on mains |
+| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
@@ -53,7 +62,54 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. Segment D is verified and committed; segment E (batch 9) closes the area.
+`refactor-2-ffi-veneers`, **segment E** (batch 9 — verification, artifacts,
+hand-over), fresh general-purpose worker, spawned 2026-08-29 16:25 (commit clock). Closes the area.
+
+- last seen 18:13: row 5's decisive pass is on round 5 of 5; **29 row-5 runs** so
+  far. Why this row earned three passes, checked by the supervisor: `host_loop`'s
+  sha is identical for arms B2 and B4 (`cdb87eff`) because batches 3–4 touched only
+  the veneers, but B9 is `01a93b3c` — segment D's `kind_out` split in
+  `veneer/shape.rs` is inside the crate, so the C-ABI bench genuinely can have
+  moved and the row is not decorative here. Benchmarking is ~61 % of this segment's
+  wall clock (66 of 108 min) against ~30 % tests and ~9 % builds.
+- previous 18:33: row 5 has gone to a decisive pass of its own (`ab_row5_dec.log`,
+  `final2.done`) — the same three-arm instinct the worker applied to row 7node.
+  Segment E has run 1 h 40 m, which is what batch 9 costs: a full dist rebuild, seven
+  e2e arms, the interleaved baseline comparison and an A/B with re-runs. No stall.
+- previous 18:22: row 5 is being re-run (`ab_row5b.log`, a second pass after
+  `row5_pass1`), dev notes and the `CLAUDE.md` index line are written. Ticks 35/41;
+  batch 9's boxes tick at its end. No stall.
+- previous 18:10: the interleaved comparison (`$SCRATCH/e/inter/`) is done, three
+  rounds, head against a `refactor-baseline-2` worktree. The one system failure is
+  `DlqE2ETest` "tier-on poison payload freezes the min-watermark" and **it fails on
+  BOTH arms** — base in round 1, head in rounds 2 and 3 — which attributes it to the
+  board's F1 population, not to area 2. Worth recording how nearly this was misread:
+  the log's TAIL shows only rounds 2 and 3, where head fails and base passes twice in
+  a row, and reads exactly like an area-introduced regression. Round 1, at the top of
+  the file, is what refutes it. Read the whole interleaved log, never its tail.
+  The unit tier is 28/28 on both arms in all three rounds.
+- previous 17:58: all seven e2e arms done and the dev notes written; the worker is
+  on task 9.2's interleaved baseline comparison (`e2e2`, `inter`, `full_ab.sh`) and
+  has taken the 600 s timeout cap after using 3000 s. A second pass already re-ran
+  php and ruby-fibers green (1849 passed, exit 0), so at least some of the seven
+  failures are the load-sensitive population rather than this area. Ticks 35/41.
+- previous 17:45: final A/B done — and it ran a **three-arm decisive pass (A, B4,
+  B9)** so batches 5–8's contribution is isolated from batch 3–4's, unprompted and
+  the right instinct. The five e2e arms are through and the ruby-fibers arm is
+  running. Supervisor's own read of the driver log, ahead of the worker's diagnosis:
+  rust 1891/1894 with 3 failed, python 1870/1872 with 2, ruby 1847/1849 with 2, and
+  **node 1849 passed with 0 failed, exit 0** — the arm that had not run since
+  `refactor(0a)` is green on its first run in four areas. The failures still owe the
+  interleaved-baseline diagnosis task 9.2 requires.
+- previous 17:30: the final A/B is 15 minutes into its run (`ab_run.sh final`, then
+  `row5pairs B9`, then the Ruby direction row; arm A's `host_loop` executing now),
+  and the e2e driver `e2e.sh` is staged for the five runtime arms after it. Ticks
+  35/41. No stall.
+- previous 17:18: 9.1 done — the five committed native binaries and both jars are
+  rebuilt and show as modified, `mvn clean verify` and the four SDK suites answered
+  (`mvn.done`, `suites.done`), arms built (`arms.done`), and the final A/B is running
+  (`ab_row5.log`, `ab_final.log`). Ticks 35/41, which is still segment D's total —
+  batch 9's boxes tick at its end. No stall.
 
 Supervisor verification of segment D, against the repo: `functions_over_50` = 0 and
 `files_over_800` = 0 in all five areas, `narrative_markers` = 0, sleeps exactly crate

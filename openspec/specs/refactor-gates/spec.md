@@ -59,3 +59,17 @@ Once `refactor-1-kernel` lands, the areas `flz_core`, `flz_transport` and `flz_n
 - **WHEN** a change touches `flz_core`'s poll core, host, flusher, entity or routing modules and runs the charter's interleaved A/B
 - **THEN** its table SHALL carry the `host_loop` row with its pre-recorded floor, both arms' medians and allocations per element, and a loss beyond the floor on that row SHALL block the change like any other row
 
+### Requirement: The FFI and veneer areas ratchet as blocking and the veneer shape has one implementation
+
+Once `refactor-2-ffi-veneers` lands, the areas `flz_core_ffi`, `sdk/node`, `sdk/ruby`, `sdk/php` and `sdk/python` SHALL be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree, so that any later rise in a ratcheted metric for those areas fails `scripts/refactor_metrics.py --check`. The crate `flz_core_ffi` SHALL carry exactly one implementation of the activation and result shapes its language bindings present (`flz_core_ffi/src/veneer/shape.rs`), parameterised over how a language builds and reads a value, and one implementation of the language-neutral half of a binding (`flz_core_ffi/src/veneer/mod.rs`: context creation, the last-error read, the out-buffer hand-off, the typed calls and the refusal shape), so that a binding for a new language adds only its value primitives and its exception mapping.
+
+#### Scenario: An FFI or veneer metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `flz_core_ffi`, `sdk/node`, `sdk/ruby`, `sdk/php` or `sdk/python` has more files over 800 lines, more functions over 50 lines, more narrative markers, more production names over 32 characters, more duplicate pairs, more test sleeps, or more production lines than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: A binding maps an activation through the one shape
+
+- **WHEN** `cargo test -p flz_core_ffi` runs under `--features napi`, `--features python` or `--features ruby-embed`
+- **THEN** the ABI scenario SHALL prove the shape once in Rust against a recording sink and source, and each enabled binding SHALL prove only that its own value primitives round-trip through its runtime, with no per-language copy of the activation vocabulary in the crate's source or tests
+
