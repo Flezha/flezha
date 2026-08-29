@@ -14,13 +14,12 @@ use std::ffi::{c_int, c_void, CString};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use flz_core::schema;
-use pyo3::conversion::FromPyObjectOwned;
 use pyo3::exceptions::{PyBufferError, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule, PyString, PyTuple};
 use pyo3::{create_exception, ffi, IntoPyObjectExt};
 
+use crate::veneer::shape;
 use crate::veneer::{self, CtxPtr, Polled, Refusal};
 use crate::FlzContext;
 
@@ -191,8 +190,8 @@ unsafe fn fill_readonly_view(
     Ok(())
 }
 
-fn payload_view(py: Python<'_>, bytes: Vec<u8>) -> PyResult<Py<PyAny>> {
-    Ok(Py::new(py, PayloadView::new(bytes))?.into_any())
+fn payload_view(py: Python<'_>, bytes: Vec<u8>) -> PyResult<Bound<'_, PyAny>> {
+    Ok(Bound::new(py, PayloadView::new(bytes))?.into_any())
 }
 
 // ---------------------------------------------------------------------------
@@ -203,8 +202,135 @@ fn payload_view(py: Python<'_>, bytes: Vec<u8>) -> PyResult<Py<PyAny>> {
 // The shape is a flat dict with a `kind` discriminator rather than a class per
 // variant, because that is what the dispatcher branches on anyway and it costs
 // no type construction per activation. Absent fields are absent, not None.
+// Which key carries which field is `veneer::shape`'s; this module says only
+// how Python builds and reads a value.
 // ---------------------------------------------------------------------------
 
+/// The Python half of [`shape::Sink`] and [`shape::Source`]: a handle over
+/// the interpreter token, not state.
+#[derive(Clone, Copy)]
+pub struct Values<'py>(pub Python<'py>);
+
+impl<'py> shape::Sink for Values<'py> {
+    type Value = Bound<'py, PyAny>;
+    type Map = Bound<'py, PyDict>;
+    type List = Bound<'py, PyList>;
+    type Error = PyErr;
+
+    fn map(&self) -> PyResult<Self::Map> {
+        Ok(PyDict::new(self.0))
+    }
+
+    fn set(&self, map: &mut Self::Map, key: shape::Key, value: Self::Value) -> PyResult<()> {
+        map.set_item(key.spell(<Self as shape::Sink>::CAMEL), value)
+    }
+
+    fn finish_map(&self, map: Self::Map) -> PyResult<Self::Value> {
+        Ok(map.into_any())
+    }
+
+    fn list(&self, _capacity: usize) -> PyResult<Self::List> {
+        Ok(PyList::empty(self.0))
+    }
+
+    fn push(&self, list: &mut Self::List, value: Self::Value) -> PyResult<()> {
+        list.append(value)
+    }
+
+    fn finish_list(&self, list: Self::List) -> PyResult<Self::Value> {
+        Ok(list.into_any())
+    }
+
+    fn bytes(&self, v: Vec<u8>) -> PyResult<Self::Value> {
+        payload_view(self.0, v)
+    }
+
+    /// `json.loads` takes bytes and not an arbitrary buffer, so state JSON is
+    /// the one payload that crosses as `bytes`.
+    fn json(&self, v: Vec<u8>) -> PyResult<Self::Value> {
+        Ok(PyBytes::new(self.0, &v).into_any())
+    }
+
+    fn text(&self, v: String) -> PyResult<Self::Value> {
+        Ok(PyString::new(self.0, &v).into_any())
+    }
+
+    fn word(&self, v: &'static str) -> PyResult<Self::Value> {
+        Ok(PyString::new(self.0, v).into_any())
+    }
+
+    fn pair(&self, key: String, value: String) -> PyResult<Self::Value> {
+        Ok(PyTuple::new(self.0, [key, value])?.into_any())
+    }
+
+    fn u64(&self, v: u64) -> PyResult<Self::Value> {
+        v.into_bound_py_any(self.0)
+    }
+
+    fn u32(&self, v: u32) -> PyResult<Self::Value> {
+        v.into_bound_py_any(self.0)
+    }
+
+    fn bool(&self, v: bool) -> PyResult<Self::Value> {
+        v.into_bound_py_any(self.0)
+    }
+}
+
+impl<'py> shape::Source for Values<'py> {
+    type Value = Bound<'py, PyAny>;
+    type Map = Bound<'py, PyDict>;
+    type Error = PyErr;
+
+    fn get(&self, map: &Self::Map, key: shape::Key) -> PyResult<Option<Self::Value>> {
+        Ok(match map.get_item(key.spell(<Self as shape::Source>::CAMEL))? {
+            Some(v) if !v.is_none() => Some(v),
+            _ => None,
+        })
+    }
+
+    fn map(&self, v: &Self::Value, what: &str) -> PyResult<Self::Map> {
+        v.cast::<PyDict>()
+            .map_err(|_| native_error(format!("{what} must be a dict")))
+            .cloned()
+    }
+
+    fn text(&self, v: &Self::Value) -> PyResult<String> {
+        v.extract::<String>()
+    }
+
+    fn bytes(&self, v: &Self::Value, what: &str) -> PyResult<Vec<u8>> {
+        read_bytes(what, v)
+    }
+
+    fn u64(&self, v: &Self::Value, _what: &str) -> PyResult<u64> {
+        v.extract::<u64>()
+    }
+
+    fn u32(&self, v: &Self::Value) -> PyResult<u32> {
+        v.extract::<u32>()
+    }
+
+    fn bool(&self, v: &Self::Value) -> PyResult<bool> {
+        v.extract::<bool>()
+    }
+
+    fn items(&self, v: &Self::Value) -> PyResult<Vec<Self::Value>> {
+        v.try_iter()?.collect()
+    }
+
+    fn pair(&self, v: &Self::Value) -> PyResult<(String, String)> {
+        let malformed = || native_error("a metadata entry must be a (key, value) pair");
+        let pair = v.extract::<Vec<String>>().map_err(|_| malformed())?;
+        let mut it = pair.into_iter();
+        match (it.next(), it.next(), it.next()) {
+            (Some(key), Some(value), None) => Ok((key, value)),
+            _ => Err(malformed()),
+        }
+    }
+}
+
+/// The bytes behind a payload: the view the veneer handed out, a `bytes`, or
+/// anything else that reads as a byte sequence.
 fn read_bytes(what: &str, value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     if let Ok(view) = value.cast::<PayloadView>() {
         return Ok(view.get().bytes.clone());
@@ -212,350 +338,9 @@ fn read_bytes(what: &str, value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
     if let Ok(b) = value.cast::<PyBytes>() {
         return Ok(b.as_bytes().to_vec());
     }
-    Vec::<u8>::from_bound(value).map_err(|_| native_error(format!("{what} must be bytes")))
-}
-
-/// A value this module reads out of an answer dict.
-///
-/// Named once because `Bound::extract` is generic over the borrow AND carries
-/// its own error type, so the higher-ranked bound that makes `?` work would
-/// otherwise be written at each of the reader functions below.
-trait Extractable<'py>: Sized {
-    fn from_bound(value: &Bound<'py, PyAny>) -> PyResult<Self>;
-}
-
-impl<'py, T> Extractable<'py> for T
-where
-    T: FromPyObjectOwned<'py>,
-    for<'a> <T as FromPyObject<'a, 'py>>::Error: Into<PyErr>,
-{
-    fn from_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
-        value.extract::<T>().map_err(Into::into)
-    }
-}
-
-/// A dict entry, or `None` when the key is absent or explicitly None.
-fn opt<'py, T: Extractable<'py>>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Option<T>> {
-    match dict.get_item(key)? {
-        None => Ok(None),
-        Some(v) if v.is_none() => Ok(None),
-        Some(v) => Ok(Some(T::from_bound(&v)?)),
-    }
-}
-
-fn req<'py, T: Extractable<'py>>(dict: &Bound<'py, PyDict>, key: &str, what: &str) -> PyResult<T> {
-    opt(dict, key)?.ok_or_else(|| native_error(format!("{what} is missing `{key}`")))
-}
-
-fn opt_bytes(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Option<Vec<u8>>> {
-    match dict.get_item(key)? {
-        None => Ok(None),
-        Some(v) if v.is_none() => Ok(None),
-        Some(v) => Ok(Some(read_bytes(key, &v)?)),
-    }
-}
-
-fn opt_seq<'py>(dict: &Bound<'py, PyDict>, key: &str) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    match dict.get_item(key)? {
-        None => Ok(Vec::new()),
-        Some(v) if v.is_none() => Ok(Vec::new()),
-        Some(v) => v.try_iter()?.collect(),
-    }
-}
-
-fn as_dict<'py>(value: &Bound<'py, PyAny>, what: &str) -> PyResult<Bound<'py, PyDict>> {
     value
-        .cast::<PyDict>()
-        .map_err(|_| native_error(format!("{what} must be a dict")))
-        .cloned()
-}
-
-/// Metadata is a list of `(key, value)` pairs rather than a dict: the schema
-/// allows a repeated key, and the order is part of what the controller sees.
-fn meta_out<'py>(py: Python<'py>, pairs: Vec<(String, String)>) -> PyResult<Bound<'py, PyList>> {
-    let out = PyList::empty(py);
-    for (key, value) in pairs {
-        out.append(PyTuple::new(py, [key, value])?)?;
-    }
-    Ok(out)
-}
-
-fn meta_in(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<Vec<(String, String)>> {
-    let mut out = Vec::new();
-    for entry in opt_seq(dict, key)? {
-        let pair = Vec::<String>::from_bound(&entry)
-            .map_err(|_| native_error("a metadata entry must be a (key, value) pair"))?;
-        if pair.len() != 2 {
-            return Err(native_error("a metadata entry must be a (key, value) pair"));
-        }
-        let mut it = pair.into_iter();
-        out.push((it.next().unwrap(), it.next().unwrap()));
-    }
-    Ok(out)
-}
-
-fn timer_kind_in(kind: &str) -> PyResult<schema::TimerKind> {
-    match kind {
-        "event_time" => Ok(schema::TimerKind::EventTime),
-        "processing_time" => Ok(schema::TimerKind::ProcessingTime),
-        other => Err(native_error(format!("unknown timer kind {other:?}"))),
-    }
-}
-
-fn restore_body<'py>(py: Python<'py>, body: schema::RestoreBody) -> PyResult<Bound<'py, PyDict>> {
-    let out = PyDict::new(py);
-    out.set_item("bytes", payload_view(py, body.bytes)?)?;
-    if let Some(v) = body.from_version {
-        out.set_item("from_version", v)?;
-    }
-    Ok(out)
-}
-
-/// Decode a polled activation into the dict the package dispatches on.
-pub fn activation_to_python<'py>(
-    py: Python<'py>,
-    act: schema::Activation,
-) -> PyResult<Bound<'py, PyDict>> {
-    let out = PyDict::new(py);
-    out.set_item("token", act.token)?;
-    out.set_item("operative", act.target.operative)?;
-    out.set_item("procedure", act.target.procedure)?;
-    if let Some(key) = act.target.entity_key {
-        out.set_item("entity_key", key)?;
-    }
-    out.set_item("change_seq", act.change_seq)?;
-    out.set_item("factory", act.factory)?;
-
-    match act.kind {
-        schema::ActivationKind::Work(items) => {
-            out.set_item("kind", "work")?;
-            let list = PyList::empty(py);
-            for item in items {
-                let h = PyDict::new(py);
-                match item {
-                    schema::WorkItem::Input(i) => {
-                        h.set_item("kind", "input")?;
-                        h.set_item("channel", i.channel)?;
-                        h.set_item("payload", payload_view(py, i.payload)?)?;
-                        h.set_item("metadata", meta_out(py, i.metadata)?)?;
-                        if let Some(offset) = i.consumed_offset {
-                            h.set_item("consumed_offset", offset)?;
-                        }
-                        h.set_item("replay", i.replay)?;
-                        h.set_item("now", i.now)?;
-                    }
-                    schema::WorkItem::Timer(t) => {
-                        h.set_item("kind", "timer")?;
-                        h.set_item("timer_kind", t.kind.as_str())?;
-                        h.set_item("scheduled_at", t.scheduled_at)?;
-                        // A timer firing's `now` IS its scheduled_at, so a
-                        // chained `timer_after` anchors replay-stably.
-                        h.set_item("now", t.scheduled_at)?;
-                    }
-                }
-                list.append(h)?;
-            }
-            out.set_item("items", list)?;
-        }
-        schema::ActivationKind::RestoreFold(fold) => {
-            out.set_item("kind", "restore_fold")?;
-            if let Some(snapshot) = fold.snapshot {
-                out.set_item("snapshot", restore_body(py, snapshot)?)?;
-            }
-            let changes = PyList::empty(py);
-            for body in fold.changes {
-                changes.append(restore_body(py, body)?)?;
-            }
-            out.set_item("changes", changes)?;
-        }
-        schema::ActivationKind::SnapshotRequest => out.set_item("kind", "snapshot_request")?,
-        schema::ActivationKind::LiveStateRead => out.set_item("kind", "live_state_read")?,
-        schema::ActivationKind::ApplyState { state_json } => {
-            out.set_item("kind", "apply_state")?;
-            // JSON rather than the codec's own format: `json.loads` takes
-            // bytes and not an arbitrary buffer, so this one crosses as bytes.
-            out.set_item("state_json", PyBytes::new(py, &state_json))?;
-        }
-        schema::ActivationKind::MigrationSerialize => {
-            out.set_item("kind", "migration_serialize")?
-        }
-        schema::ActivationKind::KeyRequest(request) => {
-            out.set_item("kind", "key_request")?;
-            let h = PyDict::new(py);
-            h.set_item("channel", request.channel)?;
-            let payloads = PyList::empty(py);
-            for p in request.payloads {
-                payloads.append(payload_view(py, p)?)?;
-            }
-            h.set_item("payloads", payloads)?;
-            h.set_item("want_keys", request.want_keys)?;
-            h.set_item("want_event_time", request.want_event_time)?;
-            out.set_item("key_request", h)?;
-        }
-        schema::ActivationKind::WorkflowRun { args } => {
-            out.set_item("kind", "workflow_run")?;
-            out.set_item("args", payload_view(py, args)?)?;
-        }
-        schema::ActivationKind::CompensateRun { outputs } => {
-            out.set_item("kind", "compensate_run")?;
-            let list = PyList::empty(py);
-            for o in outputs {
-                list.append(payload_view(py, o)?)?;
-            }
-            out.set_item("outputs", list)?;
-        }
-    }
-    Ok(out)
-}
-
-fn output_in(value: &Bound<'_, PyAny>) -> PyResult<schema::Output> {
-    let h = as_dict(value, "an output")?;
-    let target: String = req(&h, "target", "output")?;
-    let target = match target.as_str() {
-        "edge" => schema::OutputTarget::Edge {
-            channel: req(&h, "channel", "edge output")?,
-            consumer: req(&h, "consumer", "edge output")?,
-        },
-        "plugin" => schema::OutputTarget::Plugin {
-            channel: req(&h, "plugin_channel", "plugin output")?,
-        },
-        other => return Err(native_error(format!("unknown output target {other:?}"))),
-    };
-    Ok(schema::Output {
-        target,
-        key: opt(&h, "key")?,
-        event_time: opt(&h, "event_time")?,
-        metadata: meta_in(&h, "metadata")?,
-        payload: opt_bytes(&h, "payload")?.unwrap_or_default(),
-    })
-}
-
-fn effect_in(value: &Bound<'_, PyAny>) -> PyResult<schema::ItemEffect> {
-    let h = as_dict(value, "an item effect")?;
-    let verdict: String = req(&h, "verdict", "item effect")?;
-    let message: Option<String> = opt(&h, "message")?;
-    let verdict = match verdict.as_str() {
-        "ok" => schema::Verdict::Ok,
-        "retryable" => schema::Verdict::RetryableError {
-            message: message.unwrap_or_default(),
-        },
-        "non_retryable" => schema::Verdict::NonRetryableError {
-            message: message.unwrap_or_default(),
-        },
-        other => return Err(native_error(format!("unknown verdict {other:?}"))),
-    };
-
-    let mut changes = Vec::new();
-    for c in opt_seq(&h, "changes")? {
-        changes.push(read_bytes("change", &c)?);
-    }
-    let mut outputs = Vec::new();
-    for o in opt_seq(&h, "outputs")? {
-        outputs.push(output_in(&o)?);
-    }
-    let mut timers = Vec::new();
-    for t in opt_seq(&h, "timers")? {
-        let t = as_dict(&t, "a timer op")?;
-        let kind: String = req(&t, "kind", "timer op")?;
-        timers.push(schema::TimerOp {
-            kind: timer_kind_in(&kind)?,
-            scheduled_at: req(&t, "scheduled_at", "timer op")?,
-            register: req(&t, "register", "timer op")?,
-        });
-    }
-    let dlq = match h.get_item("dlq")? {
-        None => None,
-        Some(d) if d.is_none() => None,
-        Some(d) => {
-            let d = as_dict(&d, "a dlq entry")?;
-            Some(schema::DlqEntry {
-                channel: req(&d, "channel", "dlq entry")?,
-                error: req(&d, "error", "dlq entry")?,
-                attempts: req(&d, "attempts", "dlq entry")?,
-                payload: opt_bytes(&d, "payload")?,
-            })
-        }
-    };
-
-    Ok(schema::ItemEffect {
-        verdict,
-        changes,
-        outputs,
-        consumed_offset: opt(&h, "consumed_offset")?,
-        event_time: opt(&h, "event_time")?.unwrap_or(0),
-        timers,
-        checkpoint: opt(&h, "checkpoint")?.unwrap_or(false),
-        dlq,
-    })
-}
-
-/// One prepare answer per payload, in order. A per-payload refusal is a
-/// `WorkError` inside the answer — the input's retry ladder takes it from
-/// there — while a malformed answer raises at the caller, so the two failure
-/// kinds cannot be collected together.
-fn prepared_in(
-    answers: Vec<Bound<'_, PyAny>>,
-) -> PyResult<Vec<Result<schema::PrepareAnswer, schema::WorkError>>> {
-    let mut out = Vec::with_capacity(answers.len());
-    for value in answers {
-        let h = as_dict(&value, "a prepare answer")?;
-        out.push(match opt::<String>(&h, "error")? {
-            Some(message) => Err(schema::WorkError {
-                message,
-                non_retryable: opt(&h, "non_retryable")?.unwrap_or(false),
-            }),
-            None => Ok(schema::PrepareAnswer {
-                keys: opt(&h, "keys")?.unwrap_or_default(),
-                event_time: opt(&h, "event_time")?,
-            }),
-        });
-    }
-    Ok(out)
-}
-
-/// Build the postcard `ActivationResult` from the dict Python answers with.
-/// Encoding lives here for the same reason decoding does: one implementation
-/// of the wire contract, in the crate that owns it.
-pub fn result_from_python(r: &Bound<'_, PyDict>) -> PyResult<schema::ActivationResult> {
-    let outcome: String = req(r, "outcome", "activation result")?;
-    let outcome = match outcome.as_str() {
-        "work" => {
-            let mut effects = Vec::new();
-            for e in opt_seq(r, "effects")? {
-                effects.push(effect_in(&e)?);
-            }
-            schema::ActivationOutcome::Work(effects)
-        }
-        "restored" => schema::ActivationOutcome::Restored,
-        "snapshot" => schema::ActivationOutcome::Snapshot {
-            state: opt_bytes(r, "state")?.unwrap_or_default(),
-        },
-        "state_json" => schema::ActivationOutcome::StateJson {
-            json: opt_bytes(r, "json")?.unwrap_or_default(),
-        },
-        "state_applied" => schema::ActivationOutcome::StateApplied,
-        "migration_state" => schema::ActivationOutcome::MigrationState {
-            json: opt_bytes(r, "json")?.unwrap_or_default(),
-        },
-        "prepared" => schema::ActivationOutcome::Prepared(prepared_in(opt_seq(r, "prepared")?)?),
-        "failed" => schema::ActivationOutcome::Failed(schema::WorkError {
-            message: opt(r, "error")?.unwrap_or_else(|| "activation failed".into()),
-            non_retryable: opt(r, "non_retryable")?.unwrap_or(false),
-        }),
-        "workflow_done" => schema::ActivationOutcome::WorkflowDone {
-            completed: opt(r, "workflow_completed")?.unwrap_or(false),
-            result: opt_bytes(r, "workflow_result")?.unwrap_or_default(),
-        },
-        other => {
-            return Err(native_error(format!(
-                "unknown activation outcome {other:?}"
-            )))
-        }
-    };
-    Ok(schema::ActivationResult {
-        token: req(r, "token", "activation result")?,
-        outcome,
-    })
+        .extract::<Vec<u8>>()
+        .map_err(|_| native_error(format!("{what} must be bytes")))
 }
 
 // ---------------------------------------------------------------------------
@@ -639,7 +424,7 @@ impl Core {
     fn poll<'py>(&self, py: Python<'py>, timeout_ms: u64) -> PyResult<Bound<'py, PyAny>> {
         let ctx = self.ptr()?;
         match py.detach(move || veneer::poll(ctx, timeout_ms))? {
-            Polled::Activation(act) => Ok(activation_to_python(py, act)?.into_any()),
+            Polled::Activation(act) => shape::activation(&Values(py), act),
             Polled::Timeout => Ok(py.None().into_bound(py)),
             Polled::ShuttingDown => Ok(PyString::new(py, "shutting_down").into_any()),
         }
@@ -657,9 +442,9 @@ impl Core {
     /// overflow policy the routing push parks until the consumer's mailbox
     /// drains, and the consumer drains only when its handler runs on another
     /// Python thread.
-    fn complete(&self, py: Python<'_>, result: &Bound<'_, PyDict>) -> PyResult<()> {
+    fn complete<'py>(&self, py: Python<'py>, result: &Bound<'py, PyDict>) -> PyResult<()> {
         let ctx = self.ptr()?;
-        let result = result_from_python(result)?;
+        let result = shape::result(&Values(py), result)?;
         Ok(py.detach(move || veneer::complete(ctx, &result))?)
     }
 
@@ -696,7 +481,7 @@ impl Core {
         let ctx = self.ptr()?;
         let instance = veneer::c_string("instance id", instance_id)?;
         match py.detach(move || veneer::workflow_recv(ctx, &instance, timeout_ms))? {
-            Some(payload) => Ok(payload_view(py, payload)?.into_bound(py)),
+            Some(payload) => payload_view(py, payload),
             None => Ok(py.None().into_bound(py)),
         }
     }

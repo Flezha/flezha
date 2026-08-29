@@ -15,11 +15,13 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::OnceLock;
 
-use flz_core::schema;
 use magnus::prelude::*;
 use magnus::value::Opaque;
-use magnus::{function, Error, ExceptionClass, RArray, RHash, RString, Ruby, TryConvert, Value};
+use magnus::{
+    function, Error, ExceptionClass, IntoValue, RArray, RHash, RString, Ruby, TryConvert, Value,
+};
 
+use crate::veneer::shape;
 use crate::veneer::{self, CtxPtr, Polled, Refusal};
 use crate::FlzContext;
 
@@ -152,352 +154,153 @@ where
 // so the gem never carries a second implementation of the wire contract. The
 // shape is a flat Hash with a `:kind` discriminator rather than a class per
 // variant, because Ruby has no sum type and a discriminated Hash is what the
-// dispatcher case/whens on anyway. Absent fields are absent, not nil.
+// dispatcher case/whens on anyway. Absent fields are absent, not nil. Which
+// key carries which field is `veneer::shape`'s; this module says only how Ruby
+// builds and reads a value.
 // ---------------------------------------------------------------------------
 
-fn bytes(ruby: &Ruby, v: Vec<u8>) -> Value {
-    ruby.str_from_slice(&v).as_value()
+/// The one mapping of a refusal onto the gem's exception classes.
+impl From<Refusal> for Error {
+    fn from(refusal: Refusal) -> Error {
+        raise(&ruby(), refusal)
+    }
 }
 
+/// The Ruby half of [`shape::Sink`] and [`shape::Source`]: a handle over the
+/// VM, not state.
+#[derive(Clone, Copy)]
+pub struct Values<'a>(pub &'a Ruby);
+
+impl shape::Sink for Values<'_> {
+    type Value = Value;
+    type Map = RHash;
+    type List = RArray;
+    type Error = Error;
+
+    fn map(&self) -> Result<RHash, Error> {
+        Ok(self.0.hash_new())
+    }
+
+    fn set(&self, map: &mut RHash, key: shape::Key, value: Value) -> Result<(), Error> {
+        map.aset(
+            self.0.sym_new(key.spell(<Self as shape::Sink>::CAMEL)),
+            value,
+        )
+    }
+
+    fn finish_map(&self, map: RHash) -> Result<Value, Error> {
+        Ok(map.as_value())
+    }
+
+    fn list(&self, capacity: usize) -> Result<RArray, Error> {
+        Ok(self.0.ary_new_capa(capacity))
+    }
+
+    fn push(&self, list: &mut RArray, value: Value) -> Result<(), Error> {
+        list.push(value)
+    }
+
+    fn finish_list(&self, list: RArray) -> Result<Value, Error> {
+        Ok(list.as_value())
+    }
+
+    /// A binary `String`, which owns its bytes: Ruby has no borrowed-buffer
+    /// type a handler could keep past the invocation.
+    fn bytes(&self, v: Vec<u8>) -> Result<Value, Error> {
+        Ok(self.0.str_from_slice(&v).as_value())
+    }
+
+    fn text(&self, v: String) -> Result<Value, Error> {
+        Ok(v.into_value_with(self.0))
+    }
+
+    fn word(&self, v: &'static str) -> Result<Value, Error> {
+        Ok(self.0.sym_new(v).as_value())
+    }
+
+    fn pair(&self, key: String, value: String) -> Result<Value, Error> {
+        let pair = self.0.ary_new_capa(2);
+        pair.push(key)?;
+        pair.push(value)?;
+        Ok(pair.as_value())
+    }
+
+    fn u64(&self, v: u64) -> Result<Value, Error> {
+        Ok(v.into_value_with(self.0))
+    }
+
+    fn u32(&self, v: u32) -> Result<Value, Error> {
+        Ok(v.into_value_with(self.0))
+    }
+
+    fn bool(&self, v: bool) -> Result<Value, Error> {
+        Ok(v.into_value_with(self.0))
+    }
+}
+
+impl shape::Source for Values<'_> {
+    type Value = Value;
+    type Map = RHash;
+    type Error = Error;
+
+    fn get(&self, map: &RHash, key: shape::Key) -> Result<Option<Value>, Error> {
+        Ok(
+            match map.get(self.0.sym_new(key.spell(<Self as shape::Source>::CAMEL))) {
+                Some(v) if !v.is_nil() => Some(v),
+                _ => None,
+            },
+        )
+    }
+
+    fn map(&self, v: &Value, what: &str) -> Result<RHash, Error> {
+        RHash::from_value(*v).ok_or_else(|| native_error(self.0, format!("{what} must be a Hash")))
+    }
+
+    fn text(&self, v: &Value) -> Result<String, Error> {
+        String::try_convert(*v)
+    }
+
+    fn bytes(&self, v: &Value, what: &str) -> Result<Vec<u8>, Error> {
+        read_bytes(self.0, what, *v)
+    }
+
+    fn u64(&self, v: &Value, _what: &str) -> Result<u64, Error> {
+        u64::try_convert(*v)
+    }
+
+    fn u32(&self, v: &Value) -> Result<u32, Error> {
+        u32::try_convert(*v)
+    }
+
+    fn bool(&self, v: &Value) -> Result<bool, Error> {
+        bool::try_convert(*v)
+    }
+
+    fn items(&self, v: &Value) -> Result<Vec<Value>, Error> {
+        let array = RArray::try_convert(*v)?;
+        // SAFETY: the slice is copied out before any Ruby call can run and
+        // move or collect the backing array.
+        Ok(unsafe { array.as_slice() }.to_vec())
+    }
+
+    fn pair(&self, v: &Value) -> Result<(String, String), Error> {
+        let malformed = || native_error(self.0, "metadata entry must be a [key, value] Array");
+        let pair = RArray::from_value(*v).ok_or_else(malformed)?;
+        let pair: Vec<String> = pair.to_vec()?;
+        let mut it = pair.into_iter();
+        match (it.next(), it.next(), it.next()) {
+            (Some(key), Some(value), None) => Ok((key, value)),
+            _ => Err(malformed()),
+        }
+    }
+}
+
+/// The bytes behind a payload. Ruby has no borrowed-buffer type, so a payload
+/// is a binary `String` that owns them.
 fn read_bytes(ruby: &Ruby, what: &str, value: Value) -> Result<Vec<u8>, Error> {
     let s = RString::from_value(value)
         .ok_or_else(|| native_error(ruby, format!("{what} must be a String")))?;
     Ok(unsafe { s.as_slice() }.to_vec())
-}
-
-/// A Hash entry, or `None` when the key is absent or explicitly nil.
-fn opt<T: TryConvert>(ruby: &Ruby, hash: RHash, key: &str) -> Result<Option<T>, Error> {
-    match hash.get(ruby.sym_new(key)) {
-        None => Ok(None),
-        Some(v) if v.is_nil() => Ok(None),
-        Some(v) => Ok(Some(T::try_convert(v)?)),
-    }
-}
-
-fn req<T: TryConvert>(ruby: &Ruby, hash: RHash, key: &str, what: &str) -> Result<T, Error> {
-    opt(ruby, hash, key)?.ok_or_else(|| native_error(ruby, format!("{what} is missing `{key}`")))
-}
-
-fn opt_bytes(ruby: &Ruby, hash: RHash, key: &str) -> Result<Option<Vec<u8>>, Error> {
-    match opt::<Value>(ruby, hash, key)? {
-        None => Ok(None),
-        Some(v) => Ok(Some(read_bytes(ruby, key, v)?)),
-    }
-}
-
-fn opt_array(ruby: &Ruby, hash: RHash, key: &str) -> Result<Vec<Value>, Error> {
-    match opt::<RArray>(ruby, hash, key)? {
-        None => Ok(Vec::new()),
-        // SAFETY: the slice is copied out before any Ruby call can run and
-        // move or collect the backing array.
-        Some(a) => Ok(unsafe { a.as_slice() }.to_vec()),
-    }
-}
-
-/// Metadata is an Array of two-element `[key, value]` Arrays rather than a
-/// Hash: the schema allows a repeated key, and the order is part of what the
-/// controller sees.
-fn meta_out(ruby: &Ruby, pairs: Vec<(String, String)>) -> Value {
-    let out = ruby.ary_new_capa(pairs.len());
-    for (key, value) in pairs {
-        let pair = ruby.ary_new_capa(2);
-        let _ = pair.push(key);
-        let _ = pair.push(value);
-        let _ = out.push(pair);
-    }
-    out.as_value()
-}
-
-fn meta_in(ruby: &Ruby, hash: RHash, key: &str) -> Result<Vec<(String, String)>, Error> {
-    let mut out = Vec::new();
-    for entry in opt_array(ruby, hash, key)? {
-        let pair = RArray::from_value(entry)
-            .ok_or_else(|| native_error(ruby, "metadata entry must be a [key, value] Array"))?;
-        let pair: Vec<String> = pair.to_vec()?;
-        if pair.len() != 2 {
-            return Err(native_error(
-                ruby,
-                "metadata entry must be a [key, value] Array",
-            ));
-        }
-        let mut it = pair.into_iter();
-        out.push((it.next().unwrap(), it.next().unwrap()));
-    }
-    Ok(out)
-}
-
-fn timer_kind_in(ruby: &Ruby, kind: &str) -> Result<schema::TimerKind, Error> {
-    match kind {
-        "event_time" => Ok(schema::TimerKind::EventTime),
-        "processing_time" => Ok(schema::TimerKind::ProcessingTime),
-        other => Err(native_error(ruby, format!("unknown timer kind {other:?}"))),
-    }
-}
-
-fn restore_body(ruby: &Ruby, body: schema::RestoreBody) -> Value {
-    let h = ruby.hash_new();
-    let _ = h.aset(ruby.sym_new("bytes"), bytes(ruby, body.bytes));
-    if let Some(v) = body.from_version {
-        let _ = h.aset(ruby.sym_new("from_version"), v);
-    }
-    h.as_value()
-}
-
-/// Decode a polled activation into the Hash the gem dispatches on.
-pub fn activation_to_ruby(ruby: &Ruby, act: schema::Activation) -> Result<RHash, Error> {
-    let out = ruby.hash_new();
-    let sym = |name: &str| ruby.sym_new(name);
-    out.aset(sym("token"), act.token)?;
-    out.aset(sym("operative"), act.target.operative)?;
-    out.aset(sym("procedure"), act.target.procedure)?;
-    if let Some(key) = act.target.entity_key {
-        out.aset(sym("entity_key"), key)?;
-    }
-    out.aset(sym("change_seq"), act.change_seq)?;
-    out.aset(sym("factory"), act.factory)?;
-
-    match act.kind {
-        schema::ActivationKind::Work(items) => {
-            out.aset(sym("kind"), sym("work"))?;
-            let list = ruby.ary_new_capa(items.len());
-            for item in items {
-                let h = ruby.hash_new();
-                match item {
-                    schema::WorkItem::Input(i) => {
-                        h.aset(sym("kind"), sym("input"))?;
-                        h.aset(sym("channel"), i.channel)?;
-                        h.aset(sym("payload"), bytes(ruby, i.payload))?;
-                        h.aset(sym("metadata"), meta_out(ruby, i.metadata))?;
-                        if let Some(offset) = i.consumed_offset {
-                            h.aset(sym("consumed_offset"), offset)?;
-                        }
-                        h.aset(sym("replay"), i.replay)?;
-                        h.aset(sym("now"), i.now)?;
-                    }
-                    schema::WorkItem::Timer(t) => {
-                        h.aset(sym("kind"), sym("timer"))?;
-                        h.aset(sym("timer_kind"), sym(t.kind.as_str()))?;
-                        h.aset(sym("scheduled_at"), t.scheduled_at)?;
-                        // A timer firing's `now` IS its scheduled_at, so a
-                        // chained `timer_after` anchors replay-stably.
-                        h.aset(sym("now"), t.scheduled_at)?;
-                    }
-                }
-                list.push(h)?;
-            }
-            out.aset(sym("items"), list)?;
-        }
-        schema::ActivationKind::RestoreFold(fold) => {
-            out.aset(sym("kind"), sym("restore_fold"))?;
-            if let Some(snapshot) = fold.snapshot {
-                out.aset(sym("snapshot"), restore_body(ruby, snapshot))?;
-            }
-            let changes = ruby.ary_new_capa(fold.changes.len());
-            for body in fold.changes {
-                changes.push(restore_body(ruby, body))?;
-            }
-            out.aset(sym("changes"), changes)?;
-        }
-        schema::ActivationKind::SnapshotRequest => {
-            out.aset(sym("kind"), sym("snapshot_request"))?
-        }
-        schema::ActivationKind::LiveStateRead => out.aset(sym("kind"), sym("live_state_read"))?,
-        schema::ActivationKind::ApplyState { state_json } => {
-            out.aset(sym("kind"), sym("apply_state"))?;
-            out.aset(sym("state_json"), bytes(ruby, state_json))?;
-        }
-        schema::ActivationKind::MigrationSerialize => {
-            out.aset(sym("kind"), sym("migration_serialize"))?
-        }
-        schema::ActivationKind::KeyRequest(req) => {
-            out.aset(sym("kind"), sym("key_request"))?;
-            let h = ruby.hash_new();
-            h.aset(sym("channel"), req.channel)?;
-            let payloads = ruby.ary_new_capa(req.payloads.len());
-            for p in req.payloads {
-                payloads.push(bytes(ruby, p))?;
-            }
-            h.aset(sym("payloads"), payloads)?;
-            h.aset(sym("want_keys"), req.want_keys)?;
-            h.aset(sym("want_event_time"), req.want_event_time)?;
-            out.aset(sym("key_request"), h)?;
-        }
-        schema::ActivationKind::WorkflowRun { args } => {
-            out.aset(sym("kind"), sym("workflow_run"))?;
-            out.aset(sym("args"), bytes(ruby, args))?;
-        }
-        schema::ActivationKind::CompensateRun { outputs } => {
-            out.aset(sym("kind"), sym("compensate_run"))?;
-            let list = ruby.ary_new_capa(outputs.len());
-            for o in outputs {
-                list.push(bytes(ruby, o))?;
-            }
-            out.aset(sym("outputs"), list)?;
-        }
-    }
-    Ok(out)
-}
-
-fn output_in(ruby: &Ruby, value: Value) -> Result<schema::Output, Error> {
-    let h =
-        RHash::from_value(value).ok_or_else(|| native_error(ruby, "an output must be a Hash"))?;
-    let target: String = req(ruby, h, "target", "output")?;
-    let target = match target.as_str() {
-        "edge" => schema::OutputTarget::Edge {
-            channel: req(ruby, h, "channel", "edge output")?,
-            consumer: req(ruby, h, "consumer", "edge output")?,
-        },
-        "plugin" => schema::OutputTarget::Plugin {
-            channel: req(ruby, h, "plugin_channel", "plugin output")?,
-        },
-        other => {
-            return Err(native_error(
-                ruby,
-                format!("unknown output target {other:?}"),
-            ))
-        }
-    };
-    Ok(schema::Output {
-        target,
-        key: opt(ruby, h, "key")?,
-        event_time: opt(ruby, h, "event_time")?,
-        metadata: meta_in(ruby, h, "metadata")?,
-        payload: opt_bytes(ruby, h, "payload")?.unwrap_or_default(),
-    })
-}
-
-fn effect_in(ruby: &Ruby, value: Value) -> Result<schema::ItemEffect, Error> {
-    let h = RHash::from_value(value)
-        .ok_or_else(|| native_error(ruby, "an item effect must be a Hash"))?;
-    let verdict: String = req(ruby, h, "verdict", "item effect")?;
-    let message: Option<String> = opt(ruby, h, "message")?;
-    let verdict = match verdict.as_str() {
-        "ok" => schema::Verdict::Ok,
-        "retryable" => schema::Verdict::RetryableError {
-            message: message.unwrap_or_default(),
-        },
-        "non_retryable" => schema::Verdict::NonRetryableError {
-            message: message.unwrap_or_default(),
-        },
-        other => return Err(native_error(ruby, format!("unknown verdict {other:?}"))),
-    };
-
-    let mut changes = Vec::new();
-    for c in opt_array(ruby, h, "changes")? {
-        changes.push(read_bytes(ruby, "change", c)?);
-    }
-    let mut outputs = Vec::new();
-    for o in opt_array(ruby, h, "outputs")? {
-        outputs.push(output_in(ruby, o)?);
-    }
-    let mut timers = Vec::new();
-    for t in opt_array(ruby, h, "timers")? {
-        let t =
-            RHash::from_value(t).ok_or_else(|| native_error(ruby, "a timer op must be a Hash"))?;
-        let kind: String = req(ruby, t, "kind", "timer op")?;
-        timers.push(schema::TimerOp {
-            kind: timer_kind_in(ruby, &kind)?,
-            scheduled_at: req(ruby, t, "scheduled_at", "timer op")?,
-            register: req(ruby, t, "register", "timer op")?,
-        });
-    }
-    let dlq = match opt::<RHash>(ruby, h, "dlq")? {
-        None => None,
-        Some(d) => Some(schema::DlqEntry {
-            channel: req(ruby, d, "channel", "dlq entry")?,
-            error: req(ruby, d, "error", "dlq entry")?,
-            attempts: req(ruby, d, "attempts", "dlq entry")?,
-            payload: opt_bytes(ruby, d, "payload")?,
-        }),
-    };
-
-    Ok(schema::ItemEffect {
-        verdict,
-        changes,
-        outputs,
-        consumed_offset: opt(ruby, h, "consumed_offset")?,
-        event_time: opt(ruby, h, "event_time")?.unwrap_or(0),
-        timers,
-        checkpoint: opt(ruby, h, "checkpoint")?.unwrap_or(false),
-        dlq,
-    })
-}
-
-/// One prepare answer per payload, in order. A per-payload refusal is a
-/// `WorkError` inside the answer — the input's retry ladder takes it from
-/// there — while a malformed answer raises at the caller, so the two failure
-/// kinds cannot be collected together.
-fn prepared_in(
-    ruby: &Ruby,
-    answers: Vec<Value>,
-) -> Result<Vec<Result<schema::PrepareAnswer, schema::WorkError>>, Error> {
-    let mut out = Vec::with_capacity(answers.len());
-    for value in answers {
-        let h = RHash::from_value(value)
-            .ok_or_else(|| native_error(ruby, "a prepare answer must be a Hash"))?;
-        out.push(match opt::<String>(ruby, h, "error")? {
-            Some(message) => Err(schema::WorkError {
-                message,
-                non_retryable: opt(ruby, h, "non_retryable")?.unwrap_or(false),
-            }),
-            None => Ok(schema::PrepareAnswer {
-                keys: match opt::<RArray>(ruby, h, "keys")? {
-                    None => Vec::new(),
-                    Some(a) => a.to_vec()?,
-                },
-                event_time: opt(ruby, h, "event_time")?,
-            }),
-        });
-    }
-    Ok(out)
-}
-
-/// Build the postcard `ActivationResult` from the Hash Ruby answers with.
-/// Encoding lives here for the same reason decoding does: one implementation
-/// of the wire contract, in the crate that owns it.
-pub fn result_from_ruby(ruby: &Ruby, r: RHash) -> Result<schema::ActivationResult, Error> {
-    let outcome: String = req(ruby, r, "outcome", "activation result")?;
-    let outcome = match outcome.as_str() {
-        "work" => {
-            let mut effects = Vec::new();
-            for e in opt_array(ruby, r, "effects")? {
-                effects.push(effect_in(ruby, e)?);
-            }
-            schema::ActivationOutcome::Work(effects)
-        }
-        "restored" => schema::ActivationOutcome::Restored,
-        "snapshot" => schema::ActivationOutcome::Snapshot {
-            state: opt_bytes(ruby, r, "state")?.unwrap_or_default(),
-        },
-        "state_json" => schema::ActivationOutcome::StateJson {
-            json: opt_bytes(ruby, r, "json")?.unwrap_or_default(),
-        },
-        "state_applied" => schema::ActivationOutcome::StateApplied,
-        "migration_state" => schema::ActivationOutcome::MigrationState {
-            json: opt_bytes(ruby, r, "json")?.unwrap_or_default(),
-        },
-        "prepared" => {
-            schema::ActivationOutcome::Prepared(prepared_in(ruby, opt_array(ruby, r, "prepared")?)?)
-        }
-        "failed" => schema::ActivationOutcome::Failed(schema::WorkError {
-            message: opt(ruby, r, "error")?.unwrap_or_else(|| "activation failed".into()),
-            non_retryable: opt(ruby, r, "non_retryable")?.unwrap_or(false),
-        }),
-        "workflow_done" => schema::ActivationOutcome::WorkflowDone {
-            completed: opt(ruby, r, "workflow_completed")?.unwrap_or(false),
-            result: opt_bytes(ruby, r, "workflow_result")?.unwrap_or_default(),
-        },
-        other => {
-            return Err(native_error(
-                ruby,
-                format!("unknown activation outcome {other:?}"),
-            ))
-        }
-    };
-    Ok(schema::ActivationResult {
-        token: req(ruby, r, "token", "activation result")?,
-        outcome,
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -557,7 +360,7 @@ fn poll(timeout_ms: u64) -> Result<Value, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
     match without_gvl(move || veneer::poll(ctx, timeout_ms)).map_err(|r| raise(&ruby, r))? {
-        Polled::Activation(act) => Ok(activation_to_ruby(&ruby, act)?.as_value()),
+        Polled::Activation(act) => shape::activation(&Values(&ruby), act),
         Polled::Timeout => Ok(ruby.qnil().as_value()),
         Polled::ShuttingDown => Ok(ruby.sym_new("shutting_down").as_value()),
     }
@@ -579,7 +382,7 @@ fn wait_starvation(timeout_ms: u64) -> Result<i32, Error> {
 fn complete(result: RHash) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let result = result_from_ruby(&ruby, result)?;
+    let result = shape::result(&Values(&ruby), &result)?;
     without_gvl(move || veneer::complete(ctx, &result)).map_err(|r| raise(&ruby, r))
 }
 
@@ -618,7 +421,7 @@ fn workflow_recv(instance_id: String, timeout_ms: u64) -> Result<Value, Error> {
     let instance = veneer::c_string("instance id", &instance_id).map_err(refused)?;
     let received = without_gvl(move || veneer::workflow_recv(ctx, &instance, timeout_ms));
     match received.map_err(refused)? {
-        Some(payload) => Ok(bytes(&ruby, payload)),
+        Some(payload) => shape::Sink::bytes(&Values(&ruby), payload),
         None => Ok(ruby.qnil().as_value()),
     }
 }

@@ -116,39 +116,13 @@ fn abi_poll(ctx: *mut FlzContext, timeout_ms: u64) -> (i32, Option<schema::Activ
     let bytes = unsafe { std::slice::from_raw_parts(buf, len) }.to_vec();
     unsafe { flz_core_buf_free(buf, len) };
     let act = schema::decode_activation(&bytes).expect("activation decodes");
-    #[cfg(feature = "napi")]
-    napi_veneer::assert_activation_maps(&act);
-    // The shutdown phase polls from a spawned thread, where an embedded VM
-    // has no handle. It answers `SHUTTING_DOWN` and never reaches here, and
-    // the guard states that rather than relying on it.
-    #[cfg(feature = "ruby-embed")]
-    if magnus::Ruby::get().is_ok() {
-        ruby_veneer::assert_activation_maps(&act);
-    }
-    // No thread guard here: unlike an embedded CRuby VM, CPython attaches from
-    // any thread once the interpreter is initialised, so the spawned-thread
-    // phases exercise the mapping too.
-    #[cfg(feature = "python")]
-    python_veneer::assert_activation_maps(&act);
+    shape_veneer::assert_activation_maps(&act);
     (status, Some(act))
 }
 
-/// Map a result through whichever veneers are built in, and assert none of
-/// them changed it.
-///
-/// Separate from [`abi_complete`] because one phase completes from a spawned
-/// thread: the ABI accepts a completion from any thread, but an embedded Ruby
-/// VM has no handle on a thread it did not create. So the mapping is what
-/// stays on the test's own thread, and only the ABI call crosses.
-#[allow(clippy::let_and_return)]
+/// Map a result through the shape and assert it changed nothing.
 fn through_veneers(result: &schema::ActivationResult) -> schema::ActivationResult {
-    #[cfg(feature = "napi")]
-    let result = &napi_veneer::through_veneer(result);
-    #[cfg(feature = "ruby-embed")]
-    let result = &ruby_veneer::through_veneer(result);
-    #[cfg(feature = "python")]
-    let result = &python_veneer::through_veneer(result);
-    result.clone()
+    shape_veneer::through_veneer(result)
 }
 
 fn abi_complete(ctx: *mut FlzContext, result: &schema::ActivationResult) {
@@ -212,6 +186,8 @@ fn c_abi_full_scenario() {
     // SAFETY: once per process, higher up the stack than any Ruby call below.
     #[cfg(feature = "ruby-embed")]
     let _ruby_vm = unsafe { magnus::embed::init() };
+    #[cfg(feature = "ruby-embed")]
+    ruby_veneer::primitives_round_trip();
 
     // CPython is initialised here rather than on first use: initialisation
     // belongs on the main thread, and two phases below poll and complete from
@@ -865,272 +841,503 @@ fn c_abi_full_scenario() {
     unsafe { flz_core_context_free(ctx) };
 }
 
-/// The Node veneer, driven from Rust. Every mapping the addon performs is
-/// exercised by the scenario above; these helpers are the two directions.
-#[cfg(feature = "napi")]
-mod napi_veneer {
+/// The shape every binding shares, proved once against a recording pair.
+///
+/// `veneer::shape` builds an activation into a `serde_json` tree and reads a
+/// result back out of one, so which key carries which field is checked here
+/// and each binding's own arm proves only that its language builds and reads
+/// the primitives. The activation direction is checked field by field rather
+/// than by a round trip: the mapping has no inverse in production — nothing
+/// ever maps a host value back to an `Activation` — so an inverse written
+/// here could agree with a wrong forward mapping.
+mod shape_veneer {
     use flz_core::schema;
-    use flz_core_ffi::napi_glue::*;
-    use napi::bindgen_prelude::{BigInt, Buffer};
+    use flz_core_ffi::veneer::shape::{self, Key};
+    use flz_core_ffi::veneer::Refusal;
+    use serde_json::{json, Map, Value};
 
-    fn big(v: u64) -> BigInt {
-        BigInt::from(v)
+    /// A language whose containers are `serde_json`'s. A payload is an array
+    /// of byte numbers, so it round-trips with no encoding of its own.
+    pub struct Recorder;
+
+    impl shape::Sink for Recorder {
+        type Value = Value;
+        type Map = Map<String, Value>;
+        type List = Vec<Value>;
+        type Error = Refusal;
+
+        fn map(&self) -> Result<Self::Map, Refusal> {
+            Ok(Map::new())
+        }
+
+        fn set(&self, map: &mut Self::Map, key: Key, value: Value) -> Result<(), Refusal> {
+            map.insert(key.spell(<Self as shape::Sink>::CAMEL).to_string(), value);
+            Ok(())
+        }
+
+        fn finish_map(&self, map: Self::Map) -> Result<Value, Refusal> {
+            Ok(Value::Object(map))
+        }
+
+        fn list(&self, capacity: usize) -> Result<Vec<Value>, Refusal> {
+            Ok(Vec::with_capacity(capacity))
+        }
+
+        fn push(&self, list: &mut Vec<Value>, value: Value) -> Result<(), Refusal> {
+            list.push(value);
+            Ok(())
+        }
+
+        fn finish_list(&self, list: Vec<Value>) -> Result<Value, Refusal> {
+            Ok(Value::Array(list))
+        }
+
+        fn bytes(&self, v: Vec<u8>) -> Result<Value, Refusal> {
+            Ok(raw(&v))
+        }
+
+        fn text(&self, v: String) -> Result<Value, Refusal> {
+            Ok(Value::String(v))
+        }
+
+        fn word(&self, v: &'static str) -> Result<Value, Refusal> {
+            Ok(Value::String(v.to_string()))
+        }
+
+        fn pair(&self, key: String, value: String) -> Result<Value, Refusal> {
+            Ok(json!([key, value]))
+        }
+
+        fn u64(&self, v: u64) -> Result<Value, Refusal> {
+            Ok(json!(v))
+        }
+
+        fn u32(&self, v: u32) -> Result<Value, Refusal> {
+            Ok(json!(v))
+        }
+
+        fn bool(&self, v: bool) -> Result<Value, Refusal> {
+            Ok(Value::Bool(v))
+        }
     }
 
-    fn u64_of(v: &BigInt) -> u64 {
-        let (_, value, lossless) = v.get_u64();
-        assert!(lossless, "a u64 field lost precision crossing the veneer");
-        value
+    impl shape::Source for Recorder {
+        type Value = Value;
+        type Map = Map<String, Value>;
+        type Error = Refusal;
+
+        fn get(&self, map: &Self::Map, key: Key) -> Result<Option<Value>, Refusal> {
+            Ok(map
+                .get(key.spell(<Self as shape::Source>::CAMEL))
+                .filter(|v| !v.is_null())
+                .cloned())
+        }
+
+        fn map(&self, v: &Value, what: &str) -> Result<Self::Map, Refusal> {
+            v.as_object()
+                .cloned()
+                .ok_or_else(|| Refusal::Shape(format!("{what} must be an object")))
+        }
+
+        fn text(&self, v: &Value) -> Result<String, Refusal> {
+            v.as_str()
+                .map(str::to_string)
+                .ok_or_else(|| Refusal::Shape(format!("{v} is not a string")))
+        }
+
+        fn bytes(&self, v: &Value, what: &str) -> Result<Vec<u8>, Refusal> {
+            let items = v
+                .as_array()
+                .ok_or_else(|| Refusal::Shape(format!("{what} must be bytes")))?;
+            items
+                .iter()
+                .map(|b| {
+                    b.as_u64()
+                        .map(|b| b as u8)
+                        .ok_or_else(|| Refusal::Shape(format!("{what} must be bytes")))
+                })
+                .collect()
+        }
+
+        fn u64(&self, v: &Value, what: &str) -> Result<u64, Refusal> {
+            v.as_u64()
+                .ok_or_else(|| Refusal::Shape(format!("{what} must be an integer")))
+        }
+
+        fn u32(&self, v: &Value) -> Result<u32, Refusal> {
+            Ok(shape::Source::u64(self, v, "a 32-bit field")? as u32)
+        }
+
+        fn bool(&self, v: &Value) -> Result<bool, Refusal> {
+            v.as_bool()
+                .ok_or_else(|| Refusal::Shape(format!("{v} is not a boolean")))
+        }
+
+        fn items(&self, v: &Value) -> Result<Vec<Value>, Refusal> {
+            v.as_array()
+                .cloned()
+                .ok_or_else(|| Refusal::Shape(format!("{v} is not a list")))
+        }
+
+        fn pair(&self, v: &Value) -> Result<(String, String), Refusal> {
+            match v.as_array().map(Vec::as_slice) {
+                Some([key, value]) => Ok((
+                    shape::Source::text(self, key)?,
+                    shape::Source::text(self, value)?,
+                )),
+                _ => Err(Refusal::Shape(
+                    "a metadata entry must be a (key, value) pair".to_string(),
+                )),
+            }
+        }
     }
 
-    /// Assert the decoded activation reaches JavaScript intact. Checked
-    /// field by field rather than by a round trip, because the veneer has no
-    /// inverse in production — nothing ever maps JavaScript back to an
-    /// `Activation`, so an inverse written here could agree with a wrong
-    /// forward mapping.
+    /// Build every primitive the shape asks a language for and read it back,
+    /// so a container a binding cannot round-trip fails here rather than at a
+    /// branch in that SDK. Written once and called by each arm: what differs
+    /// between the bindings is only these primitives.
+    ///
+    /// `word` is not read back. It is write-only in production — a host
+    /// answers `outcome`, `verdict` and a timer `kind` as text, never as the
+    /// language's word type — so each arm asserts its own spelling instead.
+    pub fn primitives_round_trip<S, V, M>(s: &S)
+    where
+        S: shape::Sink<Value = V, Map = M> + shape::Source<Value = V, Map = M>,
+        <S as shape::Sink>::Error: std::fmt::Debug,
+        <S as shape::Source>::Error: std::fmt::Debug,
+    {
+        let mut map = shape::Sink::map(s).expect("a map");
+        let put = |map: &mut M, key, value| {
+            shape::Sink::set(s, map, key, value).expect("the key is set")
+        };
+        put(&mut map, shape::TOKEN, shape::Sink::u64(s, u64::MAX).expect("a u64"));
+        put(&mut map, shape::PROCEDURE, shape::Sink::u32(s, 7).expect("a u32"));
+        put(&mut map, shape::REPLAY, shape::Sink::bool(s, true).expect("a bool"));
+        put(&mut map, shape::FACTORY, shape::Sink::text(s, "f".to_string()).expect("text"));
+        put(&mut map, shape::PAYLOAD, shape::Sink::bytes(s, vec![0, 255, 7]).expect("bytes"));
+        let mut list = shape::Sink::list(s, 1).expect("a list");
+        let pair = shape::Sink::pair(s, "k".to_string(), "v".to_string()).expect("a pair");
+        shape::Sink::push(s, &mut list, pair).expect("the pair is pushed");
+        put(&mut map, shape::METADATA, shape::Sink::finish_list(s, list).expect("a list"));
+
+        let want = |key| {
+            shape::Source::get(s, &map, key)
+                .expect("the key reads")
+                .expect("the key is present")
+        };
+        assert_eq!(
+            shape::Source::u64(s, &want(shape::TOKEN), "token").expect("a u64"),
+            u64::MAX
+        );
+        assert_eq!(shape::Source::u32(s, &want(shape::PROCEDURE)).expect("a u32"), 7);
+        assert!(shape::Source::bool(s, &want(shape::REPLAY)).expect("a bool"));
+        assert_eq!(
+            shape::Source::text(s, &want(shape::FACTORY)).expect("text"),
+            "f"
+        );
+        assert_eq!(
+            shape::Source::bytes(s, &want(shape::PAYLOAD), "payload").expect("bytes"),
+            vec![0, 255, 7]
+        );
+        let rows = shape::Source::items(s, &want(shape::METADATA)).expect("a list");
+        assert_eq!(
+            shape::Source::pair(s, &rows[0]).expect("a pair"),
+            ("k".to_string(), "v".to_string())
+        );
+        // An absent key reads as absent, not as the language's nil.
+        assert!(shape::Source::get(s, &map, shape::ENTITY_KEY)
+            .expect("an absent key reads")
+            .is_none());
+    }
+
+    /// The helper every arm calls, proved against the recording pair itself.
+    #[test]
+    fn the_recording_pair_round_trips_every_primitive() {
+        primitives_round_trip(&Recorder);
+    }
+
+    fn raw(bytes: &[u8]) -> Value {
+        Value::Array(bytes.iter().map(|b| json!(b)).collect())
+    }
+
+    // --- reading the recorded activation ----------------------------------
+
+    fn obj(v: &Value) -> &Map<String, Value> {
+        v.as_object().expect("the shape emits maps")
+    }
+
+    fn at<'a>(h: &'a Map<String, Value>, key: &str) -> &'a Value {
+        h.get(key).unwrap_or_else(|| panic!("the shape dropped `{key}`"))
+    }
+
+    fn num(h: &Map<String, Value>, key: &str) -> u64 {
+        at(h, key).as_u64().expect("an integer field")
+    }
+
+    fn text(h: &Map<String, Value>, key: &str) -> String {
+        at(h, key).as_str().expect("a text field").to_string()
+    }
+
+    fn opt_text(h: &Map<String, Value>, key: &str) -> Option<String> {
+        h.get(key).map(|v| v.as_str().expect("a text field").to_string())
+    }
+
+    fn bytes_at(h: &Map<String, Value>, key: &str) -> Vec<u8> {
+        at(h, key)
+            .as_array()
+            .expect("a payload field")
+            .iter()
+            .map(|b| b.as_u64().expect("a byte") as u8)
+            .collect()
+    }
+
+    fn rows<'a>(h: &'a Map<String, Value>, key: &str) -> &'a [Value] {
+        at(h, key).as_array().expect("a list field")
+    }
+
+    fn meta(h: &Map<String, Value>, key: &str) -> Vec<(String, String)> {
+        rows(h, key)
+            .iter()
+            .map(|pair| {
+                let pair = pair.as_array().expect("a metadata pair is a list");
+                (
+                    pair[0].as_str().expect("a key").to_string(),
+                    pair[1].as_str().expect("a value").to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn assert_body_maps(recorded: &Value, body: &schema::RestoreBody) {
+        let h = obj(recorded);
+        assert_eq!(bytes_at(h, "bytes"), body.bytes);
+        assert_eq!(
+            h.get("from_version").map(|v| v.as_u64().expect("a version") as u32),
+            body.from_version
+        );
+    }
+
+    fn assert_item_maps(recorded: &Value, item: &schema::WorkItem) {
+        let h = obj(recorded);
+        match item {
+            schema::WorkItem::Input(i) => {
+                assert_eq!(text(h, "kind"), "input");
+                assert_eq!(num(h, "channel") as u32, i.channel);
+                assert_eq!(bytes_at(h, "payload"), i.payload);
+                assert_eq!(meta(h, "metadata"), i.metadata);
+                assert_eq!(h.get("consumed_offset").map(|v| v.as_u64().unwrap()), i.consumed_offset);
+                assert_eq!(at(h, "replay").as_bool(), Some(i.replay));
+                assert_eq!(num(h, "now"), i.now);
+            }
+            schema::WorkItem::Timer(t) => {
+                assert_eq!(text(h, "kind"), "timer");
+                assert_eq!(text(h, "timer_kind"), t.kind.as_str());
+                assert_eq!(num(h, "scheduled_at"), t.scheduled_at);
+                // A timer firing's `now` IS its scheduled time, so a handler
+                // reads one field for both kinds.
+                assert_eq!(num(h, "now"), t.scheduled_at);
+            }
+        }
+    }
+
+    /// Assert the decoded activation reaches a host intact.
     pub fn assert_activation_maps(act: &schema::Activation) {
-        let js = activation_to_js(act.clone());
-        assert_eq!(u64_of(&js.token), act.token);
-        assert_eq!(js.operative, act.target.operative);
-        assert_eq!(js.procedure, act.target.procedure);
-        assert_eq!(js.entity_key, act.target.entity_key);
-        assert_eq!(u64_of(&js.change_seq), act.change_seq);
-        assert_eq!(js.factory, act.factory);
-        match &act.kind {
+        let recorded = shape::activation(&Recorder, act.clone()).expect("the shape builds it");
+        let h = obj(&recorded);
+        assert_eq!(num(h, "token"), act.token);
+        assert_eq!(text(h, "operative"), act.target.operative);
+        assert_eq!(num(h, "procedure") as u32, act.target.procedure);
+        assert_eq!(opt_text(h, "entity_key"), act.target.entity_key);
+        assert_eq!(num(h, "change_seq"), act.change_seq);
+        assert_eq!(text(h, "factory"), act.factory);
+        assert_kind_maps(h, &act.kind);
+    }
+
+    fn assert_kind_maps(h: &Map<String, Value>, kind: &schema::ActivationKind) {
+        match kind {
             schema::ActivationKind::Work(items) => {
-                assert_eq!(js.kind, "work");
-                let mapped = js.items.expect("a work activation carries items");
+                assert_eq!(text(h, "kind"), "work");
+                let mapped = rows(h, "items");
                 assert_eq!(mapped.len(), items.len());
-                for (js_item, item) in mapped.iter().zip(items) {
-                    match item {
-                        schema::WorkItem::Input(i) => {
-                            assert_eq!(js_item.kind, "input");
-                            assert_eq!(js_item.channel, Some(i.channel));
-                            assert_eq!(
-                                js_item.payload.as_ref().expect("payload").to_vec(),
-                                i.payload
-                            );
-                            let meta: Vec<(String, String)> = js_item
-                                .metadata
-                                .as_ref()
-                                .expect("metadata")
-                                .iter()
-                                .map(|m| (m.key.clone(), m.value.clone()))
-                                .collect();
-                            assert_eq!(meta, i.metadata);
-                            assert_eq!(
-                                js_item.consumed_offset.as_ref().map(u64_of),
-                                i.consumed_offset
-                            );
-                            assert_eq!(js_item.replay, Some(i.replay));
-                            assert_eq!(js_item.now.as_ref().map(u64_of), Some(i.now));
-                        }
-                        schema::WorkItem::Timer(t) => {
-                            assert_eq!(js_item.kind, "timer");
-                            assert_eq!(js_item.timer_kind.as_deref(), Some(t.kind.as_str()));
-                            assert_eq!(
-                                js_item.scheduled_at.as_ref().map(u64_of),
-                                Some(t.scheduled_at)
-                            );
-                            // A timer firing's `now` IS its scheduled time,
-                            // so a handler reads one field for both kinds.
-                            assert_eq!(js_item.now.as_ref().map(u64_of), Some(t.scheduled_at));
-                        }
-                    }
+                for (recorded, item) in mapped.iter().zip(items) {
+                    assert_item_maps(recorded, item);
                 }
             }
             schema::ActivationKind::RestoreFold(fold) => {
-                assert_eq!(js.kind, "restore_fold");
-                assert_eq!(
-                    js.snapshot.as_ref().map(|b| b.bytes.to_vec()),
-                    fold.snapshot.as_ref().map(|b| b.bytes.clone())
-                );
-                let changes = js.changes.expect("a restore fold carries changes");
+                assert_eq!(text(h, "kind"), "restore_fold");
+                assert_eq!(h.contains_key("snapshot"), fold.snapshot.is_some());
+                if let Some(snapshot) = &fold.snapshot {
+                    assert_body_maps(at(h, "snapshot"), snapshot);
+                }
+                let changes = rows(h, "changes");
                 assert_eq!(changes.len(), fold.changes.len());
-                for (js_body, body) in changes.iter().zip(&fold.changes) {
-                    assert_eq!(js_body.bytes.to_vec(), body.bytes);
-                    assert_eq!(js_body.from_version, body.from_version);
+                for (recorded, body) in changes.iter().zip(&fold.changes) {
+                    assert_body_maps(recorded, body);
                 }
             }
-            schema::ActivationKind::SnapshotRequest => assert_eq!(js.kind, "snapshot_request"),
-            schema::ActivationKind::LiveStateRead => assert_eq!(js.kind, "live_state_read"),
+            schema::ActivationKind::SnapshotRequest => assert_eq!(text(h, "kind"), "snapshot_request"),
+            schema::ActivationKind::LiveStateRead => assert_eq!(text(h, "kind"), "live_state_read"),
             schema::ActivationKind::ApplyState { state_json } => {
-                assert_eq!(js.kind, "apply_state");
-                assert_eq!(js.state_json.expect("state json").to_vec(), *state_json);
+                assert_eq!(text(h, "kind"), "apply_state");
+                assert_eq!(bytes_at(h, "state_json"), *state_json);
             }
             schema::ActivationKind::MigrationSerialize => {
-                assert_eq!(js.kind, "migration_serialize")
+                assert_eq!(text(h, "kind"), "migration_serialize")
             }
-            schema::ActivationKind::KeyRequest(req) => {
-                assert_eq!(js.kind, "key_request");
-                let mapped = js.key_request.expect("a key request carries its payloads");
-                assert_eq!(mapped.channel, req.channel);
-                assert_eq!(mapped.want_keys, req.want_keys);
-                assert_eq!(mapped.want_event_time, req.want_event_time);
-                let payloads: Vec<Vec<u8>> = mapped.payloads.iter().map(|p| p.to_vec()).collect();
-                assert_eq!(payloads, req.payloads);
+            schema::ActivationKind::KeyRequest(request) => {
+                assert_eq!(text(h, "kind"), "key_request");
+                let mapped = obj(at(h, "key_request"));
+                assert_eq!(num(mapped, "channel") as u32, request.channel);
+                assert_eq!(at(mapped, "want_keys").as_bool(), Some(request.want_keys));
+                assert_eq!(
+                    at(mapped, "want_event_time").as_bool(),
+                    Some(request.want_event_time)
+                );
+                let payloads: Vec<Vec<u8>> = rows(mapped, "payloads")
+                    .iter()
+                    .map(|p| p.as_array().expect("a payload").iter().map(|b| b.as_u64().unwrap() as u8).collect())
+                    .collect();
+                assert_eq!(payloads, request.payloads);
             }
             schema::ActivationKind::WorkflowRun { args } => {
-                assert_eq!(js.kind, "workflow_run");
-                assert_eq!(js.args.expect("workflow args").to_vec(), *args);
+                assert_eq!(text(h, "kind"), "workflow_run");
+                assert_eq!(bytes_at(h, "args"), *args);
             }
             schema::ActivationKind::CompensateRun { outputs } => {
-                assert_eq!(js.kind, "compensate_run");
-                let mapped: Vec<Vec<u8>> = js
-                    .outputs
-                    .expect("compensate outputs")
+                assert_eq!(text(h, "kind"), "compensate_run");
+                let mapped: Vec<Vec<u8>> = rows(h, "outputs")
                     .iter()
-                    .map(|o| o.to_vec())
+                    .map(|o| o.as_array().expect("an output").iter().map(|b| b.as_u64().unwrap() as u8).collect())
                     .collect();
                 assert_eq!(mapped, *outputs);
             }
         }
     }
 
-    /// Build the result in the shape JavaScript answers with, map it back
-    /// through the veneer, and assert nothing changed. The scenario then
+    // --- writing a result the way a host answers --------------------------
+
+    /// Build the result in the shape a host answers with, read it back
+    /// through `shape::result`, and assert nothing changed. The scenario then
     /// completes with the mapped value, so a lossy field fails the phase that
     /// depends on it and not only this equality.
     pub fn through_veneer(result: &schema::ActivationResult) -> schema::ActivationResult {
-        let mapped = result_from_js(js_result(result)).expect("the veneer maps the result back");
-        assert_eq!(&mapped, result, "the veneer changed the result");
+        let mapped = shape::result(&Recorder, &record_result(result)).expect("the shape reads it");
+        assert_eq!(&mapped, result, "the shape changed the result");
         mapped
     }
 
-    fn js_meta(pairs: &[(String, String)]) -> Vec<JsMeta> {
-        pairs
-            .iter()
-            .map(|(key, value)| JsMeta {
-                key: key.clone(),
-                value: value.clone(),
-            })
-            .collect()
-    }
-
-    fn js_output(o: &schema::Output) -> JsOutput {
-        let (target, channel, consumer, plugin_channel) = match &o.target {
-            schema::OutputTarget::Edge { channel, consumer } => {
-                ("edge", Some(*channel), Some(*consumer), None)
-            }
-            schema::OutputTarget::Plugin { channel } => {
-                ("plugin", None, None, Some(channel.clone()))
-            }
-        };
-        JsOutput {
-            target: target.to_string(),
-            channel,
-            consumer,
-            plugin_channel,
-            key: o.key.clone(),
-            event_time: o.event_time.map(big),
-            metadata: Some(js_meta(&o.metadata)),
-            payload: Buffer::from(o.payload.clone()),
-        }
-    }
-
-    fn js_effect(e: &schema::ItemEffect) -> JsItemEffect {
-        let (verdict, message) = match &e.verdict {
-            schema::Verdict::Ok => ("ok", None),
-            schema::Verdict::RetryableError { message } => ("retryable", Some(message.clone())),
-            schema::Verdict::NonRetryableError { message } => {
-                ("non_retryable", Some(message.clone()))
-            }
-        };
-        JsItemEffect {
-            verdict: verdict.to_string(),
-            message,
-            changes: Some(e.changes.iter().cloned().map(Buffer::from).collect()),
-            outputs: Some(e.outputs.iter().map(js_output).collect()),
-            consumed_offset: e.consumed_offset.map(big),
-            event_time: big(e.event_time),
-            timers: Some(
-                e.timers
-                    .iter()
-                    .map(|t| JsTimerOp {
-                        kind: t.kind.as_str().to_string(),
-                        scheduled_at: big(t.scheduled_at),
-                        register: t.register,
-                    })
-                    .collect(),
-            ),
-            checkpoint: Some(e.checkpoint),
-            dlq: e.dlq.as_ref().map(|d| JsDlqEntry {
-                channel: d.channel.clone(),
-                error: d.error.clone(),
-                attempts: d.attempts,
-                payload: d.payload.clone().map(Buffer::from),
-            }),
-        }
-    }
-
-    fn js_result(r: &schema::ActivationResult) -> JsActivationResult {
-        let mut out = JsActivationResult {
-            token: big(r.token),
-            outcome: String::new(),
-            effects: None,
-            state: None,
-            json: None,
-            prepared: None,
-            error: None,
-            non_retryable: None,
-            workflow_completed: None,
-            workflow_result: None,
-        };
+    fn record_result(r: &schema::ActivationResult) -> Map<String, Value> {
+        let mut out = Map::new();
+        out.insert("token".into(), json!(r.token));
+        let mut say = |outcome: &str| out.insert("outcome".into(), json!(outcome));
         match &r.outcome {
             schema::ActivationOutcome::Work(effects) => {
-                out.outcome = "work".into();
-                out.effects = Some(effects.iter().map(js_effect).collect());
+                say("work");
+                let effects: Vec<Value> = effects.iter().map(record_effect).collect();
+                out.insert("effects".into(), json!(effects));
             }
-            schema::ActivationOutcome::Restored => out.outcome = "restored".into(),
+            schema::ActivationOutcome::Restored => {
+                say("restored");
+            }
             schema::ActivationOutcome::Snapshot { state } => {
-                out.outcome = "snapshot".into();
-                out.state = Some(Buffer::from(state.clone()));
+                say("snapshot");
+                out.insert("state".into(), raw(state));
             }
             schema::ActivationOutcome::StateJson { json } => {
-                out.outcome = "state_json".into();
-                out.json = Some(Buffer::from(json.clone()));
+                say("state_json");
+                out.insert("json".into(), raw(json));
             }
-            schema::ActivationOutcome::StateApplied => out.outcome = "state_applied".into(),
+            schema::ActivationOutcome::StateApplied => {
+                say("state_applied");
+            }
             schema::ActivationOutcome::MigrationState { json } => {
-                out.outcome = "migration_state".into();
-                out.json = Some(Buffer::from(json.clone()));
+                say("migration_state");
+                out.insert("json".into(), raw(json));
             }
             schema::ActivationOutcome::Prepared(answers) => {
-                out.outcome = "prepared".into();
-                out.prepared = Some(
-                    answers
-                        .iter()
-                        .map(|a| match a {
-                            Ok(answer) => JsPrepareAnswer {
-                                keys: Some(answer.keys.clone()),
-                                event_time: answer.event_time.map(big),
-                                error: None,
-                                non_retryable: None,
-                            },
-                            Err(e) => JsPrepareAnswer {
-                                keys: None,
-                                event_time: None,
-                                error: Some(e.message.clone()),
-                                non_retryable: Some(e.non_retryable),
-                            },
-                        })
-                        .collect(),
-                );
+                say("prepared");
+                let answers: Vec<Value> = answers.iter().map(record_prepared).collect();
+                out.insert("prepared".into(), json!(answers));
             }
             schema::ActivationOutcome::Failed(e) => {
-                out.outcome = "failed".into();
-                out.error = Some(e.message.clone());
-                out.non_retryable = Some(e.non_retryable);
+                say("failed");
+                out.insert("error".into(), json!(e.message));
+                out.insert("non_retryable".into(), json!(e.non_retryable));
             }
             schema::ActivationOutcome::WorkflowDone { completed, result } => {
-                out.outcome = "workflow_done".into();
-                out.workflow_completed = Some(*completed);
-                out.workflow_result = Some(Buffer::from(result.clone()));
+                say("workflow_done");
+                out.insert("workflow_completed".into(), json!(completed));
+                out.insert("workflow_result".into(), raw(result));
             }
         }
         out
     }
 
+    fn record_effect(e: &schema::ItemEffect) -> Value {
+        let (verdict, message) = match &e.verdict {
+            schema::Verdict::Ok => ("ok", Value::Null),
+            schema::Verdict::RetryableError { message } => ("retryable", json!(message)),
+            schema::Verdict::NonRetryableError { message } => ("non_retryable", json!(message)),
+        };
+        json!({
+            "verdict": verdict,
+            "message": message,
+            "changes": e.changes.iter().map(|c| raw(c)).collect::<Vec<_>>(),
+            "outputs": e.outputs.iter().map(record_output).collect::<Vec<_>>(),
+            "consumed_offset": e.consumed_offset,
+            "event_time": e.event_time,
+            "timers": e.timers.iter().map(|t| json!({
+                "kind": t.kind.as_str(),
+                "scheduled_at": t.scheduled_at,
+                "register": t.register,
+            })).collect::<Vec<_>>(),
+            "checkpoint": e.checkpoint,
+            "dlq": e.dlq.as_ref().map(|d| json!({
+                "channel": d.channel,
+                "error": d.error,
+                "attempts": d.attempts,
+                "payload": d.payload.as_deref().map(raw),
+            })),
+        })
+    }
+
+    fn record_output(o: &schema::Output) -> Value {
+        let mut recorded = json!({
+            "key": o.key,
+            "metadata": o.metadata.iter().map(|(k, v)| json!([k, v])).collect::<Vec<_>>(),
+            "payload": raw(&o.payload),
+            "event_time": o.event_time,
+        });
+        let map = recorded.as_object_mut().expect("an output is an object");
+        match &o.target {
+            schema::OutputTarget::Edge { channel, consumer } => {
+                map.insert("target".into(), json!("edge"));
+                map.insert("channel".into(), json!(channel));
+                map.insert("consumer".into(), json!(consumer));
+            }
+            schema::OutputTarget::Plugin { channel } => {
+                map.insert("target".into(), json!("plugin"));
+                map.insert("plugin_channel".into(), json!(channel));
+            }
+        }
+        recorded
+    }
+
+    fn record_prepared(a: &Result<schema::PrepareAnswer, schema::WorkError>) -> Value {
+        match a {
+            Ok(answer) => json!({ "keys": answer.keys, "event_time": answer.event_time }),
+            Err(e) => json!({ "error": e.message, "non_retryable": e.non_retryable }),
+        }
+    }
+}
+
+/// The Node addon's surface. Its half of the shape — how JavaScript builds
+/// and reads a value — cannot be driven from here: a Rust test binary has no
+/// `Env`, so `Values` is proved by the compile and by the Node suite, and the
+/// mapping it feeds is `shape_veneer`'s.
+#[cfg(feature = "napi")]
+mod napi_veneer {
+    use flz_core_ffi::napi_glue::native_surface;
     /// The addon exports exactly what the surface table names, every blocking
     /// entry point is a promise, and neither `poll` nor `waitStarvation` is
     /// among them. Asserted here as well as from Node, because this is the
@@ -1171,368 +1378,30 @@ mod napi_veneer {
     }
 }
 
-/// The Ruby veneer, proved by the same scenario with no Ruby process
-/// involved: an embedded CRuby VM, `activation_to_ruby` on the way out and
-/// `result_from_ruby` on the way back.
+/// The Ruby half of the shape, proved with no Ruby process involved: an
+/// embedded CRuby VM, and every primitive `veneer::shape` asks a language for
+/// built and read back. The mapping itself is `shape_veneer`'s.
 #[cfg(feature = "ruby-embed")]
 mod ruby_veneer {
-    use flz_core::schema;
-    use flz_core_ffi::ruby_glue::{activation_to_ruby, result_from_ruby, NATIVE_SURFACE};
-    use magnus::prelude::*;
-    use magnus::{IntoValue, RArray, RHash, RString, Ruby, TryConvert, Value};
+    use flz_core_ffi::ruby_glue::{Values, NATIVE_SURFACE};
+    use flz_core_ffi::veneer::shape;
+    use magnus::{Ruby, Symbol};
 
-    /// The handle of the VM `c_abi_full_scenario` booted. Every call below
-    /// runs deeper in that test's stack, which is what makes it valid.
-    fn ruby() -> Ruby {
+    /// Called from inside `c_abi_full_scenario` rather than as a `#[test]` of
+    /// its own: `magnus::embed::init` runs once per process and records the
+    /// caller's stack frame as the GC scan root, so every Ruby value must sit
+    /// deeper in that one test's stack.
+    pub fn primitives_round_trip() {
         // SAFETY: the scenario booted the VM on this thread before reaching
         // any code that calls this.
-        unsafe { Ruby::get_unchecked() }
-    }
+        let ruby = unsafe { Ruby::get_unchecked() };
+        let values = Values(&ruby);
+        super::shape_veneer::primitives_round_trip(&values);
 
-    fn get<T: TryConvert>(h: RHash, key: &str) -> Option<T> {
-        h.get(ruby().sym_new(key))
-            .filter(|v| !v.is_nil())
-            .map(|v| T::try_convert(v).expect("a veneer field has the declared type"))
-    }
-
-    fn req<T: TryConvert>(h: RHash, key: &str) -> T {
-        get(h, key).unwrap_or_else(|| panic!("the veneer dropped `{key}`"))
-    }
-
-    fn sym_of(h: RHash, key: &str) -> String {
-        req::<magnus::Symbol>(h, key).name().unwrap().into_owned()
-    }
-
-    fn bytes_of(h: RHash, key: &str) -> Vec<u8> {
-        let s: RString = req(h, key);
-        unsafe { s.as_slice() }.to_vec()
-    }
-
-    fn rows(h: RHash, key: &str) -> Vec<Value> {
-        let a: RArray = req(h, key);
-        unsafe { a.as_slice() }.to_vec()
-    }
-
-    fn as_hash(v: Value) -> RHash {
-        RHash::from_value(v).expect("the veneer emits Hashes")
-    }
-
-    fn meta_of(h: RHash, key: &str) -> Vec<(String, String)> {
-        rows(h, key)
-            .into_iter()
-            .map(|pair| {
-                let pair = RArray::from_value(pair).expect("a metadata pair is an Array");
-                let pair: Vec<String> = pair.to_vec().expect("metadata pairs are Strings");
-                (pair[0].clone(), pair[1].clone())
-            })
-            .collect()
-    }
-
-    /// Assert the decoded activation reaches Ruby intact. Checked field by
-    /// field rather than by a round trip, for the reason the Node arm gives:
-    /// the veneer has no inverse in production, so an inverse written here
-    /// could agree with a wrong forward mapping.
-    pub fn assert_activation_maps(act: &schema::Activation) {
-        let ruby = ruby();
-        let h = activation_to_ruby(&ruby, act.clone()).expect("the veneer maps the activation");
-        assert_eq!(req::<u64>(h, "token"), act.token);
-        assert_eq!(req::<String>(h, "operative"), act.target.operative);
-        assert_eq!(req::<u32>(h, "procedure"), act.target.procedure);
-        assert_eq!(get::<String>(h, "entity_key"), act.target.entity_key);
-        assert_eq!(req::<u64>(h, "change_seq"), act.change_seq);
-        assert_eq!(req::<String>(h, "factory"), act.factory);
-
-        match &act.kind {
-            schema::ActivationKind::Work(items) => {
-                assert_eq!(sym_of(h, "kind"), "work");
-                let mapped = rows(h, "items");
-                assert_eq!(mapped.len(), items.len());
-                for (value, item) in mapped.into_iter().zip(items) {
-                    let m = as_hash(value);
-                    match item {
-                        schema::WorkItem::Input(i) => {
-                            assert_eq!(sym_of(m, "kind"), "input");
-                            assert_eq!(req::<u32>(m, "channel"), i.channel);
-                            assert_eq!(bytes_of(m, "payload"), i.payload);
-                            assert_eq!(meta_of(m, "metadata"), i.metadata);
-                            assert_eq!(get::<u64>(m, "consumed_offset"), i.consumed_offset);
-                            assert_eq!(req::<bool>(m, "replay"), i.replay);
-                            assert_eq!(req::<u64>(m, "now"), i.now);
-                        }
-                        schema::WorkItem::Timer(t) => {
-                            assert_eq!(sym_of(m, "kind"), "timer");
-                            assert_eq!(sym_of(m, "timer_kind"), t.kind.as_str());
-                            assert_eq!(req::<u64>(m, "scheduled_at"), t.scheduled_at);
-                            // A timer firing's `now` IS its scheduled time,
-                            // so a handler reads one field for both kinds.
-                            assert_eq!(req::<u64>(m, "now"), t.scheduled_at);
-                        }
-                    }
-                }
-            }
-            schema::ActivationKind::RestoreFold(fold) => {
-                assert_eq!(sym_of(h, "kind"), "restore_fold");
-                match &fold.snapshot {
-                    None => assert!(get::<Value>(h, "snapshot").is_none()),
-                    Some(body) => {
-                        let s = as_hash(req(h, "snapshot"));
-                        assert_eq!(bytes_of(s, "bytes"), body.bytes);
-                        assert_eq!(get::<u32>(s, "from_version"), body.from_version);
-                    }
-                }
-                let changes = rows(h, "changes");
-                assert_eq!(changes.len(), fold.changes.len());
-                for (value, body) in changes.into_iter().zip(&fold.changes) {
-                    let c = as_hash(value);
-                    assert_eq!(bytes_of(c, "bytes"), body.bytes);
-                    assert_eq!(get::<u32>(c, "from_version"), body.from_version);
-                }
-            }
-            schema::ActivationKind::SnapshotRequest => {
-                assert_eq!(sym_of(h, "kind"), "snapshot_request")
-            }
-            schema::ActivationKind::LiveStateRead => {
-                assert_eq!(sym_of(h, "kind"), "live_state_read")
-            }
-            schema::ActivationKind::ApplyState { state_json } => {
-                assert_eq!(sym_of(h, "kind"), "apply_state");
-                assert_eq!(bytes_of(h, "state_json"), *state_json);
-            }
-            schema::ActivationKind::MigrationSerialize => {
-                assert_eq!(sym_of(h, "kind"), "migration_serialize")
-            }
-            schema::ActivationKind::KeyRequest(request) => {
-                assert_eq!(sym_of(h, "kind"), "key_request");
-                let k = as_hash(req(h, "key_request"));
-                assert_eq!(req::<u32>(k, "channel"), request.channel);
-                assert_eq!(req::<bool>(k, "want_keys"), request.want_keys);
-                assert_eq!(req::<bool>(k, "want_event_time"), request.want_event_time);
-                let payloads: Vec<Vec<u8>> = rows(k, "payloads")
-                    .into_iter()
-                    .map(|p| {
-                        unsafe {
-                            RString::from_value(p)
-                                .expect("a payload is a String")
-                                .as_slice()
-                        }
-                        .to_vec()
-                    })
-                    .collect();
-                assert_eq!(payloads, request.payloads);
-            }
-            schema::ActivationKind::WorkflowRun { args } => {
-                assert_eq!(sym_of(h, "kind"), "workflow_run");
-                assert_eq!(bytes_of(h, "args"), *args);
-            }
-            schema::ActivationKind::CompensateRun { outputs } => {
-                assert_eq!(sym_of(h, "kind"), "compensate_run");
-                let mapped: Vec<Vec<u8>> = rows(h, "outputs")
-                    .into_iter()
-                    .map(|o| {
-                        unsafe {
-                            RString::from_value(o)
-                                .expect("an output is a String")
-                                .as_slice()
-                        }
-                        .to_vec()
-                    })
-                    .collect();
-                assert_eq!(mapped, *outputs);
-            }
-        }
-    }
-
-    /// Build the result in the shape Ruby answers with, map it back through
-    /// the veneer, and assert nothing changed. The scenario then completes
-    /// with the mapped value, so a lossy field fails the phase that depends on
-    /// it and not only this equality.
-    pub fn through_veneer(result: &schema::ActivationResult) -> schema::ActivationResult {
-        let ruby = ruby();
-        let mapped =
-            result_from_ruby(&ruby, rb_result(result)).expect("the veneer maps the result back");
-        assert_eq!(&mapped, result, "the veneer changed the result");
-        mapped
-    }
-
-    fn hash(pairs: Vec<(&str, Value)>) -> RHash {
-        let ruby = ruby();
-        let h = ruby.hash_new();
-        for (key, value) in pairs {
-            h.aset(ruby.sym_new(key), value).expect("hash insert");
-        }
-        h
-    }
-
-    fn str_value(v: &[u8]) -> Value {
-        ruby().str_from_slice(v).as_value()
-    }
-
-    fn array(values: Vec<Value>) -> Value {
-        let a = ruby().ary_new_capa(values.len());
-        for v in values {
-            a.push(v).expect("array push");
-        }
-        a.as_value()
-    }
-
-    fn rb_meta(pairs: &[(String, String)]) -> Value {
-        array(
-            pairs
-                .iter()
-                .map(|(k, v)| array(vec![str_value(k.as_bytes()), str_value(v.as_bytes())]))
-                .collect(),
-        )
-    }
-
-    fn rb_output(o: &schema::Output) -> Value {
-        let ruby = ruby();
-        let mut pairs = vec![
-            ("key", o.key.clone().into_value_with(&ruby)),
-            ("metadata", rb_meta(&o.metadata)),
-            ("payload", str_value(&o.payload)),
-            ("event_time", o.event_time.into_value_with(&ruby)),
-        ];
-        match &o.target {
-            schema::OutputTarget::Edge { channel, consumer } => {
-                pairs.push(("target", str_value(b"edge")));
-                pairs.push(("channel", (*channel).into_value_with(&ruby)));
-                pairs.push(("consumer", (*consumer).into_value_with(&ruby)));
-            }
-            schema::OutputTarget::Plugin { channel } => {
-                pairs.push(("target", str_value(b"plugin")));
-                pairs.push(("plugin_channel", str_value(channel.as_bytes())));
-            }
-        }
-        hash(pairs).as_value()
-    }
-
-    fn rb_effect(e: &schema::ItemEffect) -> Value {
-        let ruby = ruby();
-        let (verdict, message) = match &e.verdict {
-            schema::Verdict::Ok => ("ok", None),
-            schema::Verdict::RetryableError { message } => ("retryable", Some(message.clone())),
-            schema::Verdict::NonRetryableError { message } => {
-                ("non_retryable", Some(message.clone()))
-            }
-        };
-        hash(vec![
-            ("verdict", str_value(verdict.as_bytes())),
-            ("message", message.into_value_with(&ruby)),
-            (
-                "changes",
-                array(e.changes.iter().map(|c| str_value(c)).collect()),
-            ),
-            ("outputs", array(e.outputs.iter().map(rb_output).collect())),
-            ("consumed_offset", e.consumed_offset.into_value_with(&ruby)),
-            ("event_time", e.event_time.into_value_with(&ruby)),
-            (
-                "timers",
-                array(
-                    e.timers
-                        .iter()
-                        .map(|t| {
-                            hash(vec![
-                                ("kind", str_value(t.kind.as_str().as_bytes())),
-                                ("scheduled_at", t.scheduled_at.into_value_with(&ruby)),
-                                ("register", t.register.into_value_with(&ruby)),
-                            ])
-                            .as_value()
-                        })
-                        .collect(),
-                ),
-            ),
-            ("checkpoint", e.checkpoint.into_value_with(&ruby)),
-            (
-                "dlq",
-                match &e.dlq {
-                    None => ruby.qnil().as_value(),
-                    Some(d) => hash(vec![
-                        ("channel", str_value(d.channel.as_bytes())),
-                        ("error", str_value(d.error.as_bytes())),
-                        ("attempts", d.attempts.into_value_with(&ruby)),
-                        (
-                            "payload",
-                            match &d.payload {
-                                None => ruby.qnil().as_value(),
-                                Some(p) => str_value(p),
-                            },
-                        ),
-                    ])
-                    .as_value(),
-                },
-            ),
-        ])
-        .as_value()
-    }
-
-    fn rb_result(r: &schema::ActivationResult) -> RHash {
-        let ruby = ruby();
-        let mut pairs = vec![("token", r.token.into_value_with(&ruby))];
-        match &r.outcome {
-            schema::ActivationOutcome::Work(effects) => {
-                pairs.push(("outcome", str_value(b"work")));
-                pairs.push(("effects", array(effects.iter().map(rb_effect).collect())));
-            }
-            schema::ActivationOutcome::Restored => pairs.push(("outcome", str_value(b"restored"))),
-            schema::ActivationOutcome::Snapshot { state } => {
-                pairs.push(("outcome", str_value(b"snapshot")));
-                pairs.push(("state", str_value(state)));
-            }
-            schema::ActivationOutcome::StateJson { json } => {
-                pairs.push(("outcome", str_value(b"state_json")));
-                pairs.push(("json", str_value(json)));
-            }
-            schema::ActivationOutcome::StateApplied => {
-                pairs.push(("outcome", str_value(b"state_applied")))
-            }
-            schema::ActivationOutcome::MigrationState { json } => {
-                pairs.push(("outcome", str_value(b"migration_state")));
-                pairs.push(("json", str_value(json)));
-            }
-            schema::ActivationOutcome::Prepared(answers) => {
-                pairs.push(("outcome", str_value(b"prepared")));
-                pairs.push((
-                    "prepared",
-                    array(
-                        answers
-                            .iter()
-                            .map(|a| match a {
-                                Ok(answer) => hash(vec![
-                                    (
-                                        "keys",
-                                        array(
-                                            answer
-                                                .keys
-                                                .iter()
-                                                .map(|k| str_value(k.as_bytes()))
-                                                .collect(),
-                                        ),
-                                    ),
-                                    ("event_time", answer.event_time.into_value_with(&ruby)),
-                                ])
-                                .as_value(),
-                                Err(e) => hash(vec![
-                                    ("error", str_value(e.message.as_bytes())),
-                                    ("non_retryable", e.non_retryable.into_value_with(&ruby)),
-                                ])
-                                .as_value(),
-                            })
-                            .collect(),
-                    ),
-                ));
-            }
-            schema::ActivationOutcome::Failed(e) => {
-                pairs.push(("outcome", str_value(b"failed")));
-                pairs.push(("error", str_value(e.message.as_bytes())));
-                pairs.push(("non_retryable", e.non_retryable.into_value_with(&ruby)));
-            }
-            schema::ActivationOutcome::WorkflowDone { completed, result } => {
-                pairs.push(("outcome", str_value(b"workflow_done")));
-                pairs.push(("workflow_completed", (*completed).into_value_with(&ruby)));
-                pairs.push(("workflow_result", str_value(result)));
-            }
-        }
-        hash(pairs)
+        // Ruby is the one language whose vocabulary word is not text.
+        let word = shape::Sink::word(&values, shape::word::WORK).expect("a word");
+        let word = Symbol::from_value(word).expect("a word is a Symbol");
+        assert_eq!(word.name().unwrap(), shape::word::WORK);
     }
 
     /// The extension exports exactly what the surface table names, every entry
@@ -1566,463 +1435,37 @@ mod ruby_veneer {
     }
 }
 
-/// The same scenario through the Python veneer, with no Python process
-/// involved: an embedded CPython interpreter, `activation_to_python` on the
-/// way out and `result_from_python` on the way back.
+/// The Python half of the shape, proved with no Python process involved: an
+/// embedded CPython interpreter, and every primitive `veneer::shape` asks a
+/// language for built and read back. The mapping itself is `shape_veneer`'s.
 #[cfg(feature = "python")]
 mod python_veneer {
-    use flz_core::schema;
-    use flz_core_ffi::python_glue::{
-        activation_to_python, result_from_python, Core, PayloadView, NATIVE_SURFACE,
-    };
+    use flz_core_ffi::python_glue::{Core, PayloadView, Values, NATIVE_SURFACE};
+    use flz_core_ffi::veneer::shape;
     use pyo3::prelude::*;
-    use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
-    use pyo3::IntoPyObjectExt;
 
-    fn get<'py, T>(h: &Bound<'py, PyDict>, key: &str) -> Option<T>
-    where
-        T: for<'a> FromPyObject<'a, 'py>,
-    {
-        h.get_item(key)
-            .expect("dict lookup")
-            .filter(|v| !v.is_none())
-            .map(|v| {
-                v.extract()
-                    .unwrap_or_else(|_| panic!("`{key}` has the declared type"))
-            })
-    }
-
-    fn req<'py, T>(h: &Bound<'py, PyDict>, key: &str) -> T
-    where
-        T: for<'a> FromPyObject<'a, 'py>,
-    {
-        get(h, key).unwrap_or_else(|| panic!("the veneer dropped `{key}`"))
-    }
-
-    /// The bytes behind a payload, however the veneer chose to expose them.
-    ///
-    /// The hot paths cross as a [`PayloadView`] — a buffer with no
-    /// intermediate `bytes` — and the JSON one crosses as `bytes`, so the
-    /// reader accepts either and the assertions below are about the bytes
-    /// rather than about which wrapper carried them.
-    fn bytes_of_value(v: &Bound<'_, PyAny>) -> Vec<u8> {
-        if let Ok(view) = v.cast::<PayloadView>() {
-            let py = v.py();
-            return view
-                .call_method0("tobytes")
-                .expect("a view copies on request")
-                .extract::<Vec<u8>>()
-                .unwrap_or_else(|_| panic!("{:?}", py.None()));
-        }
-        v.extract::<Vec<u8>>().expect("a payload is bytes")
-    }
-
-    fn bytes_of(h: &Bound<'_, PyDict>, key: &str) -> Vec<u8> {
-        bytes_of_value(
-            &h.get_item(key)
-                .expect("dict lookup")
-                .unwrap_or_else(|| panic!("the veneer dropped `{key}`")),
-        )
-    }
-
-    fn rows<'py>(h: &Bound<'py, PyDict>, key: &str) -> Vec<Bound<'py, PyAny>> {
-        req::<Bound<'py, PyList>>(h, key).iter().collect()
-    }
-
-    fn as_dict<'py>(v: &Bound<'py, PyAny>) -> Bound<'py, PyDict> {
-        v.cast::<PyDict>().expect("the veneer emits dicts").clone()
-    }
-
-    fn meta_of(h: &Bound<'_, PyDict>, key: &str) -> Vec<(String, String)> {
-        rows(h, key)
-            .into_iter()
-            .map(|pair| {
-                let pair: Vec<String> = pair.extract().expect("a metadata pair is two strings");
-                (pair[0].clone(), pair[1].clone())
-            })
-            .collect()
-    }
-
-    /// Assert the decoded activation reaches Python intact. Checked field by
-    /// field rather than by a round trip, for the reason the Node and Ruby
-    /// arms give: the veneer has no inverse in production, so an inverse
-    /// written here could agree with a wrong forward mapping.
-    pub fn assert_activation_maps(act: &schema::Activation) {
+    /// CPython attaches from any thread once the interpreter is initialised,
+    /// so this is an ordinary `#[test]` — unlike Ruby's, which must run inside
+    /// the scenario that booted the VM.
+    #[test]
+    fn every_primitive_round_trips() {
+        Python::initialize();
         Python::attach(|py| {
-            let h = activation_to_python(py, act.clone()).expect("the veneer maps the activation");
-            assert_eq!(req::<u64>(&h, "token"), act.token);
-            assert_eq!(req::<String>(&h, "operative"), act.target.operative);
-            assert_eq!(req::<u32>(&h, "procedure"), act.target.procedure);
-            assert_eq!(get::<String>(&h, "entity_key"), act.target.entity_key);
-            assert_eq!(req::<u64>(&h, "change_seq"), act.change_seq);
-            assert_eq!(req::<String>(&h, "factory"), act.factory);
+            let values = Values(py);
+            super::shape_veneer::primitives_round_trip(&values);
 
-            match &act.kind {
-                schema::ActivationKind::Work(items) => {
-                    assert_eq!(req::<String>(&h, "kind"), "work");
-                    let mapped = rows(&h, "items");
-                    assert_eq!(mapped.len(), items.len());
-                    for (value, item) in mapped.into_iter().zip(items) {
-                        let m = as_dict(&value);
-                        match item {
-                            schema::WorkItem::Input(i) => {
-                                assert_eq!(req::<String>(&m, "kind"), "input");
-                                assert_eq!(req::<u32>(&m, "channel"), i.channel);
-                                assert_eq!(bytes_of(&m, "payload"), i.payload);
-                                // The user payload is the common decode path,
-                                // so it crosses as a buffer and not a `bytes`.
-                                assert!(
-                                    m.get_item("payload")
-                                        .unwrap()
-                                        .unwrap()
-                                        .cast::<PayloadView>()
-                                        .is_ok(),
-                                    "the input payload must cross as a borrowed view"
-                                );
-                                assert_eq!(meta_of(&m, "metadata"), i.metadata);
-                                assert_eq!(get::<u64>(&m, "consumed_offset"), i.consumed_offset);
-                                assert_eq!(req::<bool>(&m, "replay"), i.replay);
-                                assert_eq!(req::<u64>(&m, "now"), i.now);
-                            }
-                            schema::WorkItem::Timer(t) => {
-                                assert_eq!(req::<String>(&m, "kind"), "timer");
-                                assert_eq!(req::<String>(&m, "timer_kind"), t.kind.as_str());
-                                assert_eq!(req::<u64>(&m, "scheduled_at"), t.scheduled_at);
-                                // A timer firing's `now` IS its scheduled
-                                // time, so a handler reads one field for both.
-                                assert_eq!(req::<u64>(&m, "now"), t.scheduled_at);
-                            }
-                        }
-                    }
-                }
-                schema::ActivationKind::RestoreFold(fold) => {
-                    assert_eq!(req::<String>(&h, "kind"), "restore_fold");
-                    match &fold.snapshot {
-                        None => assert!(h.get_item("snapshot").unwrap().is_none()),
-                        Some(body) => {
-                            let s = as_dict(&req::<Bound<'_, PyAny>>(&h, "snapshot"));
-                            assert_eq!(bytes_of(&s, "bytes"), body.bytes);
-                            assert_eq!(get::<u32>(&s, "from_version"), body.from_version);
-                        }
-                    }
-                    let changes = rows(&h, "changes");
-                    assert_eq!(changes.len(), fold.changes.len());
-                    for (value, body) in changes.into_iter().zip(&fold.changes) {
-                        let c = as_dict(&value);
-                        assert_eq!(bytes_of(&c, "bytes"), body.bytes);
-                        assert_eq!(get::<u32>(&c, "from_version"), body.from_version);
-                    }
-                }
-                schema::ActivationKind::SnapshotRequest => {
-                    assert_eq!(req::<String>(&h, "kind"), "snapshot_request")
-                }
-                schema::ActivationKind::LiveStateRead => {
-                    assert_eq!(req::<String>(&h, "kind"), "live_state_read")
-                }
-                schema::ActivationKind::ApplyState { state_json } => {
-                    assert_eq!(req::<String>(&h, "kind"), "apply_state");
-                    assert_eq!(bytes_of(&h, "state_json"), *state_json);
-                }
-                schema::ActivationKind::MigrationSerialize => {
-                    assert_eq!(req::<String>(&h, "kind"), "migration_serialize")
-                }
-                schema::ActivationKind::KeyRequest(request) => {
-                    assert_eq!(req::<String>(&h, "kind"), "key_request");
-                    let k = as_dict(&req::<Bound<'_, PyAny>>(&h, "key_request"));
-                    assert_eq!(req::<u32>(&k, "channel"), request.channel);
-                    assert_eq!(req::<bool>(&k, "want_keys"), request.want_keys);
-                    assert_eq!(req::<bool>(&k, "want_event_time"), request.want_event_time);
-                    let payloads: Vec<Vec<u8>> =
-                        rows(&k, "payloads").iter().map(bytes_of_value).collect();
-                    assert_eq!(payloads, request.payloads);
-                }
-                schema::ActivationKind::WorkflowRun { args } => {
-                    assert_eq!(req::<String>(&h, "kind"), "workflow_run");
-                    assert_eq!(bytes_of(&h, "args"), *args);
-                }
-                schema::ActivationKind::CompensateRun { outputs } => {
-                    assert_eq!(req::<String>(&h, "kind"), "compensate_run");
-                    let mapped: Vec<Vec<u8>> =
-                        rows(&h, "outputs").iter().map(bytes_of_value).collect();
-                    assert_eq!(mapped, *outputs);
-                }
-            }
+            // Python spells a vocabulary word as text, and state JSON as
+            // `bytes` rather than as the borrowed view a payload crosses as.
+            let word = shape::Sink::word(&values, shape::word::WORK).expect("a word");
+            assert_eq!(word.extract::<String>().expect("text"), shape::word::WORK);
+            let json = shape::Sink::json(&values, b"{}".to_vec()).expect("state json");
+            assert!(json.is_instance_of::<pyo3::types::PyBytes>());
+            let payload = shape::Sink::bytes(&values, b"{}".to_vec()).expect("a payload");
+            assert!(payload.is_instance_of::<PayloadView>());
+            let copied = payload.call_method0("tobytes").expect("a view copies");
+            assert_eq!(copied.extract::<Vec<u8>>().expect("bytes"), b"{}");
         });
     }
-
-    /// Build the result in the shape Python answers with, map it back through
-    /// the veneer, and assert nothing changed. The scenario then completes
-    /// with the mapped value, so a lossy field fails the phase that depends on
-    /// it and not only this equality.
-    pub fn through_veneer(result: &schema::ActivationResult) -> schema::ActivationResult {
-        Python::attach(|py| {
-            let mapped = result_from_python(&py_result(py, result))
-                .expect("the veneer maps the result back");
-            assert_eq!(&mapped, result, "the veneer changed the result");
-            mapped
-        })
-    }
-
-    fn dict<'py>(py: Python<'py>, pairs: Vec<(&str, Bound<'py, PyAny>)>) -> Bound<'py, PyDict> {
-        let d = PyDict::new(py);
-        for (key, value) in pairs {
-            d.set_item(key, value).expect("dict insert");
-        }
-        d
-    }
-
-    fn text<'py>(py: Python<'py>, v: &str) -> Bound<'py, PyAny> {
-        v.into_bound_py_any(py).expect("str")
-    }
-
-    fn raw<'py>(py: Python<'py>, v: &[u8]) -> Bound<'py, PyAny> {
-        PyBytes::new(py, v).into_any()
-    }
-
-    fn list<'py>(py: Python<'py>, values: Vec<Bound<'py, PyAny>>) -> Bound<'py, PyAny> {
-        PyList::new(py, values).expect("list").into_any()
-    }
-
-    fn opt<'py, T>(py: Python<'py>, v: &Option<T>) -> Bound<'py, PyAny>
-    where
-        T: Copy + for<'a> IntoPyObject<'a>,
-    {
-        match v {
-            None => py.None().into_bound(py),
-            Some(value) => (*value).into_bound_py_any(py).expect("scalar"),
-        }
-    }
-
-    fn py_meta<'py>(py: Python<'py>, pairs: &[(String, String)]) -> Bound<'py, PyAny> {
-        list(
-            py,
-            pairs
-                .iter()
-                .map(|(k, v)| {
-                    PyTuple::new(py, [k.as_str(), v.as_str()])
-                        .expect("tuple")
-                        .into_any()
-                })
-                .collect(),
-        )
-    }
-
-    fn py_output<'py>(py: Python<'py>, o: &schema::Output) -> Bound<'py, PyAny> {
-        let mut pairs = vec![
-            (
-                "key",
-                match &o.key {
-                    None => py.None().into_bound(py),
-                    Some(k) => text(py, k),
-                },
-            ),
-            ("metadata", py_meta(py, &o.metadata)),
-            ("payload", raw(py, &o.payload)),
-            ("event_time", opt(py, &o.event_time)),
-        ];
-        match &o.target {
-            schema::OutputTarget::Edge { channel, consumer } => {
-                pairs.push(("target", text(py, "edge")));
-                pairs.push((
-                    "channel",
-                    (*channel).into_bound_py_any(py).expect("channel"),
-                ));
-                pairs.push((
-                    "consumer",
-                    (*consumer).into_bound_py_any(py).expect("consumer"),
-                ));
-            }
-            schema::OutputTarget::Plugin { channel } => {
-                pairs.push(("target", text(py, "plugin")));
-                pairs.push(("plugin_channel", text(py, channel)));
-            }
-        }
-        dict(py, pairs).into_any()
-    }
-
-    fn py_effect<'py>(py: Python<'py>, e: &schema::ItemEffect) -> Bound<'py, PyAny> {
-        let (verdict, message) = match &e.verdict {
-            schema::Verdict::Ok => ("ok", None),
-            schema::Verdict::RetryableError { message } => ("retryable", Some(message.clone())),
-            schema::Verdict::NonRetryableError { message } => {
-                ("non_retryable", Some(message.clone()))
-            }
-        };
-        dict(
-            py,
-            vec![
-                ("verdict", text(py, verdict)),
-                (
-                    "message",
-                    match &message {
-                        None => py.None().into_bound(py),
-                        Some(m) => text(py, m),
-                    },
-                ),
-                (
-                    "changes",
-                    list(py, e.changes.iter().map(|c| raw(py, c)).collect()),
-                ),
-                (
-                    "outputs",
-                    list(py, e.outputs.iter().map(|o| py_output(py, o)).collect()),
-                ),
-                ("consumed_offset", opt(py, &e.consumed_offset)),
-                (
-                    "event_time",
-                    e.event_time.into_bound_py_any(py).expect("event time"),
-                ),
-                (
-                    "timers",
-                    list(
-                        py,
-                        e.timers
-                            .iter()
-                            .map(|t| {
-                                dict(
-                                    py,
-                                    vec![
-                                        ("kind", text(py, t.kind.as_str())),
-                                        (
-                                            "scheduled_at",
-                                            t.scheduled_at
-                                                .into_bound_py_any(py)
-                                                .expect("scheduled at"),
-                                        ),
-                                        (
-                                            "register",
-                                            t.register.into_bound_py_any(py).expect("register"),
-                                        ),
-                                    ],
-                                )
-                                .into_any()
-                            })
-                            .collect(),
-                    ),
-                ),
-                (
-                    "checkpoint",
-                    e.checkpoint.into_bound_py_any(py).expect("checkpoint"),
-                ),
-                (
-                    "dlq",
-                    match &e.dlq {
-                        None => py.None().into_bound(py),
-                        Some(d) => dict(
-                            py,
-                            vec![
-                                ("channel", text(py, &d.channel)),
-                                ("error", text(py, &d.error)),
-                                (
-                                    "attempts",
-                                    d.attempts.into_bound_py_any(py).expect("attempts"),
-                                ),
-                                (
-                                    "payload",
-                                    match &d.payload {
-                                        None => py.None().into_bound(py),
-                                        Some(p) => raw(py, p),
-                                    },
-                                ),
-                            ],
-                        )
-                        .into_any(),
-                    },
-                ),
-            ],
-        )
-        .into_any()
-    }
-
-    fn py_result<'py>(py: Python<'py>, r: &schema::ActivationResult) -> Bound<'py, PyDict> {
-        let mut pairs = vec![("token", r.token.into_bound_py_any(py).expect("token"))];
-        match &r.outcome {
-            schema::ActivationOutcome::Work(effects) => {
-                pairs.push(("outcome", text(py, "work")));
-                pairs.push((
-                    "effects",
-                    list(py, effects.iter().map(|e| py_effect(py, e)).collect()),
-                ));
-            }
-            schema::ActivationOutcome::Restored => pairs.push(("outcome", text(py, "restored"))),
-            schema::ActivationOutcome::Snapshot { state } => {
-                pairs.push(("outcome", text(py, "snapshot")));
-                pairs.push(("state", raw(py, state)));
-            }
-            schema::ActivationOutcome::StateJson { json } => {
-                pairs.push(("outcome", text(py, "state_json")));
-                pairs.push(("json", raw(py, json)));
-            }
-            schema::ActivationOutcome::StateApplied => {
-                pairs.push(("outcome", text(py, "state_applied")))
-            }
-            schema::ActivationOutcome::MigrationState { json } => {
-                pairs.push(("outcome", text(py, "migration_state")));
-                pairs.push(("json", raw(py, json)));
-            }
-            schema::ActivationOutcome::Prepared(answers) => {
-                pairs.push(("outcome", text(py, "prepared")));
-                pairs.push((
-                    "prepared",
-                    list(
-                        py,
-                        answers
-                            .iter()
-                            .map(|a| match a {
-                                Ok(answer) => dict(
-                                    py,
-                                    vec![
-                                        (
-                                            "keys",
-                                            list(
-                                                py,
-                                                answer.keys.iter().map(|k| text(py, k)).collect(),
-                                            ),
-                                        ),
-                                        ("event_time", opt(py, &answer.event_time)),
-                                    ],
-                                )
-                                .into_any(),
-                                Err(e) => dict(
-                                    py,
-                                    vec![
-                                        ("error", text(py, &e.message)),
-                                        (
-                                            "non_retryable",
-                                            e.non_retryable
-                                                .into_bound_py_any(py)
-                                                .expect("non retryable"),
-                                        ),
-                                    ],
-                                )
-                                .into_any(),
-                            })
-                            .collect(),
-                    ),
-                ));
-            }
-            schema::ActivationOutcome::Failed(e) => {
-                pairs.push(("outcome", text(py, "failed")));
-                pairs.push(("error", text(py, &e.message)));
-                pairs.push((
-                    "non_retryable",
-                    e.non_retryable
-                        .into_bound_py_any(py)
-                        .expect("non retryable"),
-                ));
-            }
-            schema::ActivationOutcome::WorkflowDone { completed, result } => {
-                pairs.push(("outcome", text(py, "workflow_done")));
-                pairs.push((
-                    "workflow_completed",
-                    (*completed).into_bound_py_any(py).expect("completed"),
-                ));
-                pairs.push(("workflow_result", raw(py, result)));
-            }
-        }
-        dict(py, pairs)
-    }
-
     /// The extension exports exactly what the surface table names, every entry
     /// names a C ABI entry point, and every blocking one is a call the veneer
     /// runs with the GIL released. Asserted on this side because it is the

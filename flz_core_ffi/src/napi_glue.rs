@@ -11,12 +11,14 @@
 //! handler runs on an event loop. Payload `Vec`s move into `Buffer`s without
 //! copying.
 
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
-use flz_core::schema;
 use napi::bindgen_prelude::*;
+use napi::ValueType;
 use napi_derive::napi;
 
+use crate::veneer::shape;
 use crate::veneer::{self, CtxPtr, Refusal};
 use crate::FlzContext;
 
@@ -75,142 +77,34 @@ where
 // so the SDK never carries a second implementation of the wire contract. The
 // shape is flat with a `kind` discriminator rather than a union, because napi
 // object mapping has no sum type and a discriminated record is what JavaScript
-// switches on anyway.
+// switches on anyway. Which key carries which field is `veneer::shape`'s; this
+// module says only how JavaScript builds and reads a value, in camelCase.
+//
+// The values are built on the JavaScript thread, inside the threadsafe
+// function's callback: a fetcher thread has no `Env`, and the objects had to
+// be built there in any case.
 // ---------------------------------------------------------------------------
 
-/// One metadata pair. An ordered list rather than a map: the schema allows a
-/// repeated key and the order is part of what the controller sees.
-#[napi(object)]
-pub struct JsMeta {
-    pub key: String,
-    pub value: String,
+/// One property of an object, absent when the key is missing or carries
+/// `undefined` / `null`.
+///
+/// Deliberately not `Object::get`, which is four N-API calls per read: it
+/// mints a JavaScript string for the key (`napi_create_string_utf8`), reads
+/// through `napi_get_property`, and calls `napi_typeof` — and the caller then
+/// needs its own `napi_typeof` to tell an absent key from an explicit `null`.
+/// `napi_get_named_property` takes the key as a C string, which V8 interns, so
+/// one read plus one `napi_typeof` answers the same question.
+fn named<'env>(map: &Object<'env>, key: &str) -> Result<Option<Unknown<'env>>> {
+    let found: Unknown<'env> = map.get_named_property_unchecked(key)?;
+    Ok(match found.get_type()? {
+        ValueType::Undefined | ValueType::Null => None,
+        _ => Some(found),
+    })
 }
 
-#[napi(object)]
-pub struct JsWorkItem {
-    /// `"input"` or `"timer"`.
-    pub kind: String,
-    pub channel: Option<u32>,
-    pub payload: Option<Buffer>,
-    pub metadata: Option<Vec<JsMeta>>,
-    pub consumed_offset: Option<BigInt>,
-    pub replay: Option<bool>,
-    /// The core-evaluated declared clock for this item; what `ctx.now()` serves.
-    pub now: Option<BigInt>,
-    /// `"event_time"` or `"processing_time"` on a timer item.
-    pub timer_kind: Option<String>,
-    pub scheduled_at: Option<BigInt>,
-}
-
-#[napi(object)]
-pub struct JsRestoreBody {
-    pub bytes: Buffer,
-    /// Absent when the body was written at the running schema version.
-    pub from_version: Option<u32>,
-}
-
-#[napi(object)]
-pub struct JsKeyRequest {
-    pub channel: u32,
-    pub payloads: Vec<Buffer>,
-    pub want_keys: bool,
-    pub want_event_time: bool,
-}
-
-#[napi(object)]
-pub struct JsActivation {
-    pub token: BigInt,
-    pub operative: String,
-    pub procedure: u32,
-    pub entity_key: Option<String>,
-    pub change_seq: BigInt,
-    pub factory: String,
-    /// `work` | `restore_fold` | `snapshot_request` | `live_state_read` |
-    /// `apply_state` | `migration_serialize` | `key_request` | `workflow_run` |
-    /// `compensate_run`.
-    pub kind: String,
-    pub items: Option<Vec<JsWorkItem>>,
-    pub snapshot: Option<JsRestoreBody>,
-    pub changes: Option<Vec<JsRestoreBody>>,
-    pub state_json: Option<Buffer>,
-    pub key_request: Option<JsKeyRequest>,
-    pub args: Option<Buffer>,
-    pub outputs: Option<Vec<Buffer>>,
-}
-
-#[napi(object)]
-pub struct JsOutput {
-    /// `"edge"` or `"plugin"`.
-    pub target: String,
-    pub channel: Option<u32>,
-    pub consumer: Option<u32>,
-    pub plugin_channel: Option<String>,
-    pub key: Option<String>,
-    pub event_time: Option<BigInt>,
-    pub metadata: Option<Vec<JsMeta>>,
-    pub payload: Buffer,
-}
-
-#[napi(object)]
-pub struct JsTimerOp {
-    /// `"event_time"` or `"processing_time"`.
-    pub kind: String,
-    pub scheduled_at: BigInt,
-    pub register: bool,
-}
-
-#[napi(object)]
-pub struct JsDlqEntry {
-    pub channel: String,
-    pub error: String,
-    pub attempts: u32,
-    pub payload: Option<Buffer>,
-}
-
-#[napi(object)]
-pub struct JsItemEffect {
-    /// `"ok"` | `"retryable"` | `"non_retryable"`.
-    pub verdict: String,
-    pub message: Option<String>,
-    pub changes: Option<Vec<Buffer>>,
-    pub outputs: Option<Vec<JsOutput>>,
-    pub consumed_offset: Option<BigInt>,
-    pub event_time: BigInt,
-    pub timers: Option<Vec<JsTimerOp>>,
-    pub checkpoint: Option<bool>,
-    pub dlq: Option<JsDlqEntry>,
-}
-
-#[napi(object)]
-pub struct JsPrepareAnswer {
-    pub keys: Option<Vec<String>>,
-    pub event_time: Option<BigInt>,
-    /// Present when this payload's prepare failed; the input's retry ladder
-    /// takes it from here.
-    pub error: Option<String>,
-    pub non_retryable: Option<bool>,
-}
-
-#[napi(object)]
-pub struct JsActivationResult {
-    pub token: BigInt,
-    /// `work` | `restored` | `snapshot` | `state_json` | `state_applied` |
-    /// `migration_state` | `prepared` | `failed` | `workflow_done`.
-    pub outcome: String,
-    pub effects: Option<Vec<JsItemEffect>>,
-    pub state: Option<Buffer>,
-    pub json: Option<Buffer>,
-    pub prepared: Option<Vec<JsPrepareAnswer>>,
-    pub error: Option<String>,
-    pub non_retryable: Option<bool>,
-    pub workflow_completed: Option<bool>,
-    pub workflow_result: Option<Buffer>,
-}
-
-fn big(v: u64) -> BigInt {
-    BigInt::from(v)
-}
-
+/// A `BigInt` argument as the `u64` the ABI takes. Also what the shape's
+/// numeric reader answers with, so an out-of-range integer is refused in one
+/// place whether it arrives as an argument or inside an answer.
 fn from_big(what: &str, v: &BigInt) -> Result<u64> {
     let (_, value, lossless) = v.get_u64();
     if !lossless {
@@ -222,301 +116,162 @@ fn from_big(what: &str, v: &BigInt) -> Result<u64> {
     Ok(value)
 }
 
-fn meta_out(pairs: Vec<(String, String)>) -> Vec<JsMeta> {
-    pairs
-        .into_iter()
-        .map(|(key, value)| JsMeta { key, value })
-        .collect()
-}
+/// The JavaScript half of [`shape::Sink`] and [`shape::Source`]: a handle over
+/// the environment of the loop the value belongs to, not state.
+#[derive(Clone, Copy)]
+pub struct Values<'env>(Env, PhantomData<&'env ()>);
 
-fn meta_in(pairs: Option<Vec<JsMeta>>) -> Vec<(String, String)> {
-    pairs
-        .unwrap_or_default()
-        .into_iter()
-        .map(|m| (m.key, m.value))
-        .collect()
-}
+impl<'env> Values<'env> {
+    pub fn of(env: Env) -> Self {
+        Self(env, PhantomData)
+    }
 
-fn timer_kind_out(kind: schema::TimerKind) -> String {
-    kind.as_str().to_string()
-}
+    /// One JavaScript value, type-erased so every `Sink` method answers the
+    /// same type.
+    fn erased<T: ToNapiValue>(&self, value: T) -> Result<Unknown<'env>> {
+        let raw = unsafe { T::to_napi_value(self.0.raw(), value)? };
+        unsafe { Unknown::from_napi_value(self.0.raw(), raw) }
+    }
 
-fn timer_kind_in(kind: &str) -> Result<schema::TimerKind> {
-    match kind {
-        "event_time" => Ok(schema::TimerKind::EventTime),
-        "processing_time" => Ok(schema::TimerKind::ProcessingTime),
-        other => Err(Error::new(
+    fn read<T: FromNapiValue>(&self, value: &Unknown<'env>) -> Result<T> {
+        unsafe { T::from_napi_value(self.0.raw(), value.raw()) }
+    }
+
+    fn refused<T>(what: &str, expected: &str) -> Result<T> {
+        Err(Error::new(
             Status::InvalidArg,
-            format!("unknown timer kind {other:?}"),
-        )),
+            format!("{what} must be {expected}"),
+        ))
     }
 }
 
-/// Decode a polled activation into the shape JavaScript dispatches on. The
-/// payload `Vec`s move into `Buffer`s, so the user payload reaches the handler
-/// with no copy beyond the one postcard already made.
-pub fn activation_to_js(act: schema::Activation) -> JsActivation {
-    let mut out = JsActivation {
-        token: big(act.token),
-        operative: act.target.operative,
-        procedure: act.target.procedure,
-        entity_key: act.target.entity_key,
-        change_seq: big(act.change_seq),
-        factory: act.factory,
-        kind: String::new(),
-        items: None,
-        snapshot: None,
-        changes: None,
-        state_json: None,
-        key_request: None,
-        args: None,
-        outputs: None,
-    };
-    match act.kind {
-        schema::ActivationKind::Work(items) => {
-            out.kind = "work".into();
-            out.items = Some(
-                items
-                    .into_iter()
-                    .map(|item| match item {
-                        schema::WorkItem::Input(i) => JsWorkItem {
-                            kind: "input".into(),
-                            channel: Some(i.channel),
-                            payload: Some(i.payload.into()),
-                            metadata: Some(meta_out(i.metadata)),
-                            consumed_offset: i.consumed_offset.map(big),
-                            replay: Some(i.replay),
-                            now: Some(big(i.now)),
-                            timer_kind: None,
-                            scheduled_at: None,
-                        },
-                        schema::WorkItem::Timer(t) => JsWorkItem {
-                            kind: "timer".into(),
-                            channel: None,
-                            payload: None,
-                            metadata: None,
-                            consumed_offset: None,
-                            replay: None,
-                            now: Some(big(t.scheduled_at)),
-                            timer_kind: Some(timer_kind_out(t.kind)),
-                            scheduled_at: Some(big(t.scheduled_at)),
-                        },
-                    })
-                    .collect(),
-            );
-        }
-        schema::ActivationKind::RestoreFold(fold) => {
-            out.kind = "restore_fold".into();
-            out.snapshot = fold.snapshot.map(|b| JsRestoreBody {
-                bytes: b.bytes.into(),
-                from_version: b.from_version,
-            });
-            out.changes = Some(
-                fold.changes
-                    .into_iter()
-                    .map(|b| JsRestoreBody {
-                        bytes: b.bytes.into(),
-                        from_version: b.from_version,
-                    })
-                    .collect(),
-            );
-        }
-        schema::ActivationKind::SnapshotRequest => out.kind = "snapshot_request".into(),
-        schema::ActivationKind::LiveStateRead => out.kind = "live_state_read".into(),
-        schema::ActivationKind::ApplyState { state_json } => {
-            out.kind = "apply_state".into();
-            out.state_json = Some(state_json.into());
-        }
-        schema::ActivationKind::MigrationSerialize => out.kind = "migration_serialize".into(),
-        schema::ActivationKind::KeyRequest(req) => {
-            out.kind = "key_request".into();
-            out.key_request = Some(JsKeyRequest {
-                channel: req.channel,
-                payloads: req.payloads.into_iter().map(Buffer::from).collect(),
-                want_keys: req.want_keys,
-                want_event_time: req.want_event_time,
-            });
-        }
-        schema::ActivationKind::WorkflowRun { args } => {
-            out.kind = "workflow_run".into();
-            out.args = Some(args.into());
-        }
-        schema::ActivationKind::CompensateRun { outputs } => {
-            out.kind = "compensate_run".into();
-            out.outputs = Some(outputs.into_iter().map(Buffer::from).collect());
+impl<'env> shape::Sink for Values<'env> {
+    type Value = Unknown<'env>;
+    type Map = Object<'env>;
+    type List = Vec<Unknown<'env>>;
+    type Error = Error;
+
+    const CAMEL: bool = true;
+
+    fn map(&self) -> Result<Object<'env>> {
+        Object::new(&self.0)
+    }
+
+    fn set(&self, map: &mut Object<'env>, key: shape::Key, value: Unknown<'env>) -> Result<()> {
+        map.set(key.spell(<Self as shape::Sink>::CAMEL), value)
+    }
+
+    fn finish_map(&self, map: Object<'env>) -> Result<Unknown<'env>> {
+        unsafe { Unknown::from_napi_value(self.0.raw(), map.raw()) }
+    }
+
+    fn list(&self, capacity: usize) -> Result<Vec<Unknown<'env>>> {
+        Ok(Vec::with_capacity(capacity))
+    }
+
+    fn push(&self, list: &mut Vec<Unknown<'env>>, value: Unknown<'env>) -> Result<()> {
+        list.push(value);
+        Ok(())
+    }
+
+    fn finish_list(&self, list: Vec<Unknown<'env>>) -> Result<Unknown<'env>> {
+        self.erased(Array::from_vec(&self.0, list)?)
+    }
+
+    /// The payload `Vec` moves into the `Buffer`, so it reaches the handler
+    /// with no copy beyond the one postcard already made.
+    fn bytes(&self, v: Vec<u8>) -> Result<Unknown<'env>> {
+        self.erased(Buffer::from(v))
+    }
+
+    fn text(&self, v: String) -> Result<Unknown<'env>> {
+        self.erased(v)
+    }
+
+    fn word(&self, v: &'static str) -> Result<Unknown<'env>> {
+        self.erased(v)
+    }
+
+    fn pair(&self, key: String, value: String) -> Result<Unknown<'env>> {
+        let mut out = Object::new(&self.0)?;
+        out.set(shape::KEY.camel, key)?;
+        out.set(shape::VALUE.camel, value)?;
+        self.finish_map(out)
+    }
+
+    fn u64(&self, v: u64) -> Result<Unknown<'env>> {
+        self.erased(BigInt::from(v))
+    }
+
+    fn u32(&self, v: u32) -> Result<Unknown<'env>> {
+        self.erased(v)
+    }
+
+    fn bool(&self, v: bool) -> Result<Unknown<'env>> {
+        self.erased(v)
+    }
+}
+
+impl<'env> shape::Source for Values<'env> {
+    type Value = Unknown<'env>;
+    type Map = Object<'env>;
+    type Error = Error;
+
+    const CAMEL: bool = true;
+
+    fn get(&self, map: &Object<'env>, key: shape::Key) -> Result<Option<Unknown<'env>>> {
+        named(map, key.spell(<Self as shape::Source>::CAMEL))
+    }
+
+    fn map(&self, v: &Unknown<'env>, what: &str) -> Result<Object<'env>> {
+        self.read(v).or_else(|_| Self::refused(what, "an object"))
+    }
+
+    fn text(&self, v: &Unknown<'env>) -> Result<String> {
+        self.read(v)
+    }
+
+    fn bytes(&self, v: &Unknown<'env>, what: &str) -> Result<Vec<u8>> {
+        match self.read::<Buffer>(v) {
+            Ok(buffer) => Ok(buffer.to_vec()),
+            Err(_) => Self::refused(what, "a Buffer"),
         }
     }
-    out
-}
 
-fn output_in(o: JsOutput) -> Result<schema::Output> {
-    let target = match o.target.as_str() {
-        "edge" => schema::OutputTarget::Edge {
-            channel: o.channel.ok_or_else(|| {
-                Error::new(Status::InvalidArg, "edge output is missing `channel`")
-            })?,
-            consumer: o.consumer.ok_or_else(|| {
-                Error::new(Status::InvalidArg, "edge output is missing `consumer`")
-            })?,
-        },
-        "plugin" => schema::OutputTarget::Plugin {
-            channel: o.plugin_channel.ok_or_else(|| {
-                Error::new(
-                    Status::InvalidArg,
-                    "plugin output is missing `pluginChannel`",
-                )
-            })?,
-        },
-        other => {
-            return Err(Error::new(
-                Status::InvalidArg,
-                format!("unknown output target {other:?}"),
-            ))
-        }
-    };
-    Ok(schema::Output {
-        target,
-        key: o.key,
-        event_time: o
-            .event_time
-            .as_ref()
-            .map(|v| from_big("output eventTime", v))
-            .transpose()?,
-        metadata: meta_in(o.metadata),
-        payload: o.payload.to_vec(),
-    })
-}
-
-/// One prepare answer per payload, in order. A per-payload refusal is a
-/// `WorkError` inside the answer — the input's retry ladder takes it from
-/// there — while a malformed answer is a napi error thrown at the caller, so
-/// the two failure kinds cannot be collected together.
-fn prepared_in(
-    answers: Vec<JsPrepareAnswer>,
-) -> Result<Vec<std::result::Result<schema::PrepareAnswer, schema::WorkError>>> {
-    let mut out = Vec::with_capacity(answers.len());
-    for a in answers {
-        out.push(match a.error {
-            Some(message) => Err(schema::WorkError {
-                message,
-                non_retryable: a.non_retryable.unwrap_or(false),
-            }),
-            None => Ok(schema::PrepareAnswer {
-                keys: a.keys.unwrap_or_default(),
-                event_time: a
-                    .event_time
-                    .as_ref()
-                    .map(|v| from_big("prepare eventTime", v))
-                    .transpose()?,
-            }),
-        });
+    fn u64(&self, v: &Unknown<'env>, what: &str) -> Result<u64> {
+        from_big(what, &self.read::<BigInt>(v)?)
     }
-    Ok(out)
-}
 
-fn effect_in(e: JsItemEffect) -> Result<schema::ItemEffect> {
-    let verdict = match e.verdict.as_str() {
-        "ok" => schema::Verdict::Ok,
-        "retryable" => schema::Verdict::RetryableError {
-            message: e.message.clone().unwrap_or_default(),
-        },
-        "non_retryable" => schema::Verdict::NonRetryableError {
-            message: e.message.clone().unwrap_or_default(),
-        },
-        other => {
-            return Err(Error::new(
-                Status::InvalidArg,
-                format!("unknown verdict {other:?}"),
-            ))
-        }
-    };
-    Ok(schema::ItemEffect {
-        verdict,
-        changes: e
-            .changes
-            .unwrap_or_default()
-            .into_iter()
-            .map(|b| b.to_vec())
-            .collect(),
-        outputs: e
-            .outputs
-            .unwrap_or_default()
-            .into_iter()
-            .map(output_in)
-            .collect::<Result<_>>()?,
-        consumed_offset: e
-            .consumed_offset
-            .as_ref()
-            .map(|v| from_big("consumedOffset", v))
-            .transpose()?,
-        event_time: from_big("eventTime", &e.event_time)?,
-        timers: e
-            .timers
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| {
-                Ok(schema::TimerOp {
-                    kind: timer_kind_in(&t.kind)?,
-                    scheduled_at: from_big("timer scheduledAt", &t.scheduled_at)?,
-                    register: t.register,
-                })
-            })
-            .collect::<Result<_>>()?,
-        checkpoint: e.checkpoint.unwrap_or(false),
-        dlq: e.dlq.map(|d| schema::DlqEntry {
-            channel: d.channel,
-            error: d.error,
-            attempts: d.attempts,
-            payload: d.payload.map(|p| p.to_vec()),
-        }),
-    })
-}
+    fn u32(&self, v: &Unknown<'env>) -> Result<u32> {
+        self.read(v)
+    }
 
-/// Build the postcard `ActivationResult` from the shape JavaScript answers
-/// with. Encoding lives here for the same reason decoding does: one
-/// implementation of the wire contract, in the crate that owns it.
-pub fn result_from_js(r: JsActivationResult) -> Result<schema::ActivationResult> {
-    let outcome = match r.outcome.as_str() {
-        "work" => schema::ActivationOutcome::Work(
-            r.effects
-                .unwrap_or_default()
-                .into_iter()
-                .map(effect_in)
-                .collect::<Result<_>>()?,
-        ),
-        "restored" => schema::ActivationOutcome::Restored,
-        "snapshot" => schema::ActivationOutcome::Snapshot {
-            state: r.state.map(|b| b.to_vec()).unwrap_or_default(),
-        },
-        "state_json" => schema::ActivationOutcome::StateJson {
-            json: r.json.map(|b| b.to_vec()).unwrap_or_default(),
-        },
-        "state_applied" => schema::ActivationOutcome::StateApplied,
-        "migration_state" => schema::ActivationOutcome::MigrationState {
-            json: r.json.map(|b| b.to_vec()).unwrap_or_default(),
-        },
-        "prepared" => {
-            schema::ActivationOutcome::Prepared(prepared_in(r.prepared.unwrap_or_default())?)
+    fn bool(&self, v: &Unknown<'env>) -> Result<bool> {
+        self.read(v)
+    }
+
+    fn items(&self, v: &Unknown<'env>) -> Result<Vec<Unknown<'env>>> {
+        let array = self.read::<Array<'env>>(v)?;
+        let mut out = Vec::with_capacity(array.len() as usize);
+        for index in 0..array.len() {
+            match array.get::<Unknown<'env>>(index)? {
+                Some(value) => out.push(value),
+                None => return Self::refused("a list entry", "present"),
+            }
         }
-        "failed" => schema::ActivationOutcome::Failed(schema::WorkError {
-            message: r.error.unwrap_or_else(|| "activation failed".into()),
-            non_retryable: r.non_retryable.unwrap_or(false),
-        }),
-        "workflow_done" => schema::ActivationOutcome::WorkflowDone {
-            completed: r.workflow_completed.unwrap_or(false),
-            result: r.workflow_result.map(|b| b.to_vec()).unwrap_or_default(),
-        },
-        other => {
-            return Err(Error::new(
-                Status::InvalidArg,
-                format!("unknown activation outcome {other:?}"),
-            ))
+        Ok(out)
+    }
+
+    fn pair(&self, v: &Unknown<'env>) -> Result<(String, String)> {
+        let entry = self.map(v, "a metadata entry")?;
+        match (
+            named(&entry, shape::KEY.camel)?,
+            named(&entry, shape::VALUE.camel)?,
+        ) {
+            (Some(key), Some(value)) => Ok((self.read(&key)?, self.read(&value)?)),
+            _ => Self::refused("a metadata entry", "a { key, value } pair"),
         }
-    };
-    Ok(schema::ActivationResult {
-        token: from_big("token", &r.token)?,
-        outcome,
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -575,9 +330,9 @@ pub fn start<'a>(env: &'a Env, namespace: String) -> Result<Object<'a>> {
 /// push parks until the consumer's mailbox drains, and the consumer drains
 /// only when its handler runs on an event loop.
 #[napi(ts_return_type = "Promise<void>")]
-pub fn complete<'a>(env: &'a Env, result: JsActivationResult) -> Result<Object<'a>> {
-    let token = from_big("token", &result.token)?;
-    let result = result_from_js(result)?;
+pub fn complete<'a>(env: &'a Env, result: Object<'a>) -> Result<Object<'a>> {
+    let result = shape::result(&Values::of(*env), &result)?;
+    let token = result.token;
     off_loop(env, context()?, move |ctx| {
         let verdict = veneer::complete(ctx, &result);
         crate::napi_host::release_token(token);
@@ -655,7 +410,7 @@ pub fn spawn_workflow<'a>(
 /// The core's monotonic clock in nanoseconds.
 #[napi]
 pub fn monotonic_nanos() -> BigInt {
-    big(crate::flz_core_monotonic_nanos())
+    BigInt::from(crate::flz_core_monotonic_nanos())
 }
 
 /// When the named entry channel last received a frame, on the same clock;
@@ -663,7 +418,7 @@ pub fn monotonic_nanos() -> BigInt {
 #[napi]
 pub fn entry_last_delivery_nanos(channel: String) -> Result<BigInt> {
     let channel = veneer::c_string("channel", &channel)?;
-    Ok(big(veneer::entry_last_delivery_nanos(&channel)))
+    Ok(BigInt::from(veneer::entry_last_delivery_nanos(&channel)))
 }
 
 /// The context's last recorded error, or `null`.

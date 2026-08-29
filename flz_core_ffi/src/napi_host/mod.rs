@@ -4,8 +4,8 @@
 //!
 //! * **Fetchers** loop `poll → decode → hand off → poll` on this module's own
 //!   threads, never libuv's shared pool, so one is always free to enter `poll`.
-//! * **The blocking pool** runs every ABI call that can park, above all
-//!   `complete`; it grows, because a fixed pool whose every thread parks
+//! * **The blocking pool** ([`pool`]) runs every ABI call that can park, above
+//!   all `complete`; it grows, because a fixed pool whose every thread parks
 //!   pushing to one consumer has no thread left to run the completion that
 //!   would drain it.
 //! * **The supervisor** parks in the core's starvation wait and answers an
@@ -14,17 +14,23 @@
 //! Dispatch targets are threadsafe-function handles, one per registered event
 //! loop; `pick_loop` keeps an entity on the loop that holds its state.
 
-use std::collections::VecDeque;
+mod pool;
+
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use flz_core::schema;
 use napi::bindgen_prelude::*;
-use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::threadsafe_function::{
+    ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
+};
 use napi_derive::napi;
 
-use crate::napi_glue::{activation_to_js, context, JsActivation};
+use crate::napi_glue::{context, Values};
+use crate::veneer::shape;
 use crate::veneer::{self, CtxPtr, Polled, Refusal};
+pub(crate) use pool::{blocking_pool, env_usize};
 use crate::{FLZ_POLL_SHUTTING_DOWN, FLZ_STARVATION_OBSERVED};
 
 /// Poll timeout per turn. Bounds how fast a shutdown request is observed —
@@ -40,9 +46,6 @@ const SUPERVISOR_WAIT_MS: u64 = 1_000;
 /// timeout, so this only has to be small next to that.
 const STDIN_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// How long a pool thread above the base stays idle before retiring.
-const POOL_IDLE_RETIRE: Duration = Duration::from_secs(30);
-
 /// How long `stopHost` waits for the fetchers and the pool to drain.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -52,185 +55,14 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_FETCHERS: u32 = 2;
 
 // ---------------------------------------------------------------------------
-// The blocking pool
-// ---------------------------------------------------------------------------
-
-type Job = Box<dyn FnOnce() + Send + 'static>;
-
-struct PoolState {
-    queue: VecDeque<Job>,
-    /// Threads currently waiting on the condvar for a job.
-    idle: usize,
-    live: usize,
-    peak: usize,
-    closing: bool,
-}
-
-/// A growable pool of native threads for every ABI call that can park.
-///
-/// Growth is driven by this host's own observation — "a job is queued and no
-/// thread is waiting to take it" — and not by the core's starvation wait,
-/// because the core cannot see this queue.
-///
-/// The pool must be able to grow or the event-loop rule only moves the
-/// deadlock one level out: with a fixed pool of N threads all parked pushing
-/// to consumer C, the completion that would drain C has no thread to run on,
-/// and C is never drained.
-pub(crate) struct BlockingPool {
-    state: Mutex<PoolState>,
-    ready: Condvar,
-    base: usize,
-    ceiling: usize,
-    idle_retire: Duration,
-}
-
-impl BlockingPool {
-    fn new(base: usize, ceiling: usize) -> Arc<Self> {
-        Self::with_retire(base, ceiling, POOL_IDLE_RETIRE)
-    }
-
-    /// The retirement streak is a parameter only so a test can watch a grown
-    /// thread retire without waiting out the production streak.
-    fn with_retire(base: usize, ceiling: usize, idle_retire: Duration) -> Arc<Self> {
-        let base = base.max(1);
-        let pool = Arc::new(Self {
-            state: Mutex::new(PoolState {
-                queue: VecDeque::new(),
-                idle: 0,
-                live: 0,
-                peak: 0,
-                closing: false,
-            }),
-            ready: Condvar::new(),
-            base,
-            ceiling: ceiling.max(base),
-            idle_retire,
-        });
-        for _ in 0..base {
-            pool.spawn_worker();
-        }
-        pool
-    }
-
-    /// Start one thread and count it. `live` is incremented before the spawn
-    /// and rolled back on failure, so a thread that never ran cannot leave the
-    /// pool believing it has capacity it does not.
-    fn spawn_worker(self: &Arc<Self>) {
-        {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            state.live += 1;
-            state.peak = state.peak.max(state.live);
-        }
-        let me = Arc::clone(self);
-        let started = std::thread::Builder::new()
-            .name("flz-blocking".into())
-            .spawn(move || me.worker());
-        if started.is_err() {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            state.live -= 1;
-        }
-    }
-
-    pub(crate) fn submit(self: &Arc<Self>, job: impl FnOnce() + Send + 'static) {
-        let grow = {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            state.queue.push_back(Box::new(job));
-            state.idle < state.queue.len() && state.live < self.ceiling
-        };
-        if grow {
-            self.spawn_worker();
-        }
-        self.ready.notify_one();
-    }
-
-    fn worker(self: Arc<Self>) {
-        loop {
-            let job = {
-                let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                loop {
-                    if let Some(job) = state.queue.pop_front() {
-                        break job;
-                    }
-                    if state.closing {
-                        state.live -= 1;
-                        return;
-                    }
-                    state.idle += 1;
-                    let (next, wait) = self
-                        .ready
-                        .wait_timeout(state, self.idle_retire)
-                        .unwrap_or_else(|p| p.into_inner());
-                    state = next;
-                    state.idle -= 1;
-                    if wait.timed_out() && state.queue.is_empty() && state.live > self.base {
-                        state.live -= 1;
-                        return;
-                    }
-                }
-            };
-            job();
-        }
-    }
-
-    fn close(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        state.closing = true;
-        self.ready.notify_all();
-    }
-
-    fn drain(&self, deadline: Duration) {
-        let step = Duration::from_millis(10);
-        let mut waited = Duration::ZERO;
-        while waited < deadline {
-            {
-                let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                if state.queue.is_empty() && state.idle == state.live {
-                    return;
-                }
-            }
-            std::thread::sleep(step);
-            waited += step;
-        }
-    }
-
-    fn snapshot(&self) -> (u32, u32, u32, u32) {
-        let state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        (
-            state.live as u32,
-            (state.live - state.idle.min(state.live)) as u32,
-            state.peak as u32,
-            state.queue.len() as u32,
-        )
-    }
-}
-
-static POOL: OnceLock<Arc<BlockingPool>> = OnceLock::new();
-
-fn env_usize(key: &str) -> Option<usize> {
-    std::env::var(key).ok()?.trim().parse().ok()
-}
-
-/// The process's blocking pool, sized from the existing worker-pool
-/// configuration rather than a knob minted for Node:
-/// `FLEZHA_WORKER_POOL_SIZE` is the base and `FLEZHA_WORKER_POOL_MAX` the
-/// ceiling, defaulting to ten times the base and never below it.
-pub(crate) fn blocking_pool() -> &'static Arc<BlockingPool> {
-    POOL.get_or_init(|| {
-        let base = env_usize("FLEZHA_WORKER_POOL_SIZE")
-            .filter(|n| *n > 0)
-            .unwrap_or(DEFAULT_FETCHERS as usize);
-        let ceiling = env_usize("FLEZHA_WORKER_POOL_MAX")
-            .filter(|n| *n > 0)
-            .unwrap_or(base * 10);
-        BlockingPool::new(base, ceiling)
-    })
-}
-
-// ---------------------------------------------------------------------------
 // Dispatch targets
 // ---------------------------------------------------------------------------
 
-type DispatchFn = ThreadsafeFunction<JsActivation, (), JsActivation, Status, false>;
+/// The activation crosses to the loop thread as the decoded `schema` value
+/// and becomes JavaScript objects inside the callback, which runs there: a
+/// fetcher thread has no `Env`, and the objects had to be built on the loop
+/// in any case.
+type DispatchFn = ThreadsafeFunction<schema::Activation, (), Unknown<'static>, Status, false>;
 
 struct DispatchTarget {
     id: u32,
@@ -295,13 +127,15 @@ fn targets() -> std::sync::MutexGuard<'static, Vec<DispatchTarget>> {
 /// per worker. That is the whole difference between the two, which is why
 /// enabling workers is a flag rather than a different dispatch path.
 #[napi]
-pub fn register_dispatch(callback: Function<JsActivation, ()>) -> Result<u32> {
+pub fn register_dispatch(callback: Function<Unknown<'static>, ()>) -> Result<u32> {
     let call: DispatchFn = callback
         .build_threadsafe_function()
         // No cap: a bounded queue would make the hand-off a place a fetcher
         // can block, and a fetcher that blocks is a fetcher not in `poll`.
         .max_queue_size::<0>()
-        .build()?;
+        .build_callback(|ctx: ThreadsafeCallContext<schema::Activation>| {
+            shape::activation(&Values::of(ctx.env), ctx.value)
+        })?;
     let id = NEXT_TARGET_ID.fetch_add(1, Ordering::Relaxed);
     targets().push(DispatchTarget { id, call });
     Ok(id)
@@ -367,17 +201,18 @@ fn abandon_quietly(token: u64) {
 /// one that round-robins. A missing `entity_key` does not mean "no entity": a
 /// single-entity procedure's entity is the one with no key of its own, and it
 /// holds state exactly like a keyed one.
-fn pick_loop(activation: &JsActivation, loops: usize) -> usize {
-    if activation.kind == "key_request" {
+fn pick_loop(activation: &schema::Activation, loops: usize) -> usize {
+    if matches!(activation.kind, schema::ActivationKind::KeyRequest(_)) {
         return ROUND_ROBIN.fetch_add(1, Ordering::Relaxed) % loops;
     }
+    let target = &activation.target;
     let mut hash: u32 = 0x811c_9dc5;
-    for byte in activation
+    for byte in target
         .operative
         .as_bytes()
         .iter()
-        .chain(activation.procedure.to_be_bytes().iter())
-        .chain(activation.entity_key.as_deref().unwrap_or("").as_bytes())
+        .chain(target.procedure.to_be_bytes().iter())
+        .chain(target.entity_key.as_deref().unwrap_or("").as_bytes())
     {
         hash = (hash ^ u32::from(*byte)).wrapping_mul(0x0100_0193);
     }
@@ -389,7 +224,7 @@ fn pick_loop(activation: &JsActivation, loops: usize) -> usize {
 /// Returns whether a loop took it. Anything else abandons: an activation the
 /// host cannot deliver would otherwise retire its entity for the life of the
 /// process, which is the one failure per-entity exclusivity makes permanent.
-fn hand_off(token: u64, activation: JsActivation) -> bool {
+fn hand_off(token: u64, activation: schema::Activation) -> bool {
     let live = targets();
     if live.is_empty() {
         drop(live);
@@ -426,7 +261,7 @@ fn fetch_turn(ctx: CtxPtr) -> bool {
         Ok(Polled::ShuttingDown) => false,
         Ok(Polled::Activation(act)) => {
             let token = act.token;
-            hand_off(token, activation_to_js(act));
+            hand_off(token, act);
             true
         }
         Err(Refusal::Shape(message)) => {
@@ -792,143 +627,28 @@ pub(crate) fn set_log_callback(callback: Option<Function<JsLogLine, ()>>) -> Res
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
-
     use super::*;
 
-    /// Wait for a condition on the pool, or fail. Polling rather than a
-    /// rendezvous because what is being observed is the pool's own
-    /// bookkeeping, which no test-side channel can be handed.
-    fn until(pool: &Arc<BlockingPool>, what: &str, ready: impl Fn((u32, u32, u32, u32)) -> bool) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            if ready(pool.snapshot()) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("timed out waiting for {what}: {:?}", pool.snapshot());
-    }
-
-    /// The deadlock this closes: with a fixed pool of N threads all parked
-    /// pushing to one consumer, the completion that would drain that consumer
-    /// has no thread to run on. Growth is what makes the queued one runnable.
-    #[test]
-    fn a_blocked_pool_grows_so_a_queued_completion_still_runs() {
-        let pool = BlockingPool::with_retire(2, 8, Duration::from_millis(50));
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let release_rx = Arc::new(Mutex::new(release_rx));
-        let (ran_tx, ran_rx) = mpsc::channel::<u32>();
-
-        // Occupy every base thread with a job that parks, exactly as a push
-        // into a full mailbox parks.
-        for _ in 0..2 {
-            let rx = Arc::clone(&release_rx);
-            pool.submit(move || {
-                let _ = rx.lock().unwrap().recv();
-            });
-        }
-        until(&pool, "the base threads to be busy", |(_, busy, _, _)| {
-            busy == 2
-        });
-
-        // A further completion is queued with no free thread. A fixed pool
-        // would leave it queued until one of the parked pushes returned —
-        // which is what the parked pushes are waiting for.
-        let ran = ran_tx.clone();
-        pool.submit(move || {
-            let _ = ran.send(7);
-        });
-        assert_eq!(
-            ran_rx.recv_timeout(Duration::from_secs(5)),
-            Ok(7),
-            "the queued completion never ran, so the pool did not grow"
-        );
-        assert!(pool.snapshot().0 > 2, "the pool grew past its base");
-
-        let _ = release_tx.send(());
-        let _ = release_tx.send(());
-        pool.drain(Duration::from_secs(5));
-        pool.close();
-    }
-
-    /// And it comes back: a grown thread is not a permanent cost.
-    #[test]
-    fn threads_above_the_base_retire_after_an_idle_streak() {
-        let pool = BlockingPool::with_retire(1, 8, Duration::from_millis(50));
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let release_rx = Arc::new(Mutex::new(release_rx));
-        for _ in 0..4 {
-            let rx = Arc::clone(&release_rx);
-            pool.submit(move || {
-                let _ = rx.lock().unwrap().recv();
-            });
-        }
-        until(&pool, "the pool to grow", |(size, _, _, _)| size >= 4);
-
-        for _ in 0..4 {
-            let _ = release_tx.send(());
-        }
-        until(&pool, "the pool to return to base", |(size, _, _, _)| {
-            size == 1
-        });
-        pool.close();
-    }
-
-    /// The ceiling is a ceiling. A sustained wedge must not spawn threads
-    /// without bound; the supervisor's latched warning is the report.
-    #[test]
-    fn growth_stops_at_the_ceiling() {
-        let pool = BlockingPool::with_retire(1, 3, Duration::from_millis(50));
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let release_rx = Arc::new(Mutex::new(release_rx));
-        for _ in 0..10 {
-            let rx = Arc::clone(&release_rx);
-            pool.submit(move || {
-                let _ = rx.lock().unwrap().recv();
-            });
-        }
-        until(&pool, "the pool to reach its ceiling", |(size, _, _, _)| {
-            size == 3
-        });
-        // Watched, not waited out: the ceiling holds for as long as it is observed.
-        let watched = std::time::Instant::now();
-        while watched.elapsed() < Duration::from_millis(100) {
-            assert_eq!(pool.snapshot().0, 3, "the pool grew past its ceiling");
-            std::thread::yield_now();
-        }
-        for _ in 0..10 {
-            let _ = release_tx.send(());
-        }
-        pool.drain(Duration::from_secs(5));
-        pool.close();
-    }
-
-    fn activation(operative: &str, procedure: u32, key: Option<&str>) -> JsActivation {
-        activation_of("work", operative, procedure, key)
+    fn activation(operative: &str, procedure: u32, key: Option<&str>) -> schema::Activation {
+        activation_of(schema::ActivationKind::Work(vec![]), operative, procedure, key)
     }
 
     fn activation_of(
-        kind: &str,
+        kind: schema::ActivationKind,
         operative: &str,
         procedure: u32,
         key: Option<&str>,
-    ) -> JsActivation {
-        JsActivation {
-            token: napi::bindgen_prelude::BigInt::from(1u64),
-            operative: operative.to_string(),
-            procedure,
-            entity_key: key.map(str::to_string),
-            change_seq: napi::bindgen_prelude::BigInt::from(0u64),
+    ) -> schema::Activation {
+        schema::Activation {
+            token: 1,
+            target: schema::EntityRef {
+                operative: operative.to_string(),
+                procedure,
+                entity_key: key.map(str::to_string),
+            },
+            kind,
+            change_seq: 0,
             factory: "f".to_string(),
-            kind: kind.to_string(),
-            items: None,
-            snapshot: None,
-            changes: None,
-            state_json: None,
-            key_request: None,
-            args: None,
-            outputs: None,
         }
     }
 
@@ -960,7 +680,19 @@ mod tests {
     /// and round-robins: there is no state anywhere to be near.
     #[test]
     fn the_prepare_crossing_round_robins() {
-        let crossing = || activation_of("key_request", "op", 0, None);
+        let crossing = || {
+            activation_of(
+                schema::ActivationKind::KeyRequest(schema::KeyRequest {
+                    channel: 0,
+                    payloads: vec![],
+                    want_keys: true,
+                    want_event_time: false,
+                }),
+                "op",
+                0,
+                None,
+            )
+        };
         let start = pick_loop(&crossing(), 3);
         assert_eq!(pick_loop(&crossing(), 3), (start + 1) % 3);
         assert_eq!(pick_loop(&crossing(), 3), (start + 2) % 3);

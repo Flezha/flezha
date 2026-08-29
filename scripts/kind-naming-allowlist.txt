@@ -125,3 +125,10 @@ sdk/ruby/lib/flezha/executor.rb:Bounded so a fetcher
 *:bounded drain
 *:drain had to be BOUNDED
 sdk/ruby/lib/flezha/executor.rb:Bounded for the reason
+
+# --- an identifier quoted verbatim: the JavaScript fixture builder whose rename
+# --- collided with an existing declaration (recorded on the refactor board).
+# --- Matches the bare identifier, not the whole phrase: rules erase text in file
+# --- order, so the [Bb]ounded[Mm]ailbox rule above has already consumed the other
+# --- half of that line by the time this one is applied.
+docs/refactor/STATE.md:`const bounded`

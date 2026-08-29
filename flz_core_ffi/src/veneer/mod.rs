@@ -9,6 +9,8 @@
 //! over the borrowed slice and freed before the call returns; no native
 //! buffer reaches a host heap.
 
+pub mod shape;
+
 use std::ffi::{c_char, CStr, CString};
 use std::fmt;
 
