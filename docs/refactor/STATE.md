@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 23:23 (supervisor session 2 — area 3 segment F running, closes the area)
+**Last updated**: 2026-08-29 23:56 (supervisor session 2 — segment F heartbeat 2)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -78,6 +78,14 @@ under `$SCRATCH/area3/` so a regression bisects instead of re-running.
 Area 3 segments A–E are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`,
 `623ba124`).
 
+- last seen 23:56: **the area's one measurement pass has started** — arm B5 is built
+  and `logs/row1-Ap-n1.log` is the first paired round against A′. Ticks 58; batch 11's
+  boxes tick at its end, and the dev notes (11.8) follow the A/B. No stall.
+- previous 23:40: ticks 58, 44 files touched, −27 net. The edits are across the new
+  test binaries (`output_identity`, `late_input_correction`, `entry_edge_backpressure`,
+  `topology_keyed_and_clock`, …), so task 11.0's prelude is being applied. Batch 10b
+  and the comment/naming work appear done. The single A/B is still ahead. No stall.
+
 `sdk/rust` is at **no file over 800, no function over 50, no name over 32**, sleeps
 9 → 3 with each survivor named. Supervisor re-ran the suite independently: 36 binaries,
 exit 0.
@@ -148,6 +156,14 @@ to one at three, plus a bisect only when a regression appears — roughly a 70 %
 with attribution preserved, because the arms are still kept at every checkpoint.
 
 ## Found defects (not fixed inline — each becomes its own change)
+
+> **These now live in `docs/known_issues.md`**, which is tracked and outlives this
+> programme, with severity, evidence and what a fix must account for. Forty entries
+> as of 2026-08-30, including the pre-existing ones this board never held (the bench
+> gate that cannot complete, Java's workflow resume re-running committed producers,
+> the unvalidated OOM fix, the production items). Two carry proposals:
+> `fix-outbox-watermark-overwrite` (KI-1) and `fix-first-input-drop-on-bind` (KI-2).
+> Keep appending here as areas find things; move them across when an area closes.
 
 - 0a: `.github/workflows/format.yml` does not run the four veneer formatters, so CI
   and `format-check.sh` no longer mirror each other for Node/Python/Ruby/PHP (owed).
