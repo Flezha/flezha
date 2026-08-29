@@ -51,7 +51,15 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. Segment B is verified and committed; segment C (batches 5–6) is next.
+`refactor-2-ffi-veneers`, **segment C** (batches 5–6, tasks 5.1–6.3), fresh
+general-purpose worker, spawned 2026-08-29 15:42. Splits `tests/abi_scenario.rs`
+(the area's last file over 800) into `tests/abi/*`, puts `await_frame` on a condvar,
+clears the two known clippy warnings in tests, then moves the Python and Node suites
+onto the real collaborator. **No A/B is owed at checkpoint 3** — batches 5 and 6
+touch tests only; the design schedules the rows for checkpoints 1, 2 and batch 9.
+Stops at CHECKPOINT 3; stages nothing.
+
+- last seen: (first heartbeat pending)
 
 Verification that closed segment B, done against the repo and not the report:
 diff scope clean; `refactor_metrics.py --check` 0 regressions; every `pub fn` in
