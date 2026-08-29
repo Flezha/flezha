@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 04:47 (supervisor session 1)
+**Last updated**: 2026-08-29 05:44 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 1 (kernel) implementing — segment A (batches 0–3) running; tag `refactor-baseline-1` = `b667c934`.
+Area 1 (kernel): segment A committed (`e709cd40`, batches 0–3); segment B (batches 4–7) running.
 
 ## Board
 
@@ -21,7 +21,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
-| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | implementing | | proposal approved: 65 reuse decisions, net ≈ −1 200 prod lines |
+| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | implementing | A: `e709cd40` | segment A: −1 851 lines dead code, seam landed, A/B no loss |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | pending | | |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
@@ -39,13 +39,11 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-1-kernel` · role implement, segment A = batches 0–3 · started 2026-08-29 04:47
-- three checkpoints: after batch 3 (seam + A/B rows 5/3/4), after batch 7
-  (transport/NIF), after batch 11 (final); the supervisor commits at each
-  checkpoint and spawns a FRESH worker for the next segment (4–7, then 8–11)
+- change `refactor-1-kernel` · role implement, segment B = batches 4–7 · started 2026-08-29 05:44
+- checkpoint after batch 7; then segment C (batches 8–11) with a fresh worker
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
   with the resume brief from the first unticked task
-- last seen: 2026-08-29 04:47 (spawned)
+- last seen: 2026-08-29 05:44 (spawned)
 
 ## Awaiting the user's decision
 
@@ -133,6 +131,21 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
   `resolve_item` calls `entity_ref_of` per item even with no outputs (area 1).
 - 1s `sdk/rust` `coalesce` allocates its map + mask whenever the buffer is
   non-empty, key or no key (area 3).
+- 1a row 5 (`host_loop`, 60 s) noise floor is 4.13 % on this box today (spike: 2.60 %)
+  — above the gates spec's 3 % clause; the paired-round rule decides that row.
+- 1a `openspec/specs/controller-packaging/spec.md:270,290` still name
+  `libflz_transport.{so,dylib,dll}` as committed binaries, and `flz_jni` (a crate
+  that does not exist) is named in `README.md:48`, `docker/dev/README.md:26` and
+  four specs — wording corrections owed in segment C (batch 11 docs), wording only.
+- 1a `flz_core_ffi/benches/host_loop.rs` copies its scaffolding from
+  `sdk/rust/benches/{dispatch,correctness}.rs` and `sdk/rust/tests/common/mod.rs`
+  (7 jscpd pairs) and carries one `thread::sleep`: segment C (batch 10) extracts
+  the shared scaffolding into `flz_core` behind `bench-internals`; area 3 moves the
+  SDK benches onto it.
+- 1a `effect.rs` ↔ `sdk/rust/src/entity/flusher.rs` duplicate pairs are the
+  interim of design D1; area 3's port removes them (owed, by design).
+- 1a a new pair `effect.rs:31-54` (`EffectEntry`) ↔ `schema.rs:234-240`
+  (`ItemEffect`): the same field list twice — segment B decides in batch 4.
 - 1s a stale worktree from another session (`…/55da9198…/scratchpad/baseline2`,
   detached at `30e64258`, prunable) is not ours; left alone.
 
@@ -212,6 +225,9 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 - 2026-08-29 Batch 0 of area 1 corrects the metrics classifier (`#[cfg(all(test,…))]`,
   mid-file `mod tests` no longer swallows the rest of the file, `generated/`
   excluded) and re-baselines every area on the unchanged tree.
+- 2026-08-29 Area 1 arm A = the working tree at the tag + the bench files (no
+  worktree); Rust test regions end at the module's own-indentation `}`, never a
+  brace count (a raw-string JSON in `host.rs` closes a brace count early).
 - 2026-08-29 `test` is a blocking ratchet from `0670e992`: sleeps ≤ 2, refutes ≤ 12,
   `async: false` share ≤ 0.815, ExUnit ≤ 56.2 s ± 5 % on this box.
 
