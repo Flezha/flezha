@@ -45,7 +45,7 @@ only. Nothing depends on `sdk/rust` except its test apps.
 **Elixir controller** — the target order is `transport` → `runner` →
 `operative` → `state` / `plugin` → `service` → `cli` / `http` / `healthz`,
 with `observability`, `authz`, `convergence` as cross-cutting consumers that
-no layer below `service` names. Measured at `42ac2a19` (`mix xref graph
+no layer below `service` names. Measured at `4405cf9d` (`mix xref graph
 --format cycles`, `--format dot` aggregated by subtree) the tree is not that:
 one 55-file cycle spans `state` (20 files), `runner` (9), `operative` (9),
 `service` (6), `convergence` (5), `shutdown` (2), `plugin` (2), `transport`

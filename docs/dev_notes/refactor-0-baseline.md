@@ -150,14 +150,14 @@ MENTIONS the retired header, wrapped in an `overflow-naming-record` block.
 ## Stale claims, refuted by measurement
 
 - **"`mix format` disagrees between local 1.20 and CI 1.19"** — false at
-  `17bdcb9c`: `mix format --check-formatted` exits 0 under both 1.20.2-otp-29
+  `dbcc5520`: `mix format --check-formatted` exits 0 under both 1.20.2-otp-29
   and 1.19.2-otp-28 (`mise exec elixir@1.19.2-otp-28 erlang@28.1.1 -- …`) on
   the same tree. CI moved to 1.20.2 anyway (seven `elixir-version` lines in six
   workflows) because the prod and dev-toolchain images are already
   `hexpm/elixir:1.20.2-erlang-28.5.0.5` and the local pin is the user's global
   mise default outside the repo; `otp-version: "28"` stays.
 - **"`cargo fmt --all` reformats files nobody touched"** — false at
-  `17bdcb9c`: 0 files under both `+nightly` and the CI-pinned
+  `dbcc5520`: 0 files under both `+nightly` and the CI-pinned
   `+nightly-2026-05-07`; Java's `spotless:check` was also clean. The three
   "formatting-only commits" for Rust, Elixir and Java were therefore empty and
   nothing was added to `.git-blame-ignore-revs` for them; only the four veneer

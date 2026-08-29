@@ -1,4 +1,4 @@
-# Refactor targets (measured at `42ac2a19`)
+# Refactor targets (measured at `4405cf9d`)
 
 Rendered by `scripts/refactor_metrics.py --targets`; the ceilings are charter §7.
 

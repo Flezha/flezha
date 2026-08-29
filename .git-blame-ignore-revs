@@ -9,8 +9,8 @@
 # comment naming the change.
 
 # enforce-code-formatting: bulk cargo fmt + mvn spotless:apply across the workspace.
-704d9c91de4ccc6cb91a829e64bc7f01c69f2956
-894d4c0f9cfbf3a5f7d4b2a262a7b27bdb09a577
-8bdd2c6c91873086ffe898839c1cba0279512bc5
-9a567ca489abaf59ee59d16f8b4fab17833910d2
-91fe0f0c1b4ee04797df71ddfa5bbde46f9b0dc9
+7492cb1e7b54b762bca45603d508b007f6186d39
+9c6ab1e33cc5e799f686f7780f00ae71bfbf4cc7
+991af1ecae9b702abecc4dcc307c81e9df4693ef
+f825645ae0cd2aea42c42fce911a350005774095
+dacbd417c3581c36b3a8717716e7674607adcc03

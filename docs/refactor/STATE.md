@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 12:58 (supervisor session 1 — HANDOVER, session closed)
+**Last updated**: 2026-08-29 14:05 (supervisor session 2 — area 2 segment B spawned)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,18 @@ one host core, tests fast and real.
 
 ## Status
 
-HANDOVER. Done: Phase 0, 1s, area 1 (kernel), area 2 segment A (`01f45d7d`). Next: area 2 segment B (batches 3–4) — the previous worker was interrupted at session end BEFORE editing any tracked file (tree clean at `b2230995`), so a fresh worker starts at task 3.1 with the segment-B brief; read `design.md` → "Segment B handover notes" first. ~30 % of the programme done.
+Done: Phase 0, 1s, area 1 (kernel), area 2 segment A (`4b032bb8`). RUNNING: area 2
+segment B (batches 3–4) from task 3.1, plus the owed checkpoint-1 A/B — the box is
+on AC again (`/sys/class/power_supply/AC/online` = 1). ~30 % of the programme done.
+
+**The history was rewritten outside the programme.** The user ran `fix.sh` (an
+untracked `git filter-branch` that shifts commit timestamps) at 14:52; every commit
+hash on this branch changed and the `refactor-baseline-*` tags moved with it (all
+still ancestors of HEAD, so every `git diff refactor-baseline-<id>` still works).
+This board's hashes are remapped to the new history; `.git-blame-ignore-revs`,
+`baseline.json`'s `head`, `CLAUDE.md` and `docs/dev_notes/` still name dead hashes
+(supervisor task, below). The pre-rewrite history survives on branch
+`backup-20260829-145208`.
 
 ## Board
 
@@ -18,11 +29,11 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 
 | # | Area | Change id | Depends on | Status | Commit | Gates before → after |
 |---|------|-----------|------------|--------|--------|----------------------|
-| 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
-| 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
-| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
-| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `e709cd40`, `f1b4fe54`, `d6288963` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
-| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | A: `01f45d7d` | A: one veneer core, error enum, hygiene; prod 3 444→3 274, dups 23→7; A/B owed (battery) |
+| 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `8fb9d167` | gates now measure; `blocking: []` |
+| 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `ea1f6f26` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
+| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
+| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
+| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | A: `4b032bb8` | A: one veneer core, error enum, hygiene; prod 3 444→3 274, dups 23→7; A/B owed (battery) |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
@@ -39,14 +50,14 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. The area-2 segment-B worker (batches 3–4) was stopped at session end
-before any tracked edit; nothing to resume from the tree. Re-spawn it with the
-segment-B brief (tasks 3.x–4.x, checkpoint 2 after batch 4, the D3 napi spike
-first in batch 4, the A/B on mains only — rows 5, 7py, 7node with
-`-p 2 -m 40000 --runners 1`, arms under `$SCRATCH/area2/` — note the scratchpad
-is per SESSION, so a new session has NO arm A: rebuild it from the tag
-`refactor-baseline-2` tree by `git worktree add <scratch>/base refactor-baseline-2`
-+ the three arm builds there, never by checkout in the main tree).
+`refactor-2-ffi-veneers`, **segment B** (tasks 3.1–4.5 + the owed 0.1/0.3/2.5),
+fresh general-purpose worker, spawned 2026-08-29 14:05 by supervisor session 2.
+Brief: the checkpoint-1 A/B first (arm A rebuilt from a `git worktree` of tag
+`refactor-baseline-2`, arm B2 = today's tree, which is segment A's tree unchanged),
+then batches 3 and 4, then the checkpoint-2 A/B. Stops at CHECKPOINT 2; stages
+nothing.
+
+- last seen: (first heartbeat pending)
 
 ## Awaiting the user's decision
 
@@ -95,7 +106,7 @@ is per SESSION, so a new session has NO arm A: rebuild it from the tag
   (`/tmp/flezha_sockets/<node>/secondary_stream_<namespace>_<ids>_wus.sock`) exceeds
   `sun_path`; 120 "Failed to start primary listener" + 167 "Failed to connect runner"
   error lines per run while the tests still pass. Owed.
-- 0b commit `e3d6e2e3`'s `:sys.get_state(Loop)` drain in the output-stall drill is
+- 0b commit `220ba60c`'s `:sys.get_state(Loop)` drain in the output-stall drill is
   inert (a 200 000-iteration probe: the `send_after(…, 0)` tick lands after the
   reply every time).
 - 0b test hygiene: 738 leaked `/tmp/flezha_*` dirs (state-test and durability-stub
@@ -206,8 +217,16 @@ is per SESSION, so a new session has NO arm A: rebuild it from the tag
   artifacts and the `ab_run.sh` driver from session 1 are gone in a new session;
   the A/B driver has to be rebuilt (a short script: copy the arm's `.so`/`.node`
   in, sha-verify, run `mix bench.roundtrip … FLEZHA_BENCH_SKIP_BUILD=1`, restore).
+- 2 (supervisor, session 2) the history rewrite (`fix.sh`, `filter-branch`) left
+  `.git-blame-ignore-revs` naming five dead SHAs, `docs/refactor/baseline.json`'s
+  `head` at `5f21b515` (dead), and dead hashes in `CLAUDE.md`, `docs/dev_notes/
+  refactor-0-baseline.md`, `docs/refactor/targets.md` and `charter.md`. Supervisor
+  reconciles them in a docs commit this session.
+- 2 (supervisor, session 2) foreign untracked file `fix.sh` in the tree (the
+  rewrite script); the untracked `test/apps/node_runner/package-lock.json` noted
+  by session 1 is gone. Neither is this change's; left alone.
 - 1s a stale worktree from another session (`…/55da9198…/scratchpad/baseline2`,
-  detached at `30e64258`, prunable) is not ours; left alone.
+  detached at `30e64258`, a pre-rewrite hash, prunable) is not ours; left alone.
 
 ## Decisions
 
@@ -223,7 +242,7 @@ is per SESSION, so a new session has NO arm A: rebuild it from the tag
 - 2026-08-28 File ceiling 800 lines; function ceiling 50.
 - 2026-08-28 Dialyzer is not a Phase 0 gate (PLT cost); revisit in area 8.
 - 2026-08-28 Elixir formatter version: CI moves to 1.20.2 (prod/dev images and
-  the box already are; OTP stays 28 in CI). Measured at `17bdcb9c`: 1.19.2 and
+  the box already are; OTP stays 28 in CI). Measured at `dbcc5520`: 1.19.2 and
   1.20.2 format the tree identically, so the "local vs CI disagree" claim was stale.
 - 2026-08-28 `sdk/node/types-tests/` is excluded from prettier (a reflow moves
   `@ts-expect-error` off its line).
@@ -244,7 +263,7 @@ is per SESSION, so a new session has NO arm A: rebuild it from the tag
   interval, honestly named; the `test` sleeps metric floors at 1, never disguised
   as `receive … after`.
 - 2026-08-29 The naming gates walk `git ls-files`: an untracked new file is invisible
-  to them (commit `e8f81b8a` landed with three offences in its own dev notes this
+  to them (commit `8fb9d167` landed with three offences in its own dev notes this
   way). The supervisor `git add -N`s a worker's new files before gating.
 - 2026-08-29 The e2e first-input race is NOT sink-plugin activation (that wait ran
   green as a no-op and the failures continued); it is the data-stream bind. The
@@ -307,14 +326,14 @@ is per SESSION, so a new session has NO arm A: rebuild it from the tag
 - 2026-08-29 A test is deleted only with an lcov diff (`cargo llvm-cov --lcov`,
   `DA:`/`FNDA:` per file) showing every lost line inside the deleted test's body.
 - 2026-08-29 `flz_core`, `flz_transport`, `flz_nif` are blocking ratchets from
-  `d6288963` (prod 12 639 / 1 743 / 2 048; markers 0; files>800 0; clippy 0).
+  `e6bd6792` (prod 12 639 / 1 743 / 2 048; markers 0; files>800 0; clippy 0).
 - 2026-08-29 Rows 7 (veneer whole-system) run `-p 2 -m 40000 --runners 1` = 80 000
   records per run, the 1s spike's resolving shape; K33's "80 000 records" means the
   total, not `-m`.
 - 2026-08-29 A segment whose A/B the box refused (battery) is still committed when
   every suite is green and the hot-path edit is a thin typed wrapper; the A/B is
   owed at the next checkpoint on mains with the earlier arm kept for attribution.
-- 2026-08-29 `test` is a blocking ratchet from `0670e992`: sleeps ≤ 2, refutes ≤ 12,
+- 2026-08-29 `test` is a blocking ratchet from `ea1f6f26`: sleeps ≤ 2, refutes ≤ 12,
   `async: false` share ≤ 0.815, ExUnit ≤ 56.2 s ± 5 % on this box.
 
 ## Baseline (rough, pre-Phase-0 — replaced by `baseline.json` in 0a)

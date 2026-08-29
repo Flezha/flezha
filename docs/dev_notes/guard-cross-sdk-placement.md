@@ -8,7 +8,7 @@ discarding a refused restore.
 
 ## The proposal was stale in one area — verify before implementing
 
-`state-evolution` (b248c1f7) landed between this proposal and its
+`state-evolution` (4c88fac4) landed between this proposal and its
 implementation and had **already** done tasks 1.3 / 2.1 / 2.2. Both restore
 arms now share `flz_core::restore::fold_change_log`, which resolves every
 record through `header::resolve_record` → `resolve_version`, and that compares

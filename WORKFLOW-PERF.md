@@ -442,8 +442,8 @@ Done this campaign (were follow-ups): Java bench fixtures — `mix bench.workflo
 workflow operatives).
 
 Done this campaign (were follow-ups): process-hub `bb49842`/`8e60760`/`a95a222`
-pushed and the pin bumped (`d097029b`); §6.13 (hibernating sleepers, `2f8ea418`
-era); the opted-out terminal emit (§6.6, `33c13fe9`); the single-loop "wedge"
+pushed and the pin bumped (`90464987`); §6.13 (hibernating sleepers, `1c29a90d`
+era); the opted-out terminal emit (§6.6, `e5a08f3e`); the single-loop "wedge"
 was diagnosed as §6.8, not a distinct defect.
 
 ## 8. Where things are
