@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 import flezha
-from flezha import diagnostics
+from flezha import logger
 from flezha.errors import FlezhaError
 from flezha.runner import Runner
 
@@ -268,12 +268,12 @@ def test_the_drain_frees_the_context(runner: Any) -> None:
 
 
 def test_a_quiet_library_installs_no_handler() -> None:
-    root = logging.getLogger(diagnostics.ROOT_LOGGER_NAME)
+    root = logging.getLogger(logger.ROOT_LOGGER_NAME)
     assert all(isinstance(handler, logging.NullHandler) for handler in root.handlers)
 
 
 def test_one_call_turns_diagnostics_on() -> None:
-    root = diagnostics.configure("info")
+    root = logger.configure("info")
     try:
         assert root.level == logging.INFO
         assert any(not isinstance(h, logging.NullHandler) for h in root.handlers)

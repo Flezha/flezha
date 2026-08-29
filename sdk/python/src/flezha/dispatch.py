@@ -20,7 +20,7 @@ from . import codec as _codec
 from . import determinism
 from .builder import DROPPED, ChannelSpec, ClassSpec, ProcNode, apply_transforms
 from .ctx import Ctx
-from .diagnostics import log
+from .logger import log
 from .errors import FlezhaError
 from .procedure import Procedure
 from .entity_state import fold_restore
@@ -43,11 +43,9 @@ __all__ = [
 class Entity:
     """One Entity of one declared class: what every activation kind operates on.
 
-    The dispatcher used to thread `(registered, node, entity_key)` through six
-    functions and re-read the key off the activation at each of them. This is
-    that triple, named — and it is where `state` is read and written, so the
-    lock stays inside :class:`RegisteredClass` and nothing else touches the
-    entity table.
+    The `(registered, node, key)` triple every activation kind names, and where
+    `state` is read and written — so the lock stays inside
+    :class:`RegisteredClass` and nothing else touches the entity table.
     """
 
     registered: RegisteredClass
@@ -331,12 +329,11 @@ async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, An
                 non_retryable=True,
             )
 
-        kind = activation["kind"]
         # The workflow body is the one kind addressed to a class rather than to
         # a procedure, so it is answered before the procedure is resolved —
         # which is what lets every arm below hold a procedure rather than
         # assert one.
-        if kind == "workflow_run":
+        if activation["kind"] == "workflow_run":
             return await _run_workflow(activation, registered, deps)
 
         procedures = registered.spec.procedures
@@ -348,32 +345,41 @@ async def answer(activation: dict[str, Any], deps: DispatchDeps) -> dict[str, An
                 non_retryable=True,
             )
         entity = registered.entity(procedures[index], activation.get("entity_key"))
-
-        if kind == "work":
-            return await _run_work(entity, activation, deps)
-        if kind == "restore_fold":
-            return _restore_fold(entity, activation)
-        if kind == "snapshot_request":
-            return {
-                "token": token,
-                "outcome": "snapshot",
-                "state": entity.proc.encode_state(entity.state),
-            }
-        # Two names for one read: a live query and a migration handover both
-        # want the state as JSON, and only the outcome key differs.
-        if kind in ("live_state_read", "migration_serialize"):
-            outcome = "state_json" if kind == "live_state_read" else "migration_state"
-            return {"token": token, "outcome": outcome, "json": _codec.to_state_json(entity.state)}
-        if kind == "apply_state":
-            entity.state = _codec.from_state_json(activation.get("state_json"))
-            return {"token": token, "outcome": "state_applied"}
-        if kind == "key_request":
-            return _prepare(activation, registered)
-        if kind == "compensate_run":
-            return await _compensate(entity, activation, deps)
-        return failed(token, f"unknown activation kind `{kind}`", non_retryable=True)
+        return await _answer_kind(entity, activation, registered, deps)
     except Exception as error:  # noqa: BLE001 - every failure becomes a result
         return failed(token, error_message(error), non_retryable=is_non_retryable(error))
+
+
+async def _answer_kind(
+    entity: Entity, activation: dict[str, Any], registered: RegisteredClass, deps: DispatchDeps
+) -> dict[str, Any]:
+    """One arm per activation kind the boundary defines."""
+    token = activation["token"]
+    kind = activation["kind"]
+
+    if kind == "work":
+        return await _run_work(entity, activation, deps)
+    if kind == "restore_fold":
+        return _restore_fold(entity, activation)
+    if kind == "snapshot_request":
+        return {
+            "token": token,
+            "outcome": "snapshot",
+            "state": entity.proc.encode_state(entity.state),
+        }
+    # Two names for one read: a live query and a migration handover both want
+    # the state as JSON, and only the outcome key differs.
+    if kind in ("live_state_read", "migration_serialize"):
+        outcome = "state_json" if kind == "live_state_read" else "migration_state"
+        return {"token": token, "outcome": outcome, "json": _codec.to_state_json(entity.state)}
+    if kind == "apply_state":
+        entity.state = _codec.from_state_json(activation.get("state_json"))
+        return {"token": token, "outcome": "state_applied"}
+    if kind == "key_request":
+        return _prepare(activation, registered)
+    if kind == "compensate_run":
+        return await _compensate(entity, activation, deps)
+    return failed(token, f"unknown activation kind `{kind}`", non_retryable=True)
 
 
 async def _run_work(

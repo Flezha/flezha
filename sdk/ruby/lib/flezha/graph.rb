@@ -36,7 +36,8 @@ module Flezha
     # and the defect.
     def validate(spec)
       check_workflow(spec)
-      check_tier_and_window(spec)
+      check_tier(spec)
+      check_window(spec)
       check_channels(spec)
       check_procedures(spec)
       check_keying(spec)
@@ -48,46 +49,9 @@ module Flezha
       sinks = {}
 
       spec.channels.each do |channel|
-        refuse(spec, channel.name, "this channel name is declared more than once") if names[channel.name]
-        names[channel.name] = true
-
-        if channel.kind == :plugin
-          refuse(spec, channel.name, "declares a plugin sink more than once") if sinks[channel.name]
-          sinks[channel.name] = true
-        elsif channel.keyed
-          refuse(spec, channel.name,
-                 "is declared keyed but has no plugin wire; output identity stamps only " \
-                 "exist on plugin-bound frames, so add a sink(...) or drop the keyed")
-        end
-
-        if spec.effectively_once && channel.kind == :plugin && !channel.keyed
-          refuse(spec, channel.name,
-                 "has a plugin wire but is not declared keyed; the effectively-once tier " \
-                 "deduplicates by output identity, so every plugin-bound channel of a class " \
-                 "that declares effectively_once must opt in with keyed")
-        end
-
-        if channel.overflow != :drop_nothing
-          if spec.effectively_once
-            refuse(spec, channel.name,
-                   "declares on_full(#{channel.overflow}) on a class that declares " \
-                   "effectively_once; a shed input's offset is still advanced past by the " \
-                   "tier's watermark, so the loss is permanent and reported nowhere — " \
-                   "declare one or the other, not both")
-          end
-          if spec.correction_window_ms
-            refuse(spec, channel.name,
-                   "declares on_full(#{channel.overflow}) on a class that declares a " \
-                   "correction window; a correction re-folds a replayed slice and its answer " \
-                   "may not depend on which items a full mailbox happened to keep")
-          end
-        end
-
-        if channel.retry_max == 0
-          refuse(spec, channel.name,
-                 "declares retry_max(0); at least one attempt is required — raise a " \
-                 "non-retryable error to park without retries")
-        end
+        check_channel_names(spec, channel, names, sinks)
+        check_channel_wiring(spec, channel)
+        check_overflow(spec, channel)
 
         if channel.kind == :entry && channel.consumers.empty?
           refuse(spec, channel.name, "is an entry channel that names no consumer")
@@ -96,6 +60,55 @@ module Flezha
           refuse(spec, channel.name, "is an inter-procedure channel that names no consumer")
         end
       end
+    end
+
+    def check_channel_names(spec, channel, names, sinks)
+      refuse(spec, channel.name, "this channel name is declared more than once") if names[channel.name]
+      names[channel.name] = true
+
+      return unless channel.kind == :plugin
+
+      refuse(spec, channel.name, "declares a plugin sink more than once") if sinks[channel.name]
+      sinks[channel.name] = true
+    end
+
+    def check_channel_wiring(spec, channel)
+      if channel.kind != :plugin && channel.keyed
+        refuse(spec, channel.name,
+               "is declared keyed but has no plugin wire; output identity stamps only " \
+               "exist on plugin-bound frames, so add a sink(...) or drop the keyed")
+      end
+
+      return unless spec.effectively_once && channel.kind == :plugin && !channel.keyed
+
+      refuse(spec, channel.name,
+             "has a plugin wire but is not declared keyed; the effectively-once tier " \
+             "deduplicates by output identity, so every plugin-bound channel of a class " \
+             "that declares effectively_once must opt in with keyed")
+    end
+
+    def check_overflow(spec, channel)
+      if channel.overflow != :drop_nothing
+        if spec.effectively_once
+          refuse(spec, channel.name,
+                 "declares on_full(#{channel.overflow}) on a class that declares " \
+                 "effectively_once; a shed input's offset is still advanced past by the " \
+                 "tier's watermark, so the loss is permanent and reported nowhere — " \
+                 "declare one or the other, not both")
+        end
+        if spec.correction_window_ms
+          refuse(spec, channel.name,
+                 "declares on_full(#{channel.overflow}) on a class that declares a " \
+                 "correction window; a correction re-folds a replayed slice and its answer " \
+                 "may not depend on which items a full mailbox happened to keep")
+        end
+      end
+
+      return unless channel.retry_max == 0
+
+      refuse(spec, channel.name,
+             "declares retry_max(0); at least one attempt is required — raise a " \
+             "non-retryable error to park without retries")
     end
 
     def check_keying(spec)
@@ -123,59 +136,74 @@ module Flezha
 
     def check_procedures(spec)
       spec.procedures.each do |node|
-        definition = node.definition
-        clock = definition.clock
-
-        if clock == :event_time && !definition.event_time?
-          refuse(spec, node.name,
-                 "declares an event_time clock but no event_time method; the core evaluates " \
-                 "the declared clock per input and has nothing to evaluate")
-        end
-        if clock != :event_time && definition.event_time?
-          refuse(spec, node.name,
-                 "declares an event_time method with clock `#{clock}`; the extractor is only " \
-                 "consulted by an event_time clock, so one of the two is not what was meant")
-        end
-        if clock == :logical && !definition.initial_state?
-          refuse(spec, node.name,
-                 "declares a logical clock but no state; logical time IS the durable change " \
-                 "sequence, which never advances for a procedure that records no changes")
-        end
-        if definition.entity_mode == :static && !definition.entities_for?
-          refuse(spec, node.name,
-                 "declares a static key set without an entities_for; static keying needs the " \
-                 "method that says which declared entities an input belongs to")
-        end
-        capacity = definition.mailbox_capacity
-        if capacity && (capacity < 1 || capacity > MAX_MAILBOX_CAPACITY)
-          refuse(spec, node.name,
-                 "declares mailbox_capacity #{capacity}; capacity must be in " \
-                 "1..#{MAX_MAILBOX_CAPACITY}")
-        end
-        if definition.max_entities == 0
-          refuse(spec, node.name,
-                 "declares max_entities 0; a dynamic procedure that may hold no entity can " \
-                 "process nothing")
-        end
-        floor = definition.min_readable_schema_version
-        next unless floor
-
-        running = definition.schema_version || 1
-        if floor > running
-          refuse(spec, node.name,
-                 "declares min_readable_schema_version #{floor} above its schema_version " \
-                 "#{running}")
-        end
-        if floor < running && !definition.migrate_state && !definition.migrate_change
-          refuse(spec, node.name,
-                 "declares it reads back to schema version #{floor} but supplies no " \
-                 "migration; a floor without one fails at the first old record instead of " \
-                 "at startup")
-        end
+        check_clocks(spec, node)
+        check_entities(spec, node)
+        check_schema(spec, node)
       end
     end
 
-    def check_tier_and_window(spec)
+    def check_clocks(spec, node)
+      definition = node.definition
+      clock = definition.clock
+
+      if clock == :event_time && !definition.event_time?
+        refuse(spec, node.name,
+               "declares an event_time clock but no event_time method; the core evaluates " \
+               "the declared clock per input and has nothing to evaluate")
+      end
+      if clock != :event_time && definition.event_time?
+        refuse(spec, node.name,
+               "declares an event_time method with clock `#{clock}`; the extractor is only " \
+               "consulted by an event_time clock, so one of the two is not what was meant")
+      end
+      return unless clock == :logical && !definition.initial_state?
+
+      refuse(spec, node.name,
+             "declares a logical clock but no state; logical time IS the durable change " \
+             "sequence, which never advances for a procedure that records no changes")
+    end
+
+    def check_entities(spec, node)
+      definition = node.definition
+
+      if definition.entity_mode == :static && !definition.entities_for?
+        refuse(spec, node.name,
+               "declares a static key set without an entities_for; static keying needs the " \
+               "method that says which declared entities an input belongs to")
+      end
+      capacity = definition.mailbox_capacity
+      if capacity && (capacity < 1 || capacity > MAX_MAILBOX_CAPACITY)
+        refuse(spec, node.name,
+               "declares mailbox_capacity #{capacity}; capacity must be in " \
+               "1..#{MAX_MAILBOX_CAPACITY}")
+      end
+      return unless definition.max_entities == 0
+
+      refuse(spec, node.name,
+             "declares max_entities 0; a dynamic procedure that may hold no entity can " \
+             "process nothing")
+    end
+
+    def check_schema(spec, node)
+      definition = node.definition
+      floor = definition.min_readable_schema_version
+      return unless floor
+
+      running = definition.schema_version || 1
+      if floor > running
+        refuse(spec, node.name,
+               "declares min_readable_schema_version #{floor} above its schema_version " \
+               "#{running}")
+      end
+      return unless floor < running && !definition.migrate_state && !definition.migrate_change
+
+      refuse(spec, node.name,
+             "declares it reads back to schema version #{floor} but supplies no " \
+             "migration; a floor without one fails at the first old record instead of " \
+             "at startup")
+    end
+
+    def check_tier(spec)
       if spec.effectively_once && !spec.persistent
         refuse(spec, nil, "declares effectively_once without persistence: the tier IS durable state")
       end
@@ -195,6 +223,9 @@ module Flezha
                "declares outputs_at_checkpoint with no maximum delay; an interval that never " \
                "closes would hold its outputs forever on a quiet entity")
       end
+    end
+
+    def check_window(spec)
       return if spec.correction_window_ms.nil?
 
       if spec.correction_window_ms == 0

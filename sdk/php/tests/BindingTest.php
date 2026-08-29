@@ -109,7 +109,13 @@ final class BindingTest extends TestCase
 
         try {
             $first = $core->monotonicNanos();
-            usleep(1_000);
+            // The clock under test is the signal; PHP's own bounds the wait,
+            // so a stopped core clock fails the assertion rather than hanging
+            // the suite.
+            $startedAt = hrtime(true);
+            while ($core->monotonicNanos() <= $first && hrtime(true) - $startedAt < 1_000_000_000) {
+                // spin
+            }
 
             self::assertGreaterThan($first, $core->monotonicNanos());
         } finally {

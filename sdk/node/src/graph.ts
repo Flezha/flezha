@@ -46,64 +46,9 @@ function checkChannels(spec: ClassSpec): void {
   const sinks = new Set<string>();
 
   for (const channel of spec.channels) {
-    if (names.has(channel.name)) {
-      refuse(spec, channel.name, 'this channel name is declared more than once');
-    }
-    names.add(channel.name);
-
-    if (channel.kind === 'plugin') {
-      if (sinks.has(channel.name)) {
-        refuse(spec, channel.name, 'declares a plugin sink more than once');
-      }
-      sinks.add(channel.name);
-    } else if (channel.keyed) {
-      refuse(
-        spec,
-        channel.name,
-        'is declared keyed() but has no plugin wire; output identity stamps only exist ' +
-          'on plugin-bound frames, so add a sink(...) or drop the keyed()',
-      );
-    }
-
-    if (spec.effectivelyOnce && channel.kind === 'plugin' && !channel.keyed) {
-      refuse(
-        spec,
-        channel.name,
-        'has a plugin wire but is not declared keyed(); the effectively-once tier ' +
-          'deduplicates by output identity, so every plugin-bound channel of a class ' +
-          'that declares effectivelyOnce() must opt in with keyed()',
-      );
-    }
-
-    if (channel.overflow !== 'drop_nothing') {
-      if (spec.effectivelyOnce) {
-        refuse(
-          spec,
-          channel.name,
-          `declares onFull(${channel.overflow}) on a class that declares effectivelyOnce(); ` +
-            "a shed input's offset is still advanced past by the tier's watermark, so the " +
-            'loss is permanent and reported nowhere — declare one or the other, not both',
-        );
-      }
-      if (spec.correctionWindowMs !== undefined) {
-        refuse(
-          spec,
-          channel.name,
-          `declares onFull(${channel.overflow}) on a class that declares a correction ` +
-            'window; a correction re-folds a replayed slice and its answer may not depend ' +
-            'on which items a full mailbox happened to keep',
-        );
-      }
-    }
-
-    if (channel.retryMax === 0) {
-      refuse(
-        spec,
-        channel.name,
-        'declares retryMax(0); at least one attempt is required — throw a non-retryable ' +
-          'error to park without retries',
-      );
-    }
+    checkChannelNames(spec, channel, names, sinks);
+    checkChannelWiring(spec, channel);
+    checkOverflow(spec, channel);
 
     if (channel.kind === 'entry' && channel.consumers.length === 0) {
       refuse(spec, channel.name, 'is an entry channel that names no consumer');
@@ -111,6 +56,77 @@ function checkChannels(spec: ClassSpec): void {
     if (channel.kind === 'inter_proc' && channel.consumers.length === 0) {
       refuse(spec, channel.name, 'is an inter-procedure channel that names no consumer');
     }
+  }
+}
+
+function checkChannelNames(
+  spec: ClassSpec,
+  channel: ChannelSpec,
+  names: Set<string>,
+  sinks: Set<string>,
+): void {
+  if (names.has(channel.name)) {
+    refuse(spec, channel.name, 'this channel name is declared more than once');
+  }
+  names.add(channel.name);
+
+  if (channel.kind !== 'plugin') return;
+  if (sinks.has(channel.name)) {
+    refuse(spec, channel.name, 'declares a plugin sink more than once');
+  }
+  sinks.add(channel.name);
+}
+
+function checkChannelWiring(spec: ClassSpec, channel: ChannelSpec): void {
+  if (channel.kind !== 'plugin' && channel.keyed) {
+    refuse(
+      spec,
+      channel.name,
+      'is declared keyed() but has no plugin wire; output identity stamps only exist ' +
+        'on plugin-bound frames, so add a sink(...) or drop the keyed()',
+    );
+  }
+
+  if (spec.effectivelyOnce && channel.kind === 'plugin' && !channel.keyed) {
+    refuse(
+      spec,
+      channel.name,
+      'has a plugin wire but is not declared keyed(); the effectively-once tier ' +
+        'deduplicates by output identity, so every plugin-bound channel of a class ' +
+        'that declares effectivelyOnce() must opt in with keyed()',
+    );
+  }
+}
+
+function checkOverflow(spec: ClassSpec, channel: ChannelSpec): void {
+  if (channel.overflow !== 'drop_nothing') {
+    if (spec.effectivelyOnce) {
+      refuse(
+        spec,
+        channel.name,
+        `declares onFull(${channel.overflow}) on a class that declares effectivelyOnce(); ` +
+          "a shed input's offset is still advanced past by the tier's watermark, so the " +
+          'loss is permanent and reported nowhere — declare one or the other, not both',
+      );
+    }
+    if (spec.correctionWindowMs !== undefined) {
+      refuse(
+        spec,
+        channel.name,
+        `declares onFull(${channel.overflow}) on a class that declares a correction ` +
+          'window; a correction re-folds a replayed slice and its answer may not depend ' +
+          'on which items a full mailbox happened to keep',
+      );
+    }
+  }
+
+  if (channel.retryMax === 0) {
+    refuse(
+      spec,
+      channel.name,
+      'declares retryMax(0); at least one attempt is required — throw a non-retryable ' +
+        'error to park without retries',
+    );
   }
 }
 
@@ -145,82 +161,97 @@ function checkKeying(spec: ClassSpec): void {
 
 function checkProcedures(spec: ClassSpec): void {
   for (const node of spec.procedures) {
-    const def = node.procedure.definition;
-    const clock = clockOf(node);
-
-    if (clock === 'event_time' && !def.eventTime) {
-      refuse(
-        spec,
-        node.name,
-        'declares an event_time clock but no eventTime extractor; the core evaluates the ' +
-          'declared clock per input and has nothing to evaluate',
-      );
-    }
-    if (clock !== 'event_time' && def.eventTime) {
-      refuse(
-        spec,
-        node.name,
-        `declares an eventTime extractor with clock \`${clock}\`; the extractor is only ` +
-          'consulted by an event_time clock, so one of the two is not what was meant',
-      );
-    }
-    if (clock === 'logical' && !def.initialState) {
-      refuse(
-        spec,
-        node.name,
-        'declares a logical clock but no state; logical time IS the durable change ' +
-          'sequence, which never advances for a procedure that records no changes',
-      );
-    }
-    if (def.entities && !def.entities.entitiesFor) {
-      refuse(
-        spec,
-        node.name,
-        'declares a static key set without an entitiesFor; static keying needs the ' +
-          'function that says which declared entities an input belongs to',
-      );
-    }
-    if (def.mailboxCapacity !== undefined) {
-      const capacity = def.mailboxCapacity;
-      if (capacity < 1 || capacity > MAX_MAILBOX_CAPACITY) {
-        refuse(
-          spec,
-          node.name,
-          `declares mailboxCapacity ${capacity}; capacity must be in 1..=${MAX_MAILBOX_CAPACITY}`,
-        );
-      }
-    }
-    if (def.dynamicEntities?.maxEntities === 0) {
-      refuse(
-        spec,
-        node.name,
-        'declares maxEntities 0; a dynamic procedure that may hold no ' +
-          'entity can process nothing',
-      );
-    }
-    if (def.minReadableSchemaVersion !== undefined) {
-      const floor = def.minReadableSchemaVersion;
-      const running = def.schemaVersion ?? 1;
-      if (floor > running) {
-        refuse(
-          spec,
-          node.name,
-          `declares minReadableSchemaVersion ${floor} above its schemaVersion ${running}`,
-        );
-      }
-      if (floor < running && !def.migrateState && !def.migrateChange) {
-        refuse(
-          spec,
-          node.name,
-          `declares it reads back to schema version ${floor} but supplies no migration; a ` +
-            'floor without one fails at the first old record instead of at startup',
-        );
-      }
-    }
+    checkClocks(spec, node);
+    checkEntities(spec, node);
+    checkSchema(spec, node);
   }
 }
 
-function checkTierAndWindow(spec: ClassSpec): void {
+function checkClocks(spec: ClassSpec, node: ProcNode): void {
+  const def = node.procedure.definition;
+  const clock = clockOf(node);
+
+  if (clock === 'event_time' && !def.eventTime) {
+    refuse(
+      spec,
+      node.name,
+      'declares an event_time clock but no eventTime extractor; the core evaluates the ' +
+        'declared clock per input and has nothing to evaluate',
+    );
+  }
+  if (clock !== 'event_time' && def.eventTime) {
+    refuse(
+      spec,
+      node.name,
+      `declares an eventTime extractor with clock \`${clock}\`; the extractor is only ` +
+        'consulted by an event_time clock, so one of the two is not what was meant',
+    );
+  }
+  if (clock === 'logical' && !def.initialState) {
+    refuse(
+      spec,
+      node.name,
+      'declares a logical clock but no state; logical time IS the durable change ' +
+        'sequence, which never advances for a procedure that records no changes',
+    );
+  }
+}
+
+function checkEntities(spec: ClassSpec, node: ProcNode): void {
+  const def = node.procedure.definition;
+
+  if (def.entities && !def.entities.entitiesFor) {
+    refuse(
+      spec,
+      node.name,
+      'declares a static key set without an entitiesFor; static keying needs the ' +
+        'function that says which declared entities an input belongs to',
+    );
+  }
+  if (def.mailboxCapacity !== undefined) {
+    const capacity = def.mailboxCapacity;
+    if (capacity < 1 || capacity > MAX_MAILBOX_CAPACITY) {
+      refuse(
+        spec,
+        node.name,
+        `declares mailboxCapacity ${capacity}; capacity must be in 1..=${MAX_MAILBOX_CAPACITY}`,
+      );
+    }
+  }
+  if (def.dynamicEntities?.maxEntities === 0) {
+    refuse(
+      spec,
+      node.name,
+      'declares maxEntities 0; a dynamic procedure that may hold no ' +
+        'entity can process nothing',
+    );
+  }
+}
+
+function checkSchema(spec: ClassSpec, node: ProcNode): void {
+  const def = node.procedure.definition;
+  if (def.minReadableSchemaVersion === undefined) return;
+
+  const floor = def.minReadableSchemaVersion;
+  const running = def.schemaVersion ?? 1;
+  if (floor > running) {
+    refuse(
+      spec,
+      node.name,
+      `declares minReadableSchemaVersion ${floor} above its schemaVersion ${running}`,
+    );
+  }
+  if (floor < running && !def.migrateState && !def.migrateChange) {
+    refuse(
+      spec,
+      node.name,
+      `declares it reads back to schema version ${floor} but supplies no migration; a ` +
+        'floor without one fails at the first old record instead of at startup',
+    );
+  }
+}
+
+function checkTier(spec: ClassSpec): void {
   if (spec.effectivelyOnce && !spec.persistent) {
     refuse(spec, null, 'declares effectivelyOnce() without persistence: the tier IS durable state');
   }
@@ -249,6 +280,9 @@ function checkTierAndWindow(spec: ClassSpec): void {
         'would hold its outputs forever on a quiet entity',
     );
   }
+}
+
+function checkWindow(spec: ClassSpec): void {
   if (spec.correctionWindowMs === undefined) return;
 
   if (spec.correctionWindowMs === 0) {
@@ -274,7 +308,6 @@ function checkTierAndWindow(spec: ClassSpec): void {
   }
 }
 
-/** Every procedure reachable from an entry channel, and no cycle among them. */
 function checkTopology(spec: ClassSpec): void {
   const entries = spec.channels.filter((c) => c.kind === 'entry');
   if (spec.kind === 'stream' && entries.length === 0) {
@@ -286,7 +319,10 @@ function checkTopology(spec: ClassSpec): void {
     }
     return;
   }
+  checkDag(spec, entries, successorsOf(spec));
+}
 
+function successorsOf(spec: ClassSpec): Map<number, number[]> {
   const successors = new Map<number, number[]>();
   for (const channel of spec.channels) {
     if (channel.kind !== 'inter_proc' || channel.producer === undefined) continue;
@@ -294,7 +330,15 @@ function checkTopology(spec: ClassSpec): void {
     list.push(...channel.consumers);
     successors.set(channel.producer, list);
   }
+  return successors;
+}
 
+/** Every procedure reachable from an entry channel, and no cycle among them. */
+function checkDag(
+  spec: ClassSpec,
+  entries: ChannelSpec[],
+  successors: Map<number, number[]>,
+): void {
   const reachable = new Set<number>();
   const frontier = entries.flatMap((c) => c.consumers);
   while (frontier.length > 0) {
@@ -367,7 +411,8 @@ function checkWorkflow(spec: ClassSpec): void {
 /** Refuse every defect static typing cannot see, naming handler and defect. */
 export function validate(spec: ClassSpec): void {
   checkWorkflow(spec);
-  checkTierAndWindow(spec);
+  checkTier(spec);
+  checkWindow(spec);
   checkChannels(spec);
   checkProcedures(spec);
   checkKeying(spec);

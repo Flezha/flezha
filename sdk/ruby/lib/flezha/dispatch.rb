@@ -165,34 +165,13 @@ module Flezha
     end
 
     def run_work(activation, registered, node, deps)
-      definition = node.definition
       effects = []
 
       Array(activation[:items]).each do |item|
         now = item[:now] || 0
         begin
           ctx, returned = invoke(activation, registered, node, deps, now, item[:replay] || false) do |c|
-            if item[:kind] == :timer
-              unless definition.on_timer?
-                raise Error,
-                      "#{node.name} registered a timer but declares no on_timer; registration " \
-                      "is a runtime call, so this cannot be refused at declaration time"
-              end
-
-              definition.instance.on_timer(
-                { kind: item[:timer_kind], scheduled_at: item[:scheduled_at] || now }, c
-              )
-              nil
-            else
-              channel = registered.spec.channels[item[:channel] || 0]
-              input = value_of(channel, item[:payload] || "".b)
-              # A filtered value is consumed and reaches no handler. It still
-              # produces an effect, so its offset advances and nothing is
-              # retried.
-              next nil if input.equal?(DROPPED)
-
-              definition.instance.process(input, c)
-            end
+            run_item(registered, node, item, now, c)
           end
 
           # A returned value is emitted; `nil` emits nothing, which is the
@@ -217,6 +196,31 @@ module Flezha
       end
 
       { token: activation[:token], outcome: "work", effects: effects }
+    end
+
+    # One item against the handler its kind names, inside an invocation.
+    def run_item(registered, node, item, now, ctx)
+      definition = node.definition
+      if item[:kind] == :timer
+        unless definition.on_timer?
+          raise Error,
+                "#{node.name} registered a timer but declares no on_timer; registration " \
+                "is a runtime call, so this cannot be refused at declaration time"
+        end
+
+        definition.instance.on_timer(
+          { kind: item[:timer_kind], scheduled_at: item[:scheduled_at] || now }, ctx
+        )
+        return nil
+      end
+
+      channel = registered.spec.channels[item[:channel] || 0]
+      input = value_of(channel, item[:payload] || "".b)
+      # A filtered value is consumed and reaches no handler. It still produces
+      # an effect, so its offset advances and nothing is retried.
+      return nil if input.equal?(DROPPED)
+
+      definition.instance.process(input, ctx)
     end
 
     def restore_fold(activation, registered, node)

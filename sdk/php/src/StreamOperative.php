@@ -14,21 +14,6 @@ abstract class StreamOperative extends Operative
     {
         $builder = static::builder($declaration);
 
-        return new ClassSpec(
-            factoryId: $declaration->factoryId,
-            kind: 'stream',
-            persistent: $declaration->persistent,
-            effectivelyOnce: $builder->effectivelyOnce,
-            ackGranularity: $builder->ackGranularity,
-            checkpointEvery: $builder->checkpointEvery,
-            checkpointOutputs: $builder->checkpointOutputs,
-            checkpointMaxDelayMs: $builder->checkpointMaxDelayMs,
-            correctionWindowMs: $builder->correctionWindowMs,
-            beyondWindowPolicy: $builder->beyondWindowPolicy,
-            compactAfterBytes: $builder->compactAfterBytes,
-            syncDurability: $builder->syncDurability,
-            procedures: $builder->procedures,
-            channels: $builder->channels,
-        );
+        return static::assemble($declaration, $builder, 'stream', $builder->syncDurability);
     }
 }

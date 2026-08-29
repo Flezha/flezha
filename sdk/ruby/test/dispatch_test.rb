@@ -31,46 +31,18 @@ class DispatchTest < Minitest::Test
     end
   end
 
-  # Records what the dispatcher hands the core, so a test can read the answer
-  # without a controller.
-  class RecordingCore
-    attr_reader :completed, :abandoned
-
-    def initialize
-      @completed = []
-      @abandoned = []
-    end
-
-    def complete(result) = @completed << result
-    def abandon(token) = @abandoned << token
-    def spawn_workflow(*) = "spawned"
-    def workflow_emit(*) = nil
-    def workflow_recv(*) = nil
-    def workflow_cancelled(*) = false
-    def monotonic_nanos = 1_234
-  end
-
   def setup
-    @registry = Flezha::Registry.new
-    @registry.add(CounterOperative.spec)
-    @core = RecordingCore.new
-    @deps = Flezha::DispatchDeps.new(
-      registry: @registry, bridge: @core,
-      workflow_ctx: ->(id) { Flezha::WorkflowCtx.new(id, @core) }
-    )
+    @core = Flezha::TestSupport::FakeCore.new
+    @deps = Flezha::TestSupport.deps(CounterOperative, @core)
+    @registry = @deps.registry
   end
 
   def activation(kind, **extra)
-    { token: 1, operative: "op-1", procedure: 0, entity_key: nil, change_seq: 0,
-      factory: "counter_op", kind: kind }.merge(extra)
+    Flezha::TestSupport.activation(factory: "counter_op", kind: kind, **extra)
   end
 
   def answer(kind, **extra) = Flezha::Dispatch.answer(activation(kind, **extra), @deps)
-
-  def input_item(payload, **extra)
-    { kind: :input, channel: 0, payload: payload.b, metadata: [], replay: false,
-      now: 100 }.merge(extra)
-  end
+  def input_item(payload, **extra) = Flezha::TestSupport.input_item(payload, **extra)
 
   def test_a_work_batch_answers_one_effect_per_item
     result = answer(:work, items: [input_item("2"), input_item("3")])
@@ -195,22 +167,54 @@ class DispatchTest < Minitest::Test
     assert_equal "ran:seed", Flezha::Codec.decode(result[:workflow_result])
   end
 
+  # The handout contract, against the collaborator that decides it. A real core
+  # created without `start` never handed these tokens out, so it is the core
+  # itself that says so — a fake that accepts whatever it is handed cannot.
+  #
   # An unanswered activation retires its entity for the life of the process, so
   # the guard is the contract rather than politeness.
-  def test_an_activation_whose_completion_raises_is_abandoned
-    failing = Class.new(RecordingCore) do
-      def complete(_result) = raise("the wire went away")
-    end.new
+  def test_an_activation_the_core_never_handed_out_is_abandoned_not_dropped
+    skip "needs the compiled veneer" unless Flezha::TestSupport.native?
 
-    Flezha::Dispatch.dispatch(activation(:work, items: []), failing, @deps)
+    core = Flezha::Core.create
+    said = reported { Flezha::Dispatch.dispatch(activation(:work, items: []), core, @deps) }
+    core.free
 
-    assert_equal [1], failing.abandoned
+    assert_match(/unknown activation token 1/, said)
+    assert_match(/abandoning activation 1 failed/, said)
   end
 
   def test_a_dispatch_that_completes_is_not_abandoned
-    Flezha::Dispatch.dispatch(activation(:work, items: []), @core, @deps)
+    skip "needs the compiled veneer" unless Flezha::TestSupport.native?
 
-    assert_equal 1, @core.completed.size
-    assert_empty @core.abandoned
+    # Only `complete` is scripted, and only to reach the path a real handout
+    # would reach: the abandon is the core's own, so a guard that abandoned an
+    # answered activation would earn its refusal and report it.
+    core = Flezha::Core.create
+    peer = Flezha::TestSupport::FakeCore.new
+    peer.define_singleton_method(:abandon) { |token| core.abandon(token) }
+    said = reported { Flezha::Dispatch.dispatch(activation(:work, items: []), peer, @deps) }
+    core.free
+
+    assert_equal 1, peer.completed.size
+    assert_equal "", said
+  end
+
+  # What the dispatcher said while it ran. Its guard never raises, so the log
+  # line is the only evidence there is.
+  class RecordingLog
+    def initialize = @lines = []
+    def to_s = @lines.join("\n")
+
+    %i[debug info warn error].each { |level| define_method(level) { |message| @lines << message } }
+  end
+
+  def reported
+    previous = Flezha.log
+    Flezha.log = RecordingLog.new
+    yield
+    Flezha.log.to_s
+  ensure
+    Flezha.log = previous
   end
 end

@@ -66,5 +66,40 @@ abstract class Operative
         return $builder;
     }
 
+    /**
+     * The declaration both kinds carry, assembled once. A stream class names
+     * only what the builder holds; a workflow adds its own attribute and, for
+     * a run-sugar body, the callable.
+     *
+     * @param (callable(mixed, WorkflowCtx):mixed)|null $run
+     */
+    protected static function assemble(
+        OperativeAttribute $declaration,
+        Builder $builder,
+        string $kind,
+        bool $syncDurability,
+        ?WorkflowAttribute $workflow = null,
+        ?\Closure $run = null,
+    ): ClassSpec {
+        return new ClassSpec(
+            factoryId: $declaration->factoryId,
+            kind: $kind,
+            persistent: $declaration->persistent,
+            effectivelyOnce: $builder->effectivelyOnce,
+            ackGranularity: $builder->ackGranularity,
+            checkpointEvery: $builder->checkpointEvery,
+            checkpointOutputs: $builder->checkpointOutputs,
+            checkpointMaxDelayMs: $builder->checkpointMaxDelayMs,
+            correctionWindowMs: $builder->correctionWindowMs,
+            beyondWindowPolicy: $builder->beyondWindowPolicy,
+            compactAfterBytes: $builder->compactAfterBytes,
+            syncDurability: $syncDurability,
+            procedures: $builder->procedures,
+            channels: $builder->channels,
+            workflow: $workflow,
+            run: $run,
+        );
+    }
+
     abstract protected static function buildSpec(OperativeAttribute $declaration): ClassSpec;
 }

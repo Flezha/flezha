@@ -206,30 +206,8 @@ export class Runner {
     installDeterminismWarnings();
     this.teardown.push(uninstallDeterminismWarnings);
 
-    // The main thread builds the registry in both configurations: it is what
-    // emits the declarations, and under `workers(0)` it also dispatches.
-    this.registry = await loadRegistry(this.specifiers);
-    for (const registered of this.registry.all()) {
-      native.declareClass(Buffer.from(JSON.stringify(toHostClassDecl(registered.spec))));
-    }
-
-    if (this.workerCount > 0) {
-      this.pool = new WorkerPool(this.namespace, this.specifiers, this.workerCount);
-      await this.pool.start();
-    } else {
-      const registry = this.registry;
-      const deps = dispatchDeps(native, registry, workflowContext);
-      const watch = new LoopWatch('main');
-      this.dispatchId = native.registerDispatch((activation) => {
-        // What the delay warning names when this loop is held. The worker tier
-        // observes the same thing on its own loop.
-        const node = registry.get(activation.factory)?.spec.procedures[activation.procedure];
-        watch.observe(node?.name ?? activation.factory);
-        void dispatch(activation, native, deps);
-      });
-      watch.start();
-      this.teardown.push(() => watch.stop());
-    }
+    const registry = await this.declareAll(native);
+    await this.serve(native, registry);
 
     await native.start(this.namespace);
 
@@ -247,6 +225,40 @@ export class Runner {
         `${this.workerCount === 0 ? 'the main loop' : `${this.workerCount} worker loops`}, ` +
         `${native.hostStats().fetchers} fetchers`,
     );
+  }
+
+  /**
+   * The main thread builds the registry in both configurations: it is what
+   * emits the declarations, and under `workers(0)` it also dispatches.
+   */
+  private async declareAll(native: Native): Promise<Registry> {
+    const registry = await loadRegistry(this.specifiers);
+    this.registry = registry;
+    for (const registered of registry.all()) {
+      native.declareClass(Buffer.from(JSON.stringify(toHostClassDecl(registered.spec))));
+    }
+    return registry;
+  }
+
+  /** Where activations are dispatched: a pool of worker loops, or this one. */
+  private async serve(native: Native, registry: Registry): Promise<void> {
+    if (this.workerCount > 0) {
+      this.pool = new WorkerPool(this.namespace, this.specifiers, this.workerCount);
+      await this.pool.start();
+      return;
+    }
+
+    const deps = dispatchDeps(native, registry, workflowContext);
+    const watch = new LoopWatch('main');
+    this.dispatchId = native.registerDispatch((activation) => {
+      // What the delay warning names when this loop is held. The worker tier
+      // observes the same thing on its own loop.
+      const node = registry.get(activation.factory)?.spec.procedures[activation.procedure];
+      watch.observe(node?.name ?? activation.factory);
+      void dispatch(activation, native, deps);
+    });
+    watch.start();
+    this.teardown.push(() => watch.stop());
   }
 
   /**

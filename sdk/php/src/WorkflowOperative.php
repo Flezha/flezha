@@ -49,23 +49,13 @@ abstract class WorkflowOperative extends Operative
         $builder = static::builder($declaration);
         $workflow = static::workflowDeclaration();
 
-        return new ClassSpec(
-            factoryId: $declaration->factoryId,
-            kind: 'workflow',
-            persistent: $declaration->persistent,
-            effectivelyOnce: $builder->effectivelyOnce,
-            ackGranularity: $builder->ackGranularity,
-            checkpointEvery: $builder->checkpointEvery,
-            checkpointOutputs: $builder->checkpointOutputs,
-            checkpointMaxDelayMs: $builder->checkpointMaxDelayMs,
-            correctionWindowMs: $builder->correctionWindowMs,
-            beyondWindowPolicy: $builder->beyondWindowPolicy,
-            compactAfterBytes: $builder->compactAfterBytes,
-            syncDurability: $workflow->syncDurability || $builder->syncDurability,
-            procedures: $builder->procedures,
-            channels: $builder->channels,
-            workflow: $workflow,
-            run: $hasRun ? static::run(...) : null,
+        return static::assemble(
+            $declaration,
+            $builder,
+            'workflow',
+            $workflow->syncDurability || $builder->syncDurability,
+            $workflow,
+            $hasRun ? static::run(...) : null,
         );
     }
 }

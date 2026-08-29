@@ -27,7 +27,7 @@ from .builder import DROPPED, Channels, Edge
 from .codec import TypeCodec, ValueCodec
 from .ctx import Ctx, WorkflowCtx
 from .entity_state import state
-from .diagnostics import configure as configure_logging
+from .logger import configure as configure_logging
 from .errors import (
     CoreError,
     DeclarationError,

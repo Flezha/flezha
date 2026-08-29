@@ -27,7 +27,7 @@ from typing import Any
 
 from . import determinism, graph
 from .ctx import WorkflowCtx
-from .diagnostics import logger
+from .logger import logger
 from .dispatch import DispatchDeps, Registry
 from .errors import FlezhaError
 from .executor import Executor, build as build_executor
@@ -148,14 +148,7 @@ class Runner:
         own the waiting, and so the startup order is something a test can
         observe rather than a comment.
         """
-        if self._started:
-            raise FlezhaError("this runner is already started")
-        if not _started_slot.acquire(blocking=False):
-            raise FlezhaError(
-                "a runner is already started in this process; a runner is one transport "
-                "connection, so N processes are N runners"
-            )
-        self._holds_slot = True
+        self._claim_slot()
         try:
             # Before anything else: a native library built against a different
             # activation schema is refused here, with no controller connection
@@ -167,18 +160,7 @@ class Runner:
             self._core.start(self._namespace)
             self._observe_shutdown()
 
-            deps = DispatchDeps(
-                registry=self._registry,
-                bridge=self._core,
-                workflow_ctx=lambda instance_id: WorkflowCtx(instance_id, self._core),
-            )
-            self._executor = build_executor(
-                self._executor_kind,
-                self._core,
-                deps,
-                on_core_shutdown=self.stop,
-                **self._executor_options,
-            )
+            self._executor = self._build_executor()
             self._executor.start()
             self._started = True
         except BaseException:
@@ -192,6 +174,31 @@ class Runner:
             self._executor.describe(),
         )
         return self
+
+    def _claim_slot(self) -> None:
+        """One runner per process: a runner is one transport connection."""
+        if self._started:
+            raise FlezhaError("this runner is already started")
+        if not _started_slot.acquire(blocking=False):
+            raise FlezhaError(
+                "a runner is already started in this process; a runner is one transport "
+                "connection, so N processes are N runners"
+            )
+        self._holds_slot = True
+
+    def _build_executor(self) -> Executor:
+        deps = DispatchDeps(
+            registry=self._registry,
+            bridge=self._core,
+            workflow_ctx=lambda instance_id: WorkflowCtx(instance_id, self._core),
+        )
+        return build_executor(
+            self._executor_kind,
+            self._core,
+            deps,
+            on_core_shutdown=self.stop,
+            **self._executor_options,
+        )
 
     def await_termination(self) -> Runner:
         """Block until the runner is stopped, then drain."""

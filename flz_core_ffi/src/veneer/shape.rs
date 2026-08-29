@@ -321,17 +321,7 @@ fn kind_out<S: Sink>(
         }
         K::RestoreFold(fold) => {
             set_word(s, out, KIND, word::RESTORE_FOLD)?;
-            if let Some(snapshot) = fold.snapshot {
-                let snapshot = restore_body(s, snapshot)?;
-                s.set(out, SNAPSHOT, snapshot)?;
-            }
-            let mut changes = s.list(fold.changes.len())?;
-            for body in fold.changes {
-                let body = restore_body(s, body)?;
-                s.push(&mut changes, body)?;
-            }
-            let changes = s.finish_list(changes)?;
-            s.set(out, CHANGES, changes)?;
+            restore_fold_out(s, out, fold)?;
         }
         K::SnapshotRequest => set_word(s, out, KIND, word::SNAPSHOT_REQUEST)?,
         K::LiveStateRead => set_word(s, out, KIND, word::LIVE_STATE_READ)?,
@@ -358,6 +348,25 @@ fn kind_out<S: Sink>(
         }
     }
     Ok(())
+}
+
+/// The optional snapshot and the change bodies a restore folds over.
+fn restore_fold_out<S: Sink>(
+    s: &S,
+    out: &mut S::Map,
+    fold: schema::RestoreFold,
+) -> Result<(), S::Error> {
+    if let Some(snapshot) = fold.snapshot {
+        let snapshot = restore_body(s, snapshot)?;
+        s.set(out, SNAPSHOT, snapshot)?;
+    }
+    let mut changes = s.list(fold.changes.len())?;
+    for body in fold.changes {
+        let body = restore_body(s, body)?;
+        s.push(&mut changes, body)?;
+    }
+    let changes = s.finish_list(changes)?;
+    s.set(out, CHANGES, changes)
 }
 
 fn set_word<S: Sink>(s: &S, map: &mut S::Map, key: Key, w: &'static str) -> Result<(), S::Error> {

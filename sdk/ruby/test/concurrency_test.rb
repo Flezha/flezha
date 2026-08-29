@@ -7,69 +7,6 @@ require_relative "test_helper"
 # core call, a refused post-fork call, and identical ordering under both
 # executors.
 class ConcurrencyTest < Minitest::Test
-  # Stands in for the core at the poll boundary. The real core needs a
-  # controller; what these tests are about is what the executor does with the
-  # three answers `poll` can give and the three `wait_starvation` can.
-  class FakeCore
-    attr_reader :completed, :abandoned
-
-    def initialize(activations: [], starvations: 0, hold: nil)
-      @pending = Thread::Queue.new
-      activations.each { |a| @pending.push(a) }
-      @starvations = starvations
-      @hold = hold
-      @completed = []
-      @abandoned = []
-      @lock = Mutex.new
-      @stopping = false
-      @handed_out = false
-    end
-
-    # Whether anything has been handed out yet, so a test can wait for the
-    # worker to be inside the handler rather than racing it.
-    def polled_once? = @lock.synchronize { @handed_out }
-
-    def poll(timeout_ms)
-      return :shutting_down if @stopping
-
-      unless @pending.empty?
-        @lock.synchronize { @handed_out = true }
-        return @pending.pop(true)
-      end
-
-      sleep(timeout_ms / 1000.0)
-      @stopping ? :shutting_down : nil
-    rescue ThreadError
-      nil
-    end
-
-    def wait_starvation(timeout_ms)
-      return 2 if @stopping
-
-      taken = @lock.synchronize do
-        next false if @starvations <= 0
-
-        @starvations -= 1
-        true
-      end
-      return 1 if taken
-
-      sleep(timeout_ms / 1000.0)
-      @stopping ? 2 : 0
-    end
-
-    # The handler's hold is here rather than in a procedure body so a test can
-    # release it without reaching through the dispatcher.
-    def complete(result)
-      @hold&.call
-      @lock.synchronize { @completed << result }
-    end
-
-    def abandon(token) = @lock.synchronize { @abandoned << token }
-    def spawn_workflow(*) = "spawned"
-    def shutdown = (@stopping = true)
-  end
-
   class Echo < Flezha::Procedure
     procedure_name "echo"
     def process(input, _ctx) = input
@@ -83,20 +20,13 @@ class ConcurrencyTest < Minitest::Test
     end
   end
 
-  def deps(core)
-    registry = Flezha::Registry.new
-    registry.add(EchoOperative.spec)
-    Flezha::DispatchDeps.new(
-      registry: registry, bridge: core,
-      workflow_ctx: ->(id) { Flezha::WorkflowCtx.new(id, core) }
-    )
-  end
+  def deps(core) = Flezha::TestSupport.deps(EchoOperative, core)
 
   def activation(token, payload)
-    { token: token, operative: "op", procedure: 0, entity_key: nil, change_seq: 0,
-      factory: "echo_op", kind: :work,
-      items: [{ kind: :input, channel: 0, payload: payload.b, metadata: [], replay: false,
-                now: 0 }] }
+    Flezha::TestSupport.activation(
+      factory: "echo_op", token: token, operative: "op",
+      items: [Flezha::TestSupport.input_item(payload, now: 0)]
+    )
   end
 
   def wait_until(timeout: 5)
@@ -141,7 +71,7 @@ class ConcurrencyTest < Minitest::Test
   # -- growth and retirement ------------------------------------------------
 
   def test_a_workload_that_never_starves_runs_on_the_base_pool
-    core = FakeCore.new(activations: Array.new(4) { |i| activation(i, "x") })
+    core = Flezha::TestSupport::FakeCore.new(activations: Array.new(4) { |i| activation(i, "x") })
     executor = Flezha::ThreadExecutor.new(core, deps(core), base: 2, ceiling: 8).start
     begin
       assert wait_until { core.completed.size == 4 }
@@ -154,7 +84,7 @@ class ConcurrencyTest < Minitest::Test
 
   def test_blocked_handlers_buy_threads_up_to_the_ceiling
     release = Thread::Queue.new
-    core = FakeCore.new(
+    core = Flezha::TestSupport::FakeCore.new(
       activations: Array.new(6) { |i| activation(i, "x") },
       starvations: 10, hold: -> { release.pop }
     )
@@ -170,7 +100,7 @@ class ConcurrencyTest < Minitest::Test
   end
 
   def test_grown_workers_retire_when_the_work_ends
-    core = FakeCore.new(starvations: 4)
+    core = Flezha::TestSupport::FakeCore.new(starvations: 4)
     executor = Flezha::ThreadExecutor.new(core, deps(core), base: 1, ceiling: 5).start
     begin
       assert wait_until { executor.size > 1 }, "the pool grows first"
@@ -188,7 +118,9 @@ class ConcurrencyTest < Minitest::Test
   def test_both_executors_complete_every_activation_and_keep_item_order
     answers = {}
     %i[threads fibers].each do |kind|
-      core = FakeCore.new(activations: Array.new(8) { |i| activation(i, "item-#{i}") })
+      core = Flezha::TestSupport::FakeCore.new(
+        activations: Array.new(8) { |i| activation(i, "item-#{i}") }
+      )
       executor =
         if kind == :threads
           Flezha::ThreadExecutor.new(core, deps(core), base: 3, ceiling: 6)
@@ -235,17 +167,13 @@ class ConcurrencyTest < Minitest::Test
 
   def test_an_activation_is_completed_only_after_its_dispatch_returns
     ORDER.clear
-    core = FakeCore.new(
+    core = Flezha::TestSupport::FakeCore.new(
       activations: [activation(1, "x").merge(factory: "recorder_op")],
       hold: -> { ORDER_LOCK.synchronize { ORDER << :completed } }
     )
-    registry = Flezha::Registry.new
-    registry.add(RecorderOperative.spec)
-    dispatcher = Flezha::DispatchDeps.new(
-      registry: registry, bridge: core,
-      workflow_ctx: ->(id) { Flezha::WorkflowCtx.new(id, core) }
-    )
-    executor = Flezha::ThreadExecutor.new(core, dispatcher, base: 1, ceiling: 1).start
+    executor = Flezha::ThreadExecutor.new(
+      core, Flezha::TestSupport.deps(RecorderOperative, core), base: 1, ceiling: 1
+    ).start
     begin
       assert wait_until { ORDER.size == 2 }
       assert_equal %i[dispatched completed], ORDER
@@ -270,19 +198,16 @@ class ConcurrencyTest < Minitest::Test
     end
   end
 
-  def never_returns_deps(core)
-    registry = Flezha::Registry.new
-    registry.add(NeverReturnsOperative.spec)
-    Flezha::DispatchDeps.new(registry: registry, bridge: core,
-                             workflow_ctx: ->(id) { Flezha::WorkflowCtx.new(id, core) })
-  end
+  def never_returns_deps(core) = Flezha::TestSupport.deps(NeverReturnsOperative, core)
 
   # A handler that never returns must not keep the runner alive forever. The
   # harness stops runners by closing their pipes, so an unbounded drain leaks a
   # process per wedge — and the process that leaks is the one holding the
   # namespace the next test wants.
   def test_a_handler_that_never_returns_does_not_hold_the_drain_open
-    core = FakeCore.new(activations: [activation(1, "x").merge(factory: "never_returns_op")])
+    core = Flezha::TestSupport::FakeCore.new(
+      activations: [activation(1, "x").merge(factory: "never_returns_op")]
+    )
     executor = Flezha::ThreadExecutor.new(core, never_returns_deps(core), base: 1, ceiling: 1).start
     assert wait_until { core.polled_once? }, "the worker picked the activation up"
 
@@ -296,7 +221,9 @@ class ConcurrencyTest < Minitest::Test
   end
 
   def test_the_same_bound_holds_under_the_fiber_executor
-    core = FakeCore.new(activations: [activation(1, "x").merge(factory: "never_returns_op")])
+    core = Flezha::TestSupport::FakeCore.new(
+      activations: [activation(1, "x").merge(factory: "never_returns_op")]
+    )
     executor = Flezha::FiberExecutor.new(core, never_returns_deps(core), fetchers: 1).start
     assert wait_until { core.polled_once? }
 

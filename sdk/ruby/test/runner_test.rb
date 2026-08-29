@@ -15,55 +15,15 @@ class RunnerTest < Minitest::Test
     channels { |c| c.input("input").into(Echo).named("out").sink("runner_sink") }
   end
 
-  # Records the order the runner drives it in.
-  class RecordingCore
-    attr_reader :events, :declarations, :polled
-
-    def initialize(events)
-      @events = events
-      @declarations = []
-      # The first poll is what "serving" means, and it happens on a worker
-      # thread — so a test that drains without waiting for it would be timing
-      # the join, not the order.
-      @polled = Thread::Queue.new
-    end
-
-    def declare_class(json)
-      @declarations << json
-      @events << :declare
-    end
-
-    def start(_namespace) = @events << :start
-
-    def poll(timeout_ms)
-      @events << :poll
-      @polled.push(:polled)
-      sleep(timeout_ms / 1000.0)
-      :shutting_down
-    end
-
-    def wait_starvation(timeout_ms)
-      sleep(timeout_ms / 1000.0)
-      2
-    end
-
-    def complete(_result) = nil
-    def abandon(_token) = nil
-    def spawn_workflow(*) = "spawned"
-    def shutdown = nil
-    def free = @events << :free
-  end
-
   def boot_recording
-    events = []
-    core = RecordingCore.new(events)
+    core = Flezha::TestSupport::FakeCore.new
     runner = Flezha::Runner.new("test-ns").define_stream(EchoOperative)
-    Process.stub(:warmup, -> { events << :warmup }) do
+    Process.stub(:warmup, -> { core.events << :warmup }) do
       runner.boot(core: core)
       core.polled.pop
       runner.drain
     end
-    [events, core]
+    [core.events, core]
   end
 
   def test_warmup_runs_after_the_last_declaration_and_before_the_first_poll
@@ -81,14 +41,14 @@ class RunnerTest < Minitest::Test
   end
 
   def test_declaration_precedes_serving_for_every_declared_class
-    events = []
-    core = RecordingCore.new(events)
+    core = Flezha::TestSupport::FakeCore.new
+    events = core.events
     second = Class.new(Flezha::StreamOperative)
     second.factory_id "runner_second_op"
     second.channels { |c| c.input("in").into(Echo, "second_node").named("o").sink("s") }
 
     runner = Flezha::Runner.new("test-ns").define_stream(EchoOperative).define_stream(second)
-    Process.stub(:warmup, -> { events << :warmup }) do
+    Process.stub(:warmup, -> { core.events << :warmup }) do
       runner.boot(core: core)
       core.polled.pop
       runner.drain
@@ -108,14 +68,14 @@ class RunnerTest < Minitest::Test
   def test_a_runner_with_no_class_is_refused
     runner = Flezha::Runner.new("test-ns")
 
-    assert_raises(Flezha::Error) { runner.boot(core: RecordingCore.new([])) }
+    assert_raises(Flezha::Error) { runner.boot(core: Flezha::TestSupport::FakeCore.new) }
   end
 
   def test_an_unknown_executor_is_refused_by_name
     runner = Flezha::Runner.new("test-ns").define_stream(EchoOperative).executor(:ractors)
 
     assert_includes(
-      assert_raises(Flezha::Error) { runner.boot(core: RecordingCore.new([])) }.message,
+      assert_raises(Flezha::Error) { runner.boot(core: Flezha::TestSupport::FakeCore.new) }.message,
       ":threads and :fibers"
     )
   end

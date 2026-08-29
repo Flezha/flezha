@@ -43,7 +43,8 @@ def validate(spec: ClassSpec) -> None:
     handler rather than on the operative.
     """
     _check_workflow(spec)
-    _check_tier_and_window(spec)
+    _check_tier(spec)
+    _check_window(spec)
     _check_channels(spec)
     _check_keying(spec)
     _check_topology(spec)
@@ -54,62 +55,76 @@ def _check_channels(spec: ClassSpec) -> None:
     sinks: set[str] = set()
 
     for channel in spec.channels:
-        if channel.name in names:
-            _refuse(spec, channel.name, "this channel name is declared more than once")
-        names.add(channel.name)
-
-        if channel.kind == "plugin":
-            if channel.name in sinks:
-                _refuse(spec, channel.name, "declares a plugin sink more than once")
-            sinks.add(channel.name)
-        elif channel.keyed:
-            _refuse(
-                spec,
-                channel.name,
-                "is declared keyed but has no plugin wire; output identity stamps only exist "
-                "on plugin-bound frames, so add a sink(...) or drop the keyed",
-            )
-
-        if spec.effectively_once and channel.kind == "plugin" and not channel.keyed:
-            _refuse(
-                spec,
-                channel.name,
-                "has a plugin wire but is not declared keyed; the effectively-once tier "
-                "deduplicates by output identity, so every plugin-bound channel of a class "
-                "that declares effectively_once must opt in with keyed",
-            )
-
-        if channel.overflow != "drop_nothing":
-            if spec.effectively_once:
-                _refuse(
-                    spec,
-                    channel.name,
-                    f"declares on_full({channel.overflow}) on a class that declares "
-                    f"effectively_once; a shed input's offset is still advanced past by the "
-                    f"tier's watermark, so the loss is permanent and reported nowhere — "
-                    f"declare one or the other, not both",
-                )
-            if spec.correction_window_ms:
-                _refuse(
-                    spec,
-                    channel.name,
-                    f"declares on_full({channel.overflow}) on a class that declares a "
-                    f"correction window; a correction re-folds a replayed slice and its answer "
-                    f"may not depend on which items a full mailbox happened to keep",
-                )
-
-        if channel.retry_max == 0:
-            _refuse(
-                spec,
-                channel.name,
-                "declares retry_max(0); at least one attempt is required — raise a "
-                "non-retryable error to park without retries",
-            )
+        _check_channel_names(spec, channel, names, sinks)
+        _check_channel_wiring(spec, channel)
+        _check_overflow(spec, channel)
 
         if channel.kind == "entry" and not channel.consumers:
             _refuse(spec, channel.name, "is an entry channel that names no consumer")
         if channel.kind == "inter_proc" and not channel.consumers:
             _refuse(spec, channel.name, "is an inter-procedure channel that names no consumer")
+
+
+def _check_channel_names(
+    spec: ClassSpec, channel: ChannelSpec, names: set[str], sinks: set[str]
+) -> None:
+    if channel.name in names:
+        _refuse(spec, channel.name, "this channel name is declared more than once")
+    names.add(channel.name)
+
+    if channel.kind != "plugin":
+        return
+    if channel.name in sinks:
+        _refuse(spec, channel.name, "declares a plugin sink more than once")
+    sinks.add(channel.name)
+
+
+def _check_channel_wiring(spec: ClassSpec, channel: ChannelSpec) -> None:
+    if channel.kind != "plugin" and channel.keyed:
+        _refuse(
+            spec,
+            channel.name,
+            "is declared keyed but has no plugin wire; output identity stamps only exist "
+            "on plugin-bound frames, so add a sink(...) or drop the keyed",
+        )
+
+    if spec.effectively_once and channel.kind == "plugin" and not channel.keyed:
+        _refuse(
+            spec,
+            channel.name,
+            "has a plugin wire but is not declared keyed; the effectively-once tier "
+            "deduplicates by output identity, so every plugin-bound channel of a class "
+            "that declares effectively_once must opt in with keyed",
+        )
+
+
+def _check_overflow(spec: ClassSpec, channel: ChannelSpec) -> None:
+    if channel.overflow != "drop_nothing":
+        if spec.effectively_once:
+            _refuse(
+                spec,
+                channel.name,
+                f"declares on_full({channel.overflow}) on a class that declares "
+                f"effectively_once; a shed input's offset is still advanced past by the "
+                f"tier's watermark, so the loss is permanent and reported nowhere — "
+                f"declare one or the other, not both",
+            )
+        if spec.correction_window_ms:
+            _refuse(
+                spec,
+                channel.name,
+                f"declares on_full({channel.overflow}) on a class that declares a "
+                f"correction window; a correction re-folds a replayed slice and its answer "
+                f"may not depend on which items a full mailbox happened to keep",
+            )
+
+    if channel.retry_max == 0:
+        _refuse(
+            spec,
+            channel.name,
+            "declares retry_max(0); at least one attempt is required — raise a "
+            "non-retryable error to park without retries",
+        )
 
 
 def _check_keying(spec: ClassSpec) -> None:
@@ -136,7 +151,7 @@ def _check_keying(spec: ClassSpec) -> None:
                 )
 
 
-def _check_tier_and_window(spec: ClassSpec) -> None:
+def _check_tier(spec: ClassSpec) -> None:
     if spec.effectively_once and not spec.persistent:
         _refuse(
             spec, None, "declares effectively_once without persistence: the tier IS durable state"
@@ -163,6 +178,9 @@ def _check_tier_and_window(spec: ClassSpec) -> None:
             "declares outputs_at_checkpoint with no maximum delay; an interval that never "
             "closes would hold its outputs forever on a quiet entity",
         )
+
+
+def _check_window(spec: ClassSpec) -> None:
     if spec.correction_window_ms is None:
         return
     if spec.correction_window_ms == 0:

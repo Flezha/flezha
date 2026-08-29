@@ -23,9 +23,9 @@ import threading
 import time
 from typing import Any, Callable, Protocol
 
-from .diagnostics import logger
 from .dispatch import DispatchDeps, close_thread_loop, dispatch, dispatch_now
 from .errors import FlezhaError
+from .logger import logger
 
 __all__ = [
     "Executor",

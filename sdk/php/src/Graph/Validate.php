@@ -33,7 +33,8 @@ final class Validate
     public static function spec(ClassSpec $spec): void
     {
         self::workflow($spec);
-        self::tierAndWindow($spec);
+        self::tier($spec);
+        self::window($spec);
         self::channels($spec);
         self::procedures($spec);
         self::keying($spec);
@@ -51,62 +52,9 @@ final class Validate
         $sinks = [];
 
         foreach ($spec->channels as $channel) {
-            if (isset($names[$channel->name])) {
-                self::refuse($spec, $channel->name, 'this channel name is declared more than once');
-            }
-            $names[$channel->name] = true;
-
-            if ($channel->kind === 'plugin') {
-                if (isset($sinks[$channel->name])) {
-                    self::refuse($spec, $channel->name, 'declares a plugin sink more than once');
-                }
-                $sinks[$channel->name] = true;
-            } elseif ($channel->keyed) {
-                self::refuse(
-                    $spec,
-                    $channel->name,
-                    'is declared keyed but has no plugin wire; output identity stamps only exist '
-                    . 'on plugin-bound frames, so add a sink(...) or drop the keyed'
-                );
-            }
-
-            if ($spec->effectivelyOnce && $channel->kind === 'plugin' && !$channel->keyed) {
-                self::refuse(
-                    $spec,
-                    $channel->name,
-                    'has a plugin wire but is not declared keyed; the effectively-once tier '
-                    . 'deduplicates by output identity, so every plugin-bound channel of a class '
-                    . 'that declares effectivelyOnce must opt in with keyed'
-                );
-            }
-
-            if ($channel->overflow !== Overflow::DropNothing) {
-                if ($spec->effectivelyOnce) {
-                    self::refuse($spec, $channel->name, sprintf(
-                        'declares onFull(%s) on a class that declares effectivelyOnce; a shed '
-                        . "input's offset is still advanced past by the tier's watermark, so the "
-                        . 'loss is permanent and reported nowhere — declare one or the other, not both',
-                        $channel->overflow->value,
-                    ));
-                }
-                if ($spec->correctionWindowMs !== null) {
-                    self::refuse($spec, $channel->name, sprintf(
-                        'declares onFull(%s) on a class that declares a correction window; a '
-                        . 'correction re-folds a replayed slice and its answer may not depend on '
-                        . 'which items a full mailbox happened to keep',
-                        $channel->overflow->value,
-                    ));
-                }
-            }
-
-            if ($channel->retryMax === 0) {
-                self::refuse(
-                    $spec,
-                    $channel->name,
-                    'declares retryMax(0); at least one attempt is required — raise a '
-                    . 'non-retryable error to park without retries'
-                );
-            }
+            self::channelNames($spec, $channel, $names, $sinks);
+            self::channelWiring($spec, $channel);
+            self::overflow($spec, $channel);
 
             if ($channel->kind === 'entry' && $channel->consumers === []) {
                 self::refuse($spec, $channel->name, 'is an entry channel that names no consumer');
@@ -119,6 +67,84 @@ final class Validate
                 );
             }
         }
+    }
+
+    /**
+     * @param array<string, true> $names
+     * @param array<string, true> $sinks
+     */
+    private static function channelNames(
+        ClassSpec $spec,
+        ChannelSpec $channel,
+        array &$names,
+        array &$sinks,
+    ): void {
+        if (isset($names[$channel->name])) {
+            self::refuse($spec, $channel->name, 'this channel name is declared more than once');
+        }
+        $names[$channel->name] = true;
+
+        if ($channel->kind !== 'plugin') {
+            return;
+        }
+        if (isset($sinks[$channel->name])) {
+            self::refuse($spec, $channel->name, 'declares a plugin sink more than once');
+        }
+        $sinks[$channel->name] = true;
+    }
+
+    private static function channelWiring(ClassSpec $spec, ChannelSpec $channel): void
+    {
+        if ($channel->kind !== 'plugin' && $channel->keyed) {
+            self::refuse(
+                $spec,
+                $channel->name,
+                'is declared keyed but has no plugin wire; output identity stamps only exist '
+                . 'on plugin-bound frames, so add a sink(...) or drop the keyed'
+            );
+        }
+
+        if ($spec->effectivelyOnce && $channel->kind === 'plugin' && !$channel->keyed) {
+            self::refuse(
+                $spec,
+                $channel->name,
+                'has a plugin wire but is not declared keyed; the effectively-once tier '
+                . 'deduplicates by output identity, so every plugin-bound channel of a class '
+                . 'that declares effectivelyOnce must opt in with keyed'
+            );
+        }
+    }
+
+    private static function overflow(ClassSpec $spec, ChannelSpec $channel): void
+    {
+        if ($channel->overflow !== Overflow::DropNothing) {
+            if ($spec->effectivelyOnce) {
+                self::refuse($spec, $channel->name, sprintf(
+                    'declares onFull(%s) on a class that declares effectivelyOnce; a shed '
+                    . "input's offset is still advanced past by the tier's watermark, so the "
+                    . 'loss is permanent and reported nowhere — declare one or the other, not both',
+                    $channel->overflow->value,
+                ));
+            }
+            if ($spec->correctionWindowMs !== null) {
+                self::refuse($spec, $channel->name, sprintf(
+                    'declares onFull(%s) on a class that declares a correction window; a '
+                    . 'correction re-folds a replayed slice and its answer may not depend on '
+                    . 'which items a full mailbox happened to keep',
+                    $channel->overflow->value,
+                ));
+            }
+        }
+
+        if ($channel->retryMax !== 0) {
+            return;
+        }
+        self::refuse(
+            $spec,
+            $channel->name,
+            'declares retryMax(0); at least one attempt is required — raise a '
+            . 'non-retryable error to park without retries'
+        );
     }
 
     private static function keying(ClassSpec $spec): void
@@ -150,83 +176,101 @@ final class Validate
     private static function procedures(ClassSpec $spec): void
     {
         foreach ($spec->procedures as $node) {
-            $definition = $node->definition;
-            $decl = $definition->decl;
-            $clock = $decl->clock;
-
-            if ($clock === Clock::EventTime && !$definition->declares('eventTime')) {
-                self::refuse(
-                    $spec,
-                    $node->name,
-                    'declares an event_time clock but no eventTime method; the core evaluates '
-                    . 'the declared clock per input and has nothing to evaluate'
-                );
-            }
-            if ($clock !== Clock::EventTime && $definition->declares('eventTime')) {
-                self::refuse($spec, $node->name, sprintf(
-                    'declares an eventTime method with clock `%s`; the extractor is only '
-                    . 'consulted by an event_time clock, so one of the two is not what was meant',
-                    $clock->value,
-                ));
-            }
-            if ($clock === Clock::Logical && !$definition->declares('state')) {
-                self::refuse(
-                    $spec,
-                    $node->name,
-                    'declares a logical clock but no state; logical time IS the durable change '
-                    . 'sequence, which never advances for a procedure that records no changes'
-                );
-            }
-            if ($definition->entityMode() === 'static' && !$definition->declares('entitiesFor')) {
-                self::refuse(
-                    $spec,
-                    $node->name,
-                    'declares a static key set without an entitiesFor; static keying needs the '
-                    . 'method that says which declared entities an input belongs to'
-                );
-            }
-
-            $capacity = $decl->mailboxCapacity;
-            if ($capacity !== null && ($capacity < 1 || $capacity > self::MAX_MAILBOX_CAPACITY)) {
-                self::refuse($spec, $node->name, sprintf(
-                    'declares mailboxCapacity %d; capacity must be in 1..%d',
-                    $capacity,
-                    self::MAX_MAILBOX_CAPACITY,
-                ));
-            }
-            if ($decl->maxEntities === 0) {
-                self::refuse(
-                    $spec,
-                    $node->name,
-                    'declares maxEntities 0; a dynamic procedure that may hold no entity can '
-                    . 'process nothing'
-                );
-            }
-
-            $floor = $decl->minReadableSchemaVersion;
-            if ($floor === null) {
-                continue;
-            }
-            if ($floor > $decl->schemaVersion) {
-                self::refuse($spec, $node->name, sprintf(
-                    'declares minReadableSchemaVersion %d above its schemaVersion %d',
-                    $floor,
-                    $decl->schemaVersion,
-                ));
-            }
-            if ($floor < $decl->schemaVersion
-                && !$definition->declares('migrateState')
-                && !$definition->declares('migrateChange')) {
-                self::refuse($spec, $node->name, sprintf(
-                    'declares it reads back to schema version %d but supplies no migration; a '
-                    . 'floor without one fails at the first old record instead of at startup',
-                    $floor,
-                ));
-            }
+            self::clocks($spec, $node);
+            self::entities($spec, $node);
+            self::schema($spec, $node);
         }
     }
 
-    private static function tierAndWindow(ClassSpec $spec): void
+    private static function clocks(ClassSpec $spec, ProcNode $node): void
+    {
+        $definition = $node->definition;
+        $clock = $definition->decl->clock;
+
+        if ($clock === Clock::EventTime && !$definition->declares('eventTime')) {
+            self::refuse(
+                $spec,
+                $node->name,
+                'declares an event_time clock but no eventTime method; the core evaluates '
+                . 'the declared clock per input and has nothing to evaluate'
+            );
+        }
+        if ($clock !== Clock::EventTime && $definition->declares('eventTime')) {
+            self::refuse($spec, $node->name, sprintf(
+                'declares an eventTime method with clock `%s`; the extractor is only '
+                . 'consulted by an event_time clock, so one of the two is not what was meant',
+                $clock->value,
+            ));
+        }
+        if ($clock === Clock::Logical && !$definition->declares('state')) {
+            self::refuse(
+                $spec,
+                $node->name,
+                'declares a logical clock but no state; logical time IS the durable change '
+                . 'sequence, which never advances for a procedure that records no changes'
+            );
+        }
+    }
+
+    private static function entities(ClassSpec $spec, ProcNode $node): void
+    {
+        $definition = $node->definition;
+
+        if ($definition->entityMode() === 'static' && !$definition->declares('entitiesFor')) {
+            self::refuse(
+                $spec,
+                $node->name,
+                'declares a static key set without an entitiesFor; static keying needs the '
+                . 'method that says which declared entities an input belongs to'
+            );
+        }
+
+        $capacity = $definition->decl->mailboxCapacity;
+        if ($capacity !== null && ($capacity < 1 || $capacity > self::MAX_MAILBOX_CAPACITY)) {
+            self::refuse($spec, $node->name, sprintf(
+                'declares mailboxCapacity %d; capacity must be in 1..%d',
+                $capacity,
+                self::MAX_MAILBOX_CAPACITY,
+            ));
+        }
+        if ($definition->decl->maxEntities === 0) {
+            self::refuse(
+                $spec,
+                $node->name,
+                'declares maxEntities 0; a dynamic procedure that may hold no entity can '
+                . 'process nothing'
+            );
+        }
+    }
+
+    private static function schema(ClassSpec $spec, ProcNode $node): void
+    {
+        $definition = $node->definition;
+        $decl = $definition->decl;
+        $floor = $decl->minReadableSchemaVersion;
+        if ($floor === null) {
+            return;
+        }
+
+        if ($floor > $decl->schemaVersion) {
+            self::refuse($spec, $node->name, sprintf(
+                'declares minReadableSchemaVersion %d above its schemaVersion %d',
+                $floor,
+                $decl->schemaVersion,
+            ));
+        }
+        if ($floor < $decl->schemaVersion
+            && !$definition->declares('migrateState')
+            && !$definition->declares('migrateChange')) {
+            self::refuse($spec, $node->name, sprintf(
+                'declares it reads back to schema version %d but supplies no migration; a '
+                . 'floor without one fails at the first old record instead of at startup',
+                $floor,
+            ));
+        }
+    }
+
+    private static function tier(ClassSpec $spec): void
     {
         if ($spec->effectivelyOnce && !$spec->persistent) {
             self::refuse(
@@ -261,6 +305,10 @@ final class Validate
                 . 'closes would hold its outputs forever on a quiet entity'
             );
         }
+    }
+
+    private static function window(ClassSpec $spec): void
+    {
         if ($spec->correctionWindowMs === null) {
             return;
         }
@@ -293,7 +341,6 @@ final class Validate
         );
     }
 
-    /** Every procedure reachable from an entry channel, and no cycle among them. */
     private static function topology(ClassSpec $spec): void
     {
         $entries = array_values(array_filter(
@@ -316,6 +363,16 @@ final class Validate
             return;
         }
 
+        self::dag($spec, $entries, self::successorsOf($spec));
+    }
+
+    /**
+     * Which procedures each procedure feeds, by index.
+     *
+     * @return list<list<int>>
+     */
+    private static function successorsOf(ClassSpec $spec): array
+    {
         $successors = array_fill(0, count($spec->procedures), []);
         foreach ($spec->channels as $channel) {
             if ($channel->kind !== 'inter_proc' || $channel->producer === null) {
@@ -324,6 +381,17 @@ final class Validate
             array_push($successors[$channel->producer], ...$channel->consumers);
         }
 
+        return $successors;
+    }
+
+    /**
+     * Every procedure reachable from an entry channel, and no cycle among them.
+     *
+     * @param list<ChannelSpec> $entries
+     * @param list<list<int>>   $successors
+     */
+    private static function dag(ClassSpec $spec, array $entries, array $successors): void
+    {
         $reachable = [];
         $frontier = [];
         foreach ($entries as $entry) {
