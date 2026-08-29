@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-30 01:01 (supervisor session 2 — segment F heartbeat 6, row 1 bisecting)
+**Last updated**: 2026-08-30 01:25 (supervisor session 2 — **AREA 3 DONE**, ready for hand-over)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 
@@ -72,7 +72,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A–E: `a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`, `623ba124` | 0a finding CLOSED; `sdk/rust` **fn>50 12→0, files>800 9→0, long_names 9→0**, sleeps 9→3; three flakes cured with mechanisms |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | **done** | A–F: `a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`, `623ba124`, `b4408d58` | **fn>50 12→0 and 2→0, files>800 9→0, long_names 9→0**, narrative 20→2, sleeps 9→3; three flakes cured; **rows 1/2 carry ~2–4 % from segment B's seam — accepted, re-measure owed**; both crates now BLOCKING |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -88,66 +88,40 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-3-rust-sdk`, **segment F — the close** (batch 10b: `procedure::expand`;
-batch 11: comments, naming, the D13 string proof, full gates, the area's ONE
-measurement pass, dev notes and hand-over), fresh general-purpose worker, spawned
-2026-08-29 23:23. Checkpoint 6; the supervisor archives, commits and flips the
-ratchets.
+None. **Area 3 is done** (`b4408d58`, archived as `2026-08-29-refactor-3-rust-sdk`;
+`sdk/rust` and `flezha-macros` flipped to blocking ratchets). Areas 0a, 0b, 1s, 1, 2
+and 3 are complete — **~42 % of the codebase by production LOC**.
 
-Its A/B is the whole area's, and under the rewritten §8 it is the FIRST measurement
-since checkpoint 1: rows 1 and 2 are gates (floors 0.33 % and 0.95 %), rows 3 and 4
-direction only (9.04 % and 6.01 % — they cannot resolve 3 %), row 5 guard, row 6
-direction. Three paired rounds detect, five only on an unbroken direction; a row whose
-binary sha matches its arm is skipped on that evidence. Arms A′/B2/B3/B4 are kept
-under `$SCRATCH/area3/` so a regression bisects instead of re-running.
+**Next**: area 4 (`sdk/java`, 8 441 lines) — its dependency (area 1) is done, and it
+is the last area before the five controller areas, which are 42 % of the codebase on
+their own and carry the 55-file dependency cycle.
 
-Area 3 segments A–E are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`,
-`623ba124`).
+### The one verdict that outlives this area
 
-- last seen 01:01: **row 1 has gone to a bisect too** (`final_row1_bisect.log`,
-  arms A′/B2/B5). Round 1 only, so NOT a verdict: A′ 736.44 ms against B2 762.88 ms,
-  which would put ~3.6 % on **segment B** — the typed tail moving onto the shared
-  `settle_effects`, i.e. the area's core change, where the 1s spike predicted ≤ 1.5 %.
-  If four more rounds hold that direction it is a real cost on the typed dispatch
-  path and the supervisor decides whether it ships. One round proves nothing; wait
-  for the worker's table.
-- previous 00:45: **the new A/B policy's bisect mechanism has been exercised for the
-  first time.** Row 2 was flagged, and instead of re-running the whole matrix the
-  worker is bisecting over the KEPT arms — `final_row2_bisect.log` shows A′, B2 and
-  B3 at four rounds each, with B2 2.7924 s and B3 2.7896 s (p = 0.91 and 0.78, not
-  significant). That is exactly what "build every checkpoint, measure once" buys:
-  attribution without re-measurement. Row 5 is running now. Ticks 58, 55 files in the
-  segment's diff, dev notes still to come.
-- previous 00:29: row 1's three-arm pass has six arm-runs recorded and the A/B has
-  moved on to rows 2, 3 and 4 (`final_rows234.log`). Ticks 58. No stall; the verdict
-  and the hand-over are what remain.
-- previous 00:13: the A/B has escalated **row 1 to a three-arm pass** (A′, B4, B5 —
-  `logs/final_row1_three.log`, round q1 running). Under the rewritten §8 that only
-  happens when the paired direction held across all three rounds, so **there may be a
-  real regression on the area's primary gate row** — the same row that has carried a
-  0.6–1.4 % deficit, 15/15, since area 1. The three-arm pass is what separates
-  segment F's contribution from the earlier segments'. Watch this. Ticks 58; dev
-  notes (11.8) and the hand-over follow the A/B.
-- previous 23:56: **the area's one measurement pass has started** — arm B5 is built
-  and `logs/row1-Ap-n1.log` is the first paired round against A′. Ticks 58; batch 11's
-  boxes tick at its end, and the dev notes (11.8) follow the A/B. No stall.
-- previous 23:40: ticks 58, 44 files touched, −27 net. The edits are across the new
-  test binaries (`output_identity`, `late_input_correction`, `entry_edge_backpressure`,
-  `topology_keyed_and_clock`, …), so task 11.0's prelude is being applied. Batch 10b
-  and the comment/naming work appear done. The single A/B is still ahead. No stall.
+**Rows 1 and 2 carry a real regression of roughly 2–4 %, and it bisects to segment
+B** — the typed settlement tail moving onto the shared `settle_effects`. Every later
+arm is flat against B2 (+0.31 % on row 1, +0.13 % on row 2) and allocations are flat
+across the step, so it is instruction path.
 
-`sdk/rust` is at **no file over 800, no function over 50, no name over 32**, sleeps
-9 → 3 with each survivor named. Supervisor re-ran the suite independently: 36 binaries,
-exit 0.
+Read it against the **session's** floor, not batch 0's. B4 and B5 carry identical
+production code — E and F touched only test modules, comments and two private names
+— and still separated **1.93 %** on row 1; arm A′ spanned 5.6 % within itself. The
+0.33 %/0.95 % floors were taken on a cold idle box and did not survive an hour of
+measurement. So: a real cost, imprecisely measured.
 
-**How the flakes were proved, because it is the method that matters.** The plain
-regime — 8 threads, idle box — reproduces NONE of the three, 20/20 before and after,
-so a green proof there would have been worthless. The worker built a stress regime
-(`--test-threads=32` under `nproc` busy loops) that does reproduce them, and reported
-both regimes. It then named its own confound (flake 1's binary was split as part of
-the cure, so before/after populations differ) and stressed all seven sibling binaries
-to close it. That is the standard for every later area: **a flake proof is only worth
-the regime that reproduces the flake.**
+**Accepted, not reverted.** The seam is charter §3's stated goal — one settlement
+tail instead of two — and reverting the area's core change on a number this noisy
+trades a structural gain for a measurement artifact. **A clean re-measure on a cold
+box is owed** before anyone decides to optimise or keep it. To reproduce: arm A′ is
+the tree at `a1bdfa34`, arm B2 the tree at `9f747656`; build **both the same way**
+(two worktrees are comparable to each other, a worktree and the tree are not) and run
+row 1 at `FLEZHA_BENCH_MEASUREMENT_SECS=60`, `FLEZHA_WORKER_POOL_SIZE=8`, five paired
+rounds. The arms themselves die with this session's scratchpad.
+
+This is also the first time the seam has been priced at all. The 1s spike put it at
+≤ 1.45 % on a branch; checkpoint 2 built its arm and measured nothing, by the
+rewritten §8. That is the policy working as designed — the cost was found, and found
+attributably, for one 7-minute bisect instead of six measured checkpoints.
 
 ## Awaiting the user's decision
 
