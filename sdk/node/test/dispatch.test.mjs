@@ -3,11 +3,47 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
-import { decodeValue, defineOperative, defineProcedure, encodeValue } from '../dist/esm/index.js';
+import {
+  ACTIVATION_SCHEMA_VERSION,
+  decodeValue,
+  defineOperative,
+  defineProcedure,
+  encodeValue,
+  loadNative,
+} from '../dist/esm/index.js';
 import { Registry, answer, dispatch } from '../dist/esm/dispatch.js';
 import { importModule, loadRegistry, specsFrom } from '../dist/esm/runner.js';
+
+import { activationFor, depsFor, inputItem } from './dispatch-fixtures.mjs';
+
+// The handout-contract tests below answer against the core itself, so the
+// refusal they assert is the core's own. Nothing starts a runner, so no
+// controller connection is attempted.
+const native = loadNative();
+native.contextNew(ACTIVATION_SCHEMA_VERSION);
+after(() => native.contextFree());
+
+/**
+ * What the SDK says while `run` executes.
+ *
+ * Read off the console rather than through `setLogger`, so what is asserted is
+ * what a host with no logger of its own would actually see.
+ */
+async function said(run) {
+  const lines = [];
+  const console_ = { error: console.error, warn: console.warn, log: console.log };
+  console.error = (line) => lines.push(line);
+  console.warn = (line) => lines.push(line);
+  console.log = (line) => lines.push(line);
+  try {
+    await run();
+  } finally {
+    Object.assign(console, console_);
+  }
+  return lines.join('\n');
+}
 
 const Counter = defineProcedure({
   name: 'counter',
@@ -33,36 +69,8 @@ const Spec = defineOperative({
   },
 });
 
-function fixture() {
-  const registry = new Registry();
-  registry.add(Spec);
-  return {
-    registry,
-    bridge: { spawnWorkflow: async () => 'spawned' },
-    workflowCtx: () => ({}),
-  };
-}
-
-const activation = (overrides) => ({
-  token: 1n,
-  operative: 'op-1',
-  procedure: 0,
-  entityKey: 'k',
-  changeSeq: 0n,
-  factory: 'counters',
-  kind: 'work',
-  ...overrides,
-});
-
-const inputItem = (value, overrides = {}) => ({
-  kind: 'input',
-  channel: 0,
-  payload: Buffer.from(encodeValue(value)),
-  metadata: [],
-  replay: false,
-  now: 1_000n,
-  ...overrides,
-});
+const fixture = () => depsFor(Spec);
+const activation = activationFor('counters');
 
 test('a work batch answers one effect per item, in order', async () => {
   const result = await answer(activation({ items: [inputItem(2), inputItem(3)] }), fixture());
@@ -94,17 +102,13 @@ test('a throwing handler is a retryable verdict and stops the batch', async () =
     factoryId: 'throwing_op',
     channels: (c) => c.input('in').into(Throwing).sink('out'),
   });
-  const registry = new Registry();
-  registry.add(spec);
-  const deps = { registry, bridge: { spawnWorkflow: async () => '' }, workflowCtx: () => ({}) };
-
   const result = await answer(
     activation({
       factory: 'throwing_op',
       entityKey: undefined,
       items: [inputItem('ok'), inputItem('boom'), inputItem('never')],
     }),
-    deps,
+    depsFor(spec),
   );
   assert.equal(result.effects.length, 2, 'items after the failure are re-handed by the core');
   assert.equal(result.effects[1].verdict, 'retryable');
@@ -122,11 +126,9 @@ test('a rejected promise is answered the same way a throw is', async () => {
     factoryId: 'rejecting_op',
     channels: (c) => c.input('in').into(Rejecting).sink('out'),
   });
-  const registry = new Registry();
-  registry.add(spec);
   const result = await answer(
     activation({ factory: 'rejecting_op', entityKey: undefined, items: [inputItem(1)] }),
-    { registry, bridge: { spawnWorkflow: async () => '' }, workflowCtx: () => ({}) },
+    depsFor(spec),
   );
   assert.equal(result.effects[0].verdict, 'non_retryable');
   assert.match(result.effects[0].message, /gave up/);
@@ -189,8 +191,7 @@ test('the JSON handover carries a bigint and a byte array without narrowing', as
     factoryId: 'wide_op',
     channels: (c) => c.input('in').into(Wide).sink('out'),
   });
-  const source = { registry: new Registry(), bridge: {}, workflowCtx: () => ({}) };
-  source.registry.add(spec);
+  const source = depsFor(spec);
   const huge = (1n << 63n) + 7n;
   await answer(
     activation({
@@ -206,8 +207,7 @@ test('the JSON handover carries a bigint and a byte array without narrowing', as
     source,
   );
 
-  const target = { registry: new Registry(), bridge: {}, workflowCtx: () => ({}) };
-  target.registry.add(spec);
+  const target = depsFor(spec);
   await answer(
     activation({
       factory: 'wide_op',
@@ -268,8 +268,6 @@ test('one payload failing its prepare does not fail the others', async () => {
         .keyed()
         .sink('out'),
   });
-  const registry = new Registry();
-  registry.add(spec);
   const result = await answer(
     activation({
       factory: 'windowed_op',
@@ -282,43 +280,51 @@ test('one payload failing its prepare does not fail the others', async () => {
         wantEventTime: true,
       },
     }),
-    { registry, bridge: {}, workflowCtx: () => ({}) },
+    depsFor(spec),
   );
   assert.deepEqual(result.prepared[0], { keys: ['a'], eventTime: 5n });
   assert.match(result.prepared[1].error, /no event time/);
 });
 
 test('an unanswerable activation abandons rather than retiring its entity', async () => {
-  const answered = [];
-  const fake = {
-    complete: async () => {
-      throw new Error('the core refused the completion');
-    },
-    abandon: (token) => answered.push(token),
-  };
-  await dispatch(activation({ items: [inputItem(1)] }), fake, fixture());
-  assert.deepEqual(answered, [1n], 'the finally abandoned what complete could not answer');
+  // A token the core never handed out: it refuses the completion, and refuses
+  // the abandon the guard falls back to. Neither refusal escapes the guard.
+  const reported = await said(() =>
+    dispatch(activation({ token: 42n, items: [inputItem(1)] }), native, fixture()),
+  );
+  assert.match(reported, /unknown activation token 42/);
+  assert.match(reported, /abandoning activation 42 failed/);
 });
 
 test('a completed activation is not also abandoned', async () => {
-  const answered = [];
-  const completed = [];
-  const fake = {
-    complete: async (result) => completed.push(result.token),
-    abandon: (token) => answered.push(token),
-  };
-  await dispatch(activation({ items: [inputItem(1)] }), fake, fixture());
-  assert.deepEqual(completed, [1n]);
-  assert.deepEqual(answered, []);
+  // Only `complete` is scripted, and only to reach the path a real handout
+  // would reach: the abandon is the core's own, so a guard that abandoned an
+  // answered activation would earn its refusal and report it.
+  const peer = { complete: async () => {}, abandon: (token) => native.abandon(token) };
+  const reported = await said(() =>
+    dispatch(activation({ token: 7n, items: [inputItem(1)] }), peer, fixture()),
+  );
+  assert.equal(reported, '');
 });
 
 test('an activation for an unknown factory is answered, not dropped', async () => {
+  // The failure reaches the core: it refuses the token the answer carries,
+  // which is what tells the completion apart from a dropped activation.
   const completed = [];
-  const fake = { complete: async (r) => completed.push(r), abandon: () => {} };
-  await dispatch(activation({ factory: 'never_declared' }), fake, fixture());
+  const peer = {
+    complete: async (result) => {
+      completed.push(result);
+      await native.complete(result);
+    },
+    abandon: (token) => native.abandon(token),
+  };
+  const reported = await said(() =>
+    dispatch(activation({ token: 13n, factory: 'never_declared' }), peer, fixture()),
+  );
   assert.equal(completed[0].outcome, 'failed');
   assert.match(completed[0].error, /no class registered/);
   assert.equal(completed[0].nonRetryable, true);
+  assert.match(reported, /unknown activation token 13/);
 });
 
 test('a module specifier is imported and its operatives registered', async () => {

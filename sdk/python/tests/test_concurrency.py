@@ -128,9 +128,10 @@ def test_the_supervisor_stops_growing_at_the_ceiling() -> None:
 
     pool = ThreadExecutor(core, deps, base=1, ceiling=3).start()
     try:
-        time.sleep(0.5)
-        # Base + grown, plus the supervisor thread; never past the ceiling.
-        assert pool.size <= 4
+        # The positive signal first: base plus the grown workers plus the
+        # supervisor. Only after that is "and no further" an observation.
+        assert _until(lambda: pool.size >= 4), f"pool stayed at {pool.size}"
+        assert not _until(lambda: pool.size > 4, timeout=0.1), f"pool grew to {pool.size}"
     finally:
         release.set()
         pool.stop()
@@ -211,7 +212,7 @@ def test_ordering_is_identical_under_either_executor(kind: str) -> None:
     pool = build(kind, core, _deps(core), base=2).start()
     try:
         for index, payload in enumerate(payloads):
-            core._activations.append(work_activation(index, payload, factory="solo"))
+            core.offer(work_activation(index, payload, factory="solo"))
             assert _until(lambda index=index: len(core.completed) == index + 1)
         served = [_payload_of(result) for result in core.completed]
         assert served == payloads
@@ -265,9 +266,11 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
 ) -> None:
     """A handler that never returns must not keep the runner alive forever."""
     never = threading.Event()
+    entered = threading.Event()
 
     @flezha.procedure
     def wedged(value: str) -> str:
+        entered.set()
         never.wait(timeout=30)
         return value
 
@@ -280,8 +283,7 @@ def test_a_drain_has_a_time_limit_and_says_what_it_abandoned(
 
     pool = build(kind, core, deps, base=1).start()
     try:
-        assert _until(lambda: len(core.dispatch_threads) >= 1 or True, timeout=1)
-        time.sleep(0.2)
+        assert entered.wait(timeout=5), "the handler never started"
         with caplog.at_level("WARNING", logger="flezha.executor"):
             started = time.monotonic()
             undrained = pool.stop()
@@ -338,7 +340,9 @@ def _assert_releases_the_gil(blocking_call: Any) -> None:
     spinner = threading.Thread(target=spin, daemon=True)
     spinner.start()
     try:
-        time.sleep(0.05)
+        # Sample only once the spinner is running: its start-up would otherwise
+        # be counted inside the blocked window it exists to measure.
+        assert _until(lambda: ticks > 0), "the spinner never ran"
         before = ticks
         blocking_call(core)
         during = ticks - before

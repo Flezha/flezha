@@ -29,14 +29,9 @@ const FETCHERS: usize = 8;
 /// Items settled through `flz_core_complete`.
 static DONE: Settle = Settle::new();
 
+/// The last error the context recorded, read the way a binding reads it.
 fn last_error(ctx: *mut FlzContext) -> String {
-    let err = unsafe { flz_core_last_error(ctx) };
-    if err.is_null() {
-        return "<no error recorded>".to_string();
-    }
-    unsafe { std::ffi::CStr::from_ptr(err) }
-        .to_string_lossy()
-        .into_owned()
+    veneer::last_error_of(veneer::CtxPtr::of(ctx))
 }
 
 /// One host fetcher: poll, decode the activation as a veneer would, answer

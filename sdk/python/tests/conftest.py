@@ -7,6 +7,7 @@ so a test of the executor tests the executor rather than a mock of it.
 
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from dataclasses import dataclass, field
@@ -76,9 +77,12 @@ class FakeCore:
         *,
         starve_after: float | None = None,
     ) -> None:
-        self._activations = list(activations or [])
+        self._activations: queue.Queue[Any] = queue.Queue()
+        for activation in activations or []:
+            self._activations.put(activation)
         self._lock = threading.Lock()
         self._starve_after = starve_after
+        self._shutting = threading.Event()
         self.completed: list[dict[str, Any]] = []
         self.abandoned: list[int] = []
         self.polls = 0
@@ -99,19 +103,23 @@ class FakeCore:
     def start(self, namespace: str) -> None:
         self.started = namespace
 
+    def offer(self, activation: Any) -> None:
+        """Queue one activation for the next poller, as a controller would."""
+        self._activations.put(activation)
+
     def poll(self, timeout_ms: int) -> Any:
         with self._lock:
             self.polls += 1
             self.pollers_inside += 1
             self.peak_pollers = max(self.peak_pollers, self.pollers_inside)
-            activation = self._activations.pop(0) if self._activations else None
             shutting = self.shut_down
         try:
             if shutting:
                 return "shutting_down"
-            if activation is None:
-                time.sleep(min(timeout_ms, 20) / 1000)
-            return activation
+            try:
+                return self._activations.get(timeout=min(timeout_ms, 20) / 1000)
+            except queue.Empty:
+                return None
         finally:
             with self._lock:
                 self.pollers_inside -= 1
@@ -126,13 +134,12 @@ class FakeCore:
         """
         if self.shut_down:
             return 2
+        waited = timeout_ms / 1000 if self._starve_after is None else self._starve_after
+        if self._shutting.wait(timeout=waited):
+            return 2
         if self._starve_after is None:
-            time.sleep(timeout_ms / 1000)
             return 0
-        time.sleep(self._starve_after)
-        with self._lock:
-            queued = bool(self._activations)
-        return 1 if queued else 0
+        return 1 if not self._activations.empty() else 0
 
     def complete(self, result: dict[str, Any]) -> None:
         self.dispatch_threads.add(threading.get_ident())
@@ -147,6 +154,7 @@ class FakeCore:
 
     def shutdown(self) -> None:
         self.shut_down = True
+        self._shutting.set()
 
     def free(self) -> None:
         self.freed = True
@@ -218,6 +226,23 @@ def deps_for(operative: flezha.Operative, core: FakeCore) -> Any:
         bridge=core,
         workflow_ctx=lambda instance_id: flezha.WorkflowCtx(instance_id, core),
     )
+
+
+def compensating(seen: list[Any]) -> Any:
+    """A procedure whose compensation appends the outputs it is driven over.
+
+    Two suites drive the same shape — the dispatcher's `compensate_run` arm and
+    the harness's `compensate` — so the procedure is declared once.
+    """
+
+    class Compensating:
+        def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
+            ctx.emit(value)
+
+        def compensate(self, outputs: list[Any], ctx: flezha.Ctx[None]) -> None:
+            seen.extend(outputs)
+
+    return flezha.procedure(Compensating)
 
 
 def solo_deps(proc: flezha.Procedure[Any, Any], core: FakeCore, factory: str = "solo") -> Any:

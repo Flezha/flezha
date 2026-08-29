@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
 import flezha
 from flezha.testing import ProcedureTestHarness, ReplayMismatch, replay_equals
 
-from conftest import Bumped, Counter, count_up, echo
+from conftest import Bumped, Counter, compensating, count_up, echo
 
 
 def test_a_handler_is_testable_with_no_runtime_and_no_controller() -> None:
@@ -136,17 +137,8 @@ def test_event_time_is_advanced_through_the_registered_timers() -> None:
 
 
 def test_a_compensation_is_driven_over_recorded_outputs() -> None:
-    seen: list[object] = []
-
-    class Compensating:
-        def process(self, value: str, ctx: flezha.Ctx[None]) -> None:
-            ctx.emit(value)
-
-        def compensate(self, outputs: list[object], ctx: flezha.Ctx[None]) -> None:
-            seen.extend(outputs)
-
-    proc = flezha.procedure(Compensating)
-    harness: ProcedureTestHarness[None] = ProcedureTestHarness(proc)
+    seen: list[Any] = []
+    harness: ProcedureTestHarness[None] = ProcedureTestHarness(compensating(seen))
     harness.compensate(["a", "b"])
     assert seen == ["a", "b"]
 

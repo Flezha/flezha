@@ -12,14 +12,10 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { Worker } from 'node:worker_threads';
 
-import {
-  decodeValue,
-  defineOperative,
-  defineProcedure,
-  encodeValue,
-  loadNative,
-} from '../dist/esm/index.js';
-import { Registry, answer } from '../dist/esm/dispatch.js';
+import { decodeValue, defineOperative, defineProcedure, loadNative } from '../dist/esm/index.js';
+import { answer } from '../dist/esm/dispatch.js';
+
+import { activationFor, depsFor, inputItem } from './dispatch-fixtures.mjs';
 
 const Accumulate = defineProcedure({
   name: 'accumulate',
@@ -45,29 +41,16 @@ const Spec = defineOperative({
       .sink('out'),
 });
 
-function deps() {
-  const registry = new Registry();
-  registry.add(Spec);
-  return { registry, bridge: { spawnWorkflow: async () => '' }, workflowCtx: () => ({}) };
-}
+const deps = () => depsFor(Spec);
+const activation = activationFor('ordering');
 
-const work = (token, key, values) => ({
-  token,
-  operative: 'op-1',
-  procedure: 0,
-  entityKey: key,
-  changeSeq: BigInt(token),
-  factory: 'ordering',
-  kind: 'work',
-  items: values.map((value) => ({
-    kind: 'input',
-    channel: 0,
-    payload: Buffer.from(encodeValue(value)),
-    metadata: [],
-    replay: false,
-    now: 0n,
-  })),
-});
+const work = (token, key, values) =>
+  activation({
+    token,
+    entityKey: key,
+    changeSeq: BigInt(token),
+    items: values.map((value) => inputItem(value, { now: 0n })),
+  });
 
 test('inputs for one entity are processed in enqueue order', async () => {
   const shared = deps();
