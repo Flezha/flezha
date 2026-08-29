@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 20:56 (supervisor session 2 — area 3 segment B committed `9f747656`)
+**Last updated**: 2026-08-29 21:02 (supervisor session 2 — area 3 segment C running)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -62,8 +62,19 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. Area 3 segments A (`a1bdfa34`) and B (`9f747656`) are verified and committed;
-segment C (the declaration surfaces, batches 5–6) is next.
+`refactor-3-rust-sdk`, **segment C** (batches 5–6: `channel/builder.rs` into five
+modules, `register_node` → `resolve_node`, the `TypeMismatch` deletion, then
+`operative/builder.rs`, `workflow/spec.rs` and one shared `graph_order` in
+`flz_core`), fresh general-purpose worker, spawned 2026-08-29 21:02. Checkpoint 3
+after batch 6, which BUILDS arm B3 and sha-compares it — no measurement. Stages
+nothing.
+
+Its two stop-and-report conditions: the topology tests must pass **unedited** (they
+match on `TopologyIssue` variants, and 5.3 deletes one — a variant with a producer is
+not the variant the task names), and `TypeMismatch`'s absence of a producer must be
+grepped and recorded BEFORE the delete.
+
+Area 3 segments A (`a1bdfa34`) and B (`9f747656`) are committed.
 
 **The typed tail is on the shared seam.** `TypedBuffer<S>` is now an alias for
 `EffectBuffer<TypedBodies<S>>`, `invoke_once`'s tail is one `settle_effects` call,
