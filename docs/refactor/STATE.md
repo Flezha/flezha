@@ -1,8 +1,34 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 23:56 (supervisor session 2 — segment F heartbeat 2)
+**Last updated**: 2026-08-30 01:01 (supervisor session 2 — segment F heartbeat 6, row 1 bisecting)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
+
+### Read this first if you are a fresh session
+
+1. **The scratchpad is per SESSION.** `$SCRATCH/area3/` currently holds 160 MB of
+   benchmark arms (A, A′, B2, B3, B4, B5, K1) — **a new session gets none of
+   them**. If an area's A/B is unfinished when a session ends, the next one
+   cannot bisect without rebuilding every arm, and an arm rebuilt in a `git
+   worktree` is not comparable to one built in the tree (charter §8). So: finish
+   an area's measurement in the session that started it, or write down which
+   arms are owed. Session 1 lost area 2's arms exactly this way.
+2. **Check the machine every 30–60 minutes** — charter §11b and `CLAUDE.md`'s
+   "Machine hygiene". Kill what you started. A `top` snapshot lies about
+   benchmark load; count runs over a window instead.
+3. **The defect list moved.** Everything found and not fixed now lives in
+   `docs/known_issues.md` (tracked, 40 entries, severity-ordered, each with
+   evidence and what a fix must account for). Two carry proposals:
+   `fix-outbox-watermark-overwrite` (KI-1) and `fix-first-input-drop-on-bind`
+   (KI-2), both owed **before** the controller areas that refactor those files.
+   `openspec/changes/` is gitignored, so those proposals are machine-local —
+   `docs/known_issues.md` is the durable record.
+4. **The charter was amended four times on 2026-08-29/30**, each time because
+   doing the work exposed a rule that could not be satisfied: §1 (net lines vs
+   the §7 ceiling), §7 (the function ceiling is production-only, matching what
+   the gate always measured), §8 (build every checkpoint, measure once), §11
+   (lines arriving from a higher layer, and ceiling-forced excess). Read them
+   before planning an area; they are not the rules a previous session followed.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
 this machine's disk only; their `tasks.md` is still the fine-grained progress.
 **Rules**: `charter.md`. **Programme**: zero behaviour change, net code down,
@@ -78,7 +104,31 @@ under `$SCRATCH/area3/` so a regression bisects instead of re-running.
 Area 3 segments A–E are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`,
 `623ba124`).
 
-- last seen 23:56: **the area's one measurement pass has started** — arm B5 is built
+- last seen 01:01: **row 1 has gone to a bisect too** (`final_row1_bisect.log`,
+  arms A′/B2/B5). Round 1 only, so NOT a verdict: A′ 736.44 ms against B2 762.88 ms,
+  which would put ~3.6 % on **segment B** — the typed tail moving onto the shared
+  `settle_effects`, i.e. the area's core change, where the 1s spike predicted ≤ 1.5 %.
+  If four more rounds hold that direction it is a real cost on the typed dispatch
+  path and the supervisor decides whether it ships. One round proves nothing; wait
+  for the worker's table.
+- previous 00:45: **the new A/B policy's bisect mechanism has been exercised for the
+  first time.** Row 2 was flagged, and instead of re-running the whole matrix the
+  worker is bisecting over the KEPT arms — `final_row2_bisect.log` shows A′, B2 and
+  B3 at four rounds each, with B2 2.7924 s and B3 2.7896 s (p = 0.91 and 0.78, not
+  significant). That is exactly what "build every checkpoint, measure once" buys:
+  attribution without re-measurement. Row 5 is running now. Ticks 58, 55 files in the
+  segment's diff, dev notes still to come.
+- previous 00:29: row 1's three-arm pass has six arm-runs recorded and the A/B has
+  moved on to rows 2, 3 and 4 (`final_rows234.log`). Ticks 58. No stall; the verdict
+  and the hand-over are what remain.
+- previous 00:13: the A/B has escalated **row 1 to a three-arm pass** (A′, B4, B5 —
+  `logs/final_row1_three.log`, round q1 running). Under the rewritten §8 that only
+  happens when the paired direction held across all three rounds, so **there may be a
+  real regression on the area's primary gate row** — the same row that has carried a
+  0.6–1.4 % deficit, 15/15, since area 1. The three-arm pass is what separates
+  segment F's contribution from the earlier segments'. Watch this. Ticks 58; dev
+  notes (11.8) and the hand-over follow the A/B.
+- previous 23:56: **the area's one measurement pass has started** — arm B5 is built
   and `logs/row1-Ap-n1.log` is the first paired round against A′. Ticks 58; batch 11's
   boxes tick at its end, and the dev notes (11.8) follow the A/B. No stall.
 - previous 23:40: ticks 58, 44 files touched, −27 net. The edits are across the new
