@@ -277,7 +277,7 @@ isolation is not evidence** — reproduce under load before concluding anything
 
 - `sdk/php/src/Executor/SwooleExecutor.php:271` carries `usleep(5_000)`. The sleep
   metric counts test paths only, so no gate sees it. Probably legitimate and
-  bounded — but nothing says so.
+  short and finite — but nothing says so.
 
 ### KI-26 · A stale doc block on `channel_metadata`
 
@@ -412,8 +412,8 @@ until 2026-08-30. Dates are when each was last established, not when it started.
 
 - **Severity**: P1 for production, P2 here.
 - **Background**: the 2026-06-19 controller OOM (2 GiB, exit 137, ~30 h outage)
-  was reproduced and root-caused on 2026-06-21 — unbounded controller write
-  buffers on the WAL persistence path. `WalWriter.append_async` is a
+  was reproduced and root-caused on 2026-06-21 — controller write buffers on the
+  WAL persistence path with no ceiling. `WalWriter.append_async` is a
   fire-and-forget cast while `FsyncBatcher` coordinates fsync via a blocking
   call, so when the SDK ships state changes faster than the controller can fsync
   (the Pi's SD-card fsync being the bottleneck) the FsyncBatcher and

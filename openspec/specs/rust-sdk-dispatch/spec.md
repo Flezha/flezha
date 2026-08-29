@@ -25,7 +25,6 @@ Under the SDK's ThreadPool dispatch (the only dispatch mode in v1; see the REMOV
 
 ### Requirement: Dispatch Throughput Floor on Reference Workload
 
-
 On the regression bench (`100 operatives × 1 procedure × 1 entity × 10K msg`, no-op Procedure, UDS transport, default worker-pool size; see `operative-architecture/design.md` Decision 16) invokable via `mix bench --runtime rust --shape regression -n 100 -m 10000`, the Rust SDK SHALL sustain at least **480_000 messages/second** of message-processing throughput on commodity developer hardware (modern x86_64 laptop, 8+ cores, non-constrained CPU).
 
 The floor SHALL be measured over the **receive window** — total messages divided by the elapsed time from the send loop returning to the last response received — because this requirement gates *dispatch* throughput, and the send window it excludes is the controller's own cast overhead rather than anything the SDK's dispatch path controls. It SHALL be read from the bench run's structured report field `metrics.receive_window_msg_per_sec`, not matched out of printed prose.
@@ -367,13 +366,17 @@ The Rust SDK SHALL provide `Flezha::create_runner(namespace: impl Into<String>) 
 
 ### Requirement: Runner declaration and connection failures surface as typed Results
 
-Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.define_stream::<A>()?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidWorkflow(#[from] BuildWorkflowError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `entities_for` overrides, type mismatches, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
+Every fallible call on the entry-point chain SHALL return `Result<_, FlezhaError>` — one unified public error type (`thiserror`-derived) so `Flezha::create_runner(ns)?.define_stream::<A>()?.run()?` compiles under a single `?`. `FlezhaError` SHALL carry at least: `InvalidNamespace`, `AlreadyRunning { namespace }`, `ConnectFailed(String)`, `InvalidTopology(#[from] TopologyBuildError)`, `InvalidWorkflow(#[from] BuildWorkflowError)`, `DuplicateFactoryId { factory_id }`, `NotDefined { factory_id }`, `OperativeTypeInUse { factory_id, live_instances }`, `NotStarted`, `RunnerUnavailable(String)`. An invalid topology (duplicate channel names, unwired channels, missing `entities_for` overrides, etc.) SHALL be reported as a typed `Err` at the call site, not a panic; a consumer whose `Input` does not match the channel payload SHALL instead be refused by the compiler at the `.into::<S>()` call site, so `TopologyIssue` SHALL carry no runtime type-mismatch variant; connect-handshake failures (socket error, or the confirmation channel closing unexpectedly) SHALL be `Err(FlezhaError::ConnectFailed(..))`, not a panic. The per-issue topology enum formerly named `BuildTopologyError` SHALL be renamed `TopologyIssue`, resolving its collision with the per-kind `TopologyBuildError`; Java throws the identically-named failure classes per naming rule 6.
 
 `operatives()` SHALL return `Result<HashMap<String, Arc<StreamInstance>>, FlezhaError>` — `Err(FlezhaError::NotStarted)` on a never-started runner, never a panic; the internal snapshot path SHALL contain no `expect`/`unwrap` reachable from it.
 
 #### Scenario: Invalid topology is reported as a Result, not a panic
-- **WHEN** an Operative declares a channel whose consumer's input type does not match the channel payload type
-- **THEN** `.define_stream::<ThatOperative>()` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::TypeMismatch` diagnosis naming the mismatch — the call SHALL NOT panic
+- **WHEN** an Operative declares the same channel name twice
+- **THEN** `.define_stream::<ThatOperative>()` SHALL return `Err(FlezhaError::InvalidTopology(..))` carrying the `TopologyIssue::DuplicateChannel` diagnosis naming the channel — the call SHALL NOT panic
+
+#### Scenario: A payload type mismatch is a compile error
+- **WHEN** user code wires a consumer whose `Procedure::Input` is not the channel's payload type
+- **THEN** the `.into::<S>()` call SHALL fail to compile at the call site, and no `TopologyIssue` variant SHALL exist to report it at registration time
 
 #### Scenario: A connection failure at start() is a Result, not a panic
 - **WHEN** the confirmation channel from the runner thread closes without delivering `RunnerIdConfirmation` (e.g. the runner thread panicked internally)

@@ -73,3 +73,27 @@ Once `refactor-2-ffi-veneers` lands, the areas `flz_core_ffi`, `sdk/node`, `sdk/
 - **WHEN** `cargo test -p flz_core_ffi` runs under `--features napi`, `--features python` or `--features ruby-embed`
 - **THEN** the ABI scenario SHALL prove the shape once in Rust against a recording sink and source, and each enabled binding SHALL prove only that its own value primitives round-trip through its runtime, with no per-language copy of the activation vocabulary in the crate's source or tests
 
+### Requirement: The Rust SDK areas ratchet as blocking and the typed path settles through the shared seam
+
+Once `refactor-3-rust-sdk` lands, the areas `sdk/rust` and `flezha-macros` SHALL be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree, so that any later rise in a ratcheted metric for those areas fails `scripts/refactor_metrics.py --check`. The Rust SDK SHALL settle an invocation's effects through `flz_core::effect::settle_effects` and buffer them in `flz_core::effect::EffectBuffer`, carrying no second implementation of the settlement tail, of the per-Entity flush buffer or of the interval close, so that the typed and erased paths cannot drift; and the SDK's benches SHALL take their scaffolding from `flz_core::bench_support` rather than re-implementing it, so that a bench row measures the code and not a per-file harness.
+
+#### Scenario: A Rust SDK metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `sdk/rust` or `flezha-macros` has more files over 800 lines, more functions over 50 lines, more narrative markers, more production names over 32 characters, more duplicate pairs, more test sleeps, or more production lines than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: The typed dispatcher settles an invocation
+
+- **WHEN** `ProcedureDispatcherImpl` completes one invocation, inside or outside the effectively-once tier
+- **THEN** the changes, outputs, consumed offset, timer ops and park SHALL be settled by the same `settle_effects` call the C-ABI host uses, into an `EffectBuffer` whose change type is supplied by a `Bodies` marker, with the tier-off park handed back to the caller
+
+#### Scenario: A Rust SDK bench declares its scaffolding
+
+- **WHEN** `cargo bench -p flezha_runner --features bench-internals` builds any bench target
+- **THEN** the stream pair, the dispatch fan-in, the settle wait, the measurement window and the allocation counter SHALL come from `flz_core::bench_support`, and the crate's `bench-internals` feature SHALL enable `flz_core/bench-internals` so that a bench built through `cargo bench -p flezha_runner` alone reaches them
+
+#### Scenario: The workspace test run needs no feature flag
+
+- **WHEN** `cargo test --workspace` runs with no `--features` argument
+- **THEN** every `flezha_runner` test target that imports `flezha_runner::__dispatch_internals` SHALL declare `required-features = ["bench-internals"]`, so the run compiles and the targets that need the feature are skipped rather than failing to build
+
