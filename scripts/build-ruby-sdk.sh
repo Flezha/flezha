@@ -17,6 +17,21 @@ if [[ "${1:-}" == "--release" ]]; then
   cargo_args+=(--release)
 fi
 
+# rb-sys runs bindgen over ruby.h, and bindgen needs clang's BUILTIN headers:
+# with libclang alone the build dies inside cargo with `'stdarg.h' file not
+# found`. gcc's builtin include directory carries the same headers.
+if [[ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]] \
+  && ! compgen -G "/usr/lib/llvm-*/lib/clang/*/include/stdarg.h" >/dev/null; then
+  gcc_include="$(gcc -print-file-name=include 2>/dev/null || true)"
+  if [[ -f "$gcc_include/stdarg.h" ]]; then
+    export BINDGEN_EXTRA_CLANG_ARGS="-I$gcc_include"
+    echo "==> no clang builtin headers; bindgen reads gcc's ($gcc_include)"
+  else
+    echo "no builtin stdarg.h for bindgen: install libclang-dev" >&2
+    exit 1
+  fi
+fi
+
 echo "==> building flz_core_ffi ($profile) with the ruby feature"
 cargo build -p flz_core_ffi --features ruby "${cargo_args[@]}"
 

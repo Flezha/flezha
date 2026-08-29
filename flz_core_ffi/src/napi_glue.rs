@@ -1,71 +1,43 @@
-//! N-API bindings over this crate's own C ABI, for the Node SDK's native
-//! binding (`@flezha/sdk`). One-to-one with the C entry points — the napi
-//! layer adds nothing the ABI does not have, so a Node-only side door cannot
-//! grow here.
+//! N-API bindings over this crate's C ABI for the Node SDK's native binding,
+//! one export per C entry point.
 //!
-//! ## One context per process
-//! The ABI's own rule is "one opaque context per host process", and Node makes
-//! that the only workable shape: a `worker_thread` is a separate V8 isolate
-//! with its own module instance, and a raw pointer handed across would be a
-//! number nothing validates. The context lives in [`CONTEXT`], a process
-//! global the shared library owns, so every isolate that loads this addon
-//! reaches the same core without carrying a handle.
-//!
-//! ## The blocking rule
-//! `flz_core_poll` is not exported here at all — it is driven from the native
-//! fetcher threads in [`crate::napi_host`]. The four remaining blocking entry
-//! points (`start`, `complete`, `workflow_recv`, `spawn_workflow`) return a
-//! promise resolved from the host's own blocking pool. They are never reached
-//! on an event-loop thread, because under the default `Block` overflow policy
-//! a completion parks until the consumer's mailbox drains, and the consumer
-//! drains only when its handler runs — parking the one thread able to run that
-//! handler wedges the process.
-//!
-//! napi-rs's `Task`/`AsyncTask` is the wrong tool for that off-loop work: it
-//! goes through `napi_create_async_work`, which runs on **libuv's threadpool**,
-//! four threads shared with `fs`, `dns` and `crypto`. The veneer owns its
-//! executor instead and resolves an `Env::create_deferred` promise from it.
-//!
-//! ## Buffer ownership
-//! A core buffer is decoded and freed through [`crate::flz_core_buf_free`]
-//! before the call that produced it returns, so no native buffer escapes into
-//! the JavaScript heap. The decoded payloads reach JavaScript as `Buffer`s
-//! built from the owning `Vec`, which napi adopts without copying.
+//! A `worker_thread` is a separate isolate with its own module instance, so
+//! the one context lives in [`CONTEXT`], a process global every isolate
+//! reaches. The event-loop rule is [`off_loop`]: `flz_core_poll` is never
+//! exported (the fetchers in [`crate::napi_host`] drive it), and every other
+//! blocking entry point answers a promise resolved from the host's own
+//! growable pool — under the default overflow policy a completion parks
+//! until the consumer's mailbox drains, and the consumer drains only when its
+//! handler runs on an event loop. Payload `Vec`s move into `Buffer`s without
+//! copying.
 
-use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use flz_core::schema;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-use crate::{FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_TIMEOUT};
+use crate::veneer::{self, CtxPtr, Refusal};
+use crate::FlzContext;
 
 /// The one context this process holds. Null until `contextNew`.
 static CONTEXT: AtomicPtr<FlzContext> = AtomicPtr::new(std::ptr::null_mut());
 
-/// The context pointer, carried to the blocking pool. The ABI's own contract
-/// is that any host thread may call any entry point — `complete` says so in
-/// as many words — and this states that once instead of at each `unsafe`.
-#[derive(Clone, Copy)]
-pub(crate) struct CtxPtr(*mut FlzContext);
-unsafe impl Send for CtxPtr {}
-
-impl CtxPtr {
-    pub(crate) fn of(ctx: *mut FlzContext) -> Self {
-        Self(ctx)
-    }
-
-    /// Read the pointer back. A method rather than a public field, so a
-    /// closure capturing it takes the whole `Send` wrapper — edition 2021
-    /// captures `ctx.0` by field, which is the bare pointer and is not.
-    pub(crate) fn get(self) -> *mut FlzContext {
-        self.0
+/// The one mapping of a refusal onto a JavaScript error: a value the binding
+/// could not map is an argument error, everything else a generic failure.
+impl From<Refusal> for Error {
+    fn from(refusal: Refusal) -> Self {
+        match refusal {
+            Refusal::Core(message) | Refusal::Schema(message) => {
+                Error::new(Status::GenericFailure, message)
+            }
+            Refusal::Shape(message) => Error::new(Status::InvalidArg, message),
+        }
     }
 }
 
 /// The live context, or an error naming what the caller skipped.
-pub(crate) fn context() -> Result<*mut FlzContext> {
+pub(crate) fn context() -> Result<CtxPtr> {
     let ptr = CONTEXT.load(Ordering::Acquire);
     if ptr.is_null() {
         return Err(Error::new(
@@ -73,23 +45,7 @@ pub(crate) fn context() -> Result<*mut FlzContext> {
             "flz_core context not created: call contextNew first",
         ));
     }
-    Ok(ptr)
-}
-
-/// The context's last recorded error, as the message for a thrown `Error`.
-pub(crate) fn last_error_of(ctx: *const FlzContext) -> String {
-    let ptr = unsafe { crate::flz_core_last_error(ctx) };
-    if ptr.is_null() {
-        "unknown native failure".to_string()
-    } else {
-        unsafe { CStr::from_ptr(ptr) }
-            .to_string_lossy()
-            .into_owned()
-    }
-}
-
-pub(crate) fn core_error(ctx: *const FlzContext) -> Error {
-    Error::new(Status::GenericFailure, last_error_of(ctx))
+    Ok(CtxPtr::of(ptr))
 }
 
 /// Run one blocking ABI call off the event loop, and answer a promise with it.
@@ -99,27 +55,17 @@ pub(crate) fn core_error(ctx: *const FlzContext) -> Error {
 /// thread" is a property of one function rather than of four correct copies —
 /// and the pool the work lands on is the growable one, which is what keeps a
 /// parked completion from exhausting it.
-fn off_loop<'a, T, F>(env: &'a Env, ctx: *mut FlzContext, work: F) -> Result<Object<'a>>
+fn off_loop<'a, T, F>(env: &'a Env, ctx: CtxPtr, work: F) -> Result<Object<'a>>
 where
     T: ToNapiValue + 'static,
-    F: FnOnce(*mut FlzContext) -> Result<T> + Send + 'static,
+    F: FnOnce(CtxPtr) -> Result<T> + Send + 'static,
 {
     let (deferred, promise) = env.create_deferred::<T, _>()?;
-    let ctx = CtxPtr(ctx);
-    crate::napi_host::blocking_pool().submit(move || match work(ctx.get()) {
+    crate::napi_host::blocking_pool().submit(move || match work(ctx) {
         Ok(value) => deferred.resolve(move |_| Ok(value)),
         Err(failure) => deferred.reject(failure),
     });
     Ok(promise)
-}
-
-fn c_string(what: &str, value: &str) -> Result<CString> {
-    CString::new(value).map_err(|_| {
-        Error::new(
-            Status::InvalidArg,
-            format!("{what} contains an interior NUL byte"),
-        )
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -593,18 +539,7 @@ pub fn context_new(shim_schema_version: u32) -> Result<()> {
             "flz_core context already created for this process",
         ));
     }
-    let ctx = crate::flz_core_context_new(shim_schema_version);
-    if ctx.is_null() {
-        let ptr = crate::flz_core_init_error();
-        let message = if ptr.is_null() {
-            "flz_core context creation failed".to_string()
-        } else {
-            unsafe { CStr::from_ptr(ptr) }
-                .to_string_lossy()
-                .into_owned()
-        };
-        return Err(Error::new(Status::GenericFailure, message));
-    }
+    let ctx = veneer::context_new(shim_schema_version)?;
     CONTEXT.store(ctx, Ordering::Release);
     Ok(())
 }
@@ -614,19 +549,14 @@ pub fn context_new(shim_schema_version: u32) -> Result<()> {
 pub fn context_free() {
     let ctx = CONTEXT.swap(std::ptr::null_mut(), Ordering::AcqRel);
     if !ctx.is_null() {
-        unsafe { crate::flz_core_context_free(ctx) };
+        veneer::context_free(CtxPtr::of(ctx));
     }
 }
 
 /// Declare one host class from its JSON declaration. Throws the core's refusal.
 #[napi]
 pub fn declare_class(json: Buffer) -> Result<()> {
-    let ctx = context()?;
-    let status = unsafe { crate::flz_core_declare_class(ctx, json.as_ptr(), json.len()) };
-    if status != FLZ_OK {
-        return Err(core_error(ctx));
-    }
-    Ok(())
+    Ok(veneer::declare_class(context()?, &json)?)
 }
 
 /// Connect to the controller and start the runner loop. Asynchronous: the ABI
@@ -634,30 +564,24 @@ pub fn declare_class(json: Buffer) -> Result<()> {
 /// seconds an event loop may not spend inside native code.
 #[napi(ts_return_type = "Promise<void>")]
 pub fn start<'a>(env: &'a Env, namespace: String) -> Result<Object<'a>> {
-    let namespace = c_string("namespace", &namespace)?;
+    let namespace = veneer::c_string("namespace", &namespace)?;
     off_loop(env, context()?, move |ctx| {
-        match unsafe { crate::flz_core_start(ctx, namespace.as_ptr()) } {
-            FLZ_OK => Ok(()),
-            _ => Err(core_error(ctx)),
-        }
+        Ok(veneer::start(ctx, &namespace)?)
     })
 }
 
 /// Answer one activation. Asynchronous, and this is the entry point the rule
-/// exists for: under the default `Block` overflow policy the routing push
-/// parks until the consumer's mailbox drains, and the consumer drains only
-/// when its handler runs on an event loop.
+/// exists for: under the default `DropNothing` overflow policy the routing
+/// push parks until the consumer's mailbox drains, and the consumer drains
+/// only when its handler runs on an event loop.
 #[napi(ts_return_type = "Promise<void>")]
 pub fn complete<'a>(env: &'a Env, result: JsActivationResult) -> Result<Object<'a>> {
     let token = from_big("token", &result.token)?;
-    let encoded = schema::encode_result(&result_from_js(result)?);
+    let result = result_from_js(result)?;
     off_loop(env, context()?, move |ctx| {
-        let status = unsafe { crate::flz_core_complete(ctx, encoded.as_ptr(), encoded.len()) };
+        let verdict = veneer::complete(ctx, &result);
         crate::napi_host::release_token(token);
-        match status {
-            FLZ_OK => Ok(()),
-            _ => Err(core_error(ctx)),
-        }
+        Ok(verdict?)
     })
 }
 
@@ -670,18 +594,13 @@ pub fn abandon(token: BigInt) -> Result<()> {
     let ctx = context()?;
     let token = from_big("token", &token)?;
     crate::napi_host::release_token(token);
-    let status = unsafe { crate::flz_core_abandon(ctx, token) };
-    if status != FLZ_OK {
-        return Err(core_error(ctx));
-    }
-    Ok(())
+    Ok(veneer::abandon(ctx, token)?)
 }
 
 /// Wake every blocked poller and stop the runner loop.
 #[napi]
 pub fn shutdown() -> Result<()> {
-    let ctx = context()?;
-    unsafe { crate::flz_core_shutdown(ctx) };
+    veneer::shutdown(context()?);
     Ok(())
 }
 
@@ -690,42 +609,17 @@ pub fn shutdown() -> Result<()> {
 #[napi]
 pub fn workflow_emit(instance_id: String, payload: Buffer) -> Result<()> {
     let ctx = context()?;
-    let instance = c_string("instance id", &instance_id)?;
-    let status = unsafe {
-        crate::flz_core_workflow_emit(ctx, instance.as_ptr(), payload.as_ptr(), payload.len())
-    };
-    if status != FLZ_OK {
-        return Err(core_error(ctx));
-    }
-    Ok(())
+    let instance = veneer::c_string("instance id", &instance_id)?;
+    Ok(veneer::workflow_emit(ctx, &instance, &payload)?)
 }
 
 /// The next inbox item of a live workflow body, or `null` on timeout.
 /// Asynchronous: it parks for the whole timeout when the inbox is empty.
 #[napi(ts_return_type = "Promise<Buffer | null>")]
 pub fn workflow_recv<'a>(env: &'a Env, instance_id: String, timeout_ms: u32) -> Result<Object<'a>> {
-    let instance = c_string("instance id", &instance_id)?;
+    let instance = veneer::c_string("instance id", &instance_id)?;
     off_loop(env, context()?, move |ctx| {
-        let mut buf: *mut u8 = std::ptr::null_mut();
-        let mut len: usize = 0;
-        let status = unsafe {
-            crate::flz_core_workflow_recv(
-                ctx,
-                instance.as_ptr(),
-                timeout_ms as u64,
-                &mut buf,
-                &mut len,
-            )
-        };
-        match status {
-            FLZ_POLL_ACTIVATION => {
-                let bytes = unsafe { std::slice::from_raw_parts(buf, len) }.to_vec();
-                unsafe { crate::flz_core_buf_free(buf, len) };
-                Ok(Some(Buffer::from(bytes)))
-            }
-            FLZ_POLL_TIMEOUT => Ok(None),
-            _ => Err(core_error(ctx)),
-        }
+        Ok(veneer::workflow_recv(ctx, &instance, u64::from(timeout_ms))?.map(Buffer::from))
     })
 }
 
@@ -733,8 +627,8 @@ pub fn workflow_recv<'a>(env: &'a Env, instance_id: String, timeout_ms: u32) -> 
 #[napi]
 pub fn workflow_cancelled(instance_id: String) -> Result<bool> {
     let ctx = context()?;
-    let instance = c_string("instance id", &instance_id)?;
-    Ok(unsafe { crate::flz_core_workflow_cancelled(ctx, instance.as_ptr()) } != 0)
+    let instance = veneer::c_string("instance id", &instance_id)?;
+    Ok(veneer::workflow_cancelled(ctx, &instance))
 }
 
 /// Spawn-or-deliver a workflow instance; resolves with the controller's
@@ -747,31 +641,14 @@ pub fn spawn_workflow<'a>(
     payload: Buffer,
     if_running: String,
 ) -> Result<Object<'a>> {
-    let instance = c_string("instance id", &instance_id)?;
-    let factory = c_string("factory id", &factory_id)?;
-    let mode = c_string("ifRunning", &if_running)?;
+    let instance = veneer::c_string("instance id", &instance_id)?;
+    let factory = veneer::c_string("factory id", &factory_id)?;
+    let mode = veneer::c_string("ifRunning", &if_running)?;
     let payload = payload.to_vec();
     off_loop(env, context()?, move |ctx| {
-        let mut out: *mut u8 = std::ptr::null_mut();
-        let mut out_len: usize = 0;
-        let status = unsafe {
-            crate::flz_core_spawn_workflow(
-                ctx,
-                instance.as_ptr(),
-                factory.as_ptr(),
-                payload.as_ptr(),
-                payload.len(),
-                mode.as_ptr(),
-                &mut out,
-                &mut out_len,
-            )
-        };
-        if status != FLZ_OK {
-            return Err(core_error(ctx));
-        }
-        let outcome = unsafe { std::slice::from_raw_parts(out, out_len) }.to_vec();
-        unsafe { crate::flz_core_buf_free(out, out_len) };
-        Ok(String::from_utf8_lossy(&outcome).into_owned())
+        Ok(veneer::spawn_workflow(
+            ctx, &instance, &factory, &payload, &mode,
+        )?)
     })
 }
 
@@ -785,10 +662,8 @@ pub fn monotonic_nanos() -> BigInt {
 /// `0n` when no frame ever has.
 #[napi]
 pub fn entry_last_delivery_nanos(channel: String) -> Result<BigInt> {
-    let channel = c_string("channel", &channel)?;
-    Ok(big(unsafe {
-        crate::flz_core_entry_last_delivery_nanos(channel.as_ptr())
-    }))
+    let channel = veneer::c_string("channel", &channel)?;
+    Ok(big(veneer::entry_last_delivery_nanos(&channel)))
 }
 
 /// The context's last recorded error, or `null`.
@@ -798,19 +673,11 @@ pub fn last_error() -> Option<String> {
     if ptr.is_null() {
         return None;
     }
-    let msg = unsafe { crate::flz_core_last_error(ptr) };
-    if msg.is_null() {
-        return None;
-    }
-    Some(
-        unsafe { CStr::from_ptr(msg) }
-            .to_string_lossy()
-            .into_owned(),
-    )
+    veneer::last_error(CtxPtr::of(ptr))
 }
 
-/// Register the ABI's log callback. The one host-function exception the
-/// contract allows.
+/// Register the host's log callback: the one host function native threads
+/// ever call, for this host's own diagnostics.
 #[napi]
 pub fn set_log_callback(callback: Option<Function<crate::napi_host::JsLogLine, ()>>) -> Result<()> {
     crate::napi_host::set_log_callback(callback)
@@ -840,7 +707,11 @@ pub struct JsNativeExport {
 ///   marked blocking returns a promise.
 #[napi]
 pub fn native_surface() -> Vec<JsNativeExport> {
-    fn entry(name: &str, abi: Option<&str>, blocking: bool) -> JsNativeExport {
+    // The veneer: one export, one C entry point, blocking as the ABI says.
+    fn veneer(name: &str, abi: &str) -> JsNativeExport {
+        host(name, Some(abi), crate::BLOCKING_ENTRY_POINTS.contains(&abi))
+    }
+    fn host(name: &str, abi: Option<&str>, blocking: bool) -> JsNativeExport {
         JsNativeExport {
             name: name.to_string(),
             abi: abi.map(str::to_string),
@@ -848,43 +719,37 @@ pub fn native_surface() -> Vec<JsNativeExport> {
         }
     }
     vec![
-        // The veneer: one export, one C entry point.
-        entry("schemaVersion", Some("flz_core_schema_version"), false),
-        entry("contextNew", Some("flz_core_context_new"), false),
-        entry("contextFree", Some("flz_core_context_free"), false),
-        entry("declareClass", Some("flz_core_declare_class"), false),
-        entry("start", Some("flz_core_start"), true),
-        entry("complete", Some("flz_core_complete"), true),
-        entry("abandon", Some("flz_core_abandon"), false),
-        entry("shutdown", Some("flz_core_shutdown"), false),
-        entry("workflowEmit", Some("flz_core_workflow_emit"), false),
-        entry("workflowRecv", Some("flz_core_workflow_recv"), true),
-        entry(
-            "workflowCancelled",
-            Some("flz_core_workflow_cancelled"),
-            false,
-        ),
-        entry("spawnWorkflow", Some("flz_core_spawn_workflow"), true),
-        entry("monotonicNanos", Some("flz_core_monotonic_nanos"), false),
-        entry(
+        veneer("schemaVersion", "flz_core_schema_version"),
+        veneer("contextNew", "flz_core_context_new"),
+        veneer("contextFree", "flz_core_context_free"),
+        veneer("declareClass", "flz_core_declare_class"),
+        veneer("start", "flz_core_start"),
+        veneer("complete", "flz_core_complete"),
+        veneer("abandon", "flz_core_abandon"),
+        veneer("shutdown", "flz_core_shutdown"),
+        veneer("workflowEmit", "flz_core_workflow_emit"),
+        veneer("workflowRecv", "flz_core_workflow_recv"),
+        veneer("workflowCancelled", "flz_core_workflow_cancelled"),
+        veneer("spawnWorkflow", "flz_core_spawn_workflow"),
+        veneer("monotonicNanos", "flz_core_monotonic_nanos"),
+        veneer(
             "entryLastDeliveryNanos",
-            Some("flz_core_entry_last_delivery_nanos"),
-            false,
+            "flz_core_entry_last_delivery_nanos",
         ),
-        entry("lastError", Some("flz_core_last_error"), false),
-        entry("setLogCallback", Some("flz_core_set_log_callback"), false),
+        veneer("lastError", "flz_core_last_error"),
+        host("setLogCallback", None, false),
         // The host's threads. `startHost` is how `flz_core_poll` is reached at
         // all: it is driven from native fetchers and never exported, because
         // an event loop inside a blocking poll is an event loop running
         // nothing else.
-        entry("startHost", Some("flz_core_poll"), false),
-        entry("stopHost", Some("flz_core_poll"), true),
-        entry("registerDispatch", None, false),
-        entry("unregisterDispatch", None, false),
-        entry("dispatchLoopCount", None, false),
-        entry("hostStats", None, false),
-        entry("setHostDrainedCallback", None, false),
-        entry("watchStdinEof", Some("flz_core_shutdown"), false),
-        entry("nativeSurface", None, false),
+        host("startHost", Some("flz_core_poll"), false),
+        host("stopHost", Some("flz_core_poll"), true),
+        host("registerDispatch", None, false),
+        host("unregisterDispatch", None, false),
+        host("dispatchLoopCount", None, false),
+        host("hostStats", None, false),
+        host("setHostDrainedCallback", None, false),
+        host("watchStdinEof", Some("flz_core_shutdown"), false),
+        host("nativeSurface", None, false),
     ]
 }

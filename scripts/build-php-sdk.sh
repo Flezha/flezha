@@ -42,6 +42,18 @@ mkdir -p "$sdk/lib/$os-$arch"
 cp "$root/target/$profile/libflz_core_ffi.$ext" "$sdk/lib/$os-$arch/"
 
 echo "==> installing composer dependencies"
-(cd "$sdk" && composer install --no-interaction --no-progress)
+if command -v composer >/dev/null 2>&1; then
+  (cd "$sdk" && composer install --no-interaction --no-progress)
+elif docker image inspect flezha-php-zts >/dev/null 2>&1; then
+  # CI's own line (.github/workflows/php-sdk.yml): composer lives in the image.
+  # As the invoking user, or vendor/ comes out root-owned on the host.
+  echo "==> no composer on PATH; running it in the flezha-php-zts image"
+  docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$root:$root" -w "$sdk" \
+    flezha-php-zts composer install --no-interaction --no-progress
+else
+  echo "neither composer nor the flezha-php-zts image is available: install composer," \
+    "or build the image from docker/dev/Dockerfile.php (target zts)" >&2
+  exit 1
+fi
 
 echo "==> php SDK ready"

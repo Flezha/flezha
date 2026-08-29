@@ -25,6 +25,10 @@ flezha-*.tar
 # Rust build artifacts.
 /target/
 
+# Python bytecode caches, written beside every module the runners import.
+__pycache__/
+*.py[cod]
+
 # Temporary files, for example, from tests.
 /tmp/
 

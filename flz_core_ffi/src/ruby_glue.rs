@@ -1,45 +1,16 @@
-//! Ruby bindings over this crate's own C ABI, for the `flezha` gem's native
-//! extension. One-to-one with the C entry points — the magnus layer adds
-//! nothing the ABI does not have, so a Ruby-only side door cannot grow here.
+//! Ruby bindings over this crate's C ABI for the `flezha` gem's native
+//! extension, one module function per C entry point.
 //!
-//! ## One context per process
-//! The ABI's rule is "one opaque context per host process". Ruby has one VM
-//! per process and the extension is loaded once into it, so the context lives
-//! in [`CONTEXT`] and no handle is carried through Ruby — a raw pointer
-//! reaching Ruby as an Integer would be a number nothing validates.
-//!
-//! ## The GVL rule
-//! Every blocking entry point runs inside [`without_gvl`], which is the single
-//! place the rule is implemented: `poll`, `wait_starvation`, `complete`,
-//! `workflow_recv`, `start` and `spawn_workflow` all park in native code with
-//! the global VM lock released, so no blocking core call stops another Ruby
-//! thread from running Ruby. `workflow_recv` is the sharp one — a workflow
-//! stage waiting seconds on its inbox with the GVL held would freeze the whole
-//! VM, fetchers included.
-//!
-//! No unblocking function is passed. The ABI has no per-thread wake
-//! (`flz_core_shutdown` releases *every* poller), so the timeout the caller
-//! passes to `poll` is what bounds how quickly `Thread#kill`, `Interrupt` and
-//! runner close are observed. That is a stated bound, not an accident, and the
-//! gem documents the value it uses.
-//!
-//! ## No log callback
-//! `flz_core_set_log_callback` is not veneered here, exactly as it is not in
-//! `jni_glue.rs`. The ABI entry point is a no-op stub, and the diagnostics a
-//! host would route through it come from threads the core owns — which CRuby
-//! cannot accept a call from: `rb_thread_call_with_gvl` is documented as
-//! usable only from inside an `rb_thread_call_without_gvl` callback, and
-//! "you cannot convert a non-Ruby thread into a Ruby thread using this API".
-//! The Node veneer needs the bridge because its fetchers are native; this
-//! host's threads are Ruby's own and log in Ruby.
-//!
-//! ## Buffer ownership
-//! A core buffer is decoded and freed through [`crate::flz_core_buf_free`]
-//! before the call that produced it returns, so no native buffer escapes into
-//! the Ruby heap. Payloads reach Ruby as binary `String`s, which own their
-//! bytes.
+//! Ruby has one VM per process, so the context lives in [`CONTEXT`] and no
+//! handle crosses into Ruby. Every blocking entry point runs inside
+//! [`without_gvl`], the one place the GVL rule is implemented; the poll
+//! timeout the caller passes bounds how quickly `Thread#kill`, `Interrupt`
+//! and a runner close are observed, because the ABI has no per-thread wake.
+//! The log callback is not veneered: the core's diagnostics come from
+//! threads Ruby did not create, which CRuby cannot accept a call from.
+//! Payloads reach Ruby as binary `String`s, which own their bytes.
 
-use std::ffi::{c_void, CStr, CString};
+use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::OnceLock;
@@ -49,10 +20,8 @@ use magnus::prelude::*;
 use magnus::value::Opaque;
 use magnus::{function, Error, ExceptionClass, RArray, RHash, RString, Ruby, TryConvert, Value};
 
-use crate::{
-    FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT,
-    FLZ_STARVATION_OBSERVED,
-};
+use crate::veneer::{self, CtxPtr, Polled, Refusal};
+use crate::FlzContext;
 
 /// The one context this process holds. Null until `context_new`.
 static CONTEXT: AtomicPtr<FlzContext> = AtomicPtr::new(std::ptr::null_mut());
@@ -99,24 +68,16 @@ fn native_error(ruby: &Ruby, message: impl Into<String>) -> Error {
     Error::new(error_class(ruby), message.into())
 }
 
-/// The context's last recorded error, as the message for a raised exception.
-fn last_error_of(ctx: *const FlzContext) -> String {
-    let ptr = unsafe { crate::flz_core_last_error(ctx) };
-    if ptr.is_null() {
-        "unknown native failure".to_string()
-    } else {
-        unsafe { CStr::from_ptr(ptr) }
-            .to_string_lossy()
-            .into_owned()
+/// The one mapping of a refusal onto the gem's exception classes.
+fn raise(ruby: &Ruby, refusal: Refusal) -> Error {
+    match refusal {
+        Refusal::Core(message) | Refusal::Shape(message) => native_error(ruby, message),
+        Refusal::Schema(message) => Error::new(schema_error_class(ruby), message),
     }
 }
 
-fn core_error(ruby: &Ruby, ctx: *const FlzContext) -> Error {
-    native_error(ruby, last_error_of(ctx))
-}
-
 /// The live context, or an error naming what the caller skipped.
-fn context(ruby: &Ruby) -> Result<*mut FlzContext, Error> {
+fn context(ruby: &Ruby) -> Result<CtxPtr, Error> {
     let ptr = CONTEXT.load(Ordering::Acquire);
     if ptr.is_null() {
         return Err(native_error(
@@ -124,11 +85,7 @@ fn context(ruby: &Ruby) -> Result<*mut FlzContext, Error> {
             "flz_core context not created: call Flezha::Native.context_new first",
         ));
     }
-    Ok(ptr)
-}
-
-fn c_string(ruby: &Ruby, what: &str, value: &str) -> Result<CString, Error> {
-    CString::new(value).map_err(|_| native_error(ruby, format!("{what} contains a NUL byte")))
+    Ok(CtxPtr::of(ptr))
 }
 
 // ---------------------------------------------------------------------------
@@ -186,34 +143,6 @@ where
         Ok(value) => value,
         Err(panic) => std::panic::resume_unwind(panic),
     }
-}
-
-/// Run one ABI call that hands out a buffer, with the GVL released, and take
-/// ownership of what it handed out.
-///
-/// The ownership rule this module promises, in the one place it is
-/// implemented: the buffer is copied out and freed through
-/// [`crate::flz_core_buf_free`] **before the GVL is reacquired**, so no native
-/// buffer can reach the Ruby heap however the caller answers.
-///
-/// `handed_out` is the status that means a buffer was produced —
-/// [`FLZ_POLL_ACTIVATION`] for poll and the workflow receive, [`FLZ_OK`] for
-/// spawn. Every other status leaves the out pointers untouched.
-fn without_gvl_taking_buffer<F>(handed_out: i32, call: F) -> (i32, Option<Vec<u8>>)
-where
-    F: FnOnce(*mut *mut u8, *mut usize) -> i32 + Send,
-{
-    without_gvl(move || {
-        let mut buf: *mut u8 = std::ptr::null_mut();
-        let mut len: usize = 0;
-        let status = call(&mut buf, &mut len);
-        if status != handed_out {
-            return (status, None);
-        }
-        let owned = unsafe { std::slice::from_raw_parts(buf, len) }.to_vec();
-        unsafe { crate::flz_core_buf_free(buf, len) };
-        (status, Some(owned))
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -591,18 +520,7 @@ fn context_new(shim_schema_version: u32) -> Result<(), Error> {
             "flz_core context already created for this process",
         ));
     }
-    let ctx = crate::flz_core_context_new(shim_schema_version);
-    if ctx.is_null() {
-        let ptr = crate::flz_core_init_error();
-        let message = if ptr.is_null() {
-            "flz_core context creation failed".to_string()
-        } else {
-            unsafe { CStr::from_ptr(ptr) }
-                .to_string_lossy()
-                .into_owned()
-        };
-        return Err(Error::new(schema_error_class(&ruby), message));
-    }
+    let ctx = veneer::context_new(shim_schema_version).map_err(|r| raise(&ruby, r))?;
     CONTEXT.store(ctx, Ordering::Release);
     Ok(())
 }
@@ -611,7 +529,7 @@ fn context_new(shim_schema_version: u32) -> Result<(), Error> {
 fn context_free() {
     let ctx = CONTEXT.swap(std::ptr::null_mut(), Ordering::AcqRel);
     if !ctx.is_null() {
-        unsafe { crate::flz_core_context_free(ctx) };
+        veneer::context_free(CtxPtr::of(ctx));
     }
 }
 
@@ -620,11 +538,7 @@ fn declare_class(json: RString) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
     let json = unsafe { json.as_slice() }.to_vec();
-    let status = unsafe { crate::flz_core_declare_class(ctx, json.as_ptr(), json.len()) };
-    if status != FLZ_OK {
-        return Err(core_error(&ruby, ctx));
-    }
-    Ok(())
+    veneer::declare_class(ctx, &json).map_err(|r| raise(&ruby, r))
 }
 
 /// Connect to the controller and start the runner loop. Blocking: the ABI call
@@ -632,15 +546,9 @@ fn declare_class(json: RString) -> Result<(), Error> {
 fn start(namespace: String) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let namespace = c_string(&ruby, "namespace", &namespace)?;
-    let ctx_addr = ctx as usize;
-    let status = without_gvl(move || unsafe {
-        crate::flz_core_start(ctx_addr as *mut FlzContext, namespace.as_ptr())
-    });
-    if status != FLZ_OK {
-        return Err(core_error(&ruby, ctx));
-    }
-    Ok(())
+    let refused = |r| raise(&ruby, r);
+    let namespace = veneer::c_string("namespace", &namespace).map_err(refused)?;
+    without_gvl(move || veneer::start(ctx, &namespace)).map_err(refused)
 }
 
 /// Block up to `timeout_ms` for one activation. Returns the activation Hash,
@@ -648,20 +556,10 @@ fn start(namespace: String) -> Result<(), Error> {
 fn poll(timeout_ms: u64) -> Result<Value, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let ctx_addr = ctx as usize;
-    let (status, encoded) =
-        without_gvl_taking_buffer(FLZ_POLL_ACTIVATION, move |buf, len| unsafe {
-            crate::flz_core_poll(ctx_addr as *mut FlzContext, timeout_ms, buf, len)
-        });
-    match status {
-        FLZ_POLL_ACTIVATION => {
-            let act = schema::decode_activation(&encoded.unwrap_or_default())
-                .map_err(|e| native_error(&ruby, format!("activation failed to decode: {e}")))?;
-            Ok(activation_to_ruby(&ruby, act)?.as_value())
-        }
-        FLZ_POLL_TIMEOUT => Ok(ruby.qnil().as_value()),
-        FLZ_POLL_SHUTTING_DOWN => Ok(ruby.sym_new("shutting_down").as_value()),
-        _ => Err(core_error(&ruby, ctx)),
+    match without_gvl(move || veneer::poll(ctx, timeout_ms)).map_err(|r| raise(&ruby, r))? {
+        Polled::Activation(act) => Ok(activation_to_ruby(&ruby, act)?.as_value()),
+        Polled::Timeout => Ok(ruby.qnil().as_value()),
+        Polled::ShuttingDown => Ok(ruby.sym_new("shutting_down").as_value()),
     }
 }
 
@@ -671,14 +569,7 @@ fn poll(timeout_ms: u64) -> Result<Value, Error> {
 fn wait_starvation(timeout_ms: u64) -> Result<i32, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let ctx_addr = ctx as usize;
-    let status = without_gvl(move || unsafe {
-        crate::flz_core_wait_starvation(ctx_addr as *mut FlzContext, timeout_ms)
-    });
-    match status {
-        FLZ_STARVATION_OBSERVED | FLZ_POLL_TIMEOUT | FLZ_POLL_SHUTTING_DOWN => Ok(status),
-        _ => Err(core_error(&ruby, ctx)),
-    }
+    without_gvl(move || veneer::wait_starvation(ctx, timeout_ms)).map_err(|r| raise(&ruby, r))
 }
 
 /// Answer one activation. Blocking, and this is the entry point the GVL rule
@@ -688,15 +579,8 @@ fn wait_starvation(timeout_ms: u64) -> Result<i32, Error> {
 fn complete(result: RHash) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let encoded = schema::encode_result(&result_from_ruby(&ruby, result)?);
-    let ctx_addr = ctx as usize;
-    let status = without_gvl(move || unsafe {
-        crate::flz_core_complete(ctx_addr as *mut FlzContext, encoded.as_ptr(), encoded.len())
-    });
-    if status != FLZ_OK {
-        return Err(core_error(&ruby, ctx));
-    }
-    Ok(())
+    let result = result_from_ruby(&ruby, result)?;
+    without_gvl(move || veneer::complete(ctx, &result)).map_err(|r| raise(&ruby, r))
 }
 
 /// Abandon a polled activation: re-hand its untouched items and release its
@@ -705,18 +589,13 @@ fn complete(result: RHash) -> Result<(), Error> {
 fn abandon(token: u64) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let status = unsafe { crate::flz_core_abandon(ctx, token) };
-    if status != FLZ_OK {
-        return Err(core_error(&ruby, ctx));
-    }
-    Ok(())
+    veneer::abandon(ctx, token).map_err(|r| raise(&ruby, r))
 }
 
 /// Wake every blocked poller and stop the runner loop.
 fn shutdown() -> Result<(), Error> {
     let ruby = ruby();
-    let ctx = context(&ruby)?;
-    unsafe { crate::flz_core_shutdown(ctx) };
+    veneer::shutdown(context(&ruby)?);
     Ok(())
 }
 
@@ -725,37 +604,22 @@ fn shutdown() -> Result<(), Error> {
 fn workflow_emit(instance_id: String, payload: RString) -> Result<(), Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let instance = c_string(&ruby, "instance id", &instance_id)?;
+    let refused = |r| raise(&ruby, r);
+    let instance = veneer::c_string("instance id", &instance_id).map_err(refused)?;
     let payload = unsafe { payload.as_slice() }.to_vec();
-    let status = unsafe {
-        crate::flz_core_workflow_emit(ctx, instance.as_ptr(), payload.as_ptr(), payload.len())
-    };
-    if status != FLZ_OK {
-        return Err(core_error(&ruby, ctx));
-    }
-    Ok(())
+    veneer::workflow_emit(ctx, &instance, &payload).map_err(refused)
 }
 
 /// The next inbox item of a live workflow body, or `nil` on timeout.
 fn workflow_recv(instance_id: String, timeout_ms: u64) -> Result<Value, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let instance = c_string(&ruby, "instance id", &instance_id)?;
-    let ctx_addr = ctx as usize;
-    let (status, payload) =
-        without_gvl_taking_buffer(FLZ_POLL_ACTIVATION, move |buf, len| unsafe {
-            crate::flz_core_workflow_recv(
-                ctx_addr as *mut FlzContext,
-                instance.as_ptr(),
-                timeout_ms,
-                buf,
-                len,
-            )
-        });
-    match status {
-        FLZ_POLL_ACTIVATION => Ok(bytes(&ruby, payload.unwrap_or_default())),
-        FLZ_POLL_TIMEOUT => Ok(ruby.qnil().as_value()),
-        _ => Err(core_error(&ruby, ctx)),
+    let refused = |r| raise(&ruby, r);
+    let instance = veneer::c_string("instance id", &instance_id).map_err(refused)?;
+    let received = without_gvl(move || veneer::workflow_recv(ctx, &instance, timeout_ms));
+    match received.map_err(refused)? {
+        Some(payload) => Ok(bytes(&ruby, payload)),
+        None => Ok(ruby.qnil().as_value()),
     }
 }
 
@@ -763,8 +627,8 @@ fn workflow_recv(instance_id: String, timeout_ms: u64) -> Result<Value, Error> {
 fn workflow_cancelled(instance_id: String) -> Result<bool, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let instance = c_string(&ruby, "instance id", &instance_id)?;
-    Ok(unsafe { crate::flz_core_workflow_cancelled(ctx, instance.as_ptr()) } != 0)
+    let instance = veneer::c_string("instance id", &instance_id).map_err(|r| raise(&ruby, r))?;
+    Ok(veneer::workflow_cancelled(ctx, &instance))
 }
 
 /// Spawn-or-deliver a workflow instance; answers the controller's outcome
@@ -777,27 +641,13 @@ fn spawn_workflow(
 ) -> Result<String, Error> {
     let ruby = ruby();
     let ctx = context(&ruby)?;
-    let instance = c_string(&ruby, "instance id", &instance_id)?;
-    let factory = c_string(&ruby, "factory id", &factory_id)?;
-    let mode = c_string(&ruby, "if_running", &if_running)?;
+    let refused = |r| raise(&ruby, r);
+    let instance = veneer::c_string("instance id", &instance_id).map_err(refused)?;
+    let factory = veneer::c_string("factory id", &factory_id).map_err(refused)?;
+    let mode = veneer::c_string("if_running", &if_running).map_err(refused)?;
     let payload = unsafe { payload.as_slice() }.to_vec();
-    let ctx_addr = ctx as usize;
-    let (status, outcome) = without_gvl_taking_buffer(FLZ_OK, move |out, out_len| unsafe {
-        crate::flz_core_spawn_workflow(
-            ctx_addr as *mut FlzContext,
-            instance.as_ptr(),
-            factory.as_ptr(),
-            payload.as_ptr(),
-            payload.len(),
-            mode.as_ptr(),
-            out,
-            out_len,
-        )
-    });
-    if status != FLZ_OK {
-        return Err(core_error(&ruby, ctx));
-    }
-    Ok(String::from_utf8_lossy(&outcome.unwrap_or_default()).into_owned())
+    without_gvl(move || veneer::spawn_workflow(ctx, &instance, &factory, &payload, &mode))
+        .map_err(refused)
 }
 
 /// The core's monotonic clock in nanoseconds.
@@ -809,8 +659,8 @@ fn monotonic_nanos() -> u64 {
 /// `0` when no frame ever has.
 fn entry_last_delivery_nanos(channel: String) -> Result<u64, Error> {
     let ruby = ruby();
-    let channel = c_string(&ruby, "channel", &channel)?;
-    Ok(unsafe { crate::flz_core_entry_last_delivery_nanos(channel.as_ptr()) })
+    let channel = veneer::c_string("channel", &channel).map_err(|r| raise(&ruby, r))?;
+    Ok(veneer::entry_last_delivery_nanos(&channel))
 }
 
 /// The context's last recorded error, or `nil`.
@@ -819,19 +669,11 @@ fn last_error() -> Option<String> {
     if ptr.is_null() {
         return None;
     }
-    let msg = unsafe { crate::flz_core_last_error(ptr) };
-    if msg.is_null() {
-        return None;
-    }
-    Some(
-        unsafe { CStr::from_ptr(msg) }
-            .to_string_lossy()
-            .into_owned(),
-    )
+    veneer::last_error(CtxPtr::of(ptr))
 }
 
 /// Every function this extension exports, with the C ABI entry point behind
-/// it: `[name, abi_entry_point_or_nil, blocking]`.
+/// it: `[name, abi_entry_point, blocking]`.
 ///
 /// Two properties are asserted against this table rather than reviewed, so
 /// neither can lapse by omission when an export is added later:
@@ -843,40 +685,41 @@ fn last_error() -> Option<String> {
 fn native_surface() -> Result<RArray, Error> {
     let ruby = ruby();
     let out = ruby.ary_new_capa(NATIVE_SURFACE.len());
-    for (name, abi, blocking) in NATIVE_SURFACE {
+    for (name, abi) in NATIVE_SURFACE {
         let row = ruby.ary_new_capa(3);
         row.push(*name)?;
         row.push(*abi)?;
-        row.push(*blocking)?;
+        row.push(crate::BLOCKING_ENTRY_POINTS.contains(abi))?;
         out.push(row)?;
     }
     Ok(out)
 }
 
-/// The table `native_surface` renders and the Rust-side test asserts against.
-pub const NATIVE_SURFACE: &[(&str, &str, bool)] = &[
-    ("schema_version", "flz_core_schema_version", false),
-    ("context_new", "flz_core_context_new", false),
-    ("context_free", "flz_core_context_free", false),
-    ("declare_class", "flz_core_declare_class", false),
-    ("start", "flz_core_start", true),
-    ("poll", "flz_core_poll", true),
-    ("wait_starvation", "flz_core_wait_starvation", true),
-    ("complete", "flz_core_complete", true),
-    ("abandon", "flz_core_abandon", false),
-    ("shutdown", "flz_core_shutdown", false),
-    ("workflow_emit", "flz_core_workflow_emit", false),
-    ("workflow_recv", "flz_core_workflow_recv", true),
-    ("workflow_cancelled", "flz_core_workflow_cancelled", false),
-    ("spawn_workflow", "flz_core_spawn_workflow", true),
-    ("monotonic_nanos", "flz_core_monotonic_nanos", false),
+/// The table `native_surface` renders and the Rust-side test asserts against:
+/// `(name, abi_entry_point)`, blocking derived from
+/// [`crate::BLOCKING_ENTRY_POINTS`].
+pub const NATIVE_SURFACE: &[(&str, &str)] = &[
+    ("schema_version", "flz_core_schema_version"),
+    ("context_new", "flz_core_context_new"),
+    ("context_free", "flz_core_context_free"),
+    ("declare_class", "flz_core_declare_class"),
+    ("start", "flz_core_start"),
+    ("poll", "flz_core_poll"),
+    ("wait_starvation", "flz_core_wait_starvation"),
+    ("complete", "flz_core_complete"),
+    ("abandon", "flz_core_abandon"),
+    ("shutdown", "flz_core_shutdown"),
+    ("workflow_emit", "flz_core_workflow_emit"),
+    ("workflow_recv", "flz_core_workflow_recv"),
+    ("workflow_cancelled", "flz_core_workflow_cancelled"),
+    ("spawn_workflow", "flz_core_spawn_workflow"),
+    ("monotonic_nanos", "flz_core_monotonic_nanos"),
     (
         "entry_last_delivery_nanos",
         "flz_core_entry_last_delivery_nanos",
-        false,
     ),
-    ("last_error", "flz_core_last_error", false),
-    ("native_surface", "flz_core_schema_version", false),
+    ("last_error", "flz_core_last_error"),
+    ("native_surface", "flz_core_schema_version"),
 ];
 
 /// Define `Flezha::Native` and its exception classes. Named `Init_flz_core_ffi`

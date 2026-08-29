@@ -5,8 +5,6 @@ src/flezha/flz_core_ffi*.pyd
 # Staged from the repository root by the build script.
 /LICENSE
 /THIRD_PARTY_NOTICES.md
-__pycache__/
-*.py[cod]
 .pytest_cache/
 .venv/
 dist/

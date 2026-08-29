@@ -1,31 +1,18 @@
-//! The native half of the Node host: the threads the SDK brings.
+//! The native half of the Node host: the threads the SDK brings. The core
+//! decides what runs; JavaScript only ever runs handlers, so the parts that
+//! block live here.
 //!
-//! `docs/sdk/poll_core.md` states the division — the core decides what runs
-//! and how much, the host brings threads and user code. Node's threads cannot
-//! all be JavaScript's: its unit of concurrency is a promise, which lives on
-//! one event loop that must never block. So the parts that block live here, in
-//! native code, and JavaScript only ever runs handlers.
-//!
-//! Three thread groups, each for one reason:
-//!
-//! * **Fetchers** loop `poll → decode → hand off → poll` and never run user
-//!   code, so one is always available to enter `poll`. They are this module's
-//!   own `std::thread`s and never libuv's shared pool, which has four threads
-//!   and serves `fs`, `dns` and `crypto` besides.
-//! * **The blocking pool** runs every ABI call that can park — above all
-//!   `complete`, which under the default `DropNothing` overflow policy parks
-//!   until the consumer's mailbox drains. It grows, because a fixed pool whose
-//!   every thread parks pushing to one consumer has no thread left to run the
-//!   completion that would drain it.
+//! * **Fetchers** loop `poll → decode → hand off → poll` on this module's own
+//!   threads, never libuv's shared pool, so one is always free to enter `poll`.
+//! * **The blocking pool** runs every ABI call that can park, above all
+//!   `complete`; it grows, because a fixed pool whose every thread parks
+//!   pushing to one consumer has no thread left to run the completion that
+//!   would drain it.
 //! * **The supervisor** parks in the core's starvation wait and answers an
-//!   observation with one more fetcher — the condition the core can see, as
-//!   distinct from the queued-completion condition only this host can.
+//!   observation with one more fetcher.
 //!
-//! Dispatch targets are threadsafe-function handles, one per JavaScript event
-//! loop that registered. The fetcher round-robins over them: per-entity
-//! affinity is unnecessary because the core never hands out two activations
-//! for one entity at a time, which is what makes the worker tier cost a
-//! selection rather than a second dispatch path.
+//! Dispatch targets are threadsafe-function handles, one per registered event
+//! loop; `pick_loop` keeps an entity on the loop that holds its state.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
@@ -36,10 +23,9 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
-use crate::napi_glue::{activation_to_js, context, core_error, JsActivation};
-use crate::{
-    FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT, FLZ_STARVATION_OBSERVED,
-};
+use crate::napi_glue::{activation_to_js, context, JsActivation};
+use crate::veneer::{self, CtxPtr, Polled, Refusal};
+use crate::{FLZ_POLL_SHUTTING_DOWN, FLZ_STARVATION_OBSERVED};
 
 /// Poll timeout per turn. Bounds how fast a shutdown request is observed —
 /// documented as that bound, because it is what an operator waits out.
@@ -356,8 +342,7 @@ static ABANDONED: AtomicUsize = AtomicUsize::new(0);
 
 fn abandon_quietly(token: u64) {
     let Ok(ctx) = context() else { return };
-    let status = unsafe { crate::flz_core_abandon(ctx, token) };
-    if status == crate::FLZ_OK {
+    if veneer::abandon(ctx, token).is_ok() {
         ABANDONED.fetch_add(1, Ordering::Relaxed);
     } else {
         log_line(2, &format!("abandoning activation {token} failed"));
@@ -435,31 +420,21 @@ fn hand_off(token: u64, activation: JsActivation) -> bool {
 }
 
 /// One fetcher turn. `false` ends the thread.
-fn fetch_turn(ctx: *mut crate::FlzContext) -> bool {
-    let mut buf: *mut u8 = std::ptr::null_mut();
-    let mut len: usize = 0;
-    let status = unsafe { crate::flz_core_poll(ctx, POLL_TIMEOUT_MS, &mut buf, &mut len) };
-    match status {
-        FLZ_POLL_TIMEOUT => true,
-        FLZ_POLL_SHUTTING_DOWN => false,
-        FLZ_POLL_ACTIVATION => {
-            // Decode and free before anything else can fail: the core's buffer
-            // must never outlive this turn, and nothing below borrows it.
-            let decoded = flz_core::schema::decode_activation(unsafe {
-                std::slice::from_raw_parts(buf, len)
-            });
-            unsafe { crate::flz_core_buf_free(buf, len) };
-            match decoded {
-                Ok(act) => {
-                    let token = act.token;
-                    hand_off(token, activation_to_js(act));
-                }
-                Err(e) => log_line(3, &format!("activation decode failed: {e}")),
-            }
+fn fetch_turn(ctx: CtxPtr) -> bool {
+    match veneer::poll(ctx, POLL_TIMEOUT_MS) {
+        Ok(Polled::Timeout) => true,
+        Ok(Polled::ShuttingDown) => false,
+        Ok(Polled::Activation(act)) => {
+            let token = act.token;
+            hand_off(token, activation_to_js(act));
             true
         }
-        _ => {
-            log_line(3, &format!("core poll failed: {}", core_error(ctx)));
+        Err(Refusal::Shape(message)) => {
+            log_line(3, &message);
+            true
+        }
+        Err(refusal) => {
+            log_line(3, &format!("core poll failed: {refusal}"));
             true
         }
     }
@@ -532,7 +507,9 @@ fn supervise_loop() {
     let Ok(ctx) = context() else { return };
     let mut at_ceiling_logged = false;
     while !CLOSING.load(Ordering::Acquire) {
-        let outcome = unsafe { crate::flz_core_wait_starvation(ctx, SUPERVISOR_WAIT_MS) };
+        let Ok(outcome) = veneer::wait_starvation(ctx, SUPERVISOR_WAIT_MS) else {
+            continue;
+        };
         if outcome == FLZ_POLL_SHUTTING_DOWN {
             return;
         }
@@ -658,7 +635,7 @@ pub fn stop_host<'a>(env: &'a Env) -> Result<Object<'a>> {
 /// nothing left that could.
 #[napi]
 pub fn watch_stdin_eof(grace_ms: u32) -> Result<()> {
-    let ctx = crate::napi_glue::CtxPtr::of(context()?);
+    let ctx = context()?;
     std::thread::Builder::new()
         .name("flz-stdin-eof".into())
         .spawn(move || {
@@ -687,7 +664,7 @@ pub fn watch_stdin_eof(grace_ms: u32) -> Result<()> {
                 }
             }
             log_line(1, "standard input reached end of file; draining");
-            unsafe { crate::flz_core_shutdown(ctx.get()) };
+            veneer::shutdown(ctx);
             std::thread::sleep(Duration::from_millis(u64::from(grace_ms)));
             std::process::exit(0);
         })

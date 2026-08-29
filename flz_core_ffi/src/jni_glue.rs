@@ -1,31 +1,22 @@
-//! JNI bindings over this crate's own C ABI, for the Java SDK's `FlzCore`
-//! class (`com.flezha.sdk.native_.FlzCore`). One-to-one with the C entry
-//! points — the JNI layer adds nothing the ABI does not have, so a Java-only
-//! side door cannot grow here.
-//!
-//! ## Buffer ownership
-//! Every `byte[]` returned to Java is copied from the native buffer into a
-//! fresh Java array and the native buffer is freed through
-//! [`crate::flz_core_buf_free`] before the call returns. Inbound `byte[]`
-//! arrays are short-lived copies — the JVM keeps ownership.
-//!
-//! ## Error model
-//! Failures throw `com.flezha.sdk.native_.FlezhaNativeException` (falling
-//! back to `java.lang.RuntimeException` off the SDK classpath) with the
-//! message from the context's last-error slot.
+//! JNI bindings over this crate's C ABI for the Java SDK's `FlzCore` class,
+//! one export per C entry point. This module owns the byte-level crossing:
+//! Java decodes postcard itself, so activations and payloads cross as fresh
+//! `byte[]` copies read out of the core's buffer before it is freed, and
+//! Java-owned arrays are copied in before the call returns. A refusal maps
+//! once, in [`throw`], onto `FlezhaNativeException` (`RuntimeException` off
+//! the SDK classpath).
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use jni::JNIEnv;
 
-use crate::{
-    FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT,
-    FLZ_STARVATION_OBSERVED,
-};
+use crate::veneer::{self, with_buffer, CtxPtr, Refusal};
+use crate::{FlzContext, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT};
 
-fn throw(env: &mut JNIEnv, message: &str) {
+fn throw(env: &mut JNIEnv, refusal: &Refusal) {
+    let message = refusal.message();
     let thrown = env
         .find_class("com/flezha/sdk/native_/FlezhaNativeException")
         .and_then(|class| env.throw_new(class, message));
@@ -34,15 +25,27 @@ fn throw(env: &mut JNIEnv, message: &str) {
     }
 }
 
-fn last_error_of(ctx: *const FlzContext) -> String {
-    let ptr = unsafe { crate::flz_core_last_error(ctx) };
-    if ptr.is_null() {
-        "unknown native failure".to_string()
-    } else {
-        unsafe { CStr::from_ptr(ptr) }
-            .to_string_lossy()
-            .into_owned()
+fn report(env: &mut JNIEnv, outcome: Result<(), Refusal>) {
+    if let Err(refusal) = outcome {
+        throw(env, &refusal);
     }
+}
+
+fn ctx_of(ctx: jlong) -> CtxPtr {
+    CtxPtr::of(ctx as *mut FlzContext)
+}
+
+fn c_string(env: &mut JNIEnv, what: &str, value: &JString) -> Result<CString, Refusal> {
+    let value: String = env
+        .get_string(value)
+        .map_err(|e| Refusal::Shape(format!("{what} unreadable: {e}")))?
+        .into();
+    veneer::c_string(what, &value)
+}
+
+fn bytes_of(env: &mut JNIEnv, what: &str, array: &JByteArray) -> Result<Vec<u8>, Refusal> {
+    env.convert_byte_array(array)
+        .map_err(|e| Refusal::Shape(format!("{what} unreadable: {e}")))
 }
 
 /// The activation schema version this native library speaks.
@@ -62,20 +65,13 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_contextNew(
     _class: JClass,
     shim_schema_version: jint,
 ) -> jlong {
-    let ctx = crate::flz_core_context_new(shim_schema_version as u32);
-    if ctx.is_null() {
-        let ptr = crate::flz_core_init_error();
-        let message = if ptr.is_null() {
-            "flz_core context creation failed".to_string()
-        } else {
-            unsafe { CStr::from_ptr(ptr) }
-                .to_string_lossy()
-                .into_owned()
-        };
-        throw(&mut env, &message);
-        return 0;
+    match veneer::context_new(shim_schema_version as u32) {
+        Ok(ctx) => ctx as jlong,
+        Err(refusal) => {
+            throw(&mut env, &refusal);
+            0
+        }
     }
-    ctx as jlong
 }
 
 /// Declare one host class from its JSON declaration. Throws the refusal.
@@ -86,15 +82,10 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_declareClass(
     ctx: jlong,
     json: JByteArray,
 ) {
-    let ctx = ctx as *mut FlzContext;
-    let bytes = match env.convert_byte_array(&json) {
-        Ok(b) => b,
-        Err(e) => return throw(&mut env, &format!("declaration bytes unreadable: {e}")),
-    };
-    let status = unsafe { crate::flz_core_declare_class(ctx, bytes.as_ptr(), bytes.len()) };
-    if status != FLZ_OK {
-        throw(&mut env, &last_error_of(ctx));
-    }
+    let ctx = ctx_of(ctx);
+    let outcome = bytes_of(&mut env, "declaration bytes", &json)
+        .and_then(|bytes| veneer::declare_class(ctx, &bytes));
+    report(&mut env, outcome);
 }
 
 /// Connect to the controller and start the runner loop. Throws on failure.
@@ -105,19 +96,10 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_start(
     ctx: jlong,
     namespace: JString,
 ) {
-    let ctx = ctx as *mut FlzContext;
-    let namespace: String = match env.get_string(&namespace) {
-        Ok(s) => s.into(),
-        Err(e) => return throw(&mut env, &format!("namespace unreadable: {e}")),
-    };
-    let c_namespace = match CString::new(namespace) {
-        Ok(c) => c,
-        Err(_) => return throw(&mut env, "namespace contains NUL"),
-    };
-    let status = unsafe { crate::flz_core_start(ctx, c_namespace.as_ptr()) };
-    if status != FLZ_OK {
-        throw(&mut env, &last_error_of(ctx));
-    }
+    let ctx = ctx_of(ctx);
+    let outcome = c_string(&mut env, "namespace", &namespace)
+        .and_then(|namespace| veneer::start(ctx, &namespace));
+    report(&mut env, outcome);
 }
 
 /// Block up to `timeout_ms` for one activation. `null` = timeout; a
@@ -130,30 +112,28 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_poll(
     ctx: jlong,
     timeout_ms: jlong,
 ) -> jbyteArray {
-    let ctx = ctx as *mut FlzContext;
-    let mut buf: *mut u8 = std::ptr::null_mut();
-    let mut len: usize = 0;
-    let status = unsafe { crate::flz_core_poll(ctx, timeout_ms.max(0) as u64, &mut buf, &mut len) };
-    match status {
-        FLZ_POLL_ACTIVATION => {
-            let bytes = unsafe { std::slice::from_raw_parts(buf, len) };
-            let out = env.byte_array_from_slice(bytes);
-            unsafe { crate::flz_core_buf_free(buf, len) };
-            match out {
-                Ok(array) => array.into_raw(),
-                Err(e) => {
-                    throw(&mut env, &format!("activation copy failed: {e}"));
-                    std::ptr::null_mut()
-                }
-            }
+    let ctx = ctx_of(ctx);
+    let (status, copied) = with_buffer(
+        FLZ_POLL_ACTIVATION,
+        |buf, len| unsafe { crate::flz_core_poll(ctx.get(), timeout_ms.max(0) as u64, buf, len) },
+        |bytes| env.byte_array_from_slice(bytes),
+    );
+    match (status, copied) {
+        (FLZ_POLL_ACTIVATION, Some(Ok(array))) => array.into_raw(),
+        (FLZ_POLL_ACTIVATION, Some(Err(e))) => {
+            throw(
+                &mut env,
+                &Refusal::Shape(format!("activation copy failed: {e}")),
+            );
+            std::ptr::null_mut()
         }
-        FLZ_POLL_TIMEOUT => std::ptr::null_mut(),
-        FLZ_POLL_SHUTTING_DOWN => match env.byte_array_from_slice(&[]) {
+        (FLZ_POLL_TIMEOUT, _) => std::ptr::null_mut(),
+        (FLZ_POLL_SHUTTING_DOWN, _) => match env.byte_array_from_slice(&[]) {
             Ok(array) => array.into_raw(),
             Err(_) => std::ptr::null_mut(),
         },
         _ => {
-            throw(&mut env, &last_error_of(ctx));
+            throw(&mut env, &Refusal::Core(veneer::last_error_of(ctx)));
             std::ptr::null_mut()
         }
     }
@@ -170,12 +150,10 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_waitStarvation(
     ctx: jlong,
     timeout_ms: jlong,
 ) -> jint {
-    let ctx = ctx as *mut FlzContext;
-    let status = unsafe { crate::flz_core_wait_starvation(ctx, timeout_ms.max(0) as u64) };
-    match status {
-        FLZ_STARVATION_OBSERVED | FLZ_POLL_TIMEOUT | FLZ_POLL_SHUTTING_DOWN => status,
-        _ => {
-            throw(&mut env, &last_error_of(ctx));
+    match veneer::wait_starvation(ctx_of(ctx), timeout_ms.max(0) as u64) {
+        Ok(status) => status,
+        Err(refusal) => {
+            throw(&mut env, &refusal);
             FLZ_POLL_TIMEOUT
         }
     }
@@ -190,15 +168,12 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_complete(
     ctx: jlong,
     result: JByteArray,
 ) {
-    let ctx = ctx as *mut FlzContext;
-    let bytes = match env.convert_byte_array(&result) {
-        Ok(b) => b,
-        Err(e) => return throw(&mut env, &format!("result bytes unreadable: {e}")),
-    };
-    let status = unsafe { crate::flz_core_complete(ctx, bytes.as_ptr(), bytes.len()) };
-    if status != FLZ_OK {
-        throw(&mut env, &last_error_of(ctx));
-    }
+    let ctx = ctx_of(ctx);
+    let outcome = bytes_of(&mut env, "result bytes", &result).and_then(|bytes| {
+        let status = unsafe { crate::flz_core_complete(ctx.get(), bytes.as_ptr(), bytes.len()) };
+        veneer::verdict(ctx, status)
+    });
+    report(&mut env, outcome);
 }
 
 /// Abandon a polled activation by token: re-hand its untouched items and
@@ -211,11 +186,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_abandon(
     ctx: jlong,
     token: jlong,
 ) {
-    let ctx = ctx as *mut FlzContext;
-    let status = unsafe { crate::flz_core_abandon(ctx, token as u64) };
-    if status != FLZ_OK {
-        throw(&mut env, &last_error_of(ctx));
-    }
+    report(&mut env, veneer::abandon(ctx_of(ctx), token as u64));
 }
 
 /// Emit one output payload from a live workflow run-sugar body.
@@ -227,25 +198,12 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_workflowEmit(
     instance_id: JString,
     payload: JByteArray,
 ) {
-    let ctx = ctx as *mut FlzContext;
-    let instance: String = match env.get_string(&instance_id) {
-        Ok(s) => s.into(),
-        Err(e) => return throw(&mut env, &format!("instance id unreadable: {e}")),
-    };
-    let bytes = match env.convert_byte_array(&payload) {
-        Ok(b) => b,
-        Err(e) => return throw(&mut env, &format!("payload bytes unreadable: {e}")),
-    };
-    let c_instance = match CString::new(instance) {
-        Ok(c) => c,
-        Err(_) => return throw(&mut env, "instance id contains NUL"),
-    };
-    let status = unsafe {
-        crate::flz_core_workflow_emit(ctx, c_instance.as_ptr(), bytes.as_ptr(), bytes.len())
-    };
-    if status != FLZ_OK {
-        throw(&mut env, &last_error_of(ctx));
-    }
+    let ctx = ctx_of(ctx);
+    let outcome = c_string(&mut env, "instance id", &instance_id).and_then(|instance| {
+        let bytes = bytes_of(&mut env, "payload bytes", &payload)?;
+        veneer::workflow_emit(ctx, &instance, &bytes)
+    });
+    report(&mut env, outcome);
 }
 
 /// Block up to `timeout_ms` for the next inbox item of a live workflow
@@ -259,48 +217,39 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_workflowRecv(
     instance_id: JString,
     timeout_ms: jlong,
 ) -> jbyteArray {
-    let ctx = ctx as *mut FlzContext;
-    let instance: String = match env.get_string(&instance_id) {
-        Ok(s) => s.into(),
-        Err(e) => {
-            throw(&mut env, &format!("instance id unreadable: {e}"));
+    let ctx = ctx_of(ctx);
+    let instance = match c_string(&mut env, "instance id", &instance_id) {
+        Ok(instance) => instance,
+        Err(refusal) => {
+            throw(&mut env, &refusal);
             return std::ptr::null_mut();
         }
     };
-    let c_instance = match CString::new(instance) {
-        Ok(c) => c,
-        Err(_) => {
-            throw(&mut env, "instance id contains NUL");
-            return std::ptr::null_mut();
+    let (status, copied) = with_buffer(
+        FLZ_POLL_ACTIVATION,
+        |buf, len| unsafe {
+            crate::flz_core_workflow_recv(
+                ctx.get(),
+                instance.as_ptr(),
+                timeout_ms.max(0) as u64,
+                buf,
+                len,
+            )
+        },
+        |bytes| env.byte_array_from_slice(bytes),
+    );
+    match (status, copied) {
+        (FLZ_POLL_ACTIVATION, Some(Ok(array))) => array.into_raw(),
+        (FLZ_POLL_ACTIVATION, Some(Err(e))) => {
+            throw(
+                &mut env,
+                &Refusal::Shape(format!("inbox payload copy failed: {e}")),
+            );
+            std::ptr::null_mut()
         }
-    };
-    let mut buf: *mut u8 = std::ptr::null_mut();
-    let mut len: usize = 0;
-    let status = unsafe {
-        crate::flz_core_workflow_recv(
-            ctx,
-            c_instance.as_ptr(),
-            timeout_ms.max(0) as u64,
-            &mut buf,
-            &mut len,
-        )
-    };
-    match status {
-        FLZ_POLL_ACTIVATION => {
-            let bytes = unsafe { std::slice::from_raw_parts(buf, len) };
-            let out = env.byte_array_from_slice(bytes);
-            unsafe { crate::flz_core_buf_free(buf, len) };
-            match out {
-                Ok(array) => array.into_raw(),
-                Err(e) => {
-                    throw(&mut env, &format!("inbox payload copy failed: {e}"));
-                    std::ptr::null_mut()
-                }
-            }
-        }
-        FLZ_POLL_TIMEOUT => std::ptr::null_mut(),
+        (FLZ_POLL_TIMEOUT, _) => std::ptr::null_mut(),
         _ => {
-            throw(&mut env, &last_error_of(ctx));
+            throw(&mut env, &Refusal::Core(veneer::last_error_of(ctx)));
             std::ptr::null_mut()
         }
     }
@@ -314,16 +263,27 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_workflowCancelled(
     ctx: jlong,
     instance_id: JString,
 ) -> jboolean {
-    let ctx = ctx as *const FlzContext;
-    let instance: String = match env.get_string(&instance_id) {
-        Ok(s) => s.into(),
-        Err(_) => return 1,
-    };
-    let c_instance = match CString::new(instance) {
-        Ok(c) => c,
-        Err(_) => return 1,
-    };
-    unsafe { crate::flz_core_workflow_cancelled(ctx, c_instance.as_ptr()) as jboolean }
+    match c_string(&mut env, "instance id", &instance_id) {
+        Ok(instance) => veneer::workflow_cancelled(ctx_of(ctx), &instance) as jboolean,
+        Err(_) => 1,
+    }
+}
+
+type SpawnArgs = (CString, CString, Vec<u8>, CString);
+
+fn spawn_args(
+    env: &mut JNIEnv,
+    instance_id: &JString,
+    factory_id: &JString,
+    payload: &JByteArray,
+    if_running: &JString,
+) -> Result<SpawnArgs, Refusal> {
+    let unreadable = |_| Refusal::Shape("spawn arguments unreadable".to_string());
+    let instance = c_string(env, "instance id", instance_id).map_err(unreadable)?;
+    let factory = c_string(env, "factory id", factory_id).map_err(unreadable)?;
+    let mode = c_string(env, "if_running", if_running).map_err(unreadable)?;
+    let bytes = bytes_of(env, "payload bytes", payload)?;
+    Ok((instance, factory, bytes, mode))
 }
 
 /// Spawn-or-deliver a workflow instance; returns the controller's outcome
@@ -338,49 +298,21 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_spawnWorkflow<'l>(
     payload: JByteArray,
     if_running: JString,
 ) -> jni::sys::jstring {
-    let ctx = ctx as *mut FlzContext;
-    let get = |env: &mut JNIEnv, s: &JString| -> Option<CString> {
-        let v: String = env.get_string(s).ok()?.into();
-        CString::new(v).ok()
-    };
-    let (Some(instance), Some(factory), Some(mode)) = (
-        get(&mut env, &instance_id),
-        get(&mut env, &factory_id),
-        get(&mut env, &if_running),
-    ) else {
-        throw(&mut env, "spawn arguments unreadable");
-        return std::ptr::null_mut();
-    };
-    let bytes = match env.convert_byte_array(&payload) {
-        Ok(b) => b,
-        Err(e) => {
-            throw(&mut env, &format!("payload bytes unreadable: {e}"));
-            return std::ptr::null_mut();
+    let ctx = ctx_of(ctx);
+    let outcome = spawn_args(&mut env, &instance_id, &factory_id, &payload, &if_running).and_then(
+        |(instance, factory, bytes, mode)| {
+            veneer::spawn_workflow(ctx, &instance, &factory, &bytes, &mode)
+        },
+    );
+    match outcome {
+        Ok(outcome) => match env.new_string(outcome) {
+            Ok(s) => s.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        },
+        Err(refusal) => {
+            throw(&mut env, &refusal);
+            std::ptr::null_mut()
         }
-    };
-    let mut out: *mut u8 = std::ptr::null_mut();
-    let mut out_len: usize = 0;
-    let status = unsafe {
-        crate::flz_core_spawn_workflow(
-            ctx,
-            instance.as_ptr(),
-            factory.as_ptr(),
-            bytes.as_ptr(),
-            bytes.len(),
-            mode.as_ptr(),
-            &mut out,
-            &mut out_len,
-        )
-    };
-    if status != FLZ_OK {
-        throw(&mut env, &last_error_of(ctx));
-        return std::ptr::null_mut();
-    }
-    let outcome = unsafe { std::slice::from_raw_parts(out, out_len) }.to_vec();
-    unsafe { crate::flz_core_buf_free(out, out_len) };
-    match env.new_string(String::from_utf8_lossy(&outcome)) {
-        Ok(s) => s.into_raw(),
-        Err(_) => std::ptr::null_mut(),
     }
 }
 
@@ -403,13 +335,10 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_entryLastDeliveryNan
     _class: JClass,
     channel: JString,
 ) -> jlong {
-    let Ok(channel) = env.get_string(&channel) else {
-        return 0;
-    };
-    let Ok(channel) = CString::new(String::from(channel)) else {
-        return 0;
-    };
-    unsafe { crate::flz_core_entry_last_delivery_nanos(channel.as_ptr()) as jlong }
+    match c_string(&mut env, "channel", &channel) {
+        Ok(channel) => veneer::entry_last_delivery_nanos(&channel) as jlong,
+        Err(_) => 0,
+    }
 }
 
 /// Wake every blocked poller and stop the runner loop.
@@ -419,7 +348,7 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_shutdown(
     _class: JClass,
     ctx: jlong,
 ) {
-    unsafe { crate::flz_core_shutdown(ctx as *mut FlzContext) };
+    veneer::shutdown(ctx_of(ctx));
 }
 
 /// Destroy the context.
@@ -429,5 +358,5 @@ pub extern "system" fn Java_com_flezha_sdk_native_1_FlzCore_contextFree(
     _class: JClass,
     ctx: jlong,
 ) {
-    unsafe { crate::flz_core_context_free(ctx as *mut FlzContext) };
+    veneer::context_free(ctx_of(ctx));
 }

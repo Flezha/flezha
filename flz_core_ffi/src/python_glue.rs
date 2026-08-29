@@ -1,55 +1,16 @@
-//! Python bindings over this crate's own C ABI, for the `flezha` wheel's
-//! native module. One-to-one with the C entry points — the PyO3 layer adds
-//! nothing the ABI does not have, so a Python-only side door cannot grow here.
+//! Python bindings over this crate's C ABI for the `flezha` wheel's native
+//! module, one method of [`Core`] per C entry point.
 //!
-//! ## The context is an object, not a static
-//! The ABI's rule is "one opaque context per host process", and the Ruby and
-//! JNI veneers keep the pointer in a process-wide static because their runtime
-//! is one interpreter per process. CPython is not: sub-interpreters are a
-//! supported execution model, and a `static` is shared by all of them while a
-//! `#[pyclass]` is reached only through the interpreter that holds a reference
-//! to it. So the handle lives in [`Core`], every entry point is a method on
-//! it, and no mutable static in this module holds a context — which is what
-//! keeps a sub-interpreter executor a later swap rather than a rewrite.
-//!
-//! The object is opaque: Python cannot construct one from an integer, cannot
-//! read the pointer out of it, and cannot make a second one for the same
-//! context. That is what a raw pointer crossing as an `int` would not give.
-//!
-//! ## The GIL rule
-//! Every blocking entry point runs inside [`Python::detach`]: `poll`,
-//! `wait_starvation`, `complete`, `workflow_recv`, `start` and
-//! `spawn_workflow` all park in native code with the global interpreter lock
-//! released, so no blocking core call stops another Python thread from running
-//! Python. `workflow_recv` is the sharp one — a workflow stage waiting seconds
-//! on its inbox with the GIL held would freeze the whole interpreter, fetchers
-//! included. `complete` is included because it can park behind an entity gate
-//! or a `DropNothing` producer, and the thread that drains that consumer is
-//! another Python thread.
-//!
-//! No unblocking function is passed. The ABI has no per-thread wake
-//! (`flz_core_shutdown` releases *every* poller), so the timeout the caller
-//! passes to `poll` is what bounds how quickly `KeyboardInterrupt`, a
-//! termination signal and runner close are observed. That is a stated bound,
-//! not an accident, and the package documents the value it uses.
-//!
-//! ## No log callback
-//! `flz_core_set_log_callback` is not veneered here, exactly as it is not in
-//! `jni_glue.rs` or `ruby_glue.rs`. The ABI entry point is a no-op stub, and
-//! the diagnostics a host would route through it come from threads the core
-//! owns. The Node veneer needs the bridge because its own host layer
-//! (`napi_host.rs`) produces those lines; this host's threads are Python's own
-//! and log through Python's `logging`.
-//!
-//! ## Buffer ownership
-//! A core buffer is decoded and freed through [`crate::flz_core_buf_free`]
-//! before the call that produced it returns, so no native buffer escapes into
-//! the Python heap. The decoded user payload then reaches Python as a
-//! [`PayloadView`] — a buffer-protocol object over bytes this module owns — so
-//! the common decode path allocates no intermediate `bytes`; a caller who
-//! wants raw bytes calls `bytes(view)` and gets the copy.
+//! The context is an object, not a static: CPython runs sub-interpreters,
+//! and a `#[pyclass]` is reached only through the interpreter holding it.
+//! Every blocking entry point runs inside [`Python::detach`], so a call that
+//! parks in the core never holds the interpreter lock; the poll timeout the
+//! caller passes bounds how quickly an interrupt or a runner close is seen,
+//! because the ABI has no per-thread wake. The user payload reaches Python
+//! as a [`PayloadView`] — a buffer-protocol object over bytes this module
+//! owns — so the common decode path allocates no intermediate `bytes`.
 
-use std::ffi::{c_int, c_void, CStr, CString};
+use std::ffi::{c_int, c_void, CString};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -60,10 +21,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule, PyString, PyTuple};
 use pyo3::{create_exception, ffi, IntoPyObjectExt};
 
-use crate::{
-    FlzContext, FLZ_OK, FLZ_POLL_ACTIVATION, FLZ_POLL_SHUTTING_DOWN, FLZ_POLL_TIMEOUT,
-    FLZ_STARVATION_OBSERVED,
-};
+use crate::veneer::{self, CtxPtr, Polled, Refusal};
+use crate::FlzContext;
 
 create_exception!(
     flz_core_ffi,
@@ -82,20 +41,14 @@ fn native_error(message: impl Into<String>) -> PyErr {
     NativeError::new_err(message.into())
 }
 
-/// The context's last recorded error, as the message for a raised exception.
-fn last_error_of(ctx: *const FlzContext) -> String {
-    let ptr = unsafe { crate::flz_core_last_error(ctx) };
-    if ptr.is_null() {
-        "unknown native failure".to_string()
-    } else {
-        unsafe { CStr::from_ptr(ptr) }
-            .to_string_lossy()
-            .into_owned()
+/// The one mapping of a refusal onto the module's exception classes.
+impl From<Refusal> for PyErr {
+    fn from(refusal: Refusal) -> PyErr {
+        match refusal {
+            Refusal::Core(message) | Refusal::Shape(message) => native_error(message),
+            Refusal::Schema(message) => SchemaMismatch::new_err(message),
+        }
     }
-}
-
-fn c_string(what: &str, value: &str) -> PyResult<CString> {
-    CString::new(value).map_err(|_| native_error(format!("{what} contains a NUL byte")))
 }
 
 // ---------------------------------------------------------------------------
@@ -634,17 +587,13 @@ unsafe impl Send for Core {}
 unsafe impl Sync for Core {}
 
 impl Core {
-    fn ptr(&self) -> PyResult<*mut FlzContext> {
+    fn ptr(&self) -> PyResult<CtxPtr> {
         if self.freed.load(Ordering::Acquire) {
             return Err(native_error(
                 "the flz_core context has been freed; create a new one",
             ));
         }
-        Ok(self.ctx.as_ptr())
-    }
-
-    fn core_error(&self) -> PyErr {
-        native_error(last_error_of(self.ctx.as_ptr()))
+        Ok(CtxPtr::of(self.ctx.as_ptr()))
     }
 }
 
@@ -655,77 +604,44 @@ impl Core {
     /// is attempted.
     #[new]
     fn new(shim_schema_version: u32) -> PyResult<Self> {
-        let ctx = crate::flz_core_context_new(shim_schema_version);
-        match NonNull::new(ctx) {
-            Some(ctx) => Ok(Self {
-                ctx,
-                freed: AtomicBool::new(false),
-            }),
-            None => {
-                let ptr = crate::flz_core_init_error();
-                let message = if ptr.is_null() {
-                    "flz_core context creation failed".to_string()
-                } else {
-                    unsafe { CStr::from_ptr(ptr) }
-                        .to_string_lossy()
-                        .into_owned()
-                };
-                Err(SchemaMismatch::new_err(message))
-            }
-        }
+        let ctx = NonNull::new(veneer::context_new(shim_schema_version)?)
+            .ok_or_else(|| native_error("flz_core context creation failed"))?;
+        Ok(Self {
+            ctx,
+            freed: AtomicBool::new(false),
+        })
     }
 
     /// Destroy the context. The host's threads must already be stopped.
     fn free(&self) {
         if !self.freed.swap(true, Ordering::AcqRel) {
-            unsafe { crate::flz_core_context_free(self.ctx.as_ptr()) };
+            veneer::context_free(CtxPtr::of(self.ctx.as_ptr()));
         }
     }
 
     /// Declare one host class from its JSON declaration. Raises the core's
     /// refusal.
     fn declare_class(&self, json: &[u8]) -> PyResult<()> {
-        let ctx = self.ptr()?;
-        let status = unsafe { crate::flz_core_declare_class(ctx, json.as_ptr(), json.len()) };
-        if status != FLZ_OK {
-            return Err(self.core_error());
-        }
-        Ok(())
+        Ok(veneer::declare_class(self.ptr()?, json)?)
     }
 
     /// Connect to the controller and start the runner loop. Blocking: the ABI
     /// call waits up to ten seconds for the connect confirmation.
     fn start(&self, py: Python<'_>, namespace: &str) -> PyResult<()> {
-        let ctx = self.ptr()? as usize;
-        let namespace = c_string("namespace", namespace)?;
-        let status = py.detach(move || unsafe {
-            crate::flz_core_start(ctx as *mut FlzContext, namespace.as_ptr())
-        });
-        if status != FLZ_OK {
-            return Err(self.core_error());
-        }
-        Ok(())
+        let ctx = self.ptr()?;
+        let namespace = veneer::c_string("namespace", namespace)?;
+        Ok(py.detach(move || veneer::start(ctx, &namespace))?)
     }
 
     /// Block up to `timeout_ms` for one activation. Returns the activation
     /// dict, `None` on timeout, or the string `"shutting_down"` once every
     /// poller has been released.
     fn poll<'py>(&self, py: Python<'py>, timeout_ms: u64) -> PyResult<Bound<'py, PyAny>> {
-        let ctx = self.ptr()? as usize;
-        let (status, encoded) = py.detach(move || {
-            take_buffer(FLZ_POLL_ACTIVATION, |buf, len| unsafe {
-                crate::flz_core_poll(ctx as *mut FlzContext, timeout_ms, buf, len)
-            })
-        });
-        match status {
-            FLZ_POLL_ACTIVATION => {
-                let act = schema::decode_activation(&encoded.unwrap_or_default())
-                    .map_err(|e| native_error(format!("activation failed to decode: {e}")))?;
-                Ok(activation_to_python(py, act)?.into_any())
-            }
-            FLZ_POLL_TIMEOUT => Ok(py.None().into_bound(py)),
-            FLZ_POLL_SHUTTING_DOWN => Ok(PyString::new(py, "shutting_down").into_any()),
-            _ => Err(self.core_error()),
+        let ctx = self.ptr()?;
+        match py.detach(move || veneer::poll(ctx, timeout_ms))? {
+            Polled::Activation(act) => Ok(activation_to_python(py, act)?.into_any()),
+            Polled::Timeout => Ok(py.None().into_bound(py)),
+            Polled::ShuttingDown => Ok(PyString::new(py, "shutting_down").into_any()),
         }
     }
 
@@ -733,31 +649,18 @@ impl Core {
     /// ABI's three-way status directly (`1` observed, `0` timeout, `2` shutting
     /// down), so a supervisor loop allocates nothing per park.
     fn wait_starvation(&self, py: Python<'_>, timeout_ms: u64) -> PyResult<i32> {
-        let ctx = self.ptr()? as usize;
-        let status = py.detach(move || unsafe {
-            crate::flz_core_wait_starvation(ctx as *mut FlzContext, timeout_ms)
-        });
-        match status {
-            FLZ_STARVATION_OBSERVED | FLZ_POLL_TIMEOUT | FLZ_POLL_SHUTTING_DOWN => Ok(status),
-            _ => Err(self.core_error()),
-        }
+        let ctx = self.ptr()?;
+        Ok(py.detach(move || veneer::wait_starvation(ctx, timeout_ms))?)
     }
 
-    /// Answer one activation. Blocking, and this is the entry point the GIL
-    /// rule exists for on the completion side: under the default `DropNothing`
+    /// Answer one activation. Blocking: under the default `DropNothing`
     /// overflow policy the routing push parks until the consumer's mailbox
     /// drains, and the consumer drains only when its handler runs on another
     /// Python thread.
     fn complete(&self, py: Python<'_>, result: &Bound<'_, PyDict>) -> PyResult<()> {
-        let ctx = self.ptr()? as usize;
-        let encoded = schema::encode_result(&result_from_python(result)?);
-        let status = py.detach(move || unsafe {
-            crate::flz_core_complete(ctx as *mut FlzContext, encoded.as_ptr(), encoded.len())
-        });
-        if status != FLZ_OK {
-            return Err(self.core_error());
-        }
-        Ok(())
+        let ctx = self.ptr()?;
+        let result = result_from_python(result)?;
+        Ok(py.detach(move || veneer::complete(ctx, &result))?)
     }
 
     /// Abandon a polled activation: re-hand its untouched items and release its
@@ -765,18 +668,12 @@ impl Core {
     /// `finally`, where anything that can park is one more thing that can go
     /// wrong.
     fn abandon(&self, token: u64) -> PyResult<()> {
-        let ctx = self.ptr()?;
-        let status = unsafe { crate::flz_core_abandon(ctx, token) };
-        if status != FLZ_OK {
-            return Err(self.core_error());
-        }
-        Ok(())
+        Ok(veneer::abandon(self.ptr()?, token)?)
     }
 
     /// Wake every blocked poller and stop the runner loop.
     fn shutdown(&self) -> PyResult<()> {
-        let ctx = self.ptr()?;
-        unsafe { crate::flz_core_shutdown(ctx) };
+        veneer::shutdown(self.ptr()?);
         Ok(())
     }
 
@@ -785,14 +682,8 @@ impl Core {
     /// the GIL.
     fn workflow_emit(&self, instance_id: &str, payload: &[u8]) -> PyResult<()> {
         let ctx = self.ptr()?;
-        let instance = c_string("instance id", instance_id)?;
-        let status = unsafe {
-            crate::flz_core_workflow_emit(ctx, instance.as_ptr(), payload.as_ptr(), payload.len())
-        };
-        if status != FLZ_OK {
-            return Err(self.core_error());
-        }
-        Ok(())
+        let instance = veneer::c_string("instance id", instance_id)?;
+        Ok(veneer::workflow_emit(ctx, &instance, payload)?)
     }
 
     /// The next inbox item of a live workflow body, or `None` on timeout.
@@ -802,33 +693,19 @@ impl Core {
         instance_id: &str,
         timeout_ms: u64,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let ctx = self.ptr()? as usize;
-        let instance = c_string("instance id", instance_id)?;
-        let (status, payload) = py.detach(move || {
-            take_buffer(FLZ_POLL_ACTIVATION, |buf, len| unsafe {
-                crate::flz_core_workflow_recv(
-                    ctx as *mut FlzContext,
-                    instance.as_ptr(),
-                    timeout_ms,
-                    buf,
-                    len,
-                )
-            })
-        });
-        match status {
-            FLZ_POLL_ACTIVATION => {
-                Ok(payload_view(py, payload.unwrap_or_default())?.into_bound(py))
-            }
-            FLZ_POLL_TIMEOUT => Ok(py.None().into_bound(py)),
-            _ => Err(self.core_error()),
+        let ctx = self.ptr()?;
+        let instance = veneer::c_string("instance id", instance_id)?;
+        match py.detach(move || veneer::workflow_recv(ctx, &instance, timeout_ms))? {
+            Some(payload) => Ok(payload_view(py, payload)?.into_bound(py)),
+            None => Ok(py.None().into_bound(py)),
         }
     }
 
     /// Whether the named workflow body's cancellation token has tripped.
     fn workflow_cancelled(&self, instance_id: &str) -> PyResult<bool> {
         let ctx = self.ptr()?;
-        let instance = c_string("instance id", instance_id)?;
-        Ok(unsafe { crate::flz_core_workflow_cancelled(ctx, instance.as_ptr()) } != 0)
+        let instance = veneer::c_string("instance id", instance_id)?;
+        Ok(veneer::workflow_cancelled(ctx, &instance))
     }
 
     /// Spawn-or-deliver a workflow instance; answers the controller's outcome
@@ -841,29 +718,12 @@ impl Core {
         payload: &[u8],
         if_running: &str,
     ) -> PyResult<String> {
-        let ctx = self.ptr()? as usize;
-        let instance = c_string("instance id", instance_id)?;
-        let factory = c_string("factory id", factory_id)?;
-        let mode = c_string("if_running", if_running)?;
+        let ctx = self.ptr()?;
+        let instance = veneer::c_string("instance id", instance_id)?;
+        let factory = veneer::c_string("factory id", factory_id)?;
+        let mode = veneer::c_string("if_running", if_running)?;
         let payload = payload.to_vec();
-        let (status, outcome) = py.detach(move || {
-            take_buffer(FLZ_OK, |out, out_len| unsafe {
-                crate::flz_core_spawn_workflow(
-                    ctx as *mut FlzContext,
-                    instance.as_ptr(),
-                    factory.as_ptr(),
-                    payload.as_ptr(),
-                    payload.len(),
-                    mode.as_ptr(),
-                    out,
-                    out_len,
-                )
-            })
-        });
-        if status != FLZ_OK {
-            return Err(self.core_error());
-        }
-        Ok(String::from_utf8_lossy(&outcome.unwrap_or_default()).into_owned())
+        Ok(py.detach(move || veneer::spawn_workflow(ctx, &instance, &factory, &payload, &mode))?)
     }
 
     /// The context's last recorded error, or `None`.
@@ -871,42 +731,8 @@ impl Core {
         if self.freed.load(Ordering::Acquire) {
             return None;
         }
-        let msg = unsafe { crate::flz_core_last_error(self.ctx.as_ptr()) };
-        if msg.is_null() {
-            return None;
-        }
-        Some(
-            unsafe { CStr::from_ptr(msg) }
-                .to_string_lossy()
-                .into_owned(),
-        )
+        veneer::last_error(CtxPtr::of(self.ctx.as_ptr()))
     }
-}
-
-/// Run one ABI call that hands out a buffer, and take ownership of what it
-/// handed out.
-///
-/// The ownership rule this module promises, in the one place it is
-/// implemented: the buffer is copied out and freed through
-/// [`crate::flz_core_buf_free`] inside the same GIL-released window, so no
-/// native buffer can reach the Python heap however the caller answers.
-///
-/// `handed_out` is the status that means a buffer was produced —
-/// [`FLZ_POLL_ACTIVATION`] for poll and the workflow receive, [`FLZ_OK`] for
-/// spawn. Every other status leaves the out pointers untouched.
-fn take_buffer<F>(handed_out: i32, call: F) -> (i32, Option<Vec<u8>>)
-where
-    F: FnOnce(*mut *mut u8, *mut usize) -> i32,
-{
-    let mut buf: *mut u8 = std::ptr::null_mut();
-    let mut len: usize = 0;
-    let status = call(&mut buf, &mut len);
-    if status != handed_out {
-        return (status, None);
-    }
-    let owned = unsafe { std::slice::from_raw_parts(buf, len) }.to_vec();
-    unsafe { crate::flz_core_buf_free(buf, len) };
-    (status, Some(owned))
 }
 
 // ---------------------------------------------------------------------------
@@ -929,8 +755,8 @@ fn monotonic_nanos() -> u64 {
 /// `0` when no frame ever has.
 #[pyfunction]
 fn entry_last_delivery_nanos(channel: &str) -> PyResult<u64> {
-    let channel = c_string("channel", channel)?;
-    Ok(unsafe { crate::flz_core_entry_last_delivery_nanos(channel.as_ptr()) })
+    let channel = veneer::c_string("channel", channel)?;
+    Ok(veneer::entry_last_delivery_nanos(&channel))
 }
 
 /// Whether this extension was built for a free-threaded interpreter.
@@ -956,41 +782,39 @@ fn free_threaded() -> bool {
 #[pyfunction]
 fn native_surface<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
     let out = PyList::empty(py);
-    for (name, abi, blocking) in NATIVE_SURFACE {
-        out.append((*name, *abi, *blocking).into_bound_py_any(py)?)?;
+    for (name, abi) in NATIVE_SURFACE {
+        let blocking = crate::BLOCKING_ENTRY_POINTS.contains(abi);
+        out.append((*name, *abi, blocking).into_bound_py_any(py)?)?;
     }
     Ok(out)
 }
 
-/// The table `native_surface` renders and the Rust-side test asserts against.
-pub const NATIVE_SURFACE: &[(&str, &str, bool)] = &[
-    ("schema_version", "flz_core_schema_version", false),
-    ("Core", "flz_core_context_new", false),
-    ("Core.free", "flz_core_context_free", false),
-    ("Core.declare_class", "flz_core_declare_class", false),
-    ("Core.start", "flz_core_start", true),
-    ("Core.poll", "flz_core_poll", true),
-    ("Core.wait_starvation", "flz_core_wait_starvation", true),
-    ("Core.complete", "flz_core_complete", true),
-    ("Core.abandon", "flz_core_abandon", false),
-    ("Core.shutdown", "flz_core_shutdown", false),
-    ("Core.workflow_emit", "flz_core_workflow_emit", false),
-    ("Core.workflow_recv", "flz_core_workflow_recv", true),
-    (
-        "Core.workflow_cancelled",
-        "flz_core_workflow_cancelled",
-        false,
-    ),
-    ("Core.spawn_workflow", "flz_core_spawn_workflow", true),
-    ("monotonic_nanos", "flz_core_monotonic_nanos", false),
+/// The table `native_surface` renders and the Rust-side test asserts against:
+/// `(name, abi_entry_point)`, blocking derived from
+/// [`crate::BLOCKING_ENTRY_POINTS`].
+pub const NATIVE_SURFACE: &[(&str, &str)] = &[
+    ("schema_version", "flz_core_schema_version"),
+    ("Core", "flz_core_context_new"),
+    ("Core.free", "flz_core_context_free"),
+    ("Core.declare_class", "flz_core_declare_class"),
+    ("Core.start", "flz_core_start"),
+    ("Core.poll", "flz_core_poll"),
+    ("Core.wait_starvation", "flz_core_wait_starvation"),
+    ("Core.complete", "flz_core_complete"),
+    ("Core.abandon", "flz_core_abandon"),
+    ("Core.shutdown", "flz_core_shutdown"),
+    ("Core.workflow_emit", "flz_core_workflow_emit"),
+    ("Core.workflow_recv", "flz_core_workflow_recv"),
+    ("Core.workflow_cancelled", "flz_core_workflow_cancelled"),
+    ("Core.spawn_workflow", "flz_core_spawn_workflow"),
+    ("monotonic_nanos", "flz_core_monotonic_nanos"),
     (
         "entry_last_delivery_nanos",
         "flz_core_entry_last_delivery_nanos",
-        false,
     ),
-    ("Core.last_error", "flz_core_last_error", false),
-    ("free_threaded", "flz_core_schema_version", false),
-    ("native_surface", "flz_core_schema_version", false),
+    ("Core.last_error", "flz_core_last_error"),
+    ("free_threaded", "flz_core_schema_version"),
+    ("native_surface", "flz_core_schema_version"),
 ];
 
 /// Define the `flezha.flz_core_ffi` extension module.

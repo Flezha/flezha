@@ -1543,8 +1543,8 @@ mod ruby_veneer {
     fn the_native_surface_is_the_declared_one() {
         let blocking: Vec<&str> = NATIVE_SURFACE
             .iter()
-            .filter(|(_, _, blocking)| *blocking)
-            .map(|(name, _, _)| *name)
+            .filter(|(_, abi)| flz_core_ffi::BLOCKING_ENTRY_POINTS.contains(abi))
+            .map(|(name, _)| *name)
             .collect();
         assert_eq!(
             blocking,
@@ -1557,7 +1557,7 @@ mod ruby_veneer {
                 "spawn_workflow"
             ]
         );
-        for (name, abi, _) in NATIVE_SURFACE {
+        for (name, abi) in NATIVE_SURFACE {
             assert!(
                 abi.starts_with("flz_core_"),
                 "{name} names {abi}, which is not a C ABI entry point"
@@ -2031,8 +2031,8 @@ mod python_veneer {
     fn the_native_surface_is_the_declared_one() {
         let blocking: Vec<&str> = NATIVE_SURFACE
             .iter()
-            .filter(|(_, _, blocking)| *blocking)
-            .map(|(name, _, _)| *name)
+            .filter(|(_, abi)| flz_core_ffi::BLOCKING_ENTRY_POINTS.contains(abi))
+            .map(|(name, _)| *name)
             .collect();
         assert_eq!(
             blocking,
@@ -2045,7 +2045,7 @@ mod python_veneer {
                 "Core.spawn_workflow"
             ]
         );
-        for (name, abi, _) in NATIVE_SURFACE {
+        for (name, abi) in NATIVE_SURFACE {
             assert!(
                 abi.starts_with("flz_core_"),
                 "{name} names {abi}, which is not a C ABI entry point"

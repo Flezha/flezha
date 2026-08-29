@@ -9,6 +9,7 @@
 //! different `SCHEMA_VERSION` is refused with an error naming both versions,
 //! before any controller connection is attempted.
 
+mod error;
 #[cfg(feature = "jni")]
 mod jni_glue;
 // `napi-derive` emits the module-registration constructor only outside
@@ -25,6 +26,7 @@ mod napi_host;
 pub mod python_glue;
 #[cfg(feature = "ruby")]
 pub mod ruby_glue;
+pub mod veneer;
 
 use std::ffi::{c_char, CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +35,7 @@ use std::time::Duration;
 
 use crossbeam::channel::Sender;
 use dashmap::DashMap;
+pub use error::Error;
 use flz_core::poll_core::{EngineActivation, Polled, Starvation};
 use flz_core::runner::{ClientResponseMessage, RunnerMessage};
 use flz_core::schema;
@@ -50,6 +53,17 @@ pub const FLZ_ERR: i32 = -1;
 /// Success for non-poll calls.
 pub const FLZ_OK: i32 = 0;
 
+/// The entry points that can park the calling thread. A host whose unit of
+/// concurrency is bound to one thread keeps every one of these off it.
+pub const BLOCKING_ENTRY_POINTS: &[&str] = &[
+    "flz_core_start",
+    "flz_core_poll",
+    "flz_core_wait_starvation",
+    "flz_core_complete",
+    "flz_core_workflow_recv",
+    "flz_core_spawn_workflow",
+];
+
 /// Opaque context handle.
 pub struct FlzContext {
     outstanding: DashMap<u64, EngineActivation>,
@@ -63,16 +77,30 @@ thread_local! {
     static INIT_ERROR: std::cell::RefCell<Option<CString>> = const { std::cell::RefCell::new(None) };
 }
 
-fn set_init_error(msg: String) {
+fn set_init_error(error: Error) {
     INIT_ERROR.with(|slot| {
-        *slot.borrow_mut() = Some(CString::new(msg).unwrap_or_default());
+        *slot.borrow_mut() = Some(CString::new(error.to_string()).unwrap_or_default());
     });
 }
 
+/// Hand `bytes` to the caller through the out pointers; the caller frees
+/// them with [`flz_core_buf_free`].
+///
+/// # Safety
+/// `buf_out`/`len_out` must be valid writable pointers.
+unsafe fn hand_out(bytes: Vec<u8>, buf_out: *mut *mut u8, len_out: *mut usize) {
+    let mut bytes = bytes.into_boxed_slice();
+    *buf_out = bytes.as_mut_ptr();
+    *len_out = bytes.len();
+    std::mem::forget(bytes);
+}
+
 impl FlzContext {
-    fn fail(&self, msg: impl Into<String>) -> i32 {
+    /// Record `error` as the context's last error; the status every failing
+    /// entry point returns. The one place an [`Error`] becomes a C string.
+    fn fail(&self, error: Error) -> i32 {
         *self.last_error.lock().unwrap_or_else(|p| p.into_inner()) =
-            Some(CString::new(msg.into()).unwrap_or_default());
+            Some(CString::new(error.to_string()).unwrap_or_default());
         FLZ_ERR
     }
 
@@ -84,7 +112,48 @@ impl FlzContext {
         self.outstanding
             .remove(&token)
             .map(|(_, act)| act)
-            .ok_or_else(|| self.fail(format!("unknown activation token {token}")))
+            .ok_or_else(|| self.fail(Error::UnknownToken(token)))
+    }
+
+    /// Spawn-or-deliver a workflow instance and wait for the controller's
+    /// outcome (`spawned | delivered | already_running | ...`).
+    fn spawn(
+        instance_id: &str,
+        factory_id: &str,
+        payload: Vec<u8>,
+        if_running: &str,
+    ) -> Result<String, Error> {
+        let reference_id = format!(
+            "spawn-workflow-{}-{}",
+            instance_id,
+            flz_core::util::nonce_suffix()
+        );
+        // Register before sending: the reply can then never arrive before its
+        // waiter exists.
+        let rx = flz_core::shutdown::register_pending_ack(reference_id.clone());
+        let sent = flz_core::runner::coordinator_try_send(RunnerMessage::EmitControlRequest {
+            reference_id: reference_id.clone(),
+            command: flz_core::pb::command_request::Command::SpawnWorkflowRequest(
+                flz_core::pb::SpawnWorkflowRequest {
+                    instance_id: instance_id.to_string(),
+                    factory_id: factory_id.to_string(),
+                    payload,
+                    if_running: if_running.to_string(),
+                },
+            ),
+        });
+        if !sent {
+            flz_core::shutdown::drop_pending_ack(&reference_id);
+            return Err(Error::NoControlPlane);
+        }
+        match rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(Ok(outcome)) => Ok(outcome),
+            Ok(Err(refusal)) => Err(Error::SpawnRefused(refusal)),
+            Err(_) => {
+                flz_core::shutdown::drop_pending_ack(&reference_id);
+                Err(Error::SpawnUnanswered)
+            }
+        }
     }
 }
 
@@ -101,11 +170,10 @@ pub extern "C" fn flz_core_schema_version() -> u32 {
 #[no_mangle]
 pub extern "C" fn flz_core_context_new(shim_schema_version: u32) -> *mut FlzContext {
     if shim_schema_version != flz_core::SCHEMA_VERSION {
-        set_init_error(format!(
-            "activation schema version mismatch: shim speaks {}, core speaks {}",
-            shim_schema_version,
-            flz_core::SCHEMA_VERSION
-        ));
+        set_init_error(Error::SchemaMismatch {
+            shim: shim_schema_version,
+            core: flz_core::SCHEMA_VERSION,
+        });
         return std::ptr::null_mut();
     }
     Box::into_raw(Box::new(FlzContext {
@@ -172,7 +240,7 @@ pub unsafe extern "C" fn flz_core_declare_class(
         Err(_) => None,
     };
     if let Err(e) = flz_core::host::register_host_class_json(bytes) {
-        return ctx.fail(e.to_string());
+        return ctx.fail(e.into());
     }
     if let Some(factory_id) = factory_id {
         ctx.declared
@@ -195,10 +263,10 @@ pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const 
         return FLZ_ERR;
     };
     let Ok(namespace) = CStr::from_ptr(namespace).to_str() else {
-        return ctx.fail("namespace is not valid UTF-8");
+        return ctx.fail(Error::Utf8("namespace"));
     };
     if ctx.started.swap(true, Ordering::AcqRel) {
-        return ctx.fail("context already started");
+        return ctx.fail(Error::AlreadyStarted);
     }
     let (otx, orx) = crossbeam::channel::unbounded::<RunnerMessage>();
     let (confirm_tx, confirm_rx) = crossbeam::channel::unbounded::<ClientResponseMessage>();
@@ -214,7 +282,7 @@ pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const 
     *ctx.runner_tx.lock().unwrap_or_else(|p| p.into_inner()) = Some(otx);
     match confirm_rx.recv_timeout(Duration::from_secs(10)) {
         Ok(_) => FLZ_OK,
-        Err(_) => ctx.fail("controller connect not confirmed within 10s"),
+        Err(_) => ctx.fail(Error::ConnectUnconfirmed),
     }
 }
 
@@ -240,10 +308,7 @@ pub unsafe extern "C" fn flz_core_poll(
         Polled::Activation(act) => {
             let encoded = schema::encode_activation(&flz_core::host::to_schema(&act));
             ctx.outstanding.insert(act.token, act);
-            let mut bytes = encoded.into_boxed_slice();
-            *buf_out = bytes.as_mut_ptr();
-            *len_out = bytes.len();
-            std::mem::forget(bytes);
+            hand_out(encoded, buf_out, len_out);
             FLZ_POLL_ACTIVATION
         }
     }
@@ -291,7 +356,7 @@ pub unsafe extern "C" fn flz_core_complete(
     let bytes = std::slice::from_raw_parts(buf, len);
     let result = match schema::decode_result(bytes) {
         Ok(r) => r,
-        Err(e) => return ctx.fail(format!("activation result failed to decode: {e}")),
+        Err(e) => return ctx.fail(Error::ResultDecode(e)),
     };
     let act = match ctx.take_outstanding(result.token) {
         Ok(act) => act,
@@ -299,7 +364,7 @@ pub unsafe extern "C" fn flz_core_complete(
     };
     match flz_core::host::apply_result(flz_core::poll_core::global(), act, result) {
         Ok(()) => FLZ_OK,
-        Err(e) => ctx.fail(e.to_string()),
+        Err(e) => ctx.fail(e.into()),
     }
 }
 
@@ -333,7 +398,7 @@ pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i
     };
     match flz_core::host::abandon_activation(flz_core::poll_core::global(), act) {
         Ok(()) => FLZ_OK,
-        Err(e) => ctx.fail(e.to_string()),
+        Err(e) => ctx.fail(e.into()),
     }
 }
 
@@ -375,7 +440,7 @@ pub unsafe extern "C" fn flz_core_workflow_emit(
         return FLZ_ERR;
     };
     let Ok(instance_id) = CStr::from_ptr(instance_id).to_str() else {
-        return ctx.fail("instance id is not valid UTF-8");
+        return ctx.fail(Error::Utf8("instance id"));
     };
     let bytes = std::slice::from_raw_parts(buf, len).to_vec();
     flz_core::runner::emit_workflow_output(instance_id.to_string(), bytes);
@@ -402,18 +467,15 @@ pub unsafe extern "C" fn flz_core_workflow_recv(
         return FLZ_ERR;
     };
     let Ok(instance_id) = CStr::from_ptr(instance_id).to_str() else {
-        return ctx.fail("instance id is not valid UTF-8");
+        return ctx.fail(Error::Utf8("instance id"));
     };
     match flz_core::host::workflow_session_recv(instance_id, Duration::from_millis(timeout_ms)) {
         Ok(Some(payload)) => {
-            let mut bytes = payload.into_boxed_slice();
-            *buf_out = bytes.as_mut_ptr();
-            *len_out = bytes.len();
-            std::mem::forget(bytes);
+            hand_out(payload, buf_out, len_out);
             FLZ_POLL_ACTIVATION
         }
         Ok(None) => FLZ_POLL_TIMEOUT,
-        Err(e) => ctx.fail(e.to_string()),
+        Err(e) => ctx.fail(e.into()),
     }
 }
 
@@ -461,47 +523,15 @@ pub unsafe extern "C" fn flz_core_spawn_workflow(
         CStr::from_ptr(factory_id).to_str(),
         CStr::from_ptr(if_running).to_str(),
     ) else {
-        return ctx.fail("spawn arguments are not valid UTF-8");
+        return ctx.fail(Error::SpawnArgsUtf8);
     };
     let payload = std::slice::from_raw_parts(payload, payload_len).to_vec();
-    let reference_id = format!(
-        "spawn-workflow-{}-{}",
-        instance_id,
-        flz_core::util::nonce_suffix()
-    );
-    // Register before sending: the reply can then never arrive before its
-    // waiter exists.
-    let rx = flz_core::shutdown::register_pending_ack(reference_id.clone());
-    let sent = flz_core::runner::coordinator_try_send(
-        flz_core::runner::RunnerMessage::EmitControlRequest {
-            reference_id: reference_id.clone(),
-            command: flz_core::pb::command_request::Command::SpawnWorkflowRequest(
-                flz_core::pb::SpawnWorkflowRequest {
-                    instance_id: instance_id.to_string(),
-                    factory_id: factory_id.to_string(),
-                    payload,
-                    if_running: if_running.to_string(),
-                },
-            ),
-        },
-    );
-    if !sent {
-        flz_core::shutdown::drop_pending_ack(&reference_id);
-        return ctx.fail("no control plane: spawn request could not be routed");
-    }
-    match rx.recv_timeout(Duration::from_secs(30)) {
-        Ok(Ok(outcome)) => {
-            let mut bytes = outcome.into_bytes().into_boxed_slice();
-            *outcome_out = bytes.as_mut_ptr();
-            *outcome_len_out = bytes.len();
-            std::mem::forget(bytes);
+    match FlzContext::spawn(instance_id, factory_id, payload, if_running) {
+        Ok(outcome) => {
+            hand_out(outcome.into_bytes(), outcome_out, outcome_len_out);
             FLZ_OK
         }
-        Ok(Err(refusal)) => ctx.fail(refusal),
-        Err(_) => {
-            flz_core::shutdown::drop_pending_ack(&reference_id);
-            ctx.fail("spawn request not answered within 30s")
-        }
+        Err(e) => ctx.fail(e),
     }
 }
 
