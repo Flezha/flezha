@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 16:03 (supervisor session 2 — segment C heartbeat 2)
+**Last updated**: 2026-08-29 16:20 (supervisor session 2 — segment C committed `a4358e97`)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,10 +10,11 @@ one host core, tests fast and real.
 
 ## Status
 
-Done: Phase 0, 1s, area 1 (kernel), area 2 segments A (`4b032bb8`) and B
-(`d6ef9947`, batches 3–4 + the owed checkpoint-1 A/B, verified and committed
-2026-08-29 15:40). NEXT: area 2 segment C — batches 5 and 6, checkpoint 3 after
-batch 6. ~35 % of the programme done.
+Done: Phase 0, 1s, area 1 (kernel), area 2 segments A (`4b032bb8`), B (`d6ef9947`)
+and C (`a4358e97`, plus the corrective `fmt(2)` `3249b6da`). `flz_core_ffi` now has
+no file over 800 lines, no function over 50, and no sleep at all. NEXT: area 2
+segment D — batches 7 and 8, checkpoint 4 after batch 8. ~40 % of the programme
+done.
 
 **The history was rewritten outside the programme.** The user ran `fix.sh` (an
 untracked `git filter-branch` that shifts commit timestamps) at 14:52; every commit
@@ -34,7 +35,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `ea1f6f26` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
-| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | A: `4b032bb8`, B: `d6ef9947` | A+B: one veneer core and one shape; prod 3 444→3 205, test →1 722, fn>50 6→0, files>800 3→1, dups 23→8, sleeps →1; both A/Bs clean on mains |
+| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | A: `4b032bb8`, B: `d6ef9947`, fmt: `3249b6da`, C: `a4358e97` | A+B+C: one veneer core, one shape, the ABI scenario by owner; prod 3 444→3 213, fn>50 6→0, files>800 3→**0**, dups 23→5, sleeps 2→**0**; both A/Bs clean on mains |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
@@ -51,34 +52,14 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-2-ffi-veneers`, **segment C** (batches 5–6, tasks 5.1–6.3), fresh
-general-purpose worker, spawned 2026-08-29 15:42. Splits `tests/abi_scenario.rs`
-(the area's last file over 800) into `tests/abi/*`, puts `await_frame` on a condvar,
-clears the two known clippy warnings in tests, then moves the Python and Node suites
-onto the real collaborator. **No A/B is owed at checkpoint 3** — batches 5 and 6
-touch tests only; the design schedules the rows for checkpoints 1, 2 and batch 9.
-Stops at CHECKPOINT 3; stages nothing.
+`refactor-2-ffi-veneers`, **segment D** (batches 7–8, tasks 7.1–8.4), fresh
+general-purpose worker, spawned 2026-08-29 16:22. Ruby and PHP suites onto real
+collaborators plus the PHP base-class fold, then the four validators split by rule
+family with messages byte-identical, the over-50 veneer functions split, and the
+comment pass. Checkpoint 4 after batch 8. No A/B is owed — the final rows run in
+batch 9. Stops at CHECKPOINT 4; stages nothing.
 
-- last seen 16:03: batch 6 started (Python `conftest`/`test_dispatch`/
-  `test_concurrency`/`test_testing` and Node `dispatch`/`concurrency` all in flight,
-  −1790 lines so far) while batch 5's `tests/abi/*` is still being finished; ticks
-  still 23/41, so neither batch is validated yet. No stall. Supervisor asked for one
-  rename: the new shared Node test module is called `helpers.mjs`, which is the
-  bucket name charter §2 forbids and §4's noun rule rejects — the module itself is
-  correct and stays.
-- previous 15:52: batch 5 in flight, ticks 23/41. `tests/abi/` exists with
-  `harness`, `lifecycle`, `veneer_napi`, `veneer_ruby`, `python_binding` and a
-  `shape` module; `abi_scenario.rs` is down 1580 lines and `benches/host_loop.rs`
-  is being moved onto the shared `last_error_of`. No stall.
-
-Verification that closed segment B, done against the repo and not the report:
-diff scope clean; `refactor_metrics.py --check` 0 regressions; every `pub fn` in
-`veneer/shape.rs` has a caller; the `named` helper (`napi_glue.rs:97`) folds
-`Undefined | Null` exactly as the old reader did and both call sites go through it;
-task 4.3's condvar verified at six notify sites with zero sleeps left in `pool.rs`;
-no narrative comments in any new or rewritten file; module docs all ≤ 15 lines
-(`napi_host/mod.rs` was trimmed from 16); `cargo test -p flz_core_ffi --features
-napi` re-run by the supervisor on the final tree, exit 0.
+- last seen: (first heartbeat pending)
 
 ## Awaiting the user's decision
 
@@ -89,6 +70,19 @@ napi` re-run by the supervisor on the final tree, exit 0.
   Recommendation: fix both as ordinary OpenSpec changes before area 5a (state) and
   5e (runner), since those areas refactor exactly these files; the programme does
   not block on them — areas 1s–4 and 6 do not touch that code.
+
+### Gate finding — the format gate aborts before it checks Rust
+
+`scripts/format-apply.sh` runs a `need` preflight for every formatter (line 33,
+rubocop) BEFORE running any of them, and `cargo +nightly fmt --all` is line 43. On a
+box missing one veneer formatter the script fails loudly about that formatter and
+never reports that Rust is dirty. That is how segment B's six unformatted production
+files reached commit `d6ef9947`: the worker's "format-check.sh exits 0" was taken on
+trust and the supervisor ran the naming and metrics gates but not the format gate.
+Corrected by a `fmt(2)` commit; the lesson is that **the supervisor runs
+`cargo +nightly fmt --all --check` itself at every close** — it is read-only and
+takes seconds. Worth considering whether the preflight should warn-and-continue
+rather than abort, so a missing veneer formatter cannot mask a dirty Rust tree.
 
 ### Gate finding — allowlist rules erase in file order
 
@@ -222,6 +216,19 @@ anyone writes another multi-token allowlist entry.
   harmless — the e2e builds via `cargo run`.
 - 1c `sdk/rust/tests/stream_transforms.rs:249` fails under a parallel suite run on a
   loaded box (5 s `wait_until`); same family as `tier_replay_skips…`; area 3.
+- 2c `flz_core_ffi/tests/abi/shape.rs` carries two test helpers over the charter's
+  50-line function ceiling (`primitives_round_trip` 75, `assert_kind_maps` 72).
+  Both are segment B's content relocated by the split, both are flat tables, and
+  `refactor_metrics.py` counts production functions only — so no gate sees them.
+  Charter §7 states the ceiling without a test exemption, so this is real debt:
+  batch 8 or a later pass owes it a decision, either split them or amend §7 to say
+  test bodies are exempt.
+- 2c `c8` is not installed in `sdk/node`, so the D9 coverage diff for Node used
+  Node 25's built-in `--experimental-test-coverage` rather than adding a
+  devDependency. Same line data; recorded as a deviation from the design's named
+  tool.
+- 2c `coverage` 7.16.0 was installed into the gitignored `sdk/python/.venv` to run
+  the D9 diff — a box-state change, not a tree change.
 - 2 (survey) the board's "Python veneer `.so` is a debug build" is STALE: Python's
   installed `.so` is the release build; Ruby's, Node's and PHP's `linux-x64` are
   debug; none is tracked.
