@@ -25,6 +25,33 @@ Rules: `docs/refactor/charter.md`. Live board: `docs/refactor/STATE.md`.
 Resume the supervisor with `/loop /refactor`. Areas run as OpenSpec changes
 `refactor-<n>-<area>`, one fresh worker at a time, zero behaviour change.
 
+## Machine hygiene — check every 30–60 minutes
+
+Any session that runs builds, suites or benchmarks **checks the machine at least
+every 30–60 minutes** and cleans up what it started. This is a laptop; a leaked
+process is not free.
+
+```
+ps -eo stat,pid,ppid,etime,cmd | awk '$1 ~ /^Z/'        # zombies
+ps -eo etime,pid,cmd | grep -E 'cargo|rustc|criterion|beam.smp|mix |mvn|phpunit|rake|pytest'
+ps -eo etime,pid,cmd | grep -E 'until \[|sleep [0-9]'   # polling loops
+docker ps                                               # containers left up
+```
+
+Kill every background job, polling loop and container **you** started once the
+work that needed it is done. If you cannot tell whether a process is yours, ask
+before killing it.
+
+**A snapshot lies about benchmark load.** Criterion and the round-trip benches
+run in 60-second windows separated by builds and process startup, so `top` at a
+random moment often shows an idle box while the fan runs hard. Judge by the
+number of runs over the window (`find <bench-log-dir> -mmin -60 | wc -l`) and by
+the 15-minute load average, not by one sample.
+
+**Never `docker compose down` here, and never `--remove-orphans`** — the sibling
+project `flezha_market` shares the compose project name and its containers would
+be destroyed. Stop containers by name.
+
 ## Per-change notes index
 
 - [FFI veneers refactor — `flz_core_ffi` + Node/Python/Ruby/PHP](docs/dev_notes/refactor-2-ffi-veneers.md) — `veneer/mod.rs` calls the `extern "C"` entry point and never the Rust behind it, because PHP takes the C ABI AS a C ABI and reads `flz_core_last_error` with no Rust in between; one `Sink`/`Source` pair (`&self`, `Source::Error: From<Refusal>` so each language keeps its own exception class, `const CAMEL` + `Key::spell` for napi's spellings, a `what` argument so every old refusal text survives byte for byte, `Sink::json` defaulting to `bytes` because Python's `json.loads` takes bytes) replaced three `activation_to_*`/`result_from_*` conversions and their eighteen helpers; ONE shared reader has ONE leniency rule, which is why napi's `eventTime` and `payload` became optional-with-default and two JNI NUL texts gained "a NUL byte" — the change's only text deltas; `Object::get` costs FOUR N-API calls per field (a `napi_create_string_utf8` per read) where napi-derive paid them once per object, so a per-field reader cost row 7node −4.25 % paired median 5/5 order-independent INSIDE its 11.89 % floor and was found only by a third arm (B2 vs B4) — `get_named_property_unchecked` + one `get_type()` takes it to two and the direction is gone; no `Env` exists in a Rust test binary so the napi `Sink`/`Source` are proved by a compile spike plus the Node suite (a sink holds `Env` BY VALUE — the borrow form is what the compiler refuses), and `magnus::embed::init()` runs once per process so Ruby's round-trips are a function inside `c_abi_full_scenario`, never a second `#[test]`; the charter's function ceiling is production-only (`7f665dba`) but the FILE ceiling binds tests, which is what split `abi_scenario.rs` into seven files whose lifecycle stays ONE sequential test; a coverage diff decided a design point, not just deletions — reading Node's diagnostics off `console` rather than `setLogger`; the five committed native binaries and both jars ARE compiled `flz_core_ffi` (`build-dist.sh --host`, then `mvn … clean verify`, never a bare `verify`), and the four SDK build scripts install a DEBUG library by default, which `FLEZHA_BENCH_SKIP_BUILD=1` will measure and say nothing about; the PHP e2e arm needs a `php` shim on PATH running `flezha-php-zts` with the repo, `/tmp/flezha_sockets` and `XDG_RUNTIME_DIR` at the SAME absolute paths and every `FLEZHA_*` forwarded by name, and the Ruby arm needs rbenv 3.4.10 because the launch line is a bare `ruby`; task 8.3's comment-deletion estimates were REFUTED, not met — one redundant `@param` line in all of `sdk/php/src`, and it carries prose
