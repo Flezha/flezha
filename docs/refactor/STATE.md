@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 22:16 (supervisor session 2 — area 3 segment D committed `9e4b6681`)
+**Last updated**: 2026-08-29 22:27 (supervisor session 2 — area 3 segment E running)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -62,9 +62,21 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. Area 3 segments A–D are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`,
-`9e4b6681`); segment E (the tests, batches 9–10) is next, and segment F now opens
-with the supervisor-added batch **10b**.
+`refactor-3-rust-sdk`, **segment E** (batches 9–10, the tests: `workflow/mod.rs`
+4 280 → ~160, `poll_core_tests.rs` into four, the `tests/` splits, the four buckets
+and **both flakes**), fresh general-purpose worker, spawned 2026-08-29 22:27.
+Checkpoint 5 after batch 10. No bench arm this segment. Stages nothing.
+
+Three things the brief pins: D5's rule that the driver scenarios split into phase
+FUNCTIONS under one `#[test]` (they share ordered process-global state, so splitting
+the test would make the ordering a hope); task 9.3 is a **measurement correction**
+(265 lines and nine `long_names` move production → test) and must not be read as
+deletion; and each flake needs **≥ 20 consecutive whole-binary runs before and
+after**, both counts recorded, since the survey established a mechanism for each and
+neither is load.
+
+Area 3 segments A–D are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`);
+segment F opens with the supervisor-added batch **10b**.
 
 `sdk/rust` is at **`functions_over_50` 0** and `files_over_800` 5 (the five remaining
 are test masses batches 9–10 own). `lib.rs` 821 → 157, `dispatcher.rs` 1 921 → 663.
