@@ -177,6 +177,15 @@ refutes, suite wall-clock. `--write-baseline` records `docs/refactor/
 baseline.json`; `--check` fails when a ratcheted metric is worse than the
 baseline. A finished area flips its gates from measuring to blocking.
 
+**Lines that arrive from a higher layer are not a breach.** §3 sends shared
+code down to the lowest layer that needs it, so a later area moving its
+scaffolding into a finished one makes that area's production count rise by
+construction — the ratchet is per-area and cannot see the deletion on the
+other side. Such a rise is accepted at the checkpoint when the change shows a
+LARGER deletion in the layers the code left, per-area numbers printed from
+`--check`, and the lower area is re-baselined at the close. Assertion is not
+enough: no evidence, no exemption. Nothing else exempts a blocking area.
+
 ## 12. The session contract
 
 Every area runs as one OpenSpec change, `refactor-<n>-<area>`, through the
