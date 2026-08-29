@@ -134,7 +134,11 @@ Fail → `SendMessage` to the same worker with the exact findings; row stays
 1. `openspec archive <change-id>` (and `--skip-specs` if there are no deltas).
 2. Stage only the worker's paths, `docs/refactor/*` and the `openspec/specs`
    files the archive updated (`openspec/changes` is gitignored, archive
-   included); commit `refactor(<id>): <one line>` with the LOC delta and A/B
+   included); an intent-to-add entry from §4 does NOT become content on its
+   own — `git add` the new files explicitly, and after the commit verify
+   `git status --short` is empty (bar foreign untracked files) and
+   `git ls-files --stage | grep e69de29bb2d1d6434b8b29ae775ad8c2e48c5391`
+   names no file of the change; commit `refactor(<id>): <one line>` with the LOC delta and A/B
    numbers in the body. No AI trailer, ever.
 3. `python3 scripts/refactor_metrics.py --write-baseline` for the finished
    area (its gates are now blocking); commit that with the same commit.
