@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 22:00 (supervisor session 2 — segment D heartbeat 1)
+**Last updated**: 2026-08-29 22:16 (supervisor session 2 — area 3 segment D committed `9e4b6681`)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -46,7 +46,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A `a1bdfa34`, B `9f747656`, C `0f23dbd1` | 0a finding CLOSED; `flz_core` dup pairs 9→4; `sdk/rust` fn>50 **12→1**, files>800 9→7 |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A `a1bdfa34`, B `9f747656`, C `0f23dbd1`, D `9e4b6681` | 0a finding CLOSED; `sdk/rust` **fn>50 12→0**, files>800 9→5; `lib.rs` 821→157; `dispatcher.rs` 1921→663 |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -62,60 +62,40 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-3-rust-sdk`, **segment D** (batches 7–8: the `lib.rs` facade,
-`runner_handle.rs`, the worked example moved to `examples/` and compiled by a gate for
-the first time, the supervisor-added `dispatcher.rs` split, then `flezha-macros`),
-fresh general-purpose worker, spawned 2026-08-29 21:43. Checkpoint 4 after batch 8,
-which BUILDS arm B4 and sha-compares — no measurement.
+None. Area 3 segments A–D are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`,
+`9e4b6681`); segment E (the tests, batches 9–10) is next, and segment F now opens
+with the supervisor-added batch **10b**.
 
-Task **8.5 was clarified before spawning**: its "all 24 `.stderr` snapshots unedited"
-now names `0f23dbd1` as the baseline, because segment C legitimately moved 7 lines
-across 3 of them (source paths a file split changed). A macro edit has no such excuse
-— it can only move a snapshot by changing a diagnostic, which is what the task exists
-to catch. Left unclarified, this was the same self-contradiction that tripped tasks
-3.1/3.5.
+`sdk/rust` is at **`functions_over_50` 0** and `files_over_800` 5 (the five remaining
+are test masses batches 9–10 own). `lib.rs` 821 → 157, `dispatcher.rs` 1 921 → 663.
 
-Segments A (`a1bdfa34`), B (`9f747656`) and C (`0f23dbd1`) are committed.
+**The supervisor's task 7.5 named two owners and the arithmetic did not close.**
+1 921 − 615 = 1 306, still 506 over the ceiling. The worker added a third owner (one
+invocation, from the call to the settle), cleared the ceiling, and reported the
+deviation instead of quietly missing the target. It also made the three modules
+CHILDREN of `dispatcher` rather than siblings, because the extracted code reads the
+type's private fields and siblings would have forced them `pub(crate)` — a widening
+the split does not need.
 
-- last seen 22:00: **both file splits have landed.** `lib.rs` **821 → 157** (the task
-  asked for ~250), `runner_handle.rs` 599 created, and `dispatcher.rs`
-  **1 924 → 663** with an `operative/dispatcher/` directory beside it — so the
-  supervisor-added task 7.5 is done and `files_over_800` should fall by two. Ticks
-  36; a `flezha_runner` suite run is executing. True delta with the new files
-  intent-added: +118 (2 093 in / 1 975 out).
+### A defect in the measuring script itself (`5d53f7f5`)
 
-`sdk/rust` `functions_over_50` is **12 → 1** (only `lib.rs:640 remove`, which task 7.2
-owns) and `files_over_800` 9 → 7.
+`brace_extent` stripped `//.*$|#.*$` for every language, so in **Rust** it ate
+`#[cfg(test)] mod x {` and every `#ident` a `quote!` interpolates: the brace depth
+never closed and a function's measured length stopped at whatever line survived.
+Measured effects — `flezha-macros/src/state.rs` `push` reported **142** and is **36**;
+its `expand` reported **58** and is **72**; and `procedure.rs:32 expand`, **348 lines
+with 39 `quote!` blocks**, was invisible to the ceiling entirely. The area's
+`functions_over_50` is 4, not 2.
 
-**Segment C's five plan defects, all correctly handled rather than worked around:**
-1. Task 6.3's `#[from]` on the topology error **cannot be written** — charter §3
-   forbids `flz_core` naming `sdk/rust`, and the alternative moves `TopologyIssue`
-   into the core, which the proposal defers to a later change. Box left unticked with
-   the reason; the task's other two clauses are done.
-2. Task 5.1 collides with D13 and tasks 8.5/11.5: splitting a file moves the path
-   rustc prints, so three `tests/ui/*.stderr` snapshots go stale **by construction**
-   while those tasks demand all 24 be untouched. Delta is 7 lines, all paths, verified
-   by the supervisor as carrying no changed diagnostic text.
-3. Task 5.3 contradicts the proposal's "no public authoring surface changes":
-   `TopologyIssue` is public and a spec scenario names the deleted variant. A spec
-   delta was written — and the supervisor confirmed it carries **all four** live
-   scenarios plus one new, so nothing was silently dropped, which is exactly how a
-   `## MODIFIED` block has bitten this repo before.
-4. Design D6's second parameter **cannot exist**: the two callers derive their edges
-   from different things (the SDK from `BuilderState.channels` before a topology
-   exists, the core from one), so only the seeding is shareable.
-5. `graph_order` at 59 lines would have taken `flz_core`'s **blocking**
-   `functions_over_50` from 7 to 8. Split into `adjacency` + `reachable` to keep it.
+Fixed (Rust now uses `//` only), `--self-test` green, and **no blocking area moved**,
+so the correction fires no false ratchet. `flezha-macros` is a measuring area, and its
+2 → 4 is the ruler being fixed, not a regression.
 
-**Charter §11 tightened again** (`0f23dbd1`): an excess over the funding deletion is
-accepted only when another §7 ceiling forces it, named and counted line by line — one
-blocking rule may not be broken to satisfy another in silence. Here: 80 arrived, 71
-deleted, +9 excess, all of it defect 5's forced split.
-
-Recorded so it is not over-read: **`sdk/rust` production still rose 205 this segment**
-and the §11 evidence does not excuse that — it is per-item, for the graph walk. The
-aggregate rise is the file-ceiling splits paying in signatures and braces, which is
-§1's permitted reason but should stop being true once segments E and F delete.
+**Consequence: a second uncovered breach, added as batch 10b.** No task owned
+`procedure.rs::expand`. It is not one flat template — it carries its own
+`// --- … ---` phase comments — so it splits the way batch 6 split
+`build_topology_with_persistence` (282 → 42), reusing batch 8's `keyword` and `try_*`
+and adding no module.
 
 ## Awaiting the user's decision
 
@@ -297,6 +277,12 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   harmless — the e2e builds via `cargo run`.
 - 1c `sdk/rust/tests/stream_transforms.rs:249` fails under a parallel suite run on a
   loaded box (5 s `wait_until`); same family as `tier_replay_skips…`; area 3.
+- 3d a stale doc block rode along with `channel_metadata` into
+  `sdk/rust/src/operative/dispatcher/emit_sink.rs:344-350`. It documents a function
+  that no longer exists, names the RETIRED `Block` overflow policy, and carries a
+  design-decision label charter §5 forbids. Relocated verbatim by an extraction-only
+  task, correctly; batch 11.1/11.3 owns the rewrite and the new location is recorded
+  here so it is not lost.
 - 3b the board's `sdk/rust` `duplicate_pairs = 178` (recorded after segment A from the
   ratchet's full-repo run) and the worker's own repeated reading of **128** on the
   same untouched tree are the SAME scan-mode hazard as 3a. Segment B's worker refused
