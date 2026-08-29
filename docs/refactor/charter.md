@@ -209,6 +209,25 @@ named and counted line by line — one blocking rule may not be broken to satisf
 another in silence. Assertion is not
 enough: no evidence, no exemption. Nothing else exempts a blocking area.
 
+## 11b. The machine
+
+This runs on a laptop. A session that runs builds, suites or benchmarks **checks
+the machine every 30–60 minutes** and kills what it started — zombies, orphaned
+`cargo`/`rustc`/`criterion`/`beam.smp`/`mix`/`mvn` processes, polling loops,
+containers. The commands are in `CLAUDE.md` under "Machine hygiene".
+
+**A `top` snapshot lies about benchmark load.** Criterion and the round-trip
+benches measure in 60-second windows separated by builds and process startup, so
+a snapshot usually lands in a gap and shows an idle box while the fan runs hard.
+Judge by runs over a window (`find <log-dir> -mmin -60 | wc -l`) and the
+15-minute load average. On 2026-08-30 an area's A/B put 76 runs and a 281 % CPU
+`beam.smp` on the box for an hour; the user's own `top` showed nothing.
+
+**When your own measurement is the load, cut the rows that cannot gate.** A row
+whose noise floor exceeds the effect it is asked to detect (§8's `direction`
+rows) spends the machine for a number nobody may act on. Record its arm sha as
+the evidence and skip it.
+
 ## 12. The session contract
 
 Every area runs as one OpenSpec change, `refactor-<n>-<area>`, through the
