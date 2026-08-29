@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 12:46 (supervisor session 1)
+**Last updated**: 2026-08-29 12:58 (supervisor session 1 — HANDOVER, session closed)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 2: segment A committed (`01f45d7d`, batches 0–2; A/B owed — box on battery); segment B (batches 3–4) running.
+HANDOVER. Done: Phase 0, 1s, area 1 (kernel), area 2 segment A (`01f45d7d`). Next: area 2 segment B (batches 3–4) — the previous worker was interrupted at session end BEFORE editing any tracked file (tree clean at `b2230995`), so a fresh worker starts at task 3.1 with the segment-B brief. ~30 % of the programme done.
 
 ## Board
 
@@ -39,12 +39,14 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-2-ffi-veneers` · role implement, segment B = batches 3–4 · started 2026-08-29 12:46
-- checkpoint 2 after batch 4 (its A/B covers rows 5, 7py, 7node against arm A —
-  which also settles the owed checkpoint-1 rows; arm B2 is kept for attribution)
-- worker agent lives in supervisor session 1 only; a new session must re-spawn
-  with the resume brief from the first unticked task
-- last seen: 2026-08-29 12:46 (spawned)
+None. The area-2 segment-B worker (batches 3–4) was stopped at session end
+before any tracked edit; nothing to resume from the tree. Re-spawn it with the
+segment-B brief (tasks 3.x–4.x, checkpoint 2 after batch 4, the D3 napi spike
+first in batch 4, the A/B on mains only — rows 5, 7py, 7node with
+`-p 2 -m 40000 --runners 1`, arms under `$SCRATCH/area2/` — note the scratchpad
+is per SESSION, so a new session has NO arm A: rebuild it from the tag
+`refactor-baseline-2` tree by `git worktree add <scratch>/base refactor-baseline-2`
++ the three arm builds there, never by checkout in the main tree).
 
 ## Awaiting the user's decision
 
@@ -200,6 +202,10 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
   "namespace contains a NUL byte", same for "instance id") because JNI now reads
   `veneer::c_string`; nothing in `sdk/java` asserts them. Two napi_host diagnostic
   log lines lost a redundant prefix. Recorded as text deltas, not behaviour.
+- HANDOVER note: the scratchpad (`$SCRATCH`) is per session — area 2's arm A / B2
+  artifacts and the `ab_run.sh` driver from session 1 are gone in a new session;
+  the A/B driver has to be rebuilt (a short script: copy the arm's `.so`/`.node`
+  in, sha-verify, run `mix bench.roundtrip … FLEZHA_BENCH_SKIP_BUILD=1`, restore).
 - 1s a stale worktree from another session (`…/55da9198…/scratchpad/baseline2`,
   detached at `30e64258`, prunable) is not ours; left alone.
 
@@ -334,9 +340,12 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-1. Survey area 2 (FFI glue + four veneers), approve, implement in two-batch
-   segments; the seam's SDK twins are area 3's, the glue dedup is area 2's.
-2. Then area 3 (Rust SDK: `TypedBodies<S>`, the typed tail onto `settle_effects`,
-   the bench scaffolding, the typed-path −1.4 %).
-3. Owed defect changes (user's priority call): F1 dlq watermark, the first-input
-   drop (two faces) — before areas 5a/5e.
+1. `/loop /refactor` in a new session: it reads this file, finds no worker and area 2
+   `implementing`, and re-spawns segment B (batches 3–4) from task 3.1.
+2. Then segments C (5–6), D (7–8), E (9) of area 2; supervisor commit at each.
+3. Area 3 (Rust SDK): `TypedBodies<S>`, the typed tail onto `settle_effects`, the
+   bench scaffolding onto `flz_core::bench_support`, the typed-path −1.4 %.
+4. Owed defect changes (user's priority call, see "Awaiting"): F1 dlq watermark, the
+   first-input drop (two faces) — before areas 5a/5e. Owed follow-up
+   `sdk-declaration-refusals-in-the-core` after area 4.
+5. Plug the laptop in before any checkpoint: every A/B is refused on battery.
