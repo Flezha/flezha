@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 12:18 (supervisor session 1)
+**Last updated**: 2026-08-29 12:46 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 2 (FFI glue + veneers) implementing — segment A (batches 0–2); tag `refactor-baseline-2` = `30feac1f`.
+Area 2: segment A committed (`01f45d7d`, batches 0–2; A/B owed — box on battery); segment B (batches 3–4) running.
 
 ## Board
 
@@ -22,7 +22,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `e709cd40`, `f1b4fe54`, `d6288963` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
-| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | | approved: 37 reuse decisions; one veneer core; net ≈ −330 prod / −750 test / −1 450 comments |
+| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | A: `01f45d7d` | A: one veneer core, error enum, hygiene; prod 3 444→3 274, dups 23→7; A/B owed (battery) |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
@@ -39,12 +39,12 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-2-ffi-veneers` · role implement, segment A = batches 0–2 · started 2026-08-29 12:18
-- checkpoints after batches 2, 4, 6, 8 and 9 (two-batch segments, fresh worker each,
-  supervisor commit at each)
+- change `refactor-2-ffi-veneers` · role implement, segment B = batches 3–4 · started 2026-08-29 12:46
+- checkpoint 2 after batch 4 (its A/B covers rows 5, 7py, 7node against arm A —
+  which also settles the owed checkpoint-1 rows; arm B2 is kept for attribution)
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
   with the resume brief from the first unticked task
-- last seen: 2026-08-29 12:18 (spawned)
+- last seen: 2026-08-29 12:46 (spawned)
 
 ## Awaiting the user's decision
 
@@ -192,6 +192,14 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
   it removes ~19 rules × 4 SDKs of duplicated logic.
 - 2 (survey) `mix bench.roundtrip`'s moduledoc names `--runtime rust|java|elixir`;
   the manifests give it five more (area 5d docs).
+- 2a the checkpoint-1 A/B (rows 5, 7py, 7node; noise floors for rows 7) is OWED:
+  the box was on battery for the whole segment. Arm A (`$SCRATCH/area2/A/`) and
+  arm B2 (`$SCRATCH/area2/B2/`) are kept with sha256; `$SCRATCH/area2/ab_run.sh
+  floors|checkpoint1` runs them on mains. **Plug the laptop in.**
+- 2a two JNI-only refusal texts changed wording ("namespace contains NUL" →
+  "namespace contains a NUL byte", same for "instance id") because JNI now reads
+  `veneer::c_string`; nothing in `sdk/java` asserts them. Two napi_host diagnostic
+  log lines lost a redundant prefix. Recorded as text deltas, not behaviour.
 - 1s a stale worktree from another session (`…/55da9198…/scratchpad/baseline2`,
   detached at `30e64258`, prunable) is not ours; left alone.
 
@@ -294,6 +302,12 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
   `DA:`/`FNDA:` per file) showing every lost line inside the deleted test's body.
 - 2026-08-29 `flz_core`, `flz_transport`, `flz_nif` are blocking ratchets from
   `d6288963` (prod 12 639 / 1 743 / 2 048; markers 0; files>800 0; clippy 0).
+- 2026-08-29 Rows 7 (veneer whole-system) run `-p 2 -m 40000 --runners 1` = 80 000
+  records per run, the 1s spike's resolving shape; K33's "80 000 records" means the
+  total, not `-m`.
+- 2026-08-29 A segment whose A/B the box refused (battery) is still committed when
+  every suite is green and the hot-path edit is a thin typed wrapper; the A/B is
+  owed at the next checkpoint on mains with the earlier arm kept for attribution.
 - 2026-08-29 `test` is a blocking ratchet from `0670e992`: sleeps ≤ 2, refutes ≤ 12,
   `async: false` share ≤ 0.815, ExUnit ≤ 56.2 s ± 5 % on this box.
 
