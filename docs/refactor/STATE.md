@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 21:19 (supervisor session 2 — segment C heartbeat 1)
+**Last updated**: 2026-08-29 21:35 (supervisor session 2 — area 3 segment C committed `0f23dbd1`)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -46,7 +46,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A `a1bdfa34`, B `9f747656` | 0a finding CLOSED; bench pair tokens 2086→1427; `flz_core` dup pairs 9→4; fn>50 12→5 |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A `a1bdfa34`, B `9f747656`, C `0f23dbd1` | 0a finding CLOSED; `flz_core` dup pairs 9→4; `sdk/rust` fn>50 **12→1**, files>800 9→7 |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -62,56 +62,43 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-3-rust-sdk`, **segment C** (batches 5–6: `channel/builder.rs` into five
-modules, `register_node` → `resolve_node`, the `TypeMismatch` deletion, then
-`operative/builder.rs`, `workflow/spec.rs` and one shared `graph_order` in
-`flz_core`), fresh general-purpose worker, spawned 2026-08-29 21:02. Checkpoint 3
-after batch 6, which BUILDS arm B3 and sha-compares it — no measurement. Stages
-nothing.
+None. Area 3 segments A (`a1bdfa34`), B (`9f747656`) and C (`0f23dbd1`) are committed;
+segment D (the crate facade and the macros, batches 7–8) is next — and batch 7 now
+carries the supervisor-added task 7.5, the `dispatcher.rs` split without which the
+area cannot close.
 
-Its two stop-and-report conditions: the topology tests must pass **unedited** (they
-match on `TopologyIssue` variants, and 5.3 deletes one — a variant with a producer is
-not the variant the task names), and `TypeMismatch`'s absence of a producer must be
-grepped and recorded BEFORE the delete.
+`sdk/rust` `functions_over_50` is **12 → 1** (only `lib.rs:640 remove`, which task 7.2
+owns) and `files_over_800` 9 → 7.
 
-Area 3 segments A (`a1bdfa34`) and B (`9f747656`) are committed.
+**Segment C's five plan defects, all correctly handled rather than worked around:**
+1. Task 6.3's `#[from]` on the topology error **cannot be written** — charter §3
+   forbids `flz_core` naming `sdk/rust`, and the alternative moves `TopologyIssue`
+   into the core, which the proposal defers to a later change. Box left unticked with
+   the reason; the task's other two clauses are done.
+2. Task 5.1 collides with D13 and tasks 8.5/11.5: splitting a file moves the path
+   rustc prints, so three `tests/ui/*.stderr` snapshots go stale **by construction**
+   while those tasks demand all 24 be untouched. Delta is 7 lines, all paths, verified
+   by the supervisor as carrying no changed diagnostic text.
+3. Task 5.3 contradicts the proposal's "no public authoring surface changes":
+   `TopologyIssue` is public and a spec scenario names the deleted variant. A spec
+   delta was written — and the supervisor confirmed it carries **all four** live
+   scenarios plus one new, so nothing was silently dropped, which is exactly how a
+   `## MODIFIED` block has bitten this repo before.
+4. Design D6's second parameter **cannot exist**: the two callers derive their edges
+   from different things (the SDK from `BuilderState.channels` before a topology
+   exists, the core from one), so only the seeding is shareable.
+5. `graph_order` at 59 lines would have taken `flz_core`'s **blocking**
+   `functions_over_50` from 7 to 8. Split into `adjacency` + `reachable` to keep it.
 
-- last seen 21:19: batch 5 done and batch 6 under way (ticks 28). `channel/builder.rs`
-  is gone, replaced by `channel/builder/{mod,issue,state,stream,merge}.rs` at
-  358/192/482/470/162 lines — all under the task's 560 ceiling. `flz_core`'s
-  `host/register.rs` and `workflow/spec.rs` are edited, so the shared `graph_order`
-  (task 6.1) is in flight. True delta with the new modules intent-added: **−284**
-  (2 241 in / 2 525 out).
-  Three `tests/ui/*.stderr` files changed — supervisor checked, and the diff is
-  **path-only** (`src/channel/builder.rs` → `src/channel/builder/stream.rs`), which
-  is what a module split does to trybuild expectations, not a changed diagnostic.
+**Charter §11 tightened again** (`0f23dbd1`): an excess over the funding deletion is
+accepted only when another §7 ceiling forces it, named and counted line by line — one
+blocking rule may not be broken to satisfy another in silence. Here: 80 arrived, 71
+deleted, +9 excess, all of it defect 5's forced split.
 
-**The typed tail is on the shared seam.** `TypedBuffer<S>` is now an alias for
-`EffectBuffer<TypedBodies<S>>`, `invoke_once`'s tail is one `settle_effects` call,
-and the four `effect.rs` ↔ `flusher.rs` pairs area 1 left as D1's interim are gone
-(`flz_core` duplicate pairs 9 → 4). `entity/flusher.rs` production 150 → 60;
-`dispatcher.rs` lost all seven functions over 50 and every
-`#[allow(clippy::too_many_arguments)]`.
-
-**Byte-pinning verified by the supervisor, per test, against
-`refactor-baseline-3`**: `effect_record_body_postcard_bytes_are_the_cross_language_fixture`,
-`frame_layout_matches_controller_decode_format` and
-`encode_entity_identity_round_trips_three_fields` are byte-identical; the other two
-changed only where they BUILD their input, and no asserted byte moved. **Task 3.5
-contradicted 3.1** (which orders the `inner` → `changes` rename at every call site,
-and two of the five tests are those call sites) — the task is corrected to demand
-unedited ASSERTIONS, which is what the rule was ever for.
-
-**A gap the worker found that would have blocked the area's close**: design D6's
-"`dispatcher.rs` 2012 → ~950" assumed the 290-line test module was the difference. It
-is not — after batch 4 the file is 1 924 lines, 1 426 production — and **no task in
-segments C–F split it**, while task 10.6 requires `files_over_800 = 0`. Added as task
-7.5, split by OWNER (the two sink adapters; `Handout` plus slot construction; the
-dispatcher keeps the activation path), with its reuse decision.
-
-`flz_core`'s baseline absorbed +2 (the host `snapshot_frame` wrap), funded by the −90
-that left `sdk/rust/src/entity/flusher.rs`. `sdk/rust` prod_loc 5 938 → 6 028 is the
-§7 ceiling's price and is measuring-only, not blocking.
+Recorded so it is not over-read: **`sdk/rust` production still rose 205 this segment**
+and the §11 evidence does not excuse that — it is per-item, for the graph walk. The
+aggregate rise is the file-ceiling splits paying in signatures and braces, which is
+§1's permitted reason but should stop being true once segments E and F delete.
 
 ## Awaiting the user's decision
 
