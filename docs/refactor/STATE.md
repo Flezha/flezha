@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 11:53 (supervisor session 1)
+**Last updated**: 2026-08-29 12:18 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 1 (kernel) done: `e709cd40` + `f1b4fe54` + `d6288963`; `flz_core`, `flz_transport`, `flz_nif` are blocking ratchets. Area 2 (FFI glue + veneers) surveying.
+Area 2 (FFI glue + veneers) implementing — segment A (batches 0–2); tag `refactor-baseline-2` = `30feac1f`.
 
 ## Board
 
@@ -22,7 +22,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `e709cd40`, `f1b4fe54`, `d6288963` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
-| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | surveying | | |
+| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | | approved: 37 reuse decisions; one veneer core; net ≈ −330 prod / −750 test / −1 450 comments |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
@@ -39,10 +39,12 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-2-ffi-veneers` · role survey · started 2026-08-29 11:53
-- deliverable: proposal/design/tasks for area 2 (no code)
+- change `refactor-2-ffi-veneers` · role implement, segment A = batches 0–2 · started 2026-08-29 12:18
+- checkpoints after batches 2, 4, 6, 8 and 9 (two-batch segments, fresh worker each,
+  supervisor commit at each)
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
-- last seen: 2026-08-29 11:53 (spawned)
+  with the resume brief from the first unticked task
+- last seen: 2026-08-29 12:18 (spawned)
 
 ## Awaiting the user's decision
 
@@ -176,6 +178,20 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
   harmless — the e2e builds via `cargo run`.
 - 1c `sdk/rust/tests/stream_transforms.rs:249` fails under a parallel suite run on a
   loaded box (5 s `wait_until`); same family as `tier_replay_skips…`; area 3.
+- 2 (survey) the board's "Python veneer `.so` is a debug build" is STALE: Python's
+  installed `.so` is the release build; Ruby's, Node's and PHP's `linux-x64` are
+  debug; none is tracked.
+- 2 (survey) three committed `.pyc` (two under `examples/python/durable_agent/`, one
+  under `test/apps/python_runner/`); root `.gitignore` lacks `__pycache__` — area 2
+  batch 0 deletes and ignores them.
+- 2 (survey) **owed follow-up `sdk-declaration-refusals-in-the-core`**: the core
+  refuses 19 declaration rules the four veneers ALSO refuse (different wording), the
+  core's cycle/reachability/single-root checks are workflow-only (a stream class's
+  DAG is checked by every SDK and never by the core), and two veneer rules the core
+  lacks. Moving them changes refusal texts → its own cross-SDK change after area 4;
+  it removes ~19 rules × 4 SDKs of duplicated logic.
+- 2 (survey) `mix bench.roundtrip`'s moduledoc names `--runtime rust|java|elixir`;
+  the manifests give it five more (area 5d docs).
 - 1s a stale worktree from another session (`…/55da9198…/scratchpad/baseline2`,
   detached at `30e64258`, prunable) is not ours; left alone.
 
