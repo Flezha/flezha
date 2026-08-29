@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 21:35 (supervisor session 2 — area 3 segment C committed `0f23dbd1`)
+**Last updated**: 2026-08-29 21:43 (supervisor session 2 — area 3 segment D running)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -62,10 +62,20 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-None. Area 3 segments A (`a1bdfa34`), B (`9f747656`) and C (`0f23dbd1`) are committed;
-segment D (the crate facade and the macros, batches 7–8) is next — and batch 7 now
-carries the supervisor-added task 7.5, the `dispatcher.rs` split without which the
-area cannot close.
+`refactor-3-rust-sdk`, **segment D** (batches 7–8: the `lib.rs` facade,
+`runner_handle.rs`, the worked example moved to `examples/` and compiled by a gate for
+the first time, the supervisor-added `dispatcher.rs` split, then `flezha-macros`),
+fresh general-purpose worker, spawned 2026-08-29 21:43. Checkpoint 4 after batch 8,
+which BUILDS arm B4 and sha-compares — no measurement.
+
+Task **8.5 was clarified before spawning**: its "all 24 `.stderr` snapshots unedited"
+now names `0f23dbd1` as the baseline, because segment C legitimately moved 7 lines
+across 3 of them (source paths a file split changed). A macro edit has no such excuse
+— it can only move a snapshot by changing a diagnostic, which is what the task exists
+to catch. Left unclarified, this was the same self-contradiction that tripped tasks
+3.1/3.5.
+
+Segments A (`a1bdfa34`), B (`9f747656`) and C (`0f23dbd1`) are committed.
 
 `sdk/rust` `functions_over_50` is **12 → 1** (only `lib.rs:640 remove`, which task 7.2
 owns) and `files_over_800` 9 → 7.
