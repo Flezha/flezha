@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 15:40 (supervisor session 2 — segment B committed `d6ef9947`)
+**Last updated**: 2026-08-29 15:52 (supervisor session 2 — segment C heartbeat 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -59,7 +59,10 @@ onto the real collaborator. **No A/B is owed at checkpoint 3** — batches 5 and
 touch tests only; the design schedules the rows for checkpoints 1, 2 and batch 9.
 Stops at CHECKPOINT 3; stages nothing.
 
-- last seen: (first heartbeat pending)
+- last seen 15:52: batch 5 in flight, ticks 23/41. `tests/abi/` exists with
+  `harness`, `lifecycle`, `veneer_napi`, `veneer_ruby`, `python_binding` and a
+  `shape` module; `abi_scenario.rs` is down 1580 lines and `benches/host_loop.rs`
+  is being moved onto the shared `last_error_of`. No stall.
 
 Verification that closed segment B, done against the repo and not the report:
 diff scope clean; `refactor_metrics.py --check` 0 regressions; every `pub fn` in
