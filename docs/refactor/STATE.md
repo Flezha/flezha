@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 20:07 (supervisor session 2 — area 3 segment B running)
+**Last updated**: 2026-08-29 20:40 (supervisor session 2 — segment B heartbeat 2)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -80,6 +80,19 @@ that needs editing means the port is not neutral, and the worker was told to sto
 report rather than adjust it.
 
 Area 3 segment A is committed (`a1bdfa34`).
+
+- last seen 20:40: batch 4 under way — `operative/dispatcher_tests.rs` created (task
+  4.5's test-module move), `dispatcher.rs` and `flz_core/src/error.rs` edited in the
+  last twelve minutes; 969 in / 1142 out. `dispatcher.rs` is 1 923 lines mid-move and
+  the ceiling check comes after the extraction. Ticks still 15 — this worker, like
+  segment A's, ticks at the segment's end. No stall, no bench command.
+- previous 20:24: batch 3 in flight — `entity/flusher.rs` and
+  `operative/dispatcher.rs` plus the `snapshot_frame` change reaching across
+  `flz_core` (`entity.rs`, `error.rs`, `host/entity.rs`, `command/compact.rs`);
+  154 in / 255 out. Supervisor spot-check: **no byte-pinning test signature is
+  edited** and `effect_record_body_postcard_bytes_are_the_cross_language_fixture`
+  is still present — the run is what proves it, but the port has not reached for
+  the test yet. No bench command run, per the new §8. No stall.
 
 Supervisor verification: `cargo check --workspace --all-targets` exit 0 with no
 flags (re-run here — **board finding 0a is closed**), `cargo +nightly fmt --all

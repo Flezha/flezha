@@ -47,9 +47,9 @@ fn compact_slot(slot: &Arc<EntitySlot>, errors: &mut Vec<String>) -> Option<(u64
 /// handout exclusivity: a host-run Entity crosses a SnapshotRequest activation;
 /// a typed one encodes in-process holding the slot locks in dispatch order
 /// (state, then flush_buffer, then timers).
-fn snapshot_slot(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, usize), String> {
+fn snapshot_slot(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, usize), crate::Error> {
     if slot.dispatcher.host_facts().is_some() {
-        return crate::host::snapshot_frame_crossing(slot).map_err(|e| e.to_string());
+        return crate::host::snapshot_frame_crossing(slot);
     }
     let mut state_guard = match slot.state.lock() {
         Ok(g) => g,

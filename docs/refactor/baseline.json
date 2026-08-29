@@ -162,7 +162,7 @@
    "long_names_list": [],
    "narrative_markers": 0,
    "narrative_markers_by_file": {},
-   "prod_loc": 12737,
+   "prod_loc": 12739,
    "prod_loc_by_file": {
     "flz_core/src/admission.rs": 217,
     "flz_core/src/bench_support.rs": 67,

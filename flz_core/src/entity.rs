@@ -400,7 +400,7 @@ pub trait ProcedureDispatcher: Send + Sync + 'static {
         state: &mut Box<dyn Any + Send>,
         flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
         timers: &crate::timer::PendingTimers,
-    ) -> Result<(Vec<u8>, u64, usize), String>;
+    ) -> Result<(Vec<u8>, u64, usize), crate::Error>;
 }
 
 /// What both slot builders (typed and host) derive the same way; the caller

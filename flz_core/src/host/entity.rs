@@ -237,11 +237,13 @@ impl ProcedureDispatcher for HostDispatcher {
         _state: &mut Box<dyn Any + Send>,
         _flush_buffer: &mut Box<dyn FlushableBuffer>,
         _timers: &PendingTimers,
-    ) -> Result<(Vec<u8>, u64, usize), String> {
-        Err("host-held state: compaction reaches the host through its \
+    ) -> Result<(Vec<u8>, u64, usize), crate::Error> {
+        Err(crate::Error::HostCrossing(
+            "host-held state: compaction reaches the host through its \
              SnapshotRequest activation (`snapshot_frame_crossing`), never \
              this in-process seam"
-            .to_string())
+                .to_string(),
+        ))
     }
 }
 

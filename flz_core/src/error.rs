@@ -55,9 +55,10 @@ impl From<QuicListError> for Error {
 mod tests {
     use super::*;
 
-    // One representative text per variant, as its producer renders it: the
-    // wrapping must add nothing, because the controller and the veneer suites
-    // match on the text alone.
+    // One representative text per variant, as its producer renders it, plus
+    // the two `snapshot_frame` refusals the typed SDK produces from outside
+    // this crate: the wrapping must add nothing, because the controller and
+    // the veneer suites match on the text alone.
     #[test]
     fn every_variant_renders_the_text_it_replaced() {
         let declaration = "a host class declares at least one procedure";
@@ -70,8 +71,13 @@ mod tests {
         let socket_dir = SocketDirError::Ambiguous { live: Vec::new() };
         let quic_list = QuicListError::NoEndpoint;
 
+        let snapshot_state = "snapshot_frame: state type mismatch for procedure";
+        let snapshot_encode = "snapshot_frame: postcard state encode failed: bad";
+
         let rendered: Vec<(Error, String)> = vec![
             (Error::Declaration(declaration.into()), declaration.into()),
+            (Error::State(snapshot_state.into()), snapshot_state.into()),
+            (Error::State(snapshot_encode.into()), snapshot_encode.into()),
             (Error::HostCrossing(crossing.into()), crossing.into()),
             (Error::Answer(answer.into()), answer.into()),
             (Error::Routing(routing.into()), routing.into()),
