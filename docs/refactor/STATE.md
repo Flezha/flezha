@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 19:31 (supervisor session 2 — segment A heartbeat 2)
+**Last updated**: 2026-08-29 19:56 (supervisor session 2 — area 3 segment A committed `a1bdfa34`)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -46,7 +46,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | tag `d56b3a11` | |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A `a1bdfa34` | 0a workspace-check finding CLOSED; bench pair tokens 2086→1427 |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -62,48 +62,39 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-3-rust-sdk`, **segment A** (batches 0–2: arm A and the floors, Cargo
-hygiene, the benches onto `flz_core::bench_support`), fresh general-purpose worker,
-spawned 2026-08-29 19:16. Checkpoint 1 after batch 2. Stages nothing.
+None. Area 3 segment A is verified and committed (`a1bdfa34`); segment B (the typed
+tail onto the shared seam, batches 3–4) is next.
 
-- last seen 19:31: batch 2 converting the benches (`dispatch`, `correctness`,
-  `dynamic_entity_steady_state`, `hybrid_channel_throughput`, `tests/common/mod.rs`).
-  Floors are running and **arm A′ is being minted** — the logs carry `row1-Ap-*` and
-  `row4-Ap-*`, so risk 1's mitigation is being executed as designed rather than
-  skipped. No stall.
-- previous 19:19: arms built under `$SCRATCH/area3/`, batches 1–2 in flight
-  (`Cargo.toml`, both SDK benches, `flz_core/src/bench_support.rs`, and
-  `flz_core_ffi/benches/alloc_counter.rs` deleted as the machinery moves down).
-  **`--check` is RED on a blocking area and that is sanctioned**: `flz_core`
-  prod_loc 12 639 → 12 737 (+98 in `bench_support.rs`), the alloc-counter machinery
-  arriving from `flz_core_ffi`. `sdk/rust` cannot depend on `flz_core_ffi`, so §3
-  leaves `flz_core` as the only shared home. Charter §11 amended (`79a8f8da`): lines
-  arriving from a higher layer are not a breach WHEN the change shows a larger
-  deletion in the layers they left, evidenced with per-area numbers, and the lower
-  area is re-baselined at the close. Supervisor's own count so far: +98 against
-  `flz_core_ffi` test −44 and `sdk/rust` test −76 = net −22, batch 2 unfinished.
-  The worker was told not to bend the work to the gate.
+Supervisor verification: `cargo check --workspace --all-targets` exit 0 with no
+flags (re-run here — **board finding 0a is closed**), `cargo +nightly fmt --all
+--check` clean, ratchet green after the baseline absorbed the evidenced inbound
+move.
 
-**Proposal APPROVED** by the supervisor after one round: all 32 candidates now carry
-a reuse decision or an explicit compliance marker (15 did on first submission; the
-charter §2 gap was the only thing sent back). 11 batches in six segments, tag
-`refactor-baseline-3` = `d56b3a11`.
+**Measured floors for area 3** (first time rows 3 and 4 have ever been floored):
+row 1 **0.33 %**, row 2 **0.95 %** — both gates, and both tighter than the 0.73/1.91 %
+the programme had recorded; row 3 **9.04 %** and row 4 **6.01 %** — neither can
+resolve 3 %, so both are now *direction, not gate*. Row 5 guard (4.13 %), row 6
+direction (~18 %).
 
-The survey's own corrections, all verified: the board's "7 jscpd pairs in the SDK
-benches" was area 1's already-closed set — at HEAD there are **21** among the SDK
-benches themselves; `targets.md`'s cross-crate pairs for this area are dead anchors
-measured at `4405cf9d` before area 1 (the concept survives, four live pairs remain);
-and the fourth `wait_until` implementation, `flz_core::test_support::spin_until`, is
-unreachable from `sdk/rust` (`pub(crate)` in a private module) so charter §3 forbids
-the merge — recorded as a decision, not an omission.
+**The design under-priced the instrument and the worker corrected it.** D10 charged
+the bench move ~0.14 % for `Settle`'s poll latency and charged the counting allocator
+nothing. Row 1 allocates 7.018 events/element, so `bump()` runs 7 M times per
+iteration ≈ 25 ms on a 700 ms iteration ≈ **3.6 %** — the whole of the measured
+A→A′ +3.57 %. Conclusion unchanged, and exactly why A′ exists: **arm A is not
+comparable to any later arm on rows 1–4.**
 
-**A/B design worth carrying to later areas**: rows 3 and 4
-(`throughput_effectively_once_tiers`) have never been floored by this programme and
-are floored in batch 0.4; row 6 is marked *direction only, never a gate*; and the
-plan mints a **new reference arm A′ at checkpoint 1**, because moving the benches
-onto `bench_support::Settle` removes up to 1 ms of poll latency from inside
-criterion's own measured window (~0.14 % on row 1, the same order as the residue the
-area is chasing) — the instrument moves before the code does.
+**Row-1 residue: not allocation.** A worktree of `refactor-baseline-1` reads 7.022
+allocs/elem against A′'s 7.018–7.023 — flat to 0.07 %, so area 1 added no allocation
+to the typed path. The residue is instruction count or layout and **this box cannot
+attribute it**: `perf_event_paranoid` = 4 and valgrind absent, both re-verified. Step
+2 of the investigation is done; the stated stop applies.
+
+**Bench wall clock this segment: 39 min** (5.5 arm builds, 33 measurement) against
+area 2's 66 in its closing segment — and that 33 is the one-off floors plus the A′
+pass. Under the new §8 the recurring cost for checkpoints 2–4 is ~2 min of arm build
+each. Two sha comparisons are already rule-2 evidence: `rust_runner` is byte-identical
+A vs A′, so row 6 cannot have moved; `host_loop` differs, so row 5 is not skippable
+at checkpoint 5 unless B5 matches A′.
 
 ## Awaiting the user's decision
 
@@ -285,6 +276,20 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   harmless — the e2e builds via `cargo run`.
 - 1c `sdk/rust/tests/stream_transforms.rs:249` fails under a parallel suite run on a
   loaded box (5 s `wait_until`); same family as `tier_replay_skips…`; area 3.
+- 3a **`duplicate_pairs` depends on which areas are scanned in one invocation** —
+  `sdk/rust` reads **128** alone, **136** with two sibling areas and **178** full-repo
+  on IDENTICAL source, because a cross-area pair is attributed to both areas.
+  Reproduced by the supervisor. `--check` uses the full run and today's baseline was
+  written the same way, so the gate is self-consistent right now; but a baseline
+  recorded with `--area` and checked against the full run would fire falsely, and the
+  per-area numbers quoted in reports are not comparable with the ratchet's. Owed a fix
+  in the metrics script (area 0a's tooling): either scan the full repo always, or
+  record the mode alongside the number.
+- 3a the proposal's "21 of 133 duplicate pairs involve `benches/`" was wrong on the
+  ratchet's own full-repo run — the baseline has **27** and batch 2 removed **5**.
+  The worker corrected this against its own interest; the pair COUNT understates the
+  work, since duplicated tokens in bench pairs fell **2086 → 1427 (−32 %)** and both
+  giants (290 and 280 tokens) are gone.
 - 2e **the PHP conformance arm through a container needs `--network host`** — without
   it every `transport=quic` test fails ("temporary test runner not connected") while
   UDS passes; and the container shim LEAKS one container per wedge drill, because the
