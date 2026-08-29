@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 15:52 (supervisor session 2 — segment C heartbeat 1)
+**Last updated**: 2026-08-29 16:03 (supervisor session 2 — segment C heartbeat 2)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -59,7 +59,14 @@ onto the real collaborator. **No A/B is owed at checkpoint 3** — batches 5 and
 touch tests only; the design schedules the rows for checkpoints 1, 2 and batch 9.
 Stops at CHECKPOINT 3; stages nothing.
 
-- last seen 15:52: batch 5 in flight, ticks 23/41. `tests/abi/` exists with
+- last seen 16:03: batch 6 started (Python `conftest`/`test_dispatch`/
+  `test_concurrency`/`test_testing` and Node `dispatch`/`concurrency` all in flight,
+  −1790 lines so far) while batch 5's `tests/abi/*` is still being finished; ticks
+  still 23/41, so neither batch is validated yet. No stall. Supervisor asked for one
+  rename: the new shared Node test module is called `helpers.mjs`, which is the
+  bucket name charter §2 forbids and §4's noun rule rejects — the module itself is
+  correct and stays.
+- previous 15:52: batch 5 in flight, ticks 23/41. `tests/abi/` exists with
   `harness`, `lifecycle`, `veneer_napi`, `veneer_ruby`, `python_binding` and a
   `shape` module; `abi_scenario.rs` is down 1580 lines and `benches/host_loop.rs`
   is being moved onto the shared `last_error_of`. No stall.
