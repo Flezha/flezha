@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 20:40 (supervisor session 2 — segment B heartbeat 2)
+**Last updated**: 2026-08-29 20:56 (supervisor session 2 — area 3 segment B committed `9f747656`)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -46,7 +46,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A `a1bdfa34` | 0a workspace-check finding CLOSED; bench pair tokens 2086→1427 |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A `a1bdfa34`, B `9f747656` | 0a finding CLOSED; bench pair tokens 2086→1427; `flz_core` dup pairs 9→4; fn>50 12→5 |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -62,68 +62,35 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-3-rust-sdk`, **segment B** (batches 3–4: `TypedBodies<S>` and the typed
-tail onto `settle_effects`, lazy `coalesce`, `snapshot_frame` onto `flz_core::Error`,
-then `dispatcher.rs` under the ceilings), fresh general-purpose worker, spawned
-2026-08-29 20:07. Checkpoint 2 after batch 4. Stages nothing. **This is the area's
-core change** — the typed half of the seam area 1 built.
+None. Area 3 segments A (`a1bdfa34`) and B (`9f747656`) are verified and committed;
+segment C (the declaration surfaces, batches 5–6) is next.
 
-The supervisor rewrote `tasks.md` 4.8, 6.5 and 8.6 to the new §8: those checkpoints
-now BUILD and sha their arm and record which rows cannot have moved, and no longer
-measure. Only task 11.7 (the area's final checkpoint) measures.
+**The typed tail is on the shared seam.** `TypedBuffer<S>` is now an alias for
+`EffectBuffer<TypedBodies<S>>`, `invoke_once`'s tail is one `settle_effects` call,
+and the four `effect.rs` ↔ `flusher.rs` pairs area 1 left as D1's interim are gone
+(`flz_core` duplicate pairs 9 → 4). `entity/flusher.rs` production 150 → 60;
+`dispatcher.rs` lost all seven functions over 50 and every
+`#[allow(clippy::too_many_arguments)]`.
 
-Its acceptance test is task 3.5's: the five byte-pinning tests in
-`entity/flusher.rs`, including
-`effect_record_body_postcard_bytes_are_the_cross_language_fixture`, must pass
-UNEDITED. Those bytes are a cross-language contract every other SDK decodes; a test
-that needs editing means the port is not neutral, and the worker was told to stop and
-report rather than adjust it.
+**Byte-pinning verified by the supervisor, per test, against
+`refactor-baseline-3`**: `effect_record_body_postcard_bytes_are_the_cross_language_fixture`,
+`frame_layout_matches_controller_decode_format` and
+`encode_entity_identity_round_trips_three_fields` are byte-identical; the other two
+changed only where they BUILD their input, and no asserted byte moved. **Task 3.5
+contradicted 3.1** (which orders the `inner` → `changes` rename at every call site,
+and two of the five tests are those call sites) — the task is corrected to demand
+unedited ASSERTIONS, which is what the rule was ever for.
 
-Area 3 segment A is committed (`a1bdfa34`).
+**A gap the worker found that would have blocked the area's close**: design D6's
+"`dispatcher.rs` 2012 → ~950" assumed the 290-line test module was the difference. It
+is not — after batch 4 the file is 1 924 lines, 1 426 production — and **no task in
+segments C–F split it**, while task 10.6 requires `files_over_800 = 0`. Added as task
+7.5, split by OWNER (the two sink adapters; `Handout` plus slot construction; the
+dispatcher keeps the activation path), with its reuse decision.
 
-- last seen 20:40: batch 4 under way — `operative/dispatcher_tests.rs` created (task
-  4.5's test-module move), `dispatcher.rs` and `flz_core/src/error.rs` edited in the
-  last twelve minutes; 969 in / 1142 out. `dispatcher.rs` is 1 923 lines mid-move and
-  the ceiling check comes after the extraction. Ticks still 15 — this worker, like
-  segment A's, ticks at the segment's end. No stall, no bench command.
-- previous 20:24: batch 3 in flight — `entity/flusher.rs` and
-  `operative/dispatcher.rs` plus the `snapshot_frame` change reaching across
-  `flz_core` (`entity.rs`, `error.rs`, `host/entity.rs`, `command/compact.rs`);
-  154 in / 255 out. Supervisor spot-check: **no byte-pinning test signature is
-  edited** and `effect_record_body_postcard_bytes_are_the_cross_language_fixture`
-  is still present — the run is what proves it, but the port has not reached for
-  the test yet. No bench command run, per the new §8. No stall.
-
-Supervisor verification: `cargo check --workspace --all-targets` exit 0 with no
-flags (re-run here — **board finding 0a is closed**), `cargo +nightly fmt --all
---check` clean, ratchet green after the baseline absorbed the evidenced inbound
-move.
-
-**Measured floors for area 3** (first time rows 3 and 4 have ever been floored):
-row 1 **0.33 %**, row 2 **0.95 %** — both gates, and both tighter than the 0.73/1.91 %
-the programme had recorded; row 3 **9.04 %** and row 4 **6.01 %** — neither can
-resolve 3 %, so both are now *direction, not gate*. Row 5 guard (4.13 %), row 6
-direction (~18 %).
-
-**The design under-priced the instrument and the worker corrected it.** D10 charged
-the bench move ~0.14 % for `Settle`'s poll latency and charged the counting allocator
-nothing. Row 1 allocates 7.018 events/element, so `bump()` runs 7 M times per
-iteration ≈ 25 ms on a 700 ms iteration ≈ **3.6 %** — the whole of the measured
-A→A′ +3.57 %. Conclusion unchanged, and exactly why A′ exists: **arm A is not
-comparable to any later arm on rows 1–4.**
-
-**Row-1 residue: not allocation.** A worktree of `refactor-baseline-1` reads 7.022
-allocs/elem against A′'s 7.018–7.023 — flat to 0.07 %, so area 1 added no allocation
-to the typed path. The residue is instruction count or layout and **this box cannot
-attribute it**: `perf_event_paranoid` = 4 and valgrind absent, both re-verified. Step
-2 of the investigation is done; the stated stop applies.
-
-**Bench wall clock this segment: 39 min** (5.5 arm builds, 33 measurement) against
-area 2's 66 in its closing segment — and that 33 is the one-off floors plus the A′
-pass. Under the new §8 the recurring cost for checkpoints 2–4 is ~2 min of arm build
-each. Two sha comparisons are already rule-2 evidence: `rust_runner` is byte-identical
-A vs A′, so row 6 cannot have moved; `host_loop` differs, so row 5 is not skippable
-at checkpoint 5 unless B5 matches A′.
+`flz_core`'s baseline absorbed +2 (the host `snapshot_frame` wrap), funded by the −90
+that left `sdk/rust/src/entity/flusher.rs`. `sdk/rust` prod_loc 5 938 → 6 028 is the
+§7 ceiling's price and is measuring-only, not blocking.
 
 ## Awaiting the user's decision
 
@@ -305,6 +272,11 @@ with attribution preserved, because the arms are still kept at every checkpoint.
   harmless — the e2e builds via `cargo run`.
 - 1c `sdk/rust/tests/stream_transforms.rs:249` fails under a parallel suite run on a
   loaded box (5 s `wait_until`); same family as `tier_replay_skips…`; area 3.
+- 3b the board's `sdk/rust` `duplicate_pairs = 178` (recorded after segment A from the
+  ratchet's full-repo run) and the worker's own repeated reading of **128** on the
+  same untouched tree are the SAME scan-mode hazard as 3a. Segment B's worker refused
+  to claim a −50 improvement it could not evidence and reported the metric flat. The
+  two numbers must never be compared until the hazard is fixed.
 - 3a **`duplicate_pairs` depends on which areas are scanned in one invocation** —
   `sdk/rust` reads **128** alone, **136** with two sibling areas and **178** full-repo
   on IDENTICAL source, because a cross-area pair is attributed to both areas.
