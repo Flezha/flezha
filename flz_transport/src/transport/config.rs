@@ -84,8 +84,11 @@ impl QuicEntry {
     /// Parse one list entry: a literal address or a name, with an optional
     /// port. Public because a non-Rust SDK reaches it through `flz_nif` with a
     /// single entry in hand.
-    pub fn parse(entry: &str) -> Result<QuicEntry, String> {
-        let invalid = |what: &str| format!("{} entry {:?} is {}", QUIC_ADDRESSES_VAR, entry, what);
+    pub fn parse(entry: &str) -> Result<QuicEntry, QuicListError> {
+        let invalid = |what: &str| QuicListError::InvalidEntry {
+            entry: entry.to_string(),
+            what: what.to_string(),
+        };
 
         // `[::1]:4433` and `[::1]` — the only spelling that separates an IPv6
         // literal from its port.
@@ -146,6 +149,35 @@ impl fmt::Display for QuicEntry {
     }
 }
 
+/// Why the candidate list is refused; each text names the variable and the
+/// rule it broke.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuicListError {
+    /// Only the retired single-address variable is set.
+    RetiredVariable,
+    /// The list is set and names nothing.
+    NoEndpoint,
+    /// One entry is not an address or a name with an optional port.
+    InvalidEntry { entry: String, what: String },
+}
+
+impl fmt::Display for QuicListError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            QuicListError::RetiredVariable => write!(
+                f,
+                "{} is no longer honoured; set {} instead — it takes a comma-separated list \
+                 whose entries may be names or literal addresses",
+                RETIRED_QUIC_ADDRESS_VAR, QUIC_ADDRESSES_VAR
+            ),
+            QuicListError::NoEndpoint => write!(f, "{} names no endpoint", QUIC_ADDRESSES_VAR),
+            QuicListError::InvalidEntry { entry, what } => {
+                write!(f, "{} entry {:?} is {}", QUIC_ADDRESSES_VAR, entry, what)
+            }
+        }
+    }
+}
+
 /// Every address `entries` resolve to on THIS attempt, deduplicated, plus the
 /// entries that failed to resolve — one failed candidate each, named with
 /// its error, never a fatal error. A name may resolve to several addresses;
@@ -169,13 +201,13 @@ pub fn resolve_entries(entries: &[QuicEntry]) -> (Vec<SocketAddr>, Vec<String>) 
 }
 
 /// The controller endpoints this runner may dial, in declared order.
-pub fn quic_addresses() -> Result<Vec<QuicEntry>, String> {
+pub fn quic_addresses() -> Result<Vec<QuicEntry>, QuicListError> {
     quic_addresses_with(None)
 }
 
 /// The candidate list, with the caller's own view of the list variable — see
 /// `socket_dir::resolve_socket_dir` for why a host supplies one.
-pub fn quic_addresses_with(list: Option<&str>) -> Result<Vec<QuicEntry>, String> {
+pub fn quic_addresses_with(list: Option<&str>) -> Result<Vec<QuicEntry>, QuicListError> {
     let from_env = env::var(QUIC_ADDRESSES_VAR).ok();
     let list = list
         .map(str::trim)
@@ -188,17 +220,13 @@ pub fn quic_addresses_with(list: Option<&str>) -> Result<Vec<QuicEntry>, String>
 fn parse_quic_addresses(
     raw: Option<&str>,
     retired: Option<&str>,
-) -> Result<Vec<QuicEntry>, String> {
+) -> Result<Vec<QuicEntry>, QuicListError> {
     if raw.is_none() && retired.is_some() {
-        return Err(format!(
-            "{} is no longer honoured; set {} instead — it takes a comma-separated list \
-             whose entries may be names or literal addresses",
-            RETIRED_QUIC_ADDRESS_VAR, QUIC_ADDRESSES_VAR
-        ));
+        return Err(QuicListError::RetiredVariable);
     }
 
     let list = raw.map(str::trim).filter(|v| !v.is_empty());
-    let entries: Result<Vec<QuicEntry>, String> = list
+    let entries: Result<Vec<QuicEntry>, QuicListError> = list
         .unwrap_or(DEFAULT_QUIC_ADDRESSES)
         .split(',')
         .map(str::trim)
@@ -208,7 +236,7 @@ fn parse_quic_addresses(
 
     let entries = entries?;
     if entries.is_empty() {
-        return Err(format!("{} names no endpoint", QUIC_ADDRESSES_VAR));
+        return Err(QuicListError::NoEndpoint);
     }
 
     Ok(entries)
@@ -326,7 +354,9 @@ mod tests {
             ]
         );
 
-        let refusal = parse_quic_addresses(Some("a.example:http"), None).unwrap_err();
+        let refusal = parse_quic_addresses(Some("a.example:http"), None)
+            .unwrap_err()
+            .to_string();
         assert!(refusal.contains("not a valid port"), "{}", refusal);
     }
 
@@ -343,13 +373,36 @@ mod tests {
 
     #[test]
     fn the_retired_variable_alone_is_refused_naming_its_replacement() {
-        let refusal = parse_quic_addresses(None, Some("127.0.0.1:4433")).unwrap_err();
+        let refusal = parse_quic_addresses(None, Some("127.0.0.1:4433"))
+            .unwrap_err()
+            .to_string();
         assert!(refusal.contains(RETIRED_QUIC_ADDRESS_VAR), "{}", refusal);
         assert!(refusal.contains(QUIC_ADDRESSES_VAR), "{}", refusal);
 
         // Set alongside the replacement it is simply ignored: an operator
         // mid-migration is not stopped by the variable they already replaced.
         assert!(parse_quic_addresses(Some("a.example"), Some("127.0.0.1:4433")).is_ok());
+    }
+
+    #[test]
+    fn every_list_refusal_renders_the_text_it_replaced() {
+        assert_eq!(
+            QuicListError::RetiredVariable.to_string(),
+            "FLEZHA_QUIC_ADDRESS is no longer honoured; set FLEZHA_QUIC_ADDRESSES instead — it \
+             takes a comma-separated list whose entries may be names or literal addresses"
+        );
+        assert_eq!(
+            QuicListError::NoEndpoint.to_string(),
+            "FLEZHA_QUIC_ADDRESSES names no endpoint"
+        );
+        assert_eq!(
+            QuicListError::InvalidEntry {
+                entry: "a:b:c".into(),
+                what: "not a valid port".into()
+            }
+            .to_string(),
+            "FLEZHA_QUIC_ADDRESSES entry \"a:b:c\" is not a valid port"
+        );
     }
 
     #[test]

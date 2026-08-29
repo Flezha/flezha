@@ -1,8 +1,4 @@
-//! Inverse of `entity_state`. Section 4 routes the state binary
-//! through the dispatcher's per-Procedure / per-Entity apply path.
-//! Section 3 ships the wiring stub: any `bin_apply_state` request
-//! returns the canonical `apply_state_not_supported` token until the
-//! dispatcher exposes its apply hook.
+//! `EntityApplyState`: every request is answered with `apply_state_not_supported`.
 
 use super::{CommandAction, Reply};
 use crate::pb::EntityApplyState;

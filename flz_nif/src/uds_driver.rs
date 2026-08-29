@@ -189,22 +189,22 @@ impl UdsDriver {
 
             // Liveness heartbeat: bump once per iteration before any work, so a
             // frozen counter (with a stale last_loop_ms) pinpoints a wedged thread.
-            let now = self.stats.now_ms();
-            self.stats.mark_loop(now, cmd_rx.len() as u64);
+            let now_ms = self.stats.now_ms();
+            self.stats.mark_loop(now_ms, cmd_rx.len() as u64);
 
             let pass = self.collect_events(&events);
             if pass.accept_needed {
                 self.accept_connections();
             }
             // Flush writable streams (backpressure relief)
-            self.flush_dirty(pass.writable, now);
+            self.flush_dirty(pass.writable, now_ms);
             for stream_id in pass.readable {
-                if self.read_stream_data(stream_id, &mut read_buf, now) {
+                if self.read_stream_data(stream_id, &mut read_buf, now_ms) {
                     self.close_stream(stream_id);
                 }
             }
             while let Ok(cmd) = cmd_rx.try_recv() {
-                if self.handle_command(cmd, now) {
+                if self.handle_command(cmd, now_ms) {
                     return Ok(());
                 }
             }
@@ -215,7 +215,7 @@ impl UdsDriver {
                 .filter(|(_, s)| !s.write_buffer.is_empty())
                 .map(|(&id, _)| id)
                 .collect();
-            self.flush_dirty(dirty, now);
+            self.flush_dirty(dirty, now_ms);
             let streams = self.snapshot_streams();
             self.stats.set_streams(streams);
         }
@@ -250,10 +250,10 @@ impl UdsDriver {
 
     /// One NIF command. `true` means the driver was asked to shut down: every
     /// stream is deregistered and the socket file removed.
-    fn handle_command(&mut self, cmd: ServerCommand, now: u64) -> bool {
+    fn handle_command(&mut self, cmd: ServerCommand, now_ms: u64) -> bool {
         match cmd {
             ServerCommand::SendData { stream_id, data } => {
-                self.enqueue_or_close(stream_id, data, now)
+                self.enqueue_or_close(stream_id, data, now_ms)
             }
             ServerCommand::SendFrame {
                 stream_id,
@@ -266,7 +266,7 @@ impl UdsDriver {
                     &message,
                     metadata,
                 );
-                self.enqueue_or_close(stream_id, frame, now);
+                self.enqueue_or_close(stream_id, frame, now_ms);
             }
             ServerCommand::SetActive { stream_id } => {
                 if let Some(state) = self.streams.get_mut(&stream_id) {
@@ -301,17 +301,17 @@ impl UdsDriver {
 
     /// Queue `data` on a stream and flush what it will take now; a broken
     /// stream is reported to its owner and closed.
-    fn enqueue_or_close(&mut self, stream_id: u64, data: Vec<u8>, now: u64) {
-        if enqueue_write(stream_id, data, &mut self.streams, &mut self.poll, now) {
+    fn enqueue_or_close(&mut self, stream_id: u64, data: Vec<u8>, now_ms: u64) {
+        if enqueue_write(stream_id, data, &mut self.streams, &mut self.poll, now_ms) {
             self.report_and_close(stream_id, "write_error");
         }
     }
 
     /// Flush the buffered writes of `stream_ids`; a broken stream is reported
     /// to its owner and closed.
-    fn flush_dirty(&mut self, stream_ids: Vec<u64>, now: u64) {
+    fn flush_dirty(&mut self, stream_ids: Vec<u64>, now_ms: u64) {
         for stream_id in stream_ids {
-            if flush_write_buffer(stream_id, &mut self.streams, &mut self.poll, now) {
+            if flush_write_buffer(stream_id, &mut self.streams, &mut self.poll, now_ms) {
                 self.report_and_close(stream_id, "write_error");
             }
         }
@@ -418,7 +418,7 @@ impl UdsDriver {
 
     /// Read available data from a stream, feed into FrameBuffer, deliver frames.
     /// Returns true if the stream is closed.
-    fn read_stream_data(&mut self, stream_id: u64, read_buf: &mut [u8], now: u64) -> bool {
+    fn read_stream_data(&mut self, stream_id: u64, read_buf: &mut [u8], now_ms: u64) -> bool {
         let state = match self.streams.get_mut(&stream_id) {
             Some(s) => s,
             None => return false,
@@ -437,8 +437,8 @@ impl UdsDriver {
                         Ok(frames) => frames,
                         Err(e) => {
                             eprintln!(
-                                "[flz_nif] UDS frame too large on stream {}: declared {} > max {}",
-                                stream_id, e.declared, e.max
+                                "[flz_nif] UDS frame too large on stream {}: {}",
+                                stream_id, e
                             );
                             let owner = *state.owner.lock().unwrap();
                             send_closed_msg(owner, stream_id, "frame_too_large");
@@ -446,7 +446,7 @@ impl UdsDriver {
                         }
                     };
                     let owner = *state.owner.lock().unwrap();
-                    state.last_read_ms = now;
+                    state.last_read_ms = now_ms;
                     state.frames_read += frames.len() as u64;
                     state.inbox.deliver(owner, stream_id, frames);
                 }
@@ -468,7 +468,7 @@ fn enqueue_write(
     data: Vec<u8>,
     streams: &mut HashMap<u64, StreamState>,
     poll: &mut Poll,
-    now: u64,
+    now_ms: u64,
 ) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
         if would_overflow_write_buffer(
@@ -484,7 +484,7 @@ fn enqueue_write(
 
         state.frames_written += 1;
         state.write_buffer.extend_from_slice(&data);
-        return flush_pending(state, poll, now);
+        return flush_pending(state, poll, now_ms);
     }
     false
 }
@@ -492,13 +492,13 @@ fn enqueue_write(
 /// Attempt to write buffered data to the stream.
 /// If WouldBlock, registers for WRITABLE events so we retry later.
 /// Returns true if the stream is broken (write error).
-fn flush_pending(state: &mut StreamState, poll: &mut Poll, now: u64) -> bool {
+fn flush_pending(state: &mut StreamState, poll: &mut Poll, now_ms: u64) -> bool {
     while !state.write_buffer.is_empty() {
         match state.stream.write(&state.write_buffer) {
             Ok(0) => break,
             Ok(n) => {
                 state.write_buffer.drain(..n);
-                state.last_write_ms = now;
+                state.last_write_ms = now_ms;
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 let _ = poll.registry().reregister(
@@ -529,10 +529,10 @@ fn flush_write_buffer(
     stream_id: u64,
     streams: &mut HashMap<u64, StreamState>,
     poll: &mut Poll,
-    now: u64,
+    now_ms: u64,
 ) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
-        return flush_pending(state, poll, now);
+        return flush_pending(state, poll, now_ms);
     }
     false
 }

@@ -35,7 +35,7 @@ impl CommandAction for MigrationDeserialization {
                         }
                     };
                     if let Err(e) = apply_init_values(&instance, json_str) {
-                        errors.push(e);
+                        errors.push(e.to_string());
                     }
                 }
                 Reply {

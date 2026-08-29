@@ -18,20 +18,16 @@ use flz_transport::transport::FlezhaStream;
 use crate::admission::{admit_from_entity, admit_from_reader};
 use crate::channel::{ChannelDescriptor, ChannelKind, ConsumerEdge};
 use crate::entity::{make_entity_payload, EntityItem, EntitySlot};
+use crate::error::Error;
 use crate::operative::instance::StreamInstance;
 use crate::operative::registry::{Operative, OperativeRegistry};
 use crate::operative::topology::{EntityMode, ProcedureDescriptor};
 use crate::retry::{spawn_edge_ladder, spawn_entry_parse_ladder, EntryParseLadder};
 
-/// Route one channel value to every subscribed consumer, each through its own
-/// edge's transform and key. The one seam a `ConsumerEdge`'s closures are
-/// applied on: the wire-reader path (live delivery and the controller's
-/// re-forwarded replay slice) and an inter-procedure emit both come through
-/// here, so the two can never drift.
-///
-/// A closure that unwinds does not take the routing thread with it — the value
-/// climbs this channel's retry→DLQ ladder, the same one a failing entry parse
-/// rides, and the remaining consumers are still served.
+/// Route one channel value to every consumer through its own edge — the one
+/// seam live delivery, the replay slice and an inter-procedure emit share. A
+/// closure that unwinds sends the value up the channel's ladder; the other
+/// consumers are still served.
 #[allow(clippy::too_many_arguments)]
 pub fn route_to_consumers(
     instance: &Arc<StreamInstance>,
@@ -63,20 +59,16 @@ pub fn route_to_consumers(
                 stream,
                 consumed_offset,
                 replay,
-                e,
+                e.to_string(),
             ),
         }
     }
     deferred
 }
 
-/// Put one value through one edge's transform and deliver everything it
-/// yields. The ONE place a `ConsumerEdge`'s closures become mailbox pushes:
-/// live routing and the retry ladder's re-attempt both call it, so a
-/// re-attempt cannot deliver differently from the attempt it retries.
-///
-/// A transform-free edge — every pre-existing topology — takes the `None` arm
-/// and pays nothing.
+/// One value through one edge's transform and into the mailbox — the ONE
+/// place an edge's closures become pushes, for live routing and the ladder's
+/// re-attempt alike.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn deliver_edge(
     instance: &Arc<StreamInstance>,
@@ -87,8 +79,8 @@ pub(crate) fn deliver_edge(
     consumed_offset: Option<u64>,
     replay: bool,
     producer: Option<&Arc<EntitySlot>>,
-) -> Result<bool, String> {
-    match edge.transform_value(value)? {
+) -> Result<bool, Error> {
+    match edge.transform_value(value).map_err(Error::Routing)? {
         None => deliver_to_consumer(
             instance,
             channel,
@@ -115,9 +107,8 @@ pub(crate) fn deliver_edge(
     }
 }
 
-/// Deliver one host completion's edge value to its named consumer — the
-/// single-edge form of [`route_to_consumers`] for producer-side-evaluated
-/// outputs (the host already ran the edge's transforms and key).
+/// One host completion's edge value to its named consumer; the host already
+/// ran the edge's transforms and key.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn deliver_host_output(
     instance: &Arc<StreamInstance>,
@@ -127,20 +118,20 @@ pub(crate) fn deliver_host_output(
     stream: &Arc<FlezhaStream>,
     consumed_offset: Option<u64>,
     producer: &Arc<EntitySlot>,
-) -> Result<bool, String> {
+) -> Result<bool, Error> {
     let channel = instance
         .topology
         .channel(channel_id)
-        .ok_or_else(|| format!("edge output names unknown channel {channel_id}"))?;
+        .ok_or_else(|| Error::Routing(format!("edge output names unknown channel {channel_id}")))?;
     let edge = channel
         .consumers
         .iter()
         .find(|e| e.procedure == consumer)
         .ok_or_else(|| {
-            format!(
+            Error::Routing(format!(
                 "edge output names procedure {consumer}, not a consumer of channel `{}`",
                 channel.name
-            )
+            ))
         })?;
     // An inter-procedure value is never a replay member: the downstream
     // Procedure receives corrected outputs already in order.
@@ -156,9 +147,9 @@ pub(crate) fn deliver_host_output(
     )
 }
 
-/// Deliver one post-transform value to one consumer's Entity. `Err` carries an
-/// unwinding key closure up to the ladder; every other outcome — an absent
-/// registry, an unmapped static key — is the pre-existing silent skip.
+/// One post-transform value to one consumer's Entity. `Err` is an unwinding
+/// key closure; an absent registry or an unmapped static key is a silent
+/// skip.
 #[allow(clippy::too_many_arguments)]
 fn deliver_to_consumer(
     instance: &StreamInstance,
@@ -169,7 +160,7 @@ fn deliver_to_consumer(
     consumed_offset: Option<u64>,
     replay: bool,
     producer: Option<&Arc<EntitySlot>>,
-) -> Result<bool, String> {
+) -> Result<bool, Error> {
     let policy = channel.overflow_policy;
     let mut deferred = false;
     // The one place the two admission forms are chosen between: a value with a
@@ -198,17 +189,14 @@ fn deliver_to_consumer(
     Ok(deferred)
 }
 
-/// A dynamic consumer: one Entity by key, minted on first sight. The key is
-/// total for typed classes — `build_topology` refuses an unkeyed edge into a
-/// dynamic consumer. A host class's key rides the payload itself (prepare
-/// crossing / producer-side evaluation), so it is consulted when no edge
-/// closure exists.
+/// A dynamic consumer: one Entity by key, minted on first sight. A host
+/// class's key rides the payload, consulted when no edge closure exists.
 fn deliver_dynamic(
     instance: &StreamInstance,
     edge: &ConsumerEdge,
     value: &Arc<dyn Any + Send + Sync>,
     admit: &mut impl FnMut(&Arc<EntitySlot>),
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let Some(registry) = instance
         .dynamic_registries
         .get(edge.procedure as usize)
@@ -216,7 +204,7 @@ fn deliver_dynamic(
     else {
         return Ok(());
     };
-    let key = match edge.key_of(value.as_ref())? {
+    let key = match edge.key_of(value.as_ref()).map_err(Error::Routing)? {
         Some(k) => Some(k),
         None => value
             .downcast_ref::<crate::host::HostPayload>()
@@ -238,7 +226,6 @@ fn deliver_dynamic(
     Ok(())
 }
 
-/// A single-mode consumer: entity 0.
 fn deliver_single(
     instance: &StreamInstance,
     procedure_id: u32,
@@ -253,15 +240,9 @@ fn deliver_single(
     }
 }
 
-/// A static consumer: the declared Entities the value's keys name. Host
-/// fan-out keys ride the payload (prepare crossing / producer-side
-/// evaluation); an empty set means every declared entity — the entities-for
-/// default. A typed class answers through its `entities_for_erased`.
-///
-/// A statically keyed class partitions by leaving its out-of-range declared
-/// Entities idle: one filter covers the named-key routes and the broadcast
-/// alike. Unlike a dynamic key this is never a park — a declared entity the
-/// member does not own is not a mis-route, it is somebody else's entity.
+/// A static consumer: the declared Entities the value's keys name, empty
+/// meaning all of them. A partition member leaves its out-of-range declared
+/// Entities idle — not a mis-route, somebody else's entity.
 fn deliver_static(
     instance: &StreamInstance,
     procedure_id: u32,
@@ -308,15 +289,10 @@ fn deliver_static(
     }
 }
 
-/// Close every Entity's replayed slice and wake their drains to run it.
-///
-/// A broadcast rather than a marker riding the slice's last input, because it
-/// has to be: an input routes to exactly one Entity by key, so a marker on the
-/// last one would reach one Entity and leave every other Entity that buffered
-/// slice members holding them forever.
-///
-/// Arrives on the frame-handling thread after every frame of the slice, so a
-/// Entity cannot still be receiving members when its slice is closed.
+/// Close every Entity's replayed slice and wake their drains. A broadcast,
+/// not a marker on the last input: an input reaches one Entity by key. On
+/// the frame thread after every slice frame, so no Entity is still receiving
+/// members when its slice closes.
 pub fn end_replay_slice(instance: &StreamInstance) {
     let statics = instance.entities.iter().flatten().cloned();
     let dynamics = instance.dynamic_registries.iter().flatten().flat_map(|r| {
@@ -354,29 +330,17 @@ pub fn send_plugin_frame(
     }
 }
 
-/// Stream-reader handle for the StreamOperative model. Cheap to clone; carries a
-/// reference to the live StreamOperative-instance registry. Per-Entity drain
-/// scheduling goes through the poll core.
+/// The stream readers' handle onto the live instance registry.
 #[derive(Clone)]
 pub struct OperativeDispatchHandle {
     pub registry: Arc<OperativeRegistry>,
 }
 
 impl OperativeDispatchHandle {
-    /// Dispatch a frame from the wire. Resolves the entry channel by
-    /// `metadata["channel"]` (or the StreamOperative's first declared input
-    /// channel as the documented default), wraps the payload bytes via
-    /// the channel's `wrap_input`, and pushes the typed
-    /// `Arc<dyn Any + Send + Sync>` onto every consumer Procedure's
-    /// entity mailbox.
-    ///
-    /// The end of a replayed slice (`flz.replay_end`) is a broadcast, not an
-    /// input — an input routes to one Entity by key, so a marker riding one
-    /// would strand the slice every *other* Entity buffered; a host class may
-    /// hold slice members in the prepare crossing, so the broadcast defers
-    /// behind them. The input-liveness signal is taken before anything can
-    /// decline the frame: a payload that fails to parse still proves the feed
-    /// is alive, and a host class's staged payload never reaches the routing.
+    /// A frame off the wire into the operative it names: the entry channel
+    /// resolved, the bytes wrapped, the value routed. The input-liveness
+    /// signal is taken before anything can decline the frame; a replay-end
+    /// broadcast defers behind a host class's staged slice members.
     pub fn dispatch(
         &self,
         instance_id: &str,
@@ -432,8 +396,8 @@ impl OperativeDispatchHandle {
 }
 
 impl OperativeDispatchHandle {
-    /// The stream instance a frame names. A workflow instance takes the frame
-    /// as inbox input here and answers `None`; an unknown id is reported.
+    /// The stream instance a frame names; a workflow instance takes it as
+    /// inbox input and answers `None`.
     fn stream_instance(
         &self,
         instance_id: &str,
@@ -456,10 +420,8 @@ impl OperativeDispatchHandle {
     }
 }
 
-/// What the controller stamped on a forwarded frame: the durable input-log
-/// offset under the effectively-once tier (threaded to the invocation so the
-/// atomic effect record carries the same offset as consumed-offset), and
-/// whether the frame is a replayed slice member.
+/// What the controller stamped: the input-log offset and whether the frame
+/// is a replayed slice member.
 fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, bool) {
     let consumed_offset = metadata
         .get("flz.offset")
@@ -467,11 +429,8 @@ fn frame_facts(metadata: &HashMap<String, String>) -> (Option<u64>, bool) {
     (consumed_offset, metadata.contains_key("flz.replay"))
 }
 
-/// Workflow inbox: route post-start input to the running driver's inbox
-/// instead of dropping it. Dropped only if the instance is not running / has
-/// no live inbox. A durable instance's input was journaled to its inbox
-/// before this frame was forwarded; the stamped offset rides into the
-/// iteration commit as the consumed offset.
+/// Post-start input into the running driver's inbox with its stamped offset;
+/// dropped only when the instance is not running.
 fn route_inbox_frame(
     instance: &crate::workflow::instance::WorkflowInstance,
     instance_id: &str,
@@ -490,8 +449,8 @@ fn route_inbox_frame(
     }
 }
 
-/// The entry channel a frame names — `metadata["channel"]`, or the first
-/// declared entry channel as the documented default. `None` is reported.
+/// `metadata["channel"]`, or the first declared entry channel; `None` is
+/// reported.
 fn resolve_entry_channel(
     instance: &StreamInstance,
     instance_id: &str,
@@ -525,10 +484,9 @@ fn resolve_entry_channel(
     }
 }
 
-/// The typed value a frame becomes on its entry channel, or `None` when it
-/// left the reader's hands: a host class whose consumers need keys / event
-/// times stages the payload for the prepare crossing instead of enqueueing
-/// directly, and a failing parse rides the ladder or is reported.
+/// The value a frame becomes on its entry channel, or `None` when it left
+/// the reader's hands — staged for a prepare crossing, or a failing parse on
+/// the ladder.
 fn enter_channel(
     instance: &Arc<StreamInstance>,
     channel_id: u32,
@@ -558,11 +516,9 @@ fn enter_channel(
     )
 }
 
-/// The wire bytes through the channel's `wrap_input`. Typed entries
-/// (`sdk-graph-authoring`): a failing parse is classified like a failing
-/// invocation and rides the channel's retry→DLQ ladder, so the wire bytes are
-/// kept for the re-attempts and the park record. Passthrough `Vec<u8>` /
-/// `String` entries keep the drop-and-log path (no clone on the hot path).
+/// The wire bytes through `wrap_input`. A parsed entry's failure rides the
+/// ladder, so its bytes are kept; a passthrough entry keeps the drop-and-log
+/// path and no clone.
 fn wrap_entry(
     instance: &Arc<StreamInstance>,
     channel_id: u32,

@@ -45,7 +45,7 @@ them:
 - Test runner fat jar — `test/apps/java_runner/dist/java_runner.jar`
 
 Refresh all three with one command after touching anything under
-`sdk/java/`, `flz_jni/`, `flz_transport/`, or `test/apps/java_runner/`:
+`sdk/java/`, `flz_core_ffi/`, `flz_core/`, `flz_transport/`, or `test/apps/java_runner/`:
 
 ```bash
 scripts/build-dist.sh             # host toolchain (auto-installs zig if missing)

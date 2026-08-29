@@ -23,7 +23,7 @@ commands below from the project *root* directory.
 > [`../build/README.md`](../build/README.md) — the one-shot wrapper is
 > `scripts/build-dist.sh --docker`. CI never builds those artifacts; it
 > consumes the committed copies, so any change under `sdk/java/`,
-> `flz_jni/`, `flz_transport/`, or `test/apps/java_runner/`
+> `flz_core_ffi/`, `flz_core/`, `flz_transport/`, or `test/apps/java_runner/`
 > needs an artifact refresh + commit before it merges.
 
 ## Quick reference

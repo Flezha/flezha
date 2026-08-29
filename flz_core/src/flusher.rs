@@ -1,30 +1,9 @@
-//! Per-Entity flusher per `operative-state-persistence/design.md`
-//! Decision 2.
-//!
-//! Single OS thread per process, lazy-initialized via `OnceLock` on the
-//! first `define_stream::<R>()` for a Procedure with a non-`NoChange`
-//! Change. The thread runs an infinite loop: sleep for `linger_ms`,
-//! iterate registered Entities, drain non-empty buffers, build wire
-//! frames, hand them to the per-Entity `send_frame` fn pointer.
-//!
-//! Frame layout (matches controller `Flezha.State.Wire.decode_frame/1`):
-//!
-//! ```text
-//! [entity_id_len: u16 BE]
-//! [entity_id_bytes]   // [rc_len:u8][rc][sh_len:u8][sh][pk_len:u16 BE][pk]
-//! [seq: u64 BE]
-//! [header: 16B]
-//! [body_len: u32 BE]
-//! [body]                 // change_bytes (or snapshot_bytes for compactions)
-//! [crc32: u32 BE over body]
-//! ```
-//!
-//! The structured `entity_id_bytes` carries `(operative_class, procedure_id,
-//! entity_key)` so the controller can route the record to the right
-//! per-Entity WAL file without a side-table mapping. Header is the
-//! 16-byte `HeaderTemplate::stamp` output (per Decision 8); the trailing
-//! CRC32 covers the body so the controller can validate framing without
-//! re-decoding the header.
+//! The per-process drain thread and the wire frames it builds: every linger
+//! tick it drains each registered Entity's buffer into `entity_state_change`
+//! / `entity_effect_record` frames (layout in `docs/sdk/state_persistence.md`)
+//! and ships them through the state sink. The invariant: a change leaves its
+//! buffer exactly once, under a seq fetched from the Entity's own counter, so
+//! a background drain and an inline flush never gap or duplicate.
 
 use std::any::Any;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -38,12 +17,11 @@ pub use crate::effect::*;
 use crate::header::HeaderTemplate;
 use crate::util::LockRecover;
 
-/// Global identifier for a registered Entity entry. Assigned at
-/// flusher-registration time; opaque to callers.
+/// A registered Entity's flusher entry, opaque to callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FlusherEntryId(u64);
 
-/// Errors returned from the wire stub or its controller-wired replacement.
+/// Why the sink could not ship a frame.
 #[derive(Debug, thiserror::Error)]
 pub enum SendError {
     #[error("transport down: {0}")]
@@ -52,30 +30,21 @@ pub enum SendError {
     Other(String),
 }
 
-/// Ship one already-built wire frame under a given data-stream payload-id. The
-/// installed sink wraps the frame in the payloader envelope with that id, so the
-/// same reliable sink carries `entity_state_change` and the saga
-/// `compensation_intent` / `compensation_done` records.
+/// Ship one built frame under a data-stream payload id.
 pub type SendFrameFn = Arc<dyn Fn(&str, &[u8]) -> Result<(), SendError> + Send + Sync + 'static>;
 
-/// Per-Entity entry registered with the flusher.
 struct FlusherEntry {
     entity_identity: Arc<Vec<u8>>,
     buffer: Arc<Mutex<Box<dyn FlushableBuffer>>>,
     persistence_enabled: bool,
     change_seq: Arc<AtomicU64>,
     header: HeaderTemplate,
-    /// This Entity's push-holdback flag (`EntitySlot::push_deferred`). While it
-    /// is set the drain pass skips the buffer: an inter-procedure output has no
-    /// durable copy, so shipping a record — and with it the consumed offset —
-    /// while the output derived from it is still undelivered would let a crash
-    /// leave the offset durable, the replay floor skipping that input, and the
-    /// consumer never fed.
+    /// The Entity's `push_deferred`: while set the drain skips the buffer, or
+    /// a consumed offset could be durable ahead of an undelivered edge output.
     push_deferred: Arc<AtomicBool>,
 }
 
-/// Encode `(operative_class, procedure_id, entity_key)` into the wire-format
-/// `entity_id_bytes` consumed by the controller's `decode_entity_id`.
+/// The wire `entity_id_bytes` the controller's `decode_entity_id` reads.
 pub fn encode_entity_identity(
     operative_class: &str,
     procedure_id: &str,
@@ -99,23 +68,16 @@ pub fn encode_entity_identity(
     out
 }
 
-/// One drained wire frame plus the data-stream payload id it ships under
-/// (`entity_state_change` for plain changes, `entity_effect_record` for
-/// effect records).
+/// One drained frame and the payload id it ships under.
 pub struct FlushFrame {
     pub payload_id: &'static str,
     pub bytes: Vec<u8>,
 }
 
-/// Type-erased per-Entity flush buffer. The dispatcher downcasts to
-/// `TypedBuffer<S>` when constructing a `StateHandle`; the flusher only
-/// sees the trait surface.
+/// The erased per-Entity flush buffer as the flusher sees it.
 pub trait FlushableBuffer: Send + Any {
-    /// Drain the buffer. Applies coalescing and produces wire frames in
-    /// emission order. Returns `(post_coalesce_count, frames)`.
-    ///
-    /// `change_seq` is fetched-and-added once per produced frame; the
-    /// returned frames carry seq values in increasing order.
+    /// Coalesce and frame everything flushable, in emission order, one
+    /// `change_seq` fetch per frame; `(post_coalesce_count, frames)`.
     fn drain_to_frames(
         &mut self,
         entity_identity: &[u8],
@@ -123,25 +85,17 @@ pub trait FlushableBuffer: Send + Any {
         header: &HeaderTemplate,
     ) -> (usize, Vec<FlushFrame>);
 
-    /// Whether the underlying buffer is empty. The flusher uses this to
-    /// avoid building frames when an Entity has had no `state.apply`
-    /// calls in the linger window. An open checkpoint interval does not
-    /// count: its changes are not flushable on their own.
+    /// Nothing flushable; an open checkpoint interval does not count.
     fn is_empty(&self) -> bool;
 
-    /// Drop an open checkpoint interval's accumulated changes. A restore
-    /// re-seats the Entity on a past in which they were never applied, and
-    /// the controller re-forwards the inputs that produced them.
+    /// Drop an open checkpoint interval's accumulation, for a restore.
     fn discard_staged(&mut self);
 
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-/// Build one `format_id = 3` timer-ops record: the body is the postcard
-/// `Vec<TimerOp>` the restore fold applies to the Entity's pending set. Ships
-/// under the ordinary `entity_state_change` payload-id — the controller stores
-/// it, truncates it and hands it back with every other record, and never
-/// decodes it.
+/// One `format_id = 3` timer-ops record, shipped under the ordinary
+/// `entity_state_change` id; the controller never decodes it.
 pub fn build_entity_timer_ops_frame(
     entity_identity: &[u8],
     seq: u64,
@@ -157,8 +111,7 @@ pub fn build_entity_timer_ops_frame(
     build_entity_frame(entity_identity, seq, &header_bytes, &body)
 }
 
-/// Build one wire frame from already-serialized body bytes. Used by the
-/// snapshot path (where the body is the postcard-encoded `Self::State`).
+/// One frame from an already-serialized body.
 pub fn build_entity_frame(
     entity_identity: &[u8],
     seq: u64,
@@ -178,10 +131,8 @@ pub fn build_entity_frame(
     frame
 }
 
-/// Single per-process flusher. Spawns one OS thread named `flezha-flusher`
-/// on first registration of a non-`NoChange` Entity. Programs without
-/// any non-`NoChange` Procedures never reach `instance()`, so no thread is
-/// spawned.
+/// The per-process flusher; its `flezha-flusher` thread starts on the first
+/// registration.
 pub struct EntityFlusher {
     entries: Arc<DashMap<FlusherEntryId, FlusherEntry>>,
     next_entry_id: AtomicU64,
@@ -195,8 +146,6 @@ const ENV_LINGER_MS: &str = "FLEZHA_FLUSH_LINGER_MS";
 const DEFAULT_LINGER_MS: u64 = 5;
 
 impl EntityFlusher {
-    /// Lazily-initialized per-process flusher. Spawns the
-    /// `flezha-flusher` OS thread on first call.
     pub fn instance() -> Arc<EntityFlusher> {
         FLUSHER
             .get_or_init(|| {
@@ -217,17 +166,12 @@ impl EntityFlusher {
             .clone()
     }
 
-    /// Drop an Entity's flusher entry. Called when a dynamic-mode
-    /// Entity is evicted by the reaper so its (now-orphaned) flush
-    /// buffer stops being drained every linger tick. Idempotent — a
-    /// missing id is a no-op.
+    /// Drop an evicted Entity's entry. Idempotent.
     pub fn deregister(&self, id: FlusherEntryId) {
         self.entries.remove(&id);
     }
 
-    /// Register an Entity with the flusher. Returns an opaque id used
-    /// to deregister at Entity teardown (dynamic-mode eviction calls
-    /// [`Self::deregister`]; static Entities live for the process).
+    /// Register an Entity's buffer; the id deregisters it on eviction.
     pub fn register(
         &self,
         entity_identity: Arc<Vec<u8>>,
@@ -252,8 +196,7 @@ impl EntityFlusher {
         id
     }
 
-    /// Test-only: synchronously drive one drain pass so unit tests can
-    /// observe drained state without sleeping for the linger window.
+    /// One synchronous drain pass, for tests.
     #[doc(hidden)]
     pub fn drain_now_for_tests(&self) {
         self.drain_pass();
@@ -288,19 +231,8 @@ impl EntityFlusher {
     }
 }
 
-/// Drain ONE entity's buffer to frames and ship them through the live
-/// global sink. Shared between the background `drain_pass` (one call per
-/// registered entry per linger tick) and the synchronous flush-before-emit
-/// path on the dispatch thread. The caller holds the buffer lock; this
-/// function does not re-lock, so it cannot self-deadlock against the
-/// singleton flusher thread.
-///
-/// The sink resolves the current secondary stream each call (so a
-/// reconnect's freshly-wired stream is used without re-registering this
-/// entity) and buffers frames in its reconnect ring when the stream is
-/// down. Frames carry seq values fetched from the same `change_seq`, so
-/// concurrent background + inline drains stay gap-free and never duplicate
-/// a record (each change is moved out of the buffer exactly once).
+/// Drain ONE entity's buffer and ship the frames, for the background pass
+/// and the inline flush-before-emit alike. The caller holds the buffer lock.
 pub fn flush_one(
     buffer: &mut dyn FlushableBuffer,
     entity_identity: &[u8],
@@ -330,10 +262,8 @@ pub fn flush_one(
     }
 }
 
-/// Build one `entity_effect_record` frame from an already-bytes body
-/// (effectively-once tier), stamped `format_id = 2` so mixed WALs stay
-/// readable. The typed layer's generic builder serializes its `S::Change`
-/// values first and produces this exact layout.
+/// One `entity_effect_record` frame from a serialized body, stamped
+/// `format_id = 2`.
 pub fn build_effect_record_frame(
     entity_identity: &[u8],
     seq: u64,
@@ -350,9 +280,8 @@ pub fn build_effect_record_frame(
     build_entity_frame(entity_identity, seq, &header_bytes, &body_bytes)
 }
 
-/// Frame pre-encoded change bodies plus a trailing timer-ops record — the
-/// drain tail both buffer kinds (`TypedBuffer<S>` after serializing, the
-/// host's `BytesBuffer` directly) produce identically.
+/// Frame encoded change bodies plus a trailing timer-ops record — the drain
+/// tail every buffer kind produces.
 pub fn frame_change_bodies(
     bodies: Vec<Vec<u8>>,
     timer_ops: Vec<crate::schema::TimerOp>,

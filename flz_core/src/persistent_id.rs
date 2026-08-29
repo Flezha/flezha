@@ -1,18 +1,8 @@
-//! Self-owned, durable **stable identity** for the runner.
-//!
-//! Created once on first boot and persisted at `FLEZHA_RUNNER_ID_PATH`
-//! (atomically: temp file + `rename`). The controller trusts this value as the
-//! operative-binding key, so it must survive a process restart on the same
-//! node. Derived for readability as `"<namespace>-<profile_hash8>-<rand6>"`
-//! (profile_hash8 is a stable hash of the declared factory set; the boot-time
-//! hostname is deliberately NOT load-bearing — a container hostname churns on
-//! recreate, which would break binding continuity).
-//!
-//! Degradation (no writable path): a fresh per-boot id is generated, cached in
-//! memory for the life of the process (so reconnects present the SAME id), and
-//! a single `warn` is logged. A restart then presents a NEW id whose old
-//! binding ages out via `FLEZHA_RUNNER_KEEPALIVE` — i.e. reconnect-as-new.
-//! The runner never refuses to start or crashes on missing persistence.
+//! The runner's durable stable identity, persisted at `FLEZHA_RUNNER_ID_PATH`
+//! and trusted by the controller as the binding key. The invariant: one
+//! process presents one id on every connect — loaded, or derived once and
+//! cached when the path is unwritable — and never refuses to start over it.
+//! The hostname is deliberately not load-bearing: a container's churns.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -34,17 +24,15 @@ pub fn id_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(DEFAULT_ID_PATH))
 }
 
-/// The runner's stable identity for this process. Loads the persisted id if
-/// present; otherwise derives one from `namespace` + the declared factory set,
-/// persists it best-effort, and caches it. Subsequent calls (including every
-/// reconnect) return the same cached value.
+/// The runner's stable identity: loaded, or derived from `namespace` and
+/// the factory set, persisted best-effort, and cached for the process.
 pub fn stable_id(namespace: &str, factory_ids: &[String]) -> String {
     STABLE_ID
-        .get_or_init(|| derive_or_load(&id_path(), namespace, factory_ids))
+        .get_or_init(|| load_or_derive(&id_path(), namespace, factory_ids))
         .clone()
 }
 
-fn derive_or_load(path: &Path, namespace: &str, factory_ids: &[String]) -> String {
+fn load_or_derive(path: &Path, namespace: &str, factory_ids: &[String]) -> String {
     if let Some(existing) = load_from(path) {
         return existing;
     }
@@ -65,10 +53,8 @@ fn derive_or_load(path: &Path, namespace: &str, factory_ids: &[String]) -> Strin
     id
 }
 
-/// `"<namespace>-<profile_hash8>-<rand6>"`. The profile hash is order-independent
-/// (factory ids are sorted first) and dependency-free (FNV-1a), so the same
-/// runner profile reads the same way across boots; the random suffix keeps two
-/// fresh runners of the same profile distinct on first boot.
+/// `"<namespace>-<profile_hash8>-<rand6>"`: an order-independent hash of the
+/// factory set, and a suffix that keeps two fresh runners distinct.
 fn derive_id(namespace: &str, factory_ids: &[String]) -> String {
     let mut ids: Vec<&str> = factory_ids.iter().map(String::as_str).collect();
     ids.sort_unstable();
@@ -191,13 +177,13 @@ mod tests {
     }
 
     #[test]
-    fn derive_or_load_reloads_a_persisted_id() {
-        // First call derives + persists; a second derive_or_load against the
+    fn load_or_derive_reloads_a_persisted_id() {
+        // First call derives + persists; a second load_or_derive against the
         // same path returns the SAME id (binding continuity across restart).
         let path = tmp_path("reload");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
-        let first = derive_or_load(&path, "ns", &["f1".to_string()]);
-        let second = derive_or_load(&path, "ns", &["f1".to_string()]);
+        let first = load_or_derive(&path, "ns", &["f1".to_string()]);
+        let second = load_or_derive(&path, "ns", &["f1".to_string()]);
         assert_eq!(first, second);
         assert_eq!(load_from(&path), Some(first));
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
@@ -206,14 +192,14 @@ mod tests {
     #[test]
     fn unwritable_path_degrades_to_a_fresh_id_without_panicking() {
         // A path under a non-existent, non-creatable parent (a file used as a
-        // directory) makes persist fail; derive_or_load must still return a
+        // directory) makes persist fail; load_or_derive must still return a
         // usable id and never panic (degradation contract).
         let mut blocker = std::env::temp_dir();
         blocker.push(format!("flezha-pid-blocker-{}", std::process::id()));
         std::fs::write(&blocker, b"x").unwrap();
         let mut path = blocker.clone();
         path.push("nested"); // parent is a FILE → create_dir_all fails
-        let id = derive_or_load(&path, "ns", &["f1".to_string()]);
+        let id = load_or_derive(&path, "ns", &["f1".to_string()]);
         assert!(id.starts_with("ns-"), "degraded id is still derived: {id}");
         assert_eq!(load_from(&path), None, "nothing was persisted");
         let _ = std::fs::remove_file(&blocker);

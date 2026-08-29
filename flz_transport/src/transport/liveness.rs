@@ -1,24 +1,9 @@
-//! Shared control-channel liveness, used by BOTH SDKs — the Rust SDK's
-//! `sock_conn` reader and the Java SDK via `flz_jni`'s control reader. One
-//! implementation, one set of env knobs, so Rust/Java parity holds by
-//! construction.
-//!
-//! Two guarantees:
-//!   1. First-frame ack-deadline — a freshly opened control channel must see
-//!      the controller's first frame (the assign-runner-id ack) within
-//!      `FLEZHA_CONTROL_ACK_TIMEOUT_MS`. A controller mid-shutdown accepts the
-//!      socket but never registers us (the warm-restart hang); without this
-//!      bound the reader blocks forever and the runner never reaches a live
-//!      controller.
-//!   2. Steady-state liveness — after the ack, an idle watchdog re-arms on
-//!      every inbound frame; if the channel sees nothing for
-//!      `FLEZHA_CONTROL_IDLE_TIMEOUT_MS` (a half-open / wedged controller the
-//!      OS never surfaces as a read error) the reader drives reconnect. The
-//!      runner's jittered keepalive ping keeps a healthy-but-quiet channel
-//!      inside the window, so the watchdog never fires on a live controller.
-//!
-//! Both deadlines are enforced with `FlezhaStream::set_read_timeout`, honored
-//! on UDS and — since this change — on QUIC (see `quic::ChannelReader`).
+//! Control-channel liveness, one implementation for every SDK: a first-frame
+//! ack deadline (`FLEZHA_CONTROL_ACK_TIMEOUT_MS`, so a controller that
+//! accepts but never registers cannot hold the reader forever) and a
+//! steady-state idle watchdog (`FLEZHA_CONTROL_IDLE_TIMEOUT_MS`, re-armed by
+//! every inbound frame) that the runner's jittered keepalive ping keeps a
+//! healthy channel inside. Both are read timeouts on `FlezhaStream`.
 
 use std::time::Duration;
 

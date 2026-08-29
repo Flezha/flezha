@@ -1,15 +1,7 @@
-//! StreamOperative class + instance registries.
-//!
-//! `OperativeClassRegistry`: process-global; one entry per StreamOperative class. Holds
-//! the immutable `Arc<OperativeTopology>` produced by `define_stream::<R>()`.
-//! Looked up by controller-facing `factory_id` when `AddOperative` arrives.
-//!
-//! `OperativeRegistry`: per-`RunnerNode`; one entry per
-//! `AddOperative` (instance_id). Reuses the DashMap pattern from the
-//! pre-change `OperativeRegistry` so concurrent reader/writer access is
-//! procedureed. Values are a sealed [`Operative`] — operative or workflow — so the
-//! dispatch boundary resolves the variant once per frame; the `Arc` keeps
-//! map values pointer-sized.
+//! The class registry (process-global, by `factory_id`) and the per-runner
+//! instance registry (by `instance_id`), whose values are a sealed
+//! [`Operative`] — stream or workflow — so the dispatch boundary resolves the
+//! kind once per frame.
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
@@ -19,12 +11,7 @@ use crate::operative::instance::StreamInstance;
 use crate::operative::topology::OperativeTopology;
 use crate::workflow::instance::WorkflowInstance;
 
-/// A control-plane-managed unit instance. Sealed two-variant enum: a new kind
-/// must be handled at every match, and the 2-variant match keeps the operative hot
-/// path branch-predictable rather than devirtualizing a single variant. Each
-/// variant carries its per-instance runtime state — a workflow operative's
-/// cancel/inbox/Entities live on its [`WorkflowInstance`] (no workflow-specific
-/// process-global).
+/// A bound instance of either kind, carrying its own runtime state.
 pub enum Operative {
     Stream(Arc<StreamInstance>),
     Workflow(Arc<WorkflowInstance>),
@@ -33,15 +20,12 @@ pub enum Operative {
 static CLASS_REGISTRY: LazyLock<RwLock<HashMap<&'static str, Arc<OperativeTopology>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-/// Overwrite-on-insert: re-registering a factory id replaces its topology,
-/// so a restarted runner generation (or a re-run inventory harvest) is
-/// idempotent rather than a collision.
+/// Re-registering a factory id replaces its topology.
 pub fn register_class(factory_id: &'static str, topology: Arc<OperativeTopology>) {
     CLASS_REGISTRY.write().unwrap().insert(factory_id, topology);
 }
 
-/// On-demand removal (`FlezhaRunner::remove_stream`). Idempotent on an
-/// unknown id.
+/// Idempotent on an unknown id.
 pub fn unregister_class(factory_id: &str) {
     CLASS_REGISTRY.write().unwrap().remove(factory_id);
 }
@@ -54,17 +38,10 @@ pub fn class_factory_ids() -> Vec<&'static str> {
     CLASS_REGISTRY.read().unwrap().keys().copied().collect()
 }
 
-/// The SDK language to advertise for `factory_id`, from whichever class
-/// registry holds it.
-///
-/// The one lookup every factory advertisement reads — the connect init frame
-/// and `UpdateFactories` alike — so no veneer restates the byte it already
-/// declared to the core, and the two frames cannot disagree.
-///
-/// A factory this runner declared no class for answers
+/// The SDK language to advertise for `factory_id` — the one lookup both
+/// advertisements read. An undeclared factory answers
 /// [`crate::header::SDK_LANG_UNSPECIFIED`], which the controller refuses to
-/// place rather than guessing at. That default lives here, once: a second
-/// spelling at a call site is exactly how the two halves of the seam drift.
+/// place.
 pub fn sdk_lang_for_factory(factory_id: &str) -> u8 {
     get_class(factory_id)
         .map(|topology| topology.sdk_lang)
@@ -97,14 +74,11 @@ impl OperativeRegistry {
         );
     }
 
-    /// Resolve the unit variant for `instance_id` — the per-frame dispatch
-    /// lookup.
     pub fn get_operative(&self, instance_id: &str) -> Option<Arc<Operative>> {
         self.inner.get(instance_id).map(|r| Arc::clone(r.value()))
     }
 
-    /// Resolve `instance_id` only when it is a operative; `None` for a workflow or
-    /// an absent id.
+    /// `None` for a workflow or an absent id.
     pub fn get_stream(&self, instance_id: &str) -> Option<Arc<StreamInstance>> {
         self.inner
             .get(instance_id)
@@ -114,8 +88,7 @@ impl OperativeRegistry {
             })
     }
 
-    /// Resolve `instance_id` only when it is a workflow operative; `None` for a
-    /// stream or an absent id.
+    /// `None` for a stream or an absent id.
     pub fn get_workflow(&self, instance_id: &str) -> Option<Arc<WorkflowInstance>> {
         self.inner
             .get(instance_id)
@@ -125,10 +98,7 @@ impl OperativeRegistry {
             })
     }
 
-    /// Locate a live workflow Entity slot by its wire identity, for the inbound
-    /// `RestoreInitState` handler (the stream scan does not see workflow
-    /// Entities). Returns the owning instance (to record the restore against its
-    /// gate) and the matched slot.
+    /// A live workflow Entity slot by wire identity, with its owning instance.
     pub fn find_workflow_entity(
         &self,
         entity_id: &[u8],
@@ -145,9 +115,7 @@ impl OperativeRegistry {
         self.inner.remove(instance_id).map(|(_, v)| v)
     }
 
-    /// Live instances of `factory_id`, both kinds — the removal check's
-    /// input. Run on the coordinator loop so it is serialized with
-    /// `AddOperative` handling.
+    /// Live instances of `factory_id`, both kinds.
     pub fn count_by_factory(&self, factory_id: &str) -> usize {
         self.inner
             .iter()
@@ -162,8 +130,7 @@ impl OperativeRegistry {
         self.inner.contains_key(instance_id)
     }
 
-    /// Snapshot of the operative instances only — workflow carry no serializable
-    /// state, so the shutdown snapshot and `get_operatives` view skip them.
+    /// The stream instances; a workflow carries no serializable state.
     pub fn snapshot_stream(&self) -> HashMap<String, Arc<StreamInstance>> {
         self.inner
             .iter()

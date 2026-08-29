@@ -1,31 +1,9 @@
-//! Graceful-shutdown handler for the Rust SDK.
-//!
-//! On graceful shutdown — SIGTERM (Kubernetes pre-stop), `Drop` of the SDK
-//! handle, or an explicit `disconnect()` — the SDK serializes each
-//! currently-running operative's state via the same per-driver path used
-//! for `MigrationSerialization` and emits one
-//! `RunnerShutdownNotification` per operative on the control channel.
-//! The controller overwrites its `Overwatch.state.snapshot` with the supplied
-//! binary so the next reconnecting runner picks up the runner's true
-//! final state — see ship-fresh-state-on-sdk-shutdown.
-//!
-//! ## Timing contract
-//!
-//! - The SDK awaits `RunnerShutdownAck` per operative with a **2 s
-//!   per-operative timeout**, parallelised across operatives so total
-//!   wait is bounded by 2 s (not 2N s).
-//! - The per-operative serializer step is capped at the controller's
-//!   `cross_node_request_timeout` ceiling (**10 s**). Concrete `StreamOperative`
-//!   impls with multi-second serializers should override `bin_apply_state`
-//!   to keep below that cap.
-//! - On timeout the SDK exits unconditionally and SHALL NOT block its
-//!   container's shutdown grace period.
-//!
-//! ## SIGKILL is out of scope
-//!
-//! `kill -9` (SIGKILL) bypasses this handler by definition. The controller's
-//! `Overwatch.state.snapshot` falls back to the most recent periodic
-//! snapshot, exactly as today.
+//! Graceful shutdown: on SIGTERM, `Drop` of the runner handle or a
+//! controller-ordered disconnect, each live operative's state is serialized
+//! and shipped as a `RunnerShutdownNotification`, and the process exits once
+//! the acks land or the bounded wait expires — never blocking its
+//! container's grace period. Also the waiter registry every SDK-initiated
+//! request's reply is matched through.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -42,43 +20,26 @@ use prost::Message;
 
 use crate::pb;
 
-/// Per-operative ack wait. Kubernetes default
-/// `terminationGracePeriodSeconds` is 30 s; with parallel acks this
-/// bounds the total ack wait at 2 s regardless of operative count.
+/// Per-operative ack wait, run in parallel so the total is bounded by this
+/// regardless of operative count (Kubernetes' default grace period is 30 s).
 const ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Wire-level payload_id reused from the existing controller -> SDK
-/// `CommandRequest` flow. The `CommandRequest` envelope is
-/// bidirectional; the controller's `ControlChannel` peeks at the oneof tag
-/// to dispatch SDK-initiated variants vs `CommandResponse`s.
+/// The bidirectional `CommandRequest` envelope's payload id.
 const SHUTDOWN_PAYLOAD_ID: &str = "control_command";
 
-/// Returns `(instance_id, serialized_state_bytes)` per live StreamOperative
-/// instance. The closure is responsible for walking the live registry
-/// and serializing each instance via `entity_state::serialize_operative_state`.
+/// `(instance_id, serialized state)` per live stream instance.
 pub type OperativeSnapshotFn = Box<dyn Fn() -> Vec<(String, Vec<u8>)> + Send + Sync>;
 
-/// Bridge between the user-facing `FlezhaRunner` handle and the per-runner
-/// runtime state required for a graceful shutdown sequence.
-///
-/// The runner's bridge is registered in the global [`active_bridge`] slot so
-/// the SIGTERM handler can reach it. `FlezhaRunner::Drop` triggers the same
-/// sequence directly.
+/// What a graceful shutdown needs of the runner, reachable from the SIGTERM
+/// handler through [`active_bridge`] and from the runner handle's `Drop`.
 pub struct ShutdownBridge {
-    /// Latest `Arc<FlezhaStream>` for the control channel. Updated by
-    /// the coordinator on initial open and on every reconnect; cleared
-    /// when the connection drops.
+    /// The live control stream, replaced on every reconnect.
     control_stream: Mutex<Option<Arc<FlezhaStream>>>,
 
-    /// Closure that returns a point-in-time snapshot of currently-running
-    /// operatives. Populated by the coordinator at startup; the closure
-    /// captures an `Arc` to the backend's registry so the bridge stays
-    /// decoupled from the dispatcher implementation.
     snapshot_fn: Mutex<Option<OperativeSnapshotFn>>,
 
-    /// Single-shot guard: a graceful shutdown runs at most once per
-    /// bridge so SIGTERM + `Drop` racing each other does not double-emit
-    /// notifications.
+    /// A shutdown runs at most once per bridge, whichever of SIGTERM and
+    /// `Drop` comes first.
     shutdown_started: AtomicBool,
 }
 
@@ -99,9 +60,7 @@ impl ShutdownBridge {
         *self.snapshot_fn.lock().unwrap() = Some(snapshot_fn);
     }
 
-    /// Run the graceful-shutdown sequence. Idempotent across SIGTERM +
-    /// `Drop`: the second caller observes
-    /// `shutdown_started.swap(true) == true` and returns early.
+    /// Run the shutdown sequence once; a second caller returns at once.
     pub fn run_graceful_shutdown(self: &Arc<Self>) {
         if self.shutdown_started.swap(true, Ordering::SeqCst) {
             return;
@@ -139,9 +98,8 @@ impl ShutdownBridge {
     }
 }
 
-/// Write one operative's `RunnerShutdownNotification` and spawn the wait for
-/// its ack; `None` when the write failed (its pending ack is dropped). A wait
-/// that times out drops the ack too, so a late reply wakes nobody.
+/// Write one operative's notification and spawn the wait for its ack;
+/// `None` when the write failed. A timed-out wait drops its registration.
 fn ship_notification(
     stream: &Arc<FlezhaStream>,
     operative_id: String,
@@ -196,10 +154,8 @@ fn ship_notification(
 // the previous (already-shut-down) runner's bridge.
 // ---------------------------------------------------------------------------
 
-/// Result carried by a controller reply to an SDK-initiated request. The `Ok`
-/// payload is whatever the reply reports beyond "it worked" — empty for a bare
-/// ack (`RunnerShutdownAck`, `ProcCommitResponse`), the resolved outcome for a
-/// `SpawnWorkflowResponse`. `Err(reason)` is a reply that reports a failure.
+/// A controller reply to an SDK-initiated request: what it reports beyond
+/// "it worked" (empty for a bare ack), or the failure it names.
 pub type AckResult = Result<String, String>;
 
 fn pending_acks_map() -> &'static Mutex<HashMap<String, mpsc::SyncSender<AckResult>>> {
@@ -208,9 +164,7 @@ fn pending_acks_map() -> &'static Mutex<HashMap<String, mpsc::SyncSender<AckResu
     PENDING_ACKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Register a waiter for a controller reply keyed by the outbound request's
-/// `reference_id`. Shared by the graceful-shutdown ack wait and the workflow
-/// driver's proc-commit barrier.
+/// Register a waiter for the reply to `reference_id`.
 pub fn register_pending_ack(reference_id: String) -> mpsc::Receiver<AckResult> {
     let (tx, rx) = mpsc::sync_channel(1);
     pending_acks_map().lock().unwrap().insert(reference_id, tx);
@@ -221,10 +175,7 @@ pub fn drop_pending_ack(reference_id: &str) {
     pending_acks_map().lock().unwrap().remove(reference_id);
 }
 
-/// Wake the waiter registered under `reference_id` with the controller's
-/// reply outcome — `Ok(())` from `RunnerShutdownAck`, the carried result
-/// from `ProcCommitResponse`. A missing entry is logged and ignored (the wait
-/// already timed out and dropped its registration).
+/// Wake the waiter under `reference_id`; a missing entry already timed out.
 pub fn signal_result(reference_id: &str, result: AckResult) {
     let entry = pending_acks_map().lock().unwrap().remove(reference_id);
     match entry {
@@ -251,13 +202,12 @@ pub fn register_bridge(bridge: Arc<ShutdownBridge>) {
     install_sigterm_handler();
 }
 
-/// Record a terminal disconnect the controller ordered. The exit itself waits
-/// until the disconnect response has been written.
+/// Record a terminal disconnect the controller ordered; the exit waits for
+/// the disconnect response to be written.
 pub fn request_terminal_exit(reason: String) {
     *terminal_exit().lock().unwrap() = Some(reason);
 }
 
-/// Take the pending terminal-disconnect reason, if one was ordered.
 pub fn take_terminal_exit() -> Option<String> {
     terminal_exit().lock().unwrap().take()
 }
@@ -267,22 +217,14 @@ fn terminal_exit() -> &'static Mutex<Option<String>> {
     TERMINAL_EXIT.get_or_init(|| Mutex::new(None))
 }
 
-/// Exit code a terminally-disconnected runner ends with. Any non-zero value
-/// makes the orchestrator restart the process; a distinct one lets an operator
-/// tell "the controller proved me wedged" apart from a crash in the logs.
+/// Exit code of a terminally-disconnected runner: non-zero so the
+/// orchestrator restarts it, distinct so the logs tell it from a crash.
 pub const TERMINAL_EXIT_CODE: i32 = 70;
 
-/// Run the graceful shutdown and end the process NON-ZERO, at the controller's
-/// order.
-///
-/// The last rung of the convergence ladder: eviction moves a wedged runner's
-/// operatives but leaves the process connected and placeable, so it takes work
-/// and wedges again. Only the process going away clears it, and only the
-/// orchestrator can bring it back — which it does for a failure, not for a
-/// clean stop. Hence non-zero.
-///
-/// Called after the disconnect response is on the wire: the controller must see
-/// its ack before the process disappears.
+/// Run the graceful shutdown and exit NON-ZERO at the controller's order —
+/// the convergence ladder's last rung, since a wedged process that stays
+/// placeable wedges again and only the orchestrator restarts a failure.
+/// Called after the disconnect response is on the wire.
 pub fn exit_terminally(reason: &str) -> ! {
     eprintln!(
         "[flezha] controller ordered a terminal disconnect (reason={}); exiting {} so the \
@@ -295,10 +237,8 @@ pub fn exit_terminally(reason: &str) -> ! {
     std::process::exit(TERMINAL_EXIT_CODE);
 }
 
-/// Run the registered bridge's graceful shutdown, if any. Idempotent: the
-/// bridge's own latch makes a second caller a no-op, which is what lets the
-/// disconnect path ship state while the control channel is still writable and
-/// still hand the exit path the same call.
+/// Run the registered bridge's shutdown, if any; the bridge's latch makes a
+/// second caller a no-op.
 pub fn run_active_graceful_shutdown() {
     let bridge = active_bridge().lock().unwrap().clone();
     if let Some(bridge) = bridge {
@@ -306,10 +246,8 @@ pub fn run_active_graceful_shutdown() {
     }
 }
 
-/// Installs a one-shot SIGTERM handler on the first call. Subsequent
-/// calls are no-ops via `std::sync::Once`. The handler runs the active
-/// bridge's graceful shutdown synchronously, then exits the process —
-/// Kubernetes' grace period is the outer bound.
+/// Install the SIGTERM handler once: it runs the active bridge's shutdown,
+/// then exits.
 #[cfg(not(windows))]
 fn install_sigterm_handler() {
     static INSTALLED: Once = Once::new();
@@ -335,21 +273,14 @@ fn install_sigterm_handler() {
     });
 }
 
-/// Windows has no SIGTERM; graceful shutdown rides `Drop` and the
-/// controller-driven disconnect.
+/// Windows has no SIGTERM; shutdown rides `Drop` and the disconnect.
 #[cfg(windows)]
 fn install_sigterm_handler() {}
 
 #[cfg(test)]
 mod tests {
-    //! Bridge mechanics tests. Drive `run_graceful_shutdown` against a
-    //! `UnixStream::pair()` standing in for the controller's control channel,
-    //! then decode the captured frame and assert protocol shape.
-    //!
-    //! The full SIGTERM-from-Kubernetes path is exercised in the
-    //! dev-compose state-freshness scenario (§6 of
-    //! ship-fresh-state-on-sdk-shutdown); here we cover the unit
-    //! contract: notification correctly framed + bounded ack wait.
+    //! `run_graceful_shutdown` against a `UnixStream::pair()` standing in for
+    //! the control channel: the notification's framing and the bounded wait.
     use std::io::Read;
     use std::os::unix::net::UnixStream;
     use std::time::Instant;
@@ -358,41 +289,22 @@ mod tests {
 
     use super::*;
     use crate::pb;
+    use crate::test_support::stream_pair;
 
     fn build_bridge_with_operative(
         operative_id: &str,
         snapshot: Vec<u8>,
     ) -> (Arc<ShutdownBridge>, UnixStream) {
-        let (sdk_side, controller_side) = UnixStream::pair().expect("UnixStream::pair");
+        let (stream, controller_side) = stream_pair();
 
         let bridge = ShutdownBridge::new();
-        bridge.set_control_stream(Some(Arc::new(FlezhaStream::Unix(sdk_side))));
+        bridge.set_control_stream(Some(stream));
 
         let pid = operative_id.to_string();
         let snap = snapshot.clone();
         bridge.set_snapshot_fn(Box::new(move || vec![(pid.clone(), snap.clone())]));
 
         (bridge, controller_side)
-    }
-
-    /// Decode a Payloader-framed payload from raw bytes captured off the
-    /// control channel. Mirrors the format produced by
-    /// `flz_transport::service::payloader::build_from_binary` — 32-byte
-    /// padded id, 4-byte payload size, 4-byte message size, message,
-    /// 2-byte metadata size, metadata.
-    fn decode_frame(buf: &[u8]) -> (String, Vec<u8>) {
-        assert!(buf.len() >= 36, "frame must have header");
-        let id_bytes = &buf[..32];
-        let payload_size = u32::from_be_bytes([buf[32], buf[33], buf[34], buf[35]]) as usize;
-        let body = &buf[36..36 + payload_size];
-        let message_size = u32::from_be_bytes([body[0], body[1], body[2], body[3]]) as usize;
-        let message = &body[4..4 + message_size];
-
-        let id = std::str::from_utf8(id_bytes)
-            .expect("payload id utf-8")
-            .trim_end_matches(' ')
-            .to_string();
-        (id, message.to_vec())
     }
 
     #[test]
@@ -412,7 +324,8 @@ mod tests {
         let n = controller_side.read(&mut buf).expect("read shutdown frame");
         buf.truncate(n);
 
-        let (payload_id, message) = decode_frame(&buf);
+        let (payload_id, message, _meta) =
+            payloader::extract_payload(&buf[..]).expect("decode shutdown frame");
         assert_eq!(payload_id, "control_command");
 
         let request = pb::CommandRequest::decode(message.as_slice())

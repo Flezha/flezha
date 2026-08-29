@@ -4,7 +4,7 @@
 //! never learned a refusal rather than a silent degrade.
 
 fn decl(json: &str) -> Result<(), String> {
-    crate::host::register_host_class_json(json.as_bytes())
+    crate::host::register_host_class_json(json.as_bytes()).map_err(|e| e.to_string())
 }
 
 fn factory(name: &str) -> String {
@@ -358,88 +358,46 @@ mod sdk_lang_declaration_tests {
         assert!(err.contains("99"), "{err}");
     }
 
-    /// The host restore arm compares a record's byte 0 against the READING
-    /// class's declared language. Without this, a Java class would refuse its
-    /// own Kryo records (or, worse, accept another SDK's).
+    /// The declared language and format reach the restore template and the
+    /// advertisement — one representative SDK per format byte (Kryo,
+    /// MessagePack, JSON), since the declaration carries the format rather
+    /// than the core inferring it from the language.
     #[test]
-    fn the_declared_language_reaches_the_restore_template_and_the_advertisement() {
-        let id = factory("host_lang_java");
-        decl(&class(&id, r#""sdk_lang":2,"change_format_id":4,"#))
-            .expect("a Java-declared class registers");
+    fn the_declared_language_and_format_reach_the_template_and_the_advertisement() {
+        use crate::header::{
+            FORMAT_ID_JSON, FORMAT_ID_KRYO, FORMAT_ID_MSGPACK, SDK_LANG_JAVA, SDK_LANG_NODE,
+            SDK_LANG_PHP, SDK_LANG_UNSPECIFIED,
+        };
+        for (name, lang, format) in [
+            ("java", SDK_LANG_JAVA, FORMAT_ID_KRYO),
+            ("node", SDK_LANG_NODE, FORMAT_ID_MSGPACK),
+            ("php", SDK_LANG_PHP, FORMAT_ID_JSON),
+        ] {
+            let id = factory(&format!("host_lang_{name}"));
+            decl(&class(
+                &id,
+                &format!(r#""sdk_lang":{lang},"change_format_id":{format},"#),
+            ))
+            .expect("a declared class registers");
 
-        let topology = crate::operative::registry::get_class(&id).expect("class registered");
-        assert_eq!(topology.sdk_lang, crate::header::SDK_LANG_JAVA);
-
-        let facts = topology.procedures[0]
-            .host_facts
-            .as_ref()
-            .expect("a host class carries host facts");
-        assert_eq!(facts.header().sdk_lang, crate::header::SDK_LANG_JAVA);
-
-        assert_eq!(
-            crate::operative::registry::sdk_lang_for_factory(&id),
-            crate::header::SDK_LANG_JAVA,
-            "the advertisement reads the declared value from the core"
-        );
+            let topology = crate::operative::registry::get_class(&id).expect("class registered");
+            assert_eq!(topology.sdk_lang, lang);
+            let header = topology.procedures[0]
+                .host_facts
+                .as_ref()
+                .expect("a host class carries host facts")
+                .header();
+            assert_eq!((header.sdk_lang, header.format_id), (lang, format));
+            assert_eq!(
+                crate::operative::registry::sdk_lang_for_factory(&id),
+                lang,
+                "the advertisement reads the declared value from the core"
+            );
+        }
         assert_eq!(
             crate::operative::registry::sdk_lang_for_factory("never_declared"),
-            crate::header::SDK_LANG_UNSPECIFIED,
+            SDK_LANG_UNSPECIFIED,
             "an undeclared factory advertises no language rather than a guess"
-        );
-    }
-
-    /// The same path for the Node SDK, which is the first to declare a format
-    /// byte that is neither postcard nor Kryo: the class's own template is
-    /// what a restore compares against, so the format has to survive the
-    /// declaration alongside the language.
-    #[test]
-    fn a_node_class_declares_its_language_and_the_msgpack_format() {
-        let id = factory("host_lang_node");
-        decl(&class(&id, r#""sdk_lang":4,"change_format_id":5,"#))
-            .expect("a Node-declared class registers");
-
-        let topology = crate::operative::registry::get_class(&id).expect("class registered");
-        assert_eq!(topology.sdk_lang, crate::header::SDK_LANG_NODE);
-
-        let header = topology.procedures[0]
-            .host_facts
-            .as_ref()
-            .expect("a host class carries host facts")
-            .header();
-        assert_eq!(header.sdk_lang, crate::header::SDK_LANG_NODE);
-        assert_eq!(header.format_id, crate::header::FORMAT_ID_MSGPACK);
-
-        assert_eq!(
-            crate::operative::registry::sdk_lang_for_factory(&id),
-            crate::header::SDK_LANG_NODE
-        );
-    }
-
-    /// The same path for the PHP SDK, whose format byte is JSON — the third
-    /// distinct change format a host has declared, and the one that proves the
-    /// declaration carries the format rather than the core inferring it from
-    /// the language.
-    #[test]
-    fn a_php_class_declares_its_language_and_the_json_format() {
-        let id = factory("host_lang_php");
-        decl(&class(&id, r#""sdk_lang":6,"change_format_id":6,"#))
-            .expect("a PHP-declared class registers");
-
-        let topology = crate::operative::registry::get_class(&id).expect("class registered");
-        assert_eq!(topology.sdk_lang, crate::header::SDK_LANG_PHP);
-
-        let header = topology.procedures[0]
-            .host_facts
-            .as_ref()
-            .expect("a host class carries host facts")
-            .header();
-        assert_eq!(header.sdk_lang, crate::header::SDK_LANG_PHP);
-        assert_eq!(header.format_id, crate::header::FORMAT_ID_JSON);
-
-        assert_eq!(
-            crate::operative::registry::sdk_lang_for_factory(&id),
-            crate::header::SDK_LANG_PHP,
-            "the advertisement reads the declared value from the core"
         );
     }
 }

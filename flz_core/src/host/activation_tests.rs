@@ -14,11 +14,7 @@ use crate::entity::{EntityItem, EntityPayload, EntitySlot};
 use crate::operative::instance::StreamInstance;
 use crate::poll_core::ItemAttempt;
 use crate::schema;
-
-fn stream() -> Arc<flz_transport::transport::FlezhaStream> {
-    let (sock, _peer) = std::os::unix::net::UnixStream::pair().expect("pair");
-    Arc::new(flz_transport::transport::FlezhaStream::Unix(sock))
-}
+use crate::test_support::{saturate, spin_until, stream_pair};
 
 /// A tier class: one entry channel into `p0`, one inter-procedure channel
 /// from `p0` to every consumer in `consumers`, each with a one-slot
@@ -52,17 +48,16 @@ fn instance(id: &str, consumers: &[u32]) -> Arc<StreamInstance> {
 
 /// Fill one consumer's single mailbox slot and claim its round, so nothing
 /// drains it until the test says so.
-fn saturate(slot: &Arc<EntitySlot>) {
-    assert!(slot
-        .mailbox
-        .try_push(EntityItem::Input(EntityPayload {
+fn saturate_slot(slot: &Arc<EntitySlot>) {
+    saturate(
+        &slot.mailbox,
+        EntityItem::Input(EntityPayload {
             value: Arc::new(0usize) as Arc<dyn Any + Send + Sync>,
-            stream: stream(),
+            stream: stream_pair().0,
             consumed_offset: None,
             replay: false,
-        }))
-        .is_ok());
-    assert!(slot.mailbox.is_full());
+        }),
+    );
     assert!(slot.mailbox.claim_inflight());
 }
 
@@ -78,7 +73,7 @@ fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::Item
                 event_time: None,
                 metadata: Vec::new(),
             }) as Arc<dyn Any + Send + Sync>,
-            stream: stream(),
+            stream: stream_pair().0,
             consumed_offset: Some(offset),
             replay: false,
         }),
@@ -110,18 +105,6 @@ fn work_and_effect(offset: u64, consumers: &[u32]) -> (ItemAttempt, schema::Item
         dlq: None,
     };
     (work, effect)
-}
-
-/// Yield until `done` holds; a 5 s deadline names `what` on failure.
-fn spin_until(what: &str, done: impl Fn() -> bool) {
-    let started = std::time::Instant::now();
-    while !done() {
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(5),
-            "timed out waiting for {what}"
-        );
-        std::thread::yield_now();
-    }
 }
 
 /// Records this Entity has actually SHIPPED. `drain_to_frames` fetch-adds
@@ -157,7 +140,7 @@ fn no_record_carries_the_offset_until_the_edge_push_lands() {
     let instance = instance(&id, &[1]);
     let producer = Arc::clone(&instance.entities[0][0]);
     let consumer = Arc::clone(&instance.entities[1][0]);
-    saturate(&consumer);
+    saturate_slot(&consumer);
     let before = shipped(&producer);
     let blocked_before = blocked_on(&consumer);
 
@@ -202,7 +185,7 @@ fn a_fan_out_holds_its_record_until_every_consumer_has_the_value() {
     let instance = instance(&id, &[1, 2, 3]);
     let producer = Arc::clone(&instance.entities[0][0]);
     let full = Arc::clone(&instance.entities[3][0]);
-    saturate(&full);
+    saturate_slot(&full);
     let before = shipped(&producer);
     let blocked_before = blocked_on(&full);
 

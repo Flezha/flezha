@@ -53,7 +53,6 @@ impl CommandAction for AddOperative {
 }
 
 impl AddOperative {
-    /// Bind a workflow operative, resuming from its journal when it carries one.
     fn start_workflow(
         &self,
         runner: &mut RunnerNode,
@@ -76,11 +75,9 @@ impl AddOperative {
         }
     }
 
-    /// Bind a stream operative and seed it from `init_values`. A keyless class
-    /// cannot be partitioned: each member would fold its own input slice into
-    /// a private copy of "the one" state — N divergent partial truths,
-    /// silently. Only the SDK can tell (key closures are compiled code, never
-    /// on the wire), so the authoritative refusal is here, at the bind.
+    /// Bind a stream operative and seed it from `init_values`. A keyless
+    /// class cannot be partitioned, and only the SDK can tell — key closures
+    /// are compiled code — so the refusal is here.
     fn start_stream(
         &self,
         runner: &mut RunnerNode,
@@ -103,7 +100,7 @@ impl AddOperative {
                         &instance,
                         &self.init_values,
                     ) {
-                        errors.push(e);
+                        errors.push(e.to_string());
                     }
                 }
             }
@@ -116,9 +113,8 @@ impl AddOperative {
         }
     }
 
-    /// The member's owned key-group range. `partition_count < 2` is every
-    /// pre-partition bind and every `--partitions 1` start; it reads as the
-    /// whole space with the dispatch guard inert.
+    /// The member's range; `partition_count < 2` is the whole space, guard
+    /// inert.
     fn key_group_range(&self) -> KeyGroupRange {
         if self.partition_count < 2 {
             return KeyGroupRange::UNPARTITIONED;
@@ -132,10 +128,8 @@ impl AddOperative {
     }
 }
 
-/// Whether at least one procedure fed by an entry channel is keyed — a
-/// `key_by` edge (`Dynamic`) or a declared keyset (`Static`). The one
-/// definition of "partitionable", read by both the bind refusal and the
-/// declaration the controller preflights against.
+/// Whether an entry-fed procedure is keyed — the one definition of
+/// "partitionable", read by the bind refusal and the declaration alike.
 fn has_keyed_entry_procedure(topology: &crate::operative::topology::OperativeTopology) -> bool {
     use crate::channel::ChannelKind;
     use crate::operative::topology::EntityMode;
@@ -149,7 +143,6 @@ fn has_keyed_entry_procedure(topology: &crate::operative::topology::OperativeTop
         .any(|procedure| matches!(procedure.mode, EntityMode::Dynamic | EntityMode::Static))
 }
 
-/// `Some(error)` when this bind asks a class that cannot be partitioned to be.
 fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String> {
     if command.partition_count < 2 {
         return None;
@@ -168,10 +161,8 @@ fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String>
     }
 }
 
-/// Encode the class's SDK-side declarations as `AddOperativeResponse`
-/// metadata for the controller's capability resolution. Returns empty
-/// bytes when nothing is declared (the default), keeping the response
-/// byte-identical to pre-tier builds.
+/// The class's declarations as `AddOperativeResponse` metadata; empty bytes
+/// when nothing is declared.
 fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
     let mut metadata = std::collections::HashMap::new();
     match kind {
@@ -189,15 +180,9 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
     AddOperativeResponse { metadata }.encode_to_vec()
 }
 
-/// What a workflow class declares: the tier, synchronous remote durability
-/// (the controller withholds the commit-barrier ack until the barrier is on
-/// the durability backend, so the class must say so before the first barrier
-/// arrives — workflow-only, `register_host_class` refuses it on a stream
-/// class), the compensable tree positions (a rewind can only unwind a
-/// procedure whose plugin output is semantically undoable, and the controller
-/// refuses one that is not before it wakes the instance) and the leaf
-/// positions (the operative is DONE when all of them have committed, which
-/// the controller derives from the journal alone).
+/// What a workflow class declares: the tier, synchronous durability, the
+/// compensable positions (a rewind may only unwind those) and the leaves
+/// (the operative is done when all committed).
 fn workflow_metadata(factory_id: &str, metadata: &mut HashMap<String, String>) {
     let spec = crate::workflow::registry::get_class(factory_id);
     if spec
@@ -225,18 +210,11 @@ fn workflow_metadata(factory_id: &str, metadata: &mut HashMap<String, String>) {
     }
 }
 
-/// What a stream class declares: the tier; partitionability, declared only
-/// when the answer is `false` (the refusable fact — a later `--partitions N`
-/// start of this class is then refused at the controller before a runner is
-/// touched, and saying nothing otherwise keeps a keyed class's response
-/// byte-identical); the late-input correction window (the controller owns the
-/// two prerequisites the SDK cannot see — the input-log hold window and the
-/// snapshot age-floor must both cover it — so it needs the window before it
-/// binds); checkpoint ack-granularity (an Entity that only acknowledges at a
-/// checkpoint holds its watermark still for the whole interval, which the
-/// silence-based liveness detectors must read as steady state); and the most
-/// conservative compaction threshold across the procedures, only when it
-/// differs from the shared default.
+/// What a stream class declares: the tier; partitionability only when
+/// `false` (the refusable fact); the correction window the controller's
+/// retention must cover; checkpoint ack-granularity, which the liveness
+/// detectors read as a still watermark; the compaction threshold when it
+/// differs from the default.
 fn stream_metadata(topology: &OperativeTopology, metadata: &mut HashMap<String, String>) {
     use crate::operative::topology::BeyondWindowPolicy;
 
@@ -275,10 +253,8 @@ fn stream_metadata(topology: &OperativeTopology, metadata: &mut HashMap<String, 
     }
 }
 
-/// Comma-separated tree positions of the procedures `select` picks out, or
-/// `None` for anything without a structured tree (run-sugar, stream) — the
-/// one seam every workflow procedure-set declaration rides. An empty string is
-/// meaningful — "a tree, none of it selected" — and is not the same as absent.
+/// The positions `select` picks out, comma-separated; `None` without a
+/// tree, and an empty string is "a tree, none selected".
 fn declared_procs(
     kind: &str,
     factory_id: &str,
@@ -301,9 +277,7 @@ fn declared_procs(
 #[cfg(test)]
 mod metadata_tests {
     //! The `AddOperativeResponse` metadata is the controller's only view of
-    //! what a class declared. A capability the controller must gate on — here
-    //! synchronous remote durability — is worthless if it never reaches this
-    //! map, and a class that declares nothing must still encode to zero bytes.
+    //! what a class declared; a class declaring nothing encodes to zero bytes.
 
     use super::{metadata_response, AddOperativeResponse, Message};
 
@@ -342,10 +316,8 @@ mod metadata_tests {
 
 #[cfg(test)]
 mod partition_tests {
-    //! The bind is where partitioning is refused or armed. Only the SDK can
-    //! tell whether a class is keyed — key closures are compiled code, never
-    //! on the wire — so a keyless class must be turned away here, and a keyed
-    //! one must come back with its range on the instance.
+    //! The bind refuses partitioning of a keyless class and arms it with the
+    //! range on a keyed one.
 
     use super::{partition_refusal, AddOperative, AddOperativeResponse, KeyGroupRange, Message};
 

@@ -13,38 +13,30 @@ use crossbeam::channel::RecvTimeoutError;
 use super::compensation::{EntityRun, StageRecord};
 use super::driver::{extend_mapped, ChainCtx, RunOutcome, Runnable, Value, CANCEL_POLL_CHUNK};
 use super::instance::{CommittedProc, InboxItem, JournalResume};
-use super::LoopMode;
+use super::{LoopMode, WorkflowError};
 use crate::channel::{ChannelId, ChannelKind};
 use crate::operative::topology::OperativeTopology;
 
-/// How long an inbox-driven loop waits at a committed iteration boundary before
-/// it parks (eviction hysteresis, `workflow-durable-suspension`): a message
-/// arriving inside the window continues the loop in place instead of paying a
-/// park/rehydrate cycle. Overridable with `FLEZHA_WORKFLOW_PARK_IDLE_MS`.
+/// Eviction hysteresis: how long an inbox-driven loop waits at a committed
+/// boundary before it parks (`FLEZHA_WORKFLOW_PARK_IDLE_MS`).
 const PARK_IDLE_DEFAULT_MS: u64 = 5_000;
 const ENV_PARK_IDLE_MS: &str = "FLEZHA_WORKFLOW_PARK_IDLE_MS";
 
-/// How long a rehydrated loop waits for the inbox tail the controller owes it
-/// before it parks regardless (a lost forward must not wedge the loop: the
-/// park's `rehydrate_if_pending` forwards it again).
+/// How long a rehydrated loop waits for the owed inbox tail before parking
+/// regardless; a lost forward must not wedge it.
 const OWED_INBOX_WAIT: Duration = Duration::from_secs(60);
 
-/// Where an iteration starts: the immediately runnable nodes plus, for a
-/// mid-iteration resume over a join, the contributions already banked for
-/// nodes still waiting on an uncommitted producer.
+/// Where an iteration starts: the runnable nodes plus, on a resume over a
+/// join, the contributions banked for nodes still waiting on a producer.
 #[derive(Default)]
 pub(super) struct IterationStart {
-    /// Nodes whose every producer is satisfied, with their input batches.
     pub(super) ready: Vec<Runnable>,
-    /// Accumulated input batches of nodes with producers still outstanding
-    /// (journaled handoffs of committed producers, on a resume).
+    /// Batches of nodes with producers still outstanding.
     pub(super) pending: HashMap<usize, Vec<Value>>,
-    /// Producers still outstanding per waiting node.
     pub(super) waiting: HashMap<usize, usize>,
 }
 
 impl IterationStart {
-    /// A fresh pass: the DAG root over the seed batch.
     fn fresh(batch: Vec<Value>) -> Self {
         Self {
             ready: vec![(0, batch)],
@@ -53,18 +45,14 @@ impl IterationStart {
     }
 }
 
-/// The start of a mid-iteration resume: every uncommitted node with at least
-/// one committed producer gets that producer's journaled handoff — filtered to
-/// the producer's own output channel, so a branch only ever re-seeds from its
-/// own edge. A node whose producers all committed is immediately runnable; a
-/// join with one committed and one uncommitted producer banks the journaled
-/// contribution and waits for the fresh one (`workflow-branching`
-/// crash-resume).
+/// A mid-iteration resume: every uncommitted node re-seeds from each
+/// committed producer's journaled handoff on that producer's own channel; a
+/// join with a producer still uncommitted banks it and waits.
 fn resumed_start(
     ctx: &ChainCtx,
     resume: &JournalResume,
     committed: &[usize],
-) -> Result<IterationStart, String> {
+) -> Result<IterationStart, WorkflowError> {
     let mut start = IterationStart::default();
     for node in 0..ctx.dag.len() {
         if committed.contains(&node) {
@@ -104,31 +92,19 @@ fn resumed_start(
     Ok(start)
 }
 
-/// How the next iteration is seeded.
 pub(super) enum IterationSeed {
-    /// Start the iteration here — the root alone on a fresh pass, the
-    /// uncommitted subgraphs on a mid-iteration resume.
-    /// `Some(offset)` when an inbox item supplied the seed (the offset the
-    /// iteration commit records as consumed).
+    /// Start here; `Some(offset)` when an inbox item supplied the seed.
     Frontier(IterationStart, Option<u64>),
-    /// The loop has no more work: terminate cleanly.
     Done,
-    /// The inbox is empty at a committed boundary past the idle threshold:
-    /// suspend (`workflow-durable-suspension`).
+    /// The inbox stayed empty past the idle threshold: suspend.
     Park,
-    /// A cooperative stop arrived while waiting for input — nothing is in
-    /// flight, so there is nothing to roll back.
+    /// A stop arrived while waiting for input; nothing to roll back.
     Cancelled,
-    /// The seed could not be built; terminate abnormally.
-    Failed(String),
+    Failed(WorkflowError),
 }
 
-/// Resolve the frontier this iteration starts from.
-///
-/// A mid-iteration resume (`committed` non-empty — the journal already records
-/// procedures of this iteration committed) starts at exactly the uncommitted
-/// subgraphs whose producers did commit. Otherwise the iteration starts at the
-/// graph root, seeded by the loop's shape.
+/// The frontier this iteration starts from: the uncommitted subgraphs on a
+/// mid-iteration resume, else the root seeded by the loop's shape.
 pub(super) fn next_iteration_seed(
     ctx: &ChainCtx,
     args: &str,
@@ -147,15 +123,9 @@ pub(super) fn next_iteration_seed(
     seed_for_mode(ctx, args, iter, resume, carry, cancel)
 }
 
-/// The root's seed by the loop's shape: the spawn args through the entry
-/// channel (single pass, and the first iteration of a chained loop — a single
-/// pass has no second), the previous iteration's terminal batch — in memory,
-/// or after a crash re-decoded from the journaled iteration commit; an empty
-/// batch means the loop has converged (`Chained`) — or one iteration per
-/// post-start input, where an empty inbox past the idle threshold parks the
-/// instance (`PerInput`; durable classes only — an opted-out one has no journal
-/// to park into and blocks in memory, and a transport-less inbox closing for
-/// good is the end of its work).
+/// The root's seed by the loop's shape: the spawn args on the first pass,
+/// the previous terminal batch (in memory or from the journal) for a chained
+/// loop, the next inbox item for a per-input one.
 fn seed_for_mode(
     ctx: &ChainCtx,
     args: &str,
@@ -198,17 +168,15 @@ fn seed_for_mode(
     }
 }
 
-fn seed_or_fail(seeded: Result<Vec<Value>, String>, consumed: Option<u64>) -> IterationSeed {
+fn seed_or_fail(seeded: Result<Vec<Value>, WorkflowError>, consumed: Option<u64>) -> IterationSeed {
     match seeded {
         Ok(batch) => IterationSeed::Frontier(IterationStart::fresh(batch), consumed),
         Err(e) => IterationSeed::Failed(e),
     }
 }
 
-/// Block for the next inbox item. `None` on a cooperative stop, on a closed
-/// inbox, or — for a journaling instance — once the inbox has been idle past
-/// the hysteresis window (the caller then parks). Sleeps while idle; the
-/// ≤200 ms wake granularity observes cancellation promptly.
+/// Block for the next inbox item; `None` on a stop, a closed inbox, or (for
+/// a journaling instance) once idle past the hysteresis window.
 fn wait_for_input(ctx: &ChainCtx, cancel: &AtomicBool) -> Option<InboxItem> {
     // The controller forwards a rehydrated loop's journaled tail after the
     // bind; while any of it is still owed the wait is the owed-tail bound,
@@ -238,7 +206,6 @@ fn wait_for_input(ctx: &ChainCtx, cancel: &AtomicBool) -> Option<InboxItem> {
     }
 }
 
-/// Eviction hysteresis for an idle inbox-driven loop.
 fn park_idle() -> Duration {
     Duration::from_millis(crate::util::env_parse(
         ENV_PARK_IDLE_MS,
@@ -246,10 +213,9 @@ fn park_idle() -> Duration {
     ))
 }
 
-/// Suspend at the committed boundary of iteration `iter`: ship `IterPark` (with
-/// the class's durable wake deadline, if any) and tear the run down without a
-/// terminal completion. The controller journals `parked`, evicts the instance,
-/// and rehydrates it on the next inbox append or at the deadline.
+/// Suspend at the committed boundary of `iter`: ship `IterPark` and tear
+/// down without a completion; the controller rehydrates on the next input or
+/// the wake deadline.
 pub(super) fn park(ctx: &ChainCtx, iter: u32) -> RunOutcome {
     let wake_deadline_ms = ctx.wake_after.map_or(0, |after| {
         let now = SystemTime::now()
@@ -273,9 +239,8 @@ pub(super) fn park(ctx: &ChainCtx, iter: u32) -> RunOutcome {
     RunOutcome::Parked
 }
 
-/// Wrap one entry payload — the spawn args, or an inbox item's bytes — into the
-/// entry channel's typed value.
-fn seed_bytes(topology: &OperativeTopology, bytes: Vec<u8>) -> Result<Vec<Value>, String> {
+/// One entry payload into the entry channel's typed value.
+fn seed_bytes(topology: &OperativeTopology, bytes: Vec<u8>) -> Result<Vec<Value>, WorkflowError> {
     let entry = topology
         .channels
         .iter()
@@ -287,21 +252,16 @@ fn seed_bytes(topology: &OperativeTopology, bytes: Vec<u8>) -> Result<Vec<Value>
         .expect("entry channel carries a wrap_input");
     wrap(bytes)
         .map(|v| vec![v])
-        .map_err(|e| format!("seeding entry channel failed: {e}"))
+        .map_err(|e| WorkflowError::from(format!("seeding entry channel failed: {e}")))
 }
 
-/// Decode a journaled handoff batch back into typed values via each item's
-/// producing-channel codec (`workflow-proc-journal` crash-resume seeding).
-///
-/// `only` restricts the batch to one edge: a resumed child branch consumes just
-/// the values its parent released on the channel that child reads. `None` takes
-/// the whole batch — the handoff-chained loop's terminal re-seed, whose values
-/// were released on the terminal channel and enter through the entry one.
+/// A journaled handoff back into typed values through each item's producing
+/// channel's codec; `only` restricts it to one edge.
 fn seed_from_journal(
     ctx: &ChainCtx,
     handoff: &[(u32, Vec<u8>)],
     only: Option<ChannelId>,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<Value>, WorkflowError> {
     let mut seeded: Vec<Value> = Vec::with_capacity(handoff.len());
     for (channel_id, bytes) in handoff {
         if only.is_some_and(|edge| edge != *channel_id) {
@@ -312,28 +272,24 @@ fn seed_from_journal(
             .channel(*channel_id)
             .and_then(|c| c.codec.as_ref())
             .ok_or_else(|| {
-                format!(
+                WorkflowError::from(format!(
                     "journaled handoff references channel id {channel_id} without an inter-proc \
                      codec; cannot re-seed the resumed procedure"
-                )
+                ))
             })?;
-        let value = (codec.decode)(bytes.clone())
-            .map_err(|e| format!("journaled handoff decode failed on channel {channel_id}: {e}"))?;
+        let value = (codec.decode)(bytes.clone()).map_err(|e| {
+            WorkflowError::from(format!(
+                "journaled handoff decode failed on channel {channel_id}: {e}"
+            ))
+        })?;
         seeded.push(value);
     }
     Ok(seeded)
 }
 
-/// Rebuild the journal's committed work as stage records, in the two
-/// granularities the driver needs: the **fully-committed iterations** (below the
-/// resume point — `plan_compensation`'s `committed` input, `workflow-durable-loop`
-/// D2) and the stages of the **still-in-flight iteration**, which a resumed pass
-/// skips but must still be able to roll back. One traversal, one grouping.
-///
-/// Entity outputs are empty, as on any crash-resume: a procedure's collected
-/// inter-procedure output was never durable, so a durable compensable procedure
-/// persists its undo handle in Entity state (which IS restored), per the
-/// at-least-once author contract.
+/// The journal's committed work as stage records: the fully-committed
+/// iterations, and the in-flight iteration's stages (skipped on resume, still
+/// rolled back). Outputs are empty, as on any crash-resume.
 pub(super) fn journaled_stages(
     ctx: &ChainCtx,
     resume: &JournalResume,
@@ -347,10 +303,8 @@ pub(super) fn journaled_stages(
     (by_iter.into_values().collect(), in_flight)
 }
 
-/// Journaled proc commits as stage records, grouped by the iteration they ran in
-/// and ordered within it by chain position (= completion order). Shared by the
-/// forward resume and the rewind undo, which need the same grouping over
-/// different sets of commits.
+/// Journaled commits as stage records, grouped by iteration and ordered by
+/// chain position; shared by the forward resume and the rewind undo.
 pub(super) fn stages_by_iter(
     ctx: &ChainCtx,
     procs: &[CommittedProc],
@@ -368,9 +322,8 @@ pub(super) fn stages_by_iter(
     by_iter
 }
 
-/// One journaled proc commit as a `StageRecord`, resolving each shipped-back wire
-/// entity identity to its slot index. `None` when the procedure is not in this
-/// build's chain (a topology that changed under a journaled instance).
+/// One journaled commit as a `StageRecord`; `None` when the procedure is not
+/// in this build's chain.
 fn stage_record(
     ctx: &ChainCtx,
     proc_idx: u32,

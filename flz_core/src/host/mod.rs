@@ -1,22 +1,10 @@
 //! The erased host surface: what a non-Rust SDK declares and drives through
-//! the C ABI (`flz_core_ffi`).
-//!
-//! A host class is a topology declared as data — no generics, no host
-//! closures beyond the bytes-passthrough entry wrapper. Its entities carry a
-//! [`BytesBuffer`] (host-encoded change bytes, core-framed) and a
-//! `HostDispatcher` that answers the engine's metadata questions;
-//! invocations never run in-process — the host polls
-//! [`crate::poll_core::PollCore`], runs its own user code, and completes with
-//! a [`crate::schema::ActivationResult`] this module applies.
-//!
-//! Full host capability: entity modes (single/static/dynamic with idle-TTL
-//! eviction), every clock kind, the effectively-once and checkpoint
-//! ack-granularity tiers, late-input correction, per-entity timers,
-//! inter-procedure edges (producer-side evaluation, routed on `(edge, key)`),
-//! the five command activation kinds (restore fold, snapshot, live read,
-//! apply-state, migration serialize), the prepare crossing for keys/event
-//! times, and workflow lifecycles (run-sugar sessions + structured chains
-//! whose stage and compensation bodies cross as activations).
+//! the C ABI. A host class is a topology declared as data; its entities carry
+//! a [`BytesBuffer`] and a dispatcher that answers only metadata. The
+//! invariant: no host code runs in-process — the host polls
+//! [`crate::poll_core::PollCore`], runs its own user code, and completes
+//! with a [`crate::schema::ActivationResult`] this module applies. Every
+//! capability a typed class has is reachable here.
 
 mod activation;
 mod commands;
@@ -31,6 +19,8 @@ mod activation_tests;
 #[cfg(test)]
 mod decl_tests;
 
+#[cfg(feature = "bench-internals")]
+pub(crate) use activation::empty_effect;
 pub use activation::{abandon_activation, apply_result, to_schema};
 pub use commands::{
     apply_state_locked, restore_fold_exclusive, snapshot_frame_crossing, state_json_locked,

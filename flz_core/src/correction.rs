@@ -1,56 +1,37 @@
-//! Late-input detection and the correction request (stream, tier-only).
-//!
-//! Only the SDK can decide an input is late: the event time comes from the
-//! user's `TimeExtractor`, so the controller — which owns the WAL, the
-//! snapshots and the input log — cannot see it. Detection therefore lives
-//! here, on the dispatch path, and orchestration lives in the controller. The
-//! seam between them is one fire-and-forget frame.
-//!
-//! The request carries no offsets and no slice. It does not need to: inputs
-//! are journaled *before* they are forwarded, so the late input is already in
-//! the durable input log at its arrival offset by the time this code runs.
-//! The controller re-reads the range and re-forwards it in event-time order.
-//! There is nothing to splice — only a slice to re-order.
+//! Late-input detection and the correction request. Only the SDK can see an
+//! event time, so detection is here and orchestration is the controller's;
+//! the seam is one fire-and-forget frame carrying no offsets, because the
+//! late input is already in the durable input log and the controller
+//! re-forwards the slice in event-time order.
 
 use serde::{Deserialize, Serialize};
 
 use crate::flusher::build_entity_frame;
 use crate::state_sink;
 
-/// Data-stream payload id of a correction request (SDK → controller). Same
-/// outer frame shape as `park_payload`: a zero header and a postcard body.
+/// A correction request: `park_payload`'s frame shape with a postcard body.
 pub const CORRECTION_REQUEST_PAYLOAD_ID: &str = "correction_request";
 
-/// Wire body of a `correction_request` frame. The entity identity rides the
-/// frame envelope, so the body is just the target.
+/// Wire body of a `correction_request`; the identity rides the envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CorrectionRequestBody {
-    /// Event time of the late input. The controller rewinds to the last state
-    /// seq whose event time precedes this, so the replay re-runs every input
-    /// that should have come after it.
+    /// The late input's event time; the controller rewinds to before it.
     pub target_event_time: u64,
 }
 
-/// What to do with an input, given its event time and the Entity's high-water.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lateness {
-    /// At or ahead of the high-water — the ordinary case. Dispatch it and
-    /// advance the high-water.
+    /// At or ahead of the high-water.
     OnTime,
-    /// Behind the high-water but inside the correction window. Do not dispatch:
-    /// the input is durable in the log and comes back inside the replayed
-    /// slice, in its rightful place. Request the correction instead.
+    /// Behind the high-water, inside the window: request a correction; the
+    /// input comes back in the replayed slice.
     Correctable,
-    /// Behind the high-water by more than the window. The past it belongs to can
-    /// no longer be rebuilt; what happens next is the caller's declared policy,
-    /// not this function's business.
+    /// Behind by more than the window; the declared policy decides.
     BeyondWindow,
 }
 
-/// Classify an input against the Entity's event-time high-water.
-///
-/// `high_water` is `-1` before the Entity has dispatched anything, which is
-/// why it is signed: a fresh Entity's first input is never late.
+/// Classify an input against the high-water; `-1` before anything was
+/// dispatched, so a first input is never late.
 pub fn classify(event_time: u64, high_water: i64, window_ms: u64) -> Lateness {
     if high_water < 0 || event_time >= high_water as u64 {
         return Lateness::OnTime;
@@ -62,13 +43,9 @@ pub fn classify(event_time: u64, high_water: i64, window_ms: u64) -> Lateness {
     }
 }
 
-/// Ship a correction request. Fire-and-forget: the controller coalesces
-/// concurrent requests per Entity into one replay, so a duplicate costs
-/// nothing and a lost one is re-raised the moment the input is re-delivered
-/// (it is still in the log, still unconsumed).
-///
-/// A transport-less run has no controller to ask; there is no correction to be
-/// had, and the caller falls back to dispatching the input as an arrival.
+/// Ship a correction request, fire-and-forget: the controller coalesces
+/// duplicates and a lost one is re-raised on re-delivery. `false` in a
+/// transport-less run, where the caller dispatches the input as an arrival.
 pub fn request(entity_identity: &[u8], target_event_time: u64) -> bool {
     if !state_sink::sink_installed() {
         return false;

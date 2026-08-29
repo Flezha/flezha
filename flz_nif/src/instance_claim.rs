@@ -10,12 +10,49 @@
 //! reports the process still holding it, so a refusal can name it.
 
 use std::fs::{self, File, OpenOptions};
-use std::io;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::{fmt, io};
 
 use flz_transport::utility::socket_probe;
+
+/// Why the state root could not be claimed, in the words the refusal repeats.
+#[derive(Debug)]
+pub enum ClaimError {
+    Uncreatable {
+        root: PathBuf,
+        source: io::Error,
+    },
+    Unopenable {
+        path: PathBuf,
+        source: io::Error,
+    },
+    /// Another process holds the record lock; the kernel names it when it can.
+    Held {
+        pid: Option<libc::pid_t>,
+    },
+    /// A filesystem that will not lock at all, which is not a peer.
+    Unlockable(io::Error),
+}
+
+impl fmt::Display for ClaimError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ClaimError::Uncreatable { root, source } => {
+                write!(f, "{} could not be created: {}", root.display(), source)
+            }
+            ClaimError::Unopenable { path, source } => {
+                write!(f, "{} could not be opened: {}", path.display(), source)
+            }
+            ClaimError::Held { pid: Some(pid) } => write!(f, "held by pid {pid}"),
+            ClaimError::Held { pid: None } => write!(f, "held by another process"),
+            ClaimError::Unlockable(source) => write!(f, "it could not be locked: {}", source),
+        }
+    }
+}
+
+impl std::error::Error for ClaimError {}
 
 /// The claim lives as long as this open file description, and a controller
 /// owns its state root until the process exits — so the file is held here
@@ -36,7 +73,10 @@ fn socket_dir_live(socket_dir: String) -> bool {
 /// `Err` names the holder, in the words a refusal repeats.
 #[rustler::nif(schedule = "DirtyIo")]
 fn lock_state_root(state_root: String) -> Result<String, String> {
-    let root = Path::new(&state_root);
+    claim(Path::new(&state_root)).map_err(|e| e.to_string())
+}
+
+fn claim(root: &Path) -> Result<String, ClaimError> {
     let path = root.join(LOCK_FILE);
     let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
@@ -47,15 +87,20 @@ fn lock_state_root(state_root: String) -> Result<String, String> {
         return Ok(path.display().to_string());
     }
 
-    fs::create_dir_all(root)
-        .map_err(|e| format!("{} could not be created: {}", root.display(), e))?;
+    fs::create_dir_all(root).map_err(|source| ClaimError::Uncreatable {
+        root: root.to_path_buf(),
+        source,
+    })?;
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(&path)
-        .map_err(|e| format!("{} could not be opened: {}", path.display(), e))?;
+        .map_err(|source| ClaimError::Unopenable {
+            path: path.clone(),
+            source,
+        })?;
 
     take(&file)?;
     // The previous claim is dropped only once the new one is taken, and only
@@ -76,7 +121,7 @@ fn held_state_root() -> String {
         .unwrap_or_default()
 }
 
-fn take(file: &File) -> Result<(), String> {
+fn take(file: &File) -> Result<(), ClaimError> {
     match fcntl(file, libc::F_SETLK) {
         Ok(_) => Ok(()),
         // The two errnos that mean "someone else holds it"; anything else is a
@@ -84,18 +129,17 @@ fn take(file: &File) -> Result<(), String> {
         Err(e) if matches!(e.raw_os_error(), Some(libc::EACCES) | Some(libc::EAGAIN)) => {
             Err(holder(file))
         }
-        Err(e) => Err(format!("it could not be locked: {}", e)),
+        Err(e) => Err(ClaimError::Unlockable(e)),
     }
 }
 
 /// Who is holding it, asked of the kernel rather than of a file we wrote.
-fn holder(file: &File) -> String {
-    match fcntl(file, libc::F_GETLK) {
-        Ok(blocking) if blocking.l_type != libc::F_UNLCK as libc::c_short => {
-            format!("held by pid {}", blocking.l_pid)
-        }
-        _ => "held by another process".to_string(),
-    }
+fn holder(file: &File) -> ClaimError {
+    let pid = match fcntl(file, libc::F_GETLK) {
+        Ok(blocking) if blocking.l_type != libc::F_UNLCK as libc::c_short => Some(blocking.l_pid),
+        _ => None,
+    };
+    ClaimError::Held { pid }
 }
 
 /// One `fcntl` write-lock call, reporting `errno` from the syscall that set it.
@@ -114,5 +158,46 @@ fn fcntl(file: &File, command: libc::c_int) -> io::Result<libc::flock> {
         Err(io::Error::last_os_error())
     } else {
         Ok(lock)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_claim_refusal_renders_the_text_it_replaced() {
+        let denied = || io::Error::from_raw_os_error(libc::EACCES);
+        let rendered = [
+            (
+                ClaimError::Uncreatable {
+                    root: PathBuf::from("/r"),
+                    source: denied(),
+                },
+                format!("/r could not be created: {}", denied()),
+            ),
+            (
+                ClaimError::Unopenable {
+                    path: PathBuf::from("/r/.instance.lock"),
+                    source: denied(),
+                },
+                format!("/r/.instance.lock could not be opened: {}", denied()),
+            ),
+            (
+                ClaimError::Held { pid: Some(42) },
+                "held by pid 42".to_string(),
+            ),
+            (
+                ClaimError::Held { pid: None },
+                "held by another process".to_string(),
+            ),
+            (
+                ClaimError::Unlockable(denied()),
+                format!("it could not be locked: {}", denied()),
+            ),
+        ];
+        for (error, text) in rendered {
+            assert_eq!(error.to_string(), text, "{error:?}");
+        }
     }
 }

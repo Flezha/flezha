@@ -1,18 +1,7 @@
-//! The retry ladder both operative profiles climb before their terminal escape.
-//!
-//! An invocation that fails retryably is re-run on its [`RetryPolicy`] — the
-//! input channel's for a stream procedure (`dead-letter-queue`),
-//! the class's for a workflow entity (`workflow-entity-retry`) — and only an
-//! exhausted (or author-classified non-retryable) failure escapes: the stream
-//! profile parks the payload to the dead-letter queue and advances, the workflow
-//! profile fails the procedure into AbortAll + saga.
-//!
-//! What is shared is the **policy**: how long attempt `n` waits, that the wait
-//! is counted and logged, and that a caller with a cancellation token may cut it
-//! short. What each profile does per attempt — re-clone the input and extract
-//! park bytes, or re-run an entity's batch into a fresh sink — stays with the
-//! profile. The two off-thread ladders the routing seam climbs — a poison entry
-//! parse and an unwinding edge closure — live here too.
+//! The retry policy every ladder climbs — how long attempt `n` waits,
+//! counted and logged — and the two off-thread ladders the routing seam
+//! climbs: a poison entry parse and an unwinding edge closure, each parked to
+//! the dead-letter queue once exhausted.
 
 use std::any::Any;
 use std::fmt::Display;
@@ -28,10 +17,8 @@ use crate::operative::instance::StreamInstance;
 use crate::park::RETRIES_TOTAL;
 use crate::routing::{deliver_edge, route_to_consumers};
 
-/// Record a failed-but-retryable attempt — count it (the `data_heartbeat`
-/// retry metric) and log it — and return how long to wait before the next one.
-/// `label` names the failing work (procedure, or workflow instance/procedure/
-/// entity).
+/// Count and log a retryable failure; how long to wait before the next
+/// attempt.
 pub fn note_failed_attempt(
     label: &str,
     attempt: u32,
@@ -48,10 +35,9 @@ pub fn note_failed_attempt(
     delay
 }
 
-/// Exponential backoff with ±50% jitter: `base * 2^(attempt-1)`, jitter
-/// included, capped at [`crate::channel::RETRY_BACKOFF_MAX_MS`]. The jitter
-/// draws from a cheap xorshift over the wall clock — backoff timing is runtime
-/// scheduling, outside the procedure determinism contract.
+/// `base * 2^(attempt-1)` ±50 %, capped at
+/// [`crate::channel::RETRY_BACKOFF_MAX_MS`]; the jitter is runtime
+/// scheduling, outside the determinism contract.
 fn backoff(base_ms: u64, attempt: u32) -> Duration {
     let exp = base_ms
         .max(1)
@@ -64,12 +50,8 @@ fn backoff(base_ms: u64, attempt: u32) -> Duration {
     Duration::from_millis(jittered.min(crate::channel::RETRY_BACKOFF_MAX_MS))
 }
 
-/// A poison entry payload climbing its channel's retry→DLQ ladder off the
-/// wire-reader thread (`sdk-graph-authoring` typed entries): the failing parse
-/// is re-attempted per the channel's retry budget — the parser contract says
-/// deterministic, so this is expected to fail identically — and then parked to
-/// the dead-letter queue under the entry channel's identity, exactly like a
-/// retry-exhausted invocation.
+/// A poison entry payload on its channel's ladder, off the reader thread;
+/// parked under the entry channel's identity when exhausted.
 pub struct EntryParseLadder {
     pub instance: Arc<StreamInstance>,
     pub channel_id: u32,
@@ -122,11 +104,9 @@ fn run_entry_parse_ladder(ladder: EntryParseLadder) {
     );
 }
 
-/// Re-attempt one failed step off the routing thread per the channel's retry
-/// budget, then park what still fails to the dead-letter queue under the
-/// channel's identity. The one ladder both poison entry payloads and unwinding
-/// edge closures climb — `attempt` re-runs the step AND delivers on success,
-/// so the two differ only in what that step is.
+/// Re-attempt one step per the channel's budget, then park what still
+/// fails; `attempt_step` re-runs AND delivers, so the two ladders differ only
+/// in the step.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_retry_park_ladder(
     label: &str,
@@ -173,11 +153,8 @@ pub(crate) fn run_retry_park_ladder(
     crate::park::park_blocking(&identity, &body);
 }
 
-/// Climb this channel's retry→DLQ ladder for one edge whose transform or key
-/// unwound. The closures are pure by contract, so a re-attempt is expected to
-/// fail identically — the ladder is there so the failure is parked and
-/// observable rather than silently taking a thread down, exactly as it is for
-/// a poison entry payload.
+/// The ladder for an edge whose transform or key unwound, so the failure is
+/// parked and observable rather than a dead thread.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_edge_ladder(
     instance: &Arc<StreamInstance>,
@@ -208,9 +185,7 @@ pub(crate) fn spawn_edge_ladder(
     });
 }
 
-/// Run a retry→DLQ ladder off the routing thread. Both ladders spawn here:
-/// the wait between attempts must not stall the wire reader, and a failure to
-/// spawn is reported rather than silently dropping the payload's last chance.
+/// A ladder off the routing thread; a failure to spawn is reported.
 pub(crate) fn spawn_park_thread(name: &str, run: impl FnOnce() + Send + 'static) {
     let spawned = std::thread::Builder::new()
         .name(name.to_string())
@@ -266,6 +241,7 @@ fn run_edge_ladder(ladder: EdgeLadder) {
                 None,
             )
             .map(|_| ())
+            .map_err(|e| e.to_string())
         },
     );
 }

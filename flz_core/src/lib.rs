@@ -12,6 +12,9 @@
 
 #[doc(hidden)]
 pub mod admission;
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+pub mod bench_support;
 pub mod channel;
 #[doc(hidden)]
 pub mod command;
@@ -29,6 +32,7 @@ pub mod dynamic;
 pub mod effect;
 pub mod entity;
 pub mod entry_input;
+pub mod error;
 #[doc(hidden)]
 pub mod flusher;
 pub mod header;
@@ -54,6 +58,8 @@ pub mod schema;
 pub mod shutdown;
 #[doc(hidden)]
 pub mod state_sink;
+#[cfg(any(test, feature = "bench-internals"))]
+mod test_support;
 pub mod timer;
 #[doc(hidden)]
 pub mod util;
@@ -64,4 +70,5 @@ pub mod pb {
     include!("generated/runner_commands.rs");
 }
 
+pub use error::Error;
 pub use schema::SCHEMA_VERSION;

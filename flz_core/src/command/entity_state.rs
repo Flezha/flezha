@@ -1,15 +1,7 @@
-//! `EntityState` — return the StreamOperative instance's per-Procedure / per-Entity
-//! state JSON blob per `operative-mvp-rust/design.md` Decision 10.
-//!
-//! `serialize_selected_state` walks each Procedure's entities via the per-Procedure
-//! `serialize_state` fn pointer cached on `ProcedureDescriptor` (built at
-//! registration time, captures S statically). `apply_init_values` walks
-//! the controller-supplied JSON object and seeds each Entity's state
-//! through the symmetric `deserialize_state` fn pointer.
-//!
-//! The command's optional `procedure` / `entity_key` selector narrows the walk
-//! so a live read costs what it asked for; the selector-less call is the
-//! migration/handover shape and covers every Procedure.
+//! `EntityState`: an instance's state as the per-procedure / per-Entity JSON
+//! shape, and `apply_init_values`, its inverse. The invariant: a read is
+//! taken under the entity gate and never drains — the value is the freshest
+//! and the seq it reports says which version it is.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -20,25 +12,23 @@ use serde_json::{Map, Value};
 use super::{CommandAction, Reply};
 use crate::dynamic::DynamicEntityRegistry;
 use crate::entity::EntitySlot;
+use crate::error::Error;
 use crate::operative::instance::StreamInstance;
 use crate::operative::topology::ProcedureDescriptor;
 use crate::pb::EntityState;
 use crate::runner::RunnerNode;
 use crate::util::LockRecover;
 
-/// Reply-frame metadata key carrying the `change_seq` a single selected
-/// Entity was serialized at. Absent when the selector covers more than one.
+/// The `change_seq` a single selected Entity was serialized at.
 pub const CHANGE_SEQ_META_KEY: &str = "flz.change_seq";
 
-/// Canonical refusal tokens. Each error string starts with one so the
-/// controller can map the refusal without parsing prose.
+/// Refusal tokens the controller matches as prefixes.
 pub const ENTITY_KEY_WITHOUT_PROCEDURE: &str = "entity_key_without_procedure";
 pub const PROCEDURE_NOT_FOUND: &str = "procedure_not_found";
 pub const ENTITY_NOT_FOUND: &str = "entity_not_found";
 pub const ENTITY_EVICTED: &str = "entity_evicted";
 
-/// Which Entities a read covers. Both fields absent is the whole-Operative
-/// (migration/handover) walk.
+/// Which Entities a read covers; both absent is the whole-operative walk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StateSelector<'a> {
     pub procedure: Option<&'a str>,
@@ -79,17 +69,14 @@ impl CommandAction for EntityState {
             ),
             Ok((payload, None)) => (reply(payload), HashMap::new()),
             Err(refusal) => {
-                errors.push(refusal);
+                errors.push(refusal.to_string());
                 (reply(Vec::new()), HashMap::new())
             }
         }
     }
 }
 
-/// The command's selector. Empty strings are absent — proto3 leaves an unset
-/// string empty, which is what keeps the selector-less encoding
-/// byte-identical to the pre-selector one. (A free fn because `EntityState`
-/// is defined in `crate::pb` now.)
+/// The command's selector; proto3 leaves an unset string empty.
 fn selector(cmd: &EntityState) -> StateSelector<'_> {
     StateSelector {
         procedure: non_empty(&cmd.procedure),
@@ -105,47 +92,35 @@ fn non_empty(s: &str) -> Option<&str> {
     }
 }
 
-/// Why a state serialization was asked for. Typed classes serve both from
-/// the same fn pointer; a host-run class is asked with the matching
-/// activation kind (`LiveStateRead` vs `MigrationSerialize`).
+/// Why a serialization was asked for; a host class is asked with the
+/// matching activation kind.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StatePurpose {
     LiveRead,
     Migration,
 }
 
-/// Whole-Operative walk — the migration/handover shape. Refusals are
-/// impossible without a selector, so the JSON is returned directly.
+/// The whole-operative walk, which cannot be refused.
 pub fn serialize_operative_state(instance: &Arc<StreamInstance>) -> Vec<u8> {
     serialize_selected_state(instance, StateSelector::default(), StatePurpose::Migration)
         .map(|(payload, _seq)| payload)
         .unwrap_or_default()
 }
 
-/// Build the canonical JSON shape from `design.md` Decision 10, narrowed by
-/// `selector`:
-/// - Single-mode procedures: `{"<procedure_name>": <state>}`
-/// - Static- and dynamic-mode procedures: `{"<procedure_name>": {"<entity_key>": <state>, ...}}`
-///
-/// State serialization goes through the per-Procedure `serialize_state` fn
-/// pointer cached on `ProcedureDescriptor`, under the Entity's state lock and
-/// without draining pending changes — the value therefore includes changes not
-/// yet flushed to the WAL, and the returned seq says which version it is.
-///
-/// The seq is `Some` only when the selector named exactly one Entity. Errors
-/// from individual entities are logged on stderr and that entity is omitted —
-/// the controller treats a missing procedure key the same as no state.
+/// `{"<procedure>": <state>}` for single mode, `{"<procedure>": {"<key>":
+/// <state>}}` for keyed, narrowed by `selector`. The seq is `Some` only for
+/// exactly one Entity; a failing Entity is logged and omitted.
 pub fn serialize_selected_state(
     instance: &Arc<StreamInstance>,
     selector: StateSelector<'_>,
     purpose: StatePurpose,
-) -> Result<(Vec<u8>, Option<u64>), String> {
+) -> Result<(Vec<u8>, Option<u64>), Error> {
     if selector.entity_key.is_some() && selector.procedure.is_none() {
-        return Err(format!(
+        return Err(Error::State(format!(
             "{}: an Entity key is unique only within its Procedure — name the \
              Procedure as well",
             ENTITY_KEY_WITHOUT_PROCEDURE
-        ));
+        )));
     }
 
     let mut top: Map<String, Value> = Map::new();
@@ -172,10 +147,10 @@ pub fn serialize_selected_state(
 
     if let Some(procedure) = selector.procedure {
         if !matched_procedure {
-            return Err(format!(
+            return Err(Error::State(format!(
                 "{}: operative `{}` has no Procedure named `{}`",
                 PROCEDURE_NOT_FOUND, instance.instance_id, procedure
-            ));
+            )));
         }
     }
 
@@ -187,12 +162,7 @@ pub fn serialize_selected_state(
     Ok((payload, seq))
 }
 
-/// One Procedure's state into `top` under its name. Keyed Procedures — static
-/// (declared keys) and dynamic (the live registry IS the keyset) — differ only
-/// in where the keyset comes from, so both take the same lookup-one-or-walk-all
-/// shape; single-mode has no keyset and sits under the Procedure's own name. A
-/// narrowed read costs one lookup, not one walk — that is what the selector is
-/// for.
+/// One procedure's state into `top`: a lookup for one key, a walk for all.
 fn collect_procedure(
     instance: &Arc<StreamInstance>,
     procedure_id: usize,
@@ -200,7 +170,7 @@ fn collect_procedure(
     purpose: StatePurpose,
     top: &mut Map<String, Value>,
     seqs: &mut Vec<u64>,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let procedure_desc = &instance.topology.procedures[procedure_id];
     let procedure_name = procedure_desc.name.to_string();
     let Some(keyed) = Keyset::of(instance, procedure_id) else {
@@ -239,11 +209,7 @@ fn collect_procedure(
     Ok(())
 }
 
-/// A keyed Procedure's live Entities: the declared keys for static mode, the
-/// registry for dynamic mode (which is where an evicted Entity disappears
-/// from). Both answer a single-key lookup and a walk-all, so a caller expresses
-/// one algorithm over either keyset — and a narrowed read never materializes
-/// the keys it did not ask for.
+/// A keyed procedure's live Entities, by declared keys or by registry.
 enum Keyset<'a> {
     Static {
         keys: &'a [&'static str],
@@ -253,7 +219,6 @@ enum Keyset<'a> {
 }
 
 impl<'a> Keyset<'a> {
-    /// `None` for single mode, which has no keyset.
     fn of(instance: &'a Arc<StreamInstance>, procedure_id: usize) -> Option<Self> {
         if let Some(Some(registry)) = instance.dynamic_registries.get(procedure_id) {
             return Some(Keyset::Dynamic(registry));
@@ -294,7 +259,7 @@ impl<'a> Keyset<'a> {
         }
     }
 
-    /// Only dynamic mode evicts, so a static key that is absent never existed.
+    /// Only dynamic mode evicts.
     fn was_evicted(&self, key: &str) -> bool {
         match self {
             Keyset::Static { .. } => false,
@@ -303,9 +268,7 @@ impl<'a> Keyset<'a> {
     }
 }
 
-/// Serialize one Entity into `into` under `key`, recording its seq. A failing
-/// Entity is logged and omitted — the controller treats a missing key the same
-/// as no state.
+/// One Entity into `into` under `key`; a failing one is logged and omitted.
 fn collect(
     procedure_desc: &ProcedureDescriptor,
     slot: &Arc<EntitySlot>,
@@ -326,15 +289,12 @@ fn collect(
     }
 }
 
-/// Serialize one Entity's state and read the seq it was serialized at, both
-/// under the state lock. Pending changes are deliberately NOT drained: a read
-/// returns the freshest value and reports the version, where compaction must
-/// drain because its seq becomes a truncation point.
+/// One Entity's state and its seq, under the gate and without draining.
 fn serialize_slot(
     procedure_desc: &ProcedureDescriptor,
     slot: &Arc<EntitySlot>,
     purpose: StatePurpose,
-) -> Result<(Value, u64), String> {
+) -> Result<(Value, u64), Error> {
     // Under the entity's handout exclusivity: a live read (or a migration
     // serialize, which shares this seam) never observes a half-applied
     // activation.
@@ -343,17 +303,15 @@ fn serialize_slot(
             return crate::host::state_json_locked(slot, purpose == StatePurpose::Migration);
         }
         let state_guard = slot.state.lock_recover();
-        let value = (procedure_desc.serialize_state)(&state_guard)?;
+        let value = (procedure_desc.serialize_state)(&state_guard).map_err(Error::State)?;
         let seq = slot.change_seq.load(Ordering::Relaxed);
         Ok((value, seq))
     })
 }
 
-/// Eviction is destructive (the recreate cold-starts), so an evicted key has
-/// no durable value either — the two refusals differ in diagnosis, not in
-/// what could have been served.
-fn missing_entity_refusal(evicted: bool, procedure_name: &str, key: &str) -> String {
-    if evicted {
+/// Evicted and never-existed serve the same absence; the diagnosis differs.
+fn missing_entity_refusal(evicted: bool, procedure_name: &str, key: &str) -> Error {
+    Error::State(if evicted {
         format!(
             "{}: Entity `{}` of procedure `{}` was idle-evicted; eviction is \
              destructive, so there is no durable value to serve",
@@ -364,30 +322,24 @@ fn missing_entity_refusal(evicted: bool, procedure_name: &str, key: &str) -> Str
             "{}: procedure `{}` holds no Entity keyed `{}`",
             ENTITY_NOT_FOUND, procedure_name, key
         )
-    }
+    })
 }
 
-/// Apply an `AddOperative.init_values` JSON blob to a fresh StreamOperative instance.
-/// Walks the top-level keys, matches them against registered Procedure names,
-/// and dispatches each value to the matching Procedure's `deserialize_state`
-/// fn pointer to overwrite the freshly-`init_state`d Entity state.
-///
-/// Empty `init_values` is a no-op (the cold-start path uses `init_state`).
-/// Unknown top-level keys and unknown inner entity_key entries are logged
-/// and skipped per the spec.
-pub fn apply_init_values(instance: &Arc<StreamInstance>, init_values: &str) -> Result<(), String> {
+/// Apply an `init_values` JSON blob onto a fresh instance; empty is a no-op,
+/// an unknown procedure or key is logged and skipped.
+pub fn apply_init_values(instance: &Arc<StreamInstance>, init_values: &str) -> Result<(), Error> {
     if init_values.is_empty() {
         return Ok(());
     }
     let parsed: Value = serde_json::from_str(init_values)
-        .map_err(|e| format!("Failed to parse init_values as JSON: {}", e))?;
+        .map_err(|e| Error::State(format!("Failed to parse init_values as JSON: {}", e)))?;
     let top = match parsed {
         Value::Object(map) => map,
         other => {
-            return Err(format!(
+            return Err(Error::State(format!(
                 "init_values must be a JSON object, got {}",
                 value_kind(&other)
-            ));
+            )));
         }
     };
 
@@ -398,9 +350,7 @@ pub fn apply_init_values(instance: &Arc<StreamInstance>, init_values: &str) -> R
     Ok(())
 }
 
-/// One top-level `init_values` entry onto its Procedure's Entities. An
-/// unknown Procedure is logged and skipped; single-mode takes the value as
-/// the State JSON itself.
+/// One `init_values` entry onto its procedure's Entities.
 fn apply_procedure(instance: &Arc<StreamInstance>, procedure_name: &str, procedure_value: Value) {
     let Some(&procedure_id) = instance.topology.procedure_name_to_id.get(procedure_name) else {
         eprintln!(
@@ -432,8 +382,7 @@ fn apply_procedure(instance: &Arc<StreamInstance>, procedure_name: &str, procedu
     }
 }
 
-/// Static-mode: the value is `{entity_key: state, ...}`; an unknown key is
-/// logged and skipped.
+/// Static mode: `{entity_key: state, ...}`.
 fn apply_static(
     instance: &Arc<StreamInstance>,
     procedure_id: u32,

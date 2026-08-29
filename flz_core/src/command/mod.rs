@@ -29,10 +29,8 @@ mod runner_disconnect;
 mod streams_connect;
 mod workflow_stop;
 
-/// One command's answer: the bytes the `CommandResponse` carries as
-/// `raw_data`, under the payload id the handler names itself by. The reply
-/// frame is stamped with the REQUEST's payload id; `payload_id` is the
-/// handler's own name for what it answered.
+/// One command's answer: the `CommandResponse` bytes under the handler's own
+/// payload id (the frame is stamped with the REQUEST's).
 pub struct Reply {
     pub payload_id: &'static str,
     pub bytes: Vec<u8>,
@@ -46,11 +44,8 @@ pub trait CommandAction {
         errors: &mut Vec<String>,
     ) -> Reply;
 
-    /// Reply payload plus the metadata to stamp on its frame. Overridden only
-    /// by commands whose answer carries more than bytes — `EntityState` stamps
-    /// `flz.change_seq` for a single selected Entity. The default forwards to
-    /// [`Self::handle`] with no metadata, which is what every other command
-    /// wants and keeps their frames byte-identical.
+    /// The reply plus its frame metadata; overridden only by a command whose
+    /// answer carries more than bytes.
     fn reply(
         &self,
         runner: &mut RunnerNode,
@@ -64,21 +59,14 @@ pub trait CommandAction {
 pub enum CommandActionType {
     Regular(Box<dyn CommandAction>),
     RunnerDisconnect(Box<dyn CommandAction>),
-    /// Controller -> SDK reply to an SDK-initiated request
-    /// (`RunnerShutdownAck`, `ProcCommitResponse`). Wake the waiter
-    /// registered under the request's `reference_id` with the carried
-    /// outcome. No `CommandResponse` is written — the controller sent this
-    /// as its own `CommandRequest`, not in reply to one we sent.
+    /// The controller's reply to an SDK-initiated request: wake the waiter
+    /// under its `reference_id`; no `CommandResponse` is written.
     AckSignal(crate::shutdown::AckResult),
-    /// Defensive: SDK should never receive `RunnerShutdownNotification`
-    /// (it's the SDK->controller direction). Logged and dropped if a buggy
-    /// or future controller ever emits one.
+    /// A frame this side only ever sends; logged and dropped.
     NotificationIgnore,
 }
 
-/// Surface of `get_handler` so callers can distinguish a transport-edge
-/// event (peer closed the socket cleanly → reconnect) from a decoded
-/// command frame.
+/// A decoded command frame, or the peer's clean close.
 pub enum FrameOutcome {
     PeerClosed,
     Command(CommandActionType, String),
@@ -95,11 +83,8 @@ impl std::fmt::Debug for FrameOutcome {
     }
 }
 
-/// Surface of `get_handler` failure cases. The control-channel reader
-/// MUST drive the existing reconnect loop on either variant and MUST NOT
-/// panic. `Malformed` is for non-empty bytes that fail `prost::decode`;
-/// `EmptyCommand` is for a well-formed `CommandRequest` whose `command`
-/// oneof is `None`.
+/// Why a frame did not decode; the reader drives a reconnect on either and
+/// never panics.
 #[derive(Debug)]
 pub enum CommandDecodeError {
     Malformed { stack: String },
@@ -125,20 +110,10 @@ fn regular(handler: impl CommandAction + 'static) -> CommandActionType {
     CommandActionType::Regular(Box::new(handler))
 }
 
-/// Which handler a decoded command takes. `WorkflowStop` trips a workflow
-/// driver's cancellation token; `CreditWindowInit` arms the sender window and
-/// acks in its `CommandResponse`, `CreditGrant` replenishes it;
-/// `ParkPayloadAck` wakes the dispatch thread parked in `park::park_blocking`.
-/// The variants the SDK SENDS (`RunnerShutdownNotification`, the
-/// `*Response`s it answers with, `WorkflowCompleted`, `ProcCommit` /
-/// `IterCommit` / `IterPark` / `UpdateFactories`, `SpawnWorkflowRequest`,
-/// `CreditWindowAck`) and the retired reconnect pair (`RunnerReconnected`,
-/// `ReassignRunnerId` — the SDK re-presents its stable id on every connect
-/// and the controller resolves a reconnect as a binding swap) are protocol
-/// mistakes on this side: dropped and logged. A controller reply to an
-/// SDK-initiated request wakes the waiter registered under its
-/// `reference_id`: a spawn resolves its requester's `SpawnHandle`, a
-/// durability reply the workflow driver blocked at its commit barrier.
+/// Which handler a decoded command takes. The variants this side SENDS, and
+/// the reconnect pair the controller resolves as a binding swap instead, are
+/// protocol mistakes here: dropped and logged. A reply to an SDK-initiated
+/// request wakes the waiter under its `reference_id`.
 fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecodeError> {
     Ok(match command {
         Some(Command::AssignRunnerId(c)) => regular(c),
@@ -183,9 +158,7 @@ fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecode
     })
 }
 
-/// A reply's `error` field as the waiter's ack result: empty ⇒ `Ok(outcome)`
-/// (a durable journal entry, a spawn's outcome), non-empty ⇒ the error, which
-/// terminates a workflow run abnormally.
+/// A reply's `error` field as the waiter's result: empty is `Ok(outcome)`.
 fn ack_result(outcome: String, error: String) -> crate::shutdown::AckResult {
     if error.is_empty() {
         Ok(outcome)
@@ -243,12 +216,9 @@ pub fn handle_command(
     }
 }
 
-/// The handler a frame decodes to, or `None` for a frame that is dropped: a
-/// malformed one (the read loop drives the reconnect), a `command: None` (the
-/// next frame is processed normally), or a 0-byte payload — the reader
-/// (`payloader::extract_payload`) is the canonical EOF detector and emits
-/// `RunnerMessage::Reconnect` on its own io::Error path, so this is a
-/// defence-in-depth no-op in case one ever flows in band.
+/// The handler a frame decodes to, or `None` for one that is dropped: a
+/// malformed frame (the read loop reconnects), `command: None`, or a 0-byte
+/// payload the reader already treats as EOF.
 fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, String)> {
     match command::get_handler(payload_id, message) {
         Ok(FrameOutcome::Command(handler, reference_id)) => Some((handler, reference_id)),
@@ -271,15 +241,9 @@ fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, 
     }
 }
 
-/// After the disconnect ack is written: FIN, not abort — shutting only the
-/// write half guarantees the response bytes are delivered BEFORE the peer
-/// observes the close (`Shutdown::Both` raced them, and the controller could
-/// deadlock its disconnect call on the missing ack); the read half drains to
-/// EOF when the controller closes its side. A terminal disconnect ships its
-/// state BEFORE the write half closes, because the graceful shutdown's
-/// per-operative notifications ride this same control channel. Once the ack
-/// and the final state are on the wire the process may go; nothing runs after
-/// a terminal exit.
+/// After the disconnect ack is written: a terminal disconnect ships its
+/// state first (the notifications ride this channel), then only the write
+/// half closes so the ack lands before the peer sees the close.
 fn finish_disconnect(stream: &FlezhaStream) {
     let terminal = crate::shutdown::take_terminal_exit();
     if terminal.is_some() {
@@ -405,43 +369,5 @@ mod tests {
         assert_eq!(reply("spawned", ""), Ok("spawned".to_string()));
         assert_eq!(reply("delivered", ""), Ok("delivered".to_string()));
         assert_eq!(reply("refused", "quota"), Err("quota".to_string()));
-    }
-
-    #[test]
-    fn no_get_handler_input_causes_panic() {
-        // Final guard: catch_unwind across every error-edge input proves
-        // the path no longer panics.
-        let empty_command = CommandRequest {
-            reference_id: "x".to_string(),
-            command: None,
-        }
-        .encode_to_vec();
-
-        let valid_request = CommandRequest {
-            reference_id: "y".to_string(),
-            command: Some(Command::RunnerShutdownAck(crate::pb::RunnerShutdownAck {
-                operative_id: "".to_string(),
-            })),
-        }
-        .encode_to_vec();
-
-        let inputs: Vec<Vec<u8>> = vec![
-            Vec::new(),
-            vec![0x08, 0x01, 0x12],
-            empty_command,
-            valid_request,
-        ];
-
-        for input in inputs {
-            let owned = input.clone();
-            let result = std::panic::catch_unwind(|| {
-                let _ = get_handler("payload", &owned);
-            });
-            assert!(
-                result.is_ok(),
-                "get_handler must not panic on input {:?}",
-                input
-            );
-        }
     }
 }

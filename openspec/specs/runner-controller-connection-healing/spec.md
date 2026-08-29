@@ -285,7 +285,7 @@ The new `:ping_runner` command and its `PingResponse` SHALL be carried by the ex
 
 The control-channel ack-deadline and steady-state liveness SHALL be implemented once in
 the shared `flz_transport` layer and consumed by BOTH the Rust SDK (`sock_conn`) and the
-Java SDK (via `flz_jni`'s reader loop), reading the same `FLEZHA_CONTROL_ACK_TIMEOUT_MS`
+Java SDK (via `flz_core_ffi`'s JNI reader loop), reading the same `FLEZHA_CONTROL_ACK_TIMEOUT_MS`
 configuration — this is the shared form of the existing Rust-only ack-deadline
 requirement. The Rust SDK's private ack-deadline copy in `control_unit.rs` SHALL be
 removed in favor of the shared implementation, so the liveness invariant lives in exactly
@@ -303,7 +303,7 @@ After the Java SDK opens a control channel and sends its handshake, it SHALL req
 controller to send at least one frame within `FLEZHA_CONTROL_ACK_TIMEOUT_MS` (default
 10 s). If no frame arrives, the SDK SHALL treat the controller as non-servicing and drive
 its `ReconnectCoordinator` to reconnect, exactly as the Rust SDK does. The Java reader's
-blocking read (today timeout-less in `flz_jni`) SHALL honor the deadline. A handshake
+blocking read SHALL honor the deadline. A handshake
 send failure SHALL drive reconnect, not strand a dead thread. The
 `assignLatch`-timeout path SHALL drive reconnect rather than warn-and-continue, and the
 `ReconnectCoordinator` wiring SHALL be free of the startup race that can drop the first
@@ -364,7 +364,7 @@ controller is found).
 
 ### Requirement: Java SDK transport-edge and decode events SHALL NOT crash the runtime thread
 
-The Java SDK and its `flz_jni` reader SHALL NOT crash the runtime thread on any
+The Java SDK and its JNI reader SHALL NOT crash the runtime thread on any
 control-socket event — clean peer close (0-byte read), truncated/malformed frame, unknown
 command variant, or missing fields — and SHALL instead surface a typed error and drive
 the reconnect path. This is the Java parity of the Rust "runtime threads SHALL NOT panic

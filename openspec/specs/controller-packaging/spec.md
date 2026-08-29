@@ -18,7 +18,7 @@ The final stage of `docker/prod/Dockerfile.controller` SHALL use `debian:bookwor
 
 The runtime image SHALL apt-install only the following packages: `libssl3`, `libstdc++6`, `libtinfo6`, `locales`, `ca-certificates`, `tini`. After installation, the apt cache SHALL be cleaned (`rm -rf /var/lib/apt/lists/*`).
 
-The image SHALL NOT contain Node.js, npm, TypeScript, the testnet TS source, the Java SDK, the Rust SDK source, the test compute engines, or any `flz_jni` artefacts.
+The image SHALL NOT contain Node.js, npm, TypeScript, the testnet TS source, the Java SDK, the Rust SDK source, the test compute engines, or any `flz_core_ffi` artefacts.
 
 #### Scenario: Built prod image is below 300MB
 
@@ -267,7 +267,7 @@ The repo's `.dockerignore` SHALL exclude at minimum: `**/target`, `_build`, `dep
 
 ### Requirement: Java native binaries and fat jars SHALL be committed to git, not built by CI
 
-The five native binaries `libflz_transport.{so,dylib,dll}` for `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`, `windows-x64` SHALL be committed under `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/`. The Java SDK fat jar SHALL be committed at `sdk/java/flezha-sdk/dist/flezha-sdk.jar`. The test runner fat jar SHALL be committed at `test/apps/java_runner/dist/java_runner.jar`.
+The five native binaries `libflz_core_ffi.{so,dylib,dll}` for `linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`, `windows-x64` SHALL be committed under `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/`. The Java SDK fat jar SHALL be committed at `sdk/java/flezha-sdk/dist/flezha-sdk.jar`. The test runner fat jar SHALL be committed at `test/apps/java_runner/dist/java_runner.jar`.
 
 CI SHALL NOT cross-compile any of the five native binaries. CI SHALL NOT package either fat jar. Runners SHALL refresh these artefacts locally with `scripts/build-native.sh --targets all` and `scripts/build-java-jars.sh`, then `git add` and commit them.
 
@@ -287,7 +287,7 @@ The `flezha-sdk-native` Maven build SHALL provide a `native-verify` profile that
 
 #### Scenario: native-verify fails when a binary is missing
 
-- **GIVEN** a working tree where `sdk/java/flezha-sdk-native/src/main/resources/native/macos-arm64/libflz_transport.dylib` has been deleted
+- **GIVEN** a working tree where `sdk/java/flezha-sdk-native/src/main/resources/native/macos-arm64/libflz_core_ffi.dylib` has been deleted
 - **WHEN** `mvn -f sdk/java/pom.xml -P native-verify verify` is run
 - **THEN** the build SHALL fail in the `prepare-package` phase with a message naming the missing file
 

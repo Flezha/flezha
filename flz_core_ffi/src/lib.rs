@@ -172,7 +172,7 @@ pub unsafe extern "C" fn flz_core_declare_class(
         Err(_) => None,
     };
     if let Err(e) = flz_core::host::register_host_class_json(bytes) {
-        return ctx.fail(e);
+        return ctx.fail(e.to_string());
     }
     if let Some(factory_id) = factory_id {
         ctx.declared
@@ -299,7 +299,7 @@ pub unsafe extern "C" fn flz_core_complete(
     };
     match flz_core::host::apply_result(flz_core::poll_core::global(), act, result) {
         Ok(()) => FLZ_OK,
-        Err(e) => ctx.fail(e),
+        Err(e) => ctx.fail(e.to_string()),
     }
 }
 
@@ -333,7 +333,7 @@ pub unsafe extern "C" fn flz_core_abandon(ctx: *mut FlzContext, token: u64) -> i
     };
     match flz_core::host::abandon_activation(flz_core::poll_core::global(), act) {
         Ok(()) => FLZ_OK,
-        Err(e) => ctx.fail(e),
+        Err(e) => ctx.fail(e.to_string()),
     }
 }
 
@@ -413,7 +413,7 @@ pub unsafe extern "C" fn flz_core_workflow_recv(
             FLZ_POLL_ACTIVATION
         }
         Ok(None) => FLZ_POLL_TIMEOUT,
-        Err(e) => ctx.fail(e),
+        Err(e) => ctx.fail(e.to_string()),
     }
 }
 

@@ -20,16 +20,14 @@ use flz_transport::utility::{socket_dir, socket_probe};
 use prost::Message;
 use serde::Serialize;
 
+use crate::error::Error;
 use crate::pb::Ping;
 use crate::runner::{ClientResponseMessage, RunnerMessage};
 use crate::util::nonce_suffix;
 
-/// The QUIC address this process last connected through — the UDS side keeps
-/// the same preference over its socket directory (`socket_dir`).
+/// The QUIC address this process last connected through.
 static LAST_GOOD_QUIC: LastGood<SocketAddr> = LastGood::new();
 
-/// Reader-thread handle + write stream + optional QUIC client returned by
-/// every control-channel open path.
 type ControlConn = (
     thread::JoinHandle<()>,
     Arc<FlezhaStream>,
@@ -40,11 +38,8 @@ type ControlConn = (
 struct FactoryInfo {
     id: String,
     description: Option<String>,
-    /// The class's declared SDK language, resolved from the class registry —
-    /// never a per-process constant, so a host serving more than one
-    /// declaration source stays correct. `0` when this runner advertises a
-    /// factory it never registered a class for, which the controller refuses
-    /// to place rather than guessing at.
+    /// The class's declared language, from the registry; `0` for a factory
+    /// with no class, which the controller refuses to place.
     sdk_lang: u8,
 }
 
@@ -53,14 +48,11 @@ struct ControlInitMessage {
     namespace: String,
     factory_ids: Vec<String>,
     factories: Vec<FactoryInfo>,
-    /// The runner's self-owned **stable identity** (see `persistent_id`).
-    /// Present on EVERY connect — initial and reconnect alike — and trusted by
-    /// the controller as the operative-binding key. On reconnect the controller
-    /// re-points this identity's existing bindings onto the new session token.
+    /// The runner's stable identity, on every connect; the controller's
+    /// binding key.
     stable_id: String,
 }
 
-/// Initial connection with retry and startup confirmation.
 pub fn open(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
@@ -70,7 +62,7 @@ pub fn open(
     open_with_retry(namespace, declared, Some(itx), otx)
 }
 
-/// Reconnection entry point — no startup confirmation sent.
+/// A reconnect sends no startup confirmation.
 pub fn open_reconnect(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
@@ -128,9 +120,8 @@ fn open_with_retry(
     }
 }
 
-/// The once-per-retry-loop gate on the diagnosis. A message repeated every
-/// 30 s is a message an operator learns to skip, so the terse per-attempt line
-/// is what repeats and this is what does not.
+/// The diagnosis is printed once per retry loop; the per-attempt line is
+/// what repeats.
 struct OnceOnly(bool);
 
 impl OnceOnly {
@@ -152,7 +143,7 @@ fn try_open(
     declared: Arc<RwLock<Vec<String>>>,
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
-) -> Result<ControlConn, String> {
+) -> Result<ControlConn, Error> {
     match get_transport_type() {
         #[cfg(unix)]
         TransportType::Uds => {
@@ -160,10 +151,10 @@ fn try_open(
             Ok((handle, stream, None))
         }
         #[cfg(not(unix))]
-        TransportType::Uds => Err(
+        TransportType::Uds => Err(Error::Connect(
             "UDS transport is not available on this platform; set FLEZHA_TRANSPORT=quic"
                 .to_string(),
-        ),
+        )),
         TransportType::Quic => try_open_quic(namespace, declared, itx, otx),
     }
 }
@@ -174,11 +165,15 @@ fn try_open_uds(
     declared: Arc<RwLock<Vec<String>>>,
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
-) -> Result<(thread::JoinHandle<()>, Arc<FlezhaStream>), String> {
-    let socket_path = socket_dir::control_socket_path().map_err(|e| e.to_string())?;
+) -> Result<(thread::JoinHandle<()>, Arc<FlezhaStream>), Error> {
+    let socket_path = socket_dir::control_socket_path()?;
 
-    let stream = UnixStream::connect(socket_path.clone())
-        .map_err(|e| format!("Failed to connect to control socket {}: {}", socket_path, e))?;
+    let stream = UnixStream::connect(socket_path.clone()).map_err(|e| {
+        Error::Connect(format!(
+            "Failed to connect to control socket {}: {}",
+            socket_path, e
+        ))
+    })?;
 
     // The directory that answered is where this runner's data sockets are
     // opened, and where a reconnect returns to.
@@ -194,7 +189,7 @@ fn try_open_quic(
     declared: Arc<RwLock<Vec<String>>>,
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
-) -> Result<ControlConn, String> {
+) -> Result<ControlConn, Error> {
     let ca_cert_path = transport_config::ca_cert_path();
     let (candidates, unresolved) = quic_candidates()?;
 
@@ -222,30 +217,28 @@ fn try_open_quic(
         }
     }
 
-    Err(format!(
+    Err(Error::Connect(format!(
         "Failed to connect to a QUIC controller — {}",
         failures.join("; ")
-    ))
+    )))
 }
 
-/// Every address the configured list resolves to on THIS attempt, ordered
-/// last-good first with the remainder shuffled, plus the entries that failed
-/// to resolve — one failed candidate each, never a fatal error.
-fn quic_candidates() -> Result<(Vec<SocketAddr>, Vec<String>), String> {
+/// Every address the list resolves to on THIS attempt, last-good first, plus
+/// the entries that failed to resolve.
+fn quic_candidates() -> Result<(Vec<SocketAddr>, Vec<String>), Error> {
     let entries = transport_config::quic_addresses()?;
     let (resolved, unresolved) = transport_config::resolve_entries(&entries);
     if resolved.is_empty() {
-        return Err(format!(
+        return Err(Error::Connect(format!(
             "no {} entry resolved — {}",
             transport_config::QUIC_ADDRESSES_VAR,
             unresolved.join("; ")
-        ));
+        )));
     }
     Ok((LAST_GOOD_QUIC.prefer(resolved), unresolved))
 }
 
-/// The one diagnosis a runner emits before it starts retrying, rendered where
-/// every SDK and `flz runner check` render it.
+/// The diagnosis every SDK and `flz runner check` render.
 fn connect_diagnosis() -> String {
     socket_probe::connect_diagnosis(get_transport_type(), None, None)
 }
@@ -299,9 +292,8 @@ fn sock_conn(
     (handle, stream_box)
 }
 
-/// Feed every control frame to the coordinator until the channel fails, then
-/// ask for a reconnect with the classified reason. The idle watchdog re-arms
-/// on every frame, so a live channel is never flagged while traffic flows.
+/// Feed control frames to the coordinator until the channel fails, then ask
+/// for a reconnect with the classified reason.
 fn read_loop(
     stream: &Arc<FlezhaStream>,
     otx: &Arc<Mutex<Sender<RunnerMessage>>>,
@@ -346,10 +338,8 @@ fn read_loop(
     }
 }
 
-/// Build a control-channel keepalive ping frame: a bare `Ping` on the
-/// dedicated `control_ping` payload. The controller echoes it (re-arming the
-/// runner's steady-state idle watchdog); on a wedged controller no echo
-/// arrives and the watchdog fires. Pure so it is unit-testable.
+/// A bare `Ping` on `control_ping`; the controller's echo re-arms the idle
+/// watchdog.
 fn build_keepalive_ping() -> Vec<u8> {
     let ping = Ping {
         nonce: format!("ka-{}", nonce_suffix()),
@@ -361,9 +351,6 @@ fn build_keepalive_ping() -> Vec<u8> {
     )
 }
 
-/// Write a keepalive ping on the current control stream. Routed through the
-/// coordinator (see `RunnerMessage::SendControlKeepalive`) so control writes
-/// stay single-threaded and never interleave with command replies.
 pub fn send_keepalive_ping(stream: &FlezhaStream) -> io::Result<()> {
     let frame = build_keepalive_ping();
     (&*stream).write_all(&frame).map_err(|e| {
@@ -376,10 +363,8 @@ pub fn send_keepalive_ping(stream: &FlezhaStream) -> io::Result<()> {
     })
 }
 
-/// Spawn the keepalive timer. It only signals the coordinator (it never writes
-/// the stream itself), so it can live for the runner's whole lifetime and
-/// always pings whatever the current control stream is. Jittered so a fleet
-/// does not ping in lockstep.
+/// The keepalive timer only signals the coordinator, so it outlives every
+/// reconnect; jittered so a fleet does not ping in lockstep.
 pub fn spawn_keepalive(otx: Arc<Mutex<Sender<RunnerMessage>>>) -> thread::JoinHandle<()> {
     thread::spawn(move || loop {
         thread::sleep(liveness::jittered(liveness::control_keepalive_interval()));
@@ -395,10 +380,7 @@ pub fn spawn_keepalive(otx: Arc<Mutex<Sender<RunnerMessage>>>) -> thread::JoinHa
     })
 }
 
-/// Spawn the data-channel heartbeat timer. Mirrors `spawn_keepalive`: it only
-/// signals the coordinator (which holds the secondary streams), so it survives
-/// reconnects and stops when the coordinator channel closes. Jittered so a
-/// fleet does not heartbeat in lockstep.
+/// The heartbeat timer, shaped as `spawn_keepalive`.
 pub fn spawn_data_heartbeat(otx: Arc<Mutex<Sender<RunnerMessage>>>) -> thread::JoinHandle<()> {
     thread::spawn(move || loop {
         thread::sleep(liveness::jittered(liveness::data_heartbeat_interval()));
@@ -414,11 +396,9 @@ pub fn spawn_data_heartbeat(otx: Arc<Mutex<Sender<RunnerMessage>>>) -> thread::J
     })
 }
 
-/// Map a control-stream read error to one of the five `reason` strings
-/// the controller-side `[:flezha, :runner, :reconnected]` telemetry
-/// expects. A post-ack timeout means the keepalive watchdog tripped; a
-/// pre-ack timeout means the channel was never registered. Anything
-/// non-timeout is treated as a stream break.
+/// A read error as the controller's `reason` string: a post-ack timeout is
+/// the watchdog, a pre-ack one a channel never registered, anything else a
+/// break.
 fn classify_reconnect_reason(e: &io::Error, acked: bool) -> &'static str {
     match e.kind() {
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => {
@@ -435,9 +415,8 @@ fn classify_reconnect_reason(e: &io::Error, acked: bool) -> &'static str {
     }
 }
 
-/// Serialize the runner's per-runner `declared` factory set into the connect
-/// init frame — read at write time, so every reconnect naturally resyncs
-/// post-start defines/removes (the init frame is the resync of record).
+/// The connect init frame, with the factory set read at write time so every
+/// reconnect resyncs it.
 fn send_init_msg(
     namespace: String,
     declared: &RwLock<Vec<String>>,
@@ -476,11 +455,11 @@ fn send_init_msg(
 #[cfg(test)]
 mod tests {
     use std::io::Read;
-    use std::os::unix::net::UnixStream;
 
     use crossbeam::channel::unbounded;
 
     use super::*;
+    use crate::test_support::stream_pair;
 
     #[test]
     fn classify_reconnect_reason_maps_kinds_to_canonical_strings() {
@@ -531,19 +510,16 @@ mod tests {
     // the `fast` tests that touch FLEZHA_RUNNER_ID_PATH).
     use crate::runner::env_test_guard;
 
-    // fails when: the runner connects to a controller that accepts the
-    // control socket but never sends the assign-runner-id ack (a controller
-    // mid-shutdown / being replaced), and the SDK blocks the control reader
-    // forever instead of reconnecting. This is the production warm-restart
-    // hang: the runner stayed "Connected" to the draining controller, never
-    // reached the new one, so no operative was ever re-registered.
+    // A controller that accepts the socket but never acknowledges (one
+    // mid-shutdown) must not hold the reader: the ack deadline drives a
+    // reconnect.
     #[test]
     fn reconnects_when_controller_never_acknowledges() {
         let _guard = env_test_guard();
         std::env::set_var("FLEZHA_CONTROL_ACK_TIMEOUT_MS", "600");
         std::env::set_var("FLEZHA_CONTROL_IDLE_TIMEOUT_MS", "60000");
 
-        let (sdk_end, ctrl_end) = UnixStream::pair().unwrap();
+        let (stream, ctrl_end) = stream_pair();
 
         // Fake non-servicing controller: drain the init frame, then hold the
         // connection open and stay silent — never acknowledges the runner —
@@ -558,7 +534,6 @@ mod tests {
 
         let (itx, _irx) = unbounded();
         let (otx, orx) = unbounded();
-        let stream = Arc::new(FlezhaStream::Unix(sdk_end));
 
         let _ = sock_conn(
             "test_ns".to_string(),
@@ -584,18 +559,15 @@ mod tests {
         ctrl.join().ok();
     }
 
-    // fails when: the control channel completes its handshake (first frame
-    // acked) but the controller then wedges (half-open / hung) without a clean
-    // close — the pre-change reader cleared its deadline (`set_read_timeout
-    // (None)`) and blocked forever, so the runner sat "Connected" to a dead
-    // controller. The steady-state idle watchdog must drive reconnect.
+    // A controller that wedges after the handshake without a clean close must
+    // not hold the reader either: the idle watchdog drives a reconnect.
     #[test]
     fn reconnects_when_controller_wedges_after_handshake() {
         let _guard = env_test_guard();
         std::env::set_var("FLEZHA_CONTROL_ACK_TIMEOUT_MS", "5000");
         std::env::set_var("FLEZHA_CONTROL_IDLE_TIMEOUT_MS", "500");
 
-        let (sdk_end, ctrl_end) = UnixStream::pair().unwrap();
+        let (stream, ctrl_end) = stream_pair();
 
         // Fake controller: drain the init frame, send ONE control frame (the
         // ack), then go silent — the post-handshake wedge — until the test
@@ -612,7 +584,6 @@ mod tests {
 
         let (itx, _irx) = unbounded();
         let (otx, orx) = unbounded();
-        let stream = Arc::new(FlezhaStream::Unix(sdk_end));
 
         let _ = sock_conn(
             "test_ns".to_string(),
@@ -659,10 +630,9 @@ mod tests {
     fn handshake_presents_a_non_empty_stable_id_on_initial_connect() {
         let _guard = env_test_guard();
 
-        let (sdk_end, ctrl_end) = UnixStream::pair().unwrap();
+        let (stream, ctrl_end) = stream_pair();
         let (itx, _irx) = unbounded();
         let (otx, _orx) = unbounded();
-        let stream = Arc::new(FlezhaStream::Unix(sdk_end));
 
         // Some(itx) marks this as an initial connect.
         let _ = sock_conn(
@@ -693,9 +663,8 @@ mod tests {
     fn handshake_presents_a_non_empty_stable_id_on_reconnect_too() {
         let _guard = env_test_guard();
 
-        let (sdk_end, ctrl_end) = UnixStream::pair().unwrap();
+        let (stream, ctrl_end) = stream_pair();
         let (otx, _orx) = unbounded();
-        let stream = Arc::new(FlezhaStream::Unix(sdk_end));
 
         // None marks this as a reconnect.
         let _ = sock_conn(
@@ -720,8 +689,8 @@ mod tests {
     // it without entering command dispatch.
     #[test]
     fn keepalive_ping_is_a_bare_ping_on_control_ping_payload() {
-        let (sdk_end, ctrl_end) = UnixStream::pair().unwrap();
-        send_keepalive_ping(&FlezhaStream::Unix(sdk_end)).unwrap();
+        let (stream, ctrl_end) = stream_pair();
+        send_keepalive_ping(&stream).unwrap();
 
         let ctrl: FlezhaStream = FlezhaStream::Unix(ctrl_end);
         let (payload_id, message, _meta) = payloader::extract_payload(&ctrl).unwrap();

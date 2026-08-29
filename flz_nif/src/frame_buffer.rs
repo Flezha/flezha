@@ -72,6 +72,14 @@ pub struct FrameError {
     pub max: usize,
 }
 
+impl std::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "declared {} > max {}", self.declared, self.max)
+    }
+}
+
+impl std::error::Error for FrameError {}
+
 /// Stateful frame parser that accumulates bytes and yields complete frames.
 ///
 /// States:
@@ -129,49 +137,8 @@ impl FrameBuffer {
             if remaining.is_empty() {
                 break;
             }
-
-            let next = match std::mem::replace(&mut self.state, BufferState::Empty) {
-                BufferState::Empty => {
-                    if remaining.len() >= HEADER_SIZE {
-                        // Fast path: header available in-place, no accumulation.
-                        let (header, rest) = remaining.split_at(HEADER_SIZE);
-                        remaining = rest;
-                        self.start_frame(header, &mut remaining, &mut frames)
-                    } else {
-                        let mut buf = Vec::with_capacity(HEADER_SIZE);
-                        fill(&mut buf, HEADER_SIZE, &mut remaining);
-                        Ok(BufferState::PartialHeader { buf })
-                    }
-                }
-                BufferState::PartialHeader { mut buf } => {
-                    if fill(&mut buf, HEADER_SIZE, &mut remaining) {
-                        self.start_frame(&buf, &mut remaining, &mut frames)
-                    } else {
-                        Ok(BufferState::PartialHeader { buf })
-                    }
-                }
-                BufferState::PartialPayload {
-                    payload_id,
-                    payload_size,
-                    mut buf,
-                } => {
-                    if fill(&mut buf, payload_size, &mut remaining) {
-                        if let Some(frame) = parse_payload(&payload_id, &buf) {
-                            frames.push(frame);
-                        }
-                        Ok(BufferState::Empty)
-                    } else {
-                        Ok(BufferState::PartialPayload {
-                            payload_id,
-                            payload_size,
-                            buf,
-                        })
-                    }
-                }
-                BufferState::Poisoned { .. } => unreachable!("poison returns above"),
-            };
-
-            match next {
+            let state = std::mem::replace(&mut self.state, BufferState::Empty);
+            match self.step(state, &mut remaining, &mut frames) {
                 Ok(state) => self.state = state,
                 Err(e) => {
                     self.state = BufferState::Poisoned {
@@ -183,6 +150,56 @@ impl FrameBuffer {
         }
 
         Ok(frames)
+    }
+
+    /// One transition: consume what `remaining` offers the current state and
+    /// answer the next one.
+    fn step(
+        &self,
+        state: BufferState,
+        remaining: &mut &[u8],
+        frames: &mut Vec<ParsedFrame>,
+    ) -> Result<BufferState, FrameError> {
+        match state {
+            BufferState::Empty => {
+                if remaining.len() >= HEADER_SIZE {
+                    // Fast path: header available in-place, no accumulation.
+                    let (header, rest) = remaining.split_at(HEADER_SIZE);
+                    *remaining = rest;
+                    self.start_frame(header, remaining, frames)
+                } else {
+                    let mut buf = Vec::with_capacity(HEADER_SIZE);
+                    fill(&mut buf, HEADER_SIZE, remaining);
+                    Ok(BufferState::PartialHeader { buf })
+                }
+            }
+            BufferState::PartialHeader { mut buf } => {
+                if fill(&mut buf, HEADER_SIZE, remaining) {
+                    self.start_frame(&buf, remaining, frames)
+                } else {
+                    Ok(BufferState::PartialHeader { buf })
+                }
+            }
+            BufferState::PartialPayload {
+                payload_id,
+                payload_size,
+                mut buf,
+            } => {
+                if fill(&mut buf, payload_size, remaining) {
+                    if let Some(frame) = parse_payload(&payload_id, &buf) {
+                        frames.push(frame);
+                    }
+                    Ok(BufferState::Empty)
+                } else {
+                    Ok(BufferState::PartialPayload {
+                        payload_id,
+                        payload_size,
+                        buf,
+                    })
+                }
+            }
+            BufferState::Poisoned { .. } => unreachable!("poison returns before a step"),
+        }
     }
 
     /// A complete 36-byte header: enforce the limit BEFORE any payload
@@ -382,23 +399,23 @@ mod tests {
         bytes
     }
 
+    /// An over-limit header is refused the moment it completes — arriving
+    /// whole or split across feeds — before any payload is allocated.
     #[test]
-    fn oversized_header_errors_without_allocation() {
-        let mut fb = FrameBuffer::with_limit(1024);
-        let err = fb.feed(&oversized_header(u32::MAX)).unwrap_err();
-        assert_eq!(err.declared, u32::MAX as usize);
-        assert_eq!(err.max, 1024);
-    }
-
-    #[test]
-    fn oversized_header_across_partial_feeds_errors() {
-        let mut fb = FrameBuffer::with_limit(1024);
-        let header = oversized_header(2048);
-
-        // Header arrives split; the limit check fires when it completes.
-        assert_eq!(fb.feed(&header[..20]).unwrap().len(), 0);
-        let err = fb.feed(&header[20..]).unwrap_err();
-        assert_eq!(err.declared, 2048);
+    fn an_oversized_header_is_refused_whole_or_split() {
+        for (declared, split_at) in [(u32::MAX, None), (2048, Some(20))] {
+            let mut fb = FrameBuffer::with_limit(1024);
+            let header = oversized_header(declared);
+            let err = match split_at {
+                None => fb.feed(&header).unwrap_err(),
+                Some(at) => {
+                    assert_eq!(fb.feed(&header[..at]).unwrap().len(), 0);
+                    fb.feed(&header[at..]).unwrap_err()
+                }
+            };
+            assert_eq!(err.declared, declared as usize);
+            assert_eq!(err.max, 1024);
+        }
     }
 
     #[test]
@@ -410,6 +427,15 @@ mod tests {
         let good = payloader::build_from_binary("id", b"data", HashMap::new());
         let err = fb.feed(&good).unwrap_err();
         assert_eq!(err.declared, 4096);
+    }
+
+    #[test]
+    fn a_frame_error_renders_the_declared_length_against_the_limit() {
+        let err = FrameError {
+            declared: 4096,
+            max: 1024,
+        };
+        assert_eq!(err.to_string(), "declared 4096 > max 1024");
     }
 
     #[test]

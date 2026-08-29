@@ -18,13 +18,11 @@ use crate::schema;
 use crate::util::LockRecover;
 
 /// Per-instance staging for the prepare crossing, plus the deferred
-/// end-of-slice broadcast (a broadcast must not overtake slice members still
-/// waiting on their keys/event times).
+/// end-of-slice broadcast.
 #[derive(Default)]
 pub struct HostPrepareState {
     queues: HashMap<u32, HostPrepareQueue>,
-    /// Replay-slice members currently staged or in a crossing; the
-    /// end-of-slice broadcast defers until this reaches zero.
+    /// Slice members staged or in a crossing; the broadcast waits for zero.
     replay_staged: usize,
     pending_replay_end: bool,
 }
@@ -35,7 +33,6 @@ struct HostPrepareQueue {
     inflight: bool,
 }
 
-/// One entry payload staged for the prepare crossing.
 #[derive(Clone)]
 pub struct StagedEntry {
     pub bytes: Vec<u8>,
@@ -44,7 +41,7 @@ pub struct StagedEntry {
     pub stream: Arc<flz_transport::transport::FlezhaStream>,
 }
 
-/// A batched prepare crossing for one entry channel, handed to the host as a
+/// A batched prepare crossing, handed to the host as a
 /// [`schema::ActivationKind::KeyRequest`].
 pub struct PrepareCrossing {
     pub instance: Arc<StreamInstance>,
@@ -52,17 +49,15 @@ pub struct PrepareCrossing {
     pub want_keys: bool,
     pub want_event_time: bool,
     pub entries: Vec<StagedEntry>,
-    /// A ladder's single-payload blocking re-crossing awaits here instead of
-    /// the inline application path.
+    /// A ladder's single-payload re-crossing awaits here.
     pub reply:
         Option<crossbeam::channel::Sender<Vec<Result<schema::PrepareAnswer, schema::WorkError>>>>,
 }
 
-/// Cap per crossing, so one flood does not become one giant activation.
+/// Cap per crossing.
 const PREPARE_BATCH_MAX: usize = 256;
 
-/// What an entry channel's consumers need resolved before enqueue:
-/// `(want_keys, want_event_time)`. `(false, false)` = no crossing.
+/// `(want_keys, want_event_time)`; `(false, false)` is no crossing.
 pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) -> (bool, bool) {
     let mut want_keys = false;
     let mut want_event_time = false;
@@ -85,9 +80,8 @@ pub fn prepare_wants(topology: &OperativeTopology, channel: &ChannelDescriptor) 
     (want_keys, want_event_time)
 }
 
-/// Wire-dispatch interception: stage an entry payload for the prepare
-/// crossing when its consumers need keys/event times the core cannot derive
-/// from bytes. Returns the payload back when no crossing is needed.
+/// Stage an entry payload for the crossing, or hand it back when none is
+/// needed.
 pub fn maybe_stage_prepare(
     instance: &Arc<StreamInstance>,
     channel_id: crate::channel::ChannelId,
@@ -125,9 +119,8 @@ pub fn maybe_stage_prepare(
     None
 }
 
-/// End-of-slice broadcast, deferred behind any slice members still waiting
-/// in the prepare crossing — otherwise the close would overtake the very
-/// inputs being re-ordered. Instances with nothing staged broadcast at once.
+/// The end-of-slice broadcast, deferred behind slice members still in the
+/// crossing.
 pub fn deferred_end_replay_slice(instance: &Arc<StreamInstance>) {
     {
         let mut state = instance.host_prepare.lock_recover();
@@ -139,8 +132,7 @@ pub fn deferred_end_replay_slice(instance: &Arc<StreamInstance>) {
     crate::routing::end_replay_slice(instance);
 }
 
-/// Assemble and submit the next crossing for a channel unless one is
-/// already in flight. Called at staging and at crossing completion.
+/// Submit the channel's next crossing unless one is in flight.
 fn submit_next_crossing(
     instance: &Arc<StreamInstance>,
     channel_id: u32,
@@ -169,13 +161,12 @@ fn submit_next_crossing(
     }));
 }
 
-/// Route a completed crossing: deliver answered payloads, ladder failed
-/// ones, then re-arm the channel's next batch (or fire a deferred
-/// end-of-slice broadcast once no slice member is waiting).
+/// A completed crossing: deliver the answered, ladder the failed, re-arm
+/// the next batch.
 pub(super) fn apply_prepare_outcome(
     crossing: PrepareCrossing,
     outcome: schema::ActivationOutcome,
-) -> Result<(), String> {
+) -> Result<(), crate::error::Error> {
     let answers = answers_for(outcome, crossing.entries.len());
     let PrepareCrossing {
         instance,
@@ -190,7 +181,9 @@ pub(super) fn apply_prepare_outcome(
         return Ok(());
     }
     let Some(channel_desc) = instance.topology.channel(channel) else {
-        return Err("prepare crossing names an unknown channel".to_string());
+        return Err(crate::error::Error::Answer(
+            "prepare crossing names an unknown channel".to_string(),
+        ));
     };
     let mut replay_resolved = 0usize;
     for (entry, answer) in entries.into_iter().zip(answers) {
@@ -219,8 +212,7 @@ pub(super) fn apply_prepare_outcome(
     Ok(())
 }
 
-/// One answer per staged entry: a whole-crossing failure or a short answer
-/// fails the entries it left unanswered.
+/// One answer per entry; a short answer fails what it left unanswered.
 fn answers_for(
     outcome: schema::ActivationOutcome,
     entries: usize,
@@ -252,8 +244,6 @@ fn answers_for(
     answers
 }
 
-/// Deliver one prepared payload to the channel's consumers through the one
-/// routing seam live delivery and replay slices share.
 fn deliver_prepared(
     instance: &Arc<StreamInstance>,
     channel_id: u32,
@@ -279,9 +269,8 @@ fn deliver_prepared(
     );
 }
 
-/// A failed prepare climbs the entry channel's retry→park ladder — each
-/// re-attempt is a single-payload blocking crossing, and exhaustion parks
-/// under the channel's identity exactly like a poison entry parse.
+/// A failed prepare climbs the entry channel's ladder, one blocking
+/// re-crossing per attempt.
 fn spawn_prepare_ladder(
     instance: Arc<StreamInstance>,
     channel_id: u32,
@@ -329,9 +318,8 @@ fn spawn_prepare_ladder(
     });
 }
 
-/// Crossing epilogue: release the channel's inflight gate, re-arm the next
-/// batch, and fire a deferred end-of-slice broadcast once the last waiting
-/// slice member resolved.
+/// Release the inflight gate, re-arm the next batch, fire a deferred
+/// broadcast once the last slice member resolved.
 fn finish_crossing(
     instance: &Arc<StreamInstance>,
     channel_id: u32,

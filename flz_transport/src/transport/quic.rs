@@ -720,9 +720,8 @@ pub fn send_transmit(udp: &UdpSocket, transmit: &Transmit, buf: &[u8]) -> io::Re
 mod tests {
     use super::*;
 
-    // fails when: QUIC `set_read_timeout` is a no-op (the pre-change behavior),
-    // so `ChannelReader::read` blocks forever on an idle stream and control-
-    // channel liveness is silently skipped on QUIC.
+    // A QUIC read timeout is a real deadline: an idle stream returns
+    // `TimedOut`, so control-channel liveness holds on QUIC as on UDS.
     #[test]
     fn channel_reader_honors_read_timeout_when_idle() {
         let (_tx, rx) = channel::bounded::<Bytes>(4);

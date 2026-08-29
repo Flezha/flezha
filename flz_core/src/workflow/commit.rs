@@ -11,32 +11,21 @@ use std::time::{Duration, Instant};
 
 use super::compensation::{EntityRun, StagedOutput};
 use super::driver::{ChainCtx, Value, CANCEL_POLL_CHUNK};
+use super::WorkflowError;
 use crate::channel::RetryPolicy;
 use crate::entity::EntitySlot;
 use crate::operative::topology::ProcedureDescriptor;
 
-/// Upper bound on one wait for the controller's `ProcCommitResponse` /
-/// `IterCommitResponse`. A wait that expires re-sends the same frame under the
-/// same `reference_id` (the controller's journal is idempotent by barrier
-/// identity) up to the class's `barrier_retry_attempts`, and only the exhausted
-/// ladder terminates the run abnormally — the same posture as any mid-run
-/// channel loss (the un-acked proc/iteration re-runs on resume,
-/// at-least-once). Overridable with `FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`.
+/// One wait for a commit response (`FLEZHA_WORKFLOW_ACK_TIMEOUT_MS`); an
+/// expired wait re-sends under the same `reference_id`, up to the class's
+/// `barrier_retry_attempts`.
 const ACK_TIMEOUT_DEFAULT_MS: u64 = 30_000;
 const ENV_ACK_TIMEOUT_MS: &str = "FLEZHA_WORKFLOW_ACK_TIMEOUT_MS";
 
-/// Ship `ProcCommit` for a completed stage and block until the controller's
-/// durable `ProcCommitResponse` (workflow-proc-journal D3). The handoff batch is
-/// serialized through the procedure's output-channel codec (validated present
-/// at registration; a terminal or plugin-bound output has no codec and ships
-/// an empty handoff), and the stage's staged plugin output rides along as the
-/// procedure's outbox (`workflow-transactional-outbox`) — journaled with the
-/// commit in one durable write, flushed by the controller only afterwards.
-/// Skipped for opted-out classes and transport-less runs (unit tests /
-/// standalone, where no coordinator is installed — mirroring the DLQ park's
-/// sink gate); those never stage, so nothing is stranded. A failed or timed-out
-/// ack is a terminal run error; the un-acked proc re-runs on resume, and its
-/// staged output — never journaled — is simply dropped (at-least-once).
+/// Ship `ProcCommit` for a completed stage — its handoff through the output
+/// channel's codec, its staged plugin output as the outbox — and block for
+/// the durable ack. Skipped for a run that does not journal, which never
+/// stages. A refused ack ends the run; the un-acked proc re-runs on resume.
 pub(super) fn commit_proc_boundary(
     ctx: &ChainCtx,
     stage_idx: usize,
@@ -45,13 +34,13 @@ pub(super) fn commit_proc_boundary(
     entities: &[EntityRun],
     slots: &[Arc<EntitySlot>],
     batch: &[Value],
-) -> Result<(), String> {
+) -> Result<(), WorkflowError> {
     if !ctx.journaling() {
         return Ok(());
     }
 
     let handoff = encode_handoff(ctx, proc.output_channel_id, batch)
-        .map_err(|e| format!("proc {stage_idx} {e}"))?;
+        .map_err(|e| WorkflowError::from(format!("proc {stage_idx} {e}")))?;
 
     let entities_ran: Vec<Vec<u8>> = entities
         .iter()
@@ -78,19 +67,15 @@ pub(super) fn commit_proc_boundary(
     )
 }
 
-/// Ship `IterCommit` for a finished loop iteration and block until the
-/// controller's durable `IterCommitResponse` (`workflow-durable-loop` D1): the
-/// journal records `iter_committed(iter, consumed_offset)` with the iteration's
-/// terminal handoff, the instance's entities are snapshotted at the boundary,
-/// the iteration's staged outbox is flushed, and the consumed inbox prefix is
-/// released. The next iteration starts only on the successful reply, so a crash
-/// re-runs at most the whole in-flight iteration — never a committed one.
+/// Ship `IterCommit` for a finished iteration and block for the durable
+/// ack; the next iteration starts only on it, so a crash re-runs at most the
+/// in-flight one.
 pub(super) fn commit_iteration(
     ctx: &ChainCtx,
     iter: u32,
     consumed_offset: u64,
     batch: &[Value],
-) -> Result<(), String> {
+) -> Result<(), WorkflowError> {
     if !ctx.journaling() {
         return Ok(());
     }
@@ -105,7 +90,7 @@ pub(super) fn commit_iteration(
         .single_leaf()
         .and_then(|leaf| ctx.proc(leaf).output_channel_id);
     let handoff = encode_handoff(ctx, terminal_channel, batch)
-        .map_err(|e| format!("iteration {iter} {e}"))?;
+        .map_err(|e| WorkflowError::from(format!("iteration {iter} {e}")))?;
 
     ship_and_await(
         ctx,
@@ -121,14 +106,13 @@ pub(super) fn commit_iteration(
     )
 }
 
-/// Serialize a released batch through its producing channel's inter-proc codec.
-/// Empty when the procedure has no output channel (a terminal stage) or the
-/// channel carries no codec (a plugin-bound output).
+/// A released batch through its channel's codec; empty for a terminal or
+/// plugin-bound output.
 fn encode_handoff(
     ctx: &ChainCtx,
     channel_id: Option<u32>,
     batch: &[Value],
-) -> Result<Vec<crate::pb::ProcHandoffItem>, String> {
+) -> Result<Vec<crate::pb::ProcHandoffItem>, WorkflowError> {
     let Some(channel_id) = channel_id else {
         return Ok(Vec::new());
     };
@@ -148,14 +132,17 @@ fn encode_handoff(
                     channel_id,
                     payload,
                 })
-                .map_err(|e| format!("handoff serialization failed on channel {channel_id}: {e}"))
+                .map_err(|e| {
+                    WorkflowError::from(format!(
+                        "handoff serialization failed on channel {channel_id}: {e}"
+                    ))
+                })
         })
         .collect()
 }
 
-/// One entity's staged plugin output as outbox entries, tagged with the
-/// producing entity's wire identity and the entity-local emit order
-/// (`seq_in_proc`) — the controller mints the flush key from that tuple.
+/// One entity's staged plugin output as outbox entries, keyed by its wire
+/// identity and emit order.
 pub(super) fn outbox_items(
     slot: &Arc<EntitySlot>,
     staged: &[StagedOutput],
@@ -174,31 +161,18 @@ pub(super) fn outbox_items(
         .collect()
 }
 
-/// Emit one durability handshake — `ProcCommit` (forward proc boundary or
-/// compensation undo record) or `IterCommit` (iteration boundary) — and block
-/// until the controller's durable ack. All three are "journal this, then tell me
-/// it is durable" round-trips over the same reference-id-keyed reply path.
-///
-/// A wait that expires is not yet a failure: the same frame is re-sent under
-/// the same `reference_id` — the controller journals a barrier once by its
-/// identity and acks a re-send from the existing entry — after the class's
-/// retry backoff, up to its `barrier_retry_attempts`; a transient control
-/// channel stall therefore delays the chain instead of ending it. The waiter
-/// stays registered across the ladder, so a late ack to an earlier send
-/// continues the chain too.
-///
-/// `abort_on_cancel` aborts the wait early on a cooperative cancel, which the
-/// caller maps to the `cancelled` terminal status. The compensation undo record
-/// passes `false`: rollback IS the response to that cancel, and abandoning the
-/// record because the token is set would drop the undo output it carries — it
-/// waits out the full ladder instead.
+/// One durability handshake: emit the command and block for its ack,
+/// re-sending under the same `reference_id` after each expired wait. The
+/// waiter stays registered across the ladder, so a late ack continues the
+/// chain. `abort_on_cancel` is `false` for an undo record: rollback IS the
+/// response to that cancel.
 pub(super) fn ship_and_await(
     ctx: &ChainCtx,
     idx: usize,
     what: &str,
     abort_on_cancel: bool,
     command: crate::pb::command_request::Command,
-) -> Result<(), String> {
+) -> Result<(), WorkflowError> {
     let reference_id = format!(
         "proc-commit-{}-{}-{}",
         ctx.instance_id,
@@ -232,14 +206,13 @@ pub(super) fn ship_and_await(
             ),
         };
         crate::shutdown::drop_pending_ack(&reference_id);
-        return Err(error);
+        return Err(WorkflowError::from(error));
     }
     unreachable!("the ladder returns from its last attempt")
 }
 
-/// One attempt's wait: the ack timeout, and — when it expires with attempts
-/// left — the retry backoff spent as one more wait on the same receiver, so a
-/// late ack to this send ends the ladder instead of costing a re-send.
+/// One attempt's wait, with the retry backoff spent as one more wait on the
+/// same receiver so a late ack ends the ladder.
 fn await_with_backoff(
     ctx: &ChainCtx,
     rx: &mpsc::Receiver<crate::shutdown::AckResult>,
@@ -257,7 +230,6 @@ fn await_with_backoff(
     await_ack(ctx, rx, delay, abort_on_cancel)
 }
 
-/// How one ack wait ended.
 enum AckWait {
     Acked,
     Refused(String),
@@ -266,7 +238,6 @@ enum AckWait {
     TimedOut,
 }
 
-/// One wait for the ack, chunked so a cooperative cancel is observed promptly.
 fn await_ack(
     ctx: &ChainCtx,
     rx: &mpsc::Receiver<crate::shutdown::AckResult>,

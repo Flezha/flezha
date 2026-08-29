@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use super::entity::{BytesBuffer, HostPayload};
+use crate::error::Error;
 use crate::flusher::FlushableBuffer;
 use crate::poll_core::EnginePayload;
 use crate::schema;
@@ -100,17 +101,21 @@ pub struct HostWorkflowSession {
 pub fn workflow_session_recv(
     instance_id: &str,
     timeout: std::time::Duration,
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Option<Vec<u8>>, Error> {
     let session = WORKFLOW_SESSIONS
         .get(instance_id)
         .map(|s| Arc::clone(s.value()))
-        .ok_or_else(|| format!("no live workflow run body for instance `{instance_id}`"))?;
+        .ok_or_else(|| {
+            Error::HostCrossing(format!(
+                "no live workflow run body for instance `{instance_id}`"
+            ))
+        })?;
     let inbox = { session.inbox.lock_recover() };
     match inbox.recv_timeout(timeout) {
         Ok(item) => Ok(Some(item.payload)),
         Err(crossbeam::channel::RecvTimeoutError::Timeout) => Ok(None),
         Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
-            Err("workflow inbox closed".to_string())
+            Err(Error::HostCrossing("workflow inbox closed".to_string()))
         }
     }
 }

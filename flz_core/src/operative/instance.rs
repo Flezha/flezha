@@ -1,4 +1,6 @@
-//! `StreamInstance`: per-`AddOperative` runtime state.
+//! `StreamInstance`: one bound stream operative — its Entities by procedure
+//! and mode, its partition range, its reapers — and the partition hash the
+//! controller's placement mirrors bit for bit.
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -10,18 +12,14 @@ use crate::dynamic::{spawn_reaper, DynamicEntityRegistry};
 use crate::entity::EntitySlot;
 use crate::operative::topology::{EntityMode, OperativeTopology};
 
-/// FNV-1a-128 offset basis, frozen by the cross-language `StableId` spec.
+/// Frozen by the cross-language `StableId` spec.
 pub const FNV128_OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58d;
 
-/// The FNV-128 prime, `2^88 + 0x13b`.
 const FNV128_PRIME: u128 = 0x0000000001000000000000000000013b;
 
-/// FNV-1a-128 (frozen by spec: xor byte, multiply by the FNV 128 prime),
-/// continuing from `hash` so a caller can chain several byte runs.
-///
-/// The one implementation behind both `StableId::derive` and [`key_group`];
-/// the controller's `Flezha.Partition` and Java's `StableId` carry the same
-/// constants, pinned by one shared fixture-vector set.
+/// FNV-1a-128 continuing from `hash`; the one implementation behind
+/// `StableId::derive` and [`key_group`], pinned against the controller's and
+/// Java's by shared fixture vectors.
 pub fn fnv1a128(mut hash: u128, bytes: &[u8]) -> u128 {
     for &b in bytes {
         hash ^= b as u128;
@@ -30,23 +28,15 @@ pub fn fnv1a128(mut hash: u128, bytes: &[u8]) -> u128 {
     hash
 }
 
-/// How many key groups a partitioned operative's key space is divided into.
 pub const KEY_GROUPS: u32 = 256;
 
-/// The key group a routing key belongs to: `fnv1a128(key) mod 256`. The
-/// controller assigns each partition a contiguous range of these and the
-/// dispatch guard refuses a key outside its own.
+/// `fnv1a128(key) mod 256`; each partition owns a contiguous range.
 pub fn key_group(key: &str) -> u32 {
     (fnv1a128(FNV128_OFFSET_BASIS, key.as_bytes()) & (KEY_GROUPS as u128 - 1)) as u32
 }
 
-/// The key-group range one partition member owns, straight off its
-/// `AddOperative`.
-///
-/// A partitioned operative runs as N ordinary instances, each owning a
-/// contiguous slice of the 256 key groups. The range is shipped explicitly
-/// rather than derived from `(index, count)` so a rescale's recomputed ranges
-/// need no format change.
+/// The key-group range one partition member owns, shipped explicitly on
+/// `AddOperative` so a rescale needs no format change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyGroupRange {
     pub index: u32,
@@ -56,8 +46,7 @@ pub struct KeyGroupRange {
 }
 
 impl KeyGroupRange {
-    /// The whole key space, guard inert — every operative that predates
-    /// partitioning, and every `--partitions 1` start.
+    /// The whole key space, guard inert.
     pub const UNPARTITIONED: Self = Self {
         index: 0,
         count: 0,
@@ -65,32 +54,28 @@ impl KeyGroupRange {
         to: KEY_GROUPS - 1,
     };
 
-    /// Whether the dispatch guard applies at all. One comparison; an
-    /// unpartitioned operative pays exactly this and nothing else.
+    /// Whether the dispatch guard applies at all — one comparison.
     #[inline]
     pub fn partitioned(&self) -> bool {
         self.count >= 2
     }
 
-    /// `Err` naming the violated contract when `key` belongs to another
-    /// member. A mis-routed key means the source and the topology disagree
-    /// about what a key is, so the message states the rule rather than the
-    /// symptom.
-    pub fn admit(&self, key: &str) -> Result<(), String> {
+    /// `Err` when `key` belongs to another member; the text states the rule
+    /// the source and the topology disagree on.
+    pub fn admit(&self, key: &str) -> Result<(), crate::error::Error> {
         let group = key_group(key);
         if group >= self.from && group <= self.to {
             return Ok(());
         }
-        Err(format!(
+        Err(crate::error::Error::Partition(format!(
             "key '{}' hashes to key group {}, which partition {} of {} does not own \
              (it owns groups {}..{}) — the routing item / flz.key must equal the key_by result",
             key, group, self.index, self.count, self.from, self.to
-        ))
+        )))
     }
 
-    /// Whether `key` belongs here — the filtering form for a statically keyed
-    /// procedure, whose out-of-range declared Entities stay idle rather than
-    /// parking every broadcast.
+    /// Whether `key` belongs here — the filtering form a static procedure
+    /// uses to leave its out-of-range Entities idle.
     #[inline]
     pub fn owns(&self, key: &str) -> bool {
         !self.partitioned() || self.admit(key).is_ok()
@@ -100,48 +85,32 @@ impl KeyGroupRange {
 pub struct StreamInstance {
     pub topology: Arc<OperativeTopology>,
     pub instance_id: Arc<str>,
-    /// This instance's partition identity, from `AddOperative`. Immutable
-    /// start-time truth; a rebind re-ships it.
+    /// This member's range, from `AddOperative`; a rebind re-ships it.
     pub partition: KeyGroupRange,
-    /// Indexed by `ProcedureId`. Each entry is a Vec of entities for that
-    /// Procedure. Single-mode procedures have one entry; static-mode procedures have
-    /// `entity_keys().len()` entries; dynamic-mode procedures have none (their
-    /// Entities live in `dynamic_registries`).
+    /// By `ProcedureId`: one slot for single mode, one per key for static,
+    /// none for dynamic (those live in `dynamic_registries`).
     pub entities: Vec<Vec<Arc<EntitySlot>>>,
-    /// Indexed by `ProcedureId`. Maps `&'static str` entity keys to the
-    /// entity index. Empty for single- and dynamic-mode procedures.
+    /// By `ProcedureId`: static keys to slot index.
     pub entity_key_to_idx: Vec<HashMap<&'static str, usize>>,
-    /// Indexed by `ProcedureId`. `Some` only for dynamic-mode procedures; holds
-    /// the lazily-populated entity map + reaper-facing counters.
+    /// By `ProcedureId`: `Some` for dynamic mode only.
     pub dynamic_registries: Vec<Option<Arc<DynamicEntityRegistry>>>,
-    /// Stop flag + join handles for this instance's background threads: one
-    /// reaper per dynamic Procedure with a TTL. Driven by
-    /// [`Self::shutdown_background_threads`] / `Drop`.
+    /// Stop flag and handles of the reapers.
     background_stop: Arc<AtomicBool>,
     background_handles: Mutex<Vec<JoinHandle<()>>>,
-    /// Per-entry-channel staging for the host prepare crossing (C-ABI
-    /// classes whose consumers need keys/event times before enqueue).
-    /// Lazily populated; typed classes never touch it.
+    /// The host prepare crossing's staging; a typed class never touches it.
     pub host_prepare: Mutex<crate::host::HostPrepareState>,
-    /// Frozen-at-instance-start persistence flag. Resolved from the
-    /// StreamOperative class const + runner override; propagated to every
-    /// `EntitySlot`. Subsequent runner config changes do not
-    /// affect this instance — only `stop_operative` + `start_operative` cycles
-    /// pick up new values.
+    /// Resolved once at start from the class const and the runner override.
     persistence_enabled: bool,
 }
 
 impl StreamInstance {
-    /// Construct a fresh `StreamInstance` with no runner persistence
-    /// override and no partitioning. Equivalent to
-    /// `StreamInstance::with_options(.., None, KeyGroupRange::UNPARTITIONED)`.
+    /// No persistence override, unpartitioned.
     pub fn new(topology: Arc<OperativeTopology>, instance_id: Arc<str>) -> Arc<Self> {
         Self::with_options(topology, instance_id, None, KeyGroupRange::UNPARTITIONED)
     }
 
-    /// Construct a fresh `StreamInstance` with an explicit runner
-    /// override for `operative_persistence.<OperativeClass>` (when `Some`, it
-    /// wins over the class const) and an explicit partition range.
+    /// With an explicit persistence override (which wins over the class
+    /// const) and partition range.
     pub fn with_options(
         topology: Arc<OperativeTopology>,
         instance_id: Arc<str>,
@@ -191,15 +160,11 @@ impl StreamInstance {
         })
     }
 
-    /// Read the resolved persistence flag for this instance. Frozen at
-    /// construction; only changes on the next stop+start cycle.
     pub fn persistence_enabled(&self) -> bool {
         self.persistence_enabled
     }
 
-    /// Stop and join this instance's background threads (the dynamic-mode
-    /// reapers). Called by `RunnerNode::stop_operative`; idempotent and a
-    /// no-op for an instance that started none.
+    /// Stop and join the reapers; idempotent.
     pub fn shutdown_background_threads(&self) {
         self.signal_background_stop();
         let handles = std::mem::take(
@@ -213,16 +178,13 @@ impl StreamInstance {
         }
     }
 
-    /// Ask every background thread to wind down.
     fn signal_background_stop(&self) {
         self.background_stop
             .store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
-/// One reaper per dynamic Procedure that opts into a TTL. Default
-/// `idle_ttl == None` spawns none — dynamic Entities then live as long as the
-/// StreamOperative, like static ones.
+/// One reaper per dynamic Procedure that declares a TTL.
 fn spawn_reapers(
     topology: &OperativeTopology,
     dynamic_registries: &[Option<Arc<DynamicEntityRegistry>>],
@@ -243,16 +205,13 @@ fn spawn_reapers(
     handles
 }
 
-/// One procedure's Entities: `(slots, key → index, dynamic registry)`.
 type ProcedureEntities = (
     Vec<Arc<EntitySlot>>,
     HashMap<&'static str, usize>,
     Option<Arc<DynamicEntityRegistry>>,
 );
 
-/// One procedure's Entities by mode. A dynamic procedure owns zero Entities
-/// at startup — its registry allocates them lazily on first key; a
-/// single-mode procedure owns one; a static one owns one per declared key.
+/// One procedure's Entities by mode: `(slots, key → index, dynamic registry)`.
 fn build_procedure_entities(
     topology: &Arc<OperativeTopology>,
     weak: &Weak<StreamInstance>,
@@ -307,8 +266,7 @@ impl Drop for StreamInstance {
 #[cfg(test)]
 mod partition_hash_tests {
     //! The routing guard and the controller's placement must agree bit for
-    //! bit: a one-bit drift parks every frame of a partitioned operative. The
-    //! twin assertions live in `Flezha.PartitionTest` and `StableIdTest`.
+    //! bit; the twin assertions are `Flezha.PartitionTest` and `StableIdTest`.
 
     use super::{fnv1a128, key_group, FNV128_OFFSET_BASIS};
 

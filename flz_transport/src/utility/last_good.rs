@@ -100,7 +100,7 @@ mod tests {
         assert_eq!(reconnect[0], 3);
         assert_eq!(reconnect.len(), 4);
 
-        // A recorded endpoint that is no longer offered must not be dialled,
+        // A recorded endpoint the list stopped offering must not be dialled,
         // and must not drop the others.
         slot.note(9);
         let moved = slot.prefer(candidates.clone());

@@ -16,14 +16,14 @@ use super::decl::HostClock;
 use super::entity::{entity_ref_of, BytesBuffer, HostPayload, HostProcedureFacts};
 use super::prepare::{apply_prepare_outcome, PrepareCrossing};
 use crate::entity::{EntityItem, EntitySlot};
+use crate::error::Error;
 use crate::flusher::{DlqEntryBody, InvocationEffects, OutputRecord, SettlePolicy};
 use crate::poll_core::{EngineActivation, EnginePayload, ItemAttempt, PollCore};
 use crate::schema::{self, TimerOp};
 use crate::util::LockRecover;
 
-/// Translate a handed-out engine activation into the schema form the C ABI
-/// ships. Wall-clock `now` is stamped here — the host never reads ambient
-/// time for `ctx.now()`.
+/// The schema form of a handed-out activation. `now` is stamped here — the
+/// host never reads ambient time for `ctx.now()`.
 pub fn to_schema(act: &EngineActivation) -> schema::Activation {
     match &act.payload {
         EnginePayload::Command {
@@ -68,8 +68,7 @@ pub fn to_schema(act: &EngineActivation) -> schema::Activation {
     }
 }
 
-/// A prepare crossing is addressed to the channel's first consumer; the host
-/// answers for the channel, not for an entity.
+/// A prepare crossing is addressed to the channel's first consumer.
 fn prepare_target(crossing: &PrepareCrossing) -> schema::EntityRef {
     schema::EntityRef {
         operative: crossing.instance.instance_id.to_string(),
@@ -84,7 +83,6 @@ fn prepare_target(crossing: &PrepareCrossing) -> schema::EntityRef {
     }
 }
 
-/// One handout's items in schema form.
 fn work_items_to_schema(slot: &EntitySlot, items: &[ItemAttempt]) -> Vec<schema::WorkItem> {
     let now_fallback = host_clock_now(slot);
     items
@@ -119,9 +117,8 @@ fn work_items_to_schema(slot: &EntitySlot, items: &[ItemAttempt]) -> Vec<schema:
         .collect()
 }
 
-/// One workflow step as the host receives it: a stage batch is an ordinary
-/// `Work` activation (the driver's ladder and barriers stay driver-side, so the
-/// host runs exactly one attempt), an undo is a `CompensateRun`.
+/// A stage batch is an ordinary `Work` activation (one attempt; the ladder
+/// stays driver-side), an undo a `CompensateRun`.
 fn workflow_step_kind(step: &crate::workflow::step::WorkflowStep) -> schema::ActivationKind {
     use crate::workflow::step::StepWork;
     match &step.work {
@@ -155,9 +152,8 @@ fn workflow_step_kind(step: &crate::workflow::step::WorkflowStep) -> schema::Act
     }
 }
 
-/// The declared clock's value for one handout. The engine stamps `now` for
-/// event-time items; wall and logical clocks evaluate here, once per handout —
-/// the host never reads ambient time (or its own counters) for `ctx.now()`.
+/// The declared clock's value, once per handout; the engine stamps event-time
+/// items, wall and logical clocks evaluate here.
 fn host_clock_now(slot: &EntitySlot) -> u64 {
     let clock = slot
         .dispatcher
@@ -170,10 +166,9 @@ fn host_clock_now(slot: &EntitySlot) -> u64 {
     }
 }
 
-/// The channel, payload and metadata one item carries across. A value that is
-/// not a `HostPayload` cannot reach a host class — its codecs mint them — so
-/// the fallback is defensive: an empty payload on the entity's input channel,
-/// which the host's own decoder rejects as a work failure.
+/// The channel, payload and metadata one item carries across. A value that
+/// is not a `HostPayload` cannot reach a host class; the fallback is an empty
+/// payload the host's decoder rejects.
 fn host_input_parts(
     payload: Option<&HostPayload>,
     slot: &EntitySlot,
@@ -191,14 +186,13 @@ fn input_channel_of(slot: &EntitySlot) -> u32 {
         .unwrap_or(0)
 }
 
-/// Apply a host completion to its outstanding activation: buffer the change
-/// bytes, fold and arm timer ops, ship plugin outputs, then drive the
+/// Apply a host completion to its outstanding activation, then drive the
 /// engine's completion protocol (release, ladder, or park).
 pub fn apply_result(
     core: &PollCore,
     act: EngineActivation,
     result: schema::ActivationResult,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let EngineActivation { token, payload } = act;
     let (slot, items) = match payload {
         EnginePayload::Command { reply, .. } => {
@@ -233,15 +227,15 @@ pub fn apply_result(
         // complete.
         _ => {
             core.abandon(token, items);
-            Err("work activation answered with a non-work outcome".to_string())
+            Err(Error::Answer(
+                "work activation answered with a non-work outcome".to_string(),
+            ))
         }
     }
 }
 
-/// Whole-activation failure: ladder the head item with the rest behind it,
-/// or park it when non-retryable/final. The host reported no per-item
-/// effect, so the park resolves with an empty one (any pending-attempt
-/// changes still flush with it).
+/// Whole-activation failure: ladder the head with the rest behind it, or
+/// park it when non-retryable/final, resolving with an empty effect.
 fn answer_failed_activation(
     core: &PollCore,
     token: u64,
@@ -268,20 +262,22 @@ fn answer_failed_activation(
     }
 }
 
-/// Settle each item against its effect in order; a retryable failure ends the
-/// batch and re-hands the failed item with the rest behind it.
+/// Settle each item against its effect in order; a retryable failure ends
+/// the batch and re-hands the failed item with the rest behind it.
 fn settle_items(
     core: &PollCore,
     token: u64,
     slot: &Arc<EntitySlot>,
     items: Vec<ItemAttempt>,
     effects: Vec<schema::ItemEffect>,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let mut queue: std::collections::VecDeque<ItemAttempt> = items.into();
     for effect in effects {
         let Some(work) = queue.pop_front() else {
             core.abandon(token, Vec::new());
-            return Err("completion carries more effects than items".to_string());
+            return Err(Error::Answer(
+                "completion carries more effects than items".to_string(),
+            ));
         };
         match effect.verdict.clone() {
             schema::Verdict::Ok => {
@@ -315,10 +311,8 @@ fn settle_items(
     Ok(())
 }
 
-/// A parked head stops the host mid-batch ("items after the failed one
-/// are re-handed by the core"); anything still queued is owed a fresh
-/// round — dropping it here is how a healthy payload behind a poison one
-/// would vanish.
+/// Anything still queued behind a parked head is owed a fresh round, or a
+/// healthy payload behind a poison one vanishes.
 fn finish_batch(core: &PollCore, token: u64, queue: std::collections::VecDeque<ItemAttempt>) {
     let rest: Vec<ItemAttempt> = queue.into_iter().collect();
     if rest.is_empty() {
@@ -328,24 +322,18 @@ fn finish_batch(core: &PollCore, token: u64, queue: std::collections::VecDeque<I
     }
 }
 
-/// Answer a polled activation the host cannot finish, without processing it.
-///
-/// The ABI's third answer, and the one no unwind can reach across the
-/// boundary: a veneer whose language threw, or whose thread died, has no way
-/// to call `complete`, and per-entity exclusivity would retire the entity for
-/// the life of the process. One function so every payload kind is answered the
-/// way its own waiter expects — a work batch re-hands its items and consumes
-/// no ladder attempt, while a command, workflow step or prepare crossing has a
-/// blocked enqueuer that must be released with a failure rather than left
-/// parked.
-pub fn abandon_activation(core: &PollCore, act: EngineActivation) -> Result<(), String> {
+/// Answer a polled activation the host cannot finish, without processing it
+/// — the ABI's third answer, for a veneer that threw or whose thread died. A
+/// work batch re-hands its items; a command, step or prepare crossing
+/// releases its blocked enqueuer with a failure.
+pub fn abandon_activation(core: &PollCore, act: EngineActivation) -> Result<(), Error> {
     let EngineActivation { token, payload } = act;
     match payload {
         EnginePayload::Work { items, .. } => match core.abandon(token, items) {
             crate::poll_core::Answered::Released => Ok(()),
-            crate::poll_core::Answered::UnknownToken => Err(format!(
+            crate::poll_core::Answered::UnknownToken => Err(Error::Answer(format!(
                 "unknown or already-answered activation token {token}"
-            )),
+            ))),
         },
         other => apply_result(
             core,
@@ -364,9 +352,7 @@ pub fn abandon_activation(core: &PollCore, act: EngineActivation) -> Result<(), 
     }
 }
 
-/// The effect a whole-activation failure resolves its head item with: the
-/// host reported nothing per-item.
-fn empty_effect() -> schema::ItemEffect {
+pub(crate) fn empty_effect() -> schema::ItemEffect {
     schema::ItemEffect {
         verdict: schema::Verdict::Ok,
         changes: Vec::new(),
@@ -379,7 +365,6 @@ fn empty_effect() -> schema::ItemEffect {
     }
 }
 
-/// Hold a failed-but-retryable attempt's changes until its item resolves.
 fn stash_pending_attempt(slot: &Arc<EntitySlot>, changes: Vec<Vec<u8>>) {
     if changes.is_empty() {
         return;
@@ -390,12 +375,9 @@ fn stash_pending_attempt(slot: &Arc<EntitySlot>, changes: Vec<Vec<u8>>) {
     }
 }
 
-/// Settle one item — the host boundary's mirror of the typed layer's
-/// per-invocation effect block: fold the item's changes and timer ops into
-/// the entity per its tier, route its outputs, and (when `park` is set) mint
-/// the DLQ entry exactly where the typed layer does — inside the effect
-/// record for the effectively-once tier (atomic with the offset advance),
-/// through the blocking tier-off park otherwise.
+/// Settle one item: fold its changes and timer ops per the tier, route its
+/// outputs, and mint the park where the typed layer does — inside the effect
+/// record under the tier, through the blocking park otherwise.
 pub(super) fn settle_item(
     slot: &Arc<EntitySlot>,
     work: &ItemAttempt,
@@ -443,9 +425,8 @@ pub(super) fn settle_item(
     }
 }
 
-/// The connection an item's outputs and park ride. A close is never resolved
-/// as host work (the assembler consumes it); without a connection of its own
-/// it takes the live secondary, as a chained deadline does.
+/// The connection an item's outputs and park ride; a close takes the live
+/// secondary.
 fn stream_of(item: &EntityItem) -> Option<Arc<FlezhaStream>> {
     match item {
         EntityItem::Input(p) => Some(Arc::clone(&p.stream)),
@@ -454,17 +435,15 @@ fn stream_of(item: &EntityItem) -> Option<Arc<FlezhaStream>> {
     }
 }
 
-/// Edge values deliver in-process to their named consumer (producer-side
-/// evaluation: the host already ran transforms and key); wire outputs ride
-/// the tier's path. `(edge, wire)`.
+/// `(edge, wire)`: edge values deliver in-process, wire outputs ride the
+/// tier's path.
 fn split_outputs(outputs: Vec<schema::Output>) -> (Vec<schema::Output>, Vec<schema::Output>) {
     outputs
         .into_iter()
         .partition(|o| matches!(o.target, schema::OutputTarget::Edge { .. }))
 }
 
-/// The offset is core-authoritative: the item the engine handed out knows
-/// what it consumed; a firing consumes nothing.
+/// The offset is core-authoritative; a firing consumes nothing.
 fn consumed_offset_of(item: &EntityItem) -> Option<u64> {
     match item {
         EntityItem::Input(p) => p.consumed_offset,
@@ -473,8 +452,7 @@ fn consumed_offset_of(item: &EntityItem) -> Option<u64> {
 }
 
 /// A failed invocation commits no timer registrations — except a poison
-/// firing, which still records its removal so it parks once instead of
-/// firing forever.
+/// firing's own removal, so it parks once instead of firing forever.
 fn committed_timers(item: &EntityItem, timers: Vec<TimerOp>, parked: bool) -> Vec<TimerOp> {
     if !parked {
         return timers;
@@ -485,7 +463,6 @@ fn committed_timers(item: &EntityItem, timers: Vec<TimerOp>, parked: bool) -> Ve
     }
 }
 
-/// The dead-letter entry a park mints, counted and reported as it is minted.
 fn park_entry(
     slot: &Arc<EntitySlot>,
     item: &EntityItem,
@@ -513,20 +490,9 @@ fn park_entry(
     }
 }
 
-/// Edge values into consumer mailboxes — the offset propagates exactly as
-/// the typed emit path propagates it.
-///
-/// BEFORE the effect record is folded, and that order is the guarantee: an
-/// edge output is the one output kind with no durable copy (it is excluded
-/// from the transactional outbox), so the only thing that can re-produce it
-/// is the producer re-running its input. Fold first and a crash in the
-/// ~5 ms until the flusher runs leaves the offset durable, the replay floor
-/// skipping that input, and the consumer never fed — a permanent loss under
-/// a contract that promises effectively-once. Holding the item's effects
-/// until every push has landed makes the item unresolved while a delivery
-/// is outstanding, exactly as `stash_pending_attempt` holds a failed
-/// attempt's changes. The typed path emits from inside `ctx.emit` during
-/// `run()`, before the effect block exists, and already satisfies this.
+/// Edge values into consumer mailboxes, BEFORE the effect record is folded:
+/// an edge output has no durable copy, so a consumed offset durable ahead of
+/// it would be a permanent loss under effectively-once.
 fn route_edge_outputs(
     slot: &Arc<EntitySlot>,
     stream: &Arc<FlezhaStream>,
@@ -575,10 +541,8 @@ fn route_edge_outputs(
     }
 }
 
-/// Fold the invocation into the Entity's buffer per its tier. Under the tier
-/// the wire outputs ride the effect record's transactional outbox; outside
-/// it they are handed back to ship on the wire directly, and so is the park,
-/// which ships as its own blocking frame after the buffer ops.
+/// Fold the invocation into the buffer per its tier; outside the tier the
+/// wire outputs and the park are handed back to ship after the buffer ops.
 fn settle_into_buffer(
     slot: &Arc<EntitySlot>,
     facts: &HostProcedureFacts,
@@ -609,7 +573,6 @@ fn settle_into_buffer(
     (tier_off_dlq, plugin_outputs)
 }
 
-/// The plugin outputs as the effect record carries them.
 fn output_records(wire_outputs: Vec<schema::Output>) -> Vec<OutputRecord> {
     wire_outputs
         .into_iter()
@@ -625,7 +588,6 @@ fn output_records(wire_outputs: Vec<schema::Output>) -> Vec<OutputRecord> {
         .collect()
 }
 
-/// Fold the committed timer ops into the pending set and arm them.
 fn commit_timers(slot: &Arc<EntitySlot>, timers: &[TimerOp], stream: &Arc<FlezhaStream>) {
     if timers.is_empty() {
         return;
@@ -639,10 +601,8 @@ fn commit_timers(slot: &Arc<EntitySlot>, timers: &[TimerOp], stream: &Arc<Flezha
     crate::timer::apply_ops(slot, timers, stream);
 }
 
-/// Ship the tier-off plugin outputs on the wire. Empty on a park and under
-/// the tier (where outputs ride the effect record's transactional outbox
-/// instead). The frame's payload id is the OPERATIVE ID — that is what the
-/// controller routes `:on_output` by; the entity label would name nothing.
+/// Ship the tier-off plugin outputs. The frame's payload id is the OPERATIVE
+/// ID — what the controller routes `:on_output` by.
 fn ship_plugin_outputs(
     slot: &Arc<EntitySlot>,
     stream: &Arc<FlezhaStream>,

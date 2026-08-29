@@ -35,14 +35,12 @@ pub struct RunnerNode {
     status: RunnerStatus,
 }
 
-/// The newest RunnerNode's operative registry — test support for harnesses
-/// (the C-ABI scenario) that drive instances the runner built.
+/// The newest RunnerNode's registry, for harnesses that drive its instances.
 #[doc(hidden)]
 pub static LIVE_REGISTRY: std::sync::Mutex<Option<Arc<OperativeRegistry>>> =
     std::sync::Mutex::new(None);
 
-/// Look up a live stream instance by id on the newest runner. Test
-/// support; `None` when no runner started or the id is unknown.
+/// A live stream instance by id on the newest runner, for harnesses.
 #[doc(hidden)]
 pub fn live_stream_instance(
     instance_id: &str,
@@ -71,12 +69,9 @@ impl RunnerNode {
         }
     }
 
-    /// Spawn a StreamOperative instance from a registered StreamOperative class. `factory_id`
-    /// is looked up in the global class registry; `instance_id` is what
-    /// the wire calls `operative_id`. `partition` is the member's owned
-    /// key-group range (`KeyGroupRange::UNPARTITIONED` for an ordinary
-    /// operative). Idempotent on duplicate `instance_id`: returns the
-    /// existing instance.
+    /// Spawn a stream instance of a registered class; `instance_id` is the
+    /// wire's `operative_id`. Idempotent: a duplicate id answers the existing
+    /// instance.
     pub fn start_operative(
         &self,
         factory_id: String,
@@ -96,24 +91,16 @@ impl RunnerNode {
         Some(self.operative_registry.register_stream(instance))
     }
 
-    /// Spawn a workflow-kind unit: register it (idempotent on a duplicate id) and
-    /// launch its sequential driver on a dedicated thread with `args` from
-    /// `init_values`. The driver runs the run-sugar body or the structured
-    /// linear chain, observes the lifecycle (inbox, loop, duration, external
-    /// stop), and converges on a single `WorkflowCompleted` teardown. Returns
-    /// `false` when no workflow class is registered.
+    /// Spawn a workflow instance and its driver; `false` when no such class
+    /// is registered.
     pub fn start_workflow(&self, factory_id: String, instance_id: String, args: String) -> bool {
         self.start_workflow_resumable(factory_id, instance_id, args, 0, 0, None)
     }
 
-    /// Spawn a workflow unit that may be **resuming** after a crash: a durable
-    /// structured driver holds its first Procedure until `resume_entity_count`
-    /// per-Entity restores have landed (the Controller ships one
-    /// `RestoreInitState` per persisted Entity). `0` ⇒ a fresh spawn / a
-    /// run-sugar or opted-out class ⇒ run immediately. `proc_journal` is the
-    /// instance's committed proc state, which rides the bind because a durable
-    /// class with no per-Entity state ships no restore at all. See
-    /// [`crate::workflow::instance`].
+    /// Spawn a workflow instance that may be resuming: the driver holds its
+    /// first procedure until `resume_entity_count` restores have landed (`0`
+    /// runs at once). `proc_journal` rides the bind: a durable class with no
+    /// per-Entity state ships no restore at all.
     pub fn start_workflow_resumable(
         &self,
         factory_id: String,
@@ -155,11 +142,8 @@ impl RunnerNode {
         true
     }
 
-    /// The live-instance check + class unregistration behind
-    /// [`RunnerMessage::RemoveFactory`]. MUST run on the coordinator loop —
-    /// that is what serializes it with `AddOperative` handling and makes the
-    /// check race-free. `Err(n)` = `n` live instances exist; the type stays
-    /// registered.
+    /// Unregister a class with no live instance; `Err(n)` names how many
+    /// exist. MUST run on the coordinator loop, serialized with `AddOperative`.
     pub fn remove_factory(&self, factory_id: &str, workflow: bool) -> Result<(), usize> {
         let live = self.operative_registry.count_by_factory(factory_id);
         if live > 0 {
@@ -196,7 +180,6 @@ impl RunnerNode {
         self.operative_registry.get_stream(instance_id)
     }
 
-    /// Resolve a running workflow instance by id (cooperative `WorkflowStop`).
     pub fn get_workflow(
         &self,
         instance_id: &str,
@@ -204,8 +187,7 @@ impl RunnerNode {
         self.operative_registry.get_workflow(instance_id)
     }
 
-    /// Locate a live workflow Entity slot by wire identity, for the inbound
-    /// `RestoreInitState` handler.
+    /// A live workflow Entity slot by wire identity.
     pub fn find_workflow_entity(
         &self,
         entity_id: &[u8],
@@ -226,8 +208,6 @@ impl RunnerNode {
         self._namespace.clone()
     }
 
-    /// Snapshot of live StreamOperative instances — the
-    /// `FlezhaRunner::operatives()` view.
     pub fn get_operatives(&self) -> HashMap<String, Arc<StreamInstance>> {
         self.operative_registry.snapshot_stream()
     }
@@ -257,9 +237,7 @@ impl RunnerNode {
     }
 }
 
-/// What the coordinator loop holds between messages: the runner, its live
-/// control stream, what a reconnect needs to re-open it, and the per-workflow
-/// count of direct outputs a completion carries.
+/// What the loop holds between messages.
 struct Coordinator {
     runner: RunnerNode,
     control_stream: Arc<FlezhaStream>,
@@ -268,8 +246,8 @@ struct Coordinator {
     otx_arc: Arc<Mutex<Sender<RunnerMessage>>>,
     ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>,
     shutdown_bridge: Arc<ShutdownBridge>,
-    /// Direct outputs written per workflow instance, in this loop's order:
-    /// the count a completion carries so the controller can wait for them.
+    /// Direct outputs written per workflow instance — the count a completion
+    /// carries so the controller can wait for them.
     direct_outputs: HashMap<String, u32>,
 }
 
@@ -291,9 +269,8 @@ pub fn start(
     })
 }
 
-/// Let the shutdown bridge enumerate live StreamOperative instances without
-/// going through the coordinator channel. Survives reconnects since the
-/// registry Arc is stable.
+/// Let the shutdown bridge enumerate live instances without the coordinator
+/// channel; the registry `Arc` is stable across reconnects.
 fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<OperativeRegistry>) {
     shutdown_bridge.set_snapshot_fn(Box::new(move || {
         registry
@@ -311,11 +288,8 @@ fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<Operative
 
 impl Coordinator {
     /// Open the control channel and build the coordinator around it. The two
-    /// jittered timers returned only signal this coordinator (they never write
-    /// a stream), so they survive reconnects and every control write stays
-    /// single-threaded: the keepalive pings the current control stream, the
-    /// heartbeat writes every secondary so an idle-but-healthy operative keeps
-    /// the controller's per-channel liveness clock fresh.
+    /// timers only signal this loop, so every control write stays on one
+    /// thread and both survive reconnects.
     fn connect(
         namespace: String,
         declared: Arc<RwLock<Vec<String>>>,
@@ -405,8 +379,6 @@ impl Coordinator {
         }
     }
 
-    /// Serialized with AddOperative by construction (same loop), so the
-    /// live-instance check cannot race a placement.
     fn remove_factory(&self, factory_id: &str, workflow: bool) {
         let result = self.runner.remove_factory(factory_id, workflow);
         let _ = self
@@ -416,8 +388,7 @@ impl Coordinator {
             .send(ClientResponseMessage::RemoveFactoryResult(result));
     }
 
-    /// A reconnect on a stopped runner is a no-op; otherwise re-open the
-    /// control stream and hand the shutdown bridge the new one.
+    /// A no-op on a stopped runner; otherwise re-open the control stream.
     fn reconnect(&mut self, reason: &'static str) {
         if matches!(self.runner.status, RunnerStatus::Stopped) {
             return;
@@ -434,8 +405,7 @@ impl Coordinator {
             .set_control_stream(Some(Arc::clone(&self.control_stream)));
     }
 
-    /// The terminal `WorkflowCompleted` frame, carrying how many direct
-    /// outputs this loop wrote for the unit.
+    /// The terminal `WorkflowCompleted`, carrying the direct-output count.
     fn write_workflow_completed(
         &mut self,
         operative_id: String,
@@ -461,10 +431,8 @@ impl Coordinator {
         }
     }
 
-    /// An SDK-initiated request under the caller's own reference id. The
-    /// reference_id keys the driver's registered waiter, so it is reused
-    /// verbatim (no fresh nonce). A failed write is left to the driver's ack
-    /// timeout — same posture as a lost frame.
+    /// An SDK-initiated request under the caller's reference id, which keys
+    /// its waiter; a failed write is left to the waiter's timeout.
     fn write_control_request(&self, reference_id: String, command: Command) {
         let frame = framed_request(reference_id, command);
         if let Err(e) = (&*self.control_stream).write_all(&frame) {
@@ -476,12 +444,9 @@ impl Coordinator {
     }
 }
 
-/// Write a workflow's output payload on a secondary stream, tagged with its
-/// `operative_id` so the controller routes it to the unit's bound plugins. The
-/// controller keys output fan-out on the payload id, so any one secondary
-/// stream suffices; best-effort like the data heartbeat.
-/// `true` when the frame reached the stream: only a written output is one
-/// the controller can be asked to wait for.
+/// A workflow's output on any one secondary stream, tagged with its
+/// `operative_id`; `true` only when it reached the stream, since only a
+/// written output can be waited for.
 fn write_workflow_output(
     io_streams: &RwLock<HashMap<u32, FlezhaStream>>,
     operative_id: &str,
@@ -513,14 +478,12 @@ fn write_workflow_output(
     }
 }
 
-/// Build an SDK -> Controller `control_command` frame for one oneof command,
-/// stamping a `<ref_prefix>-<nonce>` reference id.
+/// A `control_command` frame under a `<ref_prefix>-<nonce>` reference id.
 fn control_command_frame(ref_prefix: &str, command: Command) -> Vec<u8> {
     framed_request(format!("{ref_prefix}-{}", nonce_suffix()), command)
 }
 
-/// Frame one SDK-initiated `CommandRequest` under an explicit reference_id
-/// (the caller's waiter key when a controller reply is awaited).
+/// A `CommandRequest` frame under the caller's own reference id.
 fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
     let request = CommandRequest {
         reference_id,
@@ -529,23 +492,17 @@ fn framed_request(reference_id: String, command: Command) -> Vec<u8> {
     payloader::build_from_binary("control_command", &request.encode_to_vec(), HashMap::new())
 }
 
-/// One heartbeat tick: write, and report a heartbeat that reached nothing so
-/// the flood ladder can drive a reconnect. An idle Operative writes no state
-/// changes, so this is the only signal that would ever trip the ladder for it.
+/// One heartbeat tick; a heartbeat that reached nothing feeds the flood
+/// ladder, the only signal an idle Operative ever gives it.
 fn heartbeat_tick(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) {
     if !send_data_heartbeat(io_streams) {
         crate::state_sink::note_transport_failure();
     }
 }
 
-/// Write a data-channel heartbeat on every secondary stream. The frame is a
-/// bare payload-id with no body, small enough to write atomically.
-///
-/// Returns whether it reached at least one stream. An empty map or an
-/// all-failed write means the controller's per-channel liveness clock is no
-/// longer being fed and it will flag `output_stall`; the caller reports that
-/// so a runner producing no state changes still drives its own recovery
-/// instead of waiting for a `ConnectSocket` that may never come.
+/// A body-less heartbeat on every secondary stream; whether it reached one.
+/// Reaching none means the controller will flag `output_stall`, so the
+/// caller drives its own recovery rather than wait for a `ConnectSocket`.
 fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool {
     let frame = payloader::build_from_binary(
         liveness::DATA_HEARTBEAT_PAYLOAD_ID,
@@ -563,9 +520,8 @@ fn send_data_heartbeat(io_streams: &RwLock<HashMap<u32, FlezhaStream>>) -> bool 
     delivered
 }
 
-/// The runner's self-report, as the heartbeat frame carries it. Separate from
-/// the write so the key set — a cross-SDK contract the controller mirrors slot
-/// for slot — is readable without a socket.
+/// The heartbeat's self-report; its keys are a cross-SDK contract the
+/// controller mirrors slot for slot.
 fn heartbeat_metadata() -> HashMap<String, String> {
     let core = crate::poll_core::global();
     // The runner's whole self-report, as one table. The heartbeat thread
@@ -629,22 +585,9 @@ fn return_operatives(runner: &RunnerNode, ctx_arc: Arc<Mutex<Sender<ClientRespon
         .send(ClientResponseMessage::ReturnOperatives(operatives));
 }
 
-/// Re-establish the control stream while preserving the SDK's
-/// in-memory state. The previous behaviour cleared
-/// `shared_io_streams`, `operative_registry`, and the `runner_id` —
-/// that is what caused the May 25 silent freeze (runner sat empty
-/// while the controller still believed the binding was live). The
-/// `runner-controller-connection-healing` capability now requires:
-///
-///   * `operative_registry` and `shared_io_streams` are retained across
-///     reconnect (in-flight per-Entity mailbox work keeps draining); the
-///     existing `runner_id` is kept until the controller assigns a fresh
-///     session token via `AssignRunnerId` on the re-opened stream.
-///   * A `tracing::warn!` line is emitted with the upstream-derived
-///     `reason` so kubectl logs surface every reconnect.
-///   * The re-opened control stream re-presents the runner's stable id in
-///     its connect handshake, so the controller resolves the reconnect as a
-///     binding swap — there is no separate reconnect frame.
+/// Re-open the control stream keeping the registry, the data streams and the
+/// `runner_id`: in-flight mailbox work keeps draining, and the handshake's
+/// stable id makes the controller resolve the reconnect as a binding swap.
 fn handle_reconnect(
     runner: &mut RunnerNode,
     control_stream: &mut Arc<FlezhaStream>,
@@ -680,10 +623,8 @@ fn handle_reconnect(
 mod heartbeat_tests {
     use super::*;
 
-    /// Every overflow outcome has to reach an operator without a debugger, and
-    /// the heartbeat is the only frame a wedged-but-alive runner still sends.
-    /// The keys are a cross-SDK contract — `stream_channel.ex` mirrors them
-    /// slot for slot — so a rename here silently blinds the controller.
+    /// The heartbeat's keys are a cross-SDK contract `stream_channel.ex`
+    /// mirrors slot for slot; a rename silently blinds the controller.
     #[test]
     fn the_heartbeat_carries_every_overflow_counter() {
         let before = super::heartbeat_metadata();
@@ -716,11 +657,8 @@ mod heartbeat_tests {
         }
     }
 
-    /// An Operative that writes no state changes trips no flood ladder, so the
-    /// 10 s data heartbeat is its only outbound signal. When that heartbeat
-    /// reaches no stream the controller flags `output_stall`, while the runner
-    /// — which discarded the write error — sees nothing and never asks to
-    /// reconnect. That is a permanent, silent stall.
+    /// An idle Operative's heartbeat is its only outbound signal; one that
+    /// reaches no stream must ask for a reconnect, or the stall is silent.
     #[test]
     fn heartbeat_reaching_no_stream_arms_the_reconnect_ladder() {
         let _g = crate::state_sink::SINK_TEST_LOCK.lock().unwrap();

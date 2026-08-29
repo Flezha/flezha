@@ -17,62 +17,41 @@ use crate::poll_core::ItemAttempt;
 use crate::schema;
 use crate::timer::PendingTimers;
 
-/// One entry payload as the host layer carries it between the wire, the
-/// prepare crossing and the mailbox: the raw bytes plus everything the core
-/// resolved about them. This is the `Arc<dyn Any>` value inside a host
-/// class's `EntityPayload`.
+/// An entry payload as the host layer carries it — the bytes plus what the
+/// core resolved about them; the erased value inside a host class's
+/// `EntityPayload`.
 pub struct HostPayload {
     pub bytes: Vec<u8>,
-    /// The channel the value arrived on (entry) or was produced onto
-    /// (inter-proc edge).
     pub channel: crate::channel::ChannelId,
-    /// Routing keys: exactly one for a dynamic consumer, any number for a
-    /// static fan-out (empty = every declared entity), unused for single.
+    /// One key for a dynamic consumer, any number for a static fan-out.
     pub keys: Vec<String>,
-    /// The extracted event time (event-time classes; from the prepare
-    /// crossing for entry payloads, from the producing completion for
-    /// inter-proc values).
     pub event_time: Option<u64>,
-    /// Wire metadata worth carrying to the host, if any.
     pub metadata: Vec<(String, String)>,
 }
 
-/// The per-procedure facts a [`HostDispatcher`] answers with. `Some` from
-/// [`crate::entity::ProcedureDispatcher::host_facts`] is what marks a slot as
-/// host-run: its command interactions cross as queued activations instead of
-/// in-process calls.
+/// The per-procedure facts a [`HostDispatcher`] answers with; `Some` from
+/// `host_facts` is what marks a slot as host-run.
 pub struct HostProcedureFacts {
     pub name: &'static str,
-    /// The declaring class — stamped on every activation for this procedure.
     pub factory: &'static str,
     pub retry: RetryPolicy,
-    /// Stamped into this procedure's durable records; per procedure, never a
-    /// class-wide maximum.
+    /// Stamped into this procedure's durable records.
     pub schema_version: u32,
-    /// The oldest stamped version this procedure still reads; equal to
-    /// `schema_version` unless the host declares migrations.
+    /// The oldest stamped version this procedure still reads.
     pub min_readable_schema_version: u32,
     pub persistent: bool,
-    /// Effectively-once tier: completions produce effect records (changes +
-    /// outputs + consumed offset in ONE durable record) instead of plain
-    /// change frames, and outputs ride the transactional outbox.
+    /// Completions produce effect records and outputs ride the outbox.
     pub effectively_once: bool,
-    /// Checkpoint ack-granularity: the open interval's changes stage until a
-    /// completion carries `checkpoint` (or a park closes the interval).
+    /// The open interval's changes stage until a completion checkpoints.
     pub checkpoint: Option<crate::operative::topology::CheckpointPolicy>,
-    /// The declared clock; drives `now` stamping and event-time admission.
     pub clock: HostClock,
-    /// Header lang byte the host's durable records claim (Rust 1, Java 2).
     pub sdk_lang: u8,
-    /// Header format byte for plain change bodies (postcard 1, Kryo 4).
     pub change_format_id: u8,
-    /// Late-input correction, present only on event-time-clocked procedures.
     pub correction: Option<CorrectionPolicy>,
 }
 
 impl HostProcedureFacts {
-    /// The durable-record header for this procedure's frames — the host's
-    /// declared lang/format instead of the typed constructor's Rust ones.
+    /// The durable-record header, on the host's declared lang and format.
     pub fn header(&self) -> HeaderTemplate {
         HeaderTemplate {
             sdk_lang: self.sdk_lang,
@@ -83,10 +62,8 @@ impl HostProcedureFacts {
     }
 }
 
-/// Mirror of the typed `build_entity_slot` for a host-run procedure: the
-/// shared kernel assembly (`entity::assemble_slot`), a [`BytesBuffer`]
-/// instead of a `TypedBuffer<S>`, a [`HostDispatcher`] instead of the typed
-/// impl.
+/// The typed `build_entity_slot`'s mirror: the shared assembly with a
+/// [`BytesBuffer`] and a [`HostDispatcher`].
 pub(super) fn build_host_entity_slot(
     args: BuildEntityArgs<'_>,
     facts: Arc<HostProcedureFacts>,
@@ -129,18 +106,16 @@ pub(super) fn build_host_entity_slot(
     )
 }
 
-/// The metadata half of the dispatcher trait for a host-run procedure.
-/// `dispatch_item` is unreachable in a host process — no in-process poll
-/// worker exists to call it; work leaves through the C ABI's poll.
+/// The metadata half of the dispatcher trait; `dispatch_item` is
+/// unreachable, since work leaves through the C ABI's poll.
 struct HostDispatcher {
     procedure_id: u32,
     entity_label: Arc<str>,
     facts: Arc<HostProcedureFacts>,
 }
 
-/// Why the in-process workflow seams are unreachable for a host class: its work
-/// leaves as a step activation the host polls, and the answer folds through
-/// [`super::fold_workflow_outcome`].
+/// The in-process workflow seams are unreachable for a host class: its steps
+/// cross as activations and fold through [`super::fold_workflow_outcome`].
 fn host_workflow_unreachable(what: &str) -> crate::workflow::WorkflowError {
     crate::workflow::WorkflowError::non_retryable(format!(
         "host-run procedure: {what} reaches the host as a workflow step activation, \
@@ -270,17 +245,64 @@ impl ProcedureDispatcher for HostDispatcher {
     }
 }
 
-/// Host-encoded per-Entity flush buffer: change bodies arrive pre-encoded in
-/// completions; the core frames and ships them exactly as it does a typed
-/// drain — the one buffer, on bytes.
+/// The one flush buffer, on the host's pre-encoded bytes.
 pub type BytesBuffer = crate::flusher::EffectBuffer<crate::flusher::RawBodies>;
 
-/// The schema address of a slot — the instance id, the numeric procedure id,
-/// the key as declared.
+/// The schema address of a slot.
 pub fn entity_ref_of(slot: &EntitySlot) -> schema::EntityRef {
     schema::EntityRef {
         operative: slot.instance_id.to_string(),
         procedure: slot.procedure_id,
         entity_key: slot.entity_key.as_deref().map(str::to_string),
+    }
+}
+
+pub(super) fn host_serialize_unreachable(
+    _: &Box<dyn Any + Send>,
+) -> Result<serde_json::Value, String> {
+    Err("host-held state: a live read reaches the host through its \
+         LiveStateRead activation, not an in-process serializer"
+        .to_string())
+}
+
+pub(super) fn host_deserialize_unreachable(
+    _: &serde_json::Value,
+) -> Result<Box<dyn Any + Send>, String> {
+    Err("host-held state: apply-state reaches the host through its \
+         ApplyState activation"
+        .to_string())
+}
+
+/// The journal codec of a host inter-proc channel: the payload's routing
+/// facts, so a re-seed rebuilds the exact `HostPayload`.
+pub(super) fn host_payload_codec(channel_id: u32) -> crate::channel::ChannelCodec {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct JournalForm {
+        bytes: Vec<u8>,
+        keys: Vec<String>,
+        event_time: Option<u64>,
+    }
+    crate::channel::ChannelCodec {
+        encode: Arc::new(|value: &dyn Any| {
+            let payload = value
+                .downcast_ref::<HostPayload>()
+                .ok_or("host codec: value is not a host payload")?;
+            postcard::to_stdvec(&JournalForm {
+                bytes: payload.bytes.clone(),
+                keys: payload.keys.clone(),
+                event_time: payload.event_time,
+            })
+            .map_err(|e| e.to_string())
+        }),
+        decode: Arc::new(move |bytes: Vec<u8>| {
+            let form: JournalForm = postcard::from_bytes(&bytes).map_err(|e| e.to_string())?;
+            Ok(Arc::new(HostPayload {
+                bytes: form.bytes,
+                channel: channel_id,
+                keys: form.keys,
+                event_time: form.event_time,
+                metadata: Vec::new(),
+            }) as Arc<dyn Any + Send + Sync>)
+        }),
     }
 }

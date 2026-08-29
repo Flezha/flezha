@@ -1,16 +1,7 @@
-//! Entry-input observability: when did an entry channel last receive a frame.
-//!
-//! The SDK owns the IO threads, so application code never sees the data
-//! stream — when input goes silent every procedure stops, output freezes, and
-//! nothing outside the core knows why. This module records the one fact only
-//! the core has: the instant a frame was last handed to each entry channel.
-//! Deciding whether that silence is anomalous is the application's, and lives
-//! in the host SDKs (Rust `entry_idle`, Java `EntryIdleWatcher`).
-//!
-//! The cell is resolved once, at topology build, and cached on the channel's
-//! [`ChannelDescriptor`](crate::channel::ChannelDescriptor), so the delivery
-//! path pays one relaxed store with no lookup, no lock and no allocation.
-//! Readers reach the same cell by channel name.
+//! When an entry channel last received a frame — the one fact only the core
+//! has, recorded as one relaxed store per delivery into a cell resolved once
+//! at topology build. Deciding whether the silence is anomalous is the host
+//! SDK's.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -18,25 +9,22 @@ use std::time::Instant;
 
 use dashmap::DashMap;
 
-/// One entry channel's delivery observation. Interned by channel name, so the
-/// descriptor that stamps it and the observer that reads it share one cell.
+/// One entry channel's delivery observation, interned by name so the stamp
+/// and the observer share one cell.
 #[derive(Debug, Default)]
 pub struct EntryObservation {
-    /// Nanoseconds since [`crate::util::monotonic_anchor`] at the last
-    /// delivery; `0` means no frame has ever been delivered.
+    /// Nanoseconds since the monotonic anchor; `0` before the first frame.
     last_delivery: AtomicU64,
 }
 
 impl EntryObservation {
-    /// Record a delivery. The whole hot-path cost of the feature: one relaxed
-    /// store, called with no lock held.
+    /// One relaxed store, with no lock held.
     #[inline]
     pub fn stamp(&self) {
         self.stamp_at(crate::util::monotonic_nanos());
     }
 
-    /// [`stamp`](Self::stamp) at a chosen point on the monotonic clock — the
-    /// seam the host SDKs' episode tests drive instead of waiting on a clock.
+    /// [`stamp`](Self::stamp) at a chosen instant, for the host SDKs' tests.
     #[doc(hidden)]
     pub fn stamp_at(&self, nanos: u64) {
         // `0` is the never-delivered sentinel, so a delivery landing in the
@@ -44,8 +32,6 @@ impl EntryObservation {
         self.last_delivery.store(nanos.max(1), Ordering::Relaxed);
     }
 
-    /// Nanoseconds since the monotonic anchor at the last delivery, or `None`
-    /// before the first frame.
     pub fn last_delivery_nanos(&self) -> Option<u64> {
         match self.last_delivery.load(Ordering::Relaxed) {
             0 => None,
@@ -53,36 +39,30 @@ impl EntryObservation {
         }
     }
 
-    /// The last delivery as an [`Instant`], or `None` before the first frame.
     pub fn last_delivery(&self) -> Option<Instant> {
         self.last_delivery_nanos()
             .map(|nanos| crate::util::monotonic_anchor() + std::time::Duration::from_nanos(nanos))
     }
 }
 
-/// Every entry channel mentioned so far, by name. A channel name is an
-/// operative's external address, so one name is one observed input regardless
-/// of how many classes declare it.
+/// Every entry channel mentioned so far, by name: one name is one observed
+/// input however many classes declare it.
 static OBSERVATIONS: LazyLock<DashMap<String, Arc<EntryObservation>>> = LazyLock::new(DashMap::new);
 
-/// The observation cell for `channel`, created on first mention. Called at
-/// topology build (which caches the `Arc` on the descriptor) and by an
-/// observer registered before any class is defined — both reach one cell.
+/// The cell for `channel`, created on first mention.
 pub fn observation_for(channel: &str) -> Arc<EntryObservation> {
     Arc::clone(OBSERVATIONS.entry(channel.to_owned()).or_default().value())
 }
 
-/// The observation cell for `channel` if anything has ever mentioned it.
-/// Reads never intern: a typo stays absent instead of growing the map.
+/// The cell for `channel` if anything mentioned it; a read never interns.
 pub fn observation_of(channel: &str) -> Option<Arc<EntryObservation>> {
     OBSERVATIONS
         .get(channel)
         .map(|cell| Arc::clone(cell.value()))
 }
 
-/// When `channel` last received a frame, or `None` before its first frame —
-/// and for a channel no declared operative has (the two are the same answer
-/// to "has anything arrived here").
+/// When `channel` last received a frame; `None` before its first, and for a
+/// channel nothing declares.
 pub fn last_delivery(channel: &str) -> Option<Instant> {
     observation_of(channel).and_then(|cell| cell.last_delivery())
 }

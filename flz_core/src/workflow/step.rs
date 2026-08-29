@@ -1,17 +1,8 @@
-//! One stage of a workflow chain: who runs it, and how its driver waits.
-//!
-//! A stage's work leaves the driver as **step activations** — one per entity
-//! partition — on the poll core's direct queue. A typed class runs a step in
-//! this process ([`run_workflow_step`]); a C-ABI host receives it as an ordinary
-//! `Work` / `CompensateRun` activation and its completion folds through
-//! [`complete_workflow_step`]. Either way the thread that runs user code belongs
-//! to the SDK, and the only thread waiting is the driver, parked at
-//! [`StageBarrier`].
-//!
-//! The barrier also owns the retry ladder (`workflow-entity-retry`): a step runs
-//! ONE attempt and releases its worker, and the re-submission is timed here, at
-//! a barrier this thread is blocked on anyway — so a backoff window is an entry
-//! in a map, never a sleeping worker.
+//! One stage of a workflow chain: its step activations (one per entity
+//! partition, on the poll core's direct queue) and the barrier its driver
+//! waits at. The invariant: a step runs ONE attempt and releases its worker;
+//! the retry ladder is timed at the barrier, so a backoff is an entry in a
+//! map, never a sleeping worker.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
@@ -29,39 +20,28 @@ use crate::operative::topology::{EntityMode, ProcedureDescriptor};
 use crate::poll_core::EnginePayload;
 use crate::util::LockRecover;
 
-/// One stage's parallel-join result: the inter-procedure `batch` released to the
-/// next stage, plus the per-entity record (which entities ran, with their
-/// collected outputs) retained for a possible saga rollback.
+/// One stage's join result: the batch released to the next stage, plus the
+/// per-entity record kept for a possible rollback.
 pub(super) struct StageOut {
     pub(super) batch: Vec<Value>,
     pub(super) entities: Vec<EntityRun>,
 }
 
-/// One entity's stage result: the inter-procedure output collected for the
-/// next stage plus the plugin-bound output staged for the procedure's outbox.
+/// One entity's stage result: collected output plus staged plugin output.
 type EntityOut = (Vec<Value>, Vec<StagedOutput>);
 
-/// Which entity partition a step belongs to — the barrier's bookkeeping key and
-/// the address its answer comes back under.
+/// Which entity partition a step belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct StepKey {
     node: usize,
     entity_index: usize,
 }
 
-/// Run one frontier — every currently-runnable DAG node — as step activations
-/// and join on a single count-based barrier. All of a node's entities and all
-/// the nodes of the frontier are submitted together: the nodes are independent,
-/// so sibling branches genuinely interleave on the SDK's workers. A failing
-/// entity climbs its retry ladder in place; its siblings keep their completed
-/// results buffered and are never re-run.
-///
-/// Returns the `StageOut` of every node that completed **whole** (ascending by
-/// node, so parents keep preceding children) plus the first error seen. A node
-/// with a failing entity yields nothing: its staged plugin output is dropped
-/// with the error, exactly as a failing stage's always was — a failed procedure
-/// leaks nothing. A node whose entities all got an empty partition still yields
-/// an empty `StageOut`: a procedure with nothing to do is done.
+/// Run one frontier as step activations and join on one barrier. A failing
+/// entity climbs its ladder in place; its siblings are never re-run. Answers
+/// every node that completed whole (ascending, so parents precede children)
+/// plus the first error; a node with a failing entity yields nothing, one with
+/// nothing to do yields an empty `StageOut`.
 pub(super) fn run_stage(
     ctx: &ChainCtx,
     frontier: Vec<Runnable>,
@@ -88,12 +68,9 @@ pub(super) fn run_stage(
     barrier.join(ctx)
 }
 
-/// Run one entity's `compensate` hook — as its own step activation, so undo
-/// crosses to the SDK exactly as forward work does — and hand back whatever
-/// undo output it staged (under that entity's identity, for the `compensated`
-/// journal entry — `workflow-transactional-outbox` D5). Best-effort: a failing
-/// hook is logged where it runs, so one broken undo cannot strand the rest of
-/// the plan.
+/// Run one entity's `compensate` hook as its own step, handing back the undo
+/// output it staged. Best-effort: a failing hook is logged, never stranding
+/// the rest of the plan.
 pub(super) fn run_compensation_step(
     ctx: &ChainCtx,
     node: usize,
@@ -115,8 +92,8 @@ pub(super) fn run_compensation_step(
     }
 }
 
-/// Partition an input batch across a stage's entities. Single mode routes every
-/// item to entity 0; Static mode routes by the procedure's `entities_for` keys.
+/// Partition a batch across a stage's entities: everything to entity 0 in
+/// single mode, by `entities_for` keys in static mode.
 fn partition(proc: &ProcedureDescriptor, entity_count: usize, batch: &[Value]) -> Vec<Vec<Value>> {
     let mut buckets: Vec<Vec<Value>> = vec![Vec::new(); entity_count];
     match proc.mode {
@@ -145,15 +122,13 @@ fn partition(proc: &ProcedureDescriptor, entity_count: usize, batch: &[Value]) -
     buckets
 }
 
-/// The driver's stage barrier: every entity partition of a frontier, its place
-/// on the retry ladder, and the answers collected so far.
+/// The driver's stage barrier: every partition of a frontier, its place on
+/// the ladder, and the answers so far.
 struct StageBarrier {
     tx: Sender<StepDone>,
     rx: Receiver<StepDone>,
-    /// One ladder per submitted partition, alive until that partition resolves.
     ladders: HashMap<StepKey, Ladder>,
     runs: BTreeMap<usize, Vec<EntityRun>>,
-    /// Nodes an entity failed for: they yield nothing to the next stage.
     failed: HashSet<usize>,
     first_err: Option<WorkflowError>,
     max_attempts: u32,
@@ -173,7 +148,6 @@ impl StageBarrier {
         }
     }
 
-    /// Hand one entity's first attempt out and open its ladder.
     fn submit(&mut self, ctx: &ChainCtx, key: StepKey, items: Vec<Value>) {
         submit_step(ctx, key, StepWork::Items(items.clone()), &self.tx);
         self.ladders.insert(
@@ -187,8 +161,7 @@ impl StageBarrier {
     }
 
     /// Wait for every submitted partition — even on failure, so nothing is
-    /// mid-run when the level completes — timing the retry ladder here, then
-    /// assemble what completed whole.
+    /// mid-run when the level completes — timing the ladder here.
     fn join(mut self, ctx: &ChainCtx) -> (Vec<(usize, StageOut)>, Option<WorkflowError>) {
         while !self.ladders.is_empty() {
             match self.next_answer(ctx) {
@@ -214,9 +187,8 @@ impl StageBarrier {
         self.into_level()
     }
 
-    /// Re-submit everything whose backoff has elapsed, then block for the next
-    /// answer — no longer than the nearest attempt still owes, and never past
-    /// the cancellation granularity the in-line backoff had.
+    /// Re-submit everything whose backoff elapsed, then block for the next
+    /// answer, at most until the nearest attempt is due.
     fn next_answer(&mut self, ctx: &ChainCtx) -> Option<StepDone> {
         let now = Instant::now();
         let due: Vec<StepKey> = self
@@ -255,7 +227,6 @@ impl StageBarrier {
         }
     }
 
-    /// When the earliest pending attempt comes due, if any is pending.
     fn nearest_due(&self) -> Option<Instant> {
         self.ladders
             .values()
@@ -263,7 +234,6 @@ impl StageBarrier {
             .min()
     }
 
-    /// A completed partition joins its node's runs and closes its ladder.
     fn bank(&mut self, key: StepKey, (outputs, staged): EntityOut) {
         self.ladders.remove(&key);
         if let Some(runs) = self.runs.get_mut(&key.node) {
@@ -275,9 +245,8 @@ impl StageBarrier {
         }
     }
 
-    /// A retryable failure with budget left starts a backoff; anything else
-    /// fails the node — its whole stage output is dropped with the error and
-    /// its siblings are never re-run.
+    /// A retryable failure with budget left backs off; anything else fails
+    /// the node, dropping its whole stage output.
     fn fail_or_retry(&mut self, ctx: &ChainCtx, key: StepKey, error: WorkflowError) {
         let Some(ladder) = self.ladders.get_mut(&key) else {
             return;
@@ -296,22 +265,20 @@ impl StageBarrier {
         ladder.retry = Some((Instant::now() + delay, error));
     }
 
-    /// Record a node as failed on the first error that reached it.
     fn fail(&mut self, node: usize, error: WorkflowError) {
         self.failed.insert(node);
         self.first_err.get_or_insert(error);
     }
 
-    /// Give up on every unresolved partition — the level must not hang on a
-    /// step nothing will answer.
+    /// Give up on every unresolved partition rather than hang the level.
     fn poison_remaining(&mut self, message: &'static str) {
         for (key, _) in std::mem::take(&mut self.ladders) {
             self.fail(key.node, WorkflowError::from(message));
         }
     }
 
-    /// A cooperative stop cuts every pending backoff short: each abandoned
-    /// ladder fails its node on the error it was climbing away from.
+    /// A cooperative stop cuts every backoff short, failing each node on the
+    /// error it was climbing away from.
     fn abandon_backoffs(&mut self) {
         let abandoned: Vec<(StepKey, WorkflowError)> = self
             .ladders
@@ -323,8 +290,6 @@ impl StageBarrier {
         }
     }
 
-    /// The nodes that completed whole, ascending by node so parents keep
-    /// preceding children, plus the first error the level saw.
     fn into_level(self) -> (Vec<(usize, StageOut)>, Option<WorkflowError>) {
         let level = self
             .runs
@@ -345,21 +310,16 @@ impl StageBarrier {
     }
 }
 
-/// One entity partition's place on the retry ladder (`workflow-entity-retry`),
-/// kept driver-side: the batch to re-run from the top (at-least-once, the same
-/// idempotency contract crash-resume imposes), the attempt it is on, and —
-/// while it backs off — when the next attempt is due plus the failure it is
-/// climbing away from. A backoff is an entry in this map, never a sleeping
-/// thread: the worker that ran the failed attempt was released when it
-/// answered, and each attempt collects into a fresh sink, so a failed
-/// attempt's output is discarded rather than double-counted.
+/// One partition's place on the retry ladder: the batch to re-run from the
+/// top (at-least-once), the attempt, and while it backs off the due time and
+/// the failure. Each attempt collects into a fresh sink, so a failed
+/// attempt's output is never double-counted.
 struct Ladder {
     items: Vec<Value>,
     attempt: u32,
     retry: Option<(Instant, WorkflowError)>,
 }
 
-/// The failing work, as the retry log names it.
 fn step_label(ctx: &ChainCtx, key: StepKey) -> String {
     format!(
         "workflow {} procedure {} entity {}",
@@ -372,10 +332,9 @@ fn step_label(ctx: &ChainCtx, key: StepKey) -> String {
     )
 }
 
-/// Hand one entity's step to the SDK's workers: an activation on the poll
-/// core's direct queue — the queue every host crossing already rides, served
-/// ahead of entity work and exempt from the jobs-underway cap, so the work a
-/// driver is blocked on is never queued behind work that blocks.
+/// Hand one entity's step to the SDK's workers on the poll core's direct
+/// queue — ahead of entity work and exempt from the cap, so what a driver
+/// waits on is never queued behind work that blocks.
 fn submit_step(ctx: &ChainCtx, key: StepKey, work: StepWork, tx: &Sender<StepDone>) {
     crate::poll_core::global().submit_direct(EnginePayload::WorkflowStep(WorkflowStep {
         slot: Arc::clone(&ctx.stage_entities[key.node][key.entity_index]),
@@ -386,8 +345,7 @@ fn submit_step(ctx: &ChainCtx, key: StepKey, work: StepWork, tx: &Sender<StepDon
     }));
 }
 
-/// One entity partition's share of a stage, handed out as an activation: the
-/// unit of workflow work an SDK worker runs.
+/// One partition's share of a stage, as an SDK worker receives it.
 pub struct WorkflowStep {
     pub(crate) slot: Arc<EntitySlot>,
     pub(crate) work: StepWork,
@@ -396,23 +354,19 @@ pub struct WorkflowStep {
     reply: StepReply,
 }
 
-/// What a step runs for its entity: a stage batch, or the saga undo over the
-/// outputs that stage recorded.
+/// A stage batch, or the undo over the outputs that stage recorded.
 pub(crate) enum StepWork {
     Items(Vec<Value>),
     Compensate(Vec<Value>),
 }
 
-/// One step's answer to the driver's barrier.
 struct StepDone {
     key: StepKey,
     result: Result<EntityOut, WorkflowError>,
 }
 
-/// The answer a step owes its driver, delivered exactly once: on completion, on
-/// a panic inside it, or — if the activation is dropped unserved — from this
-/// guard's `Drop`. A driver parked at its barrier therefore never waits on a
-/// step that will never answer.
+/// The answer a step owes its driver, delivered exactly once — on completion,
+/// on a panic, or from `Drop` if the activation is never served.
 struct StepReply {
     key: StepKey,
     tx: Sender<StepDone>,
@@ -445,10 +399,8 @@ impl Drop for StepReply {
     }
 }
 
-/// Run one workflow step on the calling host thread and answer its driver. The
-/// typed layer's poll workers reach this through their activation arm; the
-/// panic guard is what keeps a worker alive through a step that unwinds past
-/// the invocation's own containment.
+/// Run one step on the calling host thread and answer its driver; the guard
+/// keeps the worker alive through a step that unwinds.
 pub fn run_workflow_step(step: WorkflowStep) {
     let mut sink = WorkflowEntitySink::new(&step.instance_id, step.staging);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -460,8 +412,8 @@ pub fn run_workflow_step(step: WorkflowStep) {
     );
 }
 
-/// Fold a host's answer to a step into its driver's barrier — the C-ABI half of
-/// [`run_workflow_step`], run by whichever host thread called `complete`.
+/// Fold a host's answer to a step into its barrier — the C-ABI half of
+/// [`run_workflow_step`].
 pub(crate) fn complete_workflow_step(
     step: WorkflowStep,
     outcome: crate::schema::ActivationOutcome,
@@ -472,9 +424,8 @@ pub(crate) fn complete_workflow_step(
 }
 
 impl WorkflowStep {
-    /// One attempt, in this process: the entity's items run sequentially
-    /// (per-entity ordering preserved) through the monomorphized dispatcher's
-    /// collecting path, or its `compensate` hook over the recorded outputs.
+    /// One attempt in this process: the items sequentially through the
+    /// collecting path, or the `compensate` hook over the recorded outputs.
     fn run_in_process(&self, sink: &mut WorkflowEntitySink) -> Result<(), WorkflowError> {
         let mut state = self.slot.state.lock_recover();
         let dispatcher = &self.slot.dispatcher;
@@ -492,9 +443,7 @@ impl WorkflowStep {
     }
 
     /// Answer the driver. A stage failure travels to the barrier; a
-    /// compensation's does not — undo is best-effort, so its error is logged
-    /// and whatever the hook staged is still handed back for the `compensated`
-    /// journal entry.
+    /// compensation's is logged and what the hook staged is still handed back.
     fn finish(mut self, outcome: Result<(), WorkflowError>, sink: WorkflowEntitySink) {
         let compensating = matches!(self.work, StepWork::Compensate(_));
         let result = match outcome {
@@ -512,12 +461,9 @@ impl WorkflowStep {
     }
 }
 
-/// Per-entity collecting sink for the structured driver. Inter-procedure
-/// output is buffered for the next stage. Plugin-bound output is **staged** for
-/// the procedure's transactional outbox when the run commits its proc boundaries
-/// (`staging`), so nothing reaches a plugin before the proc's journal entry is
-/// durable; otherwise — an opted-out class or a transport-less run, neither of
-/// which journals — it is forwarded straight to the wire as before.
+/// Per-entity collecting sink: inter-procedure output buffered for the next
+/// stage, plugin-bound output staged when the run journals (`staging`) and
+/// forwarded straight to the wire otherwise.
 struct WorkflowEntitySink {
     instance_id: Arc<str>,
     collected: Vec<Value>,
@@ -554,10 +500,8 @@ impl WorkflowCollectSink for WorkflowEntitySink {
 mod tests {
     use super::*;
 
-    /// A step activation dropped without ever being served still answers its
-    /// driver. That guarantee is what lets the barrier block on a plain `recv`
-    /// while nothing is backing off: every unresolved partition owes exactly
-    /// one answer, so the level can never hang on a step nobody ran.
+    /// A step dropped unserved still answers its driver, so the barrier can
+    /// block on a plain `recv`: every partition owes exactly one answer.
     #[test]
     fn a_dropped_step_activation_still_answers_its_barrier() {
         let (tx, rx) = unbounded::<StepDone>();
@@ -580,8 +524,7 @@ mod tests {
         );
     }
 
-    /// The guard fires once. A step that answered — the ordinary path — must
-    /// not have a second answer land behind it when it is dropped.
+    /// The guard fires once: a step that answered gets no second answer.
     #[test]
     fn an_answered_step_does_not_answer_again_when_dropped() {
         let (tx, rx) = unbounded::<StepDone>();

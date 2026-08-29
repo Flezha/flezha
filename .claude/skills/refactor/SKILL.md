@@ -166,7 +166,7 @@ heartbeat "to be sure".
 
 Every worker brief carries: *never end your turn to wait for a background job
 — use the Bash tool's `run_in_background: true` and act on its completion
-notification, never a Monitor; if you must check a job, run one bounded
+notification, never a Monitor; if you must check a job, run one time-boxed
 check (`timeout 500 bash -c 'until [ -f <marker> ]; do sleep 15; done'`) and
 continue in the same turn.*
 

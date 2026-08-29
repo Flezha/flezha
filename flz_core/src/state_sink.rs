@@ -1,37 +1,19 @@
-//! Global send path for the per-Entity flusher.
-//!
-//! At SDK boot — and again after every reconnect, when the controller
-//! re-issues `ConnectSocket` — the streams-connect path calls
-//! [`install_global_sink`] with a closure wrapping one of the secondary
-//! `FlezhaStream`s. The flusher ships every `entity_state_change` /
-//! `entity_state_snapshot` frame through [`send`], which always
-//! resolves the *live* sink (so a reconnect's freshly-wired stream is
-//! picked up without re-registering entities).
-//!
-//! Two reliability behaviours live here:
-//!
-//!   * **Reconnect ring** — while no sink is installed (reconnect window)
-//!     or a write fails, frames are held in a bounded ring (default
-//!     1024, drop-oldest). [`install_global_sink`] replays the ring
-//!     through the new sink before returning, so state changes produced
-//!     mid-reconnect are not silently lost.
-//!   * **Broken-pipe flood detection** — a sustained run of write
-//!     failures (default ≥ 10 within 5 s) means the data stream is dead
-//!     while the control channel still looks alive; we ask the
-//!     coordinator to drive a full control reconnect (which re-runs the
-//!     handshake and rebuilds the data streams).
+//! The process-global send path for durable records: [`send`] resolves the
+//! live sink on every call, holds frames in a drop-oldest ring while
+//! no sink is installed or a write fails, and [`install_global_sink`] replays
+//! the ring through the new sink — so a record produced mid-reconnect is not
+//! lost. A sustained run of write failures is a dead data stream under a
+//! live control channel, and asks the coordinator for a full reconnect.
 
 use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Coordinator reconnect request, installed by the runner at startup.
-/// Temporary seam until the coordinator loop moves into this crate; absent in
-/// transport-less runs, where a write-failure flood has nobody to tell.
+/// The coordinator's reconnect request; absent in transport-less runs.
 static RECONNECT_HOOK: std::sync::OnceLock<fn(&'static str)> = std::sync::OnceLock::new();
 
-/// Install the coordinator reconnect hook (idempotent; first install wins).
+/// First install wins.
 pub fn install_reconnect_hook(hook: fn(&'static str)) {
     let _ = RECONNECT_HOOK.set(hook);
 }
@@ -40,45 +22,26 @@ use flz_transport::transport::FlezhaStream;
 
 use crate::flusher::SendFrameFn;
 
-/// Data-stream payload-id for a per-Entity state Change record
-/// (SDK → controller). The reliable sink stamps this id on every flusher frame.
+/// A per-Entity change record.
 pub const ENTITY_STATE_CHANGE_PAYLOAD_ID: &str = "entity_state_change";
 
-/// Data-stream payload-id for an atomic effect record (effectively-once
-/// tier, SDK → controller): one invocation's state change(s) + plugin
-/// outputs + consumed input offset, same frame layout as
-/// `entity_state_change` with a `format_id = 2` header and an
-/// `EffectRecordBody` body. Rides the reliable sink so outputs are never
-/// on the primary stream in tier mode.
+/// An effect record (effectively-once tier): `entity_state_change`'s frame
+/// with a `format_id = 2` header and an `EffectRecordBody`.
 pub const ENTITY_EFFECT_RECORD_PAYLOAD_ID: &str = "entity_effect_record";
 
-/// Data-stream payload-id for the dynamic-mode hard-delete RPC
-/// (SDK → controller). The body is the structured `entity_id` bytes;
-/// the controller routes it to the per-Entity file lifecycle.
+/// The dynamic-mode hard delete; the body is the `entity_id` bytes.
 pub const DELETE_ENTITY_STATE_PAYLOAD_ID: &str = "delete_entity_state";
 
-/// Data-stream payload-ids for the workflow-operative saga compensation
-/// change-log (SDK → controller), same frame layout as `entity_state_change`.
-/// `compensation_intent` records a procedure's completion; `compensation_done`
-/// records a compensation hook's completion. Both ride the reliable sink (with
-/// its reconnect ring) so a marker survives a reconnect before a crash.
+/// The saga markers: a procedure's completion, and a compensation hook's.
 pub const COMPENSATION_INTENT_PAYLOAD_ID: &str = "compensation_intent";
 pub const COMPENSATION_DONE_PAYLOAD_ID: &str = "compensation_done";
 
-/// Data-stream payload-id for a dead-letter park (SDK → controller,
-/// tier-off sessions): a poison payload whose retry budget is exhausted,
-/// shipped with its error context so the controller can append it to the
-/// durable DLQ store. Same outer frame layout as `entity_state_change`
-/// with a postcard `ParkBody` body; the controller answers with a
-/// `ParkPayloadAck` control command once the entry is fsynced.
+/// A tier-off park: `entity_state_change`'s frame with a `ParkBody`,
+/// answered by `ParkPayloadAck` once fsynced.
 pub const PARK_PAYLOAD_PAYLOAD_ID: &str = "park_payload";
 
-/// Data-stream payload-id for a per-Entity state snapshot (compaction,
-/// SDK → controller): the postcard-encoded `S::State` captured at a
-/// `change_seq` the Entity has reached, same frame layout as
-/// `entity_state_change`. The controller writes the snapshot file, truncates
-/// the WAL up to that seq, and clears the in-flight compaction. Rides the same
-/// reliable sink so a snapshot produced mid-reconnect is not lost.
+/// A compaction snapshot at a `change_seq`; the controller truncates the WAL
+/// up to it.
 pub const ENTITY_STATE_SNAPSHOT_PAYLOAD_ID: &str = "entity_state_snapshot";
 
 const ENV_RING_CAPACITY: &str = "FLEZHA_RECONNECT_RING_CAPACITY";
@@ -94,18 +57,13 @@ const RECONNECT_REASON: &str = "broken_pipe_flood";
 
 struct SinkState {
     sink: Option<SendFrameFn>,
-    /// `(payload_id, frame)` pairs produced while no sink was installed or a
-    /// write failed. Workflow; oldest is dropped on overflow. The payload-id is
-    /// retained so a replayed frame is re-wrapped under its own id
-    /// (`entity_state_change` vs a `compensation_*` record).
+    /// `(payload_id, frame)` held while no sink was installed or a write
+    /// failed; drop-oldest.
     ring: VecDeque<(String, Vec<u8>)>,
-    /// Timestamps of recent write failures, used for flood detection.
     broken_pipe_at: VecDeque<Instant>,
-    /// When the last flood reconnect was requested; cleared on the next sink
-    /// install. One request per dead stream, but re-armed after
-    /// `FLEZHA_RECONNECT_REQUEST_RETRY_MS` — a request that is never answered
-    /// (the runner was `Stopped`, or the reconnect itself failed) must not
-    /// disarm the detector for the life of the process.
+    /// When the last flood reconnect was requested; one per dead stream, but
+    /// re-armed after `FLEZHA_RECONNECT_REQUEST_RETRY_MS` so an unanswered
+    /// request cannot disarm the detector for good.
     reconnect_requested_at: Option<Instant>,
 }
 
@@ -126,8 +84,8 @@ impl SinkState {
         self.ring.push_back((payload_id.to_string(), frame));
     }
 
-    /// Record a write failure; returns `true` when the caller should drive
-    /// a control reconnect (flood threshold crossed, not yet requested).
+    /// Record a write failure; `true` when the caller should ask for a
+    /// reconnect.
     fn note_broken_pipe(&mut self, now: Instant) -> bool {
         let window = Duration::from_millis(flood_window_ms());
         while let Some(&front) = self.broken_pipe_at.front() {
@@ -157,22 +115,17 @@ impl SinkState {
 
 static STATE: Mutex<SinkState> = Mutex::new(SinkState::new());
 
-/// Live secondary stream, mirrored from the sink install. Used by the
-/// reaper's fire-and-forget `delete_entity_state` send — no reconnect
-/// ring, no flood detection; a failed write is dropped.
+/// The live secondary stream, for fire-and-forget sends: no ring, no flood
+/// detection.
 static SECONDARY_STREAM: Mutex<Option<Arc<FlezhaStream>>> = Mutex::new(None);
 
-/// Set/clear the secondary stream used by [`send_oneshot`]. Called from the
-/// streams-connect path alongside [`install_global_sink`].
 pub fn set_secondary_stream(stream: Option<Arc<FlezhaStream>>) {
     *SECONDARY_STREAM
         .lock()
         .expect("secondary stream lock poisoned") = stream;
 }
 
-/// The live secondary stream, if one is installed. The timer wheel re-arms a
-/// restored Entity's timers against it — a restore has no originating input to
-/// inherit a connection from.
+/// The live secondary stream; what a restored Entity's timers re-arm on.
 pub fn secondary_stream() -> Option<Arc<FlezhaStream>> {
     SECONDARY_STREAM
         .lock()
@@ -181,8 +134,7 @@ pub fn secondary_stream() -> Option<Arc<FlezhaStream>> {
         .map(Arc::clone)
 }
 
-/// Best-effort one-shot write of a pre-built frame to the current secondary
-/// stream. `false` if no stream is installed or the write fails (no retry).
+/// One best-effort write to the secondary stream; `false` when it failed.
 pub fn send_oneshot(frame: &[u8]) -> bool {
     match SECONDARY_STREAM
         .lock()
@@ -210,9 +162,7 @@ fn reconnect_retry_ms() -> u64 {
     crate::util::env_parse(ENV_RECONNECT_RETRY_MS, DEFAULT_RECONNECT_RETRY_MS)
 }
 
-/// Whether a global sink has ever been installed. `false` only for
-/// transport-less runs (unit tests, standalone benches); the install is
-/// never undone, so a reconnect window still reports `true`.
+/// Whether a sink was ever installed — `false` only in transport-less runs.
 pub fn sink_installed() -> bool {
     STATE
         .lock()
@@ -221,10 +171,8 @@ pub fn sink_installed() -> bool {
         .is_some()
 }
 
-/// Ship one frame to the controller. Resolves the live sink each call. On
-/// a write failure (or while no sink is installed) the frame is buffered
-/// in the reconnect ring; a sustained failure run asks the coordinator to
-/// reconnect. Never blocks the flusher on a dead stream.
+/// Ship one frame through the live sink, or hold it in the ring; never
+/// blocks the flusher on a dead stream.
 pub fn send(payload_id: &str, frame: Vec<u8>) {
     let should_reconnect = {
         let mut st = STATE.lock().expect("state_sink lock poisoned");
@@ -254,10 +202,8 @@ pub fn send(payload_id: &str, frame: Vec<u8>) {
     drive_reconnect_if(should_reconnect);
 }
 
-/// Report an outbound transport failure that carries no frame — a data
-/// heartbeat that reached no secondary stream. Feeds the same flood ladder as
-/// [`send`], so a runner whose secondary is dead recovers even when it is
-/// producing no state changes to trip the ladder with.
+/// A frameless transport failure (a heartbeat that reached no stream) on the
+/// same flood ladder as [`send`], so an idle runner recovers too.
 pub(crate) fn note_transport_failure() {
     let should_reconnect = {
         let mut st = STATE.lock().expect("state_sink lock poisoned");
@@ -283,9 +229,7 @@ fn drive_reconnect_if(should_reconnect: bool) {
     }
 }
 
-/// Install (or replace) the global sink, then replay any frames buffered
-/// during the reconnect window through it. Called once after the
-/// secondary streams are up — at boot and after every reconnect.
+/// Install or replace the sink, then replay the ring through it.
 pub fn install_global_sink(send_fn: SendFrameFn) {
     let mut st = STATE.lock().expect("state_sink lock poisoned");
     st.sink = Some(send_fn.clone());
@@ -307,26 +251,19 @@ pub fn install_global_sink(send_fn: SendFrameFn) {
     }
 }
 
-/// Ship one workflow-operative saga compensation marker (`compensation_intent`
-/// or `compensation_done`) for an Entity through the reliable sink. The body is
-/// empty — the record's information is the Entity identity plus the payload-id
-/// — matching `Flezha.State.Wire.decode_frame/1` (crc32 over an empty body is 0).
+/// Ship one saga marker for an Entity: an empty body, the identity and the
+/// payload id are the record.
 pub fn send_compensation_record(payload_id: &str, entity_identity: &[u8]) {
     let frame = crate::flusher::build_entity_frame(entity_identity, 0, &[0u8; 16], &[]);
     send(payload_id, frame);
 }
 
-/// Serializes every test that installs the process-global sink — the sink's own
-/// tests plus the SDK's workflow driver test — so they never clobber each
-/// other's sink. Test support; always compiled so downstream test builds see it.
+/// Serializes every test that installs the process-global sink, in this
+/// crate and downstream.
 #[doc(hidden)]
 pub static SINK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Clear the process-global sink state. Test support; hold [`SINK_TEST_LOCK`].
-///
-/// `cfg(test)`-only: both callers are this crate's own test modules, so a
-/// non-test build compiles them out and would report this as dead code on
-/// every rebuild.
+/// Clear the process-global sink state; hold [`SINK_TEST_LOCK`].
 #[cfg(test)]
 #[doc(hidden)]
 pub(crate) fn reset_for_test() {
@@ -337,8 +274,7 @@ pub(crate) fn reset_for_test() {
     st.reconnect_requested_at = None;
 }
 
-/// Whether a reconnect is currently requested. Test support; `cfg(test)`-only
-/// for the same reason as [`reset_for_test`].
+/// Whether a reconnect is currently requested.
 #[cfg(test)]
 #[doc(hidden)]
 pub(crate) fn reconnect_requested_for_test() -> bool {
@@ -357,8 +293,7 @@ mod tests {
     use super::{reset_for_test as reset_state, *};
     use crate::flusher::SendError;
 
-    /// A sink that records every accepted frame; `fail` flips it to return
-    /// `TransportDown` so the failure paths can be driven deterministically.
+    /// A sink that records every frame; `fail` flips it to `TransportDown`.
     fn recording_sink(fail: Arc<AtomicBool>) -> (SendFrameFn, Arc<StdMutex<Vec<Vec<u8>>>>) {
         let seen = Arc::new(StdMutex::new(Vec::new()));
         let seen_c = Arc::clone(&seen);
@@ -505,12 +440,7 @@ mod tests {
     }
 
     /// A requested reconnect that never lands must not disarm the detector
-    /// forever. Before the fix the latch was cleared only by `install_global_sink`,
-    /// so if the `Reconnect` is dropped (the runner is `Stopped`) or the
-    /// reconnect fails, no further request is ever made: every subsequent
-    /// state change is silently absorbed by the ring for the life of the
-    /// process, while the control channel stays healthy — so the runner looks
-    /// alive from every angle and never produces anything again.
+    /// forever: the ring would absorb every later record silently.
     #[test]
     fn unanswered_reconnect_request_rearms_so_the_stall_cannot_be_permanent() {
         let _g = super::SINK_TEST_LOCK.lock().unwrap();

@@ -1,7 +1,6 @@
-//! Registration of a host class: refuse what the core cannot honour, build the
-//! topology, and register it exactly as a typed class registers. Every refusal
-//! text here is a contract — the C ABI carries it to the veneer suites, which
-//! assert on its substrings.
+//! Registration of a host class: refuse what the core cannot honour, build
+//! the topology, register it as a typed class registers. Every refusal text
+//! is a contract the veneer suites assert substrings of.
 
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -12,8 +11,12 @@ use super::decl::{
     HostClassDecl, HostClock, HostEntityModeDecl, HostLoopMode, HostOverflow, HostProcedureDecl,
     HostRollbackMode, HostWorkflowDecl,
 };
-use super::entity::{build_host_entity_slot, HostPayload, HostProcedureFacts};
+use super::entity::{
+    build_host_entity_slot, host_deserialize_unreachable, host_payload_codec,
+    host_serialize_unreachable, HostPayload, HostProcedureFacts,
+};
 use crate::channel::{ChannelDescriptor, ChannelKind, EntryWrapFn, OverflowPolicy, RetryPolicy};
+use crate::error::Error;
 use crate::operative::topology::{
     AckGranularity, BeyondWindowPolicy, CheckpointOutputs, CheckpointPolicy, CorrectionPolicy,
     EntityMode, OperativeTopology, ProcedureDescriptor,
@@ -21,17 +24,17 @@ use crate::operative::topology::{
 use crate::workflow::spec::{ProcDag, WorkflowSpec};
 use crate::workflow::{LoopMode, RollbackMode};
 
-/// Parse and register a host class from its JSON declaration — the body of
-/// `flz_core_declare_class`.
-pub fn register_host_class_json(bytes: &[u8]) -> Result<(), String> {
-    let decl: HostClassDecl = serde_json::from_slice(bytes)
-        .map_err(|e| format!("class declaration is not valid JSON for the schema: {e}"))?;
+/// The body of `flz_core_declare_class`.
+pub fn register_host_class_json(bytes: &[u8]) -> Result<(), Error> {
+    let decl: HostClassDecl = serde_json::from_slice(bytes).map_err(|e| {
+        Error::Declaration(format!(
+            "class declaration is not valid JSON for the schema: {e}"
+        ))
+    })?;
     register_host_class(decl)
 }
 
-/// Validate the declaration and build the class topology. The controller's
-/// `AddOperative` then instantiates it exactly like a typed class.
-pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
+pub fn register_host_class(decl: HostClassDecl) -> Result<(), Error> {
     refuse_class_facts(&decl)?;
     if let Some(workflow) = &decl.workflow {
         if decl.procedures.is_empty() {
@@ -43,35 +46,42 @@ pub fn register_host_class(decl: HostClassDecl) -> Result<(), String> {
     let mut seen = HashSet::new();
     for channel in &decl.channels {
         if !seen.insert(channel.name.as_str()) {
-            return Err(format!("duplicate channel name `{}`", channel.name));
+            return Err(Error::Declaration(format!(
+                "duplicate channel name `{}`",
+                channel.name
+            )));
         }
         refuse_channel(&decl, channel)?;
     }
     let mut seen_procs = HashSet::new();
     for (idx, proc_decl) in decl.procedures.iter().enumerate() {
         if !seen_procs.insert(proc_decl.name.as_str()) {
-            return Err(format!("duplicate procedure name `{}`", proc_decl.name));
+            return Err(Error::Declaration(format!(
+                "duplicate procedure name `{}`",
+                proc_decl.name
+            )));
         }
         refuse_procedure(&decl, idx as u32, proc_decl)?;
     }
     register(decl)
 }
 
-/// The class-level refusals. A run-sugar class is refused only on its
-/// workflow facts: it declares no channels, so the tier and interval facts
-/// below never apply to it.
-fn refuse_class_facts(decl: &HostClassDecl) -> Result<(), String> {
+/// The class-level refusals; a run-sugar class is refused only on its
+/// workflow facts.
+fn refuse_class_facts(decl: &HostClassDecl) -> Result<(), Error> {
     if !crate::header::sdk_lang_allocated(decl.sdk_lang) {
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "sdk_lang: {} is not an allocated SDK language; every class declares \
              the byte its SDK holds in the allocation table (flz_core::header), \
              because the controller places an operative only on a runner of its \
              factory's language",
             decl.sdk_lang
-        ));
+        )));
     }
     if decl.procedures.is_empty() && decl.workflow.is_none() {
-        return Err("a host class declares at least one procedure".to_string());
+        return Err(Error::Declaration(
+            "a host class declares at least one procedure".to_string(),
+        ));
     }
     if let Some(workflow) = &decl.workflow {
         refuse_workflow_facts(decl, workflow)?;
@@ -80,85 +90,95 @@ fn refuse_class_facts(decl: &HostClassDecl) -> Result<(), String> {
         }
     }
     if decl.sync_durability && decl.workflow.is_none() {
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "class `{}` declares sync_durability, which only a workflow class may: a stream \
              class acknowledges at input rates, and a remote round trip per acknowledgement is \
              not a guarantee it can keep",
             decl.factory_id
-        ));
+        )));
     }
     refuse_tier_facts(decl)
 }
 
-fn refuse_workflow_facts(decl: &HostClassDecl, workflow: &HostWorkflowDecl) -> Result<(), String> {
+fn refuse_workflow_facts(decl: &HostClassDecl, workflow: &HostWorkflowDecl) -> Result<(), Error> {
     if decl.procedures.is_empty() && !decl.channels.is_empty() {
-        return Err("a run-sugar workflow class (no procedures) declares no channels".to_string());
+        return Err(Error::Declaration(
+            "a run-sugar workflow class (no procedures) declares no channels".to_string(),
+        ));
     }
     if decl.effectively_once {
-        return Err("a workflow class cannot declare effectively_once".to_string());
+        return Err(Error::Declaration(
+            "a workflow class cannot declare effectively_once".to_string(),
+        ));
     }
     if decl.correction_window_ms.is_some() {
-        return Err("a workflow class cannot declare correction_window_ms".to_string());
+        return Err(Error::Declaration(
+            "a workflow class cannot declare correction_window_ms".to_string(),
+        ));
     }
     if decl.sync_durability && !decl.persistent {
-        return Err(
+        return Err(Error::Declaration(
             "sync_durability requires persistent: there is no commit barrier to ship \
              for a class that journals nothing"
                 .to_string(),
-        );
+        ));
     }
     if workflow.retry_attempts > 1 && workflow.retry_backoff_ms == 0 {
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "workflow retry ladder ({} attempts) declares a zero backoff base; retries \
              would re-run the failing entity in a hot loop",
             workflow.retry_attempts
-        ));
+        )));
     }
     for proc_decl in &decl.procedures {
         if proc_decl.entity_mode == HostEntityModeDecl::Dynamic {
-            return Err(format!(
+            return Err(Error::Declaration(format!(
                 "workflow procedure `{}` declares dynamic entity mode, which workflow \
                  operatives do not support",
                 proc_decl.name
-            ));
+            )));
         }
     }
     Ok(())
 }
 
-/// The durability tier, the checkpoint interval and the correction window
-/// each need what they rest on declared with them.
-fn refuse_tier_facts(decl: &HostClassDecl) -> Result<(), String> {
+/// The tier, the checkpoint interval and the correction window each need
+/// what they rest on declared with them.
+fn refuse_tier_facts(decl: &HostClassDecl) -> Result<(), Error> {
     if decl.effectively_once && !decl.persistent {
-        return Err("effectively_once requires persistent: the tier IS durable state".to_string());
+        return Err(Error::Declaration(
+            "effectively_once requires persistent: the tier IS durable state".to_string(),
+        ));
     }
     if decl.ack_granularity == HostAckGranularity::Checkpoint && !decl.effectively_once {
-        return Err("ack_granularity checkpoint requires effectively_once".to_string());
+        return Err(Error::Declaration(
+            "ack_granularity checkpoint requires effectively_once".to_string(),
+        ));
     }
     if decl.ack_granularity != HostAckGranularity::Checkpoint
         && (decl.checkpoint_every.is_some()
             || decl.checkpoint_outputs == HostCheckpointOutputs::AtCheckpoint
             || decl.checkpoint_max_delay_ms.is_some())
     {
-        return Err(
+        return Err(Error::Declaration(
             "checkpoint_every / checkpoint_outputs / checkpoint_max_delay_ms require \
              ack_granularity checkpoint"
                 .to_string(),
-        );
+        ));
     }
     if decl.checkpoint_outputs == HostCheckpointOutputs::AtCheckpoint
         && decl.checkpoint_max_delay_ms.is_none()
     {
-        return Err(
+        return Err(Error::Declaration(
             "checkpoint_outputs at_checkpoint requires checkpoint_max_delay_ms: an interval that \
              never closes would hold its outputs forever on a quiet Entity"
                 .to_string(),
-        );
+        ));
     }
     if decl.checkpoint_every == Some(0) || decl.checkpoint_max_delay_ms == Some(0) {
-        return Err(
+        return Err(Error::Declaration(
             "checkpoint_every / checkpoint_max_delay_ms must be greater than zero".to_string(),
-        );
+        ));
     }
     if decl.correction_window_ms.is_some()
         && !decl
@@ -166,42 +186,41 @@ fn refuse_tier_facts(decl: &HostClassDecl) -> Result<(), String> {
             .iter()
             .any(|p| p.clock == HostClock::EventTime)
     {
-        return Err(
+        return Err(Error::Declaration(
             "correction_window_ms requires at least one event_time-clocked procedure".to_string(),
-        );
+        ));
     }
     Ok(())
 }
 
-fn refuse_channel(decl: &HostClassDecl, channel: &HostChannelDecl) -> Result<(), String> {
+fn refuse_channel(decl: &HostClassDecl, channel: &HostChannelDecl) -> Result<(), Error> {
     refuse_shedding(decl, channel)?;
     let arity = |idx: u32| (idx as usize) < decl.procedures.len();
     if let Some(p) = channel.producer {
         if !arity(p) {
-            return Err(format!(
+            return Err(Error::Declaration(format!(
                 "channel `{}` names producer {} but the class declares {} procedure(s)",
                 channel.name,
                 p,
                 decl.procedures.len()
-            ));
+            )));
         }
     }
     if let Some(&c) = channel.consumers.iter().find(|&&c| !arity(c)) {
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "channel `{}` names consumer {} but the class declares {} procedure(s)",
             channel.name,
             c,
             decl.procedures.len()
-        ));
+        )));
     }
     refuse_channel_ends(channel)
 }
 
 /// A shedding policy is refused where the loss it permits cannot be
-/// accounted for. Both drop policies are rate-dependent, so which items
-/// survive depends on timing — and both durability contracts below
-/// promise an answer that does not.
-fn refuse_shedding(decl: &HostClassDecl, channel: &HostChannelDecl) -> Result<(), String> {
+/// accounted for: which items survive depends on timing, and both
+/// durability contracts promise an answer that does not.
+fn refuse_shedding(decl: &HostClassDecl, channel: &HostChannelDecl) -> Result<(), Error> {
     let sheds = match channel.overflow {
         HostOverflow::DropNothing => None,
         HostOverflow::DropNewest => Some("drop_newest"),
@@ -214,64 +233,64 @@ fn refuse_shedding(decl: &HostClassDecl, channel: &HostChannelDecl) -> Result<()
         // A dropped input's offset is skipped by a later item's
         // watermark advance: the input is gone for good while the tier
         // reports effectively-once.
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "channel `{}` declares overflow `{}` on a class that declares \
              effectively_once; a shed input's offset is still advanced past by \
              the tier's watermark, so the loss is permanent and unreported — \
              declare one or the other, not both",
             channel.name, policy
-        ));
+        )));
     }
     if decl.correction_window_ms.is_some() {
         // A correction's answer may not depend on arrival timing.
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "channel `{}` declares overflow `{}` on a class that declares \
              correction_window_ms; a correction re-folds a replayed slice and \
              its answer may not depend on which items a full mailbox happened \
              to keep",
             channel.name, policy
-        ));
+        )));
     }
     Ok(())
 }
 
 /// Each channel kind names exactly the ends its kind has.
-fn refuse_channel_ends(channel: &HostChannelDecl) -> Result<(), String> {
+fn refuse_channel_ends(channel: &HostChannelDecl) -> Result<(), Error> {
     match channel.kind {
         HostChannelKind::Entry => {
             if channel.producer.is_some() {
-                return Err(format!(
+                return Err(Error::Declaration(format!(
                     "entry channel `{}` cannot name a producer",
                     channel.name
-                ));
+                )));
             }
             if channel.consumers.is_empty() {
-                return Err(format!(
+                return Err(Error::Declaration(format!(
                     "entry channel `{}` names no consumer",
                     channel.name
-                ));
+                )));
             }
         }
         HostChannelKind::InterProc => {
             if channel.producer.is_none() {
-                return Err(format!(
+                return Err(Error::Declaration(format!(
                     "inter_proc channel `{}` names no producer",
                     channel.name
-                ));
+                )));
             }
             if channel.consumers.is_empty() {
-                return Err(format!(
+                return Err(Error::Declaration(format!(
                     "inter_proc channel `{}` names no consumer",
                     channel.name
-                ));
+                )));
             }
         }
         HostChannelKind::Plugin => {
             if !channel.consumers.is_empty() {
-                return Err(format!(
+                return Err(Error::Declaration(format!(
                     "plugin channel `{}` cannot name consumers",
                     channel.name
-                ));
+                )));
             }
         }
     }
@@ -282,27 +301,27 @@ fn refuse_procedure(
     decl: &HostClassDecl,
     idx: u32,
     proc_decl: &HostProcedureDecl,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     match proc_decl.entity_mode {
         HostEntityModeDecl::Static if proc_decl.entity_keys.is_empty() => {
-            return Err(format!(
+            return Err(Error::Declaration(format!(
                 "static procedure `{}` declares no entity_keys",
                 proc_decl.name
-            ));
+            )));
         }
         HostEntityModeDecl::Single | HostEntityModeDecl::Dynamic
             if !proc_decl.entity_keys.is_empty() =>
         {
-            return Err(format!(
+            return Err(Error::Declaration(format!(
                 "procedure `{}` declares entity_keys without static mode",
                 proc_decl.name
-            ));
+            )));
         }
         HostEntityModeDecl::Dynamic if proc_decl.max_entities == Some(0) => {
-            return Err(format!(
+            return Err(Error::Declaration(format!(
                 "dynamic procedure `{}` declares max_entities 0",
                 proc_decl.name
-            ));
+            )));
         }
         _ => {}
     }
@@ -311,17 +330,16 @@ fn refuse_procedure(
         .iter()
         .any(|c| c.kind != HostChannelKind::Plugin && c.consumers.contains(&idx));
     if !has_input {
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "procedure `{}` has no input channel",
             proc_decl.name
-        ));
+        )));
     }
     Ok(())
 }
 
-/// The class facts every procedure and the shared topology read. Resolved
-/// once: the per-procedure facts and the topology must agree on the
-/// interval's rules, so they read the same value.
+/// The class facts every procedure and the topology read, resolved once so
+/// they agree.
 struct ClassFacts {
     factory_id: &'static str,
     correction: Option<CorrectionPolicy>,
@@ -359,7 +377,7 @@ fn resolve_class_facts(decl: &HostClassDecl) -> ClassFacts {
 }
 
 /// Build the validated declaration's topology and register it.
-fn register(decl: HostClassDecl) -> Result<(), String> {
+fn register(decl: HostClassDecl) -> Result<(), Error> {
     let class = resolve_class_facts(&decl);
     let mut channels: Vec<ChannelDescriptor> = Vec::with_capacity(decl.channels.len());
     let mut name_to_id: HashMap<&'static str, u32> = HashMap::new();
@@ -400,20 +418,20 @@ fn register(decl: HostClassDecl) -> Result<(), String> {
     }
 }
 
-/// A structured chain: its DAG is built from the topology, and a chained
-/// loop is decided against that DAG.
+/// A structured chain: its DAG from the topology, a chained loop decided
+/// against it.
 fn register_structured_workflow(
     decl: &HostClassDecl,
     workflow: &HostWorkflowDecl,
     topology: Arc<OperativeTopology>,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     let dag = build_host_dag(&topology)?;
     if workflow.loop_mode == HostLoopMode::Chained && dag.single_leaf().is_none() {
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "a handoff-chained loop needs exactly one terminal procedure; the graph \
              has {}",
             dag.leaves().count()
-        ));
+        )));
     }
     let loop_mode = match workflow.loop_mode {
         HostLoopMode::Once => LoopMode::Once,
@@ -581,20 +599,7 @@ fn host_facts(
     }
 }
 
-fn host_serialize_unreachable(_: &Box<dyn Any + Send>) -> Result<serde_json::Value, String> {
-    Err("host-held state: a live read reaches the host through its \
-         LiveStateRead activation, not an in-process serializer"
-        .to_string())
-}
-
-fn host_deserialize_unreachable(_: &serde_json::Value) -> Result<Box<dyn Any + Send>, String> {
-    Err("host-held state: apply-state reaches the host through its \
-         ApplyState activation"
-        .to_string())
-}
-
-/// Register the workflow half of a host class: run-sugar (no topology, one
-/// imperative body) and a structured chain build the same spec.
+/// The workflow half: run-sugar and a structured chain build the same spec.
 fn register_workflow_class(
     decl: &HostClassDecl,
     workflow: &HostWorkflowDecl,
@@ -638,8 +643,7 @@ fn rollback_of(mode: HostRollbackMode) -> RollbackMode {
     }
 }
 
-/// `WorkflowSpec.run` placeholder for host classes — the driver branches on
-/// `spec.host` before ever calling it.
+/// The driver branches on `spec.host` before ever calling `run`.
 fn host_run_unreachable(
     _ctx: &mut crate::workflow::WorkflowCtx,
     _args: &str,
@@ -649,10 +653,10 @@ fn host_run_unreachable(
     ))
 }
 
-/// Kahn toposort of a structured host chain from its entry root, refusing
-/// what the typed builder refuses: several entry consumers, a procedure
-/// producing more than one channel, cycles, disconnected procedures.
-fn build_host_dag(topology: &OperativeTopology) -> Result<ProcDag, String> {
+/// Kahn toposort from the entry root, refusing what the typed builder
+/// refuses: several entry consumers, several outputs, cycles, disconnected
+/// procedures.
+fn build_host_dag(topology: &OperativeTopology) -> Result<ProcDag, Error> {
     let root = refuse_dag_shape(topology)?;
     let n = topology.procedures.len();
     let (parents, children) = inter_proc_edges(topology);
@@ -665,9 +669,9 @@ fn build_host_dag(topology: &OperativeTopology) -> Result<ProcDag, String> {
             .find(|(i, _)| !seen[*i])
             .map(|(_, p)| p.name.to_string())
             .unwrap_or_default();
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "procedure `{missing}` is on a cycle or not reachable from the entry channel"
-        ));
+        )));
     }
     // Re-index parents/children positionally by order (the driver's shape).
     let index_of: HashMap<usize, usize> = order
@@ -710,20 +714,22 @@ fn inter_proc_edges(topology: &OperativeTopology) -> (Vec<Vec<usize>>, Vec<Vec<u
     (parents, children)
 }
 
-/// The root procedure of a well-shaped chain: one entry channel feeding one
-/// procedure, and no procedure producing more than one channel.
-fn refuse_dag_shape(topology: &OperativeTopology) -> Result<usize, String> {
+/// The root of a well-shaped chain: one entry channel feeding one procedure,
+/// no procedure producing two channels.
+fn refuse_dag_shape(topology: &OperativeTopology) -> Result<usize, Error> {
     let entry = topology
         .channels
         .iter()
         .find(|c| c.kind == ChannelKind::Entry)
-        .ok_or("a structured workflow class declares one entry channel")?;
+        .ok_or_else(|| {
+            Error::Declaration("a structured workflow class declares one entry channel".to_string())
+        })?;
     if entry.consumers.len() != 1 {
-        return Err(format!(
+        return Err(Error::Declaration(format!(
             "a bounded topology has a single root; entry channel `{}` feeds {} procedures",
             entry.name,
             entry.consumers.len()
-        ));
+        )));
     }
     for (proc_id, _) in topology.procedures.iter().enumerate() {
         let produced = topology
@@ -732,11 +738,11 @@ fn refuse_dag_shape(topology: &OperativeTopology) -> Result<usize, String> {
             .filter(|c| c.producer == Some(proc_id as u32))
             .count();
         if produced > 1 {
-            return Err(format!(
+            return Err(Error::Declaration(format!(
                 "procedure `{}` produces more than one channel; a procedure emits on exactly \
                  one output channel",
                 topology.procedures[proc_id].name
-            ));
+            )));
         }
     }
     Ok(entry.consumers[0].procedure as usize)
@@ -766,39 +772,4 @@ fn kahn_order(
         }
     }
     (order, seen)
-}
-
-/// The journal codec for a host inter-proc channel: a lossless postcard
-/// wrapper over the payload's routing facts, so a durable re-seed rebuilds
-/// the exact `HostPayload` the live handoff carried.
-fn host_payload_codec(channel_id: u32) -> crate::channel::ChannelCodec {
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct JournalForm {
-        bytes: Vec<u8>,
-        keys: Vec<String>,
-        event_time: Option<u64>,
-    }
-    crate::channel::ChannelCodec {
-        encode: Arc::new(|value: &dyn Any| {
-            let payload = value
-                .downcast_ref::<HostPayload>()
-                .ok_or("host codec: value is not a host payload")?;
-            postcard::to_stdvec(&JournalForm {
-                bytes: payload.bytes.clone(),
-                keys: payload.keys.clone(),
-                event_time: payload.event_time,
-            })
-            .map_err(|e| e.to_string())
-        }),
-        decode: Arc::new(move |bytes: Vec<u8>| {
-            let form: JournalForm = postcard::from_bytes(&bytes).map_err(|e| e.to_string())?;
-            Ok(Arc::new(HostPayload {
-                bytes: form.bytes,
-                channel: channel_id,
-                keys: form.keys,
-                event_time: form.event_time,
-                metadata: Vec::new(),
-            }) as Arc<dyn Any + Send + Sync>)
-        }),
-    }
 }

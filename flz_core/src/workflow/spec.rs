@@ -1,12 +1,6 @@
-//! Workflow class spec: the frozen authoring result produced at registration.
-//!
-//! A workflow operative is authored either as bare [`run`](super::WorkflowOperative::run)
-//! sugar (no declared procedures) or as a structured **DAG** of
-//! Procedures/Channels/Entities via
-//! [`procedures`](super::WorkflowOperative::procedures). `build_spec` runs the
-//! declaration once, validates it (single-rooted acyclic graph — fan-out and
-//! fan-in both legal, no dynamic entities, self-terminating), and freezes the
-//! result for every spawn of the class.
+//! The frozen registration-time result of authoring a workflow class: a
+//! run-sugar body or a validated procedure DAG (single-rooted, acyclic, no
+//! dynamic entities), plus the class's loop, rollback and durability facts.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,21 +9,13 @@ use super::{LoopMode, RollbackMode, WorkflowRunFn};
 use crate::channel::{ProcedureId, RetryPolicy};
 use crate::operative::topology::OperativeTopology;
 
-/// The static procedure DAG of a structured workflow class (`workflow-branching`).
-///
-/// `order` holds every procedure in **Kahn topological order from the root**,
-/// so every producer of a node — a fan-in has several — sits at a lower index
-/// than the node itself. A node's index is also its `stage_idx` and its wire
-/// `proc_idx`. That numbering is load-bearing: completion order is topological,
-/// and reversing it (what `plan_compensation` already does) is
-/// reverse-topological compensation — a join is undone before any of its
-/// producers. A linear chain is the single-branch case.
+/// The procedure DAG in Kahn order from the root, so every producer sits at
+/// a lower index than its consumer. A node's index is its `stage_idx` and
+/// its wire `proc_idx`, and reversing the order is the compensation order.
 #[derive(Debug, Default)]
 pub struct ProcDag {
     pub order: Vec<ProcedureId>,
-    /// Indexes of each node's producers (empty for the root), positionally.
     pub parents: Vec<Vec<usize>>,
-    /// Indexes of each node's children — the consumers of its output channel.
     pub children: Vec<Vec<usize>>,
 }
 
@@ -42,15 +28,12 @@ impl ProcDag {
         self.order.is_empty()
     }
 
-    /// The nodes with no children — the operative is done when all of them
-    /// have committed.
+    /// The nodes with no children.
     pub fn leaves(&self) -> impl Iterator<Item = usize> + '_ {
         (0..self.len()).filter(|&i| self.children[i].is_empty())
     }
 
-    /// The single leaf, when the graph has exactly one — the terminal procedure
-    /// whose batch a handoff-chained loop re-seeds from, and whose output
-    /// channel an iteration commit journals.
+    /// The single leaf, when there is exactly one.
     pub fn single_leaf(&self) -> Option<usize> {
         let mut leaves = self.leaves();
         let first = leaves.next()?;
@@ -58,47 +41,28 @@ impl ProcDag {
     }
 }
 
-/// Frozen per-class authoring result stored in the registry. `topology` is
-/// `None` for the run-sugar form; `Some` (with the resolved `tree`) for the
-/// structured form.
+/// A workflow class as the registry holds it; `topology` is `None` for the
+/// run-sugar form.
 pub struct WorkflowSpec {
-    /// The SDK language behind this class — see [`OperativeTopology::sdk_lang`].
-    /// Carried here as well because a run-sugar workflow has no topology.
+    /// The SDK language; a run-sugar class has no topology to carry it.
     pub sdk_lang: u8,
-    /// Run-sugar body. Invoked only when `topology` is `None`.
     pub run: WorkflowRunFn,
-    /// Structured topology, or `None` for run-sugar.
     pub topology: Option<Arc<OperativeTopology>>,
-    /// Procedures as a static DAG rooted at the entry channel's consumer.
-    /// Empty for run-sugar.
     pub dag: ProcDag,
-    /// Optional wall-clock backstop applied by the driver.
     pub max_duration: Option<Duration>,
-    /// Saga rollback scope applied on abnormal termination.
     pub rollback_mode: RollbackMode,
-    /// Loop shape of the structured chain (`LoopMode::Once` for run-sugar).
     pub loop_mode: LoopMode,
-    /// Durable wake deadline armed when a `PerInput` loop parks.
     pub wake_after: Option<Duration>,
-    /// Per-entity retry ladder applied inside a structured stage
-    /// (`workflow-entity-retry`), on the same policy type the stream
-    /// retry-then-park loop uses.
+    /// The per-entity ladder inside a stage.
     pub retry: RetryPolicy,
-    /// Sends of one commit barrier (first send included) before an unacked
-    /// `ProcCommit` / `IterCommit` fails the run; the re-sends wait out
-    /// `retry`'s backoff.
+    /// Sends of one barrier before an unacked commit fails the run.
     pub barrier_retry_attempts: u32,
-    /// Class-level persistence toggle; when true, a structured workflow's
-    /// per-Entity Changes are flushed to the WAL as they apply.
     pub persistence_enabled: bool,
-    /// Synchronous remote durability: the controller completes the remote ship
-    /// of a commit barrier before acking it, so the ack the driver observes
-    /// implies the barrier survives losing this controller's disk (RPO 0).
-    /// Inert unless the controller has a durability backend configured.
+    /// The controller ships a barrier to its durability backend before acking
+    /// it; inert without a backend.
     pub sync_durability: bool,
-    /// A host (C-ABI) class: the run-sugar body and every stage body run
-    /// host-side, crossed through the poll surface. The driver branches on
-    /// this before touching `run`.
+    /// A host class: every body crosses through the poll surface, and the
+    /// driver never touches `run`.
     pub host: bool,
 }
 
@@ -120,7 +84,7 @@ impl std::fmt::Debug for WorkflowSpec {
     }
 }
 
-/// Registration-time rejections for a workflow operative authoring.
+/// Why a workflow class is refused at registration.
 #[derive(Debug, thiserror::Error)]
 pub enum BuildWorkflowError {
     #[error("workflow operative `{factory_id}` has an invalid topology: {detail}")]

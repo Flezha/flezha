@@ -594,10 +594,7 @@ impl QuicDriver {
         match stream_state.frame_buffer.feed(data_for_framing) {
             Ok(frames) => stream_state.inbox.deliver(owner, nif_id, frames),
             Err(e) => {
-                eprintln!(
-                    "[flz_nif] QUIC frame too large on nif_id={}: declared {} > max {}",
-                    nif_id, e.declared, e.max
-                );
+                eprintln!("[flz_nif] QUIC frame too large on nif_id={}: {}", nif_id, e);
                 send_closed_msg(owner, nif_id, "frame_too_large");
                 self.forget_stream(ch, id, nif_id);
             }

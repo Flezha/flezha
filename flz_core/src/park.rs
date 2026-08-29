@@ -1,14 +1,7 @@
-//! Dead-letter park: retry-exhausted payloads ship to the controller's
-//! durable DLQ store and the entity advances only once the park is
-//! durable (`dead-letter-queue`).
-//!
-//! Tier-off sessions use this module's blocking wire path: a
-//! `park_payload` data-stream frame (reliable sink, reconnect ring) plus a
-//! condvar wait for the controller's `ParkPayloadAck` control command,
-//! re-sending until acked — delay, never loss. Effectively-once sessions
-//! never call it: their park rides the invocation's atomic effect record
-//! (`EffectRecordBody::dlq`), whose durability the input-log replay
-//! already guarantees.
+//! The dead-letter park outside the effectively-once tier: a `park_payload`
+//! frame plus a wait for the controller's `ParkPayloadAck`, re-sent until
+//! acked. The invariant: the entity advances only once the park is durable
+//! — delay, never loss. Under the tier the park rides the effect record.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,44 +13,31 @@ use serde::{Deserialize, Serialize};
 use crate::flusher::build_entity_frame;
 use crate::state_sink::{self, PARK_PAYLOAD_PAYLOAD_ID};
 
-/// Process-global count of retry attempts after a failed invocation
-/// (attempt 2..n), shipped in `data_heartbeat` metadata like
-/// `DISPATCHES_COMPLETED`.
+/// Retry attempts, process-wide; rides the heartbeat.
 pub static RETRIES_TOTAL: AtomicU64 = AtomicU64::new(0);
 
-/// Process-global count of payloads parked to the dead-letter queue.
 pub static PARKED_TOTAL: AtomicU64 = AtomicU64::new(0);
 
-/// Monotonic nonce making tier-off `park_id`s unique within a process.
 static PARK_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// Wire body of a `park_payload` frame (postcard, field order is the
-/// contract): the ack correlation id, the tier's input-log offset when
-/// present, and the same [`DlqEntryBody`] a tier-on park embeds in its
-/// effect record — one park-record shape on every path.
+/// Wire body of a `park_payload` frame; field order is the contract, and
+/// the entry is the same [`DlqEntryBody`] a tier-on park embeds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParkBody {
-    /// SDK-minted correlation id echoed back in `ParkPayloadAck`; also the
-    /// controller's dedup handle for ack-lost re-sends.
+    /// Echoed in `ParkPayloadAck`; the controller's dedup handle for re-sends.
     pub park_id: String,
-    /// Input-log offset when the effectively-once tier provides one.
     pub origin_offset: Option<u64>,
     pub entry: crate::flusher::DlqEntryBody,
 }
 
-/// Ack registry: park_ids acked by the controller, plus the condvar the
-/// parked dispatch thread waits on. Entries are removed as they are
-/// consumed, so the set stays as small as the number of in-flight parks.
+/// Acked park ids, consumed as their waiters wake.
 static ACKED: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 static ACKED_CV: Condvar = Condvar::new();
 
-/// How long to wait for the ack before re-sending the park frame.
 const ACK_RESEND_INTERVAL: Duration = Duration::from_secs(2);
-/// Warn cadence while a park remains unacked (multiples of the resend
-/// interval).
+/// Warn every this many re-sends.
 const WARN_EVERY_RESENDS: u64 = 5;
 
-/// Mint a process-unique tier-off park id.
 pub fn mint_park_id(entity_label: &str) -> String {
     format!(
         "{}#{}",
@@ -66,9 +46,7 @@ pub fn mint_park_id(entity_label: &str) -> String {
     )
 }
 
-/// Record a controller ack for `park_id` and wake the parked dispatcher.
-/// Called from the `ParkPayloadAck` control-command handler; unknown ids
-/// are retained (the ack can race ahead of the waiter's first check).
+/// Record an ack and wake its waiter; an ack ahead of its waiter is kept.
 pub fn complete_ack(park_id: &str) {
     let mut guard = ACKED.lock().expect("park ack registry poisoned");
     guard
@@ -77,7 +55,7 @@ pub fn complete_ack(park_id: &str) {
     ACKED_CV.notify_all();
 }
 
-/// Consume a pending ack for `park_id`; `true` exactly once per ack.
+/// `true` exactly once per ack.
 fn take_ack(park_id: &str) -> bool {
     let mut guard = ACKED.lock().expect("park ack registry poisoned");
     guard
@@ -86,9 +64,8 @@ fn take_ack(park_id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Recover the wire bytes of an input for the DLQ entry. Entry-channel
-/// payloads are `Vec<u8>`/`String` and round-trip exactly; other input
-/// types have no serialization contract and park without bytes.
+/// The wire bytes of an input for the DLQ entry; only `Vec<u8>` / `String`
+/// entries round-trip, the rest park without bytes.
 pub fn extract_payload_bytes<T: std::any::Any>(input: &T) -> Option<Vec<u8>> {
     let any: &dyn std::any::Any = input;
     if let Some(bytes) = any.downcast_ref::<Vec<u8>>() {
@@ -98,11 +75,8 @@ pub fn extract_payload_bytes<T: std::any::Any>(input: &T) -> Option<Vec<u8>> {
     }
 }
 
-/// Ship a park frame and block until the controller acks it as durable
-/// (tier-off path). Re-sends on the resend cadence forever — the entity
-/// must not advance past an unparked poison payload. Transport-less runs
-/// (no sink ever installed) cannot park; they log loudly and drop,
-/// preserving the pre-DLQ standalone behaviour.
+/// Ship a park and block until it is acked durable, re-sending forever; a
+/// transport-less run logs and drops.
 pub fn park_blocking(entity_identity: &[u8], body: &ParkBody) {
     if !state_sink::sink_installed() {
         eprintln!(
@@ -146,6 +120,21 @@ pub fn park_blocking(entity_identity: &[u8], body: &ParkBody) {
             );
         }
     }
+}
+
+/// Mint, build and ship one tier-off park, blocking for its ack.
+pub fn park_tier_off(
+    entity_identity: &[u8],
+    entity_label: &str,
+    origin_offset: Option<u64>,
+    entry: crate::flusher::DlqEntryBody,
+) {
+    let body = ParkBody {
+        park_id: mint_park_id(entity_label),
+        origin_offset,
+        entry,
+    };
+    park_blocking(entity_identity, &body);
 }
 
 #[cfg(test)]
@@ -202,21 +191,4 @@ mod tests {
             ]
         );
     }
-}
-
-/// Assemble and ship one tier-off park: mint the id, build the body, block
-/// until the controller's ack makes the DLQ append durable. The caller has
-/// already counted and logged the park.
-pub fn park_tier_off(
-    entity_identity: &[u8],
-    entity_label: &str,
-    origin_offset: Option<u64>,
-    entry: crate::flusher::DlqEntryBody,
-) {
-    let body = ParkBody {
-        park_id: mint_park_id(entity_label),
-        origin_offset,
-        entry,
-    };
-    park_blocking(entity_identity, &body);
 }

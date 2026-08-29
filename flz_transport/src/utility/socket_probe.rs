@@ -160,7 +160,7 @@ pub fn connect_diagnosis(
 fn quic_candidate_note(quic_addresses: Option<&str>) -> String {
     let entries = match config::quic_addresses_with(quic_addresses) {
         Ok(entries) => entries,
-        Err(refusal) => return refusal,
+        Err(refusal) => return refusal.to_string(),
     };
 
     let (resolved, unresolved) = config::resolve_entries(&entries);

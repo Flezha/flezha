@@ -13,18 +13,14 @@ use serde::{Deserialize, Serialize};
 use crate::flusher::{build_effect_record_frame, frame_change_bodies, FlushFrame, FlushableBuffer};
 use crate::header::HeaderTemplate;
 use crate::operative::topology::{CheckpointOutputs, CheckpointPolicy};
-/// Dead-letter park carried inside an effect record (effectively-once
-/// tier): the poisoned invocation's park entry rides the SAME atomic WAL
-/// record as its consumed-offset advance. One definition — the boundary
-/// schema's — shared with completions.
+/// A park inside an effect record: it rides the SAME record as the
+/// consumed-offset advance. One definition — the boundary schema's.
 pub use crate::schema::DlqEntry as DlqEntryBody;
 use crate::schema::TimerOp;
 
-/// One plugin output captured inside an effect record. Field order is the
-/// wire contract (postcard is field-order-sensitive); `metadata` carries the
-/// caller's user metadata as key-sorted pairs — the controller derives the
-/// identity stamps (`flz.entity` / `outbox_seq` / epoch) at flush time, so
-/// none ride here.
+/// One plugin output inside an effect record. Field order is the wire
+/// contract; `metadata` is the caller's, key-sorted — the controller stamps
+/// the identity keys at flush time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutputRecord {
     pub channel: String,
@@ -33,23 +29,11 @@ pub struct OutputRecord {
     pub payload: Vec<u8>,
 }
 
-/// Wire body of an `entity_effect_record` frame (header `format_id = 2`):
-/// one invocation's state change(s), plugin emits, consumed input offset,
-/// and (for a parked poison payload) its dead-letter entry, persisted by
-/// the controller as ONE WAL record under ONE fsync. `changes` entries are
-/// the postcard `S::Change` bytes a plain change record would carry, so
-/// restore folds them identically.
-///
-/// `event_time` is the invocation's declared clock value. For an
-/// `EventTimeFrom` clock it is the extracted event time, which is what makes
-/// the controller's event-time → seq → input-offset lookup a read rather than
-/// a guess — the correction baseline rests on it.
-///
-/// `timers` carries the invocation's mutations of the Entity's pending-timer
-/// set. A firing's removal rides here beside the Changes and outputs it
-/// produced, which is what makes the firing exactly-once under the tier: a
-/// crash between "fired" and "durable" replays the whole thing, because
-/// neither the effects nor the removal landed.
+/// Wire body of an `entity_effect_record` frame (`format_id = 2`): one
+/// invocation's changes, outputs, consumed offset, park and timer ops, ONE
+/// WAL record under ONE fsync. `event_time` is the declared clock's value —
+/// the correction baseline's lookup key; a firing's removal rides beside its
+/// effects, which is what makes it exactly-once under the tier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectRecordBody {
     pub changes: Vec<Vec<u8>>,
@@ -60,9 +44,8 @@ pub struct EffectRecordBody {
     pub timers: Vec<crate::schema::TimerOp>,
 }
 
-/// One invocation's buffered effect entry (effectively-once tier), held on the
-/// change type the class buffers — `S::Change` for a typed class, bytes for a
-/// host class — and serialized into an [`EffectRecordBody`] at drain.
+/// One invocation's buffered effect entry, on the class's own change type,
+/// serialized into an [`EffectRecordBody`] at drain.
 pub struct EffectEntry<C> {
     pub changes: Vec<C>,
     pub outputs: Vec<OutputRecord>,
@@ -73,9 +56,7 @@ pub struct EffectEntry<C> {
 }
 
 impl<C> EffectEntry<C> {
-    /// The record a fold or a deadline close produced, plus the park that rides
-    /// it. One place the shipped-record fields become an effect entry, so the
-    /// two cannot drift apart field by field.
+    /// The record a fold or a deadline close produced, plus its park.
     pub fn from_shipped(record: ShippedRecord<C>, dlq: Option<DlqEntryBody>) -> Self {
         Self {
             changes: record.changes,
@@ -87,7 +68,6 @@ impl<C> EffectEntry<C> {
         }
     }
 
-    /// The wire body: the changes become bytes, everything else moves.
     pub fn into_body<B: Bodies<Change = C>>(self) -> EffectRecordBody {
         EffectRecordBody {
             changes: B::into_bodies(self.changes),
@@ -100,27 +80,22 @@ impl<C> EffectEntry<C> {
     }
 }
 
-/// What one invocation produced, before the class's ack granularity decides
-/// how much of it ships now.
+/// What one invocation produced, before the ack granularity decides how
+/// much of it ships now.
 pub struct InvocationEffects<C> {
     pub changes: Vec<C>,
     pub timers: Vec<TimerOp>,
     pub outputs: Vec<OutputRecord>,
-    /// The input offset this invocation acknowledges, `None` for a firing.
     pub offset: Option<u64>,
-    /// The invocation's declared clock value.
     pub event_time: u64,
-    /// The body called `ctx.checkpoint()`. Meaningless outside the checkpoint
-    /// granularity, which is why it is not folded into `parked` here.
+    /// The body called `ctx.checkpoint()`; meaningless outside that granularity.
     pub checkpointed: bool,
-    /// The invocation parked a poison payload. Its record MUST ship so the
-    /// dead-letter park and the consumed-offset advance stay atomic — and,
-    /// under the checkpoint granularity, it closes the interval, because the
-    /// input it is about to acknowledge into the DLQ must never replay.
+    /// The invocation parked: its record MUST ship, atomic with the offset
+    /// advance, and under the checkpoint granularity it closes the interval so
+    /// the parked input never replays.
     pub parked: bool,
 }
 
-/// The durable record one fold produced.
 pub struct ShippedRecord<C> {
     pub changes: Vec<C>,
     pub timers: Vec<TimerOp>,
@@ -129,28 +104,20 @@ pub struct ShippedRecord<C> {
     pub event_time: u64,
 }
 
-/// One open checkpoint interval's unacknowledged accumulation.
-///
-/// Nothing here is flushable on its own: draining the changes would put state
-/// ahead of the offset that acknowledges it, and draining held outputs would
-/// deliver output the interval may still replay. It all ships in the record
-/// that closes the interval, or a restore discards it together.
+/// One open checkpoint interval's accumulation. Nothing here is flushable
+/// on its own: it ships in the record that closes the interval, or a restore
+/// discards it together.
 pub struct StagedInterval<C> {
     pub changes: Vec<C>,
     pub timers: Vec<TimerOp>,
-    /// Held only under [`CheckpointOutputs::AtCheckpoint`]; empty otherwise,
-    /// where an emit is flushed as it is produced.
+    /// Held only under [`CheckpointOutputs::AtCheckpoint`].
     pub outputs: Vec<OutputRecord>,
-    /// The furthest offset folded in — what the closing record acknowledges.
     pub offset: Option<u64>,
-    /// Inputs folded in, against [`CheckpointPolicy::every`].
     pub inputs: u32,
-    /// When the interval opened, against [`CheckpointPolicy::max_delay_ms`].
     /// `None` exactly when the interval is closed.
     pub opened_at_ms: Option<u64>,
-    /// The last folded invocation's clock value — what the closing record
-    /// carries, including when a deadline closes the interval with no
-    /// invocation of its own to date it.
+    /// The last folded invocation's clock value, which a deadline close
+    /// carries too.
     pub event_time: u64,
 }
 
@@ -169,12 +136,9 @@ impl<C> Default for StagedInterval<C> {
 }
 
 impl<C> StagedInterval<C> {
-    /// Fold one invocation in and answer what its durable record ships:
-    /// `(changes, timers, outputs, consumed_offset)`, or `None` when an open
-    /// interval swallowed it.
-    ///
-    /// The one place the ack granularity's rules live — the typed dispatcher
-    /// and the C-ABI host both call it, so the two can never drift.
+    /// Fold one invocation in and answer what its record ships, or `None`
+    /// when an open interval swallowed it. The one place the ack
+    /// granularity's rules live.
     pub fn fold(
         &mut self,
         policy: Option<CheckpointPolicy>,
@@ -250,14 +214,12 @@ impl<C> StagedInterval<C> {
         })
     }
 
-    /// Whether the interval is due to close on its own — the input count is
-    /// reached, or it has been open longer than the declared delay.
+    /// Due to close on its own: the input count reached, or the delay passed.
     pub fn due(&self, policy: CheckpointPolicy, now_ms: u64) -> bool {
         policy.every.is_some_and(|every| self.inputs >= every) || self.delay_elapsed(policy, now_ms)
     }
 
-    /// Whether `max_delay_ms` has passed since the interval opened. Separate
-    /// from [`Self::due`] because the deferred wake asks only this.
+    /// Whether `max_delay_ms` passed — what the deferred wake asks.
     pub fn delay_elapsed(&self, policy: CheckpointPolicy, now_ms: u64) -> bool {
         match (policy.max_delay_ms, self.opened_at_ms) {
             (Some(delay), Some(opened)) => now_ms.saturating_sub(opened) >= delay,
@@ -265,12 +227,10 @@ impl<C> StagedInterval<C> {
         }
     }
 
-    /// When this interval must close by, for the deferred wake to arm against.
     pub fn deadline_ms(&self, policy: CheckpointPolicy) -> Option<u64> {
         Some(self.opened_at_ms? + policy.max_delay_ms?)
     }
 
-    /// Take everything the closing record ships, leaving the interval closed.
     pub fn close(&mut self) -> (Vec<C>, Vec<TimerOp>, Vec<OutputRecord>, Option<u64>) {
         self.inputs = 0;
         self.opened_at_ms = None;
@@ -282,15 +242,12 @@ impl<C> StagedInterval<C> {
         )
     }
 
-    /// Whether anything is owed — what the deferred wake checks before
-    /// shipping a record for an interval an input already closed.
     pub fn is_open(&self) -> bool {
         self.opened_at_ms.is_some()
     }
 
-    /// Close the interval because its delay elapsed, with no invocation of its
-    /// own: the accumulation is already computed, so this only decides it
-    /// ships now. `None` when nothing was open.
+    /// Close on the delay, with no invocation of its own; `None` when nothing
+    /// was open.
     pub fn close_on_deadline(&mut self) -> Option<ShippedRecord<C>> {
         self.is_open().then(|| {
             let (changes, timers, outputs, offset) = self.close();
@@ -304,26 +261,24 @@ impl<C> StagedInterval<C> {
         })
     }
 
-    /// Drop the interval. A restore re-seats the Entity on a past in which
-    /// none of it was applied, and the controller re-forwards the inputs.
+    /// Drop the interval: a restore re-seats the Entity on a past in which
+    /// none of it was applied.
     pub fn clear(&mut self) {
         let _ = self.close();
         self.offset = None;
     }
 }
 
-/// How a class's buffered changes become the bodies of its durable records,
-/// and whether a drain coalesces them first. A marker type per class kind
-/// rather than a trait on the change itself: the typed SDK's changes are its
-/// authors' own types, which it cannot implement a core trait for.
+/// How a class's buffered changes become record bodies, and whether a drain
+/// coalesces them first. A marker per class kind, not a trait on the change:
+/// the typed SDK's changes are its authors' own types.
 pub trait Bodies: Send + 'static {
     type Change: Send + 'static;
     fn coalesce(changes: Vec<Self::Change>) -> Vec<Self::Change>;
     fn into_bodies(changes: Vec<Self::Change>) -> Vec<Vec<u8>>;
 }
 
-/// The host's pre-encoded bytes: they carry no key and are already bodies, so
-/// both steps are a move — the erased drain pays nothing it did not pay before.
+/// The host's pre-encoded bytes: both steps are a move.
 pub struct RawBodies;
 
 impl Bodies for RawBodies {
@@ -338,32 +293,19 @@ impl Bodies for RawBodies {
     }
 }
 
-/// The per-Entity flush buffer, generic over the change it holds. Exactly one
-/// of `changes` / `effects` is ever populated: plain changes outside the
-/// effectively-once tier, per-invocation effect entries inside it.
-///
-/// `staged` is neither: under checkpoint ack-granularity it holds the changes
-/// an open interval has applied, which are not flushable yet — they become
-/// durable only inside the effect record the closing `ctx.checkpoint()` ships,
-/// together with the offset that acknowledges them. Draining them on their own
-/// would put the state ahead of its offset, which is the tear the mode exists
-/// to prevent.
-/// `timer_ops` is the tier-off home for pending-timer mutations: outside the
-/// tier there is no effect record to ride, so they drain as their own
-/// `format_id = 3` record. Under the tier they ride `EffectEntry::timers`
-/// instead and this stays empty.
+/// The per-Entity flush buffer. Exactly one of `changes` / `effects` is ever
+/// populated: plain changes outside the effectively-once tier, effect entries
+/// inside it. `timer_ops` is the tier-off home for timer mutations (their own
+/// `format_id = 3` record); under the tier they ride `EffectEntry::timers`.
 pub struct EffectBuffer<B: Bodies> {
     pub changes: Vec<B::Change>,
-    /// An open checkpoint interval's unacknowledged accumulation — changes,
-    /// timer registrations and (under `CheckpointOutputs::AtCheckpoint`)
-    /// outputs. Shipping any of it alone would leave state, a pending timer or
-    /// a delivered output ahead of the offset that acknowledges them.
+    /// An open checkpoint interval's accumulation, flushable only as the
+    /// record that closes it.
     pub staged: StagedInterval<B::Change>,
     pub effects: Vec<EffectEntry<B::Change>>,
     pub timer_ops: Vec<TimerOp>,
-    /// Changes a failed-but-retryable attempt applied to in-memory state,
-    /// held out of the flusher's reach until the item resolves; the next
-    /// attempt re-takes them so durable state cannot diverge from memory.
+    /// Changes a failed-but-retryable attempt applied, held from the flusher
+    /// until the item resolves so durable state cannot diverge from memory.
     pub pending_attempt: Vec<B::Change>,
 }
 
@@ -380,8 +322,7 @@ impl<B: Bodies> Default for EffectBuffer<B> {
 }
 
 impl<B: Bodies> EffectBuffer<B> {
-    /// Close an open checkpoint interval whose delay elapsed, shipping its
-    /// accumulation as the record it owes; `false` when nothing was open.
+    /// Close an open interval on its delay; `false` when nothing was open.
     pub fn close_interval(&mut self) -> bool {
         let Some(record) = self.staged.close_on_deadline() else {
             return false;
@@ -441,25 +382,20 @@ impl<B: Bodies> FlushableBuffer for EffectBuffer<B> {
     }
 }
 
-/// The class facts that decide how an invocation's effects settle.
 #[derive(Debug, Clone, Copy)]
 pub struct SettlePolicy {
     pub effectively_once: bool,
     pub checkpoint: Option<CheckpointPolicy>,
     /// Whether tier-off changes and timer ops are kept for a drain at all —
-    /// false for a host class with no flusher entry, whose bodies nobody
-    /// would ever ship.
+    /// false for a host class with no flusher entry.
     pub buffered: bool,
 }
 
-/// Settle one resolved invocation into its Entity's buffer per the class's
-/// tier. Under effectively-once its changes, outputs and consumed offset fold
-/// into ONE effect record — a park rides that record, atomic with the offset
-/// advance — and nothing is returned. Outside the tier the changes and timer
-/// ops are kept for the flusher and the park is handed back for the caller's
-/// blocking tier-off park, once the buffer lock is released. A
-/// failed-but-retryable attempt's held changes are re-taken first, so durable
-/// state cannot diverge from memory.
+/// Settle one invocation into its Entity's buffer per the tier: under
+/// effectively-once everything folds into ONE effect record, park included;
+/// outside it the changes and timer ops are kept for the flusher and the park
+/// is handed back for the caller's blocking tier-off park. A retryable
+/// attempt's held changes are re-taken first.
 pub fn settle_effects<B: Bodies>(
     buffer: &mut EffectBuffer<B>,
     policy: SettlePolicy,
@@ -503,9 +439,8 @@ mod effect_buffer_tests {
     use super::*;
     use crate::flusher::encode_entity_identity;
 
-    /// The host's bodies are already bytes: the drain's coalesce and
-    /// serialisation steps are moves — the same allocation goes in and comes
-    /// out — so the erased path pays nothing the typed path's key needs.
+    /// The host's bodies are already bytes: the drain moves them, the same
+    /// allocation going in and coming out.
     #[test]
     fn a_bytes_buffer_drains_its_bodies_by_move() {
         let bodies: Vec<Vec<u8>> = (0..64u8).map(|i| vec![i, i, i]).collect();
@@ -517,8 +452,7 @@ mod effect_buffer_tests {
         assert_eq!(out.len(), 64);
     }
 
-    /// A drained bytes buffer produces exactly the frames `frame_change_bodies`
-    /// produces from the same bodies — the generic drain adds no step.
+    /// The generic drain frames exactly as `frame_change_bodies` does.
     #[test]
     fn a_bytes_buffer_drain_is_frame_change_bodies() {
         let identity = encode_entity_identity("op", "proc", "k");
@@ -551,9 +485,8 @@ mod effect_buffer_tests {
         );
     }
 
-    /// Outside the tier the changes land in the buffer for the flusher and the
-    /// park comes back for the blocking tier-off park; inside it they fold
-    /// into one effect entry that carries the park.
+    /// Outside the tier the park comes back to the caller; inside it the
+    /// park rides the one effect entry.
     #[test]
     fn settle_effects_keeps_the_tier_off_park_for_the_caller_and_folds_the_tier_on_one() {
         let dlq = DlqEntryBody {

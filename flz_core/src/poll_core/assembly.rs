@@ -36,8 +36,8 @@ pub(super) fn event_time_due_pending(slot: &Arc<EntitySlot>) -> bool {
         .is_empty()
 }
 
-/// One batch: the re-handed head of line, then deadlines and deferred live
-/// items an earlier round left, then the mailbox.
+/// One batch: the re-handed head of line, then what an earlier round left,
+/// then the mailbox.
 pub(super) fn assemble_batch(slot: &Arc<EntitySlot>) -> Vec<ItemAttempt> {
     let policy = slot.dispatcher.retry_policy();
     let event_time_class = slot.dispatcher.is_event_time();
@@ -88,10 +88,8 @@ pub(super) fn assemble_batch(slot: &Arc<EntitySlot>) -> Vec<ItemAttempt> {
     items
 }
 
-/// Live items deferred by an earlier round because a closed slice was still
-/// draining: they are older than anything in the mailbox, so they go first —
-/// through the same staging as a fresh pop. `true` when one of them ended the
-/// batch.
+/// Live items an earlier round deferred behind a draining slice: older than
+/// the mailbox, so they go first. `true` when one ended the batch.
 fn stage_deferred_live(
     slot: &Arc<EntitySlot>,
     items: &mut Vec<ItemAttempt>,
@@ -113,10 +111,9 @@ fn stage_deferred_live(
     false
 }
 
-/// Pop the mailbox into the batch until it runs dry or an item closes the
-/// batch, serving one waiter per pop. A member of a closed slice extends the
-/// slice; a non-replay item behind one waits for the slice to run first —
-/// `true` when such an item was deferred, which ends the batch as it stands.
+/// Pop the mailbox until it runs dry or an item closes the batch, serving
+/// one waiter per pop; `true` when a live item behind a closed slice was
+/// deferred.
 fn drain_mailbox(
     slot: &Arc<EntitySlot>,
     items: &mut Vec<ItemAttempt>,
@@ -158,22 +155,17 @@ fn drain_mailbox(
     false
 }
 
-/// What one popped (or deferred) mailbox item became.
 enum Staged {
-    /// A live input was admitted and staged (an event-time batch ends here).
+    /// A live input was admitted; an event-time batch ends here.
     AdmittedInput,
-    /// Buffered, skipped, dropped, or a timer item — the batch stays open.
+    /// Buffered, skipped, dropped, or a timer — the batch stays open.
     Other,
-    /// The item ends this batch and was deferred to the next round. A
-    /// checkpoint close behind live items does this: those items belong to the
-    /// interval it closes, so it must not overtake them — and nothing popped
-    /// after it may join the batch either, or it would fold into an interval
-    /// that had already ended.
+    /// Deferred to the next round and ends this batch: a checkpoint close
+    /// behind live items must neither overtake them nor let later pops fold
+    /// into an interval that ended.
     BatchClosed,
 }
 
-/// Classify and stage one mailbox item — the shared body for fresh pops and
-/// re-served deferred items.
 fn stage_popped_item(
     slot: &Arc<EntitySlot>,
     item: EntityItem,
@@ -215,10 +207,8 @@ fn stage_popped_item(
     }
 }
 
-/// The close must land in mailbox order: an input ahead of it belongs to the
-/// interval it closes. At the head of a batch nothing is ahead of it, so close
-/// now and keep draining; behind live items, defer it and end the batch so
-/// those items run first.
+/// A close lands in mailbox order: at the head of a batch close now; behind
+/// live items defer it so they run first.
 fn stage_close(slot: &Arc<EntitySlot>, items: &[ItemAttempt]) -> Staged {
     if items.is_empty() {
         close_due_interval(slot);
@@ -230,10 +220,8 @@ fn stage_close(slot: &Arc<EntitySlot>, items: &[ItemAttempt]) -> Staged {
     Staged::BatchClosed
 }
 
-/// Stage a firing the pending set still holds. The wake list holds no lock on
-/// the pending set, so an entry can outlive the timer: a cancellation, a
-/// re-fire after a restore re-armed it, an Entity restored without it. The
-/// set is the authority — a stale entry fires nothing.
+/// Stage a firing the pending set still holds; the set is the authority and
+/// a stale wake-list entry fires nothing.
 fn stage_timer(
     slot: &Arc<EntitySlot>,
     fire: TimerFire,
@@ -256,17 +244,15 @@ fn stage_timer(
     }
 }
 
-/// Ship an open checkpoint interval's accumulation because its `max_delay_ms`
-/// elapsed. The slot is claimed by this drainer, so taking the flush buffer is
-/// uncontended; an interval an input already closed makes it a no-op.
+/// Ship an open interval's accumulation on its `max_delay_ms`; a no-op when
+/// an input already closed it.
 fn close_due_interval(slot: &Arc<EntitySlot>) {
     let mut buffer = slot.flush_buffer.lock_recover();
     slot.dispatcher.close_interval(&mut buffer);
 }
 
-/// Admit one live (or replayed, via `flush_closed_slice`) input and stage it
-/// — preceded by whatever event-time deadlines its high-water advance made
-/// due. Returns whether the input was admitted.
+/// Admit and stage one input, preceded by the event-time deadlines its
+/// high-water advance made due; whether it was admitted.
 fn stage_input(
     slot: &Arc<EntitySlot>,
     payload: EntityPayload,
@@ -313,21 +299,10 @@ fn stage_input(
     true
 }
 
-/// Decide whether an input should be dispatched at all, and keep the
-/// Entity's event-time high-water.
-///
-/// An input behind the high-water but inside the correction window is
-/// dropped *here* and asked for back: it is already durable in the input
-/// log, so the correction re-delivers it inside the replayed slice, in its
-/// rightful place. Running it now would fold it into the state at the wrong
-/// position — the very mistake the correction undoes.
-///
-/// A `replayed` input is exempt from classification: the engine has just put
-/// it back into event-time order, so it is in order by construction. It
-/// still advances the high-water — the replay is what rebuilds it.
-///
-/// The high-water is kept for EVERY event-time-clocked class, not only a
-/// correcting one: it is also what event-time timers fire against.
+/// Whether an input is dispatched at all, and the high-water it advances. A
+/// late input inside the correction window is dropped here and asked for
+/// back — the replayed slice re-delivers it in place. A `replayed` input is
+/// in order by construction and still advances the high-water.
 fn admit_and_track(slot: &Arc<EntitySlot>, event_time: u64, replayed: bool) -> bool {
     let advance = || {
         slot.event_time_high_water
@@ -361,8 +336,8 @@ fn admit_and_track(slot: &Arc<EntitySlot>, event_time: u64, replayed: bool) -> b
     }
 }
 
-/// Stage every pending event-time deadline at or below the high-water,
-/// ascending, deduplicated against what this batch already fires.
+/// Every pending event-time deadline at or below the high-water, ascending,
+/// deduplicated against the batch.
 fn push_due_event_timers(
     slot: &Arc<EntitySlot>,
     stream: &Arc<flz_transport::transport::FlezhaStream>,
@@ -394,16 +369,10 @@ fn push_due_event_timers(
     }
 }
 
-/// The end-of-slice broadcast arrived: order the buffered slice by event
-/// time — stable, tie-broken by ascending input-log offset, so a re-run
-/// folds the same inputs in the same order (reproducible correction) — and
-/// stage it. An event-time class stages ONE member per batch (chained
-/// due-timer determinism); the remainder re-buffers, still closed, and
-/// `release_and_rearm` drives the next member's round.
-///
-/// The event-time high-water is deliberately NOT reset: the restore
-/// preceding every replay already rebuilt it, and zeroing it would be lossy
-/// on a crash resume whose unconsumed tail carries a lower max event time.
+/// The slice closed: order it by event time (stable, then by offset, so a
+/// re-run folds the same order) and stage ONE member; the rest re-buffers
+/// for the next round. The high-water is never reset — the restore rebuilt
+/// it.
 fn flush_closed_slice(
     slot: &Arc<EntitySlot>,
     items: &mut Vec<ItemAttempt>,

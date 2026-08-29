@@ -1,14 +1,9 @@
-//! Per-`AddOperative` runtime state for a workflow-kind operative: its live
-//! control surface (cancellation token + inbox) plus, for a structured class,
-//! the pre-built Entity slots and the crash-resume gate.
+//! A workflow instance's runtime state: its cancellation token and inbox
+//! plus, for a structured class, the pre-built Entity slots and the
+//! crash-resume gate. Held in the one [`OperativeRegistry`], so every cancel,
+//! inbox frame and restore reaches it through the same entry.
 //!
-//! Held as the [`Operative::Workflow`](crate::operative::registry::Operative)
-//! variant in the shared [`OperativeRegistry`](crate::operative::registry::OperativeRegistry)
-//! — mirroring `StreamInstance` and the Java `WorkflowOperativeInstance`, so
-//! there is ONE per-instance registry. The `WorkflowStop` / `RemOperative` /
-//! `max_duration` cancels, the wire-dispatch inbox, and the inbound
-//! `RestoreInitState` handler all reach a running workflow operative through the
-//! same registry entry — no workflow-specific process-global.
+//! [`OperativeRegistry`]: crate::operative::registry::OperativeRegistry
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,22 +14,16 @@ use crossbeam::channel::{unbounded, Receiver, Sender};
 
 use crate::entity::EntitySlot;
 
-/// Safety-net cap on the crash-resume wait. The `expected` count is the
-/// authoritative release signal; this only prevents a permanent hold if a
-/// restore never lands (e.g. a controller/SDK persisted-Entity mismatch),
-/// degrading to a best-effort re-run rather than a hung operative.
+/// The crash-resume wait's cap; a restore that never lands degrades to a
+/// best-effort re-run rather than a hung operative.
 const RESUME_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
-/// Re-check cadence for the resume wait so a cooperative cancel is observed
-/// promptly (mirrors the reaper's `sleep_responsive`).
+/// The resume wait's cancel-check cadence.
 const RESUME_WAIT_CHUNK: Duration = Duration::from_millis(200);
 
-/// Lock a compensation-marker set, recovering from a poisoned lock (the sets
-/// only hold shipped-back Entity identities — no invariant to protect).
 fn marker_set(set: &Mutex<HashSet<Vec<u8>>>) -> std::sync::MutexGuard<'_, HashSet<Vec<u8>>> {
     set.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// One journaled forward proc commit in the driver's form.
 fn committed_proc(proc: &crate::pb::ProcCommittedProc) -> CommittedProc {
     CommittedProc {
         proc_idx: proc.proc_idx,
@@ -43,7 +32,6 @@ fn committed_proc(proc: &crate::pb::ProcCommittedProc) -> CommittedProc {
     }
 }
 
-/// A journaled handoff batch as the driver's seed form: channel-id-tagged bytes.
 fn handoff_items(items: &[crate::pb::ProcHandoffItem]) -> Vec<(u32, Vec<u8>)> {
     items
         .iter()
@@ -51,10 +39,7 @@ fn handoff_items(items: &[crate::pb::ProcHandoffItem]) -> Vec<(u32, Vec<u8>)> {
         .collect()
 }
 
-/// One post-start input delivered to a running workflow instance: the payload
-/// plus the durable-inbox offset the controller assigned it
-/// (`workflow-durable-suspension`). `offset` is `0` when the input was not
-/// journaled — an opted-out class, whose inbox is memory-only as before.
+/// One post-start input with its durable-inbox offset; `0` when unjournaled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InboxItem {
     pub payload: Vec<u8>,
@@ -63,57 +48,34 @@ pub struct InboxItem {
 
 pub struct WorkflowInstance {
     pub instance_id: Arc<str>,
-    /// The class this instance was spawned from — attributes live instances
-    /// to a factory during a `remove_workflow` check (stream instances
-    /// carry it via their topology).
+    /// The class this instance was spawned from.
     pub factory_id: Arc<str>,
-    /// Tripped by `WorkflowStop` / `RemOperative` / `max_duration`; observed by
-    /// the driver's loops + `recv` within ≤200 ms.
+    /// Tripped by a stop, a removal or `max_duration`.
     pub cancel: Arc<AtomicBool>,
-    /// Inbox feeder; the driver owns the matching `Receiver`.
     inbox_tx: Sender<InboxItem>,
-    /// Inbox items the controller forwards after this bind; the loop does not
-    /// park before they have arrived (`AddOperative.inbox_tail_count`).
+    /// Inbox items the controller still owes this bind; the loop does not
+    /// park before they arrive.
     pub owed_inbox: u32,
-    /// Pre-built Entities per chain stage (empty for run-sugar). Shared with the
-    /// driver; the restore handler rebuilds a slot's state in place before the
-    /// gate releases the driver to read it.
+    /// Pre-built Entities per stage, empty for run-sugar; a restore rebuilds
+    /// a slot in place before the gate releases the driver.
     pub stage_entities: Vec<Vec<Arc<EntitySlot>>>,
-    /// Number of Entity restores to wait for before the first Procedure runs.
-    /// `0` ⇒ a fresh spawn / no persisted state / run-sugar ⇒ run immediately.
+    /// Entity restores to wait for before the first procedure runs.
     expected: usize,
     restored: Mutex<usize>,
     restored_cv: Condvar,
-    /// Entity identities whose procedure completed forward and may need undo,
-    /// shipped back via `RestoreInitState.has_compensation_intent` on
-    /// crash-resume (saga). Non-empty ⇒ the driver finishes the compensation
-    /// instead of re-running the forward chain.
+    /// Entities whose procedure completed forward and may need undo.
     compensation_intents: Mutex<HashSet<Vec<u8>>>,
-    /// Entity identities whose compensation already ran before the crash
-    /// (`RestoreInitState.has_compensation_done`) — skipped on resume.
+    /// Entities whose compensation already ran before the crash.
     compensation_done: Mutex<HashSet<Vec<u8>>>,
-    /// Committed proc-journal state shipped back via `AddOperative.proc_journal`
-    /// on crash-resume (`workflow-proc-journal`). `Some` ⇒ the driver enters the
-    /// journaled iteration, skips the procedures committed in it, and seeds the
-    /// first uncommitted one from the handoff. It is instance-scoped, so it
-    /// rides the bind rather than a per-Entity restore — a class with no
-    /// per-Entity state gets no restore. Set at construction, so it needs no
-    /// interior mutability and is readable without a lock.
+    /// The committed proc-journal state the bind carried; instance-scoped, so
+    /// it rides the bind and not a per-Entity restore.
     proc_journal: Option<JournalResume>,
 }
 
-/// Committed proc-journal state for one crash-resume. `iter` is the iteration to
-/// resume at — the one after the highest journaled `iter_committed`, so a
-/// looping instance never re-runs a committed iteration (`workflow-durable-loop`);
-/// `committed_proc_idxs` are the procedures already committed inside that
-/// still-in-flight iteration, and `proc_handoffs` carries what each of them
-/// released, so every uncommitted child branch re-seeds from its own parent's
-/// edge (`workflow-branching`). `handoff` is the previous iteration's terminal
-/// batch, which re-seeds a handoff-chained loop. Both are channel-id-tagged
-/// codec bytes, decoded by the producing channel's inter-proc codec at seed time.
-/// `committed_procs` carries every journaled forward proc commit with its iteration,
-/// which the driver folds into the compensation planner's per-iteration
-/// `committed` input.
+/// Committed proc-journal state for one crash-resume: the iteration to
+/// resume at (after the highest committed one), the procedures committed
+/// inside it with what each released, the previous terminal batch, and every
+/// forward commit for the compensation planner.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct JournalResume {
     pub committed_proc_idxs: Vec<u32>,
@@ -121,25 +83,19 @@ pub struct JournalResume {
     pub handoff: Vec<(u32, Vec<u8>)>,
     pub proc_handoffs: Vec<EdgeHandoff>,
     pub committed_procs: Vec<CommittedProc>,
-    /// Inbox offset the last committed iteration consumed — the floor a
-    /// rehydrated inbox-driven loop reads its next item above.
+    /// The offset the last committed iteration consumed.
     pub consumed_offset: u64,
-    /// Procedures a rewind unwound that nothing has compensated yet. The driver
-    /// undoes them through the ordinary compensation planner before resuming
-    /// forward at `iter` (which the journal has already folded back to the
-    /// rewound-to iteration). Empty = no rewind pending.
+    /// Procedures a rewind unwound that nothing has compensated yet.
     pub rewind_undo: Vec<CommittedProc>,
 }
 
-/// What one committed procedure of the in-flight iteration released, so its
-/// uncommitted children re-seed from exactly their own parent.
+/// What one committed procedure of the in-flight iteration released.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EdgeHandoff {
     pub proc_idx: u32,
     pub handoff: Vec<(u32, Vec<u8>)>,
 }
 
-/// One journaled forward proc commit, shipped back on resume.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommittedProc {
     pub proc_idx: u32,
@@ -169,9 +125,8 @@ impl From<&crate::pb::ProcJournalState> for JournalResume {
 }
 
 impl WorkflowInstance {
-    /// Build the instance and return the driver's inbox `Receiver`. `expected`
-    /// is the crash-resume restore count (0 for fresh / run-sugar / opted-out)
-    /// and `proc_journal` the resume state the bind carried (`None` when fresh).
+    /// The instance and the driver's inbox `Receiver`; `expected` restores
+    /// gate the driver (0 runs at once).
     pub fn new(
         instance_id: Arc<str>,
         factory_id: Arc<str>,
@@ -198,21 +153,17 @@ impl WorkflowInstance {
         (instance, inbox_rx)
     }
 
-    /// The proc-journal state the bind carried, if any.
     pub fn proc_journal_resume(&self) -> Option<JournalResume> {
         self.proc_journal.clone()
     }
 
-    /// Whether any Entity's compensation-done marker was shipped back — the
-    /// signal that an undo pass was already in flight before the crash, so
-    /// compensation resume outranks journal-gated forward resume.
+    /// An undo pass was in flight before the crash: compensation resume
+    /// outranks forward resume.
     pub fn any_compensation_done(&self) -> bool {
         !marker_set(&self.compensation_done).is_empty()
     }
 
-    /// Record the shipped-back saga compensation markers for an Entity (crash-
-    /// resume): `intent` ⇒ its procedure completed forward and may need undo;
-    /// `done` ⇒ its compensation already ran (skip it on resume).
+    /// Record an Entity's shipped-back saga markers.
     pub fn note_compensation_markers(&self, entity_identity: &[u8], intent: bool, done: bool) {
         if intent {
             marker_set(&self.compensation_intents).insert(entity_identity.to_vec());
@@ -222,32 +173,24 @@ impl WorkflowInstance {
         }
     }
 
-    /// Whether this Entity completed forward and needs undo (drives which hooks
-    /// a crash-resume runs).
     pub fn has_compensation_intent(&self, entity_identity: &[u8]) -> bool {
         marker_set(&self.compensation_intents).contains(entity_identity)
     }
 
-    /// Whether this Entity's compensation already ran (skip on resume).
     pub fn has_compensation_done(&self, entity_identity: &[u8]) -> bool {
         marker_set(&self.compensation_done).contains(entity_identity)
     }
 
-    /// Trip the cancellation token (cooperative `WorkflowStop`, hard
-    /// `RemOperative`, or `max_duration` elapse).
     pub fn request_cancel(&self) {
         self.cancel.store(true, Ordering::Release);
     }
 
-    /// Route a post-start input frame to the driver's inbox, carrying the
-    /// durable-inbox offset the controller assigned it (`0` when unjournaled).
-    /// `false` if the channel is closed (the driver has finished).
+    /// An input into the driver's inbox; `false` once the driver finished.
     pub fn push_inbox(&self, payload: Vec<u8>, offset: u64) -> bool {
         self.inbox_tx.send(InboxItem { payload, offset }).is_ok()
     }
 
-    /// Locate one of this instance's Entity slots by wire identity, for the
-    /// inbound `RestoreInitState` handler. `None` if it isn't ours.
+    /// One of this instance's slots by wire identity.
     pub fn entity_by_identity(&self, entity_id: &[u8]) -> Option<Arc<EntitySlot>> {
         self.stage_entities
             .iter()
@@ -256,16 +199,15 @@ impl WorkflowInstance {
             .map(Arc::clone)
     }
 
-    /// Record one landed Entity restore and wake a driver waiting on the gate.
+    /// One Entity restore landed.
     pub fn note_restored(&self) {
         let mut n = self.restored.lock().unwrap_or_else(|p| p.into_inner());
         *n += 1;
         self.restored_cv.notify_all();
     }
 
-    /// Hold the calling driver until every expected Entity restore has landed,
-    /// a cooperative cancel trips, or the safety-net timeout elapses. A no-op
-    /// when `expected == 0` (fresh spawn / opted-out / run-sugar).
+    /// Hold the driver until every expected restore landed, a cancel tripped,
+    /// or the cap elapsed.
     pub fn wait_for_restore(&self) {
         if self.expected == 0 {
             return;
@@ -301,8 +243,7 @@ impl WorkflowInstance {
 mod tests {
     use super::*;
 
-    /// An instance with no Entities — enough to exercise the resume-count logic
-    /// (which never touches `stage_entities`) without building real slots.
+    /// An instance with no Entities, enough for the resume-count logic.
     fn gate(expected: usize) -> Arc<WorkflowInstance> {
         WorkflowInstance::new(
             Arc::from("gate-test"),

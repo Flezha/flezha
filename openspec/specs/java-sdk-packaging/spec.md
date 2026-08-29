@@ -28,13 +28,12 @@ under resource paths `native/<os>-<arch>/libflz_core_ffi.<ext>`
 `.so`/`.dylib`/`.dll` per platform). The cross-build SHALL be driven by
 `cargo-zigbuild` from the existing Maven `native-build` profile
 (`scripts/build-native.sh`), and `scripts/build-dist.sh` SHALL stage all
-five before the jar is assembled. The transport JNI crate (`flz_jni`) and
-its binaries are deleted: the Java SDK links no native surface besides
-`flz_core_ffi`.
+five before the jar is assembled. The Java SDK links no native surface
+besides `flz_core_ffi`, whose `jni_glue.rs` is its JNI binding.
 
 #### Scenario: Fat jar contains the five core binaries
 - **WHEN** `mvn -P native-build package` completes successfully
-- **THEN** `unzip -l sdk/java/flezha-sdk/target/flezha-sdk-*.jar` SHALL list the five `native/<os>-<arch>/libflz_core_ffi.*` paths, and no `libflz_jni.*` path
+- **THEN** `unzip -l sdk/java/flezha-sdk/target/flezha-sdk-*.jar` SHALL list the five `native/<os>-<arch>/libflz_core_ffi.*` paths, and no other native library
 
 #### Scenario: Missing native target fails the packaging step
 - **WHEN** `mvn -P native-build package` (or `-P native-verify`) runs but any of the five binaries is missing from `flezha-sdk-native/src/main/resources/native/`

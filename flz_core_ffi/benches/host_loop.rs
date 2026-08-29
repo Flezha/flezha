@@ -10,42 +10,24 @@
 #[path = "alloc_counter.rs"]
 mod alloc_counter;
 
-use std::collections::HashMap;
-use std::os::unix::net::UnixStream;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, Criterion};
+use flz_core::bench_support::{fan_in, measurement_secs, ok_effect, stream_pair, Settle};
 use flz_core::operative::instance::StreamInstance;
 use flz_core::operative::registry::{get_class, OperativeRegistry};
 use flz_core::runner::OperativeDispatchHandle;
 use flz_core::schema;
 use flz_core_ffi::*;
-use flz_transport::transport::FlezhaStream;
 
 /// The host's fetcher pool, sized like the typed bench's poll pool on this box.
 const FETCHERS: usize = 8;
 
 /// Items settled through `flz_core_complete`.
-static DONE: AtomicUsize = AtomicUsize::new(0);
-
-fn dummy_stream() -> Arc<FlezhaStream> {
-    let (a, _b) = UnixStream::pair().expect("UnixStream::pair");
-    Arc::new(FlezhaStream::Unix(a))
-}
-
-fn wait_until<F: Fn() -> bool>(predicate: F, timeout: Duration) -> bool {
-    let start = Instant::now();
-    while !predicate() {
-        if start.elapsed() > timeout {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(1));
-    }
-    true
-}
+static DONE: Settle = Settle::new();
 
 fn last_error(ctx: *mut FlzContext) -> String {
     let err = unsafe { flz_core_last_error(ctx) };
@@ -55,20 +37,6 @@ fn last_error(ctx: *mut FlzContext) -> String {
     unsafe { std::ffi::CStr::from_ptr(err) }
         .to_string_lossy()
         .into_owned()
-}
-
-/// What a host answers for an item it processed with no effect.
-fn ok_effect() -> schema::ItemEffect {
-    schema::ItemEffect {
-        verdict: schema::Verdict::Ok,
-        changes: Vec::new(),
-        outputs: Vec::new(),
-        consumed_offset: None,
-        event_time: 0,
-        timers: Vec::new(),
-        checkpoint: false,
-        dlq: None,
-    }
 }
 
 /// One host fetcher: poll, decode the activation as a veneer would, answer
@@ -97,7 +65,7 @@ fn fetch_loop(ctx: usize, stop: Arc<AtomicBool>) {
                 let bytes = schema::encode_result(&result);
                 let status = unsafe { flz_core_complete(ctx, bytes.as_ptr(), bytes.len()) };
                 assert_eq!(status, FLZ_OK, "complete failed: {}", last_error(ctx));
-                DONE.fetch_add(items, Ordering::Release);
+                DONE.add(items);
             }
             FLZ_POLL_TIMEOUT => {}
             FLZ_POLL_SHUTTING_DOWN => break,
@@ -110,10 +78,7 @@ fn host_loop_bench(c: &mut Criterion) {
     let n_instances = 100usize;
     let msgs_per_instance = 10_000usize;
     let total = n_instances * msgs_per_instance;
-    let measurement_secs = std::env::var("FLEZHA_BENCH_MEASUREMENT_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(30u64);
+    let measurement_secs = measurement_secs();
 
     let ctx = flz_core_context_new(flz_core::SCHEMA_VERSION);
     assert!(!ctx.is_null(), "context creation");
@@ -142,7 +107,7 @@ fn host_loop_bench(c: &mut Criterion) {
         ));
     }
     let handle = OperativeDispatchHandle { registry };
-    let stream = dummy_stream();
+    let stream = stream_pair().0;
     let payload: Vec<u8> = b"x".repeat(64);
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -163,24 +128,15 @@ fn host_loop_bench(c: &mut Criterion) {
             let allocs_before = alloc_counter::allocations();
             let mut elapsed = Duration::ZERO;
             for _ in 0..iters {
-                DONE.store(0, Ordering::Release);
+                DONE.reset();
                 let start = Instant::now();
-                for id in &instance_ids {
-                    for _ in 0..msgs_per_instance {
-                        let mut md = HashMap::new();
-                        md.insert("channel".to_string(), "input".to_string());
-                        handle.dispatch(id, payload.clone(), &md, Arc::clone(&stream));
-                    }
-                }
-                let drained = wait_until(
-                    || DONE.load(Ordering::Acquire) == total,
-                    Duration::from_secs(60),
-                );
+                fan_in(&handle, &instance_ids, msgs_per_instance, &payload, &stream);
+                let drained = DONE.wait_for(total, Duration::from_secs(60));
                 elapsed += start.elapsed();
                 assert!(
                     drained,
                     "host loop drain timed out: {} of {}",
-                    DONE.load(Ordering::Acquire),
+                    DONE.current(),
                     total
                 );
             }

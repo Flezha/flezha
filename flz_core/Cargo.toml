@@ -20,5 +20,10 @@ crossbeam = "0.8"
 crossbeam-deque = "0.8"
 thiserror = "1.0"
 
+[features]
+# The bench scaffolding `flz_core_ffi`'s `host_loop` and the `sdk/rust`
+# benches share. NOT a stable public API.
+bench-internals = []
+
 [lints]
 workspace = true

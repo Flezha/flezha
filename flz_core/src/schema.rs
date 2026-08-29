@@ -1,48 +1,31 @@
-//! The versioned Activation/ActivationResult boundary contract.
-//!
-//! Everything here is postcard-encoded — field order IS the wire contract, so
-//! reordering a field is a schema break and must bump [`SCHEMA_VERSION`].
-//! Shapes shared with the controller wire (`TimerOp`, `DlqEntry`) are
-//! field-identical to the layouts `Flezha.State.Wire` already decodes.
-//!
-//! Payloads at this boundary are always bytes. The in-process engine may carry
-//! richer host values (a same-process Rust host passes `Arc` payloads without
-//! serialization); those never cross this schema, which is what the C ABI and
-//! every fixture pin.
+//! The versioned Activation / ActivationResult boundary contract, postcard
+//! encoded. The invariant: field order IS the wire — reordering a field bumps
+//! [`SCHEMA_VERSION`] — and every payload at this boundary is bytes.
 
 use serde::{Deserialize, Serialize};
 
-/// Bumped on any incompatible change to the types in this module. A core and
-/// a host shim negotiate at context creation and refuse to start on mismatch.
+/// Negotiated at context creation; a mismatch refuses to start.
 pub const SCHEMA_VERSION: u32 = 3;
 
 pub use crate::channel::{ChannelId, ProcedureId};
 
-/// One unit of work handed to the host. Targets exactly one entity (or, for
-/// [`ActivationKind::KeyRequest`], one not-yet-keyed edge) and is exclusive:
-/// the core never hands out a second activation for the same entity until
-/// this one's [`ActivationResult`] arrives.
+/// One unit of work handed to the host, exclusive on its entity until its
+/// [`ActivationResult`] arrives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Activation {
-    /// Correlation handle minted by the core; the completion echoes it.
     pub token: u64,
     pub target: EntityRef,
     pub kind: ActivationKind,
-    /// The entity's durable change seq at handout (0 for pre-keying work).
-    /// One input to the host's `ctx.stable_id()`; the host combines it with
-    /// the entity identity and a per-invocation ordinal.
+    /// The entity's change seq at handout, an input to `ctx.stable_id()`.
     pub change_seq: u64,
-    /// The declared class this instance was built from. An out-of-process
-    /// host resolves the activation to its own typed class through this —
-    /// the in-process Rust host reads it off the slot's topology instead.
+    /// The declared class, by which a host resolves its own typed class.
     pub factory: String,
 }
 
-/// The entity an activation is addressed to. `entity_key` is `None` only for
-/// pre-keying work (`KeyRequest`), where the key is what's being computed.
+/// The entity an activation is addressed to; `entity_key` is `None` only for
+/// pre-keying work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityRef {
-    /// Operative instance id.
     pub operative: String,
     pub procedure: ProcedureId,
     pub entity_key: Option<String>,
@@ -50,34 +33,29 @@ pub struct EntityRef {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ActivationKind {
-    /// An ordered per-entity batch of inputs and timer firings.
     Work(Vec<WorkItem>),
-    /// Fold a persisted change log into a live state; input activations for
-    /// the entity are gated until this completes.
+    /// Fold a persisted change log into a live state.
     RestoreFold(RestoreFold),
-    /// Encode the current state for compaction. The core drained pending
-    /// changes before handing this out and stamps `change_seq - 1` itself.
+    /// Encode the state for compaction; the core drained and stamps the seq.
     SnapshotRequest,
-    /// Serialize the current state to JSON for a live read; the core stamps
-    /// the `flz.change_seq` frame metadata.
+    /// The state as JSON for a live read.
     LiveStateRead,
-    /// Materialize a migrated-in state from its JSON form.
-    ApplyState { state_json: Vec<u8> },
-    /// Serialize the current state to JSON for a migration handover.
+    ApplyState {
+        state_json: Vec<u8>,
+    },
     MigrationSerialize,
-    /// The batched prepare crossing: entry payloads whose consumers need a
-    /// key and/or an extracted event time. The host answers one
-    /// [`PrepareAnswer`] per payload, in order, before the core enqueues
-    /// anything to an entity mailbox.
+    /// The prepare crossing: one [`PrepareAnswer`] per payload, in order,
+    /// before anything is enqueued.
     KeyRequest(KeyRequest),
-    /// A workflow run-sugar body: the seed args cross once; the host runs the
-    /// imperative body (emit/recv/cancelled ride their own ABI calls) and
-    /// completes with [`ActivationOutcome::WorkflowDone`].
-    WorkflowRun { args: Vec<u8> },
-    /// Saga compensation for one workflow entity: the recorded forward
-    /// outputs cross; the host runs `compensate` and answers a work outcome
-    /// whose single effect carries any undo outputs.
-    CompensateRun { outputs: Vec<Vec<u8>> },
+    /// A run-sugar body, completed with [`ActivationOutcome::WorkflowDone`].
+    WorkflowRun {
+        args: Vec<u8>,
+    },
+    /// `compensate` over the recorded forward outputs; the answer's single
+    /// effect carries any undo outputs.
+    CompensateRun {
+        outputs: Vec<Vec<u8>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -91,17 +69,14 @@ pub struct InputItem {
     pub channel: ChannelId,
     pub payload: Vec<u8>,
     pub metadata: Vec<(String, String)>,
-    /// Input-log offset consumed by this item (effectively-once tier).
     pub consumed_offset: Option<u64>,
-    /// True when the controller is re-forwarding a journaled slice.
     pub replay: bool,
-    /// The core-evaluated value of the entity's declared clock for this item.
-    /// The host serves `ctx.now()` from this and never reads ambient time.
+    /// The declared clock's value; the host never reads ambient time.
     pub now: u64,
 }
 
-/// A validated timer firing. Its `now` IS `scheduled_at` — a chained
-/// `timer_after` anchors on the firing that woke it, replay-stable.
+/// A validated firing; its `now` IS `scheduled_at`, so a chained
+/// `timer_after` is replay-stable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimerItem {
     pub kind: TimerKind,
@@ -110,21 +85,16 @@ pub struct TimerItem {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RestoreFold {
-    /// Host-encoded state snapshot baseline, when one exists.
     pub snapshot: Option<RestoreBody>,
-    /// Host-encoded change records in seq order, to fold on top.
     pub changes: Vec<RestoreBody>,
 }
 
-/// One host-encoded body the core hands across for a restore, with the schema
-/// version it was written at when that is not the running one. The core has
-/// already refused everything unreadable, so a host either decodes at its own
-/// version or migrates from the named one — it never has to decide.
+/// One host-encoded body for a restore, with the version it was written at
+/// when that is not the running one; the host never decides readability.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RestoreBody {
     pub bytes: Vec<u8>,
-    /// `None` — written at the procedure's current `schema_version`.
-    /// `Some(v)` — written at `v`, migrate from it.
+    /// `Some(v)`: written at `v`, migrate from it.
     #[serde(default)]
     pub from_version: Option<u32>,
 }
@@ -133,24 +103,19 @@ pub struct RestoreBody {
 pub struct KeyRequest {
     pub channel: ChannelId,
     pub payloads: Vec<Vec<u8>>,
-    /// The host answers routing keys (a dynamic consumer needs exactly one;
-    /// a static fan-out any number, empty = every declared entity).
+    /// The host answers routing keys.
     pub want_keys: bool,
-    /// The host answers the payload's extracted event time.
     pub want_event_time: bool,
 }
 
-/// One payload's prepare answers, in `KeyRequest.payloads` order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrepareAnswer {
-    /// Routing keys (`want_keys`): one for a dynamic consumer, any number
-    /// for a static fan-out (empty = every declared entity).
+    /// One for a dynamic consumer, any number for a static fan-out (empty =
+    /// every declared entity).
     pub keys: Vec<String>,
-    /// The extracted event time (`want_event_time`).
     pub event_time: Option<u64>,
 }
 
-/// The host's answer to an [`Activation`], addressed by token.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivationResult {
     pub token: u64,
@@ -159,11 +124,9 @@ pub struct ActivationResult {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ActivationOutcome {
-    /// One effect per processed [`WorkItem`], in item order. May be shorter
-    /// than the batch only when an item's verdict is an error — items after
-    /// the failed one are re-handed by the core.
+    /// One effect per processed item; shorter than the batch only after an
+    /// error, the rest re-handed by the core.
     Work(Vec<ItemEffect>),
-    /// The fold completed; the host holds the materialized state.
     Restored,
     Snapshot {
         state: Vec<u8>,
@@ -175,36 +138,28 @@ pub enum ActivationOutcome {
     MigrationState {
         json: Vec<u8>,
     },
-    /// One outcome per `KeyRequest` payload, in order. A prepare failure
-    /// enters the input channel's retry→park ladder.
+    /// One outcome per `KeyRequest` payload, in order.
     Prepared(Vec<Result<PrepareAnswer, WorkError>>),
-    /// The whole activation failed before per-item processing (host-side
-    /// panic equivalent). The core treats every item per the error's class.
+    /// The whole activation failed before per-item processing.
     Failed(WorkError),
-    /// A workflow run-sugar body returned. `completed` mirrors
-    /// `ctx.complete(...)` having been called; `result` is its payload.
+    /// A run-sugar body returned; `completed` mirrors `ctx.complete(..)`.
     WorkflowDone {
         completed: bool,
         result: Vec<u8>,
     },
 }
 
-/// The effect record of one processed item — the same shape the flusher
-/// drains today (`EffectRecordBody`), plus the verdict.
+/// One processed item's effect record plus its verdict.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemEffect {
     pub verdict: Verdict,
-    /// Host-encoded change bytes, core-opaque.
     pub changes: Vec<Vec<u8>>,
     pub outputs: Vec<Output>,
     pub consumed_offset: Option<u64>,
-    /// The item's declared-clock value (what `ctx.now()` served).
     pub event_time: u64,
     pub timers: Vec<TimerOp>,
-    /// True when the host called `ctx.checkpoint()` — closes the open
-    /// checkpoint interval (checkpoint ack-granularity classes).
+    /// The host called `ctx.checkpoint()`.
     pub checkpoint: bool,
-    /// Normally `None`; the core mints the DLQ entry when its ladder parks.
     pub dlq: Option<DlqEntry>,
 }
 
@@ -221,16 +176,13 @@ pub struct WorkError {
     pub non_retryable: bool,
 }
 
-/// One value produced by an item, already transformed and keyed for its
-/// destination (producer-side evaluation — the core routes on `(edge, key)`
-/// and never evaluates a host closure).
+/// One output, already transformed and keyed producer-side; the core routes
+/// on `(edge, key)` and evaluates no host closure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Output {
     pub target: OutputTarget,
     pub key: Option<String>,
-    /// For an edge value into an event-time-clocked consumer: the consumer's
-    /// extracted event time, evaluated producer-side (the host holds the
-    /// typed value and the consumer's extractor; the core holds neither).
+    /// The consumer's extracted event time, evaluated producer-side.
     pub event_time: Option<u64>,
     pub metadata: Vec<(String, String)>,
     pub payload: Vec<u8>,
@@ -238,22 +190,21 @@ pub struct Output {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OutputTarget {
-    /// A consumer edge: the value goes to `consumer`'s entity mailbox.
     Edge {
         channel: ChannelId,
         consumer: ProcedureId,
     },
-    /// A plugin-bound channel: the value ships on the wire under `channel`.
-    Plugin { channel: String },
+    Plugin {
+        channel: String,
+    },
 }
 
-/// One durable mutation of an entity's pending-timer set. Field order matches
-/// the controller wire (`Flezha.State.Wire`) exactly.
+/// One mutation of the pending-timer set; field order is the controller
+/// wire's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimerOp {
     pub kind: TimerKind,
     pub scheduled_at: u64,
-    /// `true` adds the timer to the pending set, `false` removes it.
     pub register: bool,
 }
 
@@ -290,8 +241,7 @@ impl TimerKind {
     }
 }
 
-/// Dead-letter entry carried inside an effect record. Field order matches the
-/// controller wire exactly.
+/// A dead-letter entry; field order is the controller wire's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DlqEntry {
     pub channel: String,
@@ -383,8 +333,7 @@ mod tests {
 mod fixture_tests {
     use super::*;
 
-    /// Print-and-pin helper: the canonical work activation every shim's
-    /// fixture suite encodes byte-identically.
+    /// The canonical work activation every shim's fixture suite pins.
     fn work_activation() -> Activation {
         Activation {
             token: 42,
@@ -436,9 +385,7 @@ mod fixture_tests {
         }
     }
 
-    /// The cross-language byte pin for schema version 1: every shim's fixture
-    /// suite encodes these exact values and must produce these exact bytes.
-    /// A mismatch here means the schema changed — bump [`SCHEMA_VERSION`].
+    /// The cross-language byte pin; a mismatch means the schema changed.
     #[test]
     fn work_activation_bytes_are_pinned() {
         assert_eq!(
@@ -457,8 +404,7 @@ mod fixture_tests {
         assert_eq!(decode_result(&encode_result(&res)).unwrap(), res);
     }
 
-    /// Every command activation kind round-trips; their encodings are pinned
-    /// so a shim can hard-code the same vectors.
+    /// Every command activation kind round-trips at pinned bytes.
     #[test]
     fn command_kind_bytes_are_pinned() {
         let kinds: Vec<(ActivationKind, &str)> = vec![

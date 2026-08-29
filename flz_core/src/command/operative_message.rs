@@ -1,10 +1,4 @@
-//! `OperativeMessage` — under the operative-mvp-rust cutover, the SDK
-//! responds with the canonical "unsupported" error for every request
-//! per `operative-mvp-rust/design.md` Decision 9.
-//!
-//! `operative-message-handlers` (umbrella roadmap row 4) ships per-Procedure
-//! `handle_message` over the new model and re-enables the disabled
-//! integration tests that this fallback parks.
+//! `OperativeMessage`: every request is answered with the `unsupported` error.
 
 use prost::Message;
 

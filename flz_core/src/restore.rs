@@ -1,84 +1,53 @@
-//! `RestoreInitPayload` + restoration helpers per design.md Decision 5.
-//!
-//! When an Entity is reconnected with persisted state, the runtime
-//! invokes the user's `Procedure::init_state(entity_key, Some(payload))`,
-//! then automatically applies the snapshot bytes (replacing the user's
-//! freshly-constructed state) and folds the change-log records via
-//! `Procedure::apply_change`. The user MAY inspect `payload.snapshot_bytes`
-//! and `payload.change_log_bytes` for instrumentation but never has to
-//! decode them.
+//! The change-log walk a restore folds through: framing CRC, header
+//! resolution and effect-record unwrapping exist once here, and a sink owns
+//! what to do with each body. The invariant: a refused record delivers
+//! nothing, and an effect record's enclosed bodies inherit its version.
 
 use crate::util::{read_u32_be, read_u64_be};
 
 /// Snapshot + change-log bytes handed to `Procedure::init_state` on a warm
-/// restore. Borrowed (`&[u8]`) so the runtime owns the underlying buffers
-/// for the duration of the call without an allocation.
+/// restore, borrowed from the frame.
 pub struct RestoreInitPayload<'a> {
-    /// The snapshot's stored 16-byte header, as the controller read it off
-    /// disk. Empty exactly when `snapshot_bytes` is empty. Carries the
-    /// `schema_version` the snapshot was written at, so the snapshot resolves
-    /// through the same decision as a change record.
+    /// The snapshot's stored header; empty exactly when `snapshot_bytes` is.
     pub snapshot_header: &'a [u8],
-    /// Snapshot bytes from the latest snapshot file. Empty if no
-    /// snapshot has been written for this Entity. The body is the
-    /// postcard-encoded `S::State` exactly as the SDK shipped it via
-    /// `entity_state_snapshot`. The 16-byte header travels beside it in
-    /// `snapshot_header`, so this slice is the raw State payload.
+    /// The raw state body the SDK shipped as `entity_state_snapshot`.
     pub snapshot_bytes: &'a [u8],
-    /// Change-log bytes (concatenated WAL records). Each record is
-    /// framed `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]`
-    /// where `len = 16 + change_bytes.len()` and `crc32` covers
-    /// `header + change_bytes`. This matches the controller's on-disk WAL
-    /// record format (`Flezha.State.WalWriter.encode_record/3`).
+    /// Concatenated WAL records in the controller's on-disk framing.
     pub change_log_bytes: &'a [u8],
 }
 
 pub use crate::header::RestoreError;
 
-/// What a completed restore fold reports back over the control channel.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RestoreOutcome {
-    /// Highest WAL seq applied — the SDK re-arms `change_seq` to one past it.
     pub terminal_seq: u64,
-    /// At least one record was read through a migration. The controller
-    /// answers with a compaction, so the migration is paid once.
+    /// A record was migrated; the controller answers with a compaction so
+    /// the migration is paid once.
     pub migrated: bool,
 }
 
-/// Where a change-log walk delivers what it decoded. The walk owns the
-/// framing, the CRC, the header resolution and the effect-record unwrapping;
-/// the sink owns what to DO with a body — fold it into typed state (the
-/// in-process path) or collect it for a host crossing.
+/// Where the walk delivers what it decoded: folded into typed state, or
+/// collected for a host crossing.
 pub trait ChangeLogSink {
-    /// One of the author's change bodies. `decision` says whether it decodes
-    /// at the running schema version or migrates from an older one.
+    /// One change body, with the version decision it decodes under.
     fn change(
         &mut self,
         decision: crate::header::SchemaDecision,
         bytes: &[u8],
     ) -> Result<(), RestoreError>;
 
-    /// Timer operations, from a timer-ops record or from inside an effect
-    /// record. Timers are the runtime's own shape, so they never migrate.
+    /// Timer ops; the runtime's own shape, never migrated.
     fn timers(&mut self, ops: &[crate::schema::TimerOp]);
 }
 
-/// What a completed change-log walk observed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChangeLogSummary {
-    /// Highest record seq in the log.
     pub terminal_seq: u64,
-    /// At least one record reached the author's migration.
     pub migrated: bool,
 }
 
-/// Walk a change log once: verify each record's framing CRC, resolve its
-/// header against the running procedure, and hand its bodies to `sink` in seq
-/// order.
-///
-/// Both restore paths come through here — the typed in-process fold and the
-/// host crossing — so the CRC policy, the version decision and the rule that
-/// an effect record's enclosed bodies inherit its version exist once.
+/// Walk a change log once — CRC, header resolution, bodies to `sink` in seq
+/// order — for the typed fold and the host crossing alike.
 pub fn fold_change_log(
     change_log_bytes: &[u8],
     expected: &crate::header::HeaderTemplate,
@@ -96,11 +65,8 @@ pub fn fold_change_log(
     Ok(summary)
 }
 
-/// One record into the sink: the framing CRC, the version decision, then its
-/// bodies by kind. An effect record's change portion folds exactly as plain
-/// change records do, in order (outputs and consumed-offset are
-/// controller-side concerns), under the enclosing record's version — one
-/// invocation wrote them all. Answers whether the record migrated.
+/// One record into the sink; an effect record's changes fold as plain ones
+/// do, under the enclosing version. Whether it migrated.
 fn fold_record(
     record: &ChangeLogRecord<'_>,
     expected: &crate::header::HeaderTemplate,
@@ -140,13 +106,8 @@ fn fold_record(
     Ok(decision.migrating())
 }
 
-/// Frame one WAL record the way the controller's
-/// `Flezha.State.WalWriter.encode_record/3` does:
-/// `[seq: u64 BE][len: u32 BE][header: 16B][body][crc32: u32 BE]`.
-///
-/// The write side of [`iter_change_log_records`], kept beside it so the two
-/// halves of the framing cannot drift. Test-only in practice, hence hidden:
-/// SDKs receive change logs, they never author them.
+/// Frame one WAL record as `Flezha.State.WalWriter.encode_record/3` does —
+/// the write side of [`iter_change_log_records`], kept beside it.
 #[doc(hidden)]
 pub fn frame_record(seq: u64, header: &[u8; 16], body: &[u8]) -> Vec<u8> {
     let mut hasher = crc32fast::Hasher::new();
@@ -162,10 +123,8 @@ pub fn frame_record(seq: u64, header: &[u8; 16], body: &[u8]) -> Vec<u8> {
     out
 }
 
-/// One framed WAL record as produced by the controller's
-/// `Flezha.State.WalWriter.encode_record/3`. Field-borrowed against the
-/// source byte buffer. `change_bytes` excludes the leading 16-byte
-/// header (which is exposed separately as `header`).
+/// One framed WAL record, borrowed from the buffer; `change_bytes` excludes
+/// the header.
 #[derive(Debug)]
 pub struct ChangeLogRecord<'a> {
     pub seq: u64,
@@ -174,10 +133,9 @@ pub struct ChangeLogRecord<'a> {
     pub trailing_crc: u32,
 }
 
-/// Iterate concatenated WAL records using the controller on-disk framing
-/// `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]`
-/// where `len = 16 + change_bytes.len()` and `crc32` covers
-/// `header + change_bytes`.
+/// Iterate concatenated WAL records:
+/// `[seq: u64 BE][len: u32 BE][header: 16B][change_bytes][crc32: u32 BE]`,
+/// the crc over header + body.
 pub fn iter_change_log_records(
     bytes: &[u8],
 ) -> impl Iterator<Item = Result<ChangeLogRecord<'_>, RestoreError>> {
@@ -234,8 +192,7 @@ mod tests {
         SDK_LANG_RUST,
     };
 
-    /// Collects what the walk hands it, so a test can assert that a refused
-    /// record delivered NOTHING rather than a partial state.
+    /// Collects what the walk hands it.
     #[derive(Default)]
     struct RecordingSink {
         changes: Vec<Vec<u8>>,
@@ -263,23 +220,14 @@ mod tests {
         }
     }
 
-    /// One framed WAL record stamped by `writer`.
     fn record(seq: u64, writer: &HeaderTemplate, body: &[u8]) -> Vec<u8> {
         frame_record(seq, &writer.stamp(body), body)
     }
 
     /// Every ordered pair of allocated languages, refused before any body is
-    /// collected.
-    ///
-    /// The host arm and the typed arm share this walk, so the gate they both
-    /// inherit is proved once here — as a sweep over the allocation table
-    /// rather than a test per pair, because a pair-per-test suite covers only
-    /// the pairs someone remembered to write, grows quadratically, and would
-    /// leave the next allocated language uncovered until someone noticed.
-    ///
-    /// Both sides declare the same format id here, so the language byte is
-    /// the only thing that differs between writer and reader and therefore
-    /// the only thing that can have refused the record.
+    /// collected — a sweep over the table, so the next allocated language is
+    /// covered by construction. Both sides declare one format id, so the
+    /// language byte alone refused the record.
     #[test]
     fn a_foreign_language_record_is_refused_before_any_body_is_collected() {
         for (writer, writer_name) in SDK_LANG_ALLOCATED {
@@ -313,10 +261,6 @@ mod tests {
     }
 
     /// The language is read before the format, in both directions.
-    ///
-    /// Read the other way round, a MessagePack body reaching a postcard
-    /// reader would be reported as a malformed header, and the operator would
-    /// chase a corrupt WAL instead of the SDK that wrote it.
     #[test]
     fn the_language_is_read_before_the_format() {
         let msgpack = HeaderTemplate {
@@ -348,8 +292,7 @@ mod tests {
         }
     }
 
-    /// The gate is a language check, not a blanket refusal: a log written by
-    /// the reading SDK still folds.
+    /// A log written by the reading SDK still folds.
     #[test]
     fn a_same_language_record_folds() {
         let log = record(0, &template(SDK_LANG_RUST), b"postcard-bytes");

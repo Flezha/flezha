@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use super::entity::BytesBuffer;
 use crate::entity::EntitySlot;
+use crate::error::Error;
 use crate::flusher::FlushableBuffer;
 use crate::header::{HeaderTemplate, RestoreError, SchemaDecision};
 use crate::schema::{self, TimerOp};
@@ -146,11 +147,10 @@ fn resolve_snapshot(
 /// the seq, re-state the pending timer set (so truncation cannot eat it),
 /// then cross a [`schema::ActivationKind::SnapshotRequest`] and frame the
 /// host-encoded state. Runs under the entity gate.
-pub fn snapshot_frame_crossing(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, usize), String> {
-    let facts = slot
-        .dispatcher
-        .host_facts()
-        .ok_or("snapshot_frame_crossing: not a host-run procedure")?;
+pub fn snapshot_frame_crossing(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, usize), Error> {
+    let facts = slot.dispatcher.host_facts().ok_or_else(|| {
+        Error::HostCrossing("snapshot_frame_crossing: not a host-run procedure".to_string())
+    })?;
     let header = facts.header();
     let flush = |buffer: &mut Box<dyn FlushableBuffer>| {
         crate::flusher::flush_one(
@@ -174,15 +174,9 @@ pub fn snapshot_frame_crossing(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, 
         }
         flush(&mut buffer);
     }
-    let state = match crate::poll_core::global()
-        .host_command(slot, schema::ActivationKind::SnapshotRequest)?
-    {
-        schema::ActivationOutcome::Snapshot { state } => state,
-        schema::ActivationOutcome::Failed(err) => {
-            return Err(format!("host snapshot failed: {}", err.message))
-        }
-        _ => return Err("host answered with a non-snapshot outcome".to_string()),
-    };
+    let state = snapshot_state(
+        crate::poll_core::global().host_command(slot, schema::ActivationKind::SnapshotRequest)?,
+    )?;
     let size = state.len();
     let frame = crate::flusher::build_entity_frame(
         &slot.entity_identity,
@@ -193,12 +187,26 @@ pub fn snapshot_frame_crossing(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, 
     Ok((frame, seq, size))
 }
 
+/// The host's snapshot body, or the refusal its answer carries.
+fn snapshot_state(outcome: schema::ActivationOutcome) -> Result<Vec<u8>, Error> {
+    match outcome {
+        schema::ActivationOutcome::Snapshot { state } => Ok(state),
+        schema::ActivationOutcome::Failed(err) => Err(Error::HostCrossing(format!(
+            "host snapshot failed: {}",
+            err.message
+        ))),
+        _ => Err(Error::HostCrossing(
+            "host answered with a non-snapshot outcome".to_string(),
+        )),
+    }
+}
+
 /// Live-read / migration serialize for a host-run Entity. MUST run under the
 /// entity gate (the caller's `with_entity_exclusive` closure).
 pub fn state_json_locked(
     slot: &Arc<EntitySlot>,
     migration: bool,
-) -> Result<(serde_json::Value, u64), String> {
+) -> Result<(serde_json::Value, u64), Error> {
     let kind = if migration {
         schema::ActivationKind::MigrationSerialize
     } else {
@@ -207,24 +215,30 @@ pub fn state_json_locked(
     let json = match crate::poll_core::global().host_command(slot, kind)? {
         schema::ActivationOutcome::StateJson { json }
         | schema::ActivationOutcome::MigrationState { json } => json,
-        schema::ActivationOutcome::Failed(err) => return Err(err.message),
-        _ => return Err("host answered with a non-state outcome".to_string()),
+        schema::ActivationOutcome::Failed(err) => return Err(Error::HostCrossing(err.message)),
+        _ => {
+            return Err(Error::HostCrossing(
+                "host answered with a non-state outcome".to_string(),
+            ))
+        }
     };
     let value = serde_json::from_slice(&json)
-        .map_err(|e| format!("host state JSON failed to parse: {e}"))?;
+        .map_err(|e| Error::HostCrossing(format!("host state JSON failed to parse: {e}")))?;
     let seq = slot.change_seq.load(Ordering::Relaxed);
     Ok((value, seq))
 }
 
 /// Apply-state (migration in / init_values) for a host-run Entity. MUST run
 /// under the entity gate.
-pub fn apply_state_locked(slot: &Arc<EntitySlot>, value: &serde_json::Value) -> Result<(), String> {
-    let state_json = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+pub fn apply_state_locked(slot: &Arc<EntitySlot>, value: &serde_json::Value) -> Result<(), Error> {
+    let state_json = serde_json::to_vec(value).map_err(|e| Error::HostCrossing(e.to_string()))?;
     match crate::poll_core::global()
         .host_command(slot, schema::ActivationKind::ApplyState { state_json })?
     {
         schema::ActivationOutcome::StateApplied => Ok(()),
-        schema::ActivationOutcome::Failed(err) => Err(err.message),
-        _ => Err("host answered with a non-apply outcome".to_string()),
+        schema::ActivationOutcome::Failed(err) => Err(Error::HostCrossing(err.message)),
+        _ => Err(Error::HostCrossing(
+            "host answered with a non-apply outcome".to_string(),
+        )),
     }
 }

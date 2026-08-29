@@ -1,11 +1,7 @@
-//! Dynamic-mode entity registry (dynamic entity mode).
-//!
-//! A dynamic-mode Procedure owns zero Entities at startup; the dispatch path
-//! derives a key via the consumer edge's `key_by` and [`DynamicEntityRegistry::get_or_create`]
-//! lazily allocates an `EntitySlot` on first sight. With a TTL set, a
-//! per-Procedure reaper thread evicts idle Entities (destructively — see
-//! [`DynamicEntityRegistry::reap_sweep`]); a later input cold-starts a
-//! fresh Entity.
+//! The dynamic-mode registry: Entities minted on first sight of a key and,
+//! under a TTL, evicted destructively by a per-procedure reaper. The
+//! invariant: an eviction takes the drain gate and re-checks the mailbox, so
+//! it never drops an item a producer pushed after the idle check.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -25,12 +21,10 @@ use crate::state_sink;
 
 const ENV_REAP_INTERVAL_MS: &str = "FLEZHA_REAP_INTERVAL_MS";
 const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
-/// How many evicted keys the registry remembers so a live read can say
-/// "idle-evicted" rather than "never existed". Workflow — the trace is a
-/// diagnosis aid, not a record.
+/// How many evicted keys are remembered, so a live read can say
+/// "idle-evicted" rather than "never existed".
 const EVICTED_TRACE_CAP: usize = 1024;
 
-/// Per-Procedure dynamic-entity counters. Monotonic, `Relaxed`.
 #[derive(Debug, Default)]
 pub struct DynamicEntityCounters {
     pub entities_created_total: AtomicU64,
@@ -38,21 +32,11 @@ pub struct DynamicEntityCounters {
     pub inputs_dropped_capped_total: AtomicU64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum GetOrCreateError {
-    /// The per-Procedure `max_entities` cap is reached; the new-key input is
-    /// dropped (`inputs_dropped_capped_total` bumped).
-    Capped,
-}
-
-/// Lazily-populated per-Procedure entity map plus the build context needed to
-/// allocate fresh slots. Owned by the `StreamInstance`, one per dynamic Procedure.
+/// One dynamic procedure's Entities and the context to mint one.
 pub struct DynamicEntityRegistry {
     pub entities: DashMap<String, Arc<EntitySlot>>,
     pub counters: DynamicEntityCounters,
-    /// Keys this reaper evicted, newest last, capped at [`EVICTED_TRACE_CAP`].
-    /// Read only to answer a live read: "idle-evicted" and "never existed"
-    /// serve the same (absent) value but are different diagnoses.
+    /// Evicted keys, newest last, capped at [`EVICTED_TRACE_CAP`].
     evicted: Mutex<VecDeque<String>>,
     procedure_id: ProcedureId,
     max_entities: usize,
@@ -85,10 +69,9 @@ impl DynamicEntityRegistry {
         }
     }
 
-    /// Return the Entity for `key`, lazily creating it. The cap check is
-    /// best-effort (concurrent inserts may slightly overshoot — the cap
-    /// bounds memory, not admission).
-    pub fn get_or_create(&self, key: &str) -> Result<Arc<EntitySlot>, GetOrCreateError> {
+    /// The Entity for `key`, minted on first sight; the cap is best-effort
+    /// under concurrent inserts.
+    pub fn get_or_create(&self, key: &str) -> Result<Arc<EntitySlot>, crate::error::Error> {
         if let Some(slot) = self.entities.get(key) {
             return Ok(Arc::clone(slot.value()));
         }
@@ -96,7 +79,7 @@ impl DynamicEntityRegistry {
             self.counters
                 .inputs_dropped_capped_total
                 .fetch_add(1, Ordering::Relaxed);
-            return Err(GetOrCreateError::Capped);
+            return Err(crate::error::Error::Capped);
         }
         let entry = self.entities.entry(key.to_owned()).or_insert_with(|| {
             self.counters
@@ -107,11 +90,8 @@ impl DynamicEntityRegistry {
         Ok(Arc::clone(entry.value()))
     }
 
-    /// One reaper sweep: evict every Entity idle longer than `idle_ttl`.
-    /// Eviction acquires the slot's drain gate (never interrupts a running
-    /// `Procedure::run`), confirms the mailbox is empty, then destructively drops
-    /// the slot — deregistering its flusher entry and (when persistent)
-    /// shipping `delete_entity_state` so the on-disk WAL/snapshot is removed.
+    /// Evict every Entity idle longer than `idle_ttl`, each under its drain
+    /// gate with an empty mailbox.
     pub fn reap_sweep(&self, idle_ttl: Duration) {
         let now = crate::util::monotonic_ms();
         let ttl_ms = idle_ttl.as_millis() as i64;
@@ -122,7 +102,7 @@ impl DynamicEntityRegistry {
         let mut candidates: Vec<(String, Arc<EntitySlot>)> = Vec::new();
         for entry in self.entities.iter() {
             let slot = entry.value();
-            if now - slot.last_activity_at.load(Ordering::Relaxed) <= ttl_ms {
+            if now - slot.last_activity_ms.load(Ordering::Relaxed) <= ttl_ms {
                 continue;
             }
             if !slot.mailbox.claim_inflight() {
@@ -140,12 +120,8 @@ impl DynamicEntityRegistry {
         }
     }
 
-    /// Drop one idle candidate whose drain gate this sweep holds. The
-    /// lookup-then-push race is closed here: a producer holding the slot Arc
-    /// may have pushed after the empty-check, in which case the Entity is
-    /// re-inserted and drained instead. Eviction is destructive and a recreate
-    /// cold-starts, so the Entity's timers go with its state — dropped now
-    /// rather than at each deadline.
+    /// Drop one candidate whose gate this sweep holds; a push that landed
+    /// after the idle check re-inserts it instead. Its timers go with it.
     fn evict(&self, key: String, slot: Arc<EntitySlot>) {
         self.entities.remove(&key);
         if !slot.mailbox.is_empty() {
@@ -169,10 +145,8 @@ impl DynamicEntityRegistry {
         self.note_evicted(key);
     }
 
-    /// True when `key` is in the workflow eviction trace. False for a key that
-    /// never had an Entity — and for one evicted longer than
-    /// [`EVICTED_TRACE_CAP`] evictions ago, which then reads as "no Entity by
-    /// that key", the safe direction: it claims no eviction it cannot show.
+    /// Whether `key` is in the eviction trace; beyond the cap it reads as
+    /// never existed, claiming no eviction it cannot show.
     pub fn recently_evicted(&self, key: &str) -> bool {
         self.evicted
             .lock()
@@ -189,8 +163,6 @@ impl DynamicEntityRegistry {
         trace.push_back(key);
     }
 
-    /// Allocate a fresh slot for `key`, wired exactly as the static-mode slots
-    /// `StreamInstance::new` builds.
     fn build_slot(&self, key: &str) -> Arc<EntitySlot> {
         let procedure_desc = self
             .topology
@@ -208,9 +180,7 @@ impl DynamicEntityRegistry {
     }
 }
 
-/// Spawn one reaper thread for a dynamic Procedure. It sweeps every
-/// `reap_interval(idle_ttl)` until `stop` is set. Only called when a TTL is
-/// declared (default `None` spawns no reaper).
+/// One reaper, sweeping every `reap_interval(idle_ttl)` until `stop`.
 pub fn spawn_reaper(
     idle_ttl: Duration,
     registry: Arc<DynamicEntityRegistry>,
@@ -230,7 +200,7 @@ pub fn spawn_reaper(
         .expect("spawning flezha-reaper thread should not fail")
 }
 
-/// `FLEZHA_REAP_INTERVAL_MS` if set, else `min(idle_ttl / 4, 30s)`, floored at 1ms.
+/// `FLEZHA_REAP_INTERVAL_MS`, else `min(idle_ttl / 4, 30s)`, at least 1 ms.
 fn reap_interval(idle_ttl: Duration) -> Duration {
     std::env::var(ENV_REAP_INTERVAL_MS)
         .ok()
@@ -243,7 +213,6 @@ fn reap_interval(idle_ttl: Duration) -> Duration {
         )
 }
 
-/// Sleep `total`, waking every ≤200ms to honour `stop` promptly.
 fn sleep_responsive(total: Duration, stop: &AtomicBool) {
     let chunk = total.min(Duration::from_millis(200));
     let mut slept = Duration::ZERO;
@@ -253,8 +222,7 @@ fn sleep_responsive(total: Duration, stop: &AtomicBool) {
     }
 }
 
-/// Fire-and-forget `delete_entity_state` for an evicted Entity (body is
-/// the structured `entity_id`).
+/// Fire-and-forget `delete_entity_state` for an evicted Entity.
 fn send_delete_entity_state(entity_id: &[u8]) {
     let frame = payloader::build_from_binary(
         state_sink::DELETE_ENTITY_STATE_PAYLOAD_ID,

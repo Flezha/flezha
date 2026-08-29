@@ -105,7 +105,7 @@ fn resolve_connect<'a>(
 
     let entries = match transport_config::quic_addresses_with(quic_addresses.as_deref()) {
         Ok(entries) => entries.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
-        Err(e) => return Ok((atoms::error(), e).encode(env)),
+        Err(e) => return Ok((atoms::error(), e.to_string()).encode(env)),
     };
 
     Ok((atoms::ok(), resolved_dir, entries).encode(env))
@@ -138,7 +138,7 @@ fn client_connect_quic<'a>(
 ) -> NifResult<Term<'a>> {
     let entry = match QuicEntry::parse(&address) {
         Ok(entry) => entry,
-        Err(e) => return Ok((atoms::error(), e).encode(env)),
+        Err(e) => return Ok((atoms::error(), e.to_string()).encode(env)),
     };
     let (addrs, mut failures) = transport_config::resolve_entries(&[entry]);
     if addrs.is_empty() {

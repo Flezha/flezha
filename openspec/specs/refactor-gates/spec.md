@@ -45,3 +45,17 @@ A change that touches a hot path (the `flz_core` poll core and host, the dispatc
 - **WHEN** the dispatcher-unification spike runs its A/B on this box
 - **THEN** every row of its table SHALL carry the baseline arm's pre-recorded spread, five baseline and five changed-arm medians, the artifact hashes of both arms and the governor and power state, and the change SHALL be recorded as "converge" only when every row's loss is at most 3 % under the paired-round rule
 
+### Requirement: The kernel areas ratchet as blocking and the erased path has a bench
+
+Once `refactor-1-kernel` lands, the areas `flz_core`, `flz_transport` and `flz_nif` SHALL be listed under `blocking` in `docs/refactor/baseline.json`, re-baselined from the landed tree, so that any later rise in a ratcheted metric for those areas fails `scripts/refactor_metrics.py --check`. The repository SHALL carry a bench that drives the erased host path through the real `flz_core_poll` / `flz_core_complete` exports (`flz_core_ffi/benches/host_loop.rs`) so that a hot-path A/B on the kernel has a row for the path no typed bench reaches, and every kernel A/B after this change SHALL include that row at a measurement window whose recorded noise floor is at most 3 %.
+
+#### Scenario: A kernel metric regresses after the flip
+
+- **WHEN** `scripts/refactor_metrics.py --check` runs on a tree where `flz_core`, `flz_transport` or `flz_nif` has more files over 800 lines, more functions over 50 lines, more narrative markers, more production names over 32 characters, more duplicate pairs, or more production lines than the re-baselined value
+- **THEN** the check SHALL exit non-zero naming the area, the metric and the file
+
+#### Scenario: A kernel change measures the erased path
+
+- **WHEN** a change touches `flz_core`'s poll core, host, flusher, entity or routing modules and runs the charter's interleaved A/B
+- **THEN** its table SHALL carry the `host_loop` row with its pre-recorded floor, both arms' medians and allocations per element, and a loss beyond the floor on that row SHALL block the change like any other row
+

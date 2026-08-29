@@ -1,23 +1,11 @@
 //! Per-Entity timers: the pending set, its durable ops, and the arming of
-//! processing-time deadlines.
-//!
-//! A timer is state, not a scheduler entry. Registration, cancellation and
-//! firing each append a [`TimerOp`] to the Entity's durable record stream, so
-//! the pending set is rebuilt by the ordinary change-log fold on restore — no
-//! side-file, no crash marker, no completeness oracle. Ops ride the WAL two
-//! ways, both of which the controller already stores verbatim:
-//!
-//!   * outside the effectively-once tier, as a `format_id = 3` record whose
-//!     body is a postcard `Vec<TimerOp>`;
-//!   * inside it, as `EffectRecordBody::timers`, so a firing's effects and the
-//!     removal of the timer that produced them land in ONE record.
-//!
-//! Event-time timers need nothing here: they fire off the Entity's event-time
-//! high-water, on the dispatch path. Only the processing-time kind needs a
-//! clock of its own — an entry on the poll core's shared deferred-wake list,
-//! whose expiry pushes a [`TimerFire`] onto the target Entity's existing
-//! mailbox so `on_timer` is serialized against `run` by the
-//! single-active-drainer gate already there. No timer owns a thread.
+//! processing-time deadlines. The invariant: a timer is folded state — every
+//! registration, cancellation and firing is a [`TimerOp`] in the Entity's own
+//! record stream, so a restore rebuilds the set through the ordinary fold and
+//! a firing's removal rides the same record as its effects. Event-time timers
+//! fire off the high-water on the dispatch path; processing-time ones are
+//! entries on the poll core's wake list, promoted into the mailbox so
+//! `on_timer` is serialized against `run`. No timer owns a thread.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -33,13 +21,10 @@ use crate::entity::EntitySlot;
 pub use crate::schema::{TimerKind, TimerOp};
 use crate::util::LockRecover;
 
-/// A refused timer registration. The typed layer converts these into its
-/// `ProcedureError` variants; the core knows only the facts.
+/// A refused timer registration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TimerRefusal {
-    /// An event-time timer under a clock that is not an event time.
     EventTimeWithoutEventTimeClock { procedure: String, clock: String },
-    /// The per-entity pending cap was reached.
     CapExceeded { procedure: String, max: usize },
 }
 
@@ -57,8 +42,8 @@ impl std::fmt::Display for TimerRefusal {
     }
 }
 
-/// An Entity's pending timers: one ordered set per kind. Pending timers are a
-/// **set**, so registering the same kind and timestamp twice is idempotent.
+/// An Entity's pending timers, one ordered set per kind; registering the
+/// same timestamp twice is idempotent.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingTimers {
     event_time: BTreeSet<u64>,
@@ -80,9 +65,8 @@ impl PendingTimers {
         }
     }
 
-    /// Fold one op. The single mutation seam: registration, cancellation,
-    /// firing and the restore replay all go through it, so the live set and a
-    /// rebuilt one cannot drift. Returns whether the set actually changed.
+    /// Fold one op — the single mutation seam, live and on restore. Whether
+    /// the set changed.
     pub fn apply(&mut self, op: &TimerOp) -> bool {
         if op.register {
             self.set_mut(op.kind).insert(op.scheduled_at)
@@ -103,19 +87,16 @@ impl PendingTimers {
         self.event_time.is_empty() && self.processing_time.is_empty()
     }
 
-    /// Scheduled timestamps at or below `upto`, ascending — what a high-water
-    /// crossing (event time) or a due promotion (processing time) must fire.
+    /// Timestamps at or below `upto`, ascending.
     pub fn due(&self, kind: TimerKind, upto: u64) -> Vec<u64> {
         self.set(kind).range(..=upto).copied().collect()
     }
 
-    /// Every pending timer of one kind, ascending.
     pub fn all(&self, kind: TimerKind) -> Vec<u64> {
         self.set(kind).iter().copied().collect()
     }
 
-    /// One kind expressed as registrations — what the restore re-arm hands the
-    /// wake list, and half of what a compaction re-states.
+    /// One kind as registrations.
     pub fn register_ops(&self, kind: TimerKind) -> Vec<TimerOp> {
         self.all(kind)
             .into_iter()
@@ -123,9 +104,8 @@ impl PendingTimers {
             .collect()
     }
 
-    /// The full set expressed as registrations. A compaction re-states the
-    /// pending timers this way at a seq ABOVE the snapshot's, so truncating
-    /// the ops the snapshot covers cannot lose them.
+    /// The full set as registrations — what a compaction re-states ABOVE the
+    /// snapshot's seq so truncation cannot lose them.
     pub fn as_register_ops(&self) -> Vec<TimerOp> {
         let mut ops = self.register_ops(TimerKind::EventTime);
         ops.extend(self.register_ops(TimerKind::ProcessingTime));
@@ -133,12 +113,8 @@ impl PendingTimers {
     }
 }
 
-/// A validated timer firing on an Entity's work path. Processing-time firings
-/// are promoted off the wake list onto the mailbox; event-time firings are
-/// generated at batch assembly when an admitted input advances the
-/// high-water. Carries the secondary stream captured at arming (wake list) or
-/// inherited from the admitting input (assembly) so `on_timer`'s plugin
-/// emits leave on the same connection an input's would.
+/// A validated firing on an Entity's work path, carrying the connection
+/// `on_timer`'s emits leave on.
 #[derive(Clone)]
 pub struct TimerFire {
     pub kind: TimerKind,
@@ -148,12 +124,9 @@ pub struct TimerFire {
 
 // ----------------------------------------------------------------- session
 
-/// What a Procedure declares about its timers, resolved once per Procedure
-/// rather than at every invocation: the bound, the names a refusal reports, and
-/// whether its Clock can serve an event-time deadline at all. Carries the
-/// counter set too, so a session costs no registry lookup.
-///
-/// [`ProcedureCtx`]: crate::procedure::ProcedureCtx
+/// What a Procedure declares about its timers, resolved once: the cap, the
+/// names a refusal reports, whether its clock serves event time, its
+/// counters.
 #[derive(Clone)]
 pub struct TimerPolicy {
     max_per_entity: usize,
@@ -164,8 +137,6 @@ pub struct TimerPolicy {
 }
 
 impl TimerPolicy {
-    /// Construct from the class's declared timer facts (the typed layer's
-    /// `entity::timer::timer_policy_for::<S>()` reads them off `S`).
     pub fn new(
         max_per_entity: usize,
         procedure: &'static str,
@@ -181,19 +152,19 @@ impl TimerPolicy {
         }
     }
 
-    /// Open a session over a COPY of `pending`, optionally seeded with the
-    /// removal of the timer that is firing.
+    /// A session over a COPY of `pending`, seeded with the firing's removal
+    /// when there is one.
     pub fn session(
         &self,
         pending: &PendingTimers,
-        now: u64,
+        now_ms: u64,
         firing: Option<(TimerKind, u64)>,
     ) -> RefCell<TimerSession> {
         let mut session = TimerSession {
             pending: pending.clone(),
             ops: Vec::new(),
             policy: self.clone(),
-            now,
+            now_ms,
             firing: false,
         };
         if let Some((kind, scheduled_at)) = firing {
@@ -203,34 +174,25 @@ impl TimerPolicy {
     }
 }
 
-/// The timer surface for ONE invocation, borrowed by [`ProcedureCtx`].
-///
-/// It works on a **copy** of the Entity's pending set: the retry ladder re-runs
-/// a failed attempt, and a registration that attempt made must not survive it.
-/// The dispatcher calls [`Self::commit`] only on the attempt that succeeded —
-/// which is also where the counters move, so a refused-then-retried invocation
-/// is counted once.
-///
-/// [`ProcedureCtx`]: crate::procedure::ProcedureCtx
+/// The timer surface of ONE invocation, over a COPY of the pending set: a
+/// failed attempt's registrations must not survive its retry, so only the
+/// attempt that succeeds [`Self::commit`]s — where the counters move too.
 pub struct TimerSession {
     pending: PendingTimers,
     ops: Vec<TimerOp>,
     policy: TimerPolicy,
-    /// The invocation's `ctx.now()`. [`Self::register_after`] is anchored to
-    /// it, which is what makes a replayed invocation register the same
-    /// absolute timestamp the live one did.
-    now: u64,
-    /// Set when the session opens on a firing: op 0 is the fired timer's
-    /// removal, so [`Self::commit`] counts it as a firing rather than an author
-    /// cancel.
+    /// The invocation's `ctx.now()`, which [`Self::register_after`] anchors
+    /// to so a replay registers the same absolute timestamp.
+    now_ms: u64,
+    /// The session opened on a firing: op 0 is its removal, counted as a
+    /// firing rather than a cancel.
     firing: bool,
 }
 
 impl TimerSession {
-    /// Seed the session with the removal of the timer that is firing, so it
-    /// rides the SAME durable record as whatever `on_timer` goes on to apply
-    /// and emit. A crash between the two is therefore impossible: either both
-    /// landed, or the timer is still pending and the whole firing repeats.
+    /// Seed the session with the firing's removal, so it rides the SAME
+    /// record as what `on_timer` applies: either both land or the whole
+    /// firing repeats.
     fn open_firing(&mut self, kind: TimerKind, scheduled_at: u64) {
         let op = TimerOp::cancel(kind, scheduled_at);
         self.pending.apply(&op);
@@ -239,13 +201,12 @@ impl TimerSession {
     }
 
     pub fn now(&self) -> u64 {
-        self.now
+        self.now_ms
     }
 
-    /// Register an event-time timer at an absolute timestamp.
     pub fn register_at_event_time(&mut self, scheduled_at: u64) -> Result<u64, TimerRefusal> {
         if !self.policy.event_time_clock {
-            self.refused();
+            self.note_refused();
             return Err(TimerRefusal::EventTimeWithoutEventTimeClock {
                 procedure: self.policy.procedure.to_string(),
                 clock: self.policy.clock.to_string(),
@@ -254,9 +215,8 @@ impl TimerSession {
         self.register(TimerKind::EventTime, scheduled_at)
     }
 
-    /// Register a processing-time timer `delay` after `ctx.now()`.
     pub fn register_after(&mut self, delay: Duration) -> Result<u64, TimerRefusal> {
-        let at = self.now.saturating_add(delay.as_millis() as u64);
+        let at = self.now_ms.saturating_add(delay.as_millis() as u64);
         self.register(TimerKind::ProcessingTime, at)
     }
 
@@ -264,7 +224,7 @@ impl TimerSession {
         if !self.pending.contains(kind, scheduled_at)
             && self.pending.len() >= self.policy.max_per_entity
         {
-            self.refused();
+            self.note_refused();
             return Err(TimerRefusal::CapExceeded {
                 procedure: self.policy.procedure.to_string(),
                 max: self.policy.max_per_entity,
@@ -277,8 +237,7 @@ impl TimerSession {
         Ok(scheduled_at)
     }
 
-    /// Cancel a pending timer by its scheduled timestamp. `false` when none
-    /// was pending — a cancellation nobody registered changes nothing.
+    /// Cancel by scheduled timestamp; `false` when none was pending.
     pub fn cancel(&mut self, kind: TimerKind, scheduled_at: u64) -> bool {
         let op = TimerOp::cancel(kind, scheduled_at);
         let changed = self.pending.apply(&op);
@@ -288,16 +247,15 @@ impl TimerSession {
         changed
     }
 
-    fn refused(&self) {
+    fn note_refused(&self) {
         self.policy
             .counters
             .refused_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Publish the session onto the Entity's live pending set and return the
-    /// ops to make durable (and to arm/disarm on the wake list). Called by the
-    /// dispatcher only for the attempt that completed.
+    /// Publish onto the live pending set and answer the ops to make durable
+    /// and arm; only for the attempt that completed.
     pub fn commit(self, live: &mut PendingTimers) -> Vec<TimerOp> {
         let counters = &self.policy.counters;
         for (idx, op) in self.ops.iter().enumerate() {
@@ -321,9 +279,8 @@ impl TimerSession {
 
 // ---------------------------------------------------------------- counters
 
-/// Per-Procedure timer counters. Monotonic totals plus a signed `pending`
-/// gauge, all `Relaxed` — read by observability at its leisure, exactly like
-/// [`crate::entity::EntityCounters`].
+/// Per-Procedure timer counters: monotonic totals plus a signed `pending`
+/// gauge, all `Relaxed`.
 #[derive(Debug, Default)]
 pub struct TimerCounters {
     pub pending: AtomicI64,
@@ -333,7 +290,6 @@ pub struct TimerCounters {
     pub refused_total: AtomicU64,
 }
 
-/// Immutable view of one Procedure's counters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimerCountersView {
     pub procedure: &'static str,
@@ -351,7 +307,6 @@ fn registry() -> &'static DashMap<&'static str, Arc<TimerCounters>> {
     PER_PROCEDURE.get_or_init(DashMap::new)
 }
 
-/// The counter set for one Procedure, created on first use.
 pub fn counters_for(procedure: &'static str) -> Arc<TimerCounters> {
     if let Some(existing) = registry().get(procedure) {
         return Arc::clone(existing.value());
@@ -364,7 +319,6 @@ pub fn counters_for(procedure: &'static str) -> Arc<TimerCounters> {
     )
 }
 
-/// Every Procedure's counters, for `flz`-side observability and tests.
 pub fn counters_snapshot() -> Vec<TimerCountersView> {
     let mut out: Vec<TimerCountersView> = registry()
         .iter()
@@ -384,27 +338,22 @@ pub fn counters_snapshot() -> Vec<TimerCountersView> {
     out
 }
 
-/// Process-global count of timers that have fired. Shipped in every
-/// `data_heartbeat` frame beside `dispatches` / `blocked_parks`.
+/// Timers fired, process-wide; rides the heartbeat.
 pub static TIMERS_FIRED_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 pub fn timers_fired_total() -> u64 {
     TIMERS_FIRED_TOTAL.load(Ordering::Relaxed)
 }
 
-/// Processing-time timers currently armed — the occupancy a runaway
-/// registration shows up in before it is fatal. Counted off the poll core's
-/// wake list, which holds them, rather than tracked beside it.
+/// Processing-time timers armed, counted off the wake list that holds them.
 pub fn timers_armed() -> usize {
     crate::poll_core::global().timers_armed()
 }
 
 // ------------------------------------------------ arming from committed ops
 
-/// Reflect an invocation's committed timer ops onto the poll core's wake list.
-/// Event-time timers need nothing here — the Entity's high-water fires them.
-/// The Entity's identity is the list key, so timers armed by two instances
-/// sharing a numeric `ProcedureId` stay each other's business.
+/// Reflect committed timer ops onto the wake list; event-time timers need
+/// nothing here.
 pub fn apply_ops(slot: &Arc<EntitySlot>, ops: &[TimerOp], stream: &Arc<FlezhaStream>) {
     let core = crate::poll_core::global();
     for op in ops.iter().filter(|op| op.kind == TimerKind::ProcessingTime) {
@@ -416,12 +365,9 @@ pub fn apply_ops(slot: &Arc<EntitySlot>, ops: &[TimerOp], stream: &Arc<FlezhaStr
     }
 }
 
-/// Arm the deferred wake that closes an Entity's open checkpoint interval when
-/// its `max_delay_ms` elapses — what makes a quiet Entity's held outputs leave
-/// within the declared delay instead of waiting for an input that never comes.
-///
-/// A close leaves its spent entry armed rather than tracking the previous
-/// deadline to remove: it comes due, finds no open interval, and does nothing.
+/// Arm the wake that closes an open checkpoint interval at `max_delay_ms`. A
+/// close leaves its spent entry armed: it comes due, finds nothing open, and
+/// does nothing.
 pub fn arm_interval_deadline(slot: &Arc<EntitySlot>) {
     let deadline = {
         let mut buffer = slot.flush_buffer.lock_recover();
@@ -432,10 +378,8 @@ pub fn arm_interval_deadline(slot: &Arc<EntitySlot>) {
     }
 }
 
-/// Re-arm a restored Entity's processing-time timers. The pending set came back
-/// through the change-log fold; anything already past its deadline fires on the
-/// next promotion, in ascending order. Event-time timers need nothing — the
-/// restored high-water is their trigger.
+/// Re-arm a restored Entity's processing-time timers; anything past its
+/// deadline fires on the next promotion, ascending.
 pub fn rearm_restored(slot: &Arc<EntitySlot>) {
     let ops = slot
         .timers
@@ -493,8 +437,8 @@ mod tests {
         assert_eq!(pending.due(TimerKind::EventTime, 99), Vec::<u64>::new());
     }
 
-    /// The compaction re-statement must reproduce the set exactly: it is the
-    /// only record of the timers once the ops below the snapshot are truncated.
+    /// The compaction re-statement is the only record of the timers once the
+    /// ops below the snapshot are truncated.
     #[test]
     fn register_ops_round_trip_the_whole_set() {
         let mut pending = PendingTimers::default();
@@ -509,8 +453,8 @@ mod tests {
         assert_eq!(rebuilt, pending);
     }
 
-    /// The counters an operator reads: a registration, a cancellation, a firing
-    /// and a refusal each move exactly one of them.
+    /// A registration, a cancellation, a firing and a refusal each move
+    /// exactly one counter.
     #[test]
     fn the_per_procedure_counters_follow_the_committed_ops() {
         let policy = TimerPolicy {
@@ -556,9 +500,7 @@ mod tests {
         );
     }
 
-    /// Pins the postcard bytes the controller's `Flezha.State.Wire`
-    /// decodes — the two sides share this fixture, so an encoding change
-    /// breaks loudly here rather than silently on the wire.
+    /// Pins the postcard bytes the controller's `Flezha.State.Wire` decodes.
     #[test]
     fn timer_op_postcard_bytes_are_the_cross_language_fixture() {
         let ops = vec![

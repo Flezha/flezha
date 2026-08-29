@@ -10,8 +10,7 @@
 
 use crate::util::read_u32_be;
 
-/// Restoration failures surfaced to the control channel. Plain data — the
-/// host's typed layer wraps and reports them.
+/// Why a restore refused.
 #[derive(Debug, thiserror::Error)]
 pub enum RestoreError {
     #[error("snapshot decode failed: {0}")]
@@ -44,38 +43,23 @@ pub enum RestoreError {
     CrcMismatch { entity: u32, seq: u64 },
 }
 
-/// The `sdk_lang` allocation table: 0 unspecified, 1 Rust, 2 Java, 3 Elixir,
-/// 4 Node, 5 Ruby, 6 PHP, 7 Python, `8..=254` free in landing order, 255
-/// reserved.
-///
-/// Durable `State`/`Change` bodies are per-SDK below the shared envelope, so
-/// this byte is what keeps one language's records from reaching another's
-/// codec. One value per SDK, assigned when that SDK lands — a proposal takes
-/// the next free one at implementation time rather than asserting one. An
+/// The `sdk_lang` allocation table: durable bodies are per-SDK below the
+/// shared envelope, so this byte keeps one language's records from another's
+/// codec. One value per SDK, taken from `SDK_LANG_NEXT_FREE` as it lands; an
 /// unknown value is refused, never interpreted.
 pub const SDK_LANG_UNSPECIFIED: u8 = 0;
-/// Rust SDK. Also the value the typed in-process path stamps.
 pub const SDK_LANG_RUST: u8 = 1;
-/// Java SDK (JNI over this core).
 pub const SDK_LANG_JAVA: u8 = 2;
-/// Elixir SDK. Persists no Entity state in v1, but advertises the byte so its
-/// factories are taggable at the placement seam.
+/// Persists no Entity state, but its factories carry the byte for placement.
 pub const SDK_LANG_ELIXIR: u8 = 3;
-/// Node SDK (N-API over this core).
 pub const SDK_LANG_NODE: u8 = 4;
-/// Ruby SDK (magnus over this core).
 pub const SDK_LANG_RUBY: u8 = 5;
-/// PHP SDK (`ext-ffi` over this core's C ABI).
 pub const SDK_LANG_PHP: u8 = 6;
-/// Python SDK (PyO3 over this core).
 pub const SDK_LANG_PYTHON: u8 = 7;
-/// Lowest value not yet allocated to an SDK.
 pub const SDK_LANG_NEXT_FREE: u8 = 8;
-/// Reserved; never allocated to an SDK.
 pub const SDK_LANG_RESERVED: u8 = 255;
 
-/// Every allocated value, in allocation order. The single list the uniqueness
-/// test and the allocation-check read.
+/// Every allocated value, in allocation order.
 pub const SDK_LANG_ALLOCATED: &[(u8, &str)] = &[
     (SDK_LANG_RUST, "rust"),
     (SDK_LANG_JAVA, "java"),
@@ -86,13 +70,10 @@ pub const SDK_LANG_ALLOCATED: &[(u8, &str)] = &[
     (SDK_LANG_PYTHON, "python"),
 ];
 
-/// Whether `lang` is a value the allocation table hands to an SDK. `0` and
-/// `255` are reserved, and an unallocated value is refused rather than guessed.
 pub fn sdk_lang_allocated(lang: u8) -> bool {
     SDK_LANG_ALLOCATED.iter().any(|(v, _)| *v == lang)
 }
 
-/// The SDK name behind an allocated value, for error and log text.
 pub fn sdk_lang_name(lang: u8) -> &'static str {
     SDK_LANG_ALLOCATED
         .iter()
@@ -101,37 +82,25 @@ pub fn sdk_lang_name(lang: u8) -> &'static str {
         .unwrap_or("unallocated")
 }
 
-/// Postcard format id stamped at byte 9 of the persistence header.
+/// Format ids, stamped at byte 9: the body's codec, not its SDK.
 pub const FORMAT_ID_POSTCARD: u8 = 1;
 
-/// Effect-record format id (effectively-once tier): the body is a postcard
-/// `EffectRecordBody` whose `changes` entries are themselves the host-encoded
-/// bytes a format-1 record would carry. The durable marker that lets mixed
-/// WALs (plain change records + effect records) stay readable.
+/// A postcard `EffectRecordBody` whose `changes` are host-encoded bodies.
 pub const FORMAT_ID_EFFECT_RECORD: u8 = 2;
 
-/// Kryo format id: the body is a Kryo-encoded `State`/`Change` against the
-/// class's registered type set. Java's codec; declared here because the table
-/// of record is what makes a new id provably free.
+/// Java's Kryo codec.
 pub const FORMAT_ID_KRYO: u8 = 4;
 
-/// MessagePack format id: the body is a MessagePack-encoded `State`/`Change`.
-/// Shared by every SDK whose codec is MessagePack rather than minted per SDK —
-/// the byte names the encoding, and the cross-language gate is `sdk_lang`.
+/// MessagePack, shared by every SDK whose codec it is; `sdk_lang` is the
+/// cross-language gate.
 pub const FORMAT_ID_MSGPACK: u8 = 5;
 
-/// JSON format id: the body is a JSON-encoded `State`/`Change`. PHP's codec —
-/// author-declared `toArray()` / `fromArray()` over `json_encode`, so a class
-/// rename leaves the durable bytes readable.
+/// PHP's JSON codec.
 pub const FORMAT_ID_JSON: u8 = 6;
 
-/// Timer-ops format id: the body is a postcard `Vec<TimerOp>` mutating the
-/// Entity's pending-timer set. Rides the ordinary `entity_state_change`
-/// payload-id, so the controller stores and truncates it exactly as it does a
-/// change record and needs to know nothing about timers.
+/// A postcard `Vec<TimerOp>`, stored and truncated as any change record.
 pub const FORMAT_ID_TIMER_OPS: u8 = 3;
 
-/// Parsed view of the 16-byte header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecodedHeader {
     pub sdk_lang: u8,
@@ -141,8 +110,7 @@ pub struct DecodedHeader {
     pub crc32: u32,
 }
 
-/// Header values frozen at Entity construction so the per-record stamp
-/// is a memcpy + crc compute. Reserved bytes are always zero.
+/// Header values frozen at construction so a stamp is a memcpy plus a crc.
 #[derive(Debug, Clone, Copy)]
 pub struct HeaderTemplate {
     pub sdk_lang: u8,
@@ -152,9 +120,6 @@ pub struct HeaderTemplate {
 }
 
 impl HeaderTemplate {
-    /// Construct the per-Entity header template. The typed layer's
-    /// `header_template_for::<S>()` fills both values from compile-time
-    /// constants.
     pub fn new(sdk_version: u32, schema_version: u32) -> Self {
         Self {
             sdk_lang: SDK_LANG_RUST,
@@ -164,10 +129,7 @@ impl HeaderTemplate {
         }
     }
 
-    /// Stamp the header onto fresh bytes. The CRC32 is computed over the
-    /// caller-provided change_bytes; the returned 16-byte array is
-    /// suitable for the `[header: 16B][change_bytes]` framing produced
-    /// by the per-Entity flusher.
+    /// The header for `change_bytes`, crc included.
     pub fn stamp(&self, change_bytes: &[u8]) -> [u8; 16] {
         let mut out = [0u8; 16];
         out[0] = self.sdk_lang;
@@ -181,9 +143,8 @@ impl HeaderTemplate {
     }
 }
 
-/// Decode a 16-byte header into its fields. Resolution against the running
-/// procedure's expectations lives in the `resolve_header_for_*` helpers so the
-/// caller sees a typed error.
+/// The header's fields; resolution against the running procedure is
+/// [`resolve_record`] / [`resolve_state`].
 pub fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, RestoreError> {
     if bytes.len() < 16 {
         return Err(RestoreError::HeaderInvalid);
@@ -200,31 +161,26 @@ pub fn decode_header(bytes: &[u8]) -> Result<DecodedHeader, RestoreError> {
     })
 }
 
-/// What a record's stamped `schema_version` means to the procedure now
-/// running.
+/// What a stamped `schema_version` means to the procedure now running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaDecision {
-    /// Stamped at the running version: decode with the current codec.
     Decode,
-    /// Stamped older, and at or above the declared readable floor: the bytes
-    /// belong to the procedure's migration for `from_version`.
-    Migrate { from_version: u32 },
+    /// Older but readable: the author's migration from `from_version`.
+    Migrate {
+        from_version: u32,
+    },
 }
 
 impl SchemaDecision {
-    /// Whether this record reaches the author's migration rather than the
-    /// current codec — what a restore reports back so the controller compacts.
+    /// Reaches the migration — what a restore reports so the controller
+    /// compacts.
     pub fn migrating(self) -> bool {
         matches!(self, Self::Migrate { .. })
     }
 }
 
-/// The one place a stamped schema version is resolved against the procedure
-/// reading it. `running` is its `SCHEMA_VERSION`, `min_readable` its
-/// `MIN_READABLE_SCHEMA_VERSION`.
-///
-/// A floor above `running` reads nothing but the running version — the
-/// fail-closed reading of a contradictory declaration.
+/// The one place a stamped schema version is resolved against the reading
+/// procedure. A floor above `running` reads the running version only.
 pub fn decide_schema(
     stamped: u32,
     running: u32,
@@ -250,24 +206,17 @@ pub fn decide_schema(
     })
 }
 
-/// Which record a WAL entry is. The format byte says it, read against the
-/// running procedure's declared change format (postcard for Rust, Kryo for
-/// Java) — effect records and timer ops are the runtime's own shapes and carry
-/// their own ids.
+/// Which record a WAL entry is, by its format byte against the running
+/// procedure's declared change format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordKind {
-    /// The author's own `Change` body.
     Change,
-    /// Effectively-once effect record: changes + outputs + consumed offset.
     EffectRecord,
-    /// A mutation of the pending-timer set.
     TimerOps,
 }
 
-/// Classify and resolve one WAL record's header in a single step: the format
-/// byte says which record this is, the schema version says what to do with its
-/// body. Both restore folds go through here, so neither re-derives the kind
-/// from the byte it just matched on, and an unknown format is refused once.
+/// Classify and resolve one WAL record's header in one step; both restore
+/// folds come through here.
 pub fn resolve_record(
     header: &DecodedHeader,
     expected: &HeaderTemplate,
@@ -286,8 +235,7 @@ pub fn resolve_record(
     ))
 }
 
-/// Resolve the header of a state snapshot. A snapshot has no kind of its own:
-/// it is the running procedure's state, in the format that procedure declares.
+/// Resolve a snapshot's header: the running procedure's state in its format.
 pub fn resolve_state(
     header: &DecodedHeader,
     expected: &HeaderTemplate,
@@ -300,11 +248,8 @@ pub fn resolve_state(
     decide_schema(header.schema_version, expected.schema_version, min_readable)
 }
 
-/// Language before anything else: a record from another SDK is neither a
-/// format question nor a schema one, and the refusal has to name both
-/// languages to be actionable. SDKs that share a codec would otherwise be
-/// told their header is malformed — the answer a differing format byte gives
-/// when it is read first.
+/// Language before anything else, or two SDKs sharing a codec would be told
+/// their header is malformed.
 fn refuse_foreign_language(
     header: &DecodedHeader,
     expected: &HeaderTemplate,
@@ -318,10 +263,8 @@ fn refuse_foreign_language(
     Ok(())
 }
 
-/// Parse `CARGO_PKG_VERSION` into the `(major << 16) | (minor << 8) | patch`
-/// form stamped at bytes 1..5 of the header. Components above 255 are
-/// clamped (no real-world version reaches this; defensive against
-/// "0.1.0-pre.42" suffixes).
+/// `CARGO_PKG_VERSION` as `(major << 16) | (minor << 8) | patch`, each
+/// clamped at 255.
 pub fn parse_pkg_version() -> u32 {
     let raw = env!("CARGO_PKG_VERSION");
     let mut parts = raw
@@ -346,8 +289,7 @@ pub fn parse_pkg_version() -> u32 {
 mod tests {
     use super::*;
 
-    /// The allocation table is only worth having if it cannot collide: two
-    /// SDKs sharing a value would make the guard that reads it meaningless.
+    /// Two SDKs sharing a value would make the guard meaningless.
     #[test]
     fn allocation_table_has_no_duplicates() {
         let mut seen = std::collections::HashSet::new();
@@ -388,9 +330,8 @@ mod tests {
         assert_eq!(sdk_lang_name(SDK_LANG_NEXT_FREE), "unallocated");
     }
 
-    /// A format id names the codec, not the SDK, so MessagePack has one value
-    /// every MessagePack SDK shares. What must stay unique is the set: two
-    /// codecs on one byte would make a mixed WAL unreadable.
+    /// A format id names the codec, not the SDK; two codecs on one byte
+    /// would make a mixed WAL unreadable.
     #[test]
     fn format_ids_are_distinct() {
         let ids = [
@@ -434,8 +375,7 @@ mod tests {
         assert_eq!(decoded.crc32, crc32fast::hash(b"hello"));
     }
 
-    /// The four arms of the decision table, which is the whole of what a
-    /// restore is allowed to conclude from a stamped version.
+    /// The four arms of the decision table.
     #[test]
     fn equal_versions_decode_directly() {
         assert_eq!(decide_schema(2, 2, 1).unwrap(), SchemaDecision::Decode);
@@ -477,8 +417,7 @@ mod tests {
         ));
     }
 
-    /// A floor above the running version is a contradictory declaration; it
-    /// must read the running version and nothing else, never widen.
+    /// A floor above the running version reads the running version only.
     #[test]
     fn a_floor_above_the_running_version_reads_only_the_running_one() {
         assert_eq!(decide_schema(2, 2, 5).unwrap(), SchemaDecision::Decode);
@@ -488,9 +427,7 @@ mod tests {
         ));
     }
 
-    /// The resolvers claim the format the running procedure declares, so a
-    /// Kryo-stamped record resolves for a Kryo class and not for a postcard
-    /// one.
+    /// A Kryo-stamped record resolves for a Kryo class, not a postcard one.
     #[test]
     fn the_expected_format_comes_from_the_running_procedure() {
         let kryo = HeaderTemplate {
@@ -536,104 +473,50 @@ mod tests {
         ));
     }
 
-    /// A Ruby record is MessagePack, which is also what Node writes: the
-    /// format byte alone cannot separate them, so the language byte has to —
-    /// and the refusal has to name both SDKs rather than call the header
-    /// malformed.
+    /// Every ordered pair of allocated languages is refused by both resolvers,
+    /// each SDK stamping its own format: the SDKs that share a codec are
+    /// separated by the language byte alone, and every refusal names the
+    /// reader as expected and the writer as found.
     #[test]
-    fn a_ruby_msgpack_record_is_refused_by_another_msgpack_sdk() {
-        let ruby = HeaderTemplate {
-            sdk_lang: SDK_LANG_RUBY,
+    fn every_foreign_language_pair_is_refused_by_both_resolvers() {
+        let format_of = |lang: u8| match lang {
+            SDK_LANG_JAVA => FORMAT_ID_KRYO,
+            SDK_LANG_NODE | SDK_LANG_RUBY | SDK_LANG_PYTHON => FORMAT_ID_MSGPACK,
+            SDK_LANG_PHP => FORMAT_ID_JSON,
+            _ => FORMAT_ID_POSTCARD,
+        };
+        let template = |lang: u8| HeaderTemplate {
+            sdk_lang: lang,
             sdk_version: 1,
             schema_version: 1,
-            format_id: FORMAT_ID_MSGPACK,
+            format_id: format_of(lang),
         };
-        let stamped = decode_header(&ruby.stamp(b"body")).unwrap();
-        assert_eq!(
-            resolve_record(&stamped, &ruby, 1).unwrap(),
-            (RecordKind::Change, SchemaDecision::Decode)
-        );
-
-        let node = HeaderTemplate {
-            sdk_lang: SDK_LANG_NODE,
-            ..ruby
-        };
-        assert!(matches!(
-            resolve_record(&stamped, &node, 1).unwrap_err(),
-            RestoreError::LangMismatch {
-                expected: SDK_LANG_NODE,
-                found: SDK_LANG_RUBY,
+        for (writer, _) in SDK_LANG_ALLOCATED {
+            let stamped = decode_header(&template(*writer).stamp(b"body")).unwrap();
+            assert_eq!(
+                resolve_record(&stamped, &template(*writer), 1).unwrap(),
+                (RecordKind::Change, SchemaDecision::Decode)
+            );
+            for (reader, _) in SDK_LANG_ALLOCATED {
+                if reader == writer {
+                    continue;
+                }
+                let refusals = [
+                    resolve_record(&stamped, &template(*reader), 1).unwrap_err(),
+                    resolve_state(&stamped, &template(*reader), 1).unwrap_err(),
+                ];
+                for refusal in refusals {
+                    assert!(
+                        matches!(
+                            refusal,
+                            RestoreError::LangMismatch { expected, found }
+                                if expected == *reader && found == *writer
+                        ),
+                        "{writer} read by {reader}: {refusal:?}"
+                    );
+                }
             }
-        ));
-        assert!(matches!(
-            resolve_state(&stamped, &node, 1).unwrap_err(),
-            RestoreError::LangMismatch { .. }
-        ));
-    }
-
-    /// Python is the third SDK to stamp MessagePack, so its records are
-    /// separated from Ruby's and Node's by the language byte alone. Both
-    /// directions are pinned: a Python record refuses at another msgpack SDK,
-    /// and a Ruby record refuses at Python.
-    #[test]
-    fn a_python_msgpack_record_is_refused_by_another_msgpack_sdk() {
-        let python = HeaderTemplate {
-            sdk_lang: SDK_LANG_PYTHON,
-            sdk_version: 1,
-            schema_version: 1,
-            format_id: FORMAT_ID_MSGPACK,
-        };
-        let stamped = decode_header(&python.stamp(b"body")).unwrap();
-        assert_eq!(
-            resolve_record(&stamped, &python, 1).unwrap(),
-            (RecordKind::Change, SchemaDecision::Decode)
-        );
-
-        let ruby = HeaderTemplate {
-            sdk_lang: SDK_LANG_RUBY,
-            ..python
-        };
-        assert!(matches!(
-            resolve_record(&stamped, &ruby, 1).unwrap_err(),
-            RestoreError::LangMismatch {
-                expected: SDK_LANG_RUBY,
-                found: SDK_LANG_PYTHON,
-            }
-        ));
-
-        let ruby_record = decode_header(&ruby.stamp(b"body")).unwrap();
-        assert!(matches!(
-            resolve_record(&ruby_record, &python, 1).unwrap_err(),
-            RestoreError::LangMismatch {
-                expected: SDK_LANG_PYTHON,
-                found: SDK_LANG_RUBY,
-            }
-        ));
-        assert!(matches!(
-            resolve_state(&ruby_record, &python, 1).unwrap_err(),
-            RestoreError::LangMismatch { .. }
-        ));
-    }
-
-    /// A Rust runner reconnecting to an entity a Python runner wrote must
-    /// refuse on the language byte rather than hand postcard a MessagePack
-    /// body.
-    #[test]
-    fn a_rust_sdk_refuses_a_python_written_entity() {
-        let python = HeaderTemplate {
-            sdk_lang: SDK_LANG_PYTHON,
-            sdk_version: 1,
-            schema_version: 1,
-            format_id: FORMAT_ID_MSGPACK,
-        };
-        let stamped = decode_header(&python.stamp(b"body")).unwrap();
-        assert!(matches!(
-            resolve_record(&stamped, &HeaderTemplate::new(1, 1), 1).unwrap_err(),
-            RestoreError::LangMismatch {
-                expected: SDK_LANG_RUST,
-                found: SDK_LANG_PYTHON,
-            }
-        ));
+        }
     }
 
     #[test]
@@ -666,8 +549,7 @@ mod tests {
         }
     }
 
-    /// A snapshot resolves through the same table as a change record — the
-    /// gap that let a bumped version restore transposed state.
+    /// A snapshot resolves through the same table as a change record.
     #[test]
     fn a_snapshot_header_resolves_like_a_change_record() {
         let v1 = HeaderTemplate::new(1, 1);

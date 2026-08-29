@@ -1,29 +1,11 @@
-//! Sender-side credit window for the runner → controller state stream.
-//!
-//! The controller offers a byte window via the `CreditWindowInit` control
-//! command; [`arm`] adopts it and the ack rides back as the command's
-//! `CommandResponse`. From then on every `entity_state_change` frame
-//! [`acquire`]s its wire size before the sink write, and `CreditGrant`
-//! frames [`grant`] bytes back as the controller fsyncs. An exhausted
-//! window parks the sending thread (the flusher or a dispatch worker mid
-//! flush-before-emit) — park, never drop.
-//!
-//! Guardrails (2026-06-10 mailbox wait-list lesson):
-//!  * the park lives in the data send path only; `arm`/`grant` run on the
-//!    control coordinator and never block, so heartbeats and grants keep
-//!    flowing while senders are parked;
-//!  * the park is a workflow `Condvar` wait loop (50 ms recheck), so a lost
-//!    grant degrades to a retry loop with warnings, never a silent freeze;
-//!  * [`CREDIT_PARKED`] advances on every wait iteration, so a credit-parked
-//!    runner classifies as fed-but-parked in the liveness self-report.
-//!
-//! A frame larger than the whole window is sent once the window is fully
-//! replenished (single-frame overshoot); the controller mirrors this by
-//! accepting any frame arriving on an empty un-fsynced buffer.
-//!
-//! Production uses one process-global window (module-level fns); the
-//! [`CreditWindow`] type itself is instance-based so tests never touch the
-//! global that live send paths flow through.
+//! Sender-side credit window for the runner → controller state stream: the
+//! controller offers bytes (`CreditWindowInit`), every record [`acquire`]s
+//! its size before the sink write, and `CreditGrant` [`grant`]s bytes back
+//! as the controller fsyncs. The invariant: an exhausted window parks the
+//! sending thread and never drops — a bounded wait re-checked every 50 ms,
+//! counted on [`CREDIT_PARKED`] so a parked runner reads as parked, not
+//! wedged — while `arm`/`grant` run on the coordinator and never block. A
+//! frame larger than the whole window is sent once it is fully replenished.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
@@ -32,9 +14,8 @@ use std::time::{Duration, Instant};
 const PARK_TIMEOUT: Duration = Duration::from_millis(50);
 const WARN_AFTER: Duration = Duration::from_secs(5);
 
-/// Process-global count of credit-park wait iterations. Shipped in every
-/// `data_heartbeat` frame's metadata; advancing while `dispatches` is frozen
-/// means the runner is parked on credit, not wedged.
+/// Credit-park wait iterations, process-wide; on the heartbeat, where
+/// advancing beside a frozen `dispatches` means parked, not wedged.
 pub static CREDIT_PARKED: AtomicU64 = AtomicU64::new(0);
 
 pub fn credit_parked() -> u64 {
@@ -43,8 +24,7 @@ pub fn credit_parked() -> u64 {
 
 #[derive(Default)]
 struct WindowState {
-    /// Opaque credit-session id from the last adopted `CreditWindowInit`.
-    /// `None` = legacy session (no credit accounting).
+    /// The adopted credit session; `None` means no credit accounting.
     session: Option<String>,
     window_bytes: u64,
     available: i64,
@@ -69,8 +49,7 @@ impl CreditWindow {
         }
     }
 
-    /// Adopt a controller-offered window, replacing any previous session.
-    /// Runs on the control coordinator; never blocks.
+    /// Adopt an offered window, replacing any session. Never blocks.
     pub fn arm(&self, session: String, window_bytes: u64) {
         let mut st = self.state.lock().expect("credit window mutex poisoned");
         tracing::info!(
@@ -86,8 +65,8 @@ impl CreditWindow {
         self.cond.notify_all();
     }
 
-    /// Drop the current credit session (reconnect / new `ConnectSocket`).
-    /// Parked senders wake and proceed un-metered until the next `arm`.
+    /// Drop the session; parked senders proceed un-metered until the next
+    /// `arm`.
     pub fn disarm(&self) {
         let mut st = self.state.lock().expect("credit window mutex poisoned");
         if st.session.is_some() {
@@ -98,9 +77,8 @@ impl CreditWindow {
         self.cond.notify_all();
     }
 
-    /// Apply a `CreditGrant`. A grant whose session does not match the
-    /// current one is stale (minted for a pre-reconnect session) and is
-    /// discarded. Runs on the control coordinator; never blocks.
+    /// Apply a `CreditGrant`; one for another session is stale and dropped.
+    /// Never blocks.
     pub fn grant(&self, session: &str, bytes: u64) {
         let mut st = self.state.lock().expect("credit window mutex poisoned");
         match st.session.as_deref() {
@@ -122,10 +100,8 @@ impl CreditWindow {
         }
     }
 
-    /// Debit `frame_len` bytes from the window, parking the calling thread
-    /// until enough credit is available. No-op (immediate return) for a
-    /// legacy session. Must never be called from the control coordinator
-    /// thread.
+    /// Debit `frame_len`, parking until enough credit is available. Never
+    /// from the coordinator thread.
     pub fn acquire(&self, frame_len: usize) {
         let need = frame_len as i64;
         let mut st = self.state.lock().expect("credit window mutex poisoned");
@@ -172,7 +148,6 @@ impl CreditWindow {
         }
     }
 
-    /// Current credit-session id, if armed. Test/diagnostic surface.
     pub fn current_session(&self) -> Option<String> {
         self.state
             .lock()
@@ -181,7 +156,6 @@ impl CreditWindow {
             .clone()
     }
 
-    /// Currently available bytes. Test/diagnostic surface.
     pub fn available_bytes(&self) -> i64 {
         self.state
             .lock()
@@ -192,7 +166,6 @@ impl CreditWindow {
 
 // ---- process-global window (production send path) --------------------------
 
-/// The one window the live send path flows through.
 pub fn global() -> &'static CreditWindow {
     static WINDOW: OnceLock<CreditWindow> = OnceLock::new();
     WINDOW.get_or_init(CreditWindow::new)
