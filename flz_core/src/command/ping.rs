@@ -1,6 +1,6 @@
 use prost::Message;
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::pb::{Ping, PingResponse};
 use crate::runner::RunnerNode;
 
@@ -14,16 +14,14 @@ use crate::runner::RunnerNode;
 /// `nonce` so the caller can correlate replies if multiple pings are in
 /// flight on the same channel.
 impl CommandAction for Ping {
-    fn handle(
-        &self,
-        _runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         let response = PingResponse {
             nonce: self.nonce.clone(),
         };
 
-        ("ping".to_string(), response.encode_to_vec())
+        Reply {
+            payload_id: "ping",
+            bytes: response.encode_to_vec(),
+        }
     }
 }

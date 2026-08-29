@@ -20,11 +20,11 @@ pub enum FlezhaStream {
 }
 
 impl FlezhaStream {
-    pub fn try_clone(&self) -> io::Result<FlezhaStream> {
+    pub fn clone_handle(&self) -> io::Result<FlezhaStream> {
         match self {
             #[cfg(unix)]
             FlezhaStream::Unix(stream) => Ok(FlezhaStream::Unix(stream.try_clone()?)),
-            FlezhaStream::Quic(stream) => Ok(FlezhaStream::Quic(stream.try_clone())),
+            FlezhaStream::Quic(stream) => Ok(FlezhaStream::Quic(stream.clone_handle())),
         }
     }
 

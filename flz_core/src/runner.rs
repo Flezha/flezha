@@ -6,7 +6,7 @@ use crossbeam::channel::Sender;
 use crate::operative::instance::StreamInstance;
 
 /// Process-global handle to the coordinator's message channel, installed
-/// once by `fast::start`. Lets components outside the coordinator (e.g.
+/// once by `coordinator::start`. Lets components outside the coordinator (e.g.
 /// the entity-state sink on a broken-pipe flood) request a control
 /// reconnect without threading the `Sender` through every layer.
 static RECONNECT_TRIGGER: OnceLock<Mutex<Sender<RunnerMessage>>> = OnceLock::new();
@@ -186,4 +186,5 @@ pub enum ClientResponseMessage {
     RemoveFactoryResult(Result<(), usize>),
 }
 
-pub use crate::fast::{start, RunnerNode};
+pub use crate::coordinator::{live_stream_instance, start, RunnerNode};
+pub use crate::routing::OperativeDispatchHandle;

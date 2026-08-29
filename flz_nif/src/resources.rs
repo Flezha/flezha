@@ -59,7 +59,7 @@ impl Drop for StreamHandle {
         let _ = self.cmd_tx.send(ServerCommand::CloseStream {
             stream_id: self.stream_id,
         });
-        let _ = self.waker.wake();
+        self.waker.wake();
     }
 }
 

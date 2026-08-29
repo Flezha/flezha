@@ -8,23 +8,21 @@
 
 use prost::Message;
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::pb::{OperativeMessage, OperativeMessageResponse};
 use crate::runner::RunnerNode;
 
 const UNSUPPORTED_ERROR: &str = "operative does not support handle_message";
 
 impl CommandAction for OperativeMessage {
-    fn handle(
-        &self,
-        _runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         let response = OperativeMessageResponse {
             payload: Vec::new(),
             error: UNSUPPORTED_ERROR.to_string(),
         };
-        ("operative_message".to_string(), response.encode_to_vec())
+        Reply {
+            payload_id: "operative_message",
+            bytes: response.encode_to_vec(),
+        }
     }
 }

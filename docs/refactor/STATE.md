@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 05:44 (supervisor session 1)
+**Last updated**: 2026-08-29 08:25 (supervisor session 1, heartbeat)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -43,7 +43,7 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 - checkpoint after batch 7; then segment C (batches 8–11) with a fresh worker
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
   with the resume brief from the first unticked task
-- last seen: 2026-08-29 05:44 (spawned)
+- last seen: 2026-08-29 08:25 — tasks 27/48 ticked; working tree: 61 files changed, 2356 insertions(+), 8753 deletions(-)
 
 ## Awaiting the user's decision
 

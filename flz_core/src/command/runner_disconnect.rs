@@ -1,14 +1,9 @@
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::pb::RunnerDisconnect;
 use crate::runner::{RunnerNode, RunnerStatus};
 
 impl CommandAction for RunnerDisconnect {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         runner.set_status(RunnerStatus::Stopped);
         if self.terminal {
             // Acted on by the disconnect arm of `command::handle_command`,
@@ -17,6 +12,9 @@ impl CommandAction for RunnerDisconnect {
             crate::shutdown::request_terminal_exit(self.reason.clone());
         }
 
-        ("runner_disconnect".to_string(), Vec::new())
+        Reply {
+            payload_id: "runner_disconnect",
+            bytes: Vec::new(),
+        }
     }
 }

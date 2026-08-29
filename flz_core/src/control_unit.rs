@@ -16,7 +16,7 @@ use flz_transport::transport::liveness::{self, ControlLiveness, ReadAction};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
 use flz_transport::utility::last_good::LastGood;
-use flz_transport::utility::path_helper;
+use flz_transport::utility::{socket_dir, socket_probe};
 use prost::Message;
 use serde::Serialize;
 
@@ -25,7 +25,7 @@ use crate::runner::{ClientResponseMessage, RunnerMessage};
 use crate::util::nonce_suffix;
 
 /// The QUIC address this process last connected through — the UDS side keeps
-/// the same preference over its socket directory (`path_helper`).
+/// the same preference over its socket directory (`socket_dir`).
 static LAST_GOOD_QUIC: LastGood<SocketAddr> = LastGood::new();
 
 /// Reader-thread handle + write stream + optional QUIC client returned by
@@ -175,14 +175,14 @@ fn try_open_uds(
     itx: Option<Arc<Mutex<Sender<ClientResponseMessage>>>>,
     otx: Arc<Mutex<Sender<RunnerMessage>>>,
 ) -> Result<(thread::JoinHandle<()>, Arc<FlezhaStream>), String> {
-    let socket_path = path_helper::control_socket_path().map_err(|e| e.to_string())?;
+    let socket_path = socket_dir::control_socket_path().map_err(|e| e.to_string())?;
 
     let stream = UnixStream::connect(socket_path.clone())
         .map_err(|e| format!("Failed to connect to control socket {}: {}", socket_path, e))?;
 
     // The directory that answered is where this runner's data sockets are
     // opened, and where a reconnect returns to.
-    path_helper::note_connected(&socket_path);
+    socket_dir::note_connected(&socket_path);
 
     let stream_box = Arc::new(FlezhaStream::Unix(stream));
 
@@ -233,24 +233,7 @@ fn try_open_quic(
 /// to resolve — one failed candidate each, never a fatal error.
 fn quic_candidates() -> Result<(Vec<SocketAddr>, Vec<String>), String> {
     let entries = transport_config::quic_addresses()?;
-    let mut resolved: Vec<SocketAddr> = Vec::new();
-    let mut unresolved: Vec<String> = Vec::new();
-
-    for entry in &entries {
-        match entry.resolve() {
-            // A name may resolve to several addresses; the flattened set is
-            // what one attempt walks.
-            Ok(addrs) => {
-                for addr in addrs {
-                    if !resolved.contains(&addr) {
-                        resolved.push(addr);
-                    }
-                }
-            }
-            Err(e) => unresolved.push(format!("{}: {}", entry, e)),
-        }
-    }
-
+    let (resolved, unresolved) = transport_config::resolve_entries(&entries);
     if resolved.is_empty() {
         return Err(format!(
             "no {} entry resolved — {}",
@@ -258,14 +241,13 @@ fn quic_candidates() -> Result<(Vec<SocketAddr>, Vec<String>), String> {
             unresolved.join("; ")
         ));
     }
-
     Ok((LAST_GOOD_QUIC.prefer(resolved), unresolved))
 }
 
 /// The one diagnosis a runner emits before it starts retrying, rendered where
 /// every SDK and `flz runner check` render it.
 fn connect_diagnosis() -> String {
-    path_helper::connect_diagnosis(get_transport_type(), None, None)
+    socket_probe::connect_diagnosis(get_transport_type(), None, None)
 }
 
 fn sock_conn(
@@ -311,48 +293,57 @@ fn sock_conn(
                 .unwrap();
         }
 
-        loop {
-            match payloader::extract_payload(&*stream_clone.clone()) {
-                Ok((payload_id, message, metadata)) => {
-                    live.note_frame();
-                    // Re-arm the idle watchdog on every frame; a live channel
-                    // is therefore never flagged while traffic is flowing.
-                    let _ = stream_clone.set_read_timeout(Some(live.current_deadline()));
-                    otx.lock()
-                        .unwrap()
-                        .send(RunnerMessage::HandleCommandAction(
-                            payload_id, message, metadata,
-                        ))
-                        .unwrap();
-                }
-                Err(e) => match live.classify_error(&e) {
-                    ReadAction::Retry => continue,
-                    ReadAction::Reconnect => {
-                        let reason = classify_reconnect_reason(&e, live.acked());
-                        if !live.acked() {
-                            tracing::warn!(
-                                target: "flezha::transport",
-                                reason, idle_deadline = ?live.current_deadline(),
-                                "control channel: controller never acknowledged within ack window; reconnecting: {}",
-                                e
-                            );
-                        } else {
-                            tracing::warn!(
-                                target: "flezha::transport",
-                                reason, kind = ?e.kind(),
-                                "control channel went silent / disconnected; reconnecting: {}",
-                                e
-                            );
-                        }
-                        let _ = otx.lock().unwrap().send(RunnerMessage::Reconnect(reason));
-                        break;
-                    }
-                },
-            }
-        }
+        read_loop(&stream_clone, &otx, &mut live);
     });
 
     (handle, stream_box)
+}
+
+/// Feed every control frame to the coordinator until the channel fails, then
+/// ask for a reconnect with the classified reason. The idle watchdog re-arms
+/// on every frame, so a live channel is never flagged while traffic flows.
+fn read_loop(
+    stream: &Arc<FlezhaStream>,
+    otx: &Arc<Mutex<Sender<RunnerMessage>>>,
+    live: &mut ControlLiveness,
+) {
+    loop {
+        match payloader::extract_payload(&**stream) {
+            Ok((payload_id, message, metadata)) => {
+                live.note_frame();
+                let _ = stream.set_read_timeout(Some(live.current_deadline()));
+                otx.lock()
+                    .unwrap()
+                    .send(RunnerMessage::HandleCommandAction(
+                        payload_id, message, metadata,
+                    ))
+                    .unwrap();
+            }
+            Err(e) => match live.classify_error(&e) {
+                ReadAction::Retry => continue,
+                ReadAction::Reconnect => {
+                    let reason = classify_reconnect_reason(&e, live.acked());
+                    if !live.acked() {
+                        tracing::warn!(
+                            target: "flezha::transport",
+                            reason, idle_deadline = ?live.current_deadline(),
+                            "control channel: controller never acknowledged within ack window; reconnecting: {}",
+                            e
+                        );
+                    } else {
+                        tracing::warn!(
+                            target: "flezha::transport",
+                            reason, kind = ?e.kind(),
+                            "control channel went silent / disconnected; reconnecting: {}",
+                            e
+                        );
+                    }
+                    let _ = otx.lock().unwrap().send(RunnerMessage::Reconnect(reason));
+                    return;
+                }
+            },
+        }
+    }
 }
 
 /// Build a control-channel keepalive ping frame: a bare `Ping` on the

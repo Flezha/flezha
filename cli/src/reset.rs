@@ -5,7 +5,8 @@ use std::process::{exit, Command, Stdio};
 use std::time::{Duration, Instant};
 use std::{env, fs};
 
-use flz_transport::utility::path_helper::{self, Diagnosis, Reach, Role};
+use flz_transport::utility::socket_dir::{self, Role};
+use flz_transport::utility::socket_probe::{diagnose, Diagnosis, Reach};
 
 use crate::utils::{app_data_root, get_flezha_command};
 
@@ -40,9 +41,7 @@ impl Source {
     fn covers(self, file_name: &OsStr) -> bool {
         match self {
             Source::AppData(_) => true,
-            Source::SocketLadder => file_name
-                .to_str()
-                .is_some_and(path_helper::is_flezha_socket),
+            Source::SocketLadder => file_name.to_str().is_some_and(socket_dir::is_flezha_socket),
         }
     }
 }
@@ -361,7 +360,7 @@ fn plan_socket_root() -> Root {
     // Resolve and probe in one step, the way the runner's pre-retry diagnosis
     // and `flz runner check` do — asked as the Controller, and never as two
     // calls that could name two directories.
-    let Diagnosis { dir, reach } = match path_helper::diagnose(Role::Controller, None) {
+    let Diagnosis { dir, reach } = match diagnose(Role::Controller, None) {
         Ok(diagnosis) => diagnosis,
         // Not knowing which directory holds the sockets is not an I/O error on
         // a path this command was asked to clear: report it and let the

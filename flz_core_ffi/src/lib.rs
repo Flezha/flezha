@@ -204,7 +204,7 @@ pub unsafe extern "C" fn flz_core_start(ctx: *mut FlzContext, namespace: *const 
     let (confirm_tx, confirm_rx) = crossbeam::channel::unbounded::<ClientResponseMessage>();
     let bridge = flz_core::shutdown::ShutdownBridge::new();
     flz_core::shutdown::register_bridge(Arc::clone(&bridge));
-    let _runner = flz_core::fast::start(
+    let _runner = flz_core::runner::start(
         namespace.to_string(),
         Arc::clone(&ctx.declared),
         (otx.clone(), orx),

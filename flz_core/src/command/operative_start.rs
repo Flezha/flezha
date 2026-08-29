@@ -1,18 +1,16 @@
+use std::collections::HashMap;
+
 use prost::Message;
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::operative::instance::KeyGroupRange;
+use crate::operative::topology::OperativeTopology;
 use crate::pb::{AddOperative, AddOperativeResponse};
 use crate::runner::RunnerNode;
 use crate::workflow::spec::WorkflowSpec;
 
 impl CommandAction for AddOperative {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
         let instance_id = self.operative_id.clone();
         let factory_id = self.factory_id.clone();
 
@@ -30,58 +28,15 @@ impl CommandAction for AddOperative {
         // the existing per-Entity state intact and prevents
         // duplicate-init crashes.
         if runner.has_operative(&instance_id) {
-            return (
-                "start_operative".to_string(),
-                metadata_response(kind, &factory_id),
-            );
+            return Reply {
+                payload_id: "start_operative",
+                bytes: metadata_response(kind, &factory_id),
+            };
         }
 
         match kind {
-            "workflow" => {
-                if !runner.start_workflow_resumable(
-                    factory_id.clone(),
-                    instance_id.clone(),
-                    self.init_values.clone(),
-                    self.resume_entity_count,
-                    self.inbox_tail_count,
-                    self.proc_journal.as_ref().map(Into::into),
-                ) {
-                    errors.push(format!(
-                        "WorkflowOperative class with factory_id {} is not registered",
-                        factory_id
-                    ));
-                }
-            }
-            "stream" => match partition_refusal(self, &factory_id) {
-                // A keyless class cannot be partitioned: each member would
-                // fold its own input slice into a private copy of "the one"
-                // state — N divergent partial truths, silently. Only the SDK
-                // can tell (key closures are compiled code, never on the
-                // wire), so the authoritative refusal is here, at the bind.
-                Some(refusal) => errors.push(refusal),
-                None => match runner.start_operative(
-                    factory_id.clone(),
-                    instance_id.clone(),
-                    self.key_group_range(),
-                ) {
-                    Some(instance) => {
-                        if !self.init_values.is_empty() {
-                            if let Err(e) = crate::command::entity_state::apply_init_values(
-                                &instance,
-                                &self.init_values,
-                            ) {
-                                errors.push(e);
-                            }
-                        }
-                    }
-                    None => {
-                        errors.push(format!(
-                            "StreamOperative class with factory_id {} is not registered",
-                            factory_id
-                        ));
-                    }
-                },
-            },
+            "workflow" => self.start_workflow(runner, &factory_id, &instance_id, errors),
+            "stream" => self.start_stream(runner, &factory_id, &instance_id, errors),
             other => {
                 errors.push(format!(
                     "unknown compute-unit kind '{}' for unit {}",
@@ -90,14 +45,77 @@ impl CommandAction for AddOperative {
             }
         }
 
-        (
-            "start_operative".to_string(),
-            metadata_response(kind, &factory_id),
-        )
+        Reply {
+            payload_id: "start_operative",
+            bytes: metadata_response(kind, &factory_id),
+        }
     }
 }
 
 impl AddOperative {
+    /// Bind a workflow operative, resuming from its journal when it carries one.
+    fn start_workflow(
+        &self,
+        runner: &mut RunnerNode,
+        factory_id: &str,
+        instance_id: &str,
+        errors: &mut Vec<String>,
+    ) {
+        if !runner.start_workflow_resumable(
+            factory_id.to_string(),
+            instance_id.to_string(),
+            self.init_values.clone(),
+            self.resume_entity_count,
+            self.inbox_tail_count,
+            self.proc_journal.as_ref().map(Into::into),
+        ) {
+            errors.push(format!(
+                "WorkflowOperative class with factory_id {} is not registered",
+                factory_id
+            ));
+        }
+    }
+
+    /// Bind a stream operative and seed it from `init_values`. A keyless class
+    /// cannot be partitioned: each member would fold its own input slice into
+    /// a private copy of "the one" state — N divergent partial truths,
+    /// silently. Only the SDK can tell (key closures are compiled code, never
+    /// on the wire), so the authoritative refusal is here, at the bind.
+    fn start_stream(
+        &self,
+        runner: &mut RunnerNode,
+        factory_id: &str,
+        instance_id: &str,
+        errors: &mut Vec<String>,
+    ) {
+        if let Some(refusal) = partition_refusal(self, factory_id) {
+            errors.push(refusal);
+            return;
+        }
+        match runner.start_operative(
+            factory_id.to_string(),
+            instance_id.to_string(),
+            self.key_group_range(),
+        ) {
+            Some(instance) => {
+                if !self.init_values.is_empty() {
+                    if let Err(e) = crate::command::entity_state::apply_init_values(
+                        &instance,
+                        &self.init_values,
+                    ) {
+                        errors.push(e);
+                    }
+                }
+            }
+            None => {
+                errors.push(format!(
+                    "StreamOperative class with factory_id {} is not registered",
+                    factory_id
+                ));
+            }
+        }
+    }
+
     /// The member's owned key-group range. `partition_count < 2` is every
     /// pre-partition bind and every `--partitions 1` start; it reads as the
     /// whole space with the dispatch guard inert.
@@ -155,96 +173,44 @@ fn partition_refusal(command: &AddOperative, factory_id: &str) -> Option<String>
 /// bytes when nothing is declared (the default), keeping the response
 /// byte-identical to pre-tier builds.
 fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
-    use crate::operative::topology::BeyondWindowPolicy;
-
     let mut metadata = std::collections::HashMap::new();
-
-    // Every stream-only declaration reads the same topology; resolve it once.
-    // `None` for a workflow class, or one that never registered.
-    let stream = match kind {
-        "workflow" => None,
-        _ => crate::operative::registry::get_class(factory_id),
-    };
-
-    let effectively_once = match kind {
-        "workflow" => crate::workflow::registry::get_class(factory_id)
-            .and_then(|spec| spec.topology.as_ref().map(|t| t.effectively_once))
-            .unwrap_or(false),
-        _ => stream.as_ref().is_some_and(|t| t.effectively_once),
-    };
-    if effectively_once {
-        metadata.insert("effectively_once".to_string(), "true".to_string());
-    }
-
-    // Synchronous remote durability (`remote-durability-tier`): the controller
-    // withholds the commit-barrier ack until the barrier is on the durability
-    // backend, so the class must say so before the first barrier arrives.
-    // Workflow-only — `register_host_class` refuses it on a stream class.
-    if kind == "workflow"
-        && crate::workflow::registry::get_class(factory_id).is_some_and(|spec| spec.sync_durability)
-    {
-        metadata.insert("durability".to_string(), "sync_remote".to_string());
-    }
-
-    if let Some(topology) = &stream {
-        // Partitionability. Declared only when the answer is `false` — that
-        // is the refusable fact, and saying nothing otherwise keeps a keyed
-        // class's response byte-identical. With it recorded, a later
-        // `--partitions N` start of this class is refused at the controller
-        // before a runner is touched.
-        if !has_keyed_entry_procedure(topology) {
-            metadata.insert("keyed".to_string(), "false".to_string());
-        }
-
-        // Late-input correction. The controller owns the two prerequisites the
-        // SDK cannot see — the input-log hold window and the snapshot age-floor
-        // must both cover this window, or the past it promises to repair is
-        // already gone — so it needs the window before it binds the operative.
-        if let Some(policy) = topology.correction {
-            metadata.insert(
-                "correction_window_ms".to_string(),
-                policy.window_ms.to_string(),
-            );
-            metadata.insert(
-                "beyond_window_policy".to_string(),
-                match policy.beyond_window {
-                    BeyondWindowPolicy::ProcessAsArrival => "process_as_arrival",
-                    BeyondWindowPolicy::Drop => "drop",
-                }
-                .to_string(),
-            );
-        }
-
-        // Checkpoint ack-granularity. An Entity that only acknowledges at a
-        // checkpoint holds its input-log watermark still for the whole interval
-        // — the controller's silence-based liveness detectors have to read that
-        // as the steady state it is, not as a stall.
-        if topology.ack_granularity.is_checkpoint() {
-            metadata.insert("ack_granularity".to_string(), "checkpoint".to_string());
-        }
-
-        // The per-Entity WAL size compaction trigger. The controller resolves
-        // it per operative_class, so ship the most conservative (smallest)
-        // declared threshold across this operative's procedures — only when it
-        // differs from the shared default, keeping an unchanged class's reply
-        // byte-identical.
-        if let Some(min_bytes) = topology
-            .procedures
-            .iter()
-            .map(|proc| proc.compact_after_bytes)
-            .min()
-        {
-            if min_bytes != crate::persistence::DEFAULT_COMPACT_AFTER_BYTES {
-                metadata.insert("compact_after_bytes".to_string(), min_bytes.to_string());
+    match kind {
+        "workflow" => workflow_metadata(factory_id, &mut metadata),
+        // A stream class that never registered declares nothing.
+        _ => {
+            if let Some(topology) = crate::operative::registry::get_class(factory_id) {
+                stream_metadata(&topology, &mut metadata);
             }
         }
     }
+    if metadata.is_empty() {
+        return Vec::new();
+    }
+    AddOperativeResponse { metadata }.encode_to_vec()
+}
 
-    // The tree positions whose procedure declares `compensate`. A rewind can
-    // only unwind a procedure whose plugin output is semantically undoable, and
-    // the controller refuses one that is not — so it needs this before it wakes
-    // the instance (workflow-loop-rewind D5).
-    if let Some(procs) = declared_procs(kind, factory_id, |spec, node| {
+/// What a workflow class declares: the tier, synchronous remote durability
+/// (the controller withholds the commit-barrier ack until the barrier is on
+/// the durability backend, so the class must say so before the first barrier
+/// arrives — workflow-only, `register_host_class` refuses it on a stream
+/// class), the compensable tree positions (a rewind can only unwind a
+/// procedure whose plugin output is semantically undoable, and the controller
+/// refuses one that is not before it wakes the instance) and the leaf
+/// positions (the operative is DONE when all of them have committed, which
+/// the controller derives from the journal alone).
+fn workflow_metadata(factory_id: &str, metadata: &mut HashMap<String, String>) {
+    let spec = crate::workflow::registry::get_class(factory_id);
+    if spec
+        .as_ref()
+        .and_then(|spec| spec.topology.as_ref().map(|t| t.effectively_once))
+        .unwrap_or(false)
+    {
+        metadata.insert("effectively_once".to_string(), "true".to_string());
+    }
+    if spec.as_ref().is_some_and(|spec| spec.sync_durability) {
+        metadata.insert("durability".to_string(), "sync_remote".to_string());
+    }
+    if let Some(procs) = declared_procs("workflow", factory_id, |spec, node| {
         spec.topology
             .as_ref()
             .and_then(|t| t.procedure(spec.dag.order[node]))
@@ -252,20 +218,61 @@ fn metadata_response(kind: &str, factory_id: &str) -> Vec<u8> {
     }) {
         metadata.insert("compensable_procs".to_string(), procs);
     }
-
-    // The tree's leaf positions. The operative is DONE when all of them have
-    // committed, and the controller derives that from the journal alone —
-    // which needs the leaf set (workflow-branching D4).
-    if let Some(procs) = declared_procs(kind, factory_id, |spec, node| {
+    if let Some(procs) = declared_procs("workflow", factory_id, |spec, node| {
         spec.dag.children[node].is_empty()
     }) {
         metadata.insert("leaf_procs".to_string(), procs);
     }
+}
 
-    if metadata.is_empty() {
-        return Vec::new();
+/// What a stream class declares: the tier; partitionability, declared only
+/// when the answer is `false` (the refusable fact — a later `--partitions N`
+/// start of this class is then refused at the controller before a runner is
+/// touched, and saying nothing otherwise keeps a keyed class's response
+/// byte-identical); the late-input correction window (the controller owns the
+/// two prerequisites the SDK cannot see — the input-log hold window and the
+/// snapshot age-floor must both cover it — so it needs the window before it
+/// binds); checkpoint ack-granularity (an Entity that only acknowledges at a
+/// checkpoint holds its watermark still for the whole interval, which the
+/// silence-based liveness detectors must read as steady state); and the most
+/// conservative compaction threshold across the procedures, only when it
+/// differs from the shared default.
+fn stream_metadata(topology: &OperativeTopology, metadata: &mut HashMap<String, String>) {
+    use crate::operative::topology::BeyondWindowPolicy;
+
+    if topology.effectively_once {
+        metadata.insert("effectively_once".to_string(), "true".to_string());
     }
-    AddOperativeResponse { metadata }.encode_to_vec()
+    if !has_keyed_entry_procedure(topology) {
+        metadata.insert("keyed".to_string(), "false".to_string());
+    }
+    if let Some(policy) = topology.correction {
+        metadata.insert(
+            "correction_window_ms".to_string(),
+            policy.window_ms.to_string(),
+        );
+        metadata.insert(
+            "beyond_window_policy".to_string(),
+            match policy.beyond_window {
+                BeyondWindowPolicy::ProcessAsArrival => "process_as_arrival",
+                BeyondWindowPolicy::Drop => "drop",
+            }
+            .to_string(),
+        );
+    }
+    if topology.ack_granularity.is_checkpoint() {
+        metadata.insert("ack_granularity".to_string(), "checkpoint".to_string());
+    }
+    if let Some(min_bytes) = topology
+        .procedures
+        .iter()
+        .map(|proc| proc.compact_after_bytes)
+        .min()
+    {
+        if min_bytes != crate::operative::topology::DEFAULT_COMPACT_AFTER_BYTES {
+            metadata.insert("compact_after_bytes".to_string(), min_bytes.to_string());
+        }
+    }
 }
 
 /// Comma-separated tree positions of the procedures `select` picks out, or

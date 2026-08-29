@@ -8,7 +8,7 @@
 //! window parks the sending thread (the flusher or a dispatch worker mid
 //! flush-before-emit) — park, never drop.
 //!
-//! Guardrails (2026-06-10 BlockParker lesson):
+//! Guardrails (2026-06-10 mailbox wait-list lesson):
 //!  * the park lives in the data send path only; `arm`/`grant` run on the
 //!    control coordinator and never block, so heartbeats and grants keep
 //!    flowing while senders are parked;

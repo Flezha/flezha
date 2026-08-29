@@ -29,13 +29,22 @@ mod runner_disconnect;
 mod streams_connect;
 mod workflow_stop;
 
+/// One command's answer: the bytes the `CommandResponse` carries as
+/// `raw_data`, under the payload id the handler names itself by. The reply
+/// frame is stamped with the REQUEST's payload id; `payload_id` is the
+/// handler's own name for what it answered.
+pub struct Reply {
+    pub payload_id: &'static str,
+    pub bytes: Vec<u8>,
+}
+
 pub trait CommandAction {
     fn handle(
         &self,
         runner: &mut RunnerNode,
         command_struct: &str,
         errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>);
+    ) -> Reply;
 
     /// Reply payload plus the metadata to stamp on its frame. Overridden only
     /// by commands whose answer carries more than bytes — `EntityState` stamps
@@ -47,9 +56,8 @@ pub trait CommandAction {
         runner: &mut RunnerNode,
         command_struct: &str,
         errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>, HashMap<String, String>) {
-        let (payload_id, raw_data) = self.handle(runner, command_struct, errors);
-        (payload_id, raw_data, HashMap::new())
+    ) -> (Reply, HashMap<String, String>) {
+        (self.handle(runner, command_struct, errors), HashMap::new())
     }
 }
 
@@ -109,97 +117,78 @@ pub fn get_handler(_payload_id: &str, message: &[u8]) -> Result<FrameOutcome, Co
         })?;
 
     let reference_id = wrapper_command.reference_id;
-
-    let command_handler = match wrapper_command.command {
-        Some(Command::AssignRunnerId(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::ConnectSocket(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::AddOperative(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::RemOperative(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::MigrationSerialization(proto_ch)) => {
-            CommandActionType::Regular(Box::new(proto_ch))
-        }
-        Some(Command::MigrationDeserialization(proto_ch)) => {
-            CommandActionType::Regular(Box::new(proto_ch))
-        }
-        Some(Command::EntityState(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::RunnerDisconnect(proto_ch)) => {
-            CommandActionType::RunnerDisconnect(Box::new(proto_ch))
-        }
-        Some(Command::OperativeMessage(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::EntityApplyState(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::RunnerShutdownNotification(_)) => CommandActionType::NotificationIgnore,
-        Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
-        Some(Command::RestoreInitState(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        // SDK is the SENDER for the response variants — receiving them
-        // is a protocol bug. Drop the message, log it like the other
-        // direction-mistake (`RunnerShutdownNotification`).
-        Some(Command::RestoreInitStateResponse(_)) => CommandActionType::NotificationIgnore,
-        Some(Command::CompactEntity(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::CompactEntityResponse(_)) => CommandActionType::NotificationIgnore,
-        Some(Command::EntityMailboxStatus(proto_ch)) => {
-            CommandActionType::Regular(Box::new(proto_ch))
-        }
-        Some(Command::Ping(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        // Retired reconnect machinery. The SDK no longer sends
-        // `RunnerReconnected` (it re-presents its stable id every connect) and
-        // the controller no longer mints-and-reassigns ids (reconnect is a
-        // controller-side binding swap), so neither is handled — drop and log.
-        Some(Command::RunnerReconnected(_)) => CommandActionType::NotificationIgnore,
-        Some(Command::ReassignRunnerId(_)) => CommandActionType::NotificationIgnore,
-        // SDK is the SENDER for WorkflowCompleted — receiving it is a protocol
-        // bug. Drop and log, like `RunnerShutdownNotification`.
-        Some(Command::WorkflowCompleted(_)) => CommandActionType::NotificationIgnore,
-        // Cooperative external stop for a workflow operative (Controller -> SDK):
-        // trip the driver's cancellation token via the WorkflowStop handler.
-        Some(Command::WorkflowStop(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        // Credit-grant flow control (Controller -> SDK): the init arms the
-        // sender window and acks in its CommandResponse; grants replenish it.
-        Some(Command::CreditWindowInit(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        Some(Command::CreditGrant(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        // SDK is the SENDER for the ack (as CommandResponse raw_data) —
-        // receiving it as a request is a protocol bug. Drop and log.
-        Some(Command::CreditWindowAck(_)) => CommandActionType::NotificationIgnore,
-        // Dead-letter park durability ack (Controller -> SDK): wakes the
-        // dispatch thread parked in `entity::park::park_blocking`.
-        Some(Command::ParkPayloadAck(proto_ch)) => CommandActionType::Regular(Box::new(proto_ch)),
-        // SDK is the SENDER for ProcCommit / IterCommit / IterPark /
-        // UpdateFactories — receiving one is a protocol bug.
-        Some(Command::ProcCommit(_)) => CommandActionType::NotificationIgnore,
-        Some(Command::IterCommit(_)) => CommandActionType::NotificationIgnore,
-        Some(Command::IterPark(_)) => CommandActionType::NotificationIgnore,
-        Some(Command::UpdateFactories(_)) => CommandActionType::NotificationIgnore,
-        // SDK is the SENDER for the spawn request — receiving one is a
-        // protocol bug.
-        Some(Command::SpawnWorkflowRequest(_)) => CommandActionType::NotificationIgnore,
-        // Procedure-requested spawn resolved (Controller -> SDK): wakes the
-        // requester's `SpawnHandle` with the outcome.
-        Some(Command::SpawnWorkflowResponse(reply)) => {
-            CommandActionType::AckSignal(if reply.error.is_empty() {
-                Ok(reply.outcome)
-            } else {
-                Err(reply.error)
-            })
-        }
-        // Proc-journal durability replies (Controller -> SDK): wake the workflow
-        // driver blocked at the proc-commit / iteration-commit barrier; a non-empty
-        // error terminates the run abnormally.
-        Some(Command::ProcCommitResponse(reply)) => {
-            CommandActionType::AckSignal(ack_result(reply.error))
-        }
-        Some(Command::IterCommitResponse(reply)) => {
-            CommandActionType::AckSignal(ack_result(reply.error))
-        }
-        None => return Err(CommandDecodeError::EmptyCommand),
-    };
-
+    let command_handler = classify(wrapper_command.command)?;
     Ok(FrameOutcome::Command(command_handler, reference_id))
 }
 
-/// A durability reply's `error` field as the waiter's ack result: empty ⇒ the
-/// journal entry is durable, non-empty ⇒ the run terminates abnormally.
-fn ack_result(error: String) -> crate::shutdown::AckResult {
+fn regular(handler: impl CommandAction + 'static) -> CommandActionType {
+    CommandActionType::Regular(Box::new(handler))
+}
+
+/// Which handler a decoded command takes. `WorkflowStop` trips a workflow
+/// driver's cancellation token; `CreditWindowInit` arms the sender window and
+/// acks in its `CommandResponse`, `CreditGrant` replenishes it;
+/// `ParkPayloadAck` wakes the dispatch thread parked in `park::park_blocking`.
+/// The variants the SDK SENDS (`RunnerShutdownNotification`, the
+/// `*Response`s it answers with, `WorkflowCompleted`, `ProcCommit` /
+/// `IterCommit` / `IterPark` / `UpdateFactories`, `SpawnWorkflowRequest`,
+/// `CreditWindowAck`) and the retired reconnect pair (`RunnerReconnected`,
+/// `ReassignRunnerId` — the SDK re-presents its stable id on every connect
+/// and the controller resolves a reconnect as a binding swap) are protocol
+/// mistakes on this side: dropped and logged. A controller reply to an
+/// SDK-initiated request wakes the waiter registered under its
+/// `reference_id`: a spawn resolves its requester's `SpawnHandle`, a
+/// durability reply the workflow driver blocked at its commit barrier.
+fn classify(command: Option<Command>) -> Result<CommandActionType, CommandDecodeError> {
+    Ok(match command {
+        Some(Command::AssignRunnerId(c)) => regular(c),
+        Some(Command::ConnectSocket(c)) => regular(c),
+        Some(Command::AddOperative(c)) => regular(c),
+        Some(Command::RemOperative(c)) => regular(c),
+        Some(Command::MigrationSerialization(c)) => regular(c),
+        Some(Command::MigrationDeserialization(c)) => regular(c),
+        Some(Command::EntityState(c)) => regular(c),
+        Some(Command::RunnerDisconnect(c)) => CommandActionType::RunnerDisconnect(Box::new(c)),
+        Some(Command::OperativeMessage(c)) => regular(c),
+        Some(Command::EntityApplyState(c)) => regular(c),
+        Some(Command::RestoreInitState(c)) => regular(c),
+        Some(Command::CompactEntity(c)) => regular(c),
+        Some(Command::EntityMailboxStatus(c)) => regular(c),
+        Some(Command::Ping(c)) => regular(c),
+        Some(Command::WorkflowStop(c)) => regular(c),
+        Some(Command::CreditWindowInit(c)) => regular(c),
+        Some(Command::CreditGrant(c)) => regular(c),
+        Some(Command::ParkPayloadAck(c)) => regular(c),
+        Some(Command::RunnerShutdownNotification(_))
+        | Some(Command::RestoreInitStateResponse(_))
+        | Some(Command::CompactEntityResponse(_))
+        | Some(Command::RunnerReconnected(_))
+        | Some(Command::ReassignRunnerId(_))
+        | Some(Command::WorkflowCompleted(_))
+        | Some(Command::CreditWindowAck(_))
+        | Some(Command::ProcCommit(_))
+        | Some(Command::IterCommit(_))
+        | Some(Command::IterPark(_))
+        | Some(Command::UpdateFactories(_))
+        | Some(Command::SpawnWorkflowRequest(_)) => CommandActionType::NotificationIgnore,
+        Some(Command::RunnerShutdownAck(_)) => CommandActionType::AckSignal(Ok(String::new())),
+        Some(Command::SpawnWorkflowResponse(reply)) => {
+            CommandActionType::AckSignal(ack_result(reply.outcome, reply.error))
+        }
+        Some(Command::ProcCommitResponse(crate::pb::ProcCommitResponse { error, .. }))
+        | Some(Command::IterCommitResponse(crate::pb::IterCommitResponse { error, .. })) => {
+            CommandActionType::AckSignal(ack_result(String::new(), error))
+        }
+        None => return Err(CommandDecodeError::EmptyCommand),
+    })
+}
+
+/// A reply's `error` field as the waiter's ack result: empty ⇒ `Ok(outcome)`
+/// (a durable journal entry, a spawn's outcome), non-empty ⇒ the error, which
+/// terminates a workflow run abnormally.
+fn ack_result(outcome: String, error: String) -> crate::shutdown::AckResult {
     if error.is_empty() {
-        Ok(String::new())
+        Ok(outcome)
     } else {
         Err(error)
     }
@@ -217,36 +206,8 @@ pub fn handle_command(
     if payload_id == flz_transport::transport::liveness::CONTROL_PING_PAYLOAD_ID {
         return;
     }
-
-    let outcome = match command::get_handler(payload_id, message) {
-        Ok(o) => o,
-        Err(CommandDecodeError::Malformed { stack }) => {
-            eprintln!(
-                "[flezha] control-channel frame failed to decode (stack={}); \
-                 dropping and waiting for the read loop to drive reconnect.",
-                stack
-            );
-            return;
-        }
-        Err(CommandDecodeError::EmptyCommand) => {
-            eprintln!(
-                "[flezha] control-channel frame had `command: None`; dropping. \
-                 The next frame on this connection will be processed normally."
-            );
-            return;
-        }
-    };
-
-    let (handler_type, reference_id) = match outcome {
-        FrameOutcome::PeerClosed => {
-            // The control-channel reader (`payloader::extract_payload`)
-            // is the canonical detector of EOF and emits
-            // `RunnerMessage::Reconnect` on its own io::Error path.
-            // Dropping this frame here is a defence-in-depth no-op in
-            // case a 0-byte payload ever flows in band.
-            return;
-        }
-        FrameOutcome::Command(handler, reference_id) => (handler, reference_id),
+    let Some((handler_type, reference_id)) = decode_frame(payload_id, message) else {
+        return;
     };
 
     match handler_type {
@@ -262,29 +223,7 @@ pub fn handle_command(
             if let Err(e) = (&*stream).write_all(&reply) {
                 eprintln!("[flezha] Failed to write disconnect response: {}", e);
             }
-
-            // FIN, not abort: shutting only the write half guarantees the
-            // response bytes are delivered BEFORE the peer observes the
-            // close. `Shutdown::Both` raced them — the controller could see
-            // an aborted read (losing the response) and then deadlock its
-            // disconnect call cycle on the missing ack. The read half drains
-            // to EOF when the controller closes its side.
-            // A terminal disconnect ships its state BEFORE the write half
-            // closes: the graceful shutdown's per-operative notifications ride
-            // this same control channel, and a closed write half would turn
-            // every one of them into a broken pipe.
-            let terminal = crate::shutdown::take_terminal_exit();
-            if terminal.is_some() {
-                crate::shutdown::run_active_graceful_shutdown();
-            }
-
-            let _ = stream.shutdown(Shutdown::Write);
-
-            // The ack and the final state are on the wire, so the process may
-            // now go. Nothing below this line runs.
-            if let Some(reason) = terminal {
-                crate::shutdown::exit_terminally(&reason);
-            }
+            finish_disconnect(stream);
         }
 
         CommandActionType::AckSignal(result) => {
@@ -304,6 +243,54 @@ pub fn handle_command(
     }
 }
 
+/// The handler a frame decodes to, or `None` for a frame that is dropped: a
+/// malformed one (the read loop drives the reconnect), a `command: None` (the
+/// next frame is processed normally), or a 0-byte payload — the reader
+/// (`payloader::extract_payload`) is the canonical EOF detector and emits
+/// `RunnerMessage::Reconnect` on its own io::Error path, so this is a
+/// defence-in-depth no-op in case one ever flows in band.
+fn decode_frame(payload_id: &str, message: &[u8]) -> Option<(CommandActionType, String)> {
+    match command::get_handler(payload_id, message) {
+        Ok(FrameOutcome::Command(handler, reference_id)) => Some((handler, reference_id)),
+        Ok(FrameOutcome::PeerClosed) => None,
+        Err(CommandDecodeError::Malformed { stack }) => {
+            eprintln!(
+                "[flezha] control-channel frame failed to decode (stack={}); \
+                 dropping and waiting for the read loop to drive reconnect.",
+                stack
+            );
+            None
+        }
+        Err(CommandDecodeError::EmptyCommand) => {
+            eprintln!(
+                "[flezha] control-channel frame had `command: None`; dropping. \
+                 The next frame on this connection will be processed normally."
+            );
+            None
+        }
+    }
+}
+
+/// After the disconnect ack is written: FIN, not abort — shutting only the
+/// write half guarantees the response bytes are delivered BEFORE the peer
+/// observes the close (`Shutdown::Both` raced them, and the controller could
+/// deadlock its disconnect call on the missing ack); the read half drains to
+/// EOF when the controller closes its side. A terminal disconnect ships its
+/// state BEFORE the write half closes, because the graceful shutdown's
+/// per-operative notifications ride this same control channel. Once the ack
+/// and the final state are on the wire the process may go; nothing runs after
+/// a terminal exit.
+fn finish_disconnect(stream: &FlezhaStream) {
+    let terminal = crate::shutdown::take_terminal_exit();
+    if terminal.is_some() {
+        crate::shutdown::run_active_graceful_shutdown();
+    }
+    let _ = stream.shutdown(Shutdown::Write);
+    if let Some(reason) = terminal {
+        crate::shutdown::exit_terminally(&reason);
+    }
+}
+
 fn exec_control(
     runner: &mut RunnerNode,
     handler: Box<dyn CommandAction>,
@@ -315,7 +302,7 @@ fn exec_control(
     let mut status = String::from("success");
 
     let message_str = std::str::from_utf8(message).unwrap_or("");
-    let (_payload_id, raw_data, metadata) = handler.reply(runner, message_str, &mut errors);
+    let (reply, metadata) = handler.reply(runner, message_str, &mut errors);
 
     if !errors.is_empty() {
         status = "error".to_string();
@@ -325,7 +312,7 @@ fn exec_control(
         reference_id,
         status,
         errors,
-        raw_data,
+        raw_data: reply.bytes,
     };
 
     let command_response_bytes = command_response.encode_to_vec();

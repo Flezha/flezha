@@ -6,17 +6,17 @@ use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use crossbeam::channel::{Receiver, Sender};
+use flz_transport::transport::quic::{expire_timer, flush_transmits, send_transmit};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token, Waker};
 use quinn_proto::{
-    ConnectionHandle, DatagramEvent, Dir, EndpointConfig, Event, IdleTimeout, ServerConfig,
-    StreamEvent, StreamId, Transmit,
+    ConnectionHandle, DatagramEvent, Dir, EndpointConfig, Event, ServerConfig, StreamEvent,
+    StreamId,
 };
-use rustler::{Encoder, LocalPid, OwnedEnv};
+use rustler::LocalPid;
 
-use crate::atoms;
-use crate::driver_msg::{send_closed_msg, send_connection_msg, send_data_msg, send_refused_msg};
-use crate::frame_buffer::{FrameBuffer, ParsedFrame};
+use crate::driver_msg::{send_closed_msg, send_connection_msg, send_refused_msg, send_stream_msg};
+use crate::frame_buffer::{FrameBuffer, Inbox};
 use crate::resources::StreamHandle;
 use crate::uds_driver::ServerCommand;
 
@@ -47,8 +47,7 @@ struct QuicStreamState {
     nif_stream_id: u64,
     owner: Arc<Mutex<LocalPid>>,
     frame_buffer: FrameBuffer,
-    active: bool,
-    passive_queue: Vec<ParsedFrame>,
+    inbox: Inbox,
     write_buffer: Vec<u8>,
     type_byte_state: TypeByteState,
 }
@@ -78,27 +77,38 @@ pub fn run_quic_driver(
     cmd_tx: Sender<ServerCommand>,
     ready_tx: Sender<io::Result<QuicDriverReady>>,
 ) {
-    match init_and_run(
-        bind_address,
-        server_config,
-        acceptor_pid,
-        cmd_rx,
-        cmd_tx,
-        ready_tx,
-    ) {
-        Ok(()) => {}
-        Err(e) => eprintln!("[flz_nif] QUIC driver fatal error: {}", e),
+    let outcome = bind_endpoint(bind_address, &ready_tx).and_then(|(poll, udp, waker)| {
+        QuicDriver {
+            acceptor_pid,
+            cmd_tx,
+            waker,
+            poll,
+            udp,
+            endpoint: quinn_proto::Endpoint::new(
+                Arc::new(EndpointConfig::default()),
+                Some(Arc::new(server_config)),
+                true,
+                None,
+            ),
+            connections: HashMap::new(),
+            nif_stream_map: HashMap::new(),
+            next_nif_stream_id: 1,
+            pending_data_streams: HashMap::new(),
+            transmit_buf: Vec::new(),
+        }
+        .run(cmd_rx)
+    });
+    if let Err(e) = outcome {
+        eprintln!("[flz_nif] QUIC driver fatal error: {}", e);
     }
 }
 
-fn init_and_run(
+/// Bind the UDP socket, register it with a fresh poll and hand the NIF its
+/// waker.
+fn bind_endpoint(
     bind_address: SocketAddr,
-    server_config: ServerConfig,
-    acceptor_pid: LocalPid,
-    cmd_rx: Receiver<ServerCommand>,
-    cmd_tx: Sender<ServerCommand>,
-    ready_tx: Sender<io::Result<QuicDriverReady>>,
-) -> io::Result<()> {
+    ready_tx: &Sender<io::Result<QuicDriverReady>>,
+) -> io::Result<(Poll, UdpSocket, Arc<Waker>)> {
     let std_udp = std::net::UdpSocket::bind(bind_address)?;
     std_udp.set_nonblocking(true)?;
     let mut udp = UdpSocket::from_std(std_udp);
@@ -112,56 +122,76 @@ fn init_and_run(
     let _ = ready_tx.send(Ok(QuicDriverReady {
         waker: Arc::clone(&waker),
     }));
-
-    driver_loop(
-        bind_address,
-        server_config,
-        acceptor_pid,
-        cmd_rx,
-        cmd_tx,
-        &waker,
-        poll,
-        udp,
-    )
+    Ok((poll, udp, waker))
 }
 
-// reason: each arg is part of the QUIC driver's required wiring (poll, sockets, channels, pid); splitting would invent arbitrary bag-of-state structs
-#[allow(clippy::too_many_arguments)]
-fn driver_loop(
-    _bind_address: SocketAddr,
-    server_config: ServerConfig,
+/// The QUIC server driver: the endpoint, every accepted connection and its
+/// streams, and the NIF-facing stream ids that address them.
+struct QuicDriver {
     acceptor_pid: LocalPid,
-    cmd_rx: Receiver<ServerCommand>,
     cmd_tx: Sender<ServerCommand>,
-    _waker: &Arc<Waker>,
-    mut poll: Poll,
+    waker: Arc<Waker>,
+    poll: Poll,
     udp: UdpSocket,
-) -> io::Result<()> {
-    let mut endpoint = quinn_proto::Endpoint::new(
-        Arc::new(EndpointConfig::default()),
-        Some(Arc::new(server_config)),
-        true,
-        None,
-    );
+    endpoint: quinn_proto::Endpoint,
+    connections: HashMap<ConnectionHandle, ConnectionState>,
+    /// Maps NIF stream_id → (ConnectionHandle, StreamId) for command dispatch.
+    nif_stream_map: HashMap<u64, (ConnectionHandle, StreamId)>,
+    next_nif_stream_id: u64,
+    /// Data streams pending type-byte identification, keyed by NIF stream_id.
+    pending_data_streams: HashMap<u64, rustler::ResourceArc<StreamHandle>>,
+    transmit_buf: Vec<u8>,
+}
 
-    let mut events = Events::with_capacity(256);
-    let mut connections: HashMap<ConnectionHandle, ConnectionState> = HashMap::new();
-    let mut udp_buf = vec![0u8; 65536];
-    let mut transmit_buf = Vec::new();
+impl QuicDriver {
+    fn run(mut self, cmd_rx: Receiver<ServerCommand>) -> io::Result<()> {
+        let mut events = Events::with_capacity(256);
+        let mut udp_buf = vec![0u8; 65536];
 
-    // Maps NIF stream_id → (ConnectionHandle, StreamId) for command dispatch.
-    let mut nif_stream_map: HashMap<u64, (ConnectionHandle, StreamId)> = HashMap::new();
-    let mut next_nif_stream_id: u64 = 1;
+        loop {
+            let timeout = self.poll_timeout();
+            let _ = self.poll.poll(&mut events, Some(timeout));
+            let now = Instant::now();
+            for conn_state in self.connections.values_mut() {
+                expire_timer(&mut conn_state.connection, now);
+            }
+            self.handle_datagrams(&mut udp_buf, now);
 
-    // Data streams pending type-byte identification (QUIC only).
-    // Keyed by NIF stream_id.
-    let mut pending_data_streams: HashMap<u64, rustler::ResourceArc<StreamHandle>> = HashMap::new();
+            // Pump endpoint events and poll connection events.
+            // Events are collected first to avoid borrow conflicts with
+            // drain_readable.
+            let conn_handles: Vec<ConnectionHandle> = self.connections.keys().copied().collect();
+            let mut lost_connections: Vec<ConnectionHandle> = Vec::new();
+            for ch in &conn_handles {
+                for event in self.pump_connection(*ch) {
+                    self.handle_stream_event(*ch, event, &mut lost_connections);
+                }
+            }
+            for ch in &lost_connections {
+                self.connections.remove(ch);
+            }
+            self.flush_all(&conn_handles);
 
-    loop {
-        // Compute poll timeout from all active connections.
+            while let Ok(cmd) = cmd_rx.try_recv() {
+                if self.handle_command(cmd) {
+                    return Ok(());
+                }
+            }
+
+            // Flush pending writes for all streams across all connections.
+            let conn_handles: Vec<ConnectionHandle> = self.connections.keys().copied().collect();
+            for ch in &conn_handles {
+                self.flush_stream_writes(*ch);
+            }
+            self.flush_all(&conn_handles);
+        }
+    }
+
+    /// How long to poll: until the nearest connection timer, 50 ms at most.
+    fn poll_timeout(&mut self) -> Duration {
         let now = Instant::now();
         let mut min_timeout = Duration::from_millis(50);
-        for conn_state in connections.values_mut() {
+        for conn_state in self.connections.values_mut() {
             if let Some(deadline) = conn_state.connection.poll_timeout() {
                 let remaining = deadline.saturating_duration_since(now);
                 if remaining < min_timeout {
@@ -169,542 +199,465 @@ fn driver_loop(
                 }
             }
         }
+        min_timeout
+    }
 
-        let _ = poll.poll(&mut events, Some(min_timeout));
-        let now = Instant::now();
-
-        // Handle timers for all connections.
-        for conn_state in connections.values_mut() {
-            if let Some(deadline) = conn_state.connection.poll_timeout() {
-                if now >= deadline {
-                    conn_state.connection.handle_timeout(now);
-                }
-            }
-        }
-
-        // Read incoming UDP datagrams.
-        loop {
-            match udp.recv_from(&mut udp_buf) {
-                Ok((n, remote)) => {
-                    let data = BytesMut::from(&udp_buf[..n]);
-                    let mut resp_buf = Vec::new();
-                    if let Some(event) =
-                        endpoint.handle(now, remote, None, None, data, &mut resp_buf)
-                    {
-                        match event {
-                            DatagramEvent::ConnectionEvent(ch, event) => {
-                                if let Some(conn_state) = connections.get_mut(&ch) {
-                                    conn_state.connection.handle_event(event);
-                                }
-                            }
-                            DatagramEvent::Response(transmit) => {
-                                let _ = send_transmit(&udp, &transmit, &resp_buf);
-                            }
-                            DatagramEvent::NewConnection(incoming) => {
-                                // New QUIC connection incoming.
-                                // Accept new QUIC connection via the endpoint.
-                                let mut accept_buf = Vec::new();
-                                match endpoint.accept(incoming, now, &mut accept_buf, None) {
-                                    Ok((ch, mut connection)) => {
-                                        // Connection accepted.
-                                        // Flush initial handshake packets.
-                                        let _ = flush_connection_transmits(
-                                            &mut connection,
-                                            &udp,
-                                            &mut transmit_buf,
-                                        );
-
-                                        connections.insert(
-                                            ch,
-                                            ConnectionState {
-                                                connection,
-                                                streams: HashMap::new(),
-                                                stream_count: 0,
-                                                control_nif_id: 0,
-                                            },
-                                        );
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[flz_nif] QUIC accept error: {:?}", e);
-                                    }
-                                }
-                            }
-                        }
+    /// Read every datagram the socket holds into the endpoint: a connection's
+    /// event to its connection, a stateless response back onto the wire, a
+    /// new connection accepted with its handshake packets flushed.
+    fn handle_datagrams(&mut self, udp_buf: &mut [u8], now: Instant) {
+        while let Ok((n, remote)) = self.udp.recv_from(udp_buf) {
+            let data = BytesMut::from(&udp_buf[..n]);
+            let mut resp_buf = Vec::new();
+            let Some(event) = self
+                .endpoint
+                .handle(now, remote, None, None, data, &mut resp_buf)
+            else {
+                continue;
+            };
+            match event {
+                DatagramEvent::ConnectionEvent(ch, event) => {
+                    if let Some(conn_state) = self.connections.get_mut(&ch) {
+                        conn_state.connection.handle_event(event);
                     }
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
-            }
-        }
-
-        // Pump endpoint events and poll connection events.
-        // We collect events first to avoid borrow conflicts with drain_readable.
-        let conn_handles: Vec<ConnectionHandle> = connections.keys().copied().collect();
-        let mut lost_connections: Vec<ConnectionHandle> = Vec::new();
-
-        for ch in &conn_handles {
-            let conn_state = match connections.get_mut(ch) {
-                Some(c) => c,
-                None => continue,
-            };
-
-            // Pump endpoint ↔ connection events.
-            while let Some(endpoint_event) = conn_state.connection.poll_endpoint_events() {
-                if let Some(conn_event) = endpoint.handle_event(*ch, endpoint_event) {
-                    conn_state.connection.handle_event(conn_event);
+                DatagramEvent::Response(transmit) => {
+                    let _ = send_transmit(&self.udp, &transmit, &resp_buf);
                 }
-            }
-
-            // Collect events to process (avoids borrow conflicts).
-            let mut conn_events: Vec<Event> = Vec::new();
-            while let Some(event) = conn_state.connection.poll() {
-                conn_events.push(event);
-            }
-
-            for event in conn_events {
-                // Re-borrow conn_state for each event since drain_readable may
-                // need &mut connections for the same connection.
-                match event {
-                    Event::Connected => {}
-                    Event::Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
-                        // Accept new bidi streams on this connection.
-                        let conn_state = connections.get_mut(ch).unwrap();
-                        let mut accepted_streams: Vec<StreamId> = Vec::new();
-                        while let Some(stream_id) = conn_state.connection.streams().accept(Dir::Bi)
-                        {
-                            let nif_id = next_nif_stream_id;
-                            next_nif_stream_id += 1;
-
-                            // First stream per connection = control channel (no type prefix).
-                            // Subsequent streams = data streams (2-byte type+index prefix).
-                            let is_control = conn_state.stream_count == 0;
-                            conn_state.stream_count += 1;
-
-                            let type_byte_state = if is_control {
-                                TypeByteState::ControlChannel
-                            } else {
-                                TypeByteState::AwaitingPrefix(Vec::with_capacity(2))
-                            };
-
-                            let owner = Arc::new(Mutex::new(acceptor_pid));
-
-                            let stream_handle = rustler::ResourceArc::new(StreamHandle {
-                                stream_id: nif_id,
-                                cmd_tx: cmd_tx.clone(),
-                                waker: crate::resources::StreamWaker::Mio(Arc::clone(_waker)),
-                                owner: Arc::clone(&owner),
-                            });
-
-                            conn_state.streams.insert(
-                                stream_id,
-                                QuicStreamState {
-                                    nif_stream_id: nif_id,
-                                    owner,
-                                    frame_buffer: FrameBuffer::new(),
-                                    active: false,
-                                    passive_queue: Vec::new(),
-                                    write_buffer: Vec::new(),
-                                    type_byte_state,
+                DatagramEvent::NewConnection(incoming) => {
+                    let mut accept_buf = Vec::new();
+                    match self.endpoint.accept(incoming, now, &mut accept_buf, None) {
+                        Ok((ch, mut connection)) => {
+                            let _ =
+                                flush_transmits(&mut connection, &self.udp, &mut self.transmit_buf);
+                            self.connections.insert(
+                                ch,
+                                ConnectionState {
+                                    connection,
+                                    streams: HashMap::new(),
+                                    stream_count: 0,
+                                    control_nif_id: 0,
                                 },
                             );
-
-                            nif_stream_map.insert(nif_id, (*ch, stream_id));
-
-                            // For control channel, send connection message immediately.
-                            // For data streams, defer until type bytes are read.
-                            if is_control {
-                                // Tag this connection by its control stream's nif id so
-                                // every data stream on it routes by connection identity.
-                                conn_state.control_nif_id = nif_id;
-                                // Control channel — notify Elixir immediately.
-                                send_connection_msg(acceptor_pid, stream_handle);
-                            } else {
-                                // Data stream — defer notification until type prefix is read.
-                                // Store the handle for later delivery once type is known.
-                                pending_data_streams.insert(nif_id, stream_handle);
-                            }
-
-                            accepted_streams.push(stream_id);
                         }
-
-                        // After accepting streams, immediately drain any data that was
-                        // buffered in quinn-proto before the accept. quinn-proto may not
-                        // fire a Readable event for data received before accept().
-                        for accepted_id in accepted_streams {
-                            drain_readable(
-                                *ch,
-                                accepted_id,
-                                &mut connections,
-                                &mut nif_stream_map,
-                                &mut pending_data_streams,
-                                acceptor_pid,
-                            );
+                        Err(e) => {
+                            eprintln!("[flz_nif] QUIC accept error: {:?}", e);
                         }
                     }
-                    Event::Stream(StreamEvent::Readable { id }) => {
-                        drain_readable(
-                            *ch,
-                            id,
-                            &mut connections,
-                            &mut nif_stream_map,
-                            &mut pending_data_streams,
-                            acceptor_pid,
-                        );
-                    }
-                    Event::Stream(StreamEvent::Writable { id }) => {
-                        let conn_state = connections.get_mut(ch).unwrap();
-                        let mut broken: Option<(u64, LocalPid)> = None;
-                        if let Some(stream_state) = conn_state.streams.get_mut(&id) {
-                            if flush_quic_write(&mut conn_state.connection, id, stream_state) {
-                                broken = Some((
-                                    stream_state.nif_stream_id,
-                                    *stream_state.owner.lock().unwrap(),
-                                ));
-                            }
-                        }
-                        if let Some((nif_id, owner)) = broken {
-                            conn_state.streams.remove(&id);
-                            nif_stream_map.remove(&nif_id);
-                            send_closed_msg(owner, nif_id, "write_error");
-                        }
-                    }
-                    Event::Stream(StreamEvent::Finished { id }) => {
-                        let conn_state = connections.get_mut(ch).unwrap();
-                        if let Some(stream_state) = conn_state.streams.remove(&id) {
-                            nif_stream_map.remove(&stream_state.nif_stream_id);
-                            let owner = *stream_state.owner.lock().unwrap();
-                            send_closed_msg(owner, stream_state.nif_stream_id, "stream_finished");
-                        }
-                    }
-                    Event::ConnectionLost { reason } => {
-                        // Connection lost — clean up all streams.
-                        let conn_state = connections.get_mut(ch).unwrap();
-
-                        // A transport error on a connection that never opened a
-                        // stream is a refused handshake (missing/untrusted
-                        // client cert lands here); report it to the acceptor so
-                        // it is logged and observable like every other event.
-                        if conn_state.streams.is_empty()
-                            && matches!(&reason, quinn_proto::ConnectionError::TransportError(_))
-                        {
-                            send_refused_msg(acceptor_pid, &reason.to_string());
-                        }
-
-                        for (_, stream_state) in conn_state.streams.drain() {
-                            nif_stream_map.remove(&stream_state.nif_stream_id);
-                            let owner = *stream_state.owner.lock().unwrap();
-                            send_closed_msg(
-                                owner,
-                                stream_state.nif_stream_id,
-                                &format!("connection_lost: {}", reason),
-                            );
-                        }
-                        lost_connections.push(*ch);
-                    }
-                    _ => {}
                 }
             }
         }
+    }
 
-        // Remove lost connections.
-        for ch in &lost_connections {
-            connections.remove(ch);
-        }
-
-        // Flush outgoing packets for all connections.
-        for ch in &conn_handles {
-            if let Some(conn_state) = connections.get_mut(ch) {
-                let _ =
-                    flush_connection_transmits(&mut conn_state.connection, &udp, &mut transmit_buf);
+    /// Pump endpoint ↔ connection events for one connection and take every
+    /// event it has to report.
+    fn pump_connection(&mut self, ch: ConnectionHandle) -> Vec<Event> {
+        let Some(conn_state) = self.connections.get_mut(&ch) else {
+            return Vec::new();
+        };
+        while let Some(endpoint_event) = conn_state.connection.poll_endpoint_events() {
+            if let Some(conn_event) = self.endpoint.handle_event(ch, endpoint_event) {
+                conn_state.connection.handle_event(conn_event);
             }
         }
+        let mut conn_events: Vec<Event> = Vec::new();
+        while let Some(event) = conn_state.connection.poll() {
+            conn_events.push(event);
+        }
+        conn_events
+    }
 
-        // Process NIF commands.
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                ServerCommand::SendData {
-                    stream_id: nif_id,
-                    data,
-                } => {
-                    if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
-                        if let Some(conn_state) = connections.get_mut(&ch) {
-                            let mut broken: Option<LocalPid> = None;
-                            if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                                stream_state.write_buffer.extend_from_slice(&data);
-                                if flush_quic_write(
-                                    &mut conn_state.connection,
-                                    qstream_id,
-                                    stream_state,
-                                ) {
-                                    broken = Some(*stream_state.owner.lock().unwrap());
-                                }
-                            }
-                            if let Some(owner) = broken {
-                                conn_state.streams.remove(&qstream_id);
-                                nif_stream_map.remove(&nif_id);
-                                send_closed_msg(owner, nif_id, "write_error");
-                            }
-                        }
-                    }
-                }
-                ServerCommand::SendFrame {
-                    stream_id: nif_id,
-                    payload_id,
-                    message,
-                    metadata,
-                } => {
-                    let frame = flz_transport::service::payloader::build_from_binary(
-                        &payload_id,
-                        &message,
-                        metadata,
-                    );
-                    if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
-                        if let Some(conn_state) = connections.get_mut(&ch) {
-                            let mut broken: Option<LocalPid> = None;
-                            if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                                stream_state.write_buffer.extend_from_slice(&frame);
-                                if flush_quic_write(
-                                    &mut conn_state.connection,
-                                    qstream_id,
-                                    stream_state,
-                                ) {
-                                    broken = Some(*stream_state.owner.lock().unwrap());
-                                }
-                            }
-                            if let Some(owner) = broken {
-                                conn_state.streams.remove(&qstream_id);
-                                nif_stream_map.remove(&nif_id);
-                                send_closed_msg(owner, nif_id, "write_error");
-                            }
-                        }
-                    }
-                }
-                ServerCommand::SetActive { stream_id: nif_id } => {
-                    if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
-                        if let Some(conn_state) = connections.get_mut(&ch) {
-                            if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                                stream_state.active = true;
-                                let owner = *stream_state.owner.lock().unwrap();
-                                let queued: Vec<_> = stream_state.passive_queue.drain(..).collect();
-                                for frame in queued {
-                                    send_data_msg(owner, nif_id, frame);
-                                }
-                            }
-                        }
-                    }
-                }
-                ServerCommand::SetPassive { stream_id: nif_id } => {
-                    if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
-                        if let Some(conn_state) = connections.get_mut(&ch) {
-                            if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                                stream_state.active = false;
-                            }
-                        }
-                    }
-                }
-                ServerCommand::CloseStream { stream_id: nif_id } => {
-                    if let Some((ch, qstream_id)) = nif_stream_map.remove(&nif_id) {
-                        if let Some(conn_state) = connections.get_mut(&ch) {
-                            conn_state.streams.remove(&qstream_id);
-                            let _ = conn_state
-                                .connection
-                                .recv_stream(qstream_id)
-                                .stop(quinn_proto::VarInt::from_u32(0));
-                            let _ = conn_state.connection.send_stream(qstream_id).finish();
-                        }
-                    }
-                }
-                ServerCommand::UpdateOwner {
-                    stream_id: nif_id,
-                    new_owner,
-                } => {
-                    if let Some(&(ch, qstream_id)) = nif_stream_map.get(&nif_id) {
-                        if let Some(conn_state) = connections.get_mut(&ch) {
-                            if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                                *stream_state.owner.lock().unwrap() = new_owner;
-                            }
-                        }
-                    }
-                }
-                ServerCommand::Shutdown => {
-                    let now = Instant::now();
-                    for (_, mut conn_state) in connections.drain() {
-                        conn_state.connection.close(
-                            now,
-                            quinn_proto::VarInt::from_u32(0),
-                            b"shutdown".to_vec().into(),
-                        );
-                        let _ = flush_connection_transmits(
-                            &mut conn_state.connection,
-                            &udp,
-                            &mut transmit_buf,
-                        );
-                    }
-                    return Ok(());
+    /// One connection event: newly opened streams are accepted and drained
+    /// (quinn-proto may not fire a Readable event for data received before
+    /// accept).
+    fn handle_stream_event(
+        &mut self,
+        ch: ConnectionHandle,
+        event: Event,
+        lost_connections: &mut Vec<ConnectionHandle>,
+    ) {
+        match event {
+            Event::Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
+                for accepted_id in self.accept_streams(ch) {
+                    self.drain_readable(ch, accepted_id);
                 }
             }
+            Event::Stream(StreamEvent::Readable { id }) => self.drain_readable(ch, id),
+            Event::Stream(StreamEvent::Writable { id }) => self.flush_one(ch, id),
+            Event::Stream(StreamEvent::Finished { id }) => {
+                let conn_state = self.connections.get_mut(&ch).unwrap();
+                if let Some(stream_state) = conn_state.streams.remove(&id) {
+                    self.nif_stream_map.remove(&stream_state.nif_stream_id);
+                    let owner = *stream_state.owner.lock().unwrap();
+                    send_closed_msg(owner, stream_state.nif_stream_id, "stream_finished");
+                }
+            }
+            Event::ConnectionLost { reason } => {
+                self.connection_lost(ch, reason);
+                lost_connections.push(ch);
+            }
+            _ => {}
         }
+    }
 
-        // Flush pending writes for all streams across all connections.
-        let conn_handles: Vec<ConnectionHandle> = connections.keys().copied().collect();
+    /// A lost connection closes every stream; one that never opened a stream
+    /// is reported as refused (a missing or untrusted client certificate
+    /// lands there).
+    fn connection_lost(&mut self, ch: ConnectionHandle, reason: quinn_proto::ConnectionError) {
+        let conn_state = self.connections.get_mut(&ch).unwrap();
+        if conn_state.streams.is_empty()
+            && matches!(&reason, quinn_proto::ConnectionError::TransportError(_))
+        {
+            send_refused_msg(self.acceptor_pid, &reason.to_string());
+        }
+        for (_, stream_state) in conn_state.streams.drain() {
+            self.nif_stream_map.remove(&stream_state.nif_stream_id);
+            let owner = *stream_state.owner.lock().unwrap();
+            send_closed_msg(
+                owner,
+                stream_state.nif_stream_id,
+                &format!("connection_lost: {}", reason),
+            );
+        }
+    }
+
+    /// Flush one stream's buffered writes; a broken stream is closed and
+    /// reported.
+    fn flush_one(&mut self, ch: ConnectionHandle, qstream_id: StreamId) {
+        let Some(conn_state) = self.connections.get_mut(&ch) else {
+            return;
+        };
+        let mut broken: Option<(u64, LocalPid)> = None;
+        if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
+            if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+                broken = Some((
+                    stream_state.nif_stream_id,
+                    *stream_state.owner.lock().unwrap(),
+                ));
+            }
+        }
+        if let Some((nif_id, owner)) = broken {
+            conn_state.streams.remove(&qstream_id);
+            self.nif_stream_map.remove(&nif_id);
+            send_closed_msg(owner, nif_id, "write_error");
+        }
+    }
+
+    /// Accept every bidi stream waiting on a connection. The first stream per
+    /// connection is the control channel (no type prefix) and is announced at
+    /// once, tagging the connection with its nif id; a later one is a data
+    /// stream (2-byte type+index prefix) whose announcement waits for the
+    /// prefix. Answers the accepted stream ids.
+    fn accept_streams(&mut self, ch: ConnectionHandle) -> Vec<StreamId> {
+        let conn_state = self.connections.get_mut(&ch).unwrap();
+        let mut accepted_streams: Vec<StreamId> = Vec::new();
+        while let Some(stream_id) = conn_state.connection.streams().accept(Dir::Bi) {
+            let nif_id = self.next_nif_stream_id;
+            self.next_nif_stream_id += 1;
+
+            let is_control = conn_state.stream_count == 0;
+            conn_state.stream_count += 1;
+
+            let type_byte_state = if is_control {
+                TypeByteState::ControlChannel
+            } else {
+                TypeByteState::AwaitingPrefix(Vec::with_capacity(2))
+            };
+
+            let owner = Arc::new(Mutex::new(self.acceptor_pid));
+
+            let stream_handle = rustler::ResourceArc::new(StreamHandle {
+                stream_id: nif_id,
+                cmd_tx: self.cmd_tx.clone(),
+                waker: crate::resources::StreamWaker::Mio(Arc::clone(&self.waker)),
+                owner: Arc::clone(&owner),
+            });
+
+            conn_state.streams.insert(
+                stream_id,
+                QuicStreamState {
+                    nif_stream_id: nif_id,
+                    owner,
+                    frame_buffer: FrameBuffer::new(),
+                    inbox: Inbox::new(),
+                    write_buffer: Vec::new(),
+                    type_byte_state,
+                },
+            );
+
+            self.nif_stream_map.insert(nif_id, (ch, stream_id));
+
+            if is_control {
+                conn_state.control_nif_id = nif_id;
+                send_connection_msg(self.acceptor_pid, stream_handle);
+            } else {
+                self.pending_data_streams.insert(nif_id, stream_handle);
+            }
+
+            accepted_streams.push(stream_id);
+        }
+        accepted_streams
+    }
+
+    /// Flush every connection's pending transmits to the UDP socket.
+    fn flush_all(&mut self, conn_handles: &[ConnectionHandle]) {
         for ch in conn_handles {
-            if let Some(conn_state) = connections.get_mut(&ch) {
-                let stream_ids: Vec<StreamId> = conn_state
-                    .streams
-                    .iter()
-                    .filter(|(_, s)| !s.write_buffer.is_empty())
-                    .map(|(&id, _)| id)
-                    .collect();
-                let mut broken_streams: Vec<(StreamId, u64, LocalPid)> = Vec::new();
-                for qstream_id in stream_ids {
-                    if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
-                        if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
-                            broken_streams.push((
-                                qstream_id,
-                                stream_state.nif_stream_id,
-                                *stream_state.owner.lock().unwrap(),
-                            ));
-                        }
-                    }
+            if let Some(conn_state) = self.connections.get_mut(ch) {
+                let _ = flush_transmits(
+                    &mut conn_state.connection,
+                    &self.udp,
+                    &mut self.transmit_buf,
+                );
+            }
+        }
+    }
+
+    /// Flush every stream's buffered writes on one connection; a broken stream
+    /// is closed and reported.
+    fn flush_stream_writes(&mut self, ch: ConnectionHandle) {
+        let Some(conn_state) = self.connections.get_mut(&ch) else {
+            return;
+        };
+        let stream_ids: Vec<StreamId> = conn_state
+            .streams
+            .iter()
+            .filter(|(_, s)| !s.write_buffer.is_empty())
+            .map(|(&id, _)| id)
+            .collect();
+        let mut broken_streams: Vec<(StreamId, u64, LocalPid)> = Vec::new();
+        for qstream_id in stream_ids {
+            if let Some(stream_state) = conn_state.streams.get_mut(&qstream_id) {
+                if flush_quic_write(&mut conn_state.connection, qstream_id, stream_state) {
+                    broken_streams.push((
+                        qstream_id,
+                        stream_state.nif_stream_id,
+                        *stream_state.owner.lock().unwrap(),
+                    ));
                 }
-                for (qstream_id, nif_id, owner) in broken_streams {
-                    conn_state.streams.remove(&qstream_id);
-                    nif_stream_map.remove(&nif_id);
-                    send_closed_msg(owner, nif_id, "write_error");
+            }
+        }
+        for (qstream_id, nif_id, owner) in broken_streams {
+            conn_state.streams.remove(&qstream_id);
+            self.nif_stream_map.remove(&nif_id);
+            send_closed_msg(owner, nif_id, "write_error");
+        }
+    }
+
+    /// One NIF command. `true` means the driver was asked to shut down.
+    fn handle_command(&mut self, cmd: ServerCommand) -> bool {
+        match cmd {
+            ServerCommand::SendData {
+                stream_id: nif_id,
+                data,
+            } => self.write_stream(nif_id, data),
+            ServerCommand::SendFrame {
+                stream_id: nif_id,
+                payload_id,
+                message,
+                metadata,
+            } => {
+                let frame = flz_transport::service::payloader::build_from_binary(
+                    &payload_id,
+                    &message,
+                    metadata,
+                );
+                self.write_stream(nif_id, frame);
+            }
+            ServerCommand::SetActive { stream_id: nif_id } => {
+                if let Some(stream_state) = self.stream_mut(nif_id) {
+                    let owner = *stream_state.owner.lock().unwrap();
+                    stream_state.inbox.activate(owner, nif_id);
                 }
-                let _ =
-                    flush_connection_transmits(&mut conn_state.connection, &udp, &mut transmit_buf);
+            }
+            ServerCommand::SetPassive { stream_id: nif_id } => {
+                if let Some(stream_state) = self.stream_mut(nif_id) {
+                    stream_state.inbox.deactivate();
+                }
+            }
+            ServerCommand::CloseStream { stream_id: nif_id } => self.close_stream(nif_id),
+            ServerCommand::UpdateOwner {
+                stream_id: nif_id,
+                new_owner,
+            } => {
+                if let Some(stream_state) = self.stream_mut(nif_id) {
+                    *stream_state.owner.lock().unwrap() = new_owner;
+                }
+            }
+            ServerCommand::Shutdown => {
+                self.shutdown();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Stop reading and finish writing the stream a NIF id addresses.
+    fn close_stream(&mut self, nif_id: u64) {
+        let Some((ch, qstream_id)) = self.nif_stream_map.remove(&nif_id) else {
+            return;
+        };
+        if let Some(conn_state) = self.connections.get_mut(&ch) {
+            conn_state.streams.remove(&qstream_id);
+            let _ = conn_state
+                .connection
+                .recv_stream(qstream_id)
+                .stop(quinn_proto::VarInt::from_u32(0));
+            let _ = conn_state.connection.send_stream(qstream_id).finish();
+        }
+    }
+
+    /// Close every connection and flush its closing transmits.
+    fn shutdown(&mut self) {
+        let now = Instant::now();
+        for (_, mut conn_state) in self.connections.drain() {
+            conn_state.connection.close(
+                now,
+                quinn_proto::VarInt::from_u32(0),
+                b"shutdown".to_vec().into(),
+            );
+            let _ = flush_transmits(
+                &mut conn_state.connection,
+                &self.udp,
+                &mut self.transmit_buf,
+            );
+        }
+    }
+
+    /// The stream a NIF id addresses, if it is still open.
+    fn stream_mut(&mut self, nif_id: u64) -> Option<&mut QuicStreamState> {
+        let &(ch, qstream_id) = self.nif_stream_map.get(&nif_id)?;
+        self.connections.get_mut(&ch)?.streams.get_mut(&qstream_id)
+    }
+
+    /// Queue `data` on a stream and flush what it will take now.
+    fn write_stream(&mut self, nif_id: u64, data: Vec<u8>) {
+        let Some(&(ch, qstream_id)) = self.nif_stream_map.get(&nif_id) else {
+            return;
+        };
+        if let Some(stream_state) = self.stream_mut(nif_id) {
+            stream_state.write_buffer.extend_from_slice(&data);
+        }
+        self.flush_one(ch, qstream_id);
+    }
+
+    /// Forget a stream the peer ended: its state, its NIF id, and any
+    /// announcement still pending on its type prefix.
+    fn forget_stream(&mut self, ch: ConnectionHandle, id: StreamId, nif_id: u64) {
+        if let Some(conn_state) = self.connections.get_mut(&ch) {
+            conn_state.streams.remove(&id);
+        }
+        self.nif_stream_map.remove(&nif_id);
+        self.pending_data_streams.remove(&nif_id);
+    }
+
+    /// Drain readable data from a QUIC stream, feed into FrameBuffer, deliver
+    /// frames. For data streams, handles the 2-byte type+index prefix before
+    /// switching to framed mode; a just-identified data stream is announced
+    /// with the connection's routing key (the control stream's nif id).
+    fn drain_readable(&mut self, ch: ConnectionHandle, id: StreamId) {
+        let Some(conn_state) = self.connections.get_mut(&ch) else {
+            return;
+        };
+        let conn_id = conn_state.control_nif_id;
+        let Some(stream_state) = conn_state.streams.get_mut(&id) else {
+            return;
+        };
+        let nif_id = stream_state.nif_stream_id;
+        let owner = *stream_state.owner.lock().unwrap();
+
+        let all_data = match read_chunks(&mut conn_state.connection, id, nif_id) {
+            Ok(data) => data,
+            Err(reason) => {
+                send_closed_msg(owner, nif_id, reason);
+                self.forget_stream(ch, id, nif_id);
+                return;
+            }
+        };
+        if all_data.is_empty() {
+            return;
+        }
+
+        let Some((consumed, identified)) =
+            consume_type_prefix(&mut stream_state.type_byte_state, &all_data)
+        else {
+            return;
+        };
+        if let Some((stream_type, index)) = identified {
+            if let Some(handle) = self.pending_data_streams.remove(&nif_id) {
+                send_stream_msg(self.acceptor_pid, handle, stream_type, index, conn_id);
+            }
+        }
+        let data_for_framing = &all_data[consumed..];
+        if data_for_framing.is_empty() {
+            return;
+        }
+        match stream_state.frame_buffer.feed(data_for_framing) {
+            Ok(frames) => stream_state.inbox.deliver(owner, nif_id, frames),
+            Err(e) => {
+                eprintln!(
+                    "[flz_nif] QUIC frame too large on nif_id={}: declared {} > max {}",
+                    nif_id, e.declared, e.max
+                );
+                send_closed_msg(owner, nif_id, "frame_too_large");
+                self.forget_stream(ch, id, nif_id);
             }
         }
     }
 }
 
-/// Drain readable data from a QUIC stream, feed into FrameBuffer, deliver frames.
-/// For data streams, handles the 2-byte type+index prefix before switching to framed mode.
-fn drain_readable(
-    ch: ConnectionHandle,
+/// Everything readable on a stream right now. `Err` carries the close reason
+/// for a reset or a read error.
+fn read_chunks(
+    connection: &mut quinn_proto::Connection,
     id: StreamId,
-    connections: &mut HashMap<ConnectionHandle, ConnectionState>,
-    nif_stream_map: &mut HashMap<u64, (ConnectionHandle, StreamId)>,
-    pending_data_streams: &mut HashMap<u64, rustler::ResourceArc<StreamHandle>>,
-    acceptor_pid: LocalPid,
-) {
-    let conn_state = match connections.get_mut(&ch) {
-        Some(c) => c,
-        None => return,
-    };
-
-    // Per-connection routing key (the control stream's nif id), captured before
-    // the per-stream mutable borrow so data streams can carry it to Elixir.
-    let conn_id = conn_state.control_nif_id;
-
-    let stream_state = match conn_state.streams.get_mut(&id) {
-        Some(s) => s,
-        None => return,
-    };
-
-    let nif_id = stream_state.nif_stream_id;
-
-    match conn_state.connection.recv_stream(id).read(true) {
-        Ok(mut chunks) => {
-            let mut all_data = Vec::new();
-            loop {
-                match chunks.next(usize::MAX) {
-                    Ok(Some(chunk)) => {
-                        all_data.extend_from_slice(&chunk.bytes);
-                    }
-                    Ok(None) => break,
-                    Err(quinn_proto::ReadError::Blocked) => break,
-                    Err(quinn_proto::ReadError::Reset(_)) => {
-                        let _ = chunks.finalize();
-                        let owner = *stream_state.owner.lock().unwrap();
-                        send_closed_msg(owner, nif_id, "stream_reset");
-                        conn_state.streams.remove(&id);
-                        nif_stream_map.remove(&nif_id);
-                        pending_data_streams.remove(&nif_id);
-                        return;
-                    }
-                }
-            }
-            let _ = chunks.finalize();
-
-            if all_data.is_empty() {
-                return;
-            }
-
-            // Handle type-byte prefix for data streams.
-            let data_for_framing = match &mut stream_state.type_byte_state {
-                TypeByteState::ControlChannel => {
-                    // Control channel — all data goes to FrameBuffer directly.
-                    all_data.as_slice()
-                }
-                TypeByteState::AwaitingPrefix(buf) => {
-                    // Accumulate until we have 2 bytes.
-                    let need = 2 - buf.len();
-                    let take = std::cmp::min(need, all_data.len());
-                    buf.extend_from_slice(&all_data[..take]);
-
-                    if buf.len() >= 2 {
-                        let stream_type = buf[0];
-                        let index = buf[1];
-                        stream_state.type_byte_state = TypeByteState::DataStream {
-                            _stream_type: stream_type,
-                            _index: index,
-                        };
-
-                        // Type prefix consumed — deliver stream notification.
-                        // Deliver the {:flz_stream, stream_ref, type, index, conn_id} message.
-                        if let Some(handle) = pending_data_streams.remove(&nif_id) {
-                            send_stream_msg(acceptor_pid, handle, stream_type, index, conn_id);
-                        }
-
-                        // Remaining data after the 2-byte prefix.
-                        &all_data[take..]
-                    } else {
-                        // Still need more bytes for the prefix.
-                        return;
-                    }
-                }
-                TypeByteState::DataStream { .. } => {
-                    // Prefix already consumed — all data goes to FrameBuffer.
-                    all_data.as_slice()
-                }
-            };
-
-            if !data_for_framing.is_empty() {
-                let frames = match stream_state.frame_buffer.feed(data_for_framing) {
-                    Ok(frames) => frames,
-                    Err(e) => {
-                        eprintln!(
-                            "[flz_nif] QUIC frame too large on nif_id={}: declared {} > max {}",
-                            nif_id, e.declared, e.max
-                        );
-                        let owner = *stream_state.owner.lock().unwrap();
-                        send_closed_msg(owner, nif_id, "frame_too_large");
-                        conn_state.streams.remove(&id);
-                        nif_stream_map.remove(&nif_id);
-                        pending_data_streams.remove(&nif_id);
-                        return;
-                    }
-                };
-                let owner = *stream_state.owner.lock().unwrap();
-
-                if stream_state.active {
-                    for frame in frames {
-                        send_data_msg(owner, nif_id, frame);
-                    }
-                } else {
-                    stream_state.passive_queue.extend(frames);
-                }
-            }
-        }
+    nif_id: u64,
+) -> Result<Vec<u8>, &'static str> {
+    let mut recv = connection.recv_stream(id);
+    let mut chunks = match recv.read(true) {
+        Ok(chunks) => chunks,
         Err(e) => {
             eprintln!("[flz_nif] QUIC read error on nif_id={}: {:?}", nif_id, e);
-            let owner = *stream_state.owner.lock().unwrap();
-            send_closed_msg(owner, nif_id, "read_error");
-            conn_state.streams.remove(&id);
-            nif_stream_map.remove(&nif_id);
-            pending_data_streams.remove(&nif_id);
+            return Err("read_error");
+        }
+    };
+    let mut all_data = Vec::new();
+    loop {
+        match chunks.next(usize::MAX) {
+            Ok(Some(chunk)) => all_data.extend_from_slice(&chunk.bytes),
+            Ok(None) => break,
+            Err(quinn_proto::ReadError::Blocked) => break,
+            Err(quinn_proto::ReadError::Reset(_)) => {
+                let _ = chunks.finalize();
+                return Err("stream_reset");
+            }
+        }
+    }
+    let _ = chunks.finalize();
+    Ok(all_data)
+}
+
+/// Take a data stream's 2-byte type+index prefix out of `data`. Answers how
+/// many bytes belong to the prefix and, the moment it completes, the
+/// `(type, index)` it named; `None` while the prefix is still incomplete.
+fn consume_type_prefix(
+    state: &mut TypeByteState,
+    data: &[u8],
+) -> Option<(usize, Option<(u8, u8)>)> {
+    match state {
+        TypeByteState::ControlChannel | TypeByteState::DataStream { .. } => Some((0, None)),
+        TypeByteState::AwaitingPrefix(buf) => {
+            let need = 2 - buf.len();
+            let take = std::cmp::min(need, data.len());
+            buf.extend_from_slice(&data[..take]);
+            if buf.len() < 2 {
+                return None;
+            }
+            let (stream_type, index) = (buf[0], buf[1]);
+            *state = TypeByteState::DataStream {
+                _stream_type: stream_type,
+                _index: index,
+            };
+            Some((take, Some((stream_type, index))))
         }
     }
 }
@@ -736,63 +689,6 @@ fn flush_quic_write(
     }
 }
 
-/// Flush all pending transmits from a connection to the UDP socket.
-fn flush_connection_transmits(
-    connection: &mut quinn_proto::Connection,
-    udp: &UdpSocket,
-    buf: &mut Vec<u8>,
-) -> io::Result<()> {
-    let now = Instant::now();
-    while let Some(transmit) = connection.poll_transmit(now, 1, buf) {
-        send_transmit(udp, &transmit, buf)?;
-        buf.clear();
-    }
-    Ok(())
-}
-
-/// Send a single UDP datagram.
-fn send_transmit(udp: &UdpSocket, transmit: &Transmit, buf: &[u8]) -> io::Result<()> {
-    let data = &buf[..transmit.size];
-    match udp.send_to(data, transmit.destination) {
-        Ok(_) => Ok(()),
-        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(()),
-        Err(e) => Err(e),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Erlang message helpers (same pattern as uds_driver.rs)
-// ---------------------------------------------------------------------------
-
-// send_data_msg / send_closed_msg / send_connection_msg live in
-// crate::driver_msg (shared with the UDS driver).
-
-/// Send {:flz_stream, stream_handle, type, index, conn_id} for QUIC data
-/// streams. `conn_id` is the control stream's nif id — a stable per-connection
-/// routing key the controller uses to bind data streams to the connection that
-/// owns the session token (fixes the concurrent-connect race).
-fn send_stream_msg(
-    acceptor: LocalPid,
-    stream_handle: rustler::ResourceArc<StreamHandle>,
-    stream_type: u8,
-    index: u8,
-    conn_id: u64,
-) {
-    let mut env = OwnedEnv::new();
-    let _ = env.send_and_clear(&acceptor, |env| {
-        rustler::types::tuple::make_tuple(
-            env,
-            &[
-                atoms::flz_stream().encode(env),
-                stream_handle.encode(env),
-                (stream_type as u64).encode(env),
-                (index as u64).encode(env),
-                conn_id.encode(env),
-            ],
-        )
-    });
-}
-
 /// Build a rustls ServerConfig and wrap it into a quinn-proto ServerConfig.
 ///
 /// A non-empty `client_ca_path` makes the handshake require a client
@@ -815,48 +711,28 @@ pub fn build_quic_server_config(
 
     let key = tls::load_private_key(key_path)?;
 
-    // Build rustls server config.
     let builder = rustls::ServerConfig::builder();
-
     let builder = if client_ca_path.is_empty() {
         builder.with_no_client_auth()
     } else {
         let roots = tls::load_root_store(client_ca_path)?;
-
         let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(roots))
             .build()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
         builder.with_client_cert_verifier(verifier)
     };
-
     let mut server_crypto = builder
         .with_single_cert(certs, key)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
     server_crypto.alpn_protocols = vec![b"flezha".to_vec()];
 
     let quic_server_config = quinn_proto::crypto::rustls::QuicServerConfig::try_from(server_crypto)
         .map_err(io::Error::other)?;
-
     let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
 
-    // Transport config matching client settings.
-    let mut transport = quinn_proto::TransportConfig::default();
-    transport.keep_alive_interval(Some(Duration::from_secs(5)));
-    // Explicit idle timeout aligned to the control-liveness window so a wedged
-    // peer is declared dead in the same window on QUIC as on UDS, instead of
-    // inheriting the quinn default. keep_alive (5s) << this. See
-    // docs/internals/transport_liveness.md.
-    if let Ok(idle) =
-        IdleTimeout::try_from(flz_transport::transport::liveness::control_idle_timeout())
-    {
-        transport.max_idle_timeout(Some(idle));
-    }
-    transport.stream_receive_window(8_388_608u32.into());
-    transport.receive_window(16_777_216u32.into());
-    transport.send_window(8_388_608);
-    // Allow enough bidi streams for control + data streams.
+    // The client's transport settings, plus enough bidi streams for control +
+    // data streams.
+    let mut transport = flz_transport::transport::quic::transport_config();
     transport.max_concurrent_bidi_streams(128u32.into());
     server_config.transport_config(Arc::new(transport));
 

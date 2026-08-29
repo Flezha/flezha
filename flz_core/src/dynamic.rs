@@ -30,13 +30,6 @@ const MAX_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// diagnosis aid, not a record.
 const EVICTED_TRACE_CAP: usize = 1024;
 
-/// Monotonic milliseconds since process start. Stamped on every push into a
-/// dynamic Entity's mailbox; read by the reaper. The process-wide anchor keeps
-/// `EntitySlot::last_activity_at` a plain `AtomicI64`.
-pub fn now_millis() -> i64 {
-    crate::util::monotonic_anchor().elapsed().as_millis() as i64
-}
-
 /// Per-Procedure dynamic-entity counters. Monotonic, `Relaxed`.
 #[derive(Debug, Default)]
 pub struct DynamicEntityCounters {
@@ -120,7 +113,7 @@ impl DynamicEntityRegistry {
     /// the slot — deregistering its flusher entry and (when persistent)
     /// shipping `delete_entity_state` so the on-disk WAL/snapshot is removed.
     pub fn reap_sweep(&self, idle_ttl: Duration) {
-        let now = now_millis();
+        let now = crate::util::monotonic_ms();
         let ttl_ms = idle_ttl.as_millis() as i64;
 
         // Collect idle candidates, taking each one's drain gate. Removal is
@@ -132,7 +125,7 @@ impl DynamicEntityRegistry {
             if now - slot.last_activity_at.load(Ordering::Relaxed) <= ttl_ms {
                 continue;
             }
-            if !slot.mailbox.try_mark_inflight() {
+            if !slot.mailbox.claim_inflight() {
                 continue; // a drain is scheduled/running; retry next sweep
             }
             if !slot.mailbox.is_empty() {
@@ -143,32 +136,37 @@ impl DynamicEntityRegistry {
         }
 
         for (key, slot) in candidates {
-            self.entities.remove(&key);
-            // Close the lookup-then-push race: a producer holding the slot Arc
-            // may have pushed after our empty-check. Re-insert and drain it.
-            if !slot.mailbox.is_empty() {
-                self.entities.insert(key, Arc::clone(&slot));
-                slot.mailbox.release_inflight();
-                if slot.mailbox.try_mark_inflight() {
-                    crate::poll_core::global().schedule(&slot);
-                }
-                continue;
-            }
-            if let Some(id) = slot.flusher_entry_id {
-                EntityFlusher::instance().deregister(id);
-            }
-            // Eviction is destructive and a recreate cold-starts, so the
-            // Entity's timers go with its state. Dropping them here releases
-            // the wake-list memory now instead of at each deadline.
-            crate::poll_core::global().discard_entity_timers(&slot.entity_identity);
-            if slot.persistence_enabled {
-                send_delete_entity_state(&slot.entity_identity);
-            }
-            self.counters
-                .entities_evicted_total
-                .fetch_add(1, Ordering::Relaxed);
-            self.note_evicted(key);
+            self.evict(key, slot);
         }
+    }
+
+    /// Drop one idle candidate whose drain gate this sweep holds. The
+    /// lookup-then-push race is closed here: a producer holding the slot Arc
+    /// may have pushed after the empty-check, in which case the Entity is
+    /// re-inserted and drained instead. Eviction is destructive and a recreate
+    /// cold-starts, so the Entity's timers go with its state — dropped now
+    /// rather than at each deadline.
+    fn evict(&self, key: String, slot: Arc<EntitySlot>) {
+        self.entities.remove(&key);
+        if !slot.mailbox.is_empty() {
+            self.entities.insert(key, Arc::clone(&slot));
+            slot.mailbox.release_inflight();
+            if slot.mailbox.claim_inflight() {
+                crate::poll_core::global().schedule(&slot);
+            }
+            return;
+        }
+        if let Some(id) = slot.flusher_entry_id {
+            EntityFlusher::instance().deregister(id);
+        }
+        crate::poll_core::global().discard_entity_timers(&slot.entity_identity);
+        if slot.persistence_enabled {
+            send_delete_entity_state(&slot.entity_identity);
+        }
+        self.counters
+            .entities_evicted_total
+            .fetch_add(1, Ordering::Relaxed);
+        self.note_evicted(key);
     }
 
     /// True when `key` is in the workflow eviction trace. False for a key that

@@ -14,21 +14,10 @@ use quinn_proto::{
     StreamEvent, StreamId, Transmit,
 };
 
-use super::config::max_write_buffer_bytes;
+use super::config::{max_write_buffer_bytes, would_overflow_write_buffer};
 
 const UDP_TOKEN: Token = Token(0);
 const WAKER_TOKEN: Token = Token(1);
-
-/// Whether buffering `incoming` bytes onto a `buffered`-byte send buffer would
-/// exceed `cap`. An empty buffer always accepts; once non-empty it stays at or
-/// below `cap` (DropNewest).
-fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize) -> bool {
-    buffered != 0 && buffered + incoming > cap
-}
-
-// ---------------------------------------------------------------------------
-// Driver ↔ App communication types
-// ---------------------------------------------------------------------------
 
 enum DriverCommand {
     OpenStream {
@@ -50,10 +39,6 @@ struct StreamSlot {
     max_write_buffer_bytes: usize,
     write_buffer_dropped: u64,
 }
-
-// ---------------------------------------------------------------------------
-// ChannelReader — sync Read over crossbeam channel
-// ---------------------------------------------------------------------------
 
 struct ChannelReader {
     rx: channel::Receiver<Bytes>,
@@ -102,10 +87,6 @@ impl Read for ChannelReader {
     }
 }
 
-// ---------------------------------------------------------------------------
-// QuicClient — public API
-// ---------------------------------------------------------------------------
-
 /// Load the client identity for mutual TLS. `Ok(None)` when the pair is not
 /// on disk (the caller falls back to no client auth and the server's posture
 /// decides); a present-but-unreadable pair is an error, not a silent
@@ -131,6 +112,44 @@ fn load_client_identity(
     Ok(Some((chain, super::tls::load_private_key(key_path)?)))
 }
 
+/// The client's TLS posture: the CA the server is verified against, the
+/// client identity for mutual TLS when its pair is on disk (the server
+/// requires it by default), and the `flezha` ALPN.
+fn client_crypto(ca_cert_path: &str) -> io::Result<rustls::ClientConfig> {
+    let root_store = super::tls::load_root_store(ca_cert_path)?;
+    let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
+
+    let client_cert_path = super::config::quic_client_cert_path();
+    let client_key_path = super::config::quic_client_key_path();
+
+    let mut crypto = match load_client_identity(&client_cert_path, &client_key_path)? {
+        Some((chain, key)) => builder
+            .with_client_auth_cert(chain, key)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        None => builder.with_no_client_auth(),
+    };
+    crypto.alpn_protocols = vec![b"flezha".to_vec()];
+    Ok(crypto)
+}
+
+/// The transport settings both ends of a Flezha QUIC connection run: a 5 s
+/// keep-alive and an idle timeout aligned to the control-liveness window, so
+/// a wedged peer is declared dead in the same window on QUIC as on UDS
+/// instead of inheriting the quinn default (keep-alive << idle, so a live
+/// connection never idles out), plus the receive/send windows. The server
+/// adds its stream limit on top.
+pub fn transport_config() -> quinn_proto::TransportConfig {
+    let mut transport = quinn_proto::TransportConfig::default();
+    transport.keep_alive_interval(Some(Duration::from_secs(5)));
+    if let Ok(idle) = IdleTimeout::try_from(crate::transport::liveness::control_idle_timeout()) {
+        transport.max_idle_timeout(Some(idle));
+    }
+    transport.stream_receive_window(8_388_608u32.into());
+    transport.receive_window(16_777_216u32.into());
+    transport.send_window(8_388_608);
+    transport
+}
+
 /// Holds a QUIC connection driven by a background I/O thread using quinn-proto.
 pub struct QuicClient {
     cmd_tx: channel::Sender<DriverCommand>,
@@ -146,40 +165,11 @@ impl QuicClient {
     /// happens per attempt: an address parsed once at startup is the failure
     /// the candidate list exists to remove.
     pub fn connect(addr: SocketAddr, ca_cert_path: &str) -> io::Result<QuicClient> {
-        // --- TLS config ---
-        let root_store = super::tls::load_root_store(ca_cert_path)?;
-        let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
-
-        let client_cert_path = super::config::quic_client_cert_path();
-        let client_key_path = super::config::quic_client_key_path();
-
-        let mut crypto = match load_client_identity(&client_cert_path, &client_key_path)? {
-            Some((chain, key)) => builder
-                .with_client_auth_cert(chain, key)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
-            None => builder.with_no_client_auth(),
-        };
-        crypto.alpn_protocols = vec![b"flezha".to_vec()];
-
         let mut client_config = ClientConfig::new(Arc::new(
-            quinn_proto::crypto::rustls::QuicClientConfig::try_from(crypto)
+            quinn_proto::crypto::rustls::QuicClientConfig::try_from(client_crypto(ca_cert_path)?)
                 .map_err(io::Error::other)?,
         ));
-
-        let mut transport = quinn_proto::TransportConfig::default();
-        transport.keep_alive_interval(Some(Duration::from_secs(5)));
-        // Explicit idle timeout aligned to the control-liveness window so a
-        // wedged peer is declared dead in the same window on QUIC as on UDS,
-        // instead of inheriting the quinn default. keep_alive (5s) << this, so
-        // a live connection never idles out. See transport_liveness.md.
-        if let Ok(idle) = IdleTimeout::try_from(crate::transport::liveness::control_idle_timeout())
-        {
-            transport.max_idle_timeout(Some(idle));
-        }
-        transport.stream_receive_window(8_388_608u32.into());
-        transport.receive_window(16_777_216u32.into());
-        transport.send_window(8_388_608);
-        client_config.transport_config(Arc::new(transport));
+        client_config.transport_config(Arc::new(transport_config()));
 
         // --- UDP socket + mio Poll ---
         let std_udp = std::net::UdpSocket::bind("0.0.0.0:0")?;
@@ -257,10 +247,6 @@ impl Drop for QuicClient {
     }
 }
 
-// ---------------------------------------------------------------------------
-// QuicBidiStream — public API, same interface as before
-// ---------------------------------------------------------------------------
-
 /// A bidirectional QUIC stream that implements std::io::Read and Write.
 ///
 /// All QUIC I/O is driven by a background driver thread using quinn-proto.
@@ -284,8 +270,9 @@ impl QuicBidiStream {
         Ok(())
     }
 
-    /// Clone by sharing the write channel and read channel.
-    pub fn try_clone(&self) -> QuicBidiStream {
+    /// Clone by sharing the write channel and read channel. Infallible: the
+    /// handle shares channels, it opens nothing.
+    pub fn clone_handle(&self) -> QuicBidiStream {
         QuicBidiStream {
             stream_id: self.stream_id,
             cmd_tx: self.cmd_tx.clone(),
@@ -356,10 +343,6 @@ impl Write for &QuicBidiStream {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Handshake — blocking mio loop until Event::Connected
-// ---------------------------------------------------------------------------
-
 fn drive_handshake(
     poll: &mut Poll,
     udp: &UdpSocket,
@@ -375,49 +358,10 @@ fn drive_handshake(
     flush_transmits(connection, udp, &mut transmit_buf)?;
 
     loop {
-        let timeout = connection
-            .poll_timeout()
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
-        let poll_timeout = timeout.unwrap_or(Duration::from_millis(100));
-        poll.poll(&mut events, Some(poll_timeout))?;
-
+        poll.poll(&mut events, Some(poll_timeout(connection)))?;
         let now = Instant::now();
-
-        // Handle timer
-        if let Some(deadline) = connection.poll_timeout() {
-            if now >= deadline {
-                connection.handle_timeout(now);
-            }
-        }
-
-        // Read incoming UDP
-        loop {
-            match udp.recv_from(&mut udp_buf) {
-                Ok((n, remote)) => {
-                    let data = BytesMut::from(&udp_buf[..n]);
-                    let mut resp_buf = Vec::new();
-                    if let Some(event) =
-                        endpoint.handle(now, remote, None, None, data, &mut resp_buf)
-                    {
-                        match event {
-                            DatagramEvent::ConnectionEvent(ch, event) => {
-                                if ch == conn_handle {
-                                    connection.handle_event(event);
-                                }
-                            }
-                            DatagramEvent::Response(transmit) => {
-                                send_transmit(udp, &transmit, &resp_buf)?;
-                            }
-                            DatagramEvent::NewConnection(_) => {}
-                        }
-                    }
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(e) => return Err(e),
-            }
-        }
-
-        // Pump endpoint ↔ connection event feedback
+        expire_timer(connection, now);
+        pump_udp(udp, &mut udp_buf, endpoint, conn_handle, connection, now)?;
         pump_endpoint_events(endpoint, conn_handle, connection);
 
         // Flush outgoing packets
@@ -439,10 +383,6 @@ fn drive_handshake(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Driver loop — main I/O thread
-// ---------------------------------------------------------------------------
-
 fn driver_loop(
     mut poll: Poll,
     udp: UdpSocket,
@@ -457,170 +397,211 @@ fn driver_loop(
     let mut streams: HashMap<StreamId, StreamSlot> = HashMap::new();
 
     loop {
-        // 1. Poll with timeout from connection
-        let timeout = connection
-            .poll_timeout()
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
-        let poll_timeout = timeout.unwrap_or(Duration::from_millis(100));
-        let _ = poll.poll(&mut events, Some(poll_timeout));
-
+        let _ = poll.poll(&mut events, Some(poll_timeout(&mut connection)));
         let now = Instant::now();
-
-        // 2. Handle timer
-        if let Some(deadline) = connection.poll_timeout() {
-            if now >= deadline {
-                connection.handle_timeout(now);
-            }
-        }
-
-        // 3. Read incoming UDP datagrams
-        loop {
-            match udp.recv_from(&mut udp_buf) {
-                Ok((n, remote)) => {
-                    let data = BytesMut::from(&udp_buf[..n]);
-                    let mut resp_buf = Vec::new();
-                    if let Some(event) =
-                        endpoint.handle(now, remote, None, None, data, &mut resp_buf)
-                    {
-                        match event {
-                            DatagramEvent::ConnectionEvent(ch, event) => {
-                                if ch == conn_handle {
-                                    connection.handle_event(event);
-                                }
-                            }
-                            DatagramEvent::Response(transmit) => {
-                                let _ = send_transmit(&udp, &transmit, &resp_buf);
-                            }
-                            DatagramEvent::NewConnection(_) => {}
-                        }
-                    }
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
-            }
-        }
-
-        // 4. Process commands from app threads
+        expire_timer(&mut connection, now);
+        let _ = pump_udp(
+            &udp,
+            &mut udp_buf,
+            &mut endpoint,
+            conn_handle,
+            &mut connection,
+            now,
+        );
         while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                DriverCommand::OpenStream { read_tx, reply } => {
-                    match connection.streams().open(Dir::Bi) {
-                        Some(stream_id) => {
-                            streams.insert(
-                                stream_id,
-                                StreamSlot {
-                                    read_tx,
-                                    write_buf: Vec::new(),
-                                    pending_write_reply: None,
-                                    max_write_buffer_bytes: max_write_buffer_bytes(),
-                                    write_buffer_dropped: 0,
-                                },
-                            );
-                            let _ = reply.send(Ok(stream_id));
-                        }
-                        None => {
-                            let _ = reply.send(Err(io::Error::other("Stream limit reached")));
-                        }
-                    }
-                }
-                DriverCommand::Write {
-                    stream_id,
-                    data,
-                    reply,
-                } => {
-                    if let Some(slot) = streams.get_mut(&stream_id) {
-                        let total_len = data.len();
-                        if would_overflow_write_buffer(
-                            slot.write_buf.len(),
-                            total_len,
-                            slot.max_write_buffer_bytes,
-                        ) {
-                            // DropNewest: the peer is not draining; drop rather than
-                            // grow the buffer without bound. The data stream is
-                            // at-least-once with downstream dedup.
-                            slot.write_buffer_dropped += 1;
-                            tracing::warn!(
-                                target: "flezha::transport",
-                                transport = "quic",
-                                dropped = slot.write_buffer_dropped,
-                                "QUIC send buffer at cap; dropping frame"
-                            );
-                            let _ = reply.send(Ok(total_len));
-                        } else {
-                            match connection.send_stream(stream_id).write(&data) {
-                                Ok(written) => {
-                                    if written < total_len {
-                                        // Partial write — buffer remainder, defer reply
-                                        slot.write_buf.extend_from_slice(&data[written..]);
-                                        slot.pending_write_reply = Some((total_len, reply));
-                                    } else {
-                                        let _ = reply.send(Ok(total_len));
-                                    }
-                                }
-                                Err(quinn_proto::WriteError::Blocked) => {
-                                    // Fully blocked — buffer everything, defer reply
-                                    slot.write_buf = data;
-                                    slot.pending_write_reply = Some((total_len, reply));
-                                }
-                                Err(e) => {
-                                    let _ = reply.send(Err(io::Error::new(
-                                        io::ErrorKind::BrokenPipe,
-                                        format!("QUIC write error: {}", e),
-                                    )));
-                                }
-                            }
-                        }
-                    } else {
-                        let _ = reply.send(Err(io::Error::new(
-                            io::ErrorKind::NotFound,
-                            "Unknown stream ID",
-                        )));
-                    }
-                }
-                DriverCommand::Shutdown => {
-                    connection.close(
-                        now,
-                        quinn_proto::VarInt::from_u32(0),
-                        b"shutdown".to_vec().into(),
-                    );
-                    let _ = flush_transmits(&mut connection, &udp, &mut transmit_buf);
-                    return;
-                }
+            if handle_command(cmd, &mut connection, &mut streams, now) {
+                let _ = flush_transmits(&mut connection, &udp, &mut transmit_buf);
+                return;
             }
         }
-
-        // 5. Pump endpoint ↔ connection event feedback
         pump_endpoint_events(&mut endpoint, conn_handle, &mut connection);
-
-        // 6. Poll connection events — dispatch stream events
-        while let Some(event) = connection.poll() {
-            match event {
-                Event::Stream(StreamEvent::Readable { id }) => {
-                    drain_readable(&mut connection, id, &mut streams);
-                }
-                Event::Stream(StreamEvent::Writable { id }) => {
-                    flush_write_buffer(&mut connection, id, &mut streams);
-                }
-                Event::ConnectionLost { reason } => {
-                    tracing::warn!(
-                        target: "flezha::transport",
-                        transport = "quic",
-                        "QUIC connection lost; driver thread exiting: {}", reason
-                    );
-                    return;
-                }
-                _ => {}
-            }
+        if dispatch_stream_events(&mut connection, &mut streams) {
+            return;
         }
-
-        // 7. Flush outgoing packets
         let _ = flush_transmits(&mut connection, &udp, &mut transmit_buf);
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+/// How long to poll: until the connection's next timer, 100 ms at most.
+fn poll_timeout(connection: &mut quinn_proto::Connection) -> Duration {
+    connection
+        .poll_timeout()
+        .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+        .unwrap_or(Duration::from_millis(100))
+}
+
+/// Fire the connection's timer if it has come due.
+pub fn expire_timer(connection: &mut quinn_proto::Connection, now: Instant) {
+    if let Some(deadline) = connection.poll_timeout() {
+        if now >= deadline {
+            connection.handle_timeout(now);
+        }
+    }
+}
+
+/// Read every datagram the socket holds into the endpoint, feeding this
+/// connection's events to it and answering stateless responses on the spot.
+/// Shared by the handshake and the steady-state loop.
+pub fn pump_udp(
+    udp: &UdpSocket,
+    udp_buf: &mut [u8],
+    endpoint: &mut quinn_proto::Endpoint,
+    conn_handle: ConnectionHandle,
+    connection: &mut quinn_proto::Connection,
+    now: Instant,
+) -> io::Result<()> {
+    loop {
+        match udp.recv_from(udp_buf) {
+            Ok((n, remote)) => {
+                let data = BytesMut::from(&udp_buf[..n]);
+                let mut resp_buf = Vec::new();
+                if let Some(event) = endpoint.handle(now, remote, None, None, data, &mut resp_buf) {
+                    match event {
+                        DatagramEvent::ConnectionEvent(ch, event) => {
+                            if ch == conn_handle {
+                                connection.handle_event(event);
+                            }
+                        }
+                        DatagramEvent::Response(transmit) => {
+                            send_transmit(udp, &transmit, &resp_buf)?;
+                        }
+                        DatagramEvent::NewConnection(_) => {}
+                    }
+                }
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// One app-thread command. `true` means the driver was asked to shut down:
+/// the connection is closed and the caller flushes and exits.
+fn handle_command(
+    cmd: DriverCommand,
+    connection: &mut quinn_proto::Connection,
+    streams: &mut HashMap<StreamId, StreamSlot>,
+    now: Instant,
+) -> bool {
+    match cmd {
+        DriverCommand::OpenStream { read_tx, reply } => match connection.streams().open(Dir::Bi) {
+            Some(stream_id) => {
+                streams.insert(
+                    stream_id,
+                    StreamSlot {
+                        read_tx,
+                        write_buf: Vec::new(),
+                        pending_write_reply: None,
+                        max_write_buffer_bytes: max_write_buffer_bytes(),
+                        write_buffer_dropped: 0,
+                    },
+                );
+                let _ = reply.send(Ok(stream_id));
+            }
+            None => {
+                let _ = reply.send(Err(io::Error::other("Stream limit reached")));
+            }
+        },
+        DriverCommand::Write {
+            stream_id,
+            data,
+            reply,
+        } => match streams.get_mut(&stream_id) {
+            Some(slot) => write_or_buffer(connection, stream_id, slot, data, reply),
+            None => {
+                let _ = reply.send(Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "Unknown stream ID",
+                )));
+            }
+        },
+        DriverCommand::Shutdown => {
+            connection.close(
+                now,
+                quinn_proto::VarInt::from_u32(0),
+                b"shutdown".to_vec().into(),
+            );
+            return true;
+        }
+    }
+    false
+}
+
+/// Write an app thread's bytes onto its stream, buffering what the stream
+/// will not take now and deferring the reply until the buffer drains. At the
+/// send-buffer cap the frame is dropped rather than growing the buffer
+/// without bound (DropNewest — the peer is not draining; the data stream is
+/// at-least-once with downstream dedup).
+fn write_or_buffer(
+    connection: &mut quinn_proto::Connection,
+    stream_id: StreamId,
+    slot: &mut StreamSlot,
+    data: Vec<u8>,
+    reply: channel::Sender<io::Result<usize>>,
+) {
+    let total_len = data.len();
+    if would_overflow_write_buffer(slot.write_buf.len(), total_len, slot.max_write_buffer_bytes) {
+        slot.write_buffer_dropped += 1;
+        tracing::warn!(
+            target: "flezha::transport",
+            transport = "quic",
+            dropped = slot.write_buffer_dropped,
+            "QUIC send buffer at cap; dropping frame"
+        );
+        let _ = reply.send(Ok(total_len));
+        return;
+    }
+    match connection.send_stream(stream_id).write(&data) {
+        Ok(written) => {
+            if written < total_len {
+                // Partial write — buffer remainder, defer reply
+                slot.write_buf.extend_from_slice(&data[written..]);
+                slot.pending_write_reply = Some((total_len, reply));
+            } else {
+                let _ = reply.send(Ok(total_len));
+            }
+        }
+        Err(quinn_proto::WriteError::Blocked) => {
+            // Fully blocked — buffer everything, defer reply
+            slot.write_buf = data;
+            slot.pending_write_reply = Some((total_len, reply));
+        }
+        Err(e) => {
+            let _ = reply.send(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("QUIC write error: {}", e),
+            )));
+        }
+    }
+}
+
+/// Serve every event the connection has for its streams. `true` when the
+/// connection was lost and the driver should exit.
+fn dispatch_stream_events(
+    connection: &mut quinn_proto::Connection,
+    streams: &mut HashMap<StreamId, StreamSlot>,
+) -> bool {
+    while let Some(event) = connection.poll() {
+        match event {
+            Event::Stream(StreamEvent::Readable { id }) => {
+                drain_readable(connection, id, streams);
+            }
+            Event::Stream(StreamEvent::Writable { id }) => {
+                flush_write_buffer(connection, id, streams);
+            }
+            Event::ConnectionLost { reason } => {
+                tracing::warn!(
+                    target: "flezha::transport",
+                    transport = "quic",
+                    "QUIC connection lost; driver thread exiting: {}", reason
+                );
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
 
 /// Drain readable data from a stream and push to the channel.
 fn drain_readable(
@@ -712,7 +693,7 @@ fn pump_endpoint_events(
 }
 
 /// Flush all pending transmits from the connection to the UDP socket.
-fn flush_transmits(
+pub fn flush_transmits(
     connection: &mut quinn_proto::Connection,
     udp: &UdpSocket,
     buf: &mut Vec<u8>,
@@ -726,7 +707,7 @@ fn flush_transmits(
 }
 
 /// Send a single transmit (datagram) on the UDP socket.
-fn send_transmit(udp: &UdpSocket, transmit: &Transmit, buf: &[u8]) -> io::Result<()> {
+pub fn send_transmit(udp: &UdpSocket, transmit: &Transmit, buf: &[u8]) -> io::Result<()> {
     let data = &buf[..transmit.size];
     match udp.send_to(data, transmit.destination) {
         Ok(_) => Ok(()),
@@ -764,18 +745,6 @@ mod tests {
             started.elapsed() >= Duration::from_millis(100),
             "read returned before the deadline elapsed"
         );
-    }
-
-    // Parallel to the UDS R2d guard: the send-buffer cap predicate bounds the
-    // buffered-write `Vec` with DropNewest once it is non-empty.
-    #[test]
-    fn write_buffer_cap_drops_newest_past_bound() {
-        let cap = 1024;
-
-        assert!(!would_overflow_write_buffer(0, 4096, cap));
-        assert!(!would_overflow_write_buffer(512, 512, cap));
-        assert!(would_overflow_write_buffer(512, 513, cap));
-        assert!(would_overflow_write_buffer(cap, 1, cap));
     }
 
     #[test]

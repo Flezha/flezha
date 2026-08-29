@@ -3,7 +3,7 @@
 use std::os::unix::net::UnixListener;
 use std::process::{Command, Output};
 
-use flz_transport::utility::path_helper::{probe, Reach};
+use flz_transport::utility::socket_probe::{probe, Reach};
 use tempfile::TempDir;
 
 const FLZ_BIN: &str = env!("CARGO_BIN_EXE_flz");

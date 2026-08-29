@@ -187,7 +187,7 @@ an opaque handle with its later events.
 | `controlling_process` | `(handle, pid) -> :ok` | transfers ownership |
 | `stream_id` | `(handle) -> integer` | driver-assigned id |
 | `client_connect_uds` / `client_connect_quic` / `client_open_stream` | see above | standalone SDK only |
-| `socket_dir_live` | `(socket_dir) -> boolean` | `path_helper::probe` from the controller's side: a live peer's directory is not this instance's to clear |
+| `socket_dir_live` | `(socket_dir) -> boolean` | `socket_probe::probe` from the controller's side: a live peer's directory is not this instance's to clear |
 | `lock_state_root` | `(state_root) -> {:ok, lock_file} \| {:error, holder}` | `fcntl` record lock held for the OS process lifetime; `F_GETLK` names the holder |
 | `held_state_root` | `() -> string` | the lock file this process holds, `""` before it has claimed one |
 

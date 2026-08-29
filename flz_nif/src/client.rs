@@ -17,13 +17,14 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam::channel::unbounded;
+use crossbeam::channel::{unbounded, Receiver};
 use flz_transport::service::payloader::{build_from_binary_into, extract_payload};
 use flz_transport::transport::config::{self as transport_config, QuicEntry, TransportType};
 use flz_transport::transport::protocol::{STREAM_TYPE_PRIMARY, STREAM_TYPE_SECONDARY};
 use flz_transport::transport::quic::QuicClient;
 use flz_transport::transport::FlezhaStream;
-use flz_transport::utility::path_helper::{self, Role};
+use flz_transport::utility::socket_dir::{self, Role};
+use flz_transport::utility::socket_probe;
 use rustler::{Encoder, Env, LocalPid, NifResult, ResourceArc, Term};
 
 use crate::atoms;
@@ -57,7 +58,7 @@ fn client_connect_uds<'a>(
             // The directory that answered is where this runner's later sockets
             // are opened, and where a reconnect returns to — the same slot the
             // Rust client records.
-            path_helper::note_connected(&socket_path);
+            socket_dir::note_connected(&socket_path);
 
             let handle = spawn_client_stream(FlezhaStream::Unix(stream), owner_pid);
             Ok((atoms::ok(), handle).encode(env))
@@ -97,7 +98,7 @@ fn resolve_connect<'a>(
         }
     };
 
-    let resolved_dir = match path_helper::resolve_socket_dir(role, socket_dir.as_deref()) {
+    let resolved_dir = match socket_dir::resolve_socket_dir(role, socket_dir.as_deref()) {
         Ok(resolved) => resolved.path.display().to_string(),
         Err(e) => return Ok((atoms::error(), e.to_string()).encode(env)),
     };
@@ -124,7 +125,7 @@ fn connect_diagnosis(
         _ => TransportType::Uds,
     };
 
-    path_helper::connect_diagnosis(transport, socket_dir.as_deref(), quic_addresses.as_deref())
+    socket_probe::connect_diagnosis(transport, socket_dir.as_deref(), quic_addresses.as_deref())
 }
 
 /// Open a QUIC client connection, verifying the server against `ca_cert_path`.
@@ -135,18 +136,15 @@ fn client_connect_quic<'a>(
     address: String,
     ca_cert_path: String,
 ) -> NifResult<Term<'a>> {
-    let resolved = QuicEntry::parse(&address).and_then(|entry| {
-        entry
-            .resolve()
-            .map_err(|e| format!("{} did not resolve: {}", entry, e))
-    });
-
-    let addrs = match resolved {
-        Ok(addrs) => addrs,
+    let entry = match QuicEntry::parse(&address) {
+        Ok(entry) => entry,
         Err(e) => return Ok((atoms::error(), e).encode(env)),
     };
+    let (addrs, mut failures) = transport_config::resolve_entries(&[entry]);
+    if addrs.is_empty() {
+        return Ok((atoms::error(), failures.join("; ")).encode(env));
+    }
 
-    let mut failures = Vec::new();
     for addr in addrs {
         match QuicClient::connect(addr, &ca_cert_path) {
             Ok(client) => {
@@ -213,10 +211,24 @@ fn spawn_client_stream(stream: FlezhaStream, owner_pid: LocalPid) -> StreamHandl
     let owner = Arc::new(Mutex::new(owner_pid));
     let (cmd_tx, cmd_rx) = unbounded::<ServerCommand>();
 
-    // Reader: decode frames and deliver to the CURRENT owner (shared via `owner`,
-    // updated by `controlling_process/2`), the same contract the server drivers ship.
-    let mut read_stream = stream.try_clone().expect("clone client stream for reader");
-    let reader_owner = Arc::clone(&owner);
+    let read_stream = stream
+        .clone_handle()
+        .expect("clone client stream for reader");
+    spawn_reader(read_stream, stream_id, Arc::clone(&owner));
+    spawn_writer(stream, cmd_rx);
+
+    ResourceArc::new(StreamHandle {
+        stream_id,
+        cmd_tx,
+        waker: StreamWaker::Channel,
+        owner,
+    })
+}
+
+/// Reader: decode frames and deliver to the CURRENT owner (shared via `owner`,
+/// updated by `controlling_process/2`), the same contract the server drivers
+/// ship.
+fn spawn_reader(mut read_stream: FlezhaStream, stream_id: u64, owner: Arc<Mutex<LocalPid>>) {
     thread::spawn(move || loop {
         match extract_payload(&mut read_stream) {
             Ok((payload_id, message, metadata)) => {
@@ -226,7 +238,7 @@ fn spawn_client_stream(stream: FlezhaStream, owner_pid: LocalPid) -> StreamHandl
                     metadata,
                 };
 
-                let who = *reader_owner.lock().unwrap();
+                let who = *owner.lock().unwrap();
                 send_data_msg(who, stream_id, frame);
             }
 
@@ -237,16 +249,17 @@ fn spawn_client_stream(stream: FlezhaStream, owner_pid: LocalPid) -> StreamHandl
                     _ => "read_error",
                 };
 
-                let who = *reader_owner.lock().unwrap();
+                let who = *owner.lock().unwrap();
                 send_closed_msg(who, stream_id, reason);
                 break;
             }
         }
     });
+}
 
-    // Writer: drain the command channel. Client streams are active from birth and
-    // route by the shared `owner`, so SetActive/SetPassive/UpdateOwner are inert.
-    let mut write_stream = stream;
+/// Writer: drain the command channel. Client streams are active from birth and
+/// route by the shared `owner`, so SetActive/SetPassive/UpdateOwner are inert.
+fn spawn_writer(mut write_stream: FlezhaStream, cmd_rx: Receiver<ServerCommand>) {
     thread::spawn(move || {
         let mut buf = Vec::new();
 
@@ -280,13 +293,6 @@ fn spawn_client_stream(stream: FlezhaStream, owner_pid: LocalPid) -> StreamHandl
             }
         }
     });
-
-    ResourceArc::new(StreamHandle {
-        stream_id,
-        cmd_tx,
-        waker: StreamWaker::Channel,
-        owner,
-    })
 }
 
 #[cfg(test)]

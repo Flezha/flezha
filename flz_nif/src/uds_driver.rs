@@ -4,14 +4,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crossbeam::channel::{Receiver, Sender};
-use flz_transport::transport::config::max_write_buffer_bytes;
+use flz_transport::transport::config::{max_write_buffer_bytes, would_overflow_write_buffer};
 use mio::net::UnixListener;
 use mio::{Events, Interest, Poll, Token, Waker};
 use rustler::LocalPid;
 
-use crate::driver_msg::{send_closed_msg, send_connection_msg, send_data_msg};
+use crate::driver_msg::{send_closed_msg, send_connection_msg};
 use crate::driver_stats::{DriverStats, StreamSnapshot};
-use crate::frame_buffer::{FrameBuffer, ParsedFrame};
+use crate::frame_buffer::{FrameBuffer, Inbox};
 use crate::resources::StreamHandle;
 
 const LISTENER_TOKEN: Token = Token(0);
@@ -51,8 +51,7 @@ struct StreamState {
     token: Token,
     owner: Arc<Mutex<LocalPid>>,
     frame_buffer: FrameBuffer,
-    active: bool,
-    passive_queue: Vec<ParsedFrame>,
+    inbox: Inbox,
     write_buffer: Vec<u8>,
     // Hard cap on the per-stream send buffer: past it `enqueue_write` drops the
     // newest frame so a slow/non-reading runner cannot grow controller memory
@@ -84,31 +83,44 @@ pub fn run_uds_driver(
     ready_tx: Sender<std::io::Result<DriverReady>>,
     stats: Arc<DriverStats>,
 ) {
-    match init_and_run(socket_path, acceptor_pid, cmd_rx, cmd_tx, ready_tx, stats) {
-        Ok(()) => {}
-        Err(e) => eprintln!("[flz_nif] UDS driver fatal error: {}", e),
+    let outcome = bind_listener(&socket_path, &ready_tx).and_then(|(poll, listener, waker)| {
+        UdsDriver {
+            socket_path,
+            acceptor_pid,
+            cmd_tx,
+            waker,
+            poll,
+            listener,
+            stats,
+            streams: HashMap::new(),
+            token_to_stream: HashMap::new(),
+            next_stream_id: 1,
+            next_token_id: STREAM_TOKEN_BASE,
+        }
+        .run(cmd_rx)
+    });
+    if let Err(e) = outcome {
+        eprintln!("[flz_nif] UDS driver fatal error: {}", e);
     }
 }
 
-fn init_and_run(
-    socket_path: PathBuf,
-    acceptor_pid: LocalPid,
-    cmd_rx: Receiver<ServerCommand>,
-    cmd_tx: Sender<ServerCommand>,
-    ready_tx: Sender<std::io::Result<DriverReady>>,
-    stats: Arc<DriverStats>,
-) -> std::io::Result<()> {
+/// Bind the listening socket, owner-only, and hand the NIF its waker.
+///
+/// The parent directory is created owner-only because directory traversal
+/// is the UDS authentication boundary — a local same-uid peer IS the node
+/// owner. Best-effort on the parent (a socket placed in a shared dir like
+/// /tmp is not ours to chmod); the socket file itself is hardened
+/// unconditionally, and the controller's own socket dir is created 0700 here
+/// and by `Flezha.Socket.Support.prepare_socket_dir/0`.
+fn bind_listener(
+    socket_path: &PathBuf,
+    ready_tx: &Sender<std::io::Result<DriverReady>>,
+) -> std::io::Result<(Poll, UnixListener, Arc<Waker>)> {
     // Clean up stale socket file
     if socket_path.exists() {
-        let _ = std::fs::remove_file(&socket_path);
+        let _ = std::fs::remove_file(socket_path);
     }
 
-    // Ensure parent directory exists, owner-only: directory traversal is the
-    // UDS authentication boundary — a local same-uid peer IS the node owner.
-    // Best-effort on the parent (a socket placed in a shared dir like /tmp is
-    // not ours to chmod); the socket file itself is hardened unconditionally
-    // below, and the controller's own socket dir is created 0700 here and by
-    // `Flezha.Socket.Support.prepare_socket_dir/0`.
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
         #[cfg(unix)]
@@ -120,13 +132,13 @@ fn init_and_run(
 
     let poll = Poll::new()?;
 
-    let mut listener = UnixListener::bind(&socket_path)?;
+    let mut listener = UnixListener::bind(socket_path)?;
 
     // Owner-only socket; the 0o700 parent already gates the pre-chmod window.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
     }
     poll.registry()
         .register(&mut listener, LISTENER_TOKEN, Interest::READABLE)?;
@@ -138,204 +150,186 @@ fn init_and_run(
         waker: Arc::clone(&waker),
     }));
 
-    driver_loop(
-        socket_path,
-        acceptor_pid,
-        cmd_rx,
-        cmd_tx,
-        &waker,
-        poll,
-        listener,
-        stats,
-    )
+    Ok((poll, listener, waker))
 }
 
-// reason: the loop owns the listener, command channel, waker, poll registry and
-// the shared stats handle; bundling them into a struct would not reduce the
-// genuine state the loop must thread.
-#[allow(clippy::too_many_arguments)]
-fn driver_loop(
+/// What one poll pass found: whether the listener is readable, and the
+/// streams that are.
+struct PassEvents {
+    accept_needed: bool,
+    readable: Vec<u64>,
+    writable: Vec<u64>,
+}
+
+/// The UDS server driver: the listener, every accepted stream, and the
+/// bookkeeping the loop threads through them.
+struct UdsDriver {
     socket_path: PathBuf,
     acceptor_pid: LocalPid,
-    cmd_rx: Receiver<ServerCommand>,
     cmd_tx: Sender<ServerCommand>,
-    _waker: &Arc<Waker>,
-    mut poll: Poll,
+    waker: Arc<Waker>,
+    poll: Poll,
     listener: UnixListener,
     stats: Arc<DriverStats>,
-) -> std::io::Result<()> {
-    let mut events = Events::with_capacity(256);
-    let mut streams: HashMap<u64, StreamState> = HashMap::new();
-    let mut next_stream_id: u64 = 1;
-    let mut next_token_id: usize = STREAM_TOKEN_BASE;
-    let mut token_to_stream: HashMap<Token, u64> = HashMap::new();
-    let mut read_buf = vec![0u8; 65536];
+    streams: HashMap<u64, StreamState>,
+    token_to_stream: HashMap<Token, u64>,
+    next_stream_id: u64,
+    next_token_id: usize,
+}
 
-    loop {
-        let _ = poll.poll(&mut events, Some(std::time::Duration::from_millis(50)));
+impl UdsDriver {
+    fn run(mut self, cmd_rx: Receiver<ServerCommand>) -> std::io::Result<()> {
+        let mut events = Events::with_capacity(256);
+        let mut read_buf = vec![0u8; 65536];
 
-        // Liveness heartbeat: bump once per iteration before any work, so a
-        // frozen counter (with a stale last_loop_ms) pinpoints a wedged thread.
-        let now = stats.now_ms();
-        stats.mark_loop(now, cmd_rx.len() as u64);
+        loop {
+            let _ = self
+                .poll
+                .poll(&mut events, Some(std::time::Duration::from_millis(50)));
 
-        // Collect events that need stream reads (to avoid borrow issues)
-        let mut readable_streams: Vec<u64> = Vec::new();
-        let mut writable_streams: Vec<u64> = Vec::new();
-        let mut accept_needed = false;
+            // Liveness heartbeat: bump once per iteration before any work, so a
+            // frozen counter (with a stale last_loop_ms) pinpoints a wedged thread.
+            let now = self.stats.now_ms();
+            self.stats.mark_loop(now, cmd_rx.len() as u64);
 
-        for event in events.iter() {
-            match event.token() {
-                LISTENER_TOKEN => {
-                    accept_needed = true;
-                }
-                WAKER_TOKEN => {
-                    // Commands handled below
-                }
-                token => {
-                    if let Some(&stream_id) = token_to_stream.get(&token) {
-                        if event.is_readable() {
-                            readable_streams.push(stream_id);
-                        }
-                        if event.is_writable() {
-                            writable_streams.push(stream_id);
-                        }
-                    }
+            let pass = self.collect_events(&events);
+            if pass.accept_needed {
+                self.accept_connections();
+            }
+            // Flush writable streams (backpressure relief)
+            self.flush_dirty(pass.writable, now);
+            for stream_id in pass.readable {
+                if self.read_stream_data(stream_id, &mut read_buf, now) {
+                    self.close_stream(stream_id);
                 }
             }
-        }
-
-        // Accept new connections
-        if accept_needed {
-            accept_connections(
-                &listener,
-                &mut poll,
-                &mut streams,
-                &mut token_to_stream,
-                &mut next_stream_id,
-                &mut next_token_id,
-                acceptor_pid,
-                &cmd_tx,
-                _waker,
-            );
-        }
-
-        // Flush writable streams (backpressure relief)
-        for stream_id in writable_streams {
-            if flush_write_buffer(stream_id, &mut streams, &mut poll, now) {
-                if let Some(state) = streams.get(&stream_id) {
-                    let owner = *state.owner.lock().unwrap();
-                    send_closed_msg(owner, stream_id, "write_error");
-                }
-                close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
-            }
-        }
-
-        // Read from streams
-        for stream_id in readable_streams {
-            let closed = read_stream_data(stream_id, &mut streams, &mut read_buf, now);
-            if closed {
-                close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
-            }
-        }
-
-        // Process commands
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                ServerCommand::SendData { stream_id, data } => {
-                    if enqueue_write(stream_id, data, &mut streams, &mut poll, now) {
-                        if let Some(state) = streams.get(&stream_id) {
-                            let owner = *state.owner.lock().unwrap();
-                            send_closed_msg(owner, stream_id, "write_error");
-                        }
-                        close_stream_internal(
-                            stream_id,
-                            &mut streams,
-                            &mut token_to_stream,
-                            &mut poll,
-                        );
-                    }
-                }
-                ServerCommand::SendFrame {
-                    stream_id,
-                    payload_id,
-                    message,
-                    metadata,
-                } => {
-                    let frame = flz_transport::service::payloader::build_from_binary(
-                        &payload_id,
-                        &message,
-                        metadata,
-                    );
-                    if enqueue_write(stream_id, frame, &mut streams, &mut poll, now) {
-                        if let Some(state) = streams.get(&stream_id) {
-                            let owner = *state.owner.lock().unwrap();
-                            send_closed_msg(owner, stream_id, "write_error");
-                        }
-                        close_stream_internal(
-                            stream_id,
-                            &mut streams,
-                            &mut token_to_stream,
-                            &mut poll,
-                        );
-                    }
-                }
-                ServerCommand::SetActive { stream_id } => {
-                    if let Some(state) = streams.get_mut(&stream_id) {
-                        state.active = true;
-                        let owner = *state.owner.lock().unwrap();
-                        let queued: Vec<_> = state.passive_queue.drain(..).collect();
-                        for frame in queued {
-                            send_data_msg(owner, stream_id, frame);
-                        }
-                    }
-                }
-                ServerCommand::SetPassive { stream_id } => {
-                    if let Some(state) = streams.get_mut(&stream_id) {
-                        state.active = false;
-                    }
-                }
-                ServerCommand::CloseStream { stream_id } => {
-                    close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
-                }
-                ServerCommand::UpdateOwner {
-                    stream_id,
-                    new_owner,
-                } => {
-                    if let Some(state) = streams.get_mut(&stream_id) {
-                        *state.owner.lock().unwrap() = new_owner;
-                    }
-                }
-                ServerCommand::Shutdown => {
-                    for (_, mut state) in streams.drain() {
-                        let _ = poll.registry().deregister(&mut state.stream);
-                    }
-                    let _ = std::fs::remove_file(&socket_path);
+            while let Ok(cmd) = cmd_rx.try_recv() {
+                if self.handle_command(cmd, now) {
                     return Ok(());
                 }
             }
+            // After processing all commands, try to flush pending writes
+            let dirty: Vec<u64> = self
+                .streams
+                .iter()
+                .filter(|(_, s)| !s.write_buffer.is_empty())
+                .map(|(&id, _)| id)
+                .collect();
+            self.flush_dirty(dirty, now);
+            let streams = self.snapshot_streams();
+            self.stats.set_streams(streams);
         }
+    }
 
-        // After processing all commands, try to flush pending writes
-        let ids_with_data: Vec<u64> = streams
-            .iter()
-            .filter(|(_, s)| !s.write_buffer.is_empty())
-            .map(|(&id, _)| id)
-            .collect();
-        for stream_id in ids_with_data {
-            if flush_write_buffer(stream_id, &mut streams, &mut poll, now) {
-                if let Some(state) = streams.get(&stream_id) {
-                    let owner = *state.owner.lock().unwrap();
-                    send_closed_msg(owner, stream_id, "write_error");
+    /// Sort one pass's events by what they ask for; the waker's own token
+    /// means only that commands are queued.
+    fn collect_events(&self, events: &Events) -> PassEvents {
+        let mut pass = PassEvents {
+            accept_needed: false,
+            readable: Vec::new(),
+            writable: Vec::new(),
+        };
+        for event in events.iter() {
+            match event.token() {
+                LISTENER_TOKEN => pass.accept_needed = true,
+                WAKER_TOKEN => {}
+                token => {
+                    if let Some(&stream_id) = self.token_to_stream.get(&token) {
+                        if event.is_readable() {
+                            pass.readable.push(stream_id);
+                        }
+                        if event.is_writable() {
+                            pass.writable.push(stream_id);
+                        }
+                    }
                 }
-                close_stream_internal(stream_id, &mut streams, &mut token_to_stream, &mut poll);
             }
         }
+        pass
+    }
 
-        // Rebuild the per-stream liveness snapshot once per iteration (off the
-        // per-frame path). A frozen loop means this never refreshes — matching
-        // the stale last_loop_ms that flags the wedge.
-        let snap: HashMap<u64, StreamSnapshot> = streams
+    /// One NIF command. `true` means the driver was asked to shut down: every
+    /// stream is deregistered and the socket file removed.
+    fn handle_command(&mut self, cmd: ServerCommand, now: u64) -> bool {
+        match cmd {
+            ServerCommand::SendData { stream_id, data } => {
+                self.enqueue_or_close(stream_id, data, now)
+            }
+            ServerCommand::SendFrame {
+                stream_id,
+                payload_id,
+                message,
+                metadata,
+            } => {
+                let frame = flz_transport::service::payloader::build_from_binary(
+                    &payload_id,
+                    &message,
+                    metadata,
+                );
+                self.enqueue_or_close(stream_id, frame, now);
+            }
+            ServerCommand::SetActive { stream_id } => {
+                if let Some(state) = self.streams.get_mut(&stream_id) {
+                    let owner = *state.owner.lock().unwrap();
+                    state.inbox.activate(owner, stream_id);
+                }
+            }
+            ServerCommand::SetPassive { stream_id } => {
+                if let Some(state) = self.streams.get_mut(&stream_id) {
+                    state.inbox.deactivate();
+                }
+            }
+            ServerCommand::CloseStream { stream_id } => self.close_stream(stream_id),
+            ServerCommand::UpdateOwner {
+                stream_id,
+                new_owner,
+            } => {
+                if let Some(state) = self.streams.get_mut(&stream_id) {
+                    *state.owner.lock().unwrap() = new_owner;
+                }
+            }
+            ServerCommand::Shutdown => {
+                for (_, mut state) in self.streams.drain() {
+                    let _ = self.poll.registry().deregister(&mut state.stream);
+                }
+                let _ = std::fs::remove_file(&self.socket_path);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Queue `data` on a stream and flush what it will take now; a broken
+    /// stream is reported to its owner and closed.
+    fn enqueue_or_close(&mut self, stream_id: u64, data: Vec<u8>, now: u64) {
+        if enqueue_write(stream_id, data, &mut self.streams, &mut self.poll, now) {
+            self.report_and_close(stream_id, "write_error");
+        }
+    }
+
+    /// Flush the buffered writes of `stream_ids`; a broken stream is reported
+    /// to its owner and closed.
+    fn flush_dirty(&mut self, stream_ids: Vec<u64>, now: u64) {
+        for stream_id in stream_ids {
+            if flush_write_buffer(stream_id, &mut self.streams, &mut self.poll, now) {
+                self.report_and_close(stream_id, "write_error");
+            }
+        }
+    }
+
+    fn report_and_close(&mut self, stream_id: u64, reason: &str) {
+        if let Some(state) = self.streams.get(&stream_id) {
+            let owner = *state.owner.lock().unwrap();
+            send_closed_msg(owner, stream_id, reason);
+        }
+        self.close_stream(stream_id);
+    }
+
+    /// The per-stream liveness snapshot, rebuilt once per iteration (off the
+    /// per-frame path). A frozen loop means this never refreshes — matching
+    /// the stale last_loop_ms that flags the wedge.
+    fn snapshot_streams(&self) -> HashMap<u64, StreamSnapshot> {
+        self.streams
             .iter()
             .map(|(&id, s)| {
                 (
@@ -350,8 +344,120 @@ fn driver_loop(
                     },
                 )
             })
-            .collect();
-        stats.set_streams(snap);
+            .collect()
+    }
+
+    fn accept_connections(&mut self) {
+        loop {
+            match self.listener.accept() {
+                Ok((stream, _addr)) => self.register_stream(stream),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) => {
+                    eprintln!("[flz_nif] Accept error: {}", e);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Register one accepted connection with the poll and hand its handle to
+    /// the acceptor.
+    fn register_stream(&mut self, mut stream: mio::net::UnixStream) {
+        let stream_id = self.next_stream_id;
+        self.next_stream_id += 1;
+        let token = Token(self.next_token_id);
+        self.next_token_id += 1;
+
+        let owner = Arc::new(Mutex::new(self.acceptor_pid));
+
+        if let Err(e) = self
+            .poll
+            .registry()
+            .register(&mut stream, token, Interest::READABLE)
+        {
+            eprintln!("[flz_nif] Failed to register stream: {}", e);
+            return;
+        }
+
+        let stream_handle = rustler::ResourceArc::new(StreamHandle {
+            stream_id,
+            cmd_tx: self.cmd_tx.clone(),
+            waker: crate::resources::StreamWaker::Mio(Arc::clone(&self.waker)),
+            owner: Arc::clone(&owner),
+        });
+
+        self.streams.insert(
+            stream_id,
+            StreamState {
+                stream,
+                token,
+                owner,
+                frame_buffer: FrameBuffer::new(),
+                inbox: Inbox::new(),
+                write_buffer: Vec::new(),
+                max_write_buffer_bytes: max_write_buffer_bytes(),
+                write_buffer_dropped: 0,
+                frames_written: 0,
+                frames_read: 0,
+                last_write_ms: 0,
+                last_read_ms: 0,
+            },
+        );
+        self.token_to_stream.insert(token, stream_id);
+
+        send_connection_msg(self.acceptor_pid, stream_handle);
+    }
+
+    fn close_stream(&mut self, stream_id: u64) {
+        if let Some(mut state) = self.streams.remove(&stream_id) {
+            self.token_to_stream.remove(&state.token);
+            let _ = self.poll.registry().deregister(&mut state.stream);
+            // Stream is dropped here, closing the fd
+        }
+    }
+
+    /// Read available data from a stream, feed into FrameBuffer, deliver frames.
+    /// Returns true if the stream is closed.
+    fn read_stream_data(&mut self, stream_id: u64, read_buf: &mut [u8], now: u64) -> bool {
+        let state = match self.streams.get_mut(&stream_id) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        loop {
+            match state.stream.read(read_buf) {
+                Ok(0) => {
+                    // EOF — connection closed
+                    let owner = *state.owner.lock().unwrap();
+                    send_closed_msg(owner, stream_id, "connection_closed");
+                    return true;
+                }
+                Ok(n) => {
+                    let frames = match state.frame_buffer.feed(&read_buf[..n]) {
+                        Ok(frames) => frames,
+                        Err(e) => {
+                            eprintln!(
+                                "[flz_nif] UDS frame too large on stream {}: declared {} > max {}",
+                                stream_id, e.declared, e.max
+                            );
+                            let owner = *state.owner.lock().unwrap();
+                            send_closed_msg(owner, stream_id, "frame_too_large");
+                            return true;
+                        }
+                    };
+                    let owner = *state.owner.lock().unwrap();
+                    state.last_read_ms = now;
+                    state.frames_read += frames.len() as u64;
+                    state.inbox.deliver(owner, stream_id, frames);
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => return false,
+                Err(_) => {
+                    let owner = *state.owner.lock().unwrap();
+                    send_closed_msg(owner, stream_id, "read_error");
+                    return true;
+                }
+            }
+        }
     }
 }
 
@@ -378,23 +484,15 @@ fn enqueue_write(
 
         state.frames_written += 1;
         state.write_buffer.extend_from_slice(&data);
-        return try_flush(state, poll, now);
+        return flush_pending(state, poll, now);
     }
     false
-}
-
-/// Whether enqueuing `incoming` bytes onto a `buffered`-byte send buffer would
-/// exceed `cap`. An empty buffer always accepts (so a single oversized frame on
-/// an idle stream is never dropped); once non-empty, the buffer stays at or
-/// below `cap`.
-fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize) -> bool {
-    buffered != 0 && buffered + incoming > cap
 }
 
 /// Attempt to write buffered data to the stream.
 /// If WouldBlock, registers for WRITABLE events so we retry later.
 /// Returns true if the stream is broken (write error).
-fn try_flush(state: &mut StreamState, poll: &mut Poll, now: u64) -> bool {
+fn flush_pending(state: &mut StreamState, poll: &mut Poll, now: u64) -> bool {
     while !state.write_buffer.is_empty() {
         match state.stream.write(&state.write_buffer) {
             Ok(0) => break,
@@ -434,173 +532,7 @@ fn flush_write_buffer(
     now: u64,
 ) -> bool {
     if let Some(state) = streams.get_mut(&stream_id) {
-        return try_flush(state, poll, now);
+        return flush_pending(state, poll, now);
     }
     false
-}
-
-// reason: accept loop needs the listener plus all per-connection bookkeeping (stream/token maps, id counters, acceptor pid, mio waker); splitting would just bundle them into an inline struct
-#[allow(clippy::too_many_arguments)]
-fn accept_connections(
-    listener: &UnixListener,
-    poll: &mut Poll,
-    streams: &mut HashMap<u64, StreamState>,
-    token_to_stream: &mut HashMap<Token, u64>,
-    next_stream_id: &mut u64,
-    next_token_id: &mut usize,
-    acceptor_pid: LocalPid,
-    cmd_tx: &Sender<ServerCommand>,
-    waker: &Arc<Waker>,
-) {
-    loop {
-        match listener.accept() {
-            Ok((mut stream, _addr)) => {
-                let stream_id = *next_stream_id;
-                *next_stream_id += 1;
-                let token = Token(*next_token_id);
-                *next_token_id += 1;
-
-                let owner = Arc::new(Mutex::new(acceptor_pid));
-
-                if let Err(e) = poll
-                    .registry()
-                    .register(&mut stream, token, Interest::READABLE)
-                {
-                    eprintln!("[flz_nif] Failed to register stream: {}", e);
-                    continue;
-                }
-
-                let stream_handle = rustler::ResourceArc::new(StreamHandle {
-                    stream_id,
-                    cmd_tx: cmd_tx.clone(),
-                    waker: crate::resources::StreamWaker::Mio(Arc::clone(waker)),
-                    owner: Arc::clone(&owner),
-                });
-
-                streams.insert(
-                    stream_id,
-                    StreamState {
-                        stream,
-                        token,
-                        owner,
-                        frame_buffer: FrameBuffer::new(),
-                        active: false,
-                        passive_queue: Vec::new(),
-                        write_buffer: Vec::new(),
-                        max_write_buffer_bytes: max_write_buffer_bytes(),
-                        write_buffer_dropped: 0,
-                        frames_written: 0,
-                        frames_read: 0,
-                        last_write_ms: 0,
-                        last_read_ms: 0,
-                    },
-                );
-                token_to_stream.insert(token, stream_id);
-
-                send_connection_msg(acceptor_pid, stream_handle);
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-            Err(e) => {
-                eprintln!("[flz_nif] Accept error: {}", e);
-                break;
-            }
-        }
-    }
-}
-
-fn close_stream_internal(
-    stream_id: u64,
-    streams: &mut HashMap<u64, StreamState>,
-    token_to_stream: &mut HashMap<Token, u64>,
-    poll: &mut Poll,
-) {
-    if let Some(mut state) = streams.remove(&stream_id) {
-        token_to_stream.remove(&state.token);
-        let _ = poll.registry().deregister(&mut state.stream);
-        // Stream is dropped here, closing the fd
-    }
-}
-
-/// Read available data from a stream, feed into FrameBuffer, deliver frames.
-/// Returns true if the stream is closed.
-fn read_stream_data(
-    stream_id: u64,
-    streams: &mut HashMap<u64, StreamState>,
-    read_buf: &mut [u8],
-    now: u64,
-) -> bool {
-    let state = match streams.get_mut(&stream_id) {
-        Some(s) => s,
-        None => return false,
-    };
-
-    loop {
-        match state.stream.read(read_buf) {
-            Ok(0) => {
-                // EOF — connection closed
-                let owner = *state.owner.lock().unwrap();
-                send_closed_msg(owner, stream_id, "connection_closed");
-                return true;
-            }
-            Ok(n) => {
-                let frames = match state.frame_buffer.feed(&read_buf[..n]) {
-                    Ok(frames) => frames,
-                    Err(e) => {
-                        eprintln!(
-                            "[flz_nif] UDS frame too large on stream {}: declared {} > max {}",
-                            stream_id, e.declared, e.max
-                        );
-                        let owner = *state.owner.lock().unwrap();
-                        send_closed_msg(owner, stream_id, "frame_too_large");
-                        return true;
-                    }
-                };
-                let owner = *state.owner.lock().unwrap();
-                state.last_read_ms = now;
-                state.frames_read += frames.len() as u64;
-
-                if state.active {
-                    for frame in frames {
-                        send_data_msg(owner, stream_id, frame);
-                    }
-                } else {
-                    state.passive_queue.extend(frames);
-                }
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => return false,
-            Err(_) => {
-                let owner = *state.owner.lock().unwrap();
-                send_closed_msg(owner, stream_id, "read_error");
-                return true;
-            }
-        }
-    }
-}
-
-// send_data_msg / send_closed_msg / send_connection_msg live in
-// crate::driver_msg (shared with the QUIC driver).
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // R2d: without the cap, `enqueue_write` appends to `write_buffer` on every
-    // `WouldBlock` and it grows without bound. The cap predicate bounds it:
-    // DropNewest once the buffer is non-empty and the frame would exceed the cap.
-    #[test]
-    fn write_buffer_cap_drops_newest_past_bound() {
-        let cap = 1024;
-
-        // Empty buffer always accepts (a single oversized frame on an idle stream
-        // is never dropped).
-        assert!(!would_overflow_write_buffer(0, 4096, cap));
-
-        // Filling exactly to the cap is allowed; one byte past it is dropped.
-        assert!(!would_overflow_write_buffer(512, 512, cap));
-        assert!(would_overflow_write_buffer(512, 513, cap));
-
-        // Already at the cap: every further frame is dropped — workflow, not 1:1.
-        assert!(would_overflow_write_buffer(cap, 1, cap));
-        assert!(would_overflow_write_buffer(cap, 4096, cap));
-    }
 }

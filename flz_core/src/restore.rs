@@ -90,47 +90,54 @@ pub fn fold_change_log(
     for record in iter_change_log_records(change_log_bytes) {
         let record = record?;
         summary.terminal_seq = summary.terminal_seq.max(record.seq);
-
-        // The trailing crc32 in the WAL covers header + change_bytes.
-        let mut hasher = crc32fast::Hasher::new();
-        hasher.update(record.header);
-        hasher.update(record.change_bytes);
-        if hasher.finalize() != record.trailing_crc {
-            return Err(RestoreError::CrcMismatch {
-                entity: 0,
-                seq: record.seq,
-            });
-        }
-
-        let header = crate::header::decode_header(record.header)?;
-        let (kind, decision) = crate::header::resolve_record(&header, expected, min_readable)?;
-        summary.migrated |= decision.migrating();
-
-        match kind {
-            crate::header::RecordKind::EffectRecord => {
-                // Effectively-once effect record: its change portion folds
-                // exactly as plain change records do, in order. Outputs and
-                // consumed-offset are controller-side concerns. The enclosing
-                // record's version governs the bodies it encloses — one
-                // invocation wrote them all.
-                let body: crate::flusher::EffectRecordBody =
-                    postcard::from_bytes(record.change_bytes)
-                        .map_err(|e| RestoreError::ChangeDecode(e.to_string()))?;
-                for bytes in &body.changes {
-                    sink.change(decision, bytes)?;
-                }
-                sink.timers(&body.timers);
-            }
-            crate::header::RecordKind::TimerOps => {
-                let ops: Vec<crate::schema::TimerOp> = postcard::from_bytes(record.change_bytes)
-                    .map_err(|e| RestoreError::ChangeDecode(e.to_string()))?;
-                sink.timers(&ops);
-            }
-            crate::header::RecordKind::Change => sink.change(decision, record.change_bytes)?,
-        }
+        summary.migrated |= fold_record(&record, expected, min_readable, sink)?;
     }
 
     Ok(summary)
+}
+
+/// One record into the sink: the framing CRC, the version decision, then its
+/// bodies by kind. An effect record's change portion folds exactly as plain
+/// change records do, in order (outputs and consumed-offset are
+/// controller-side concerns), under the enclosing record's version — one
+/// invocation wrote them all. Answers whether the record migrated.
+fn fold_record(
+    record: &ChangeLogRecord<'_>,
+    expected: &crate::header::HeaderTemplate,
+    min_readable: u32,
+    sink: &mut dyn ChangeLogSink,
+) -> Result<bool, RestoreError> {
+    // The trailing crc32 in the WAL covers header + change_bytes.
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(record.header);
+    hasher.update(record.change_bytes);
+    if hasher.finalize() != record.trailing_crc {
+        return Err(RestoreError::CrcMismatch {
+            entity: 0,
+            seq: record.seq,
+        });
+    }
+
+    let header = crate::header::decode_header(record.header)?;
+    let (kind, decision) = crate::header::resolve_record(&header, expected, min_readable)?;
+
+    match kind {
+        crate::header::RecordKind::EffectRecord => {
+            let body: crate::flusher::EffectRecordBody = postcard::from_bytes(record.change_bytes)
+                .map_err(|e| RestoreError::ChangeDecode(e.to_string()))?;
+            for bytes in &body.changes {
+                sink.change(decision, bytes)?;
+            }
+            sink.timers(&body.timers);
+        }
+        crate::header::RecordKind::TimerOps => {
+            let ops: Vec<crate::schema::TimerOp> = postcard::from_bytes(record.change_bytes)
+                .map_err(|e| RestoreError::ChangeDecode(e.to_string()))?;
+            sink.timers(&ops);
+        }
+        crate::header::RecordKind::Change => sink.change(decision, record.change_bytes)?,
+    }
+    Ok(decision.migrating())
 }
 
 /// Frame one WAL record the way the controller's

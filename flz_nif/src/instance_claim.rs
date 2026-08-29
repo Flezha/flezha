@@ -15,7 +15,7 @@ use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use flz_transport::utility::path_helper;
+use flz_transport::utility::socket_probe;
 
 /// The claim lives as long as this open file description, and a controller
 /// owns its state root until the process exits — so the file is held here
@@ -29,7 +29,7 @@ const LOCK_FILE: &str = ".instance.lock";
 /// control socket and every attached runner's stream socket with it.
 #[rustler::nif(schedule = "DirtyIo")]
 fn socket_dir_live(socket_dir: String) -> bool {
-    path_helper::probe(Path::new(&socket_dir)).reachable()
+    socket_probe::probe(Path::new(&socket_dir)).reachable()
 }
 
 /// Claim `state_root` for this controller. `Ok` carries the lock file;

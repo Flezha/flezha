@@ -91,32 +91,9 @@ pub fn extract_payload<R: Read>(
 pub fn extract_payload_non_blocking<R: Read>(
     mut reader: R,
 ) -> io::Result<Option<(String, Vec<u8>, HashMap<String, String>)>> {
-    let mut header_buf = [0; HEADER_LEN];
-    match reader.read(&mut header_buf) {
-        Ok(0) => {
-            // End of stream
-            return Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Connection closed",
-            ));
-        }
-        Ok(n) if n < HEADER_LEN => {
-            // This should not happen with UnixStream, but as a precaution.
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Incomplete header",
-            ));
-        }
-        Ok(_) => {
-            // Header read successfully
-        }
-        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-            return Ok(None);
-        }
-        Err(e) => {
-            return Err(e);
-        }
-    }
+    let Some(header_buf) = read_header_or_none(&mut reader)? else {
+        return Ok(None);
+    };
 
     let payload_id = parse_payload_id(&header_buf[..PAYLOAD_ID_LEN]);
     let payload_length = (&header_buf[PAYLOAD_ID_LEN..]).read_u32::<BigEndian>()? as usize;
@@ -143,6 +120,26 @@ pub fn extract_payload_non_blocking<R: Read>(
     let (message_buf, metadata) = parse_payload_body(&payload_buf)?;
 
     Ok(Some((payload_id, message_buf, metadata)))
+}
+
+/// One non-blocking read of the frame header: the header, `None` when nothing
+/// is readable yet, an error at end of stream or on a short read.
+fn read_header_or_none<R: Read>(reader: &mut R) -> io::Result<Option<[u8; HEADER_LEN]>> {
+    let mut header_buf = [0; HEADER_LEN];
+    match reader.read(&mut header_buf) {
+        Ok(0) => Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "Connection closed",
+        )),
+        // A short header cannot happen on a UnixStream; refused as a precaution.
+        Ok(n) if n < HEADER_LEN => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Incomplete header",
+        )),
+        Ok(_) => Ok(Some(header_buf)),
+        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 pub fn build_from_binary(payload_id: &str, message: &[u8], metadata: PayloadMetadata) -> Vec<u8> {
@@ -271,6 +268,39 @@ fn serialize_metadata(metadata: &HashMap<String, String>) -> Vec<u8> {
     result
 }
 
+fn deserialize_metadata(metadata_bytes: &[u8]) -> io::Result<HashMap<String, String>> {
+    let mut metadata = HashMap::new();
+    let mut offset = 0;
+
+    while offset < metadata_bytes.len() {
+        if offset + 2 > metadata_bytes.len() {
+            break; // Not enough bytes for key and value sizes
+        }
+
+        let key_size = metadata_bytes[offset] as usize;
+        let value_size = metadata_bytes[offset + 1] as usize;
+        offset += 2;
+
+        if offset + key_size + value_size > metadata_bytes.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid metadata format: insufficient bytes for key/value",
+            ));
+        }
+
+        let key = String::from_utf8_lossy(&metadata_bytes[offset..offset + key_size]).to_string();
+        offset += key_size;
+
+        let value =
+            String::from_utf8_lossy(&metadata_bytes[offset..offset + value_size]).to_string();
+        offset += value_size;
+
+        metadata.insert(key, value);
+    }
+
+    Ok(metadata)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,37 +371,4 @@ mod tests {
             ReadAction::Reconnect
         ));
     }
-}
-
-fn deserialize_metadata(metadata_bytes: &[u8]) -> io::Result<HashMap<String, String>> {
-    let mut metadata = HashMap::new();
-    let mut offset = 0;
-
-    while offset < metadata_bytes.len() {
-        if offset + 2 > metadata_bytes.len() {
-            break; // Not enough bytes for key and value sizes
-        }
-
-        let key_size = metadata_bytes[offset] as usize;
-        let value_size = metadata_bytes[offset + 1] as usize;
-        offset += 2;
-
-        if offset + key_size + value_size > metadata_bytes.len() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Invalid metadata format: insufficient bytes for key/value",
-            ));
-        }
-
-        let key = String::from_utf8_lossy(&metadata_bytes[offset..offset + key_size]).to_string();
-        offset += key_size;
-
-        let value =
-            String::from_utf8_lossy(&metadata_bytes[offset..offset + value_size]).to_string();
-        offset += value_size;
-
-        metadata.insert(key, value);
-    }
-
-    Ok(metadata)
 }

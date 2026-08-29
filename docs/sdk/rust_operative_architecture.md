@@ -389,7 +389,7 @@ c.input::<Vec<u8>>("trade.raw")
 
 | `OverflowPolicy` | Behaviour |
 |---|---|
-| `DropNothing` (default, every kind) | Nothing is discarded, and **how** that is realized depends on who produced the value. A producing Entity's `ctx.emit` never parks: the push is held in that Entity's push holdback, the Entity is handed no further activation until it drains, and the consumer's next free slot drains it. The wire reader, which has no producing Entity, retries after a bounded 50 ms park on the consumer's `BlockParker`, woken per pop — the one park left, and what carries ingress backpressure to the controller. Preserves ordering either way, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
+| `DropNothing` (default, every kind) | Nothing is discarded, and **how** that is realized depends on who produced the value. A producing Entity's `ctx.emit` never parks: the push is held in that Entity's push holdback, the Entity is handed no further activation until it drains, and the consumer's next free slot drains it. The wire reader, which has no producing Entity, retries after a bounded 50 ms park on the consumer's `Waiters`, woken per pop — the one park left, and what carries ingress backpressure to the controller. Preserves ordering either way, loses nothing, never stalls indefinitely; a producer blocked longer than 5 s logs one `flezha::mailbox` warning naming the consumer. |
 | `DropNewest` | The incoming item is discarded; `drops_newest_total` += 1. |
 | `DropOldest` | The mailbox pops its oldest item and accepts the new one (`force_push`); `drops_oldest_total` += 1 **and `pushes_total` += 1** — the force-push admitted, so it is a successful enqueue by that counter's definition. Which item is evicted is best-effort under MPMC contention; the evicted one is named in a `flezha::mailbox` debug line. |
 
@@ -566,7 +566,7 @@ port: [`state_persistence.md`](state_persistence.md).
 | Typed dispatcher and plugin-sink tail; poll-worker pool | `sdk/rust/src/operative/dispatcher.rs`, `poll_pool.rs` |
 | Poll engine (handout, admission, ladder, deferred wakes) | `flz_core/src/poll_core.rs` |
 | `StreamInstance`, `KeyGroupRange`; `OperativeTopology`, `EntityMode`; registries | `flz_core/src/operative/{instance,topology,registry}.rs` |
-| `EntitySlot`, `EntityCounters`, `BlockParker`; `Mailbox`; dynamic registry and reaper | `flz_core/src/entity.rs`, `mailbox.rs`, `dynamic.rs` |
+| `EntitySlot`, `EntityCounters`; `Mailbox`, `Waiters`; dynamic registry and reaper | `flz_core/src/entity.rs`, `mailbox.rs`, `dynamic.rs` |
 | Wire dispatch (`OperativeDispatchHandle`); wire input routing | `flz_core/src/fast.rs`, `flz_core/src/command/streams_connect.rs` |
 | Enqueue, overflow policies, `send_plugin_frame`; Change flusher | `flz_core/src/routing.rs`, `flz_core/src/flusher.rs` |
 | State migration JSON shape | `flz_core/src/command/entity_state.rs` |

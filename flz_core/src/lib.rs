@@ -10,11 +10,15 @@
 //! it through the C ABI (`flz_core_ffi`); the Rust SDK consumes the same
 //! engine this crate exposes as a library.
 
+#[doc(hidden)]
+pub mod admission;
 pub mod channel;
 #[doc(hidden)]
 pub mod command;
 #[doc(hidden)]
 pub mod control_unit;
+#[doc(hidden)]
+pub mod coordinator;
 #[doc(hidden)]
 pub mod correction;
 #[doc(hidden)]
@@ -26,8 +30,6 @@ pub mod effect;
 pub mod entity;
 pub mod entry_input;
 #[doc(hidden)]
-pub mod fast;
-#[doc(hidden)]
 pub mod flusher;
 pub mod header;
 pub mod host;
@@ -36,8 +38,6 @@ pub mod mailbox;
 pub mod operative;
 #[doc(hidden)]
 pub mod park;
-#[doc(hidden)]
-pub mod persistence;
 #[doc(hidden)]
 pub mod persistent_id;
 pub mod poll_core;

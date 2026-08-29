@@ -18,6 +18,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use flz_transport::utility::noise::{noise, xorshift64};
+
 const ENV_ID_PATH: &str = "FLEZHA_RUNNER_ID_PATH";
 const DEFAULT_ID_PATH: &str = "/var/lib/flezha-runner/id";
 
@@ -86,19 +88,14 @@ fn profile_hash8(sorted_ids: &[&str]) -> String {
 }
 
 fn rand6() -> String {
-    // Dependency-free entropy: clock noise (the shared `nonce_suffix` helper)
-    // mixed with the pid is enough to keep two fresh runners distinct —
-    // cryptographic randomness is not needed, since the persistence path already
-    // scopes uniqueness per runner.
-    let nanos = crate::util::nonce_suffix() as u64;
+    // Clock noise mixed with the pid keeps two fresh runners distinct; the
+    // persistence path already scopes uniqueness per runner.
+    let nanos = noise();
     let mut seed = nanos ^ ((std::process::id() as u64) << 32) ^ nanos.rotate_left(17);
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut out = String::with_capacity(6);
     for _ in 0..6 {
-        // xorshift step so the 6 chars spread instead of repeating.
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
+        xorshift64(&mut seed);
         out.push(ALPHABET[(seed % ALPHABET.len() as u64) as usize] as char);
     }
     out

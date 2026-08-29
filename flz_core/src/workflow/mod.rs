@@ -36,10 +36,12 @@
 //! # }
 //! ```
 
+mod commit;
 pub mod compensation;
 pub mod driver;
 pub mod instance;
 pub mod registry;
+mod resume;
 pub mod spec;
 pub mod step;
 

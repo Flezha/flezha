@@ -1,14 +1,9 @@
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::pb::AssignRunnerId;
 use crate::runner::{RunnerNode, RunnerStatus};
 
 impl CommandAction for AssignRunnerId {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         // The controller-minted value is this connection's **session token**: it
         // keys the per-connection data-stream sockets and the controller-side
         // Registry/StreamChannel names. It is NOT persisted — the durable
@@ -17,6 +12,9 @@ impl CommandAction for AssignRunnerId {
         runner.assign_runner_id(self.runner_id.clone());
         runner.set_status(RunnerStatus::Running);
 
-        ("assign_runner_id".to_string(), Vec::new())
+        Reply {
+            payload_id: "assign_runner_id",
+            bytes: Vec::new(),
+        }
     }
 }

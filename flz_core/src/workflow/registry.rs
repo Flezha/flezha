@@ -4,16 +4,12 @@
 //! frozen [`WorkflowSpec`] (run-sugar fn + optional structured topology).
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
-use lazy_static::lazy_static;
+use std::sync::{Arc, LazyLock, RwLock};
 
 use super::spec::WorkflowSpec;
 
-lazy_static! {
-    static ref WORKFLOW_CLASS_REGISTRY: RwLock<HashMap<&'static str, Arc<WorkflowSpec>>> =
-        RwLock::new(HashMap::new());
-}
+static WORKFLOW_CLASS_REGISTRY: LazyLock<RwLock<HashMap<&'static str, Arc<WorkflowSpec>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Overwrite-on-insert: re-registering a factory id replaces its spec, so a
 /// restarted runner generation is idempotent rather than a collision.

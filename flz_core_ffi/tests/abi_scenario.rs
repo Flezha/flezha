@@ -290,8 +290,8 @@ fn c_abi_full_scenario() {
 
     // -------------------------------------------------- input activations
     // Drive the instance the runner built: route two entry payloads.
-    let instance =
-        flz_core::fast::live_stream_instance("abi_probe").expect("AddOperative built the instance");
+    let instance = flz_core::runner::live_stream_instance("abi_probe")
+        .expect("AddOperative built the instance");
     let (sock, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
     let stream = Arc::new(flz_transport::transport::FlezhaStream::Unix(sock));
     let entry = instance.topology.channel(0).expect("entry channel");
@@ -367,7 +367,7 @@ fn c_abi_full_scenario() {
     // ------------------------------------------ entry-input idle signal
     // The C ABI is the only view a non-Rust host has of the last-delivery
     // stamp, so the two reads are pinned here; the wire path that writes it
-    // (`fast::dispatch`) is driven by the Rust SDK's `entry_idle` suite.
+    // (`routing::dispatch`) is driven by the Rust SDK's `entry_idle` suite.
     let unknown = CString::new("no_such_entry_channel").unwrap();
     assert_eq!(
         unsafe { flz_core_entry_last_delivery_nanos(unknown.as_ptr()) },
@@ -590,7 +590,7 @@ fn c_abi_full_scenario() {
 
     // The fold's effect record consumed offset 7: a re-forwarded input at or
     // below the floor is skipped, one above it dispatches.
-    let eff_instance = flz_core::fast::live_stream_instance("eff-1").expect("eff instance");
+    let eff_instance = flz_core::runner::live_stream_instance("eff-1").expect("eff instance");
     let eff_entry = eff_instance.topology.channel(0).expect("entry channel");
     let wrap = eff_entry.wrap_input.as_ref().expect("entry wrapper");
     let below = wrap(b"dup".to_vec()).unwrap();
@@ -712,7 +712,7 @@ fn c_abi_full_scenario() {
             .then_some(())
         })
     });
-    let dyn_instance = flz_core::fast::live_stream_instance("dyn-1").expect("dyn instance");
+    let dyn_instance = flz_core::runner::live_stream_instance("dyn-1").expect("dyn instance");
     let dyn_entry = dyn_instance.topology.channel(0).expect("entry channel");
     // The wire-dispatch staging seam (the same call `OperativeDispatchHandle::
     // dispatch` makes): a keyed consumer holds the payload for the crossing.

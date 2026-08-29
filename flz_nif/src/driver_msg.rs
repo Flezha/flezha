@@ -80,3 +80,29 @@ pub(crate) fn send_connection_msg(acceptor: LocalPid, stream_handle: ResourceArc
         )
     });
 }
+
+/// Send `{:flz_stream, stream_handle, type, index, conn_id}` for a QUIC data
+/// stream once its type prefix is read. `conn_id` is the control stream's nif
+/// id — a stable per-connection routing key the controller uses to bind data
+/// streams to the connection that owns the session token.
+pub(crate) fn send_stream_msg(
+    acceptor: LocalPid,
+    stream_handle: ResourceArc<StreamHandle>,
+    stream_type: u8,
+    index: u8,
+    conn_id: u64,
+) {
+    let mut env = OwnedEnv::new();
+    let _ = env.send_and_clear(&acceptor, |env| {
+        rustler::types::tuple::make_tuple(
+            env,
+            &[
+                atoms::flz_stream().encode(env),
+                stream_handle.encode(env),
+                (stream_type as u64).encode(env),
+                (index as u64).encode(env),
+                conn_id.encode(env),
+            ],
+        )
+    });
+}

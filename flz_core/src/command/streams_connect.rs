@@ -9,29 +9,27 @@ use flz_transport::service::payloader;
 use flz_transport::transport::config::{get_transport_type, TransportType};
 use flz_transport::transport::{protocol, FlezhaStream};
 #[cfg(unix)]
-use flz_transport::utility::path_helper;
+use flz_transport::utility::socket_dir;
 
-use super::CommandAction;
-use crate::fast::OperativeDispatchHandle;
+use super::{CommandAction, Reply};
 use crate::flusher::{SendError, SendFrameFn};
 use crate::pb::ConnectSocket;
+use crate::routing::OperativeDispatchHandle;
 use crate::runner::RunnerNode;
 use crate::state_sink;
 
 impl CommandAction for ConnectSocket {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         match get_transport_type() {
             #[cfg(unix)]
             TransportType::Uds => handle_uds(self, runner),
             #[cfg(not(unix))]
             TransportType::Uds => {
                 _errors.push("UDS transport is not available on this platform".to_string());
-                ("connect_sockets".to_string(), Vec::new())
+                Reply {
+                    payload_id: "connect_sockets",
+                    bytes: Vec::new(),
+                }
             }
             TransportType::Quic => handle_quic(self, runner),
         }
@@ -39,7 +37,7 @@ impl CommandAction for ConnectSocket {
 }
 
 #[cfg(unix)]
-fn handle_uds(cmd: &ConnectSocket, runner: &mut RunnerNode) -> (String, Vec<u8>) {
+fn handle_uds(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Reply {
     let io_streams = runner.get_io_streams();
     let runner_id = runner.get_runner_id();
 
@@ -60,12 +58,15 @@ fn handle_uds(cmd: &ConnectSocket, runner: &mut RunnerNode) -> (String, Vec<u8>)
         stream_pairs.push((FlezhaStream::Unix(primary), secondary_for_write));
     }
 
-    install_entity_state_sink_from_pairs(&stream_pairs);
+    install_state_sink(&stream_pairs);
     spawn_listener_uds(runner, stream_pairs);
-    ("connect_sockets".to_string(), Vec::new())
+    Reply {
+        payload_id: "connect_sockets",
+        bytes: Vec::new(),
+    }
 }
 
-fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> (String, Vec<u8>) {
+fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> Reply {
     let io_streams = runner.get_io_streams();
 
     let quic_client = runner.get_quic_client().expect("QUIC client not available");
@@ -87,16 +88,19 @@ fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> (String, Vec<u8>
             .write_all(&[protocol::STREAM_TYPE_SECONDARY, key as u8])
             .expect("Failed to send secondary stream type");
 
-        let secondary_for_store = FlezhaStream::Quic(secondary.try_clone());
+        let secondary_for_store = FlezhaStream::Quic(secondary.clone_handle());
         io_streams.write().unwrap().insert(key, secondary_for_store);
 
         let secondary_for_write = Arc::new(FlezhaStream::Quic(secondary));
         stream_pairs.push((FlezhaStream::Quic(primary), secondary_for_write));
     }
 
-    install_entity_state_sink_from_pairs(&stream_pairs);
+    install_state_sink(&stream_pairs);
     spawn_listener_quic(runner, stream_pairs);
-    ("connect_sockets".to_string(), Vec::new())
+    Reply {
+        payload_id: "connect_sockets",
+        bytes: Vec::new(),
+    }
 }
 
 /// Install the global `state_sink` wrapping the FIRST
@@ -105,7 +109,7 @@ fn handle_quic(cmd: &ConnectSocket, runner: &mut RunnerNode) -> (String, Vec<u8>
 /// `entity_state_snapshot` frames; one secondary is enough because
 /// the WAL is single-writer per entity and the controller serializes the
 /// per-Entity writes server-side.
-fn install_entity_state_sink_from_pairs(pairs: &[(FlezhaStream, Arc<FlezhaStream>)]) {
+fn install_state_sink(pairs: &[(FlezhaStream, Arc<FlezhaStream>)]) {
     // Credit never carries across sessions: drop the old window (waking any
     // parked sender into the legacy path) until the controller re-offers
     // `CreditWindowInit` for the fresh attach.
@@ -213,7 +217,7 @@ fn listen_incoming_quic(
 fn connect_unix(runner_id: &str, stream_type: String) -> UnixStream {
     // Resolved from the directory the control channel actually reached, so a
     // data socket can never land in a different one.
-    let socket_path = path_helper::stream_socket_path(runner_id, stream_type)
+    let socket_path = socket_dir::stream_socket_path(runner_id, stream_type)
         .unwrap_or_else(|e| panic!("Cannot resolve the data socket directory: {}", e));
 
     // The controller binds the per-runner data sockets immediately before

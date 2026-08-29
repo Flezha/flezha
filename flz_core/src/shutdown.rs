@@ -126,54 +126,60 @@ impl ShutdownBridge {
             return;
         }
 
-        let mut wait_handles = Vec::with_capacity(operatives.len());
-
-        for (operative_id, serialized_state) in operatives {
-            let reference_id = format!("shutdown-{}-{}", operative_id, crate::util::nonce_suffix());
-
-            let request = pb::CommandRequest {
-                reference_id: reference_id.clone(),
-                command: Some(pb::command_request::Command::RunnerShutdownNotification(
-                    pb::RunnerShutdownNotification {
-                        operative_id: operative_id.clone(),
-                        serialized_state,
-                    },
-                )),
-            };
-
-            let encoded = request.encode_to_vec();
-            let payload =
-                payloader::build_from_binary(SHUTDOWN_PAYLOAD_ID, &encoded, HashMap::new());
-
-            let rx = register_pending_ack(reference_id.clone());
-
-            if let Err(e) = (&*stream).write_all(&payload) {
-                eprintln!(
-                    "[flezha] Failed to write RunnerShutdownNotification for {}: {}",
-                    operative_id, e
-                );
-                drop_pending_ack(&reference_id);
-                continue;
-            }
-
-            let operative_id_for_thread = operative_id;
-            let reference_id_for_thread = reference_id;
-            wait_handles.push(thread::spawn(move || match rx.recv_timeout(ACK_TIMEOUT) {
-                Ok(_) => {}
-                Err(_) => {
-                    eprintln!(
-                        "[flezha] RunnerShutdownAck timeout for {}",
-                        operative_id_for_thread
-                    );
-                    drop_pending_ack(&reference_id_for_thread);
-                }
-            }));
-        }
+        let wait_handles: Vec<_> = operatives
+            .into_iter()
+            .filter_map(|(operative_id, serialized_state)| {
+                ship_notification(&stream, operative_id, serialized_state)
+            })
+            .collect();
 
         for handle in wait_handles {
             let _ = handle.join();
         }
     }
+}
+
+/// Write one operative's `RunnerShutdownNotification` and spawn the wait for
+/// its ack; `None` when the write failed (its pending ack is dropped). A wait
+/// that times out drops the ack too, so a late reply wakes nobody.
+fn ship_notification(
+    stream: &Arc<FlezhaStream>,
+    operative_id: String,
+    serialized_state: Vec<u8>,
+) -> Option<thread::JoinHandle<()>> {
+    let reference_id = format!("shutdown-{}-{}", operative_id, crate::util::nonce_suffix());
+
+    let request = pb::CommandRequest {
+        reference_id: reference_id.clone(),
+        command: Some(pb::command_request::Command::RunnerShutdownNotification(
+            pb::RunnerShutdownNotification {
+                operative_id: operative_id.clone(),
+                serialized_state,
+            },
+        )),
+    };
+
+    let encoded = request.encode_to_vec();
+    let payload = payloader::build_from_binary(SHUTDOWN_PAYLOAD_ID, &encoded, HashMap::new());
+
+    let rx = register_pending_ack(reference_id.clone());
+
+    if let Err(e) = (&**stream).write_all(&payload) {
+        eprintln!(
+            "[flezha] Failed to write RunnerShutdownNotification for {}: {}",
+            operative_id, e
+        );
+        drop_pending_ack(&reference_id);
+        return None;
+    }
+
+    Some(thread::spawn(move || match rx.recv_timeout(ACK_TIMEOUT) {
+        Ok(_) => {}
+        Err(_) => {
+            eprintln!("[flezha] RunnerShutdownAck timeout for {}", operative_id);
+            drop_pending_ack(&reference_id);
+        }
+    }))
 }
 
 // ---------------------------------------------------------------------------

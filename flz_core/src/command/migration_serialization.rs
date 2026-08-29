@@ -3,18 +3,13 @@
 //! the StreamOperative instance from the local registry (the controller is migrating
 //! it elsewhere).
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::command::entity_state::serialize_operative_state;
 use crate::pb::MigrationSerialization;
 use crate::runner::RunnerNode;
 
 impl CommandAction for MigrationSerialization {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         let serialized_state = match runner.get_stream(&self.operative_id) {
             Some(instance) => serialize_operative_state(&instance),
             None => Vec::new(),
@@ -22,6 +17,9 @@ impl CommandAction for MigrationSerialization {
 
         runner.stop_operative(&self.operative_id);
 
-        ("migration_serialization".to_string(), serialized_state)
+        Reply {
+            payload_id: "migration_serialization",
+            bytes: serialized_state,
+        }
     }
 }

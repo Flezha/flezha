@@ -17,7 +17,7 @@ fn send_data<'a>(
         stream_id: stream.stream_id,
         data: data.as_slice().to_vec(),
     });
-    let _ = stream.waker.wake();
+    stream.waker.wake();
     Ok(atoms::ok().encode(env))
 }
 
@@ -36,7 +36,7 @@ fn send_frame<'a>(
         message: message.as_slice().to_vec(),
         metadata,
     });
-    let _ = stream.waker.wake();
+    stream.waker.wake();
     Ok(atoms::ok().encode(env))
 }
 
@@ -46,7 +46,7 @@ fn set_active(env: Env, stream: StreamHandleArc) -> NifResult<Term> {
     let _ = stream.cmd_tx.send(ServerCommand::SetActive {
         stream_id: stream.stream_id,
     });
-    let _ = stream.waker.wake();
+    stream.waker.wake();
     Ok(atoms::ok().encode(env))
 }
 
@@ -56,7 +56,7 @@ fn set_passive(env: Env, stream: StreamHandleArc) -> NifResult<Term> {
     let _ = stream.cmd_tx.send(ServerCommand::SetPassive {
         stream_id: stream.stream_id,
     });
-    let _ = stream.waker.wake();
+    stream.waker.wake();
     Ok(atoms::ok().encode(env))
 }
 
@@ -66,7 +66,7 @@ fn close(env: Env, stream: StreamHandleArc) -> NifResult<Term> {
     let _ = stream.cmd_tx.send(ServerCommand::CloseStream {
         stream_id: stream.stream_id,
     });
-    let _ = stream.waker.wake();
+    stream.waker.wake();
     Ok(atoms::ok().encode(env))
 }
 
@@ -88,7 +88,7 @@ fn controlling_process(env: Env, stream: StreamHandleArc, new_owner: LocalPid) -
         stream_id: stream.stream_id,
         new_owner,
     });
-    let _ = stream.waker.wake();
+    stream.waker.wake();
 
     Ok(atoms::ok().encode(env))
 }

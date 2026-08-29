@@ -1,20 +1,21 @@
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::pb::RemOperative;
 use crate::runner::RunnerNode;
 
 impl CommandAction for RemOperative {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
         if runner.has_operative(&self.operative_id) {
             runner.stop_operative(&self.operative_id);
-            ("stop_operative".to_string(), Vec::new())
+            Reply {
+                payload_id: "stop_operative",
+                bytes: Vec::new(),
+            }
         } else {
             errors.push("StreamOperative instance not found".to_string());
-            ("stop_operative".to_string(), Vec::new())
+            Reply {
+                payload_id: "stop_operative",
+                bytes: Vec::new(),
+            }
         }
     }
 }

@@ -9,7 +9,36 @@ use crate::channel::BuildEntityArgs;
 use crate::dynamic::{spawn_reaper, DynamicEntityRegistry};
 use crate::entity::EntitySlot;
 use crate::operative::topology::{EntityMode, OperativeTopology};
-use crate::persistence::resolve_persistence_enabled;
+
+/// FNV-1a-128 offset basis, frozen by the cross-language `StableId` spec.
+pub const FNV128_OFFSET_BASIS: u128 = 0x6c62272e07bb014262b821756295c58d;
+
+/// The FNV-128 prime, `2^88 + 0x13b`.
+const FNV128_PRIME: u128 = 0x0000000001000000000000000000013b;
+
+/// FNV-1a-128 (frozen by spec: xor byte, multiply by the FNV 128 prime),
+/// continuing from `hash` so a caller can chain several byte runs.
+///
+/// The one implementation behind both `StableId::derive` and [`key_group`];
+/// the controller's `Flezha.Partition` and Java's `StableId` carry the same
+/// constants, pinned by one shared fixture-vector set.
+pub fn fnv1a128(mut hash: u128, bytes: &[u8]) -> u128 {
+    for &b in bytes {
+        hash ^= b as u128;
+        hash = hash.wrapping_mul(FNV128_PRIME);
+    }
+    hash
+}
+
+/// How many key groups a partitioned operative's key space is divided into.
+pub const KEY_GROUPS: u32 = 256;
+
+/// The key group a routing key belongs to: `fnv1a128(key) mod 256`. The
+/// controller assigns each partition a contiguous range of these and the
+/// dispatch guard refuses a key outside its own.
+pub fn key_group(key: &str) -> u32 {
+    (fnv1a128(FNV128_OFFSET_BASIS, key.as_bytes()) & (KEY_GROUPS as u128 - 1)) as u32
+}
 
 /// The key-group range one partition member owns, straight off its
 /// `AddOperative`.
@@ -33,7 +62,7 @@ impl KeyGroupRange {
         index: 0,
         count: 0,
         from: 0,
-        to: crate::util::KEY_GROUPS - 1,
+        to: KEY_GROUPS - 1,
     };
 
     /// Whether the dispatch guard applies at all. One comparison; an
@@ -48,7 +77,7 @@ impl KeyGroupRange {
     /// about what a key is, so the message states the rule rather than the
     /// symptom.
     pub fn admit(&self, key: &str) -> Result<(), String> {
-        let group = crate::util::key_group(key);
+        let group = key_group(key);
         if group >= self.from && group <= self.to {
             return Ok(());
         }
@@ -119,8 +148,8 @@ impl StreamInstance {
         operator_override: Option<bool>,
         partition: KeyGroupRange,
     ) -> Arc<Self> {
-        let persistence_enabled =
-            resolve_persistence_enabled(topology.persistence_enabled_const, operator_override);
+        // The runner override wins over the class const when present.
+        let persistence_enabled = operator_override.unwrap_or(topology.persistence_enabled_const);
         Arc::new_cyclic(|weak: &Weak<StreamInstance>| {
             let procedure_count = topology.procedures.len();
             let mut entities: Vec<Vec<Arc<EntitySlot>>> = Vec::with_capacity(procedure_count);
@@ -130,71 +159,22 @@ impl StreamInstance {
                 Vec::with_capacity(procedure_count);
 
             for (procedure_id, procedure_desc) in topology.procedures.iter().enumerate() {
-                let procedure_id_u32 = procedure_id as u32;
-                if procedure_desc.mode == EntityMode::Dynamic {
-                    // Dynamic procedures own zero Entities at startup; the
-                    // registry allocates them lazily on first key.
-                    entities.push(Vec::new());
-                    entity_key_to_idx.push(HashMap::new());
-                    dynamic_registries.push(Some(Arc::new(DynamicEntityRegistry::new(
-                        procedure_id_u32,
-                        procedure_desc.max_entities,
-                        Arc::clone(&topology),
-                        Weak::clone(weak),
-                        Arc::clone(&instance_id),
-                        persistence_enabled,
-                    ))));
-                } else if procedure_desc.entity_keys.is_empty() {
-                    let slot = (procedure_desc.build_entity)(BuildEntityArgs {
-                        topology: Arc::clone(&topology),
-                        instance: Weak::clone(weak),
-                        instance_id: Arc::clone(&instance_id),
-                        procedure_id: procedure_id_u32,
-                        entity_key: None,
-                        entity_index: 0,
-                        persistence_enabled,
-                    });
-                    entities.push(vec![slot]);
-                    entity_key_to_idx.push(HashMap::new());
-                    dynamic_registries.push(None);
-                } else {
-                    let mut slots = Vec::with_capacity(procedure_desc.entity_keys.len());
-                    let mut key_map = HashMap::with_capacity(procedure_desc.entity_keys.len());
-                    for (idx, key) in procedure_desc.entity_keys.iter().enumerate() {
-                        let slot = (procedure_desc.build_entity)(BuildEntityArgs {
-                            topology: Arc::clone(&topology),
-                            instance: Weak::clone(weak),
-                            instance_id: Arc::clone(&instance_id),
-                            procedure_id: procedure_id_u32,
-                            entity_key: Some(key),
-                            entity_index: idx,
-                            persistence_enabled,
-                        });
-                        slots.push(slot);
-                        key_map.insert(*key, idx);
-                    }
-                    entities.push(slots);
-                    entity_key_to_idx.push(key_map);
-                    dynamic_registries.push(None);
-                }
+                let (slots, key_map, registry) = build_procedure_entities(
+                    &topology,
+                    weak,
+                    &instance_id,
+                    procedure_id as u32,
+                    procedure_desc,
+                    persistence_enabled,
+                );
+                entities.push(slots);
+                entity_key_to_idx.push(key_map);
+                dynamic_registries.push(registry);
             }
 
-            // One reaper per dynamic Procedure that opts into a TTL. Default
-            // `idle_ttl == None` spawns none — dynamic Entities then live
-            // as long as the StreamOperative, like static ones.
             let background_stop = Arc::new(AtomicBool::new(false));
-            let mut background_handles: Vec<JoinHandle<()>> = Vec::new();
-            for (procedure_id, registry) in dynamic_registries.iter().enumerate() {
-                if let (Some(registry), Some(idle_ttl)) =
-                    (registry, topology.procedures[procedure_id].idle_ttl)
-                {
-                    background_handles.push(spawn_reaper(
-                        idle_ttl,
-                        Arc::clone(registry),
-                        Arc::clone(&background_stop),
-                    ));
-                }
-            }
+            let background_handles =
+                spawn_reapers(&topology, &dynamic_registries, &background_stop);
 
             StreamInstance {
                 host_prepare: Mutex::new(crate::host::HostPrepareState::default()),
@@ -240,11 +220,113 @@ impl StreamInstance {
     }
 }
 
+/// One reaper per dynamic Procedure that opts into a TTL. Default
+/// `idle_ttl == None` spawns none — dynamic Entities then live as long as the
+/// StreamOperative, like static ones.
+fn spawn_reapers(
+    topology: &OperativeTopology,
+    dynamic_registries: &[Option<Arc<DynamicEntityRegistry>>],
+    stop: &Arc<AtomicBool>,
+) -> Vec<JoinHandle<()>> {
+    let mut handles: Vec<JoinHandle<()>> = Vec::new();
+    for (procedure_id, registry) in dynamic_registries.iter().enumerate() {
+        if let (Some(registry), Some(idle_ttl)) =
+            (registry, topology.procedures[procedure_id].idle_ttl)
+        {
+            handles.push(spawn_reaper(
+                idle_ttl,
+                Arc::clone(registry),
+                Arc::clone(stop),
+            ));
+        }
+    }
+    handles
+}
+
+/// One procedure's Entities: `(slots, key → index, dynamic registry)`.
+type ProcedureEntities = (
+    Vec<Arc<EntitySlot>>,
+    HashMap<&'static str, usize>,
+    Option<Arc<DynamicEntityRegistry>>,
+);
+
+/// One procedure's Entities by mode. A dynamic procedure owns zero Entities
+/// at startup — its registry allocates them lazily on first key; a
+/// single-mode procedure owns one; a static one owns one per declared key.
+fn build_procedure_entities(
+    topology: &Arc<OperativeTopology>,
+    weak: &Weak<StreamInstance>,
+    instance_id: &Arc<str>,
+    procedure_id: u32,
+    procedure_desc: &crate::operative::topology::ProcedureDescriptor,
+    persistence_enabled: bool,
+) -> ProcedureEntities {
+    let build = |entity_key: Option<&str>, entity_index: usize| {
+        (procedure_desc.build_entity)(BuildEntityArgs {
+            topology: Arc::clone(topology),
+            instance: Weak::clone(weak),
+            instance_id: Arc::clone(instance_id),
+            procedure_id,
+            entity_key,
+            entity_index,
+            persistence_enabled,
+        })
+    };
+    if procedure_desc.mode == EntityMode::Dynamic {
+        let registry = DynamicEntityRegistry::new(
+            procedure_id,
+            procedure_desc.max_entities,
+            Arc::clone(topology),
+            Weak::clone(weak),
+            Arc::clone(instance_id),
+            persistence_enabled,
+        );
+        return (Vec::new(), HashMap::new(), Some(Arc::new(registry)));
+    }
+    if procedure_desc.entity_keys.is_empty() {
+        return (vec![build(None, 0)], HashMap::new(), None);
+    }
+    let mut slots = Vec::with_capacity(procedure_desc.entity_keys.len());
+    let mut key_map = HashMap::with_capacity(procedure_desc.entity_keys.len());
+    for (idx, key) in procedure_desc.entity_keys.iter().enumerate() {
+        slots.push(build(Some(key), idx));
+        key_map.insert(*key, idx);
+    }
+    (slots, key_map, None)
+}
+
 impl Drop for StreamInstance {
     fn drop(&mut self) {
         // Safety net for an instance dropped without `stop_operative`: signal the
         // background threads (don't join — Drop must not block on a sweep
         // interval) so each thread and the state it holds wind down.
         self.signal_background_stop();
+    }
+}
+
+#[cfg(test)]
+mod partition_hash_tests {
+    //! The routing guard and the controller's placement must agree bit for
+    //! bit: a one-bit drift parks every frame of a partitioned operative. The
+    //! twin assertions live in `Flezha.PartitionTest` and `StableIdTest`.
+
+    use super::{fnv1a128, key_group, FNV128_OFFSET_BASIS};
+
+    #[test]
+    fn key_group_matches_the_cross_language_fixture() {
+        assert_eq!(key_group("BTC-USD"), 129);
+        assert_eq!(key_group("ETH-USD"), 213);
+        assert_eq!(key_group("SOL-USD"), 60);
+        assert_eq!(key_group(""), 141);
+        assert_eq!(key_group("a"), 100);
+    }
+
+    #[test]
+    fn key_group_is_the_digest_low_byte() {
+        for key in ["BTC-USD", "", "a", &"x".repeat(512)] {
+            let digest = fnv1a128(FNV128_OFFSET_BASIS, key.as_bytes());
+            assert_eq!(key_group(key) as u128, digest % 256);
+            assert!(key_group(key) < 256);
+        }
     }
 }

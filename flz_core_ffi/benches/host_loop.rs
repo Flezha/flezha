@@ -18,9 +18,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use flz_core::fast::OperativeDispatchHandle;
 use flz_core::operative::instance::StreamInstance;
 use flz_core::operative::registry::{get_class, OperativeRegistry};
+use flz_core::runner::OperativeDispatchHandle;
 use flz_core::schema;
 use flz_core_ffi::*;
 use flz_transport::transport::FlezhaStream;

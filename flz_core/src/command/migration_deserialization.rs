@@ -4,18 +4,13 @@
 //! migrated instance ends up with byte-identical Entity state to the
 //! source instance produced by `serialize_operative_state`.
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::command::entity_state::apply_init_values;
 use crate::pb::MigrationDeserialization;
 use crate::runner::RunnerNode;
 
 impl CommandAction for MigrationDeserialization {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
         // A hot-swap handover carries no partition identity: the destination's
         // `AddOperative` ran first and already registered the instance with
         // its range, so this call resolves to that instance.
@@ -33,21 +28,30 @@ impl CommandAction for MigrationDeserialization {
                                 "MigrationDeserialization: serialized_state is not UTF-8: {}",
                                 e
                             ));
-                            return ("migration_deserialization".to_string(), Vec::new());
+                            return Reply {
+                                payload_id: "migration_deserialization",
+                                bytes: Vec::new(),
+                            };
                         }
                     };
                     if let Err(e) = apply_init_values(&instance, json_str) {
                         errors.push(e);
                     }
                 }
-                ("migration_deserialization".to_string(), Vec::new())
+                Reply {
+                    payload_id: "migration_deserialization",
+                    bytes: Vec::new(),
+                }
             }
             None => {
                 errors.push(format!(
                     "StreamOperative class with factory_id {} is not registered",
                     self.factory_id
                 ));
-                ("migration_deserialization".to_string(), Vec::new())
+                Reply {
+                    payload_id: "migration_deserialization",
+                    bytes: Vec::new(),
+                }
             }
         }
     }

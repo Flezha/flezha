@@ -8,23 +8,21 @@
 //!
 //! No `CommandResponse` payload — this is a one-way notification.
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::pb::EntityMailboxStatus;
 use crate::runner::RunnerNode;
 
 impl CommandAction for EntityMailboxStatus {
-    fn handle(
-        &self,
-        _runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         tracing::debug!(
             target: "flezha::backpressure",
             "legacy entity mailbox status from a pre-credit controller: {}",
             self.status,
         );
 
-        ("entity_mailbox_status".to_string(), Vec::new())
+        Reply {
+            payload_id: "entity_mailbox_status",
+            bytes: Vec::new(),
+        }
     }
 }

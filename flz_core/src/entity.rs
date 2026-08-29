@@ -1,12 +1,12 @@
 //! `EntitySlot`: per-(procedure, entity) state + bounded mailbox +
-//! dispatcher + producer-block parker + per-Entity counters.
+//! dispatcher + wait list + per-Entity counters.
 //!
 //! The inflight CAS on `Mailbox` guarantees that at most one drain task
 //! is active per slot; under that exclusion the typed dispatcher
 //! downcasts state and runs `Procedure::run`. The mailbox is bounded
 //! (`crossbeam::queue::ArrayQueue`); when the channel's declared
 //! `OverflowPolicy` is `DropNothing`, a producer that cannot deliver waits on
-//! the slot's [`BlockParker`] — the entry-path transport reader by parking its
+//! the slot's [`crate::mailbox::Waiters`] — the entry-path transport reader by parking its
 //! own thread, a producing Entity by holding the push in its
 //! [`EntitySlot::push_holdback`] and standing down until room appears. The
 //! drain loop serves one waiter per popped item, whichever kind it is.
@@ -28,14 +28,12 @@ use std::any::Any;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
 
-use crossbeam::sync::{Parker, Unparker};
 use flz_transport::transport::FlezhaStream;
 
 use crate::channel::{OverflowPolicy, ProcedureId};
 pub use crate::header::RestoreError;
-use crate::mailbox::Mailbox;
+use crate::mailbox::{Mailbox, Waiters};
 pub use crate::restore::RestoreInitPayload;
 use crate::util::LockRecover;
 
@@ -126,166 +124,6 @@ pub struct EntityCounters {
     pub drops_oldest_total: AtomicU64,
 }
 
-/// Multi-waiter, multi-unparker FIFO parker used by `DropNothing`-policy
-/// producers when the consumer's mailbox is saturated.
-///
-/// A waiter is either a parked thread — the entry-path transport reader, which
-/// has no producing Entity to withhold work from — or a producing Entity whose
-/// undelivered push is held in its own holdback. One list, because "room
-/// appeared on this consumer" is one event and both kinds are owed it, and one
-/// pop is one unit of room.
-///
-/// A parked thread pushes its own entry, **drops the lock**, **rechecks that
-/// the mailbox is still full**, parks, and takes its entry back out on the way
-/// through. The lock is never held across `park()`. Every entry in the list
-/// therefore corresponds to somebody who is still waiting — which is what makes
-/// "one pop serves one waiter" true rather than approximately true.
-///
-/// FIFO ordering at the API level is best-effort once threads start
-/// observing their own wakeups; thread scheduling can reorder which
-/// woken thread re-attempts the push first.
-pub struct BlockParker {
-    waiters: Mutex<VecDeque<Waiter>>,
-    /// Identifies a parked thread's own entry so it can take it back out.
-    next_ticket: AtomicU64,
-}
-
-/// Who is owed the next free slot on a consumer's mailbox.
-enum Waiter {
-    /// A parked thread, woken by its `Unparker`. The ticket is how the thread
-    /// removes its own entry when it stops waiting.
-    Thread { ticket: u64, unparker: Unparker },
-    /// A producing Entity gated on its push holdback, re-armed by draining it.
-    /// `Weak` so a consumer's wait list cannot keep an evicted producer alive.
-    Producer(Weak<EntitySlot>),
-}
-
-impl BlockParker {
-    pub fn new() -> Self {
-        Self {
-            waiters: Mutex::new(VecDeque::new()),
-            next_ticket: AtomicU64::new(0),
-        }
-    }
-
-    /// Register on this slot's wait list and park the calling thread until a
-    /// pop frees a slot, or `timeout` elapses (`None` = until woken).
-    ///
-    /// After registering, the producer **rechecks** `mailbox.is_full()`. If a
-    /// drain freed a slot (or fully drained and exited) between the caller's
-    /// failed `try_push` and our deque push, the recheck observes
-    /// `!is_full()` and we return immediately without parking; the outer
-    /// `enqueue` loop will retry `try_push`. Without this recheck, a producer
-    /// that loses that race parks forever.
-    ///
-    /// **The entry is removed on the way out, on every exit path.** An entry
-    /// whose thread has moved on still consumes an `unpark_one` the next live
-    /// waiter was owed, and each consumed wake makes that waiter's next
-    /// timeout more likely — a deficit that only ever grows, until every wake
-    /// is absorbed by the dead and a live producer advances one 50 ms park at
-    /// a time.
-    pub fn wait_one_until<P: Send + 'static>(
-        &self,
-        mailbox: &Mailbox<P>,
-        timeout: Option<Duration>,
-    ) {
-        let parker = Parker::new();
-        let ticket = self.next_ticket.fetch_add(1, Ordering::Relaxed);
-        {
-            let mut deque = self.waiters.lock().expect("BlockParker mutex poisoned");
-            deque.push_back(Waiter::Thread {
-                ticket,
-                unparker: parker.unparker().clone(),
-            });
-        }
-        if mailbox.is_full() {
-            match timeout {
-                Some(t) => parker.park_timeout(t),
-                None => parker.park(),
-            }
-        }
-        let mut deque = self.waiters.lock().expect("BlockParker mutex poisoned");
-        if let Some(at) = deque
-            .iter()
-            .position(|w| matches!(w, Waiter::Thread { ticket: t, .. } if *t == ticket))
-        {
-            deque.remove(at);
-        }
-    }
-
-    /// Register on this slot's wait list and park until a pop frees a slot.
-    pub fn wait_one<P: Send + 'static>(&self, mailbox: &Mailbox<P>) {
-        self.wait_one_until(mailbox, None);
-    }
-
-    /// [`wait_one`] with a bounded park. Used by `DropNothing`-policy producers
-    /// so that even an unforeseen lost-wake degrades to a retry loop with
-    /// warnings instead of a permanent silent freeze.
-    pub fn wait_one_timeout<P: Send + 'static>(&self, mailbox: &Mailbox<P>, timeout: Duration) {
-        self.wait_one_until(mailbox, Some(timeout));
-    }
-
-    /// Register a producing Entity as owed the next free slot on this
-    /// consumer. Unlike [`Self::wait_one`] it holds no thread: the producer
-    /// returns and its holdback is drained when the room arrives.
-    ///
-    /// At most one entry per producer, because a producer re-registers after
-    /// every failed drain and duplicates would absorb wakes a parked thread is
-    /// owed. The caller re-checks `is_full()` after registering for the same
-    /// reason a parking waiter does — a drain that emptied the mailbox between
-    /// the failed admission and this registration would otherwise never wake
-    /// it. A registration left behind by a producer that drained on its own is
-    /// inert: re-arming an un-gated Entity is a no-op.
-    pub fn wait_producer(&self, producer: &Arc<EntitySlot>) {
-        let mut deque = self.waiters.lock().expect("BlockParker mutex poisoned");
-        let already = deque
-            .iter()
-            .any(|w| matches!(w, Waiter::Producer(p) if p.as_ptr() == Arc::as_ptr(producer)));
-        if !already {
-            deque.push_back(Waiter::Producer(Arc::downgrade(producer)));
-        }
-    }
-
-    /// Serve the oldest waiter, if any. Called by the consumer's drain loop
-    /// after a successful pop. A waiter whose Entity has been dropped is
-    /// discarded and the next one served — a dead entry must not absorb the
-    /// room it can no longer use.
-    pub fn unpark_one(&self) {
-        loop {
-            let waiter = {
-                let mut deque = self.waiters.lock().expect("BlockParker mutex poisoned");
-                deque.pop_front()
-            };
-            match waiter {
-                Some(Waiter::Thread { unparker, .. }) => return unparker.unpark(),
-                // Not a wake but the work itself: the freed slot is admitted
-                // from the producer's holdback on this thread. Nothing here
-                // runs user code — it is one `try_push` per held item — so the
-                // consumer's drain pays only what the producer would have paid
-                // on its own.
-                Some(Waiter::Producer(weak)) => {
-                    if let Some(producer) = weak.upgrade() {
-                        return crate::poll_core::global().rearm_deferred_pushes(&producer);
-                    }
-                }
-                None => return,
-            }
-        }
-    }
-
-    /// Number of currently registered waiters. Approximate under contention;
-    /// exposed for diagnostics only.
-    pub fn waiter_count(&self) -> usize {
-        self.waiters.lock().map(|d| d.len()).unwrap_or(0)
-    }
-}
-
-impl Default for BlockParker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Process-global count of payloads dispatched through `drain_entity`.
 /// Shipped in every `data_heartbeat` frame's metadata so the controller can
 /// tell "runner alive but dispatch wedged" apart from "runner healthy" —
@@ -342,13 +180,16 @@ pub struct EntitySlot {
     pub dispatcher: Arc<dyn ProcedureDispatcher>,
     pub procedure_id: ProcedureId,
     pub entity_key: Option<Arc<str>>,
+    /// The operative INSTANCE id this Entity belongs to — what a schema
+    /// address and a plugin frame's payload id name.
+    pub instance_id: Arc<str>,
     pub instance: Weak<crate::operative::instance::StreamInstance>,
     pub topology: Arc<crate::operative::topology::OperativeTopology>,
     /// FIFO wait list for whoever is owed this mailbox's next free slot under
     /// `DropNothing` — a parked entry-path thread, or a producing Entity
     /// holding an undelivered push. Served one entry at a time after every
     /// successful pop.
-    pub block_parker: BlockParker,
+    pub waiters: Waiters,
     /// Single-ACTIVE-drainer gate. `mailbox`'s inflight flag means "a round is
     /// scheduled or running" (it is held from the moment the slot is queued on
     /// the poll core, before any worker takes it); this flag is true only while
@@ -362,9 +203,8 @@ pub struct EntitySlot {
     /// `StateHandle` from the borrowed Vec inside; the per-process
     /// flusher locks it on each linger tick to drain.
     pub flush_buffer: Arc<Mutex<Box<dyn crate::flusher::FlushableBuffer>>>,
-    /// Frozen-at-instance-start persistence flag. Resolved by
-    /// `operative::persistence::resolve_persistence_enabled` from the
-    /// runner override + StreamOperative class const at `StreamInstance::new`
+    /// Frozen-at-instance-start persistence flag: the runner override, else
+    /// the StreamOperative class const, resolved at `StreamInstance::new`
     /// time and propagated here.
     pub persistence_enabled: bool,
     /// Per-Entity WAL seq counter. The flusher fetches-and-adds once
@@ -412,7 +252,7 @@ pub struct EntitySlot {
     /// to route the frame to the right per-Entity WAL.
     pub entity_identity: Arc<Vec<u8>>,
     /// Monotonic millis-since-process-start of the last successful push
-    /// (`dynamic::now_millis`). Read by the dynamic-mode reaper to decide
+    /// (`util::monotonic_ms`). Read by the dynamic-mode reaper to decide
     /// idle eviction; inert for single- and static-mode Entities.
     pub last_activity_at: AtomicI64,
     /// Flusher registration id, captured when this Entity's flush
@@ -429,7 +269,7 @@ pub struct EntitySlot {
     /// item (with its attempt count) and the unprocessed tail of a batch that
     /// stopped at a retryable failure. Only touched under the drain gates, so
     /// the lock is never contended.
-    pub pending_retry: Mutex<VecDeque<crate::poll_core::WorkItem>>,
+    pub pending_retry: Mutex<VecDeque<crate::poll_core::ItemAttempt>>,
     /// Live items popped behind a closed replay slice that is draining
     /// member-per-round: they run after the remainder, ahead of the mailbox.
     /// Only touched under the drain gates.
@@ -438,7 +278,7 @@ pub struct EntitySlot {
     /// emit order. Backpressure withholds work from the producer instead of
     /// holding its caller: the push returns at once, the Entity's handout
     /// gates stay held until the list drains, and the consumer's next free
-    /// slot drains it ([`crate::routing::admit_from_entity`]).
+    /// slot drains it ([`crate::admission::admit_from_entity`]).
     pub push_holdback: Mutex<VecDeque<PendingPush>>,
     /// Whether [`Self::push_holdback`] is non-empty. Read on EVERY push,
     /// including the overwhelming majority that succeed, so it is an atomic
@@ -647,7 +487,7 @@ pub trait ProcedureDispatcher: Send + Sync + 'static {
     /// thread, so the push site needs it in hand.
     fn dispatch_item(
         &self,
-        work: crate::poll_core::WorkItem,
+        work: crate::poll_core::ItemAttempt,
         slot: &Arc<EntitySlot>,
         state: &mut Box<dyn Any + Send>,
         flush_buffer: &mut Box<dyn crate::flusher::FlushableBuffer>,
@@ -759,148 +599,6 @@ pub trait ProcedureDispatcher: Send + Sync + 'static {
     ) -> Result<(Vec<u8>, u64, usize), String>;
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, Instant};
-
-    use super::*;
-
-    /// Yield until `done` holds; a 2 s deadline names `what` on failure.
-    fn spin_until(what: &str, done: impl Fn() -> bool) {
-        let started = Instant::now();
-        while !done() {
-            assert!(
-                started.elapsed() < Duration::from_secs(2),
-                "timed out waiting for {what}"
-            );
-            std::thread::yield_now();
-        }
-    }
-
-    /// Build a capacity-1 mailbox pre-filled so `is_full()` reports true.
-    /// Required because [`BlockParker::wait_one`] rechecks the mailbox
-    /// after registering and returns without parking when it isn't full.
-    fn saturated_mailbox() -> Arc<Mailbox<u8>> {
-        let mbox = Arc::new(Mailbox::<u8>::with_capacity(1));
-        mbox.try_push(0).expect("pre-fill");
-        mbox
-    }
-
-    #[test]
-    fn block_parker_unpark_releases_waiter() {
-        let parker = Arc::new(BlockParker::new());
-        let mbox = saturated_mailbox();
-        let p = Arc::clone(&parker);
-        let m = Arc::clone(&mbox);
-        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let s = Arc::clone(&started);
-        let t = std::thread::spawn(move || {
-            s.store(true, Ordering::Release);
-            p.wait_one(&m);
-        });
-        // Wait for the thread to register itself before unparking, so we
-        // exercise the wake-after-park path rather than the no-op
-        // unpark-before-park (Parker handles both, but we want the
-        // observable path here).
-        while !started.load(Ordering::Acquire) {
-            std::hint::spin_loop();
-        }
-        // The producer has reached `parker.park()` once it is counted.
-        spin_until("the producer to park", || parker.waiter_count() == 1);
-        parker.unpark_one();
-        spin_until("the waiter to be unparked", || t.is_finished());
-        t.join().unwrap();
-    }
-
-    #[test]
-    fn block_parker_unpark_with_no_waiters_is_noop() {
-        let parker = BlockParker::new();
-        // Should not block, panic, or otherwise misbehave.
-        parker.unpark_one();
-        parker.unpark_one();
-        assert_eq!(parker.waiter_count(), 0);
-    }
-
-    #[test]
-    fn block_parker_fifo_order_at_unpark_time() {
-        // Push three unparkers in order A, B, C; verify pop_front sees
-        // A, B, C. Test the deque-level ordering only — once threads
-        // observe their wakeups, scheduling can reorder them.
-        let parker = BlockParker::new();
-        let mbox = saturated_mailbox();
-        // Use the internal API by parking three threads serialized via
-        // sleeps so we can assert the wait_count grows monotonically.
-        let p = Arc::new(parker);
-        let order = Arc::new(Mutex::new(Vec::<u8>::new()));
-        let mut threads = Vec::new();
-        for (parked, tag) in [b'A', b'B', b'C'].into_iter().enumerate() {
-            let parker = Arc::clone(&p);
-            let m = Arc::clone(&mbox);
-            let order = Arc::clone(&order);
-            threads.push(std::thread::spawn(move || {
-                parker.wait_one(&m);
-                order.lock().unwrap().push(tag);
-            }));
-            // Sequence the parkers so they enter the deque in order: each is
-            // counted parked before the next is spawned.
-            spin_until("the parker to park", || p.waiter_count() == parked + 1);
-        }
-        for woken in 1..=3 {
-            p.unpark_one();
-            // The woken thread records its wake before the next is issued, so
-            // the record is the deque order and not the scheduler's.
-            spin_until("the woken thread to record its wake", || {
-                order.lock().unwrap().len() == woken
-            });
-        }
-        for t in threads {
-            t.join().unwrap();
-        }
-        let observed = order.lock().unwrap().clone();
-        assert_eq!(observed, vec![b'A', b'B', b'C']);
-    }
-
-    /// Regression for the missed-wake deadlock: if drain pops every item
-    /// and exits between a producer's failed `try_push` and its deque
-    /// push inside `wait_one`, the producer must NOT block forever. The
-    /// fix re-checks `mailbox.is_full()` after registering and returns
-    /// immediately when the mailbox has space.
-    #[test]
-    fn wait_one_does_not_block_when_mailbox_has_space() {
-        let parker = BlockParker::new();
-        let mbox = Arc::new(Mailbox::<u8>::with_capacity(2));
-        // Mailbox has 2 free slots — wait_one must NOT park.
-        let start = Instant::now();
-        parker.wait_one(&mbox);
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed < Duration::from_millis(50),
-            "wait_one parked despite non-full mailbox; elapsed = {:?}",
-            elapsed
-        );
-        // And it leaves NOTHING behind. An entry whose thread has moved on
-        // absorbs an `unpark_one` the next live waiter was owed, which makes
-        // that waiter's next timeout more likely, which leaves another dead
-        // entry: a deficit that only grows until every wake is absorbed and a
-        // live producer advances one bounded park at a time.
-        assert_eq!(parker.waiter_count(), 0);
-    }
-
-    /// A timed-out waiter leaves nothing behind either — the path a
-    /// `DropNothing` entry-path producer takes on every 50 ms retry, and the
-    /// one that accumulates if it does not clean up.
-    #[test]
-    fn a_timed_out_waiter_removes_its_own_entry() {
-        let parker = BlockParker::new();
-        let mbox = saturated_mailbox();
-        for _ in 0..5 {
-            parker.wait_one_timeout(&mbox, Duration::from_millis(1));
-        }
-        assert_eq!(parker.waiter_count(), 0);
-    }
-}
-
 /// The derivations and the assembly both slot builders share — the typed
 /// layer's (`sdk/rust` dispatcher) and the host layer's (`crate::host`).
 /// The caller supplies what genuinely differs: the state cell, the flush
@@ -960,9 +658,10 @@ pub fn assemble_slot(
         dispatcher,
         procedure_id: args.procedure_id,
         entity_key: parts.entity_key,
+        instance_id: args.instance_id,
         instance: args.instance,
         topology: args.topology,
-        block_parker: BlockParker::new(),
+        waiters: Waiters::new(),
         drain_active: AtomicBool::new(false),
         flush_buffer,
         persistence_enabled: args.persistence_enabled,
@@ -973,7 +672,7 @@ pub fn assemble_slot(
         replay_open: AtomicBool::new(false),
         replay_depth: AtomicU64::new(0),
         entity_identity: parts.entity_identity,
-        last_activity_at: AtomicI64::new(crate::dynamic::now_millis()),
+        last_activity_at: AtomicI64::new(crate::util::monotonic_ms()),
         flusher_entry_id,
         timers: Mutex::new(crate::timer::PendingTimers::default()),
         pending_retry: Mutex::new(VecDeque::new()),

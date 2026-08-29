@@ -12,9 +12,7 @@
 //! map values pointer-sized.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
-
-use lazy_static::lazy_static;
+use std::sync::{Arc, LazyLock, RwLock};
 
 use crate::entity::EntitySlot;
 use crate::operative::instance::StreamInstance;
@@ -32,10 +30,8 @@ pub enum Operative {
     Workflow(Arc<WorkflowInstance>),
 }
 
-lazy_static! {
-    static ref CLASS_REGISTRY: RwLock<HashMap<&'static str, Arc<OperativeTopology>>> =
-        RwLock::new(HashMap::new());
-}
+static CLASS_REGISTRY: LazyLock<RwLock<HashMap<&'static str, Arc<OperativeTopology>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Overwrite-on-insert: re-registering a factory id replaces its topology,
 /// so a restarted runner generation (or a re-run inventory harvest) is

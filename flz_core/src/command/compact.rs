@@ -14,21 +14,55 @@
 //! concurrent invocation can neither apply a change the snapshot misses nor
 //! assign a seq the snapshot claims to cover.
 
+use std::sync::Arc;
+
 use prost::Message;
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
+use crate::entity::EntitySlot;
 use crate::pb::{CompactEntity, CompactEntityResponse};
 use crate::runner::RunnerNode;
 use crate::state_sink::{send, ENTITY_STATE_SNAPSHOT_PAYLOAD_ID};
 use crate::util::LockRecover;
 
+/// Snapshot one Entity under its handout exclusivity (no activation
+/// interleaves) and ship the frame AFTER the drained change frames — both
+/// ride the ordered reliable sink, so the controller sees every record the
+/// snapshot folds before the snapshot that truncates them. `(seq, size)`, or
+/// `None` with the failure recorded.
+fn compact_slot(slot: &Arc<EntitySlot>, errors: &mut Vec<String>) -> Option<(u64, u64)> {
+    crate::poll_core::global().with_entity_exclusive(slot, || match snapshot_slot(slot) {
+        Ok((frame, seq, size)) => {
+            send(ENTITY_STATE_SNAPSHOT_PAYLOAD_ID, frame);
+            Some((seq, size as u64))
+        }
+        Err(e) => {
+            errors.push(format!("compact_entity: {e}"));
+            None
+        }
+    })
+}
+
+/// The snapshot frame, seq and size of one Entity. MUST run under the entity's
+/// handout exclusivity: a host-run Entity crosses a SnapshotRequest activation;
+/// a typed one encodes in-process holding the slot locks in dispatch order
+/// (state, then flush_buffer, then timers).
+fn snapshot_slot(slot: &Arc<EntitySlot>) -> Result<(Vec<u8>, u64, usize), String> {
+    if slot.dispatcher.host_facts().is_some() {
+        return crate::host::snapshot_frame_crossing(slot);
+    }
+    let mut state_guard = match slot.state.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut buffer_guard = slot.flush_buffer.lock_recover();
+    let timer_guard = slot.timers.lock_recover();
+    slot.dispatcher
+        .snapshot_frame(&mut state_guard, &mut buffer_guard, &timer_guard)
+}
+
 impl CommandAction for CompactEntity {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
         let mut snapshot_seq = 0u64;
         let mut snapshot_bytes_size = 0u64;
 
@@ -43,40 +77,10 @@ impl CommandAction for CompactEntity {
 
         match slot {
             Some(slot) => {
-                // The snapshot runs under the entity's handout exclusivity
-                // (no activation interleaves). A host-run Entity crosses a
-                // SnapshotRequest activation; a typed one encodes in-process
-                // holding the slot locks in dispatch order (state then
-                // flush_buffer).
-                crate::poll_core::global().with_entity_exclusive(&slot, || {
-                    let result = if slot.dispatcher.host_facts().is_some() {
-                        crate::host::snapshot_frame_crossing(&slot)
-                    } else {
-                        let mut state_guard = match slot.state.lock() {
-                            Ok(g) => g,
-                            Err(poisoned) => poisoned.into_inner(),
-                        };
-                        let mut buffer_guard = slot.flush_buffer.lock_recover();
-                        let timer_guard = slot.timers.lock_recover();
-                        slot.dispatcher.snapshot_frame(
-                            &mut state_guard,
-                            &mut buffer_guard,
-                            &timer_guard,
-                        )
-                    };
-                    match result {
-                        Ok((frame, seq, size)) => {
-                            // Ship the snapshot AFTER the drained change frames
-                            // (both ride the ordered reliable sink), so the
-                            // controller sees every record the snapshot folds
-                            // before the snapshot that truncates them.
-                            send(ENTITY_STATE_SNAPSHOT_PAYLOAD_ID, frame);
-                            snapshot_seq = seq;
-                            snapshot_bytes_size = size as u64;
-                        }
-                        Err(e) => errors.push(format!("compact_entity: {e}")),
-                    }
-                });
+                if let Some((seq, size)) = compact_slot(&slot, errors) {
+                    snapshot_seq = seq;
+                    snapshot_bytes_size = size;
+                }
             }
             None => errors
                 .push("compact_entity: no live entity matches the addressed entity_id".to_string()),
@@ -88,6 +92,9 @@ impl CommandAction for CompactEntity {
             snapshot_bytes_size,
         };
 
-        ("compact_entity".to_string(), response.encode_to_vec())
+        Reply {
+            payload_id: "compact_entity",
+            bytes: response.encode_to_vec(),
+        }
     }
 }

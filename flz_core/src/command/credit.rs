@@ -10,37 +10,33 @@
 
 use prost::Message;
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::credit;
 use crate::pb::{CreditGrant, CreditWindowAck, CreditWindowInit};
 use crate::runner::RunnerNode;
 
 impl CommandAction for CreditWindowInit {
-    fn handle(
-        &self,
-        _runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         credit::global().arm(self.stream_id.clone(), self.window_bytes);
 
         let ack = CreditWindowAck {
             stream_id: self.stream_id.clone(),
         };
 
-        ("credit_window_init".to_string(), ack.encode_to_vec())
+        Reply {
+            payload_id: "credit_window_init",
+            bytes: ack.encode_to_vec(),
+        }
     }
 }
 
 impl CommandAction for CreditGrant {
-    fn handle(
-        &self,
-        _runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         credit::global().grant(&self.stream_id, self.bytes);
 
-        ("credit_grant".to_string(), Vec::new())
+        Reply {
+            payload_id: "credit_grant",
+            bytes: Vec::new(),
+        }
     }
 }

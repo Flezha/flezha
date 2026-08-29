@@ -4,19 +4,17 @@
 //! parked entity drops its poison payload and advances. Runs on the
 //! control coordinator and never blocks.
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::park;
 use crate::pb::ParkPayloadAck;
 use crate::runner::RunnerNode;
 
 impl CommandAction for ParkPayloadAck {
-    fn handle(
-        &self,
-        _runner: &mut RunnerNode,
-        _message: &str,
-        _errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, _runner: &mut RunnerNode, _message: &str, _errors: &mut Vec<String>) -> Reply {
         park::complete_ack(&self.park_id);
-        ("park_payload_ack".to_string(), Vec::new())
+        Reply {
+            payload_id: "park_payload_ack",
+            bytes: Vec::new(),
+        }
     }
 }

@@ -1,8 +1,8 @@
-//! Per-Entity mailboxes backed by a DashMap registry, served by the poll
-//! core's activation handout. The coordinator thread still exists for control-plane
-//! traffic (`HandleCommandAction`, `ReturnOperatives`, `Reconnect`) but
-//! data-plane traffic bypasses it entirely — stream readers push directly
-//! into the targeted StreamOperative instance's entity mailboxes.
+//! The coordinator: one thread per runner that owns the control stream and
+//! every control-plane write — command replies, keepalives, heartbeats,
+//! workflow completions and SDK-initiated requests — so those writes never
+//! interleave. Data-plane traffic bypasses it entirely: stream readers push
+//! straight into the targeted operative's entity mailboxes.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -20,6 +20,7 @@ use crate::operative::instance::StreamInstance;
 use crate::operative::registry::{get_class as get_operative_class, Operative, OperativeRegistry};
 use crate::pb::command_request::Command;
 use crate::pb::{CommandRequest, WorkflowCompleted as PbWorkflowCompleted};
+use crate::routing::OperativeDispatchHandle;
 use crate::runner::{ClientResponseMessage, RunnerMessage, RunnerStatus};
 use crate::shutdown::ShutdownBridge;
 use crate::util::nonce_suffix;
@@ -256,6 +257,22 @@ impl RunnerNode {
     }
 }
 
+/// What the coordinator loop holds between messages: the runner, its live
+/// control stream, what a reconnect needs to re-open it, and the per-workflow
+/// count of direct outputs a completion carries.
+struct Coordinator {
+    runner: RunnerNode,
+    control_stream: Arc<FlezhaStream>,
+    namespace: String,
+    declared: Arc<RwLock<Vec<String>>>,
+    otx_arc: Arc<Mutex<Sender<RunnerMessage>>>,
+    ctx_arc: Arc<Mutex<Sender<ClientResponseMessage>>>,
+    shutdown_bridge: Arc<ShutdownBridge>,
+    /// Direct outputs written per workflow instance, in this loop's order:
+    /// the count a completion carries so the controller can wait for them.
+    direct_outputs: HashMap<String, u32>,
+}
+
 pub fn start(
     namespace: String,
     declared: Arc<RwLock<Vec<String>>>,
@@ -264,27 +281,50 @@ pub fn start(
     shutdown_bridge: Arc<ShutdownBridge>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
-        let mut runner = RunnerNode::new(namespace.clone());
-
-        // Capture a registry snapshot closure now so the shutdown bridge
-        // can enumerate live StreamOperative instances without going through the
-        // coordinator channel. Survives reconnects since the registry
-        // Arc is stable.
-        {
-            let registry = Arc::clone(&runner.operative_registry);
-            shutdown_bridge.set_snapshot_fn(Box::new(move || {
-                registry
-                    .snapshot_stream()
-                    .into_iter()
-                    .map(|(k, instance)| {
-                        (
-                            k,
-                            crate::command::entity_state::serialize_operative_state(&instance),
-                        )
-                    })
-                    .collect()
-            }));
+        let (mut coordinator, _timers) =
+            Coordinator::connect(namespace, declared, otx, ctx, shutdown_bridge);
+        // A closed channel means every sender is gone — the owning
+        // FlezhaRunner dropped. Exit cleanly so a later runner can start.
+        while let Ok(message) = orx.recv() {
+            coordinator.handle_message(message);
         }
+    })
+}
+
+/// Let the shutdown bridge enumerate live StreamOperative instances without
+/// going through the coordinator channel. Survives reconnects since the
+/// registry Arc is stable.
+fn install_snapshot_fn(shutdown_bridge: &ShutdownBridge, registry: Arc<OperativeRegistry>) {
+    shutdown_bridge.set_snapshot_fn(Box::new(move || {
+        registry
+            .snapshot_stream()
+            .into_iter()
+            .map(|(k, instance)| {
+                (
+                    k,
+                    crate::command::entity_state::serialize_operative_state(&instance),
+                )
+            })
+            .collect()
+    }));
+}
+
+impl Coordinator {
+    /// Open the control channel and build the coordinator around it. The two
+    /// jittered timers returned only signal this coordinator (they never write
+    /// a stream), so they survive reconnects and every control write stays
+    /// single-threaded: the keepalive pings the current control stream, the
+    /// heartbeat writes every secondary so an idle-but-healthy operative keeps
+    /// the controller's per-channel liveness clock fresh.
+    fn connect(
+        namespace: String,
+        declared: Arc<RwLock<Vec<String>>>,
+        otx: Sender<RunnerMessage>,
+        ctx: Sender<ClientResponseMessage>,
+        shutdown_bridge: Arc<ShutdownBridge>,
+    ) -> (Self, [JoinHandle<()>; 2]) {
+        let mut runner = RunnerNode::new(namespace.clone());
+        install_snapshot_fn(&shutdown_bridge, Arc::clone(&runner.operative_registry));
 
         let ctx_arc = Arc::new(Mutex::new(ctx));
         // Expose the coordinator channel process-globally so the
@@ -292,7 +332,7 @@ pub fn start(
         // flood without a handle threaded through every layer.
         crate::runner::install_reconnect_trigger(otx.clone());
         let otx_arc = Arc::new(Mutex::new(otx));
-        let (_control_thread, mut control_stream, quic_client) = control_unit::open(
+        let (_control_thread, control_stream, quic_client) = control_unit::open(
             namespace.clone(),
             Arc::clone(&declared),
             ctx_arc.clone(),
@@ -301,121 +341,139 @@ pub fn start(
         runner.set_quic_client(quic_client);
         shutdown_bridge.set_control_stream(Some(Arc::clone(&control_stream)));
 
-        // Jittered control-channel keepalive. The timer only signals this
-        // coordinator (it never writes the stream), so it survives reconnects
-        // and always pings the current control stream — single-threaded with
-        // command replies, so writes never interleave.
-        let _keepalive = control_unit::spawn_keepalive(otx_arc.clone());
+        let timers = [
+            control_unit::spawn_keepalive(otx_arc.clone()),
+            control_unit::spawn_data_heartbeat(otx_arc.clone()),
+        ];
+        let coordinator = Coordinator {
+            runner,
+            control_stream,
+            namespace,
+            declared,
+            otx_arc,
+            ctx_arc,
+            shutdown_bridge,
+            direct_outputs: HashMap::new(),
+        };
+        (coordinator, timers)
+    }
 
-        // Jittered data-channel heartbeat. Like the keepalive it only signals
-        // this coordinator, which writes every secondary stream — so an
-        // idle-but-healthy operative keeps the controller's per-channel liveness
-        // clock fresh without producing real output.
-        let _data_heartbeat = control_unit::spawn_data_heartbeat(otx_arc.clone());
-
-        // Direct outputs written per workflow instance, in this loop's order:
-        // the count a completion carries so the controller can wait for them.
-        let mut direct_outputs: HashMap<String, u32> = HashMap::new();
-
-        loop {
-            // A closed channel means every sender is gone — the owning
-            // FlezhaRunner dropped. Exit cleanly so a later runner can start.
-            let Ok(message) = orx.recv() else {
-                break;
-            };
-
-            match message {
-                RunnerMessage::HandleCommandAction(payload_id, message, _metadata) => {
-                    command::handle_command(&mut runner, &control_stream, &payload_id, &message);
-                }
-                RunnerMessage::ReturnOperatives => {
-                    return_operatives(&runner, ctx_arc.clone());
-                }
-                RunnerMessage::Reconnect(reason) => {
-                    if matches!(runner.status, RunnerStatus::Stopped) {
-                        continue;
-                    }
-                    handle_reconnect(
-                        &mut runner,
-                        &mut control_stream,
-                        &namespace,
-                        &declared,
-                        &otx_arc,
-                        reason,
-                    );
-                    shutdown_bridge.set_control_stream(Some(Arc::clone(&control_stream)));
-                }
-                RunnerMessage::SendControlKeepalive => {
-                    // A failed keepalive write means the control stream died;
-                    // the reader loop detects the same and drives reconnect, so
-                    // just drop this tick.
-                    let _ = control_unit::send_keepalive_ping(&control_stream);
-                }
-                RunnerMessage::SendDataHeartbeat => {
-                    heartbeat_tick(&runner.shared_io_streams);
-                }
-                RunnerMessage::EmitWorkflowOutput {
-                    operative_id,
-                    payload,
-                } => {
-                    if write_workflow_output(&runner.shared_io_streams, &operative_id, &payload) {
-                        *direct_outputs.entry(operative_id).or_insert(0) += 1;
-                    }
-                }
-                RunnerMessage::EmitWorkflowCompleted {
-                    operative_id,
-                    status,
-                    error,
-                    result,
-                } => {
-                    let frame = control_command_frame(
-                        "workflow-completed",
-                        Command::WorkflowCompleted(PbWorkflowCompleted {
-                            operative_id: operative_id.clone(),
-                            status,
-                            error,
-                            result,
-                            direct_outputs: direct_outputs.remove(&operative_id).unwrap_or(0),
-                        }),
-                    );
-                    if let Err(e) = (&*control_stream).write_all(&frame) {
-                        warn!(
-                            target: "flezha",
-                            "[flezha] WorkflowCompleted write failed for {}: {}", operative_id, e
-                        );
-                    }
-                }
-                RunnerMessage::EmitControlRequest {
-                    reference_id,
-                    command,
-                } => {
-                    // The reference_id keys the driver's registered waiter, so
-                    // it is reused verbatim (no fresh nonce). A failed write is
-                    // left to the driver's ack timeout — same posture as a
-                    // lost frame.
-                    let frame = framed_request(reference_id, command);
-                    if let Err(e) = (&*control_stream).write_all(&frame) {
-                        warn!(
-                            target: "flezha",
-                            "[flezha] SDK-initiated control request write failed: {}", e
-                        );
-                    }
-                }
-                RunnerMessage::RemoveFactory {
-                    factory_id,
-                    workflow,
-                } => {
-                    // Serialized with AddOperative by construction (same loop),
-                    // so the live-instance check cannot race a placement.
-                    let result = runner.remove_factory(&factory_id, workflow);
-                    let _ = ctx_arc
-                        .lock()
-                        .unwrap()
-                        .send(ClientResponseMessage::RemoveFactoryResult(result));
+    fn handle_message(&mut self, message: RunnerMessage) {
+        match message {
+            RunnerMessage::HandleCommandAction(payload_id, message, _metadata) => {
+                command::handle_command(
+                    &mut self.runner,
+                    &self.control_stream,
+                    &payload_id,
+                    &message,
+                );
+            }
+            RunnerMessage::ReturnOperatives => {
+                return_operatives(&self.runner, self.ctx_arc.clone());
+            }
+            RunnerMessage::Reconnect(reason) => self.reconnect(reason),
+            // A failed keepalive write means the control stream died; the
+            // reader loop detects the same and drives reconnect.
+            RunnerMessage::SendControlKeepalive => {
+                let _ = control_unit::send_keepalive_ping(&self.control_stream);
+            }
+            RunnerMessage::SendDataHeartbeat => {
+                heartbeat_tick(&self.runner.shared_io_streams);
+            }
+            RunnerMessage::EmitWorkflowOutput {
+                operative_id,
+                payload,
+            } => {
+                if write_workflow_output(&self.runner.shared_io_streams, &operative_id, &payload) {
+                    *self.direct_outputs.entry(operative_id).or_insert(0) += 1;
                 }
             }
+            RunnerMessage::EmitWorkflowCompleted {
+                operative_id,
+                status,
+                error,
+                result,
+            } => self.write_workflow_completed(operative_id, status, error, result),
+            RunnerMessage::EmitControlRequest {
+                reference_id,
+                command,
+            } => self.write_control_request(reference_id, command),
+            RunnerMessage::RemoveFactory {
+                factory_id,
+                workflow,
+            } => self.remove_factory(&factory_id, workflow),
         }
-    })
+    }
+
+    /// Serialized with AddOperative by construction (same loop), so the
+    /// live-instance check cannot race a placement.
+    fn remove_factory(&self, factory_id: &str, workflow: bool) {
+        let result = self.runner.remove_factory(factory_id, workflow);
+        let _ = self
+            .ctx_arc
+            .lock()
+            .unwrap()
+            .send(ClientResponseMessage::RemoveFactoryResult(result));
+    }
+
+    /// A reconnect on a stopped runner is a no-op; otherwise re-open the
+    /// control stream and hand the shutdown bridge the new one.
+    fn reconnect(&mut self, reason: &'static str) {
+        if matches!(self.runner.status, RunnerStatus::Stopped) {
+            return;
+        }
+        handle_reconnect(
+            &mut self.runner,
+            &mut self.control_stream,
+            &self.namespace,
+            &self.declared,
+            &self.otx_arc,
+            reason,
+        );
+        self.shutdown_bridge
+            .set_control_stream(Some(Arc::clone(&self.control_stream)));
+    }
+
+    /// The terminal `WorkflowCompleted` frame, carrying how many direct
+    /// outputs this loop wrote for the unit.
+    fn write_workflow_completed(
+        &mut self,
+        operative_id: String,
+        status: String,
+        error: String,
+        result: Vec<u8>,
+    ) {
+        let frame = control_command_frame(
+            "workflow-completed",
+            Command::WorkflowCompleted(PbWorkflowCompleted {
+                operative_id: operative_id.clone(),
+                status,
+                error,
+                result,
+                direct_outputs: self.direct_outputs.remove(&operative_id).unwrap_or(0),
+            }),
+        );
+        if let Err(e) = (&*self.control_stream).write_all(&frame) {
+            warn!(
+                target: "flezha",
+                "[flezha] WorkflowCompleted write failed for {}: {}", operative_id, e
+            );
+        }
+    }
+
+    /// An SDK-initiated request under the caller's own reference id. The
+    /// reference_id keys the driver's registered waiter, so it is reused
+    /// verbatim (no fresh nonce). A failed write is left to the driver's ack
+    /// timeout — same posture as a lost frame.
+    fn write_control_request(&self, reference_id: String, command: Command) {
+        let frame = framed_request(reference_id, command);
+        if let Err(e) = (&*self.control_stream).write_all(&frame) {
+            warn!(
+                target: "flezha",
+                "[flezha] SDK-initiated control request write failed: {}", e
+            );
+        }
+    }
 }
 
 /// Write a workflow's output payload on a secondary stream, tagged with its
@@ -616,183 +674,6 @@ fn handle_reconnect(
     // mailboxes drain into a paused state and the controller sees
     // the SDK as a black hole even though its registry is intact.
     runner.set_status(RunnerStatus::Running);
-}
-
-/// Stream-reader handle for the StreamOperative model. Cheap to clone; carries a
-/// reference to the live StreamOperative-instance registry. Per-Entity drain
-/// scheduling goes through the poll core.
-#[derive(Clone)]
-pub struct OperativeDispatchHandle {
-    pub registry: Arc<OperativeRegistry>,
-}
-
-impl OperativeDispatchHandle {
-    /// Dispatch a frame from the wire. Resolves the entry channel by
-    /// `metadata["channel"]` (or the StreamOperative's first declared input
-    /// channel as the documented default), wraps the payload bytes via
-    /// the channel's `wrap_input`, and pushes the typed
-    /// `Arc<dyn Any + Send + Sync>` onto every consumer Procedure's
-    /// entity mailbox.
-    pub fn dispatch(
-        &self,
-        instance_id: &str,
-        payload: Vec<u8>,
-        metadata: &HashMap<String, String>,
-        stream: Arc<FlezhaStream>,
-    ) {
-        let instance = match self.registry.get_operative(instance_id) {
-            Some(unit) => match &*unit {
-                Operative::Stream(ri) => Arc::clone(ri),
-                // Workflow inbox: route post-start input to the running driver's
-                // inbox instead of dropping it. Dropped only if the instance is
-                // not running / has no live inbox.
-                Operative::Workflow(instance) => {
-                    // A durable instance's input was journaled to its inbox
-                    // before this frame was forwarded; the stamped offset rides
-                    // into the iteration commit as the consumed offset.
-                    let offset = metadata
-                        .get(crate::workflow::INBOX_OFFSET_KEY)
-                        .and_then(|v| v.parse::<u64>().ok())
-                        .unwrap_or(0);
-                    if !instance.push_inbox(payload, offset) {
-                        eprintln!(
-                            "[flezha] inbox frame for workflow unit {} dropped (not running / no inbox)",
-                            instance_id
-                        );
-                    }
-                    return;
-                }
-            },
-            None => {
-                eprintln!("[flezha] operative instance {} not found", instance_id);
-                return;
-            }
-        };
-
-        // Late-input correction: the end of a replayed slice is a broadcast, not
-        // an input — an input routes to one Entity by key, so a marker riding
-        // one would strand the slice every *other* Entity buffered. It carries
-        // no payload and never reaches a Procedure.
-        if metadata.contains_key("flz.replay_end") {
-            // Host classes may hold slice members in the prepare crossing;
-            // the broadcast defers behind them instead of overtaking them.
-            crate::host::deferred_end_replay_slice(&instance);
-            return;
-        }
-
-        let topology = &instance.topology;
-
-        let channel_id = match metadata.get("channel") {
-            Some(name) => match topology.lookup_channel_id(name) {
-                Some(id) => id,
-                None => {
-                    eprintln!(
-                        "[flezha] operative {} has no channel `{}`",
-                        instance_id, name
-                    );
-                    return;
-                }
-            },
-            None => {
-                match topology
-                    .channels
-                    .iter()
-                    .position(|c| c.kind == crate::channel::ChannelKind::Entry)
-                {
-                    Some(idx) => idx as u32,
-                    None => {
-                        eprintln!("[flezha] operative {} has no entry channels", instance_id);
-                        return;
-                    }
-                }
-            }
-        };
-
-        let channel = match topology.channel(channel_id) {
-            Some(c) => c,
-            None => return,
-        };
-
-        // The input-liveness signal, taken before anything can decline the
-        // frame: a payload that fails to parse still proves the feed is alive,
-        // and a host class's staged payload never reaches the lines below.
-        channel.observe_delivery();
-
-        // Effectively-once tier: the controller stamps the durable input-log
-        // offset on the forwarded frame; thread it to the invocation so the
-        // atomic effect record carries the same offset as consumed-offset.
-        let consumed_offset = metadata
-            .get("flz.offset")
-            .and_then(|s| s.parse::<u64>().ok());
-        let replay = metadata.contains_key("flz.replay");
-
-        // Typed entries (`sdk-graph-authoring`): a failing parse is classified
-        // like a failing invocation and rides the channel's retry→DLQ ladder,
-        // so keep the wire bytes for the re-attempts and the park record.
-        // Passthrough `Vec<u8>`/`String` entries keep the pre-change
-        // drop-and-log path (no clone on the hot path).
-        // Host classes whose consumers need keys / event times stage the
-        // payload for the prepare crossing instead of enqueueing directly.
-        let payload = match crate::host::maybe_stage_prepare(
-            &instance,
-            channel_id,
-            channel,
-            payload,
-            consumed_offset,
-            replay,
-            &stream,
-        ) {
-            Some(payload) => payload,
-            None => return,
-        };
-
-        let retry_bytes = channel.entry_parsed.then(|| payload.clone());
-        let typed_payload = match &channel.wrap_input {
-            Some(wrap) => match wrap(payload) {
-                Ok(p) => p,
-                Err(e) => {
-                    match retry_bytes {
-                        Some(bytes) => crate::routing::spawn_entry_parse_ladder(
-                            crate::routing::EntryParseLadder {
-                                instance: Arc::clone(&instance),
-                                channel_id,
-                                bytes,
-                                first_error: e,
-                                stream,
-                                consumed_offset,
-                                replay,
-                            },
-                        ),
-                        None => eprintln!(
-                            "[flezha] operative {} channel `{}`: wrap_input failed: {}",
-                            instance_id, channel.name, e
-                        ),
-                    }
-                    return;
-                }
-            },
-            None => {
-                eprintln!(
-                    "[flezha] operative {} channel `{}` has no entry wrapper",
-                    instance_id, channel.name
-                );
-                return;
-            }
-        };
-
-        // The entry path has no producing Entity to withhold work from, so a
-        // `DropNothing` push here parks this reader — the one park the core
-        // keeps, and what carries ingress backpressure to the controller.
-        crate::routing::route_to_consumers(
-            &instance,
-            channel,
-            &typed_payload,
-            &stream,
-            consumed_offset,
-            replay,
-            None,
-        );
-    }
 }
 
 #[cfg(test)]

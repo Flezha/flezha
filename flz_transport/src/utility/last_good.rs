@@ -11,15 +11,23 @@
 
 use std::sync::RwLock;
 
-use crate::transport::liveness::noise;
+use crate::utility::noise::{noise, xorshift64};
 
 pub struct LastGood<T>(RwLock<Option<T>>);
 
-impl<T: Clone + PartialEq> LastGood<T> {
+impl<T> Default for LastGood<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> LastGood<T> {
     pub const fn new() -> Self {
         LastGood(RwLock::new(None))
     }
+}
 
+impl<T: Clone + PartialEq> LastGood<T> {
     /// Record the endpoint a connection was established through.
     pub fn note(&self, value: T) {
         if let Ok(mut slot) = self.0.write() {
@@ -66,11 +74,7 @@ impl<T: Clone + PartialEq> LastGood<T> {
 fn shuffle<T>(items: &mut [T]) {
     let mut state = noise() | 1;
     for i in (1..items.len()).rev() {
-        // xorshift64: a PRNG crate for choosing an order would be a dependency
-        // for nothing.
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
+        xorshift64(&mut state);
         items.swap(i, (state % (i as u64 + 1)) as usize);
     }
 }

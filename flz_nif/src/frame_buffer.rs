@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
 use flz_transport::service::payloader;
+use rustler::LocalPid;
+
+use crate::driver_msg::send_data_msg;
 
 /// Frame header width, owned by the wire format's payloader module.
 const HEADER_SIZE: usize = payloader::HEADER_LEN;
@@ -11,6 +14,54 @@ pub struct ParsedFrame {
     pub payload_id: String,
     pub message: Vec<u8>,
     pub metadata: HashMap<String, String>,
+}
+
+/// Where one stream's parsed frames go: to the owner as `{:flz_data, …}`
+/// while the stream is active, into a queue while it is passive — flushed in
+/// order the moment it is activated, so no frame is delivered out of turn.
+pub struct Inbox {
+    active: bool,
+    passive_queue: Vec<ParsedFrame>,
+}
+
+impl Inbox {
+    /// A stream starts passive: its first owner activates it.
+    pub fn new() -> Self {
+        Inbox {
+            active: false,
+            passive_queue: Vec::new(),
+        }
+    }
+
+    /// Hand `frames` to `owner` now, or hold them until the stream is active.
+    pub fn deliver(&mut self, owner: LocalPid, stream_id: u64, frames: Vec<ParsedFrame>) {
+        if self.active {
+            for frame in frames {
+                send_data_msg(owner, stream_id, frame);
+            }
+        } else {
+            self.passive_queue.extend(frames);
+        }
+    }
+
+    /// Active from now on: everything held while passive goes first, in order.
+    pub fn activate(&mut self, owner: LocalPid, stream_id: u64) {
+        self.active = true;
+        let queued: Vec<_> = self.passive_queue.drain(..).collect();
+        for frame in queued {
+            send_data_msg(owner, stream_id, frame);
+        }
+    }
+
+    pub fn deactivate(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Default for Inbox {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// A header declared a payload length above the configured maximum. The byte

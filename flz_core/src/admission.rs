@@ -1,0 +1,369 @@
+//! Mailbox admission under the channel's overflow policy: the entry path's
+//! form, which parks the transport reader while `DropNothing` has nowhere to
+//! put an item, and the producing Entity's form, which holds the push in
+//! that Entity's holdback and withholds work from it instead. The invariant:
+//! a producer's pushes land in emit order, whichever form admitted them.
+
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+
+use crate::channel::OverflowPolicy;
+use crate::entity::{EntityItem, EntitySlot};
+use crate::util::LockRecover;
+
+/// Bounded park per DropNothing-policy retry on the entry path; progress is
+/// re-checked on every wakeup so even a lost wake degrades to a retry loop.
+const ROOM_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// One throttled warning per blocked episode once it exceeds this — a full
+/// mailbox holding a producer this long means a consumer procedure is wedged or
+/// severely behind, and silence here is how the 2026-06-10 freeze hid.
+const BLOCK_WARN_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Admit one item without ever waiting for room: the success half of
+/// [`admit_from_reader`], shared with the wake list's promotion pass, which
+/// must return the item rather than hold the poller that is servicing it.
+///
+/// `Err` hands the item back exactly as [`crate::mailbox::Mailbox::try_push`]
+/// does, so the caller decides what a full mailbox means.
+pub(crate) fn try_admit(slot: &Arc<EntitySlot>, item: EntityItem) -> Result<(), EntityItem> {
+    slot.mailbox.try_push(item)?;
+    note_admitted(slot);
+    Ok(())
+}
+
+/// What every admission owes, whichever path admitted the item — a plain
+/// `try_push` or a `DropOldest` force-push: the count, the reaper's activity
+/// stamp, and the round claim that schedules the entity when nobody is
+/// draining it.
+fn note_admitted(slot: &Arc<EntitySlot>) {
+    slot.mailbox
+        .counters()
+        .pushes_total
+        .fetch_add(1, Ordering::Relaxed);
+    // Activity stamp for the dynamic-mode reaper (one atomic store; inert for
+    // single/static Entities that are never reaped).
+    slot.last_activity_at
+        .store(crate::util::monotonic_ms(), Ordering::Relaxed);
+    if slot.mailbox.claim_inflight() {
+        crate::poll_core::global().schedule(slot);
+    }
+}
+
+/// Admit one item under the channel's policy, PARKING the calling thread while
+/// `DropNothing` has nowhere to put it.
+///
+/// The entry path's form, and only the entry path's: the shared transport
+/// reader has no producing Entity to withhold work from, its stalling is what
+/// carries ingress backpressure to the controller, and it is a core-owned
+/// thread no host language ever observes. Every producing Entity takes
+/// [`admit_from_entity`] instead, which holds no thread at all.
+pub fn admit_from_reader(slot: &Arc<EntitySlot>, item: EntityItem, policy: OverflowPolicy) {
+    // Open the slice here, on the frame-handling thread, rather than in the
+    // drain: the controller's end-of-slice broadcast arrives on this same thread
+    // after every slice frame, so opening here guarantees the close can never
+    // overtake a member it was meant to include. Opening in the drain would race
+    // — a slow drain could see the close first and then buffer members nobody
+    // would ever flush.
+    let replay = matches!(&item, EntityItem::Input(p) if p.replay);
+    if replay {
+        slot.replay_open.store(true, Ordering::Release);
+    }
+    // A correction's answer may not depend on arrival timing, so a replay-slice
+    // member is never shed whatever the channel declares: a dropped member
+    // leaves `replay_open` set and `replay_depth` short, the slice still closes
+    // on the end-of-slice broadcast, and `flush_closed_slice` folds whatever
+    // arrived — a wrong answer with no error anywhere.
+    let policy = if replay {
+        OverflowPolicy::DropNothing
+    } else {
+        policy
+    };
+    let mut next = item;
+    let mut blocked_since: Option<std::time::Instant> = None;
+    let mut block_warned = false;
+    loop {
+        match try_admit(slot, next) {
+            Ok(()) => return,
+            Err(returned) => match policy {
+                OverflowPolicy::DropNothing => {
+                    next = returned;
+                    let since = *blocked_since.get_or_insert_with(std::time::Instant::now);
+                    wait_for_room(slot, since, &mut block_warned);
+                }
+                OverflowPolicy::DropNewest => {
+                    slot.note_shed(policy, Some(&returned));
+                    return;
+                }
+                OverflowPolicy::DropOldest => {
+                    let evicted = slot.mailbox.force_push(returned);
+                    slot.note_shed(policy, evicted.as_ref());
+                    // A force-push that admits IS a successful enqueue by
+                    // `pushes_total`'s own definition; not counting it made
+                    // `processed` exceed `admitted` for this policy.
+                    note_admitted(slot);
+                    return;
+                }
+            },
+        }
+    }
+}
+
+/// One `DropNothing` wait on the entry path: count it, park with a deadline
+/// while the mailbox is full, and warn once per episode past [`BLOCK_WARN_AFTER`].
+fn wait_for_room(slot: &Arc<EntitySlot>, since: std::time::Instant, warned: &mut bool) {
+    slot.note_blocked();
+    if slot.mailbox.is_full() {
+        // A live drainer on another thread owns progress;
+        // bounded park so even a lost wake degrades to a
+        // retry loop instead of a permanent freeze.
+        slot.waiters
+            .wait_for_room_timeout(&slot.mailbox, ROOM_WAIT_TIMEOUT);
+    }
+    if !*warned && since.elapsed() >= BLOCK_WARN_AFTER {
+        *warned = true;
+        tracing::warn!(
+            target: "flezha::mailbox",
+            procedure_id = slot.procedure_id,
+            entity_key = ?slot.entity_key,
+            "DropNothing-policy producer stalled >{:?} on a full entity mailbox; consumer procedure wedged or far behind",
+            BLOCK_WARN_AFTER
+        );
+    }
+}
+
+/// Whether the non-parking realization of `DropNothing` is enabled. A rollout
+/// switch, not a fourth policy: the guarantee an author declared — nothing
+/// discarded, order preserved — is identical either way, and only the
+/// deployment learns which mechanism carried it.
+const ENV_NONPARKING: &str = "FLEZHA_DROP_NOTHING_NONPARKING";
+
+/// How many undelivered pushes one producing Entity may hold before its emit
+/// falls back to parking. Only the in-process typed host can reach it — an FFI
+/// host's outputs are materialized as bytes before the core sees them, so its
+/// holdback is bounded by one completion's output count — and that host is the
+/// one with a supervised worker pool behind it.
+const ENV_HOLDBACK_MAX: &str = "FLEZHA_PUSH_HOLDBACK_MAX";
+const HOLDBACK_MAX_DEFAULT: usize = 4096;
+
+/// Both knobs are read once and cached in an atomic: they are consulted on the
+/// push path, where an `std::env::var` per call would cost more than the whole
+/// mechanism. `0` means "not read yet"; the test setters below are what let one
+/// binary exercise both settings.
+static NONPARKING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static HOLDBACK_MAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub(crate) fn nonparking_enabled() -> bool {
+    match NONPARKING.load(Ordering::Relaxed) {
+        0 => {
+            let on = crate::util::env_flag(ENV_NONPARKING);
+            NONPARKING.store(1 + u8::from(on), Ordering::Relaxed);
+            on
+        }
+        n => n == 2,
+    }
+}
+
+fn holdback_max() -> usize {
+    match HOLDBACK_MAX.load(Ordering::Relaxed) {
+        0 => {
+            let max = crate::util::env_parse_positive(ENV_HOLDBACK_MAX, HOLDBACK_MAX_DEFAULT);
+            HOLDBACK_MAX.store(max, Ordering::Relaxed);
+            max
+        }
+        n => n,
+    }
+}
+
+/// Drive both settings from a test without a process per combination — the one
+/// flag whose whole point is that a deployment can flip it.
+#[doc(hidden)]
+pub fn set_nonparking_for_tests(on: bool) {
+    NONPARKING.store(1 + u8::from(on), Ordering::Relaxed);
+}
+
+#[doc(hidden)]
+pub fn set_holdback_max_for_tests(max: usize) {
+    HOLDBACK_MAX.store(max.max(1), Ordering::Relaxed);
+}
+
+/// Admit one item produced BY an Entity, withholding work from that Entity
+/// instead of holding the thread that produced it.
+///
+/// Two rules make the ordering a parked producer achieved total, and both live
+/// here:
+///
+/// 1. a push made while `producer` already owes one appends behind it rather
+///    than attempting — otherwise item 2 of a completion's batch could land
+///    while item 1 is still held;
+/// 2. an Entity owing a push is handed no further activation
+///    ([`crate::poll_core::PollCore::release_and_rearm`]).
+///
+/// Returns `true` when the push was deferred, which is what tells a typed
+/// batch to stop dispatching and hand its tail back.
+pub(crate) fn admit_from_entity(
+    producer: &Arc<EntitySlot>,
+    consumer: &Arc<EntitySlot>,
+    item: EntityItem,
+    policy: OverflowPolicy,
+) -> bool {
+    // A shedding policy has nothing to hold — it admits or discards on the
+    // first pass, holding no thread either way. A self-emit into an Entity's
+    // OWN full mailbox has nothing to withhold work from: gating it would gate
+    // the only round that could drain it, so it keeps the pre-existing
+    // behaviour (which wedges the same way the park did, and is why a topology
+    // should not do it).
+    if !matches!(policy, OverflowPolicy::DropNothing)
+        || !nonparking_enabled()
+        || Arc::ptr_eq(producer, consumer)
+    {
+        admit_from_reader(consumer, item, policy);
+        return false;
+    }
+    // Rule 1. One atomic load on the path every successful push takes; the
+    // holdback's lock is touched only once this says it must be.
+    while producer.push_deferred.load(Ordering::Acquire) {
+        let mut held = producer.push_holdback.lock_recover();
+        // Re-read under the lock: the flag is cleared only by a drainer
+        // holding it, so a false reading here means the list is empty and a
+        // direct attempt cannot overtake anything.
+        if !producer.push_deferred.load(Ordering::Acquire) {
+            break;
+        }
+        if held.len() < holdback_max() {
+            held.push_back(crate::entity::PendingPush {
+                consumer: Arc::clone(consumer),
+                item,
+            });
+            return true;
+        }
+        drop(held);
+        // The bound. Only an in-process typed emit can loop far enough to
+        // reach it — an FFI host's outputs are materialized before the core
+        // sees them — and that host is the one with a supervised pool behind
+        // it. Waiting for THIS producer's own earlier pushes to land, rather
+        // than pushing past them, is what keeps the bound from reordering the
+        // sequence it exists to bound.
+        wait_for_holdback_room(producer, consumer);
+    }
+    let Err(returned) = try_admit(consumer, item) else {
+        return false;
+    };
+    consumer.note_blocked();
+    defer_push(producer, consumer, returned);
+    true
+}
+
+/// Park the calling thread until this producer's holdback has room again.
+/// The one remaining park on an emit path, and the only one a host thread can
+/// still see — reached solely by an invocation that emitted past the bound.
+fn wait_for_holdback_room(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>) {
+    report_holdback_full(producer, consumer);
+    producer.note_blocked();
+    if consumer.mailbox.is_full() {
+        consumer
+            .waiters
+            .wait_for_room_timeout(&consumer.mailbox, ROOM_WAIT_TIMEOUT);
+    }
+    crate::poll_core::global().rearm_deferred_pushes(producer);
+}
+
+/// Register `producer` as owed `consumer`'s next free slot, and say whether
+/// room appeared while we were doing it.
+///
+/// The recheck is the one a parking waiter makes and is owed for the same
+/// reason: a drain that emptied the mailbox between the failed admission and
+/// the registration would leave nobody to wake it. Both places a producer
+/// stands down go through here, so the two cannot drift — the first draft had
+/// the recheck on the deferral and not on the re-drain, which is a lost wake
+/// costing a full fallback window.
+///
+/// Called with no holdback lock held: the consumer's drain takes its wait list
+/// on every pop, and the two must never nest.
+fn owe_room(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>) -> bool {
+    consumer.waiters.wait_producer(producer);
+    !consumer.mailbox.is_full()
+}
+
+/// Hold one undelivered push and stand the producer down until room appears.
+fn defer_push(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>, item: EntityItem) {
+    {
+        let mut held = producer.push_holdback.lock_recover();
+        held.push_back(crate::entity::PendingPush {
+            consumer: Arc::clone(consumer),
+            item,
+        });
+        producer.push_deferred.store(true, Ordering::Release);
+    }
+    if owe_room(producer, consumer) {
+        crate::poll_core::global().rearm_deferred_pushes(producer);
+    }
+}
+
+/// Admit as much of `producer`'s holdback as the consumers will take, oldest
+/// first. Stops at the first refusal and leaves the rest in order, so a
+/// per-producer emit sequence can never be reordered by a partial drain.
+///
+/// Says nothing about the Entity's gates: `push_gated` is the single claim on
+/// releasing those, so this may be called by any thread, any number of times.
+pub(crate) fn drain_push_holdback(producer: &Arc<EntitySlot>) {
+    // At most one retry: the recheck answers "room appeared while I was
+    // registering", and anything past that is another producer winning the
+    // slot — which is the consumer's next pop to resolve, not a spin here.
+    for _ in 0..2 {
+        let Some(consumer) = admit_held(producer) else {
+            return;
+        };
+        if !owe_room(producer, &consumer) {
+            return;
+        }
+    }
+}
+
+/// One drain pass. `Some(consumer)` names the one that refused and left the
+/// rest of the holdback behind it; `None` means the holdback emptied and the
+/// flag is cleared.
+fn admit_held(producer: &Arc<EntitySlot>) -> Option<Arc<EntitySlot>> {
+    let mut held = producer.push_holdback.lock_recover();
+    while let Some(pending) = held.pop_front() {
+        let consumer = Arc::clone(&pending.consumer);
+        if let Err(returned) = try_admit(&consumer, pending.item) {
+            consumer.note_blocked();
+            held.push_front(crate::entity::PendingPush {
+                consumer: Arc::clone(&consumer),
+                item: returned,
+            });
+            return Some(consumer);
+        }
+    }
+    // Cleared under the lock so a push that observed the flag set cannot
+    // append behind a list nobody will drain again.
+    producer.push_deferred.store(false, Ordering::Release);
+    None
+}
+
+/// One line per [`HOLDBACK_WARN_EVERY_MS`], however many producers are at the
+/// bound: a filled holdback is a pathology, and a pathology that logs per push
+/// is its own outage. It names both ends because the producer is the Entity
+/// that looks stuck and the consumer is the one actually behind — the identity
+/// the process-wide heartbeat counters cannot carry.
+fn report_holdback_full(producer: &Arc<EntitySlot>, consumer: &Arc<EntitySlot>) {
+    const HOLDBACK_WARN_EVERY_MS: u64 = 5_000;
+    static LAST_WARN_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let now = crate::util::wall_now_ms();
+    let last = LAST_WARN_MS.load(Ordering::Relaxed);
+    if now < last + HOLDBACK_WARN_EVERY_MS
+        || LAST_WARN_MS
+            .compare_exchange(last, now, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+    {
+        return;
+    }
+    tracing::warn!(
+        target: "flezha::mailbox",
+        producer = producer.dispatcher.entity_label(),
+        consumer = consumer.dispatcher.entity_label(),
+        holdback_max = holdback_max(),
+        "producer filled its push holdback; falling back to parking until the consumer catches up"
+    );
+}

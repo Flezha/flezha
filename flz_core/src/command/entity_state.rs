@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::dynamic::DynamicEntityRegistry;
 use crate::entity::EntitySlot;
 use crate::operative::instance::StreamInstance;
@@ -46,14 +46,8 @@ pub struct StateSelector<'a> {
 }
 
 impl CommandAction for EntityState {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        message: &str,
-        errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
-        let (payload_id, payload, _metadata) = self.reply(runner, message, errors);
-        (payload_id, payload)
+    fn handle(&self, runner: &mut RunnerNode, message: &str, errors: &mut Vec<String>) -> Reply {
+        self.reply(runner, message, errors).0
     }
 
     fn reply(
@@ -61,8 +55,11 @@ impl CommandAction for EntityState {
         runner: &mut RunnerNode,
         _message: &str,
         errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>, HashMap<String, String>) {
-        let payload_id = "entity_state".to_string();
+    ) -> (Reply, HashMap<String, String>) {
+        let reply = |bytes| Reply {
+            payload_id: "entity_state",
+            bytes,
+        };
 
         let instance = match runner.get_stream(&self.operative_id) {
             Some(i) => i,
@@ -71,20 +68,19 @@ impl CommandAction for EntityState {
                     "StreamOperative instance with id {} not found",
                     self.operative_id
                 ));
-                return (payload_id, Vec::new(), HashMap::new());
+                return (reply(Vec::new()), HashMap::new());
             }
         };
 
         match serialize_selected_state(&instance, selector(self), StatePurpose::LiveRead) {
             Ok((payload, Some(seq))) => (
-                payload_id,
-                payload,
+                reply(payload),
                 HashMap::from([(CHANGE_SEQ_META_KEY.to_string(), seq.to_string())]),
             ),
-            Ok((payload, None)) => (payload_id, payload, HashMap::new()),
+            Ok((payload, None)) => (reply(payload), HashMap::new()),
             Err(refusal) => {
                 errors.push(refusal);
-                (payload_id, Vec::new(), HashMap::new())
+                (reply(Vec::new()), HashMap::new())
             }
         }
     }
@@ -164,65 +160,14 @@ pub fn serialize_selected_state(
             continue;
         }
         matched_procedure = true;
-        let procedure_name = procedure_desc.name.to_string();
-
-        // Keyed Procedures — static (declared keys) and dynamic (the live
-        // registry IS the keyset) — differ only in where the keyset comes from,
-        // so both take the same lookup-one-or-walk-all shape below. Single-mode
-        // has no keyset and sits under the Procedure's own name.
-        let keyed = match Keyset::of(instance, procedure_id) {
-            Some(keyed) => keyed,
-            None => {
-                if let Some(key) = selector.entity_key {
-                    return Err(missing_entity_refusal(false, &procedure_name, key));
-                }
-                let Some(slot) = instance
-                    .entities
-                    .get(procedure_id)
-                    .and_then(|entities| entities.first())
-                else {
-                    continue;
-                };
-                collect(
-                    procedure_desc,
-                    slot,
-                    &procedure_name,
-                    purpose,
-                    &mut top,
-                    &mut seqs,
-                );
-                continue;
-            }
-        };
-
-        let mut inner: Map<String, Value> = Map::new();
-        match selector.entity_key {
-            // A narrowed read must cost one lookup, not one walk — that is what
-            // the selector is for.
-            Some(wanted) => {
-                let Some(slot) = keyed.get(wanted) else {
-                    return Err(missing_entity_refusal(
-                        keyed.was_evicted(wanted),
-                        &procedure_name,
-                        wanted,
-                    ));
-                };
-                collect(
-                    procedure_desc,
-                    &slot,
-                    wanted,
-                    purpose,
-                    &mut inner,
-                    &mut seqs,
-                );
-            }
-            None => {
-                for (key, slot) in keyed.pairs() {
-                    collect(procedure_desc, &slot, &key, purpose, &mut inner, &mut seqs);
-                }
-            }
-        }
-        top.insert(procedure_name, Value::Object(inner));
+        collect_procedure(
+            instance,
+            procedure_id,
+            selector,
+            purpose,
+            &mut top,
+            &mut seqs,
+        )?;
     }
 
     if let Some(procedure) = selector.procedure {
@@ -240,6 +185,58 @@ pub fn serialize_selected_state(
         _ => None,
     };
     Ok((payload, seq))
+}
+
+/// One Procedure's state into `top` under its name. Keyed Procedures — static
+/// (declared keys) and dynamic (the live registry IS the keyset) — differ only
+/// in where the keyset comes from, so both take the same lookup-one-or-walk-all
+/// shape; single-mode has no keyset and sits under the Procedure's own name. A
+/// narrowed read costs one lookup, not one walk — that is what the selector is
+/// for.
+fn collect_procedure(
+    instance: &Arc<StreamInstance>,
+    procedure_id: usize,
+    selector: StateSelector<'_>,
+    purpose: StatePurpose,
+    top: &mut Map<String, Value>,
+    seqs: &mut Vec<u64>,
+) -> Result<(), String> {
+    let procedure_desc = &instance.topology.procedures[procedure_id];
+    let procedure_name = procedure_desc.name.to_string();
+    let Some(keyed) = Keyset::of(instance, procedure_id) else {
+        if let Some(key) = selector.entity_key {
+            return Err(missing_entity_refusal(false, &procedure_name, key));
+        }
+        if let Some(slot) = instance
+            .entities
+            .get(procedure_id)
+            .and_then(|entities| entities.first())
+        {
+            collect(procedure_desc, slot, &procedure_name, purpose, top, seqs);
+        }
+        return Ok(());
+    };
+
+    let mut inner: Map<String, Value> = Map::new();
+    match selector.entity_key {
+        Some(wanted) => {
+            let Some(slot) = keyed.get(wanted) else {
+                return Err(missing_entity_refusal(
+                    keyed.was_evicted(wanted),
+                    &procedure_name,
+                    wanted,
+                ));
+            };
+            collect(procedure_desc, &slot, wanted, purpose, &mut inner, seqs);
+        }
+        None => {
+            for (key, slot) in keyed.pairs() {
+                collect(procedure_desc, &slot, &key, purpose, &mut inner, seqs);
+            }
+        }
+    }
+    top.insert(procedure_name, Value::Object(inner));
+    Ok(())
 }
 
 /// A keyed Procedure's live Entities: the declared keys for static mode, the
@@ -395,82 +392,89 @@ pub fn apply_init_values(instance: &Arc<StreamInstance>, init_values: &str) -> R
     };
 
     for (procedure_name, procedure_value) in top {
-        let procedure_id = match instance
-            .topology
-            .procedure_name_to_id
-            .get(procedure_name.as_str())
-        {
-            Some(&id) => id,
+        apply_procedure(instance, &procedure_name, procedure_value);
+    }
+
+    Ok(())
+}
+
+/// One top-level `init_values` entry onto its Procedure's Entities. An
+/// unknown Procedure is logged and skipped; single-mode takes the value as
+/// the State JSON itself.
+fn apply_procedure(instance: &Arc<StreamInstance>, procedure_name: &str, procedure_value: Value) {
+    let Some(&procedure_id) = instance.topology.procedure_name_to_id.get(procedure_name) else {
+        eprintln!(
+            "[flezha] apply_init_values: ignoring unknown procedure `{}`",
+            procedure_name
+        );
+        return;
+    };
+    let Some(procedure_desc) = instance.topology.procedure(procedure_id) else {
+        return;
+    };
+    let Some(procedure_entities) = instance.entities.get(procedure_id as usize) else {
+        return;
+    };
+
+    if procedure_desc.entity_keys.is_empty() {
+        if let Some(slot) = procedure_entities.first() {
+            apply_one(procedure_desc, slot, &procedure_value, procedure_name, None);
+        }
+    } else {
+        apply_static(
+            instance,
+            procedure_id,
+            procedure_desc,
+            procedure_entities,
+            procedure_name,
+            procedure_value,
+        );
+    }
+}
+
+/// Static-mode: the value is `{entity_key: state, ...}`; an unknown key is
+/// logged and skipped.
+fn apply_static(
+    instance: &Arc<StreamInstance>,
+    procedure_id: u32,
+    procedure_desc: &ProcedureDescriptor,
+    procedure_entities: &[Arc<EntitySlot>],
+    procedure_name: &str,
+    procedure_value: Value,
+) {
+    let inner = match procedure_value {
+        Value::Object(m) => m,
+        other => {
+            eprintln!(
+                "[flezha] apply_init_values: procedure `{}` expected object of \
+                 entity_keys, got {} — skipping",
+                procedure_name,
+                value_kind(&other)
+            );
+            return;
+        }
+    };
+    let Some(key_to_idx) = instance.entity_key_to_idx.get(procedure_id as usize) else {
+        return;
+    };
+    for (key, value) in inner {
+        let idx = match key_to_idx.get(key.as_str()) {
+            Some(&i) => i,
             None => {
                 eprintln!(
-                    "[flezha] apply_init_values: ignoring unknown procedure `{}`",
-                    procedure_name
+                    "[flezha] apply_init_values: ignoring unknown entity_key \
+                     `{}` for procedure `{}`",
+                    key, procedure_name
                 );
                 continue;
             }
         };
-        let procedure_desc = match instance.topology.procedure(procedure_id) {
-            Some(d) => d,
+        let slot = match procedure_entities.get(idx) {
+            Some(s) => s,
             None => continue,
         };
-        let procedure_entities = match instance.entities.get(procedure_id as usize) {
-            Some(p) => p,
-            None => continue,
-        };
-
-        if procedure_desc.entity_keys.is_empty() {
-            // Single-mode: the value is the State JSON itself.
-            let slot = match procedure_entities.first() {
-                Some(s) => s,
-                None => continue,
-            };
-            apply_one(
-                procedure_desc,
-                slot,
-                &procedure_value,
-                &procedure_name,
-                None,
-            );
-        } else {
-            // Static-mode: the value is `{entity_key: state, ...}`.
-            let inner = match procedure_value {
-                Value::Object(m) => m,
-                other => {
-                    eprintln!(
-                        "[flezha] apply_init_values: procedure `{}` expected object of \
-                         entity_keys, got {} — skipping",
-                        procedure_name,
-                        value_kind(&other)
-                    );
-                    continue;
-                }
-            };
-            let key_to_idx = match instance.entity_key_to_idx.get(procedure_id as usize) {
-                Some(m) => m,
-                None => continue,
-            };
-            for (key, value) in inner {
-                let idx = match key_to_idx.get(key.as_str()) {
-                    Some(&i) => i,
-                    None => {
-                        eprintln!(
-                            "[flezha] apply_init_values: ignoring unknown entity_key \
-                             `{}` for procedure `{}`",
-                            key, procedure_name
-                        );
-                        continue;
-                    }
-                };
-                let slot = match procedure_entities.get(idx) {
-                    Some(s) => s,
-                    None => continue,
-                };
-                apply_one(procedure_desc, slot, &value, &procedure_name, Some(&key));
-            }
-        }
+        apply_one(procedure_desc, slot, &value, procedure_name, Some(&key));
     }
-
-    Ok(())
 }
 
 fn apply_one(

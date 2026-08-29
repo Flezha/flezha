@@ -38,6 +38,10 @@ impl ProcDag {
         self.order.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+
     /// The nodes with no children — the operative is done when all of them
     /// have committed.
     pub fn leaves(&self) -> impl Iterator<Item = usize> + '_ {

@@ -39,6 +39,14 @@ pub fn max_write_buffer_bytes() -> usize {
     )
 }
 
+/// Whether buffering `incoming` bytes onto a `buffered`-byte send buffer would
+/// exceed `cap`. An empty buffer always accepts (so a single oversized frame on
+/// an idle stream is never dropped); once non-empty it stays at or below `cap`
+/// (DropNewest). The one predicate behind every driver's send-buffer bound.
+pub fn would_overflow_write_buffer(buffered: usize, incoming: usize, cap: usize) -> bool {
+    buffered != 0 && buffered + incoming > cap
+}
+
 fn parse_positive_bytes(raw: Option<&str>, default: usize) -> usize {
     raw.and_then(|v| v.parse().ok())
         .filter(|&n| n > 0)
@@ -138,13 +146,35 @@ impl fmt::Display for QuicEntry {
     }
 }
 
+/// Every address `entries` resolve to on THIS attempt, deduplicated, plus the
+/// entries that failed to resolve — one failed candidate each, named with
+/// its error, never a fatal error. A name may resolve to several addresses;
+/// the flattened set is what one attempt walks.
+pub fn resolve_entries(entries: &[QuicEntry]) -> (Vec<SocketAddr>, Vec<String>) {
+    let mut resolved: Vec<SocketAddr> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    for entry in entries {
+        match entry.resolve() {
+            Ok(addrs) => {
+                for addr in addrs {
+                    if !resolved.contains(&addr) {
+                        resolved.push(addr);
+                    }
+                }
+            }
+            Err(e) => unresolved.push(format!("{}: {}", entry, e)),
+        }
+    }
+    (resolved, unresolved)
+}
+
 /// The controller endpoints this runner may dial, in declared order.
 pub fn quic_addresses() -> Result<Vec<QuicEntry>, String> {
     quic_addresses_with(None)
 }
 
 /// The candidate list, with the caller's own view of the list variable — see
-/// `path_helper::resolve_socket_dir_with` for why a host supplies one.
+/// `socket_dir::resolve_socket_dir` for why a host supplies one.
 pub fn quic_addresses_with(list: Option<&str>) -> Result<Vec<QuicEntry>, String> {
     let from_env = env::var(QUIC_ADDRESSES_VAR).ok();
     let list = list
@@ -230,6 +260,25 @@ mod tests {
 
     fn entries(raw: &str) -> Vec<QuicEntry> {
         parse_quic_addresses(Some(raw), None).expect("parses")
+    }
+
+    // The send-buffer cap predicate bounds every driver's buffered-write `Vec`
+    // with DropNewest once it is non-empty.
+    #[test]
+    fn write_buffer_cap_drops_newest_past_bound() {
+        let cap = 1024;
+
+        // Empty buffer always accepts (a single oversized frame on an idle
+        // stream is never dropped).
+        assert!(!would_overflow_write_buffer(0, 4096, cap));
+
+        // Filling exactly to the cap is allowed; one byte past it is dropped.
+        assert!(!would_overflow_write_buffer(512, 512, cap));
+        assert!(would_overflow_write_buffer(512, 513, cap));
+
+        // Already at the cap: every further frame is dropped — workflow, not 1:1.
+        assert!(would_overflow_write_buffer(cap, 1, cap));
+        assert!(would_overflow_write_buffer(cap, 4096, cap));
     }
 
     #[test]

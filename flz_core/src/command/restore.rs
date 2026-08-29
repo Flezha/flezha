@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use prost::Message;
 
-use super::CommandAction;
+use super::{CommandAction, Reply};
 use crate::entity::EntitySlot;
 use crate::pb::{RestoreInitState, RestoreInitStateResponse};
 use crate::restore::{iter_change_log_records, RestoreOutcome};
@@ -25,12 +25,7 @@ use crate::runner::RunnerNode;
 use crate::util::LockRecover;
 
 impl CommandAction for RestoreInitState {
-    fn handle(
-        &self,
-        runner: &mut RunnerNode,
-        _message: &str,
-        errors: &mut Vec<String>,
-    ) -> (String, Vec<u8>) {
+    fn handle(&self, runner: &mut RunnerNode, _message: &str, errors: &mut Vec<String>) -> Reply {
         let outcome = if let Some(slot) = find_entity_slot(runner, &self.entity_id) {
             restore_into_slot(&slot, self, errors)
         } else if let Some((instance, slot)) = runner.find_workflow_entity(&self.entity_id) {
@@ -50,21 +45,14 @@ impl CommandAction for RestoreInitState {
             instance.note_restored();
             t
         } else {
-            // No live slot — validate the change-log and ack the terminal seq
-            // (the controller still advances its handshake).
-            let mut terminal = 0u64;
-            for record in iter_change_log_records(&self.change_log_bytes) {
-                match record {
-                    Ok(r) => terminal = terminal.max(r.seq),
-                    Err(e) => {
-                        errors.push(format!("change_log decode error: {e}"));
-                        return ("restore_init_state".to_string(), Vec::new());
+            match self.ack_without_slot(errors) {
+                Some(outcome) => outcome,
+                None => {
+                    return Reply {
+                        payload_id: "restore_init_state",
+                        bytes: Vec::new(),
                     }
                 }
-            }
-            RestoreOutcome {
-                terminal_seq: terminal.max(self.terminal_seq),
-                migrated: false,
             }
         };
 
@@ -74,7 +62,32 @@ impl CommandAction for RestoreInitState {
             migrated: outcome.migrated,
         };
 
-        ("restore_init_state".to_string(), response.encode_to_vec())
+        Reply {
+            payload_id: "restore_init_state",
+            bytes: response.encode_to_vec(),
+        }
+    }
+}
+
+impl RestoreInitState {
+    /// No live slot: validate the change log and ack its terminal seq, so the
+    /// controller still advances its handshake. `None` after recording a
+    /// decode error.
+    fn ack_without_slot(&self, errors: &mut Vec<String>) -> Option<RestoreOutcome> {
+        let mut terminal = 0u64;
+        for record in iter_change_log_records(&self.change_log_bytes) {
+            match record {
+                Ok(r) => terminal = terminal.max(r.seq),
+                Err(e) => {
+                    errors.push(format!("change_log decode error: {e}"));
+                    return None;
+                }
+            }
+        }
+        Some(RestoreOutcome {
+            terminal_seq: terminal.max(self.terminal_seq),
+            migrated: false,
+        })
     }
 }
 

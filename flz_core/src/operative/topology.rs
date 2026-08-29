@@ -81,6 +81,12 @@ pub struct ProcedureDescriptor {
     pub deserialize_state: DeserializeStateFn,
 }
 
+/// Default per-Entity WAL size compaction threshold (8 MiB), in lockstep with
+/// the controller's `:default_compact_after_bytes`. The single source both the
+/// `Procedure::compact_after_bytes` default and the `AddOperative` metadata
+/// "omit when equal to the default" check read.
+pub const DEFAULT_COMPACT_AFTER_BYTES: usize = 8 * 1024 * 1024;
+
 pub struct OperativeTopology {
     /// The SDK language behind this class, from the allocation table in
     /// [`crate::header`]. Stamped at byte 0 of every durable record the class

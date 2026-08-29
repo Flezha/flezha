@@ -33,7 +33,8 @@ defmodule FlezhaTest.SdkConformance.GateTest do
   # `flz_nif`.
   @connect_sources %{
     rust: [
-      "flz_transport/src/utility/path_helper.rs",
+      "flz_transport/src/utility/socket_dir.rs",
+      "flz_transport/src/utility/socket_probe.rs",
       "flz_transport/src/transport/config.rs",
       "flz_core/src/control_unit.rs"
     ],
@@ -432,7 +433,7 @@ defmodule FlezhaTest.SdkConformance.GateTest do
 
     test "the ladder is walked in the pinned order by the one implementation that walks it" do
       %{ladder: ladder} = connect_env()
-      source = File.read!("flz_transport/src/utility/path_helper.rs")
+      source = File.read!("flz_transport/src/utility/socket_dir.rs")
 
       body =
         case Regex.run(~r/fn candidates_from\(.*?\n\}/s, source) do
