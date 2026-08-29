@@ -4,17 +4,14 @@ version = "0.1.0"
 edition = "2021"
 license.workspace = true
 repository.workspace = true
-description = "Flezha shared transport library — QUIC, UDS, binary framing, protobuf"
+description = "Flezha shared transport library — QUIC, UDS, binary framing"
 
 [lib]
 name = "flz_transport"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
 byteorder = "1.4"
-prost = "0.13.5"
 crossbeam = "0.8"
 mio = { version = "0.8.11", features = ["os-poll", "os-ext", "net"] }
 quinn-proto = "0.11"

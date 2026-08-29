@@ -4,8 +4,8 @@
 # one or more
 # target platforms and stage the result into the Java SDK's resources tree.
 #
-# *This script is runner-driven, not invoked by CI.* When flz_core_ffi or
-# flz_transport changes, run it locally to refresh the bundled binaries
+# *This script is runner-driven, not invoked by CI.* When flz_core_ffi,
+# flz_core or flz_transport changes, run it locally to refresh the bundled binaries
 # under sdk/java/flezha-sdk-native/src/main/resources/native/, then
 # `git add` and commit the updated files. CI only verifies the committed
 # binaries are present (it does not rebuild them).

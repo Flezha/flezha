@@ -85,9 +85,14 @@ rb-sys-env = { version = "0.2", optional = true }
 pyo3-build-config = { version = "0.29", optional = true }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 prost = "0.13.5"
 postcard = { version = "1.0", features = ["use-std"] }
 crc32fast = "1.4"
+
+[[bench]]
+name = "host_loop"
+harness = false
 
 [lints]
 workspace = true

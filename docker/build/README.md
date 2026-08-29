@@ -3,8 +3,8 @@
 Pinned toolchain image used to produce the distribution artifacts that
 ride along in the repo (so CI never has to rebuild them):
 
-- `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_transport.{so,dylib,dll}`
-  — flz_jni cdylib for **all five** target platforms (linux-x64,
+- `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_core_ffi.{so,dylib,dll}`
+  — the `flz_core_ffi` cdylib (feature `jni`) for **all five** target platforms (linux-x64,
   linux-arm64, macos-x64, macos-arm64, windows-x64).
 - `sdk/java/flezha-sdk/dist/flezha-sdk.jar` — SDK fat jar.
 - `test/apps/java_runner/dist/java_runner.jar` —

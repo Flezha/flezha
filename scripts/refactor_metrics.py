@@ -9,10 +9,10 @@
 
 One area table, one classifier per language: a line is blank, code, a plain
 comment or a doc comment; a file is production or test by its path, and a Rust
-file is test from a `#[cfg(test)]` that opens a `mod` to its end. Duplicates are jscpd's (`.jscpd.json`), cycles `mix xref graph --format cycles`,
-lint counts credo and clippy under `--lint` (slow, opt-in). A ratcheted metric
-must never rise; timings tolerate 5 % and compare only on the recording box; an
-area under `blocking` in the baseline fails `--check`, the rest only report.
+file is test inside each `#[cfg(test)] mod … { }` block. Duplicates are jscpd's (`.jscpd.json`),
+cycles `mix xref graph --format cycles`, lint counts credo and clippy under `--lint` (slow,
+opt-in). A ratcheted metric must never rise; timings tolerate 5 % and compare only on the
+recording box; an area under `blocking` in the baseline fails `--check`, the rest only report.
 """
 
 import argparse
@@ -60,7 +60,7 @@ LANG_EXTS = {
     "php": "php",
 }
 LANG_BY_EXT = {f".{e}": lang for lang, exts in LANG_EXTS.items() for e in exts.split()}
-GENERATED = ("flz_transport/src/generated/", "sdk/rust/src/generated/")
+GENERATED = tuple(f"{c}/src/generated/" for c in "flz_core flz_transport sdk/rust".split())
 CRATES_AND_SDKS = (
     "flz_core flz_transport flz_nif flz_core_ffi flezha-macros sdk/rust sdk/java sdk/node "
     "sdk/python sdk/ruby sdk/php cli lib/mix"
@@ -212,20 +212,32 @@ CLASSIFIERS = {
     "ruby": classify_ruby,
 }
 
-CFG_TEST = re.compile(r"^\s*#\[cfg\(test\)\]")
+CFG_TEST = re.compile(r"^\s*#\[cfg\((?:test|all\(test\b[^)]*\))\)\]")
 MOD_OPEN = re.compile(r"^\s*(pub(\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 
 
-def rust_test_start(lines):
-    """Index of the `#[cfg(test)]` that opens a `mod`, or None."""
-    for i, line in enumerate(lines):
-        if CFG_TEST.match(line):
+def mod_close(lines, start):
+    """Index past the `}` closing the module opened at `start`: the first one at its own
+    indentation (the formatter's shape — a brace count closes early on a raw string), else EOF."""
+    indent = lines[start][: len(lines[start]) - len(lines[start].lstrip())]
+    closes = (k + 1 for k in range(start + 1, len(lines)) if lines[k].rstrip() == indent + "}")
+    return next(closes, len(lines))
+
+
+def rust_test_regions(lines):
+    """(start, end) of every `#[cfg(test)]` that opens a `mod`."""
+    regions, i = [], 0
+    while i < len(lines):
+        if CFG_TEST.match(lines[i]):
             j = i + 1
             while j < len(lines) and (not lines[j].strip() or lines[j].strip().startswith("#[")):
                 j += 1
             if j < len(lines) and MOD_OPEN.match(lines[j]):
-                return i
-    return None
+                regions.append((i, mod_close(lines, j)))
+                i = regions[-1][1]
+                continue
+        i += 1
+    return regions
 
 
 # --- functions and names --------------------------------------------------------
@@ -344,23 +356,25 @@ def measure_file(path):
     """Everything one file contributes; None when the file is not source."""
     lang = language(path)
     lines = read_lines(path) if lang and not path.startswith(GENERATED) else None
-    if lines is None:
-        return None
-    test_from = 0 if is_test_path(path) else len(lines)
-    if lang == "rust" and test_from == len(lines) and rust_test_start(lines) is not None:
-        test_from = rust_test_start(lines)
+    return None if lines is None else measure_lines(path, lang, lines)
+
+
+def measure_lines(path, lang, lines):
+    """Test throughout for a test path; a Rust file only inside its `#[cfg(test)]` modules."""
+    whole = is_test_path(path)
+    regions = rust_test_regions(lines) if lang == "rust" and not whole else []
+    in_test = [whole or any(s <= i < e for s, e in regions) for i in range(len(lines))]
     counts = defaultdict(int)
     for i, kind in enumerate(CLASSIFIERS[lang](lines)):
-        in_test = i >= test_from
         if kind == "code":
-            counts["test_loc" if in_test else "prod_loc"] += 1
+            counts["test_loc" if in_test[i] else "prod_loc"] += 1
         elif kind != "blank":
             counts[f"{kind}_lines"] += 1
             counts["narrative_markers"] += bool(NARRATIVE.search(lines[i]))
-        if in_test:
+        if in_test[i]:
             counts["sleeps"] += bool(SLEEP[lang].search(lines[i]))
             counts["refutes"] += bool(lang == "elixir" and REFUTE.search(lines[i]))
-    fns = functions(lines[:test_from], lang)
+    fns = [f for f in functions(lines, lang) if not in_test[f[1] - 1]]
     is_exunit = lang == "elixir" and path.endswith("_test.exs")
     return {
         "lines": len(lines),
@@ -434,14 +448,7 @@ def clippy_warnings():
     if not shutil.which("cargo"):
         return None
     # The feature `make stabilize-test-check` builds with; two sdk/rust test targets need it.
-    cmd = [
-        "cargo",
-        "clippy",
-        "--workspace",
-        "--all-targets",
-        "--features",
-        "flezha_runner/bench-internals",
-    ]
+    cmd = "cargo clippy --workspace --all-targets --features flezha_runner/bench-internals".split()
     out = run(cmd + ["--message-format=json"])
     seen = set()
     for line in out.stdout.split("\n"):
@@ -453,13 +460,8 @@ def clippy_warnings():
             and m.get("spans")
         ):
             span = next((s for s in m["spans"] if s.get("is_primary")), m["spans"][0])
-            seen.add(
-                (
-                    span["file_name"],
-                    span["line_start"],
-                    (m.get("code") or {}).get("code", "warning"),
-                )
-            )
+            code = (m.get("code") or {}).get("code", "warning")
+            seen.add((span["file_name"], span["line_start"], code))
     return [(f, f"{f}:{ln} {c}") for f, ln, c in sorted(seen)]
 
 
@@ -536,18 +538,10 @@ def measure(area_filter=None, lint=False):
 
 
 def box():
-    cpu = "unknown"
-    try:
-        with open("/proc/cpuinfo", encoding="utf-8") as fh:
-            cpu = next(ln.split(":", 1)[1].strip() for ln in fh if ln.startswith("model name"))
-    except (OSError, StopIteration):
-        pass
-    try:
-        with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", encoding="utf-8") as fh:
-            governor = fh.read().strip()
-    except OSError:
-        governor = "unknown"
-    return {"hostname": socket.gethostname(), "cpu": cpu, "governor": governor}
+    cpu = [ln for ln in read_lines("/proc/cpuinfo") or [] if ln.startswith("model name")]
+    cpu = cpu[0].split(":", 1)[1].strip() if cpu else "unknown"
+    governor = read_lines("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") or ["unknown"]
+    return {"hostname": socket.gethostname(), "cpu": cpu, "governor": governor[0].strip()}
 
 
 def parse_kv(items):
@@ -675,8 +669,19 @@ def self_test_classifiers():
         "mod tests {",
         "    fn t() { std::thread::sleep(d); }",
         "}",
+        "pub fn after(x: u32) -> u32 {",
+        "    x",
+        "}",
+        "#[cfg(all(test, unix))]",
+        "mod more {",
+        "}",
     ]
-    assert rust_test_start(rust) == 7 and SLEEP["rust"].search(rust[9])
+    assert rust_test_regions(rust) == [(7, 11), (14, 17)] and SLEEP["rust"].search(rust[9])
+    assert not CFG_TEST.match('#[cfg(any(test, feature = "testing"))]')
+    m = measure_lines("x.rs", "rust", rust)
+    assert (m["counts"]["prod_loc"], m["counts"]["test_loc"], m["counts"]["sleeps"]) == (6, 7, 1)
+    assert [n for n, _, _ in functions(rust, "rust")] == ["short", "t", "after"]
+    assert measure_file("flz_core/src/generated/runner_commands.rs") is None
     assert len(functions(FIXTURES["elixir"][0].split("\n"), "elixir")[1][0]) > NAME_CEILING
     assert SLEEP["elixir"].search("    Process.sleep(10)") and REFUTE.search("refute_receive {:x}")
     assert (
@@ -724,12 +729,8 @@ def parse_args(argv):
     ap.add_argument("--area", action="append", help="restrict to this area (repeatable)")
     ap.add_argument("--json", action="store_true", help="print the full JSON instead of the table")
     ap.add_argument("--lint", action="store_true", help="also run credo and clippy (slow)")
-    ap.add_argument(
-        "--timing", action="append", metavar="NAME=SECONDS", help="a suite's wall-clock"
-    )
-    ap.add_argument(
-        "--bench", action="append", metavar="NAME=VALUE", help="a bench headline number"
-    )
+    ap.add_argument("--timing", action="append", metavar="NAME=SECONDS", help="suite wall-clock")
+    ap.add_argument("--bench", action="append", metavar="NAME=VALUE", help="bench headline number")
     ap.add_argument("--write-baseline", action="store_true", help=f"write {BASELINE}")
     ap.add_argument("--check", action="store_true", help=f"compare the tree to {BASELINE}")
     ap.add_argument("--targets", action="store_true", help=f"write {TARGETS}")
@@ -757,10 +758,8 @@ def check(data, baseline, args):
     blocking = set(baseline.get("blocking", []))
     for area, metric, then, now, culprits in regressions:
         tag = "BLOCKING" if area in blocking else "measuring"
-        print(
-            f"{tag} {area} {metric}: {then} -> {now}"
-            + (f"  [{', '.join(culprits)}]" if culprits else "")
-        )
+        where = f"  [{', '.join(culprits)}]" if culprits else ""
+        print(f"{tag} {area} {metric}: {then} -> {now}{where}")
     code = exit_code(regressions, baseline)
     print(f"{len(regressions)} regression(s) against {baseline.get('head')}; exit {code}")
     return code

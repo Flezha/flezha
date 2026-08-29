@@ -128,11 +128,11 @@
   "flz_core": {
    "async_false_share": null,
    "clippy_warnings": null,
-   "comment_density": 0.26,
-   "comment_lines": 988,
+   "comment_density": 0.255,
+   "comment_lines": 987,
    "credo_warnings": null,
    "cycles": 0,
-   "doc_lines": 4282,
+   "doc_lines": 4011,
    "duplicate_pairs": 12,
    "duplicate_pairs_list": [
     "flz_core/src/command/compact.rs:25-32 <-> flz_core/src/command/operative_start.rs:9-16 (40 tokens)",
@@ -148,7 +148,7 @@
     "flz_core/src/retry.rs:52-55 <-> flz_transport/src/transport/liveness.rs:88-91 (41 tokens)",
     "flz_core/src/retry.rs:52-55 <-> sdk/rust/src/testing/tests/harness_smoke.rs:114-117 (43 tokens)"
    ],
-   "files": 56,
+   "files": 55,
    "files_over_800": 7,
    "files_over_800_list": [
     "flz_core/src/entity.rs (985)",
@@ -205,14 +205,13 @@
     "flz_core/src/host.rs:267 default_workflow_retry_backoff_ms",
     "flz_core/src/workflow/driver.rs:1434 reconstruct_completed_from_intents"
    ],
-   "narrative_markers": 26,
+   "narrative_markers": 25,
    "narrative_markers_by_file": {
     "flz_core/src/command/mod.rs": 3,
     "flz_core/src/command/operative_start.rs": 2,
     "flz_core/src/correction.rs": 1,
     "flz_core/src/credit.rs": 1,
     "flz_core/src/entity.rs": 4,
-    "flz_core/src/generated/runner_commands.rs": 1,
     "flz_core/src/header.rs": 1,
     "flz_core/src/operative/topology.rs": 1,
     "flz_core/src/poll_core.rs": 4,
@@ -220,7 +219,7 @@
     "flz_core/src/workflow/driver.rs": 4,
     "flz_core/src/workflow/step.rs": 2
    },
-   "prod_loc": 12020,
+   "prod_loc": 11666,
    "prod_loc_by_file": {
     "flz_core/src/channel.rs": 158,
     "flz_core/src/command/compact.rs": 60,
@@ -245,11 +244,10 @@
     "flz_core/src/correction.rs": 35,
     "flz_core/src/credit.rs": 134,
     "flz_core/src/dynamic.rs": 196,
-    "flz_core/src/entity.rs": 324,
+    "flz_core/src/entity.rs": 390,
     "flz_core/src/entry_input.rs": 40,
     "flz_core/src/fast.rs": 553,
     "flz_core/src/flusher.rs": 412,
-    "flz_core/src/generated/runner_commands.rs": 462,
     "flz_core/src/header.rs": 216,
     "flz_core/src/host.rs": 2116,
     "flz_core/src/lib.rs": 50,
@@ -258,8 +256,8 @@
     "flz_core/src/operative/mod.rs": 3,
     "flz_core/src/operative/registry.rs": 123,
     "flz_core/src/operative/topology.rs": 97,
-    "flz_core/src/park.rs": 91,
-    "flz_core/src/persistence.rs": 3,
+    "flz_core/src/park.rs": 104,
+    "flz_core/src/persistence.rs": 4,
     "flz_core/src/persistent_id.rs": 80,
     "flz_core/src/poll_core.rs": 971,
     "flz_core/src/restore.rs": 130,
@@ -270,7 +268,7 @@
     "flz_core/src/shutdown.rs": 183,
     "flz_core/src/state_sink.rs": 201,
     "flz_core/src/timer.rs": 306,
-    "flz_core/src/util.rs": 66,
+    "flz_core/src/util.rs": 94,
     "flz_core/src/workflow/compensation.rs": 28,
     "flz_core/src/workflow/driver.rs": 1009,
     "flz_core/src/workflow/instance.rs": 178,
@@ -284,7 +282,7 @@
    "sleeps": 0,
    "sleeps_by_file": {},
    "test_files": 0,
-   "test_loc": 3013
+   "test_loc": 2905
   },
   "flz_core_ffi": {
    "async_false_share": null,
@@ -453,36 +451,22 @@
    "files_over_800_list": [
     "flz_transport/src/utility/path_helper.rs (922)"
    ],
-   "functions_over_50": 6,
+   "functions_over_50": 5,
    "functions_over_50_list": [
     "flz_transport/src/ffi/api.rs:111 flezha_frame_build (60)",
     "flz_transport/src/service/payloader.rs:91 extract_payload_non_blocking (56)",
     "flz_transport/src/transport/quic.rs:148 connect (74)",
     "flz_transport/src/transport/quic.rs:363 drive_handshake (78)",
-    "flz_transport/src/transport/quic.rs:446 driver_loop (174)",
-    "flz_transport/src/utility/path_helper.rs:691 the_pinned_environment_contract_is_what_the_ladder_reads (64)"
+    "flz_transport/src/transport/quic.rs:446 driver_loop (174)"
    ],
-   "long_names": 12,
-   "long_names_list": [
-    "flz_transport/src/utility/path_helper.rs:612 each_rung_answers_when_it_is_the_only_live_one",
-    "flz_transport/src/utility/path_helper.rs:642 an_explicit_path_never_falls_back_to_a_live_candidate",
-    "flz_transport/src/utility/path_helper.rs:661 two_live_candidates_are_refused_and_both_are_named",
-    "flz_transport/src/utility/path_helper.rs:691 the_pinned_environment_contract_is_what_the_ladder_reads",
-    "flz_transport/src/utility/path_helper.rs:757 an_unset_runtime_dir_falls_through_to_the_later_rungs",
-    "flz_transport/src/utility/path_helper.rs:774 a_relative_candidate_is_reported_absolutely",
-    "flz_transport/src/utility/path_helper.rs:788 nothing_live_reports_the_candidate_with_the_most_to_say",
-    "flz_transport/src/utility/path_helper.rs:804 the_controller_takes_the_first_candidate_it_can_create",
-    "flz_transport/src/utility/path_helper.rs:824 a_controller_steps_over_a_directory_another_controller_is_listening_in",
-    "flz_transport/src/utility/path_helper.rs:843 the_probe_tells_the_four_situations_apart",
-    "flz_transport/src/utility/path_helper.rs:880 a_recorded_directory_settles_an_ambiguity_a_first_connect_would_refuse",
-    "flz_transport/src/utility/path_helper.rs:901 the_socket_predicate_recognises_the_names_this_module_creates"
-   ],
+   "long_names": 0,
+   "long_names_list": [],
    "narrative_markers": 2,
    "narrative_markers_by_file": {
     "flz_transport/src/ffi/api.rs": 1,
     "flz_transport/src/utility/last_good.rs": 1
    },
-   "prod_loc": 2203,
+   "prod_loc": 1961,
    "prod_loc_by_file": {
     "flz_transport/src/ffi/api.rs": 111,
     "flz_transport/src/ffi/config.rs": 62,
@@ -493,7 +477,7 @@
     "flz_transport/src/ffi/types.rs": 56,
     "flz_transport/src/lib.rs": 10,
     "flz_transport/src/service/mod.rs": 1,
-    "flz_transport/src/service/payloader.rs": 175,
+    "flz_transport/src/service/payloader.rs": 200,
     "flz_transport/src/transport/config.rs": 140,
     "flz_transport/src/transport/liveness.rs": 89,
     "flz_transport/src/transport/mod.rs": 110,
@@ -502,14 +486,14 @@
     "flz_transport/src/transport/tls.rs": 37,
     "flz_transport/src/utility/last_good.rs": 48,
     "flz_transport/src/utility/mod.rs": 2,
-    "flz_transport/src/utility/path_helper.rs": 707
+    "flz_transport/src/utility/path_helper.rs": 440
    },
    "refutes": 0,
    "refutes_by_file": {},
    "sleeps": 0,
    "sleeps_by_file": {},
    "test_files": 0,
-   "test_loc": 316
+   "test_loc": 558
   },
   "lib/flezha": {
    "async_false_share": null,
@@ -2454,7 +2438,7 @@
     "sdk/rust/tests/operative_dispatch.rs": 3,
     "sdk/rust/tests/partition_guard.rs": 1
    },
-   "prod_loc": 5933,
+   "prod_loc": 5939,
    "prod_loc_by_file": {
     "sdk/rust/examples/live_state_read.rs": 90,
     "sdk/rust/examples/merged_input.rs": 107,
@@ -2472,7 +2456,7 @@
     "sdk/rust/src/entity/restore.rs": 79,
     "sdk/rust/src/entity/timer.rs": 10,
     "sdk/rust/src/entry_idle.rs": 145,
-    "sdk/rust/src/lib.rs": 418,
+    "sdk/rust/src/lib.rs": 424,
     "sdk/rust/src/operative/builder.rs": 325,
     "sdk/rust/src/operative/dispatcher.rs": 1246,
     "sdk/rust/src/operative/mod.rs": 15,
@@ -2505,7 +2489,7 @@
     "sdk/rust/tests/workflow_scaling.rs": 1
    },
    "test_files": 0,
-   "test_loc": 17157
+   "test_loc": 17151
   },
   "test": {
    "async_false_share": 0.815,
@@ -2936,7 +2920,7 @@
   "governor": "powersave",
   "hostname": "moon"
  },
- "head": "59deb753",
+ "head": "b667c934",
  "repo": {
   "clippy_warnings": null,
   "credo_warnings": null,

@@ -21,6 +21,8 @@ pub mod correction;
 pub mod credit;
 #[doc(hidden)]
 pub mod dynamic;
+#[doc(hidden)]
+pub mod effect;
 pub mod entity;
 pub mod entry_input;
 #[doc(hidden)]

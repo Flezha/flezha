@@ -495,6 +495,7 @@ name = "flz_core_ffi"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "criterion",
  "crossbeam",
  "dashmap",
  "flz_core",
@@ -538,12 +539,9 @@ dependencies = [
  "crossbeam",
  "libc",
  "mio",
- "prost",
  "quinn-proto",
  "rustls",
  "rustls-pemfile",
- "serde",
- "serde_json",
  "tempfile",
  "tracing",
 ]

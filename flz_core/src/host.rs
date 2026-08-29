@@ -20,14 +20,14 @@
 
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::channel::{
     BuildEntityArgs, ChannelDescriptor, ChannelKind, OverflowPolicy, RetryPolicy,
 };
 use crate::entity::{EntityItem, EntitySlot, ItemDisposition, ProcedureDispatcher};
-use crate::flusher::{EntityFlusher, FlushFrame, FlushableBuffer};
+use crate::flusher::{EntityFlusher, FlushableBuffer};
 use crate::header::HeaderTemplate;
 use crate::operative::instance::StreamInstance;
 use crate::operative::topology::{
@@ -1185,13 +1185,7 @@ impl ProcedureDispatcher for HostDispatcher {
         let Some(bytes) = flush_buffer.as_any_mut().downcast_mut::<BytesBuffer>() else {
             return false;
         };
-        let Some(record) = bytes.staged.close_on_deadline() else {
-            return false;
-        };
-        bytes
-            .effects
-            .push(crate::flusher::EffectRecordBody::from_shipped(record, None));
-        true
+        bytes.close_interval()
     }
 
     fn interval_deadline(
@@ -1285,66 +1279,8 @@ impl ProcedureDispatcher for HostDispatcher {
 
 /// Host-encoded per-Entity flush buffer: change bodies arrive pre-encoded in
 /// completions; the core frames and ships them exactly as it does a typed
-/// drain. Mirrors `TypedBuffer<S>` field-for-field at the bytes level:
-/// `changes`/`timer_ops` are the tier-off home, `effects` the
-/// effectively-once one, `staged` holds a checkpoint interval's
-/// unacknowledged accumulation, and `pending_attempt` holds a
-/// failed-but-retryable attempt's changes out of the flusher's reach until
-/// the item resolves.
-#[derive(Default)]
-pub struct BytesBuffer {
-    pub changes: Vec<Vec<u8>>,
-    pub timer_ops: Vec<TimerOp>,
-    pub effects: Vec<crate::flusher::EffectRecordBody>,
-    pub staged: crate::flusher::StagedInterval<Vec<u8>>,
-    pub pending_attempt: Vec<Vec<u8>>,
-}
-
-impl FlushableBuffer for BytesBuffer {
-    fn drain_to_frames(
-        &mut self,
-        entity_identity: &[u8],
-        change_seq: &AtomicU64,
-        header: &HeaderTemplate,
-    ) -> (usize, Vec<FlushFrame>) {
-        let mut frames = crate::flusher::frame_change_bodies(
-            std::mem::take(&mut self.changes),
-            std::mem::take(&mut self.timer_ops),
-            entity_identity,
-            change_seq,
-            header,
-        );
-        // Effect records are never coalesced or merged: a coalesced-away
-        // record would drop its outputs and consumed-offset.
-        for body in std::mem::take(&mut self.effects) {
-            let seq = change_seq.fetch_add(1, Ordering::Relaxed);
-            frames.push(FlushFrame {
-                payload_id: crate::state_sink::ENTITY_EFFECT_RECORD_PAYLOAD_ID,
-                bytes: crate::flusher::build_effect_record_frame(
-                    entity_identity,
-                    seq,
-                    header,
-                    &body,
-                ),
-            });
-        }
-        (frames.len(), frames)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.changes.is_empty() && self.timer_ops.is_empty() && self.effects.is_empty()
-    }
-
-    fn discard_staged(&mut self) {
-        self.staged.clear();
-        // A mid-ladder attempt's changes belong to the same superseded past.
-        self.pending_attempt.clear();
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
+/// drain — the one buffer, on bytes.
+pub type BytesBuffer = crate::flusher::EffectBuffer<crate::flusher::RawBodies>;
 
 /// The instance id off an `instance/procedure/key` entity label.
 fn operative_of(label: &str) -> String {
@@ -1831,17 +1767,12 @@ fn resolve_item(
     {
         let mut buffer = slot.flush_buffer.lock_recover();
         if let Some(bytes) = buffer.as_any_mut().downcast_mut::<BytesBuffer>() {
-            // The item resolves (success or park): re-take any changes a
-            // failed-but-retryable attempt left behind.
-            let mut changes = std::mem::take(&mut bytes.pending_attempt);
-            changes.extend(effect.changes);
-            if facts.effectively_once {
-                // Tier mode: this item's changes + outputs + consumed offset
-                // become ONE effect record. An effect-free item contributes
-                // nothing durable — unless it parked, in which case the
-                // record MUST ship so the dead-letter park and the
-                // consumed-offset advance stay atomic.
-                let output_records: Vec<crate::flusher::OutputRecord> = wire_outputs
+            // Tier mode: the wire outputs ride the effect record's
+            // transactional outbox. Tier-off: they ship on the wire directly,
+            // below, and the park ships as its own blocking frame after the
+            // buffer ops.
+            let output_records: Vec<crate::flusher::OutputRecord> = if facts.effectively_once {
+                wire_outputs
                     .into_iter()
                     .filter_map(|o| match o.target {
                         schema::OutputTarget::Plugin { channel } => {
@@ -1854,35 +1785,29 @@ fn resolve_item(
                         }
                         schema::OutputTarget::Edge { .. } => None,
                     })
-                    .collect();
-                let shipped = bytes.staged.fold(
-                    facts.checkpoint,
-                    crate::flusher::InvocationEffects {
-                        changes,
-                        timers: timers.clone(),
-                        outputs: output_records,
-                        offset: consumed_offset,
-                        event_time: effect.event_time,
-                        checkpointed: effect.checkpoint,
-                        parked: dlq.is_some(),
-                    },
-                    crate::util::wall_now_ms(),
-                );
-                if let Some(record) = shipped {
-                    bytes
-                        .effects
-                        .push(crate::flusher::EffectRecordBody::from_shipped(record, dlq));
-                }
+                    .collect()
             } else {
-                if slot.flusher_entry_id.is_some() {
-                    bytes.changes.extend(changes);
-                    bytes.timer_ops.extend(timers.iter().copied());
-                }
-                // Tier-off outputs ship on the wire directly, below; the
-                // park ships as its own blocking frame after the buffer ops.
                 plugin_outputs = wire_outputs;
-                tier_off_dlq = dlq;
-            }
+                Vec::new()
+            };
+            tier_off_dlq = crate::flusher::settle_effects(
+                bytes,
+                crate::flusher::SettlePolicy {
+                    effectively_once: facts.effectively_once,
+                    checkpoint: facts.checkpoint,
+                    buffered: slot.flusher_entry_id.is_some(),
+                },
+                crate::flusher::InvocationEffects {
+                    changes: effect.changes,
+                    timers: timers.clone(),
+                    outputs: output_records,
+                    offset: consumed_offset,
+                    event_time: effect.event_time,
+                    checkpointed: effect.checkpoint,
+                    parked: dlq.is_some(),
+                },
+                dlq,
+            );
         }
     }
 

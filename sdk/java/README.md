@@ -347,7 +347,7 @@ retention, and a tier without keyed sinks is refused at registration.
 |---|---|
 | `flezha-sdk-api` | Public API: `Flezha`, `StreamOperative`, `WorkflowOperative`, `Procedure`, `ProcedureCtx`, `StableId`, channel builders, clocks. No native dependency. |
 | `flezha-sdk-runtime` | Control plane, data plane, framing, worker pool, reconnect, state persistence, workflow driver. |
-| `flezha-sdk-native` | JNI bindings + bundled per-OS `libflz_transport`. |
+| `flezha-sdk-native` | JNI bindings + bundled per-OS `libflz_core_ffi`. |
 | `flezha-sdk-testing` | `ProcedureTestHarness` — add with `<scope>test</scope>`. |
 | `flezha-sdk-examples` | Worked examples. Compiled by the build, so they cannot rot. |
 | `flezha-sdk` | Fat-jar aggregator — the published artifact. |
@@ -388,7 +388,7 @@ FLEZHA_E2E_RUNTIME=java mix test --include system   # from repo root: the shared
 | `FLEZHA_SOCKET_FILES_PATH` | resolved by the socket ladder | UDS only. Set, it wins outright; unset, the ladder walks `$XDG_RUNTIME_DIR/flezha`, `/run/flezha`, `app_data/sockets`. |
 | `FLEZHA_RUNNER_ID_PATH` | `/var/lib/flezha-runner/id` | Durable stable identity. Unwritable ⇒ a fresh id per boot and lost bindings. |
 | `FLEZHA_WORKER_POOL_SIZE` | `availableProcessors()` | Shared runner draining every Entity mailbox. |
-| `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Where `libflz_transport` is extracted. Set it on containers where `/tmp` is `noexec`. |
+| `FLEZHA_NATIVE_LIB_DIR` | `$TMPDIR` | Where `libflz_core_ffi` is extracted. Set it on containers where `/tmp` is `noexec`. |
 | `FLEZHA_WORKFLOW_PARK_IDLE_MS` | `5000` | Idle hysteresis before a looping workflow operative parks. |
 
 ## Further reading

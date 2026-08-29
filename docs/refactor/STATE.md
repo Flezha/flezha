@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 04:23 (supervisor session 1)
+**Last updated**: 2026-08-29 04:47 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Phase 0 and 1s done (1s `3914b140`, verdict converge). Area 1 (`flz_core` + `flz_transport` + `flz_nif`) surveying.
+Area 1 (kernel) implementing — segment A (batches 0–3) running; tag `refactor-baseline-1` = `b667c934`.
 
 ## Board
 
@@ -21,7 +21,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
-| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | surveying | | |
+| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | implementing | | proposal approved: 65 reuse decisions, net ≈ −1 200 prod lines |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | pending | | |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
@@ -39,10 +39,13 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-1-kernel` · role survey · started 2026-08-29 04:23
-- deliverable: proposal/design/tasks for area 1 (no code)
+- change `refactor-1-kernel` · role implement, segment A = batches 0–3 · started 2026-08-29 04:47
+- three checkpoints: after batch 3 (seam + A/B rows 5/3/4), after batch 7
+  (transport/NIF), after batch 11 (final); the supervisor commits at each
+  checkpoint and spawns a FRESH worker for the next segment (4–7, then 8–11)
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
-- last seen: 2026-08-29 04:23 (spawned)
+  with the resume brief from the first unticked task
+- last seen: 2026-08-29 04:47 (spawned)
 
 ## Awaiting the user's decision
 
@@ -198,6 +201,17 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 - 2026-08-29 Hot-path A/B rows for the kernel: row 5 (`host_loop`) at
   `FLEZHA_BENCH_MEASUREMENT_SECS=60`; row 7 (`--runtime python`) needs
   `--runners 1` and ≥ 80 000 records to resolve 3 % at all.
+- 2026-08-29 Area 1 runs as three worker segments (batches 0–3, 4–7, 8–11) with a
+  supervisor commit at each checkpoint — one change, three green commits — because
+  eleven batches exceed one worker's context and every batch leaves the tree green
+  by construction.
+- 2026-08-29 `flz_transport/src/ffi/` (459 lines, a cdylib nothing loads — Java
+  bundles `libflz_core_ffi` via `scripts/build-native.sh`) and
+  `flz_transport/src/generated/runner_commands.rs` (625, a stale copy of
+  `flz_core::pb`) are deleted, not moved: verified by grep before approval.
+- 2026-08-29 Batch 0 of area 1 corrects the metrics classifier (`#[cfg(all(test,…))]`,
+  mid-file `mod tests` no longer swallows the rest of the file, `generated/`
+  excluded) and re-baselines every area on the unchanged tree.
 - 2026-08-29 `test` is a blocking ratchet from `0670e992`: sleeps ≤ 2, refutes ≤ 12,
   `async: false` share ≤ 0.815, ExUnit ≤ 56.2 s ± 5 % on this box.
 

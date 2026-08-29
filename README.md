@@ -40,7 +40,7 @@ The `protoc` install layer rejects any other `uname -m` with
 Three classes of artifacts ride along in the repo so CI never rebuilds
 them:
 
-- 5× native binaries — `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_transport.{so,dylib,dll}`
+- 5× native binaries — `sdk/java/flezha-sdk-native/src/main/resources/native/<platform>/libflz_core_ffi.{so,dylib,dll}`
 - SDK fat jar — `sdk/java/flezha-sdk/dist/flezha-sdk.jar`
 - Test runner fat jar — `test/apps/java_runner/dist/java_runner.jar`
 
@@ -307,7 +307,7 @@ Java 21, Rust stable, `cargo-zigbuild` and a Zig toolchain.
 
 On hardened containers where `/tmp` is mounted `noexec`, set
 `FLEZHA_NATIVE_LIB_DIR=/path/to/writable` so `NativeLibraryLoader` can
-extract `libflz_transport` somewhere it can be loaded. See
+extract `libflz_core_ffi` somewhere it can be loaded. See
 `sdk/java/README.md` for the full env-var reference.
 
 ## License, trademark and warranty
