@@ -18,8 +18,7 @@ use napi::bindgen_prelude::*;
 use napi::ValueType;
 use napi_derive::napi;
 
-use crate::veneer::shape;
-use crate::veneer::{self, CtxPtr, Refusal};
+use crate::veneer::{self, shape, CtxPtr, Refusal};
 use crate::FlzContext;
 
 /// The one context this process holds. Null until `contextNew`.

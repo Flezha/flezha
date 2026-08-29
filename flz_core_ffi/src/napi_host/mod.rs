@@ -26,11 +26,10 @@ use napi::threadsafe_function::{
     ThreadsafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
 use napi_derive::napi;
+pub(crate) use pool::{blocking_pool, env_usize};
 
 use crate::napi_glue::{context, Values};
-use crate::veneer::shape;
-use crate::veneer::{self, CtxPtr, Polled, Refusal};
-pub(crate) use pool::{blocking_pool, env_usize};
+use crate::veneer::{self, shape, CtxPtr, Polled, Refusal};
 use crate::{FLZ_POLL_SHUTTING_DOWN, FLZ_STARVATION_OBSERVED};
 
 /// Poll timeout per turn. Bounds how fast a shutdown request is observed —
@@ -630,7 +629,12 @@ mod tests {
     use super::*;
 
     fn activation(operative: &str, procedure: u32, key: Option<&str>) -> schema::Activation {
-        activation_of(schema::ActivationKind::Work(vec![]), operative, procedure, key)
+        activation_of(
+            schema::ActivationKind::Work(vec![]),
+            operative,
+            procedure,
+            key,
+        )
     }
 
     fn activation_of(

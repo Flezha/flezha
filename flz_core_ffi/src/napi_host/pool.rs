@@ -18,7 +18,6 @@ const IDLE_RETIRE: Duration = Duration::from_secs(30);
 /// both `settle` and `hostStats` report on.
 pub(crate) type Snapshot = (u32, u32, u32, u32);
 
-
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
 struct PoolState {

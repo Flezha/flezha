@@ -100,8 +100,20 @@ pub mod record {
     use super::*;
 
     pub const ACTIVATION: &[Key] = &[
-        TOKEN, OPERATIVE, PROCEDURE, ENTITY_KEY, CHANGE_SEQ, FACTORY, KIND, ITEMS, SNAPSHOT,
-        CHANGES, STATE_JSON, super::KEY_REQUEST, ARGS, OUTPUTS,
+        TOKEN,
+        OPERATIVE,
+        PROCEDURE,
+        ENTITY_KEY,
+        CHANGE_SEQ,
+        FACTORY,
+        KIND,
+        ITEMS,
+        SNAPSHOT,
+        CHANGES,
+        STATE_JSON,
+        super::KEY_REQUEST,
+        ARGS,
+        OUTPUTS,
     ];
     pub const WORK_ITEM: &[Key] = &[
         KIND,
@@ -295,7 +307,11 @@ pub fn activation<S: Sink>(s: &S, act: schema::Activation) -> Result<S::Value, S
 }
 
 /// The discriminator, and whatever that kind carries.
-fn kind_out<S: Sink>(s: &S, out: &mut S::Map, kind: schema::ActivationKind) -> Result<(), S::Error> {
+fn kind_out<S: Sink>(
+    s: &S,
+    out: &mut S::Map,
+    kind: schema::ActivationKind,
+) -> Result<(), S::Error> {
     use schema::ActivationKind as K;
     match kind {
         K::Work(items) => {
@@ -572,8 +588,12 @@ fn verdict<S: Source>(s: &S, h: &S::Map) -> Result<schema::Verdict, S::Error> {
     let message = || opt_text(s, h, MESSAGE).map(Option::unwrap_or_default);
     Ok(match named.as_str() {
         word::OK => schema::Verdict::Ok,
-        word::RETRYABLE => schema::Verdict::RetryableError { message: message()? },
-        word::NON_RETRYABLE => schema::Verdict::NonRetryableError { message: message()? },
+        word::RETRYABLE => schema::Verdict::RetryableError {
+            message: message()?,
+        },
+        word::NON_RETRYABLE => schema::Verdict::NonRetryableError {
+            message: message()?,
+        },
         other => return Err(unknown::<S>("verdict", other)),
     })
 }
@@ -593,12 +613,7 @@ fn output<S: Source>(s: &S, value: &S::Value) -> Result<schema::Output, S::Error
     Ok(schema::Output {
         target,
         key: opt_text(s, &h, KEY)?,
-        event_time: opt_u64_as(
-            s,
-            &h,
-            EVENT_TIME,
-            what::OUTPUT_EVENT_TIME.spell(S::CAMEL),
-        )?,
+        event_time: opt_u64_as(s, &h, EVENT_TIME, what::OUTPUT_EVENT_TIME.spell(S::CAMEL))?,
         metadata: metadata_in(s, &h)?,
         payload: opt_bytes(s, &h, PAYLOAD)?.unwrap_or_default(),
     })
@@ -660,11 +675,6 @@ fn prepared<S: Source>(
     }
     Ok(Ok(schema::PrepareAnswer {
         keys,
-        event_time: opt_u64_as(
-            s,
-            &h,
-            EVENT_TIME,
-            what::PREPARE_EVENT_TIME.spell(S::CAMEL),
-        )?,
+        event_time: opt_u64_as(s, &h, EVENT_TIME, what::PREPARE_EVENT_TIME.spell(S::CAMEL))?,
     }))
 }

@@ -36,9 +36,7 @@ function keySpellings() {
   )) {
     spellings.set(name, camel);
   }
-  for (const [, name, flat] of shape.matchAll(
-    /^pub const (\w+): Key = Key::flat\("(\w+)"\);/gm,
-  )) {
+  for (const [, name, flat] of shape.matchAll(/^pub const (\w+): Key = Key::flat\("(\w+)"\);/gm)) {
     spellings.set(name, flat);
   }
   return spellings;
@@ -51,9 +49,7 @@ function shapeRecords() {
   const at = shape.indexOf('pub mod record {');
   assert.notEqual(at, -1, 'shape.rs declares no `record` module');
   const body = shape.slice(at, shape.indexOf('\n}', at));
-  for (const [, name, fields] of body.matchAll(
-    /pub const (\w+): &\[Key\] = &\[([\s\S]*?)\];/g,
-  )) {
+  for (const [, name, fields] of body.matchAll(/pub const (\w+): &\[Key\] = &\[([\s\S]*?)\];/g)) {
     const named = fields
       .split(',')
       .map((field) => field.trim().replace(/^super::/, ''))

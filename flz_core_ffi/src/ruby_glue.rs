@@ -21,8 +21,7 @@ use magnus::{
     function, Error, ExceptionClass, IntoValue, RArray, RHash, RString, Ruby, TryConvert, Value,
 };
 
-use crate::veneer::shape;
-use crate::veneer::{self, CtxPtr, Polled, Refusal};
+use crate::veneer::{self, shape, CtxPtr, Polled, Refusal};
 use crate::FlzContext;
 
 /// The one context this process holds. Null until `context_new`.

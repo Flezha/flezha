@@ -19,8 +19,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyModule, PyString, PyTuple};
 use pyo3::{create_exception, ffi, IntoPyObjectExt};
 
-use crate::veneer::shape;
-use crate::veneer::{self, CtxPtr, Polled, Refusal};
+use crate::veneer::{self, shape, CtxPtr, Polled, Refusal};
 use crate::FlzContext;
 
 create_exception!(
@@ -282,10 +281,12 @@ impl<'py> shape::Source for Values<'py> {
     type Error = PyErr;
 
     fn get(&self, map: &Self::Map, key: shape::Key) -> PyResult<Option<Self::Value>> {
-        Ok(match map.get_item(key.spell(<Self as shape::Source>::CAMEL))? {
-            Some(v) if !v.is_none() => Some(v),
-            _ => None,
-        })
+        Ok(
+            match map.get_item(key.spell(<Self as shape::Source>::CAMEL))? {
+                Some(v) if !v.is_none() => Some(v),
+                _ => None,
+            },
+        )
     }
 
     fn map(&self, v: &Self::Value, what: &str) -> PyResult<Self::Map> {
