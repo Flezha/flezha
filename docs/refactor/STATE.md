@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 01:53 (supervisor session 1, heartbeat)
+**Last updated**: 2026-08-29 02:35 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 0a done (`e8f81b8a`). Area 0b implementing (worker spawned); tag `refactor-baseline-0b` at `59deb753`.
+Phase 0 done (0a `e8f81b8a`, 0b `0670e992`). Area 1s surveying (dispatcher-unification A/B spike proposal).
 
 ## Board
 
@@ -19,8 +19,8 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | # | Area | Change id | Depends on | Status | Commit | Gates before → after |
 |---|------|-----------|------------|--------|--------|----------------------|
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
-| 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | implementing | | |
-| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | pending | | |
+| 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
+| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | surveying | | |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | pending | | |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | pending | | |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
@@ -39,18 +39,20 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-0-tests` · role implement · started 2026-08-28 23:49
-- checkpoint A after task group 1 (flake population + root causes, NO edits): the
-  supervisor vetoes any fix that changes behaviour before code moves; checkpoint B
-  at the end
+- change `refactor-1s-dispatcher-spike` · role survey · started 2026-08-29 02:35
+- deliverable: proposal/design/tasks for the spike (no code); the spike itself is
+  the next implement step
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
-- last seen: 2026-08-29 01:53 — tasks 2/11 ticked; working tree: 221 files changed, 1902 insertions(+), 1115 deletions(-)
-- resume note: if this worker is gone, re-spawn with the resume brief; group-2
-  edits are test files plus the settle-signal seams the report must list
+- last seen: 2026-08-29 02:35 (spawned)
 
 ## Awaiting the user's decision
 
-Nothing.
+- Two product defects found by 0b need their own (behaviour-changing) changes and
+  a priority call: **F1** (watermark overwrite after a park, `wal_writer.ex:1288`
+  + `input_log.ex:189`) and the **first-input drop after `start_operative/2`**.
+  Recommendation: fix both as ordinary OpenSpec changes before area 5a (state) and
+  5e (runner), since those areas refactor exactly these files; the programme does
+  not block on them — areas 1s–4 and 6 do not touch that code.
 
 ## Found defects (not fixed inline — each becomes its own change)
 
@@ -98,6 +100,23 @@ Nothing.
 - 0b three uncaptured `[error]` lines in a plain `mix test` (two sdk_lang-mismatch
   restore refusals, one ControlUnit abnormal shutdown) would trip CI's uncaptured-log
   gate on this suite shape.
+- 0b **first-input drop after `start_operative/2` — PRODUCT DEFECT, own change owed**:
+  the start reply comes on the control-channel ack while the runner's primary data
+  stream binds later; a `send_io` cast in between hits `io_in/3` → `{:error,
+  :no_stream}` and is dropped with only `nil_drops` + `[:flezha, :stream, :drop]`;
+  a tier-on input is journaled (`Ingest.verdict/2` answers `:ok` on `:no_stream`)
+  and never forwarded at bind. A drop probe logged 38 drops on exactly the failing
+  e2e operatives. Cure: a start reply that waits for the bind, or a cast that
+  cannot drop. Every e2e module now settles on `await_stream_bound/2`;
+  `sdk_smoke` still carries an older re-send loop.
+- 0b UDS driver `DropNewest` write-buffer drops are invisible to the caller
+  (`Native.send_frame/4` always answers `:ok`); only `driver_stats.write_buffer_dropped`
+  sees them (the last silent-drop default; already on the memory list).
+- 0b `unique/1` suffixes reach 7 digits in one BEAM, so any id prefix over 24 chars
+  breaches the 32-byte operative-id cap late in a combined run.
+- 0b `sdk_smoke_e2e_test.exs` `send_until_forwarded` is the old re-send workaround
+  for the first-input drop; fold onto `await_stream_bound/2` in area 7.
+- 0b F5 (`flezha_test.exs:591`) still unexplained; 10/10 alone again.
 
 ## Decisions
 
@@ -136,9 +155,14 @@ Nothing.
 - 2026-08-29 The naming gates walk `git ls-files`: an untracked new file is invisible
   to them (commit `e8f81b8a` landed with three offences in its own dev notes this
   way). The supervisor `git add -N`s a worker's new files before gating.
-- 2026-08-29 A first-input race against an asynchronously activating sink plugin is
-  settled by waiting on the plugin's phase (`Table.phase` → `:running`) before the
-  send — a positive signal — never by re-sending.
+- 2026-08-29 The e2e first-input race is NOT sink-plugin activation (that wait ran
+  green as a no-op and the failures continued); it is the data-stream bind. The
+  settle is `NodeTestHelper.await_stream_bound/2` on the acceptor's own
+  `:stream_ref_status` — a positive signal — never a re-send.
+- 2026-08-29 The combined one-BEAM `--include system` run is a different load
+  profile from per-half runs and is the one that exposes the drop; both are run.
+- 2026-08-29 `test` is a blocking ratchet from `0670e992`: sleeps ≤ 2, refutes ≤ 12,
+  `async: false` share ≤ 0.815, ExUnit ≤ 56.2 s ± 5 % on this box.
 
 ## Baseline (rough, pre-Phase-0 — replaced by `baseline.json` in 0a)
 
@@ -163,5 +187,8 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-1. Implement `refactor-0-tests` (0b), verify, commit.
-2. Survey 1s (dispatcher A/B spike), then 1.
+1. Survey 1s (spike proposal), approve, implement the spike, record the A/B verdict.
+2. Then area 1 (`flz_core` + transport + nif) — survey.
+3. Owed defect changes (user's priority call): F1 dlq watermark overwrite, the
+   first-input drop after `start_operative/2` — both before area 5a touches
+   `wal_writer`/`stream_channel`.
