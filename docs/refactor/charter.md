@@ -131,11 +131,31 @@ per-language host half stays per language.
 Hot paths: `flz_core` poll core and host, the dispatchers, `flz_transport`,
 `wal_writer`, `input_log`, the Kafka producer worker, the plugin routing seam.
 
-- A session that touches a hot path runs an **interleaved A/B on the same box**
-  against the tag `refactor-baseline-<area>` set at its start: `mix
-  bench.roundtrip` for the controller/kernel, the Rust SDK bench for the SDK.
-  A regression beyond noise (3 %) blocks the commit; an improvement is recorded
-  in `STATE.md` and the commit message.
+An area that touches a hot path proves it with an **interleaved A/B on the same
+box** against the tag `refactor-baseline-<area>`. A regression beyond the row's
+measured floor blocks the commit; an improvement is recorded in `STATE.md` and
+the commit message. Measuring is the most expensive thing this programme does —
+it was 61 % of area 2's closing segment — so it obeys four rules:
+
+- **Build every checkpoint, measure once.** Each checkpoint BUILDS its arm and
+  keeps it with a `sha256sum` (about two minutes); only the area's LAST
+  checkpoint measures. A regression found there is attributed by a bisect over
+  the kept arms, run only when there is something to attribute. Area 2 measured
+  three times and the decisive answer came from a pair of kept arms both times —
+  so keeping arms is what buys attribution, and re-measuring at every checkpoint
+  buys nothing.
+- **An unchanged binary is not re-measured.** Before running a row, compare the
+  driving binary's `sha256sum` between the arms; if they are equal the row cannot
+  have moved, and the sha IS the evidence. Record it and skip the row.
+- **Three rounds detect, five confirm.** Run three paired alternating rounds. Go
+  to five only when the direction is consistent across all three — a real
+  regression shows as an unbroken direction early (area 2's was 5 of 5), and a
+  clean row does not.
+- **Only a gate row gets the long window.** Each row is declared `gate`, `guard`
+  or `direction` in the area's `design.md` with its measured floor. A gate row
+  gets the window its floor needs; a guard row gets the short window; a direction
+  row is reported and never blocks. A row whose floor cannot resolve the effect
+  being claimed is a direction row — say so rather than running it.
 - CI floors stay as they are; they detect hardware, not refactors.
 - The dispatcher unification (§3) is measured as a spike change with no other
   output before any code moves.
