@@ -138,7 +138,10 @@ Fail → `SendMessage` to the same worker with the exact findings; row stays
    own — `git add` the new files explicitly, and after the commit verify
    `git status --short` is empty (bar foreign untracked files) and
    `git ls-files --stage | grep e69de29bb2d1d6434b8b29ae775ad8c2e48c5391`
-   names no file of the change; commit `refactor(<id>): <one line>` with the LOC delta and A/B
+   names no file of the change; stage with `git add --ignore-errors --` (a
+   deleted path that a new ignore rule now covers makes plain `git add` exit 1
+   and a `&&` chain skip the commit) and check `git status --short` shows no
+   unstaged entry BEFORE the commit and BEFORE the board is edited; commit `refactor(<id>): <one line>` with the LOC delta and A/B
    numbers in the body. No AI trailer, ever.
 3. `python3 scripts/refactor_metrics.py --write-baseline` for the finished
    area (its gates are now blocking); commit that with the same commit.
