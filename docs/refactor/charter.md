@@ -64,11 +64,16 @@ controller areas (5a–5e) each cut their part of that cycle; the charter's
 order is what they cut towards, and `refactor_metrics.py` ratchets the cycle
 count per area.
 
-**One host core.** The typed Rust dispatcher, the Java dispatcher and the
-erased host in `flz_core/src/host.rs` implement one contract. They converge on
-one core generic over how state is held, *only* after the A/B in §8 proves no
-loss; type safety stays in the builders and the type system, not in a
-duplicated loop.
+**One settlement tail, one buffer.** The poll loop is already one core:
+`PollCore`, one `EntitySlot` with erased state, one `ProcedureDispatcher`
+trait with two impls, one `StagedInterval<C>::fold`. What the typed Rust path
+and the erased host duplicate is the effect-settlement tail (`invoke_once` vs
+`resolve_item`) and the buffer (`TypedBuffer<S>` vs `BytesBuffer`). Area 1
+re-implements the spike's seam — a `Bodies` codec marker, `EffectBuffer<B>`,
+`settle_effects<B>` (branch `spike/1s-dispatcher`, measured ≤ 1.5 % on every
+resolvable row with allocations flat) — under this charter. Java's
+`ActivationDispatcher` is a host over the erased loop, not a third loop; the
+per-language host half stays per language.
 
 ## 4. Naming
 

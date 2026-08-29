@@ -36,3 +36,12 @@ A test in the repository SHALL NOT sleep to wait for a condition, and SHALL NOT 
 - **WHEN** a test fails in a full run and passes alone
 - **THEN** the session that met it SHALL fix its root cause in the test's observation or in the code, and SHALL NOT tag it skipped or flaky
 
+### Requirement: A hot-path change is measured by an interleaved A/B on one box
+
+A change that touches a hot path (the `flz_core` poll core and host, the dispatchers, `flz_transport`, `wal_writer`, `input_log`, the Kafka producer worker, the plugin routing seam) SHALL be measured by an interleaved A/B on the same box against the tag `refactor-baseline-<area>` set at the start of the area: two arms built from the same tree in sequence, the arm artifacts recorded by content hash, at least five rounds with the arm order alternating by round, the baseline arm's run-to-run spread measured and recorded before the changed arm exists, and the hostname, CPU model, governor and power state recorded beside every number. A loss of more than 3 % on any row whose recorded spread is at most 3 % SHALL block the change; a row whose spread exceeds 3 % SHALL be decided by paired rounds (the changed arm below 97 % of the baseline arm in at least four of five rounds). The numbers SHALL be recorded in the change's `design.md` and the verdict as one line in `docs/refactor/STATE.md`; the dispatcher unification SHALL be measured this way as a spike with no other output before any of its code moves.
+
+#### Scenario: A spike measures the dispatcher seam
+
+- **WHEN** the dispatcher-unification spike runs its A/B on this box
+- **THEN** every row of its table SHALL carry the baseline arm's pre-recorded spread, five baseline and five changed-arm medians, the artifact hashes of both arms and the governor and power state, and the change SHALL be recorded as "converge" only when every row's loss is at most 3 % under the paired-round rule
+

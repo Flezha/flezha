@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 02:35 (supervisor session 1)
+**Last updated**: 2026-08-29 04:21 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Phase 0 done (0a `e8f81b8a`, 0b `0670e992`). Area 1s surveying (dispatcher-unification A/B spike proposal).
+Area 1s verdict: converge. Closing 1s (dev notes in progress), then survey area 1.
 
 ## Board
 
@@ -20,7 +20,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 |---|------|-----------|------------|--------|--------|----------------------|
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
-| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | surveying | | |
+| 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | checkpoint | branch `spike/1s-dispatcher` | verdict converge; ≤ 1.45 % loss on every resolvable row |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | pending | | |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | pending | | |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
@@ -39,11 +39,14 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-1s-dispatcher-spike` · role survey · started 2026-08-29 02:35
-- deliverable: proposal/design/tasks for the spike (no code); the spike itself is
-  the next implement step
+- change `refactor-1s-dispatcher-spike` · role implement · started 2026-08-29 02:53
+- all code edits happen in the worktree `<scratchpad>/spike` on branch
+  `spike/1s-dispatcher` (off tag `refactor-baseline-1s` = `948cba77`); the main
+  tree stays clean; the deliverable is the A/B table in the change's `design.md`
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
-- last seen: 2026-08-29 02:35 (spawned)
+- last seen: 2026-08-29 04:21 — spike complete, verified; worker writing dev notes
+- resume note: if this worker is gone, `git worktree list` shows whether the
+  worktree exists and `git log spike/1s-dispatcher` which arm is committed
 
 ## Awaiting the user's decision
 
@@ -117,6 +120,22 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 - 0b `sdk_smoke_e2e_test.exs` `send_until_forwarded` is the old re-send workaround
   for the first-input drop; fold onto `await_stream_bound/2` in area 7.
 - 0b F5 (`flezha_test.exs:591`) still unexplained; 10/10 alone again.
+- 1s `test/apps/python_runner/__pycache__/fixtures.cpython-312.pyc` is COMMITTED
+  and stale; every Python runner launch dirties the tree (area 2 deletes it and
+  ignores `__pycache__`).
+- 1s the tree's installed Python veneer `.so` is a DEBUG build
+  (`build-python-sdk.sh` default, 24.5 MB); a `--runtime python` round trip under
+  `FLEZHA_BENCH_SKIP_BUILD=1` measures a debug veneer silently.
+- 1s `mix bench.roundtrip --runtime python -p 2` with the default `--runners 2` is
+  bimodal (~20 k vs ~33 k rec/s) on placement and the report records nothing
+  about placement.
+- 1s the erased path pays 8.09 allocs/elem vs the typed 7.02, pre-existing:
+  `to_schema` clones payload + metadata and mints two `String`s per activation;
+  `resolve_item` calls `entity_ref_of` per item even with no outputs (area 1).
+- 1s `sdk/rust` `coalesce` allocates its map + mask whenever the buffer is
+  non-empty, key or no key (area 3).
+- 1s a stale worktree from another session (`…/55da9198…/scratchpad/baseline2`,
+  detached at `30e64258`, prunable) is not ours; left alone.
 
 ## Decisions
 
@@ -161,6 +180,28 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
   `:stream_ref_status` — a positive signal — never a re-send.
 - 2026-08-29 The combined one-BEAM `--include system` run is a different load
   profile from per-half runs and is the one that exposes the drop; both are run.
+- 2026-08-29 Charter §3 "three dispatchers" is refuted by the code (1s survey): the
+  loop is already one (`PollCore`, `EntitySlot`, `ProcedureDispatcher` with two
+  impls, `StagedInterval<C>::fold`); Java's `ActivationDispatcher` is a host over
+  the erased loop, not a third loop. What is duplicated is the effect-settlement
+  tail (`invoke_once` vs `resolve_item`, ~230 lines) and the buffer struct
+  (`TypedBuffer<S>` vs `BytesBuffer`). The spike measures exactly that seam
+  (`EffectBuffer<C>` + `settle_effects<C>`); §3 is amended after the verdict.
+- 2026-08-29 1s: converge — 4 tier_on: A 0.6467, B 0.6373 Melem/s (loss 1.45 %,
+  floor n/a); rows 1/2/5 +0.45/−0.36/+0.97 % inside floors 0.73/1.91/2.60 %;
+  allocs/elem flat (7.02→7.02 typed, 8.09→8.09 erased); row 6 (Rust whole-system)
+  B faster 5/5; row 7 (Python whole-system) unresolvable — bimodal on placement,
+  paired 2/5 on the one-runner supplement. Box moon, i7-8650U, powersave, AC.
+- 2026-08-29 The seam's shape is a `Bodies` codec marker (`RawBodies` in the core,
+  `TypedBodies<S>` in the SDK; `EffectBuffer<B: Bodies>`, `settle_effects<B>`), not
+  a trait on `C` — the orphan rule forbids that (`Change` would move into
+  `flz_core` and every user `impl Change for <std type>` breaks). Area 1
+  re-implements it; the spike branch is read, never merged.
+- 2026-08-29 Charter §3 "one host core" rewritten to the measured truth: one
+  settlement tail and one buffer; the loop was already one.
+- 2026-08-29 Hot-path A/B rows for the kernel: row 5 (`host_loop`) at
+  `FLEZHA_BENCH_MEASUREMENT_SECS=60`; row 7 (`--runtime python`) needs
+  `--runners 1` and ≥ 80 000 records to resolve 3 % at all.
 - 2026-08-29 `test` is a blocking ratchet from `0670e992`: sleeps ≤ 2, refutes ≤ 12,
   `async: false` share ≤ 0.815, ExUnit ≤ 56.2 s ± 5 % on this box.
 
