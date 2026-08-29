@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 11:00 (supervisor session 1, heartbeat)
+**Last updated**: 2026-08-29 11:53 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 1 (kernel): segments A (`e709cd40`) and B (`2f47a296`) committed; segment C (batches 8–11) running.
+Area 1 (kernel) done: `e709cd40` + `f1b4fe54` + `d6288963`; `flz_core`, `flz_transport`, `flz_nif` are blocking ratchets. Area 2 (FFI glue + veneers) surveying.
 
 ## Board
 
@@ -21,8 +21,8 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
-| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | implementing | A: `e709cd40`, B: `2f47a296` | A: −1 851 dead lines, seam; B: host/engine/driver/transport by owner, clippy 24→5, host_loop +5 %, roundtrip +13 % |
-| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | pending | | |
+| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `e709cd40`, `f1b4fe54`, `d6288963` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
+| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | surveying | | |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
@@ -39,17 +39,16 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-1-kernel` · role implement, segment C = batches 8–11 · started 2026-08-29 09:29
-- final checkpoint after batch 11; the supervisor then flips `flz_core`,
-  `flz_transport`, `flz_nif` to blocking, re-baselines, archives and commits
+- change `refactor-2-ffi-veneers` · role survey · started 2026-08-29 11:53
+- deliverable: proposal/design/tasks for area 2 (no code)
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
-  with the resume brief from the first unticked task
-- last seen: 2026-08-29 11:00 — tasks 43/48 ticked; final A/B in progress
+- last seen: 2026-08-29 11:53 (spawned)
 
 ## Awaiting the user's decision
 
-- Two product defects found by 0b need their own (behaviour-changing) changes and
-  a priority call: **F1** (watermark overwrite after a park, `wal_writer.ex:1288`
+- THREE product defects need their own (behaviour-changing) changes and a priority
+  call — the first-input drop now has a second face (1c: the restore re-forward
+  path drops the same way): **F1** (watermark overwrite after a park, `wal_writer.ex:1288`
   + `input_log.ex:189`) and the **first-input drop after `start_operative/2`**.
   Recommendation: fix both as ordinary OpenSpec changes before area 5a (state) and
   5e (runner), since those areas refactor exactly these files; the programme does
@@ -159,6 +158,24 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 - 1b row 6 (whole-system round trip) has no measured floor; 5-second runs spread
   ~18 % within one arm — the row is a direction, not a gate, until the shape is
   lengthened.
+- 1c **`effectively_once_checkpoint_e2e_test.exs:37` is the 0b first-input drop on
+  the RESTORE re-forward path**: after a rebind the controller re-forwards offsets
+  onto a data stream the fresh runner has not bound yet, three
+  `[:flezha, :stream, :drop]` in one ms, never re-driven; reproduced on the 40th
+  probed iteration alone. Same cure as the first-input drop (a bind-aware forward).
+- 1c `mvn … verify` straight after `scripts/build-dist.sh` fails at the shade step
+  (stale `target/`); the Java suite command is `clean verify`.
+- 1c the Ruby veneer does not build here without
+  `BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/13/include` (no
+  `libclang-common-*-dev`); PHP's `composer install` runs only in the
+  `flezha-php-zts` container.
+- 1c row-5 (`host_loop`) re-measure after the bench-scaffolding extraction was
+  REFUSED (box on battery); the pre-extraction B11 figure stands; area 3's A/B
+  measures row 5 again on mains.
+- 1c `target/release/rust_runner` in the tree is arm B7's binary (the A/B restore);
+  harmless — the e2e builds via `cargo run`.
+- 1c `sdk/rust/tests/stream_transforms.rs:249` fails under a parallel suite run on a
+  loaded box (5 s `wait_until`); same family as `tier_replay_skips…`; area 3.
 - 1s a stale worktree from another session (`…/55da9198…/scratchpad/baseline2`,
   detached at `30e64258`, prunable) is not ours; left alone.
 
@@ -248,6 +265,19 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 - 2026-08-29 A worker waiting on a background job's completion can miss the event
   (twice in segment B); the supervisor's heartbeat checks the job's marker file and
   nudges — a stalled worker is a heartbeat finding, not a failure.
+- 2026-08-29 Area 1's error enums carry the old refusal STRINGS as variant payloads
+  (`Error::Declaration(String)` …) with `Display` byte-identical: one shape per
+  crate now, the strings themselves are wire/ABI contracts and stay; deeper typing
+  is a later change, never a rephrase.
+- 2026-08-29 Area 1 is +738 production lines by the metrics script (seam and bench
+  scaffolding moved INTO the shared core, +391, twins still in `sdk/rust`; error
+  enum +56; owner splits' mod.rs/imports) while the raw tree lost 1,851 dead
+  lines. The net loss of the programme lands in areas 2–4 as the twins leave the
+  SDKs — the kernel growing a little is what "one core" costs.
+- 2026-08-29 A test is deleted only with an lcov diff (`cargo llvm-cov --lcov`,
+  `DA:`/`FNDA:` per file) showing every lost line inside the deleted test's body.
+- 2026-08-29 `flz_core`, `flz_transport`, `flz_nif` are blocking ratchets from
+  `d6288963` (prod 12 639 / 1 743 / 2 048; markers 0; files>800 0; clippy 0).
 - 2026-08-29 `test` is a blocking ratchet from `0670e992`: sleeps ≤ 2, refutes ≤ 12,
   `async: false` share ≤ 0.815, ExUnit ≤ 56.2 s ± 5 % on this box.
 
@@ -274,8 +304,9 @@ CI (1.19); no formatter for the four veneers.
 
 ## Next steps
 
-1. Survey area 1 (kernel), approve, implement (the seam from `spike/1s-dispatcher`
-   is a named task; hot path → A/B rows 1–6 per the refactor-gates requirement).
-2. Then area 2 (FFI glue + veneers) or 5a (state), by board order: 2.
-3. Owed defect changes (user's priority call, see "Awaiting"): F1 dlq watermark,
-   first-input drop after `start_operative/2`.
+1. Survey area 2 (FFI glue + four veneers), approve, implement in two-batch
+   segments; the seam's SDK twins are area 3's, the glue dedup is area 2's.
+2. Then area 3 (Rust SDK: `TypedBodies<S>`, the typed tail onto `settle_effects`,
+   the bench scaffolding, the typed-path −1.4 %).
+3. Owed defect changes (user's priority call): F1 dlq watermark, the first-input
+   drop (two faces) — before areas 5a/5e.
