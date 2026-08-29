@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 08:25 (supervisor session 1, heartbeat)
+**Last updated**: 2026-08-29 09:29 (supervisor session 1)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,7 +10,7 @@ one host core, tests fast and real.
 
 ## Status
 
-Area 1 (kernel): segment A committed (`e709cd40`, batches 0–3); segment B (batches 4–7) running.
+Area 1 (kernel): segments A (`e709cd40`) and B (`2f47a296`) committed; segment C (batches 8–11) running.
 
 ## Board
 
@@ -21,7 +21,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0a | Baseline, gates, formatters | `refactor-0-baseline` | — | done | `e8f81b8a` | gates now measure; `blocking: []` |
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `0670e992` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `3914b140` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
-| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | implementing | A: `e709cd40` | segment A: −1 851 lines dead code, seam landed, A/B no loss |
+| 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | implementing | A: `e709cd40`, B: `2f47a296` | A: −1 851 dead lines, seam; B: host/engine/driver/transport by owner, clippy 24→5, host_loop +5 %, roundtrip +13 % |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | pending | | |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
@@ -39,11 +39,12 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-- change `refactor-1-kernel` · role implement, segment B = batches 4–7 · started 2026-08-29 05:44
-- checkpoint after batch 7; then segment C (batches 8–11) with a fresh worker
+- change `refactor-1-kernel` · role implement, segment C = batches 8–11 · started 2026-08-29 09:29
+- final checkpoint after batch 11; the supervisor then flips `flz_core`,
+  `flz_transport`, `flz_nif` to blocking, re-baselines, archives and commits
 - worker agent lives in supervisor session 1 only; a new session must re-spawn
   with the resume brief from the first unticked task
-- last seen: 2026-08-29 08:25 — tasks 27/48 ticked; working tree: 61 files changed, 2356 insertions(+), 8753 deletions(-)
+- last seen: 2026-08-29 09:29 (spawned)
 
 ## Awaiting the user's decision
 
@@ -146,6 +147,18 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
   interim of design D1; area 3's port removes them (owed, by design).
 - 1a a new pair `effect.rs:31-54` (`EffectEntry`) ↔ `schema.rs:234-240`
   (`ItemEffect`): the same field list twice — segment B decides in batch 4.
+- 1b the typed dispatch bench (row 1) is 0.6–1.2 % behind after batches 4–7, B
+  slower in 10/10 pairs across two arms — inside the floor and the rule, but a
+  consistent small cost on the typed path; area 3 (which rewrites that path) owns
+  finding it.
+- 1b `flz_nif/src/frame_buffer.rs` `feed` (69 lines) is over the function ceiling
+  and no task owned it; segment C takes it in batch 9.
+- 1b the Rust SDK test `tier_replay_skips…` has a second flake shape under parallel
+  runs (5 s `wait_until`, ~1–2/26) attributed to pool starvation by parking tests;
+  area 3.
+- 1b row 6 (whole-system round trip) has no measured floor; 5-second runs spread
+  ~18 % within one arm — the row is a direction, not a gate, until the shape is
+  lengthened.
 - 1s a stale worktree from another session (`…/55da9198…/scratchpad/baseline2`,
   detached at `30e64258`, prunable) is not ours; left alone.
 
@@ -228,6 +241,13 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 - 2026-08-29 Area 1 arm A = the working tree at the tag + the bench files (no
   worktree); Rust test regions end at the module's own-indentation `}`, never a
   brace count (a raw-string JSON in `host.rs` closes a brace count early).
+- 2026-08-29 `EffectEntry<C>` and `ItemEffect` both stay: `ItemEffect` is the frozen
+  ABI wire form, `EffectEntry` the generic buffered record; folding them is an ABI
+  change. A NIF-touching batch's row 6 swaps `priv/native/flz_nif.so` per arm with
+  sha checks. The routing admission callback is `impl FnMut` (static dispatch).
+- 2026-08-29 A worker waiting on a background job's completion can miss the event
+  (twice in segment B); the supervisor's heartbeat checks the job's marker file and
+  nudges — a stalled worker is a heartbeat finding, not a failure.
 - 2026-08-29 `test` is a blocking ratchet from `0670e992`: sleeps ≤ 2, refutes ≤ 12,
   `async: false` share ≤ 0.815, ExUnit ≤ 56.2 s ± 5 % on this box.
 
