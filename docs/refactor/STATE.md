@@ -62,63 +62,21 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-2-ffi-veneers`, **segment E** (batch 9 — verification, artifacts,
-hand-over), fresh general-purpose worker, spawned 2026-08-29 16:25 (commit clock). Closes the area.
+None. **Area 2 is done** (`e3b6cab3`, archived as `2026-08-29-refactor-2-ffi-veneers`,
+five areas flipped to blocking ratchets). Area 3 (`sdk/rust` + `flezha-macros`) is
+next and its dependency (area 1) is done.
 
-- last seen 18:13: row 5's decisive pass is on round 5 of 5; **29 row-5 runs** so
-  far. Why this row earned three passes, checked by the supervisor: `host_loop`'s
-  sha is identical for arms B2 and B4 (`cdb87eff`) because batches 3–4 touched only
-  the veneers, but B9 is `01a93b3c` — segment D's `kind_out` split in
-  `veneer/shape.rs` is inside the crate, so the C-ABI bench genuinely can have
-  moved and the row is not decorative here. Benchmarking is ~61 % of this segment's
-  wall clock (66 of 108 min) against ~30 % tests and ~9 % builds.
-- previous 18:33: row 5 has gone to a decisive pass of its own (`ab_row5_dec.log`,
-  `final2.done`) — the same three-arm instinct the worker applied to row 7node.
-  Segment E has run 1 h 40 m, which is what batch 9 costs: a full dist rebuild, seven
-  e2e arms, the interleaved baseline comparison and an A/B with re-runs. No stall.
-- previous 18:22: row 5 is being re-run (`ab_row5b.log`, a second pass after
-  `row5_pass1`), dev notes and the `CLAUDE.md` index line are written. Ticks 35/41;
-  batch 9's boxes tick at its end. No stall.
-- previous 18:10: the interleaved comparison (`$SCRATCH/e/inter/`) is done, three
-  rounds, head against a `refactor-baseline-2` worktree. The one system failure is
-  `DlqE2ETest` "tier-on poison payload freezes the min-watermark" and **it fails on
-  BOTH arms** — base in round 1, head in rounds 2 and 3 — which attributes it to the
-  board's F1 population, not to area 2. Worth recording how nearly this was misread:
-  the log's TAIL shows only rounds 2 and 3, where head fails and base passes twice in
-  a row, and reads exactly like an area-introduced regression. Round 1, at the top of
-  the file, is what refutes it. Read the whole interleaved log, never its tail.
-  The unit tier is 28/28 on both arms in all three rounds.
-- previous 17:58: all seven e2e arms done and the dev notes written; the worker is
-  on task 9.2's interleaved baseline comparison (`e2e2`, `inter`, `full_ab.sh`) and
-  has taken the 600 s timeout cap after using 3000 s. A second pass already re-ran
-  php and ruby-fibers green (1849 passed, exit 0), so at least some of the seven
-  failures are the load-sensitive population rather than this area. Ticks 35/41.
-- previous 17:45: final A/B done — and it ran a **three-arm decisive pass (A, B4,
-  B9)** so batches 5–8's contribution is isolated from batch 3–4's, unprompted and
-  the right instinct. The five e2e arms are through and the ruby-fibers arm is
-  running. Supervisor's own read of the driver log, ahead of the worker's diagnosis:
-  rust 1891/1894 with 3 failed, python 1870/1872 with 2, ruby 1847/1849 with 2, and
-  **node 1849 passed with 0 failed, exit 0** — the arm that had not run since
-  `refactor(0a)` is green on its first run in four areas. The failures still owe the
-  interleaved-baseline diagnosis task 9.2 requires.
-- previous 17:30: the final A/B is 15 minutes into its run (`ab_run.sh final`, then
-  `row5pairs B9`, then the Ruby direction row; arm A's `host_loop` executing now),
-  and the e2e driver `e2e.sh` is staged for the five runtime arms after it. Ticks
-  35/41. No stall.
-- previous 17:18: 9.1 done — the five committed native binaries and both jars are
-  rebuilt and show as modified, `mvn clean verify` and the four SDK suites answered
-  (`mvn.done`, `suites.done`), arms built (`arms.done`), and the final A/B is running
-  (`ab_row5.log`, `ab_final.log`). Ticks 35/41, which is still segment D's total —
-  batch 9's boxes tick at its end. No stall.
+Area-2 final A/B verdict, box `moon` on mains: no regression on any row — 7py
++0.53 % paired median (B9 faster 4/5), 7node settled by a three-arm pass (B9-vs-B4
+−0.13 %, B9-vs-A −0.55 %), row 5 settled by B2-vs-B9 (B9 faster 5/5, −3.54 %) after
+the A-vs-B9 direction proved to be arm A's build path, Ruby direction +2.89 % in
+B9's favour, allocs/elem flat (7.096 → 7.097).
 
-Supervisor verification of segment D, against the repo: `functions_over_50` = 0 and
-`files_over_800` = 0 in all five areas, `narrative_markers` = 0, sleeps exactly crate
-0 / node 1 / python 5 / ruby 1 / php 0; **every string literal over twelve characters
-in all four graph validators is byte-identical to `refactor-baseline-2`** (checked
-against the area tag, not merely against HEAD, so it covers segments A–D together);
-the `diagnostics.py` → `logger.py` rename is staged as a rename with public names
-unchanged. Area production 15 285 → 15 192 (−93); the veneers' +131 from
-ceiling-clearing extractions is paid for by the crate's −224.
+**Method finding that outlives this area: an arm built in a `git worktree` is not
+comparable to one built in the tree.** A Rust binary is not byte-reproducible across
+build paths, and row 5 read +3.5 % against arm A while reading −3.5 % against a
+tree-built arm of the same vintage. Every decisive A/B comparison must be between two
+arms built the same way; arm A stays useful for direction, not for a verdict.
 
 ## Awaiting the user's decision
 
@@ -179,13 +137,13 @@ anyone writes another multi-token allowlist entry.
   (`input_log.ex:189`, unconditional `:ets.insert`) overwrites it with 1. Fires
   whenever the park record and the next record share one fsync batch. Impact: the
   input-log retention floor and credit accounting under-report by one offset after
-  every park until the next input. `test/system/dlq_e2e_test.exs:119` fails 14/20
+  every park until the next input. `test/system/dlq_e2e_test.exs` (now line **121**, was 119) fails 14/20
   alone — it was never a load flake. Left red, untagged, per charter §9.
 - 0b F5 — `test/flezha_test.exs:591` (runner disconnect, preserve) failed 1/6 full
   runs, 0/10 alone, 0/3 instrumented; root cause not established; left as is.
-- 0b `mix test --include system` always exits 2: the two `:postgres_integration`
-  modules raise in `setup_all` because an include beats an exclude (the `:interop`
-  self-skip pattern is the fix; authorised inside 0b).
+- 0b ~~`mix test --include system` always exits 2~~ **REFUTED at HEAD (2e)**: both
+  `:postgres_integration` modules now self-skip via `SystemCase.skip_unless`, and four
+  of nine runtime-arm runs exited 0. The `:interop` self-skip pattern landed.
 - 0b UDS socket path overflow in the system tier: a stream socket path of 114 bytes
   (`/tmp/flezha_sockets/<node>/secondary_stream_<namespace>_<ids>_wus.sock`) exceeds
   `sun_path`; 120 "Failed to start primary listener" + 167 "Failed to connect runner"
@@ -219,9 +177,11 @@ anyone writes another multi-token allowlist entry.
 - 1s `test/apps/python_runner/__pycache__/fixtures.cpython-312.pyc` is COMMITTED
   and stale; every Python runner launch dirties the tree (area 2 deletes it and
   ignores `__pycache__`).
-- 1s the tree's installed Python veneer `.so` is a DEBUG build
-  (`build-python-sdk.sh` default, 24.5 MB); a `--runtime python` round trip under
-  `FLEZHA_BENCH_SKIP_BUILD=1` measures a debug veneer silently.
+- 1s/2e the installed veneer `.so`/`.node` are DEBUG builds whenever a script runs
+  without `--release`, which is its default — **this is general to all four veneers,
+  not Python's alone**, and the tree ends area 2 holding debug artifacts. A
+  `--runtime <veneer>` round trip under `FLEZHA_BENCH_SKIP_BUILD=1` then measures a
+  debug veneer silently.
 - 1s `mix bench.roundtrip --runtime python -p 2` with the default `--runners 2` is
   bimodal (~20 k vs ~33 k rec/s) on placement and the report records nothing
   about placement.
@@ -275,6 +235,24 @@ anyone writes another multi-token allowlist entry.
   harmless — the e2e builds via `cargo run`.
 - 1c `sdk/rust/tests/stream_transforms.rs:249` fails under a parallel suite run on a
   loaded box (5 s `wait_until`); same family as `tier_replay_skips…`; area 3.
+- 2e **the PHP conformance arm through a container needs `--network host`** — without
+  it every `transport=quic` test fails ("temporary test runner not connected") while
+  UDS passes; and the container shim LEAKS one container per wedge drill, because the
+  port kill reaches only the `docker run` client while `wedge_probe`'s handler never
+  returns. Both leaked containers were removed by the worker; none remain.
+- 2e `flz_core/src/control_unit.rs:19` — `unused_imports` on `socket_dir` when
+  cross-compiled to `x86_64-pc-windows-gnu`; only `build-dist.sh` surfaces it. Used
+  solely inside `#[cfg(unix)]`. Pre-existing at the baseline, area 1's crate.
+- 2e FOUR load-sensitive reds not previously on the board, each seen once and green
+  in isolation afterwards: `workflow_crash_resume_e2e_test.exs:249` (**reproduced at
+  `refactor-baseline-2`, so pre-existing**), `effectively_once_e2e_test.exs:34` (a
+  DIFFERENT module from the board's `effectively_once_checkpoint_e2e_test.exs:37`),
+  `plugin/kafka/worker_registry_test.exs:303` (a controller unit test with no runner),
+  and `flezha_test.exs:383` live handover (NOT the board's F5 at `:591`).
+- 2e the UDS `sun_path` overflow recorded under 0b has a NEW consequence: it can FAIL
+  a test, not merely log. `schema_evolution_e2e_test.exs:65` on the python arm is
+  preceded by `[flz_nif] UDS driver fatal error: path must be shorter than
+  libc::sockaddr_un.sun_path`.
 - 2d `sdk/php/src/Executor/SwooleExecutor.php:271` carries a PRODUCTION
   `usleep(5_000)` that nothing states or bounds in writing. The sleep metric counts
   test paths only, so no gate sees it. Probably D8's "production, bounded, stated"
