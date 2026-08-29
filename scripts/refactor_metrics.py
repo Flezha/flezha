@@ -270,13 +270,17 @@ ARROW = re.compile(
 )
 STRING = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
 LINE_COMMENT = re.compile(r"//.*$|#.*$")
+# Rust's `#` opens an attribute or a `quote!` interpolation, never a comment, so
+# the shared pattern would eat `#[cfg(test)] mod x {` and every `#ident` a proc
+# macro emits, and the brace depth would never close.
+LINE_COMMENT_RUST = re.compile(r"//.*$")
 
 
-def brace_extent(lines, start):
+def brace_extent(lines, start, comment=LINE_COMMENT):
     """Lines from `start` to the brace that closes the first `{` after it."""
     depth, opened = 0, False
     for i in range(start, len(lines)):
-        text = LINE_COMMENT.sub("", STRING.sub('""', lines[i]))
+        text = comment.sub("", STRING.sub('""', lines[i]))
         if not opened and "{" not in text and ";" in text:
             return None
         for ch in text:
@@ -314,7 +318,7 @@ def functions(lines, lang):
             one_liner = lang == "elixir" and re.search(r",\s*do:", line)
             length = 1 if one_liner else indent_extent(lines, i, len(m.group(1)), lang != "python")
         else:
-            length = brace_extent(lines, i)
+            length = brace_extent(lines, i, LINE_COMMENT_RUST if lang == "rust" else LINE_COMMENT)
             if length is None:
                 continue
         found.append((m.group(m.lastindex), i + 1, length))
