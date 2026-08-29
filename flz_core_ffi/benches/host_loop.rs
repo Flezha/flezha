@@ -7,21 +7,25 @@
 //! encode → decode → `apply_result` → `resolve_item`, with no veneer in the
 //! loop. Drives the ABI exactly as `tests/abi_scenario.rs` does.
 
-#[path = "alloc_counter.rs"]
-mod alloc_counter;
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use flz_core::bench_support::{fan_in, measurement_secs, ok_effect, stream_pair, Settle};
+use flz_core::bench_support::{
+    allocations, fan_in, measurement_secs, ok_effect, report, stream_pair, Counting, Settle,
+};
 use flz_core::operative::instance::StreamInstance;
 use flz_core::operative::registry::{get_class, OperativeRegistry};
 use flz_core::runner::OperativeDispatchHandle;
 use flz_core::schema;
 use flz_core_ffi::*;
+
+/// Allocation counting for the row: at most one `#[global_allocator]` per
+/// binary, so the static lives here and the machinery in `bench_support`.
+#[global_allocator]
+static GLOBAL: Counting = Counting;
 
 /// The host's fetcher pool, sized like the typed bench's poll pool on this box.
 const FETCHERS: usize = 8;
@@ -120,12 +124,19 @@ fn host_loop_bench(c: &mut Criterion) {
     group.throughput(criterion::Throughput::Elements(total as u64));
     group.bench_function("regression_host_100x1x1x10k", |b| {
         b.iter_custom(|iters| {
-            let allocs_before = alloc_counter::allocations();
+            let allocs_before = allocations();
             let mut elapsed = Duration::ZERO;
             for _ in 0..iters {
                 DONE.reset();
                 let start = Instant::now();
-                fan_in(&handle, &instance_ids, msgs_per_instance, &payload, &stream);
+                fan_in(
+                    &handle,
+                    &instance_ids,
+                    msgs_per_instance,
+                    &[payload.as_slice()],
+                    None,
+                    &stream,
+                );
                 let drained = DONE.wait_for(total, Duration::from_secs(60));
                 elapsed += start.elapsed();
                 assert!(
@@ -135,7 +146,7 @@ fn host_loop_bench(c: &mut Criterion) {
                     total
                 );
             }
-            alloc_counter::report(
+            report(
                 "regression_host_100x1x1x10k",
                 allocs_before,
                 (iters as usize * total) as u64,
