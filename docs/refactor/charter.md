@@ -12,8 +12,12 @@ OpenSpec change under `openspec/changes/refactor-*` is the plan for one area.
   own change, unless it blocks the area.
 - **Every commit is green**: the area's suites, the full ExUnit suite once, the
   gates in §9, and — on a hot path — the A/B in §8.
-- **Net code goes down.** A session that ends with more lines than it started
-  must say why in its report, and the reason must be §2, not convenience.
+- **Net code goes down**, measured over an area, not over a session. A session
+  that ends with more lines than it started must say why in its report, and the
+  reason must be another rule of this charter — §2's reuse order, or a §7
+  ceiling, whose extractions each cost a signature and a brace — never
+  convenience. Clearing a ceiling and reducing total lines pull against each
+  other; when they do, the ceiling wins and the area's total is what must fall.
 - **Reuse before new code** (§2). A plan item without a reuse decision is
   rejected by the supervisor.
 - **Cross-SDK rule** stands (see `CLAUDE.md`): a surface every SDK carries
@@ -112,8 +116,11 @@ per-language host half stays per language.
 
 ## 7. Size and complexity
 
-- File ≤ 800 lines. Function ≤ 50 lines. Cyclomatic complexity ≤ 10 (credo),
-  cognitive complexity ≤ 25 (clippy).
+- File ≤ 800 lines. Production function ≤ 50 lines. Cyclomatic complexity ≤ 10
+  (credo), cognitive complexity ≤ 25 (clippy). The function ceiling is production
+  only — as §4 already exempts test names, a test body that is one flat table of
+  assertions reads worse split at an arbitrary point, and this is what
+  `refactor_metrics.py` has measured all along. The file ceiling binds tests too.
 - Complexity that comes from a shared, parameterised core is accepted and
   named in the proposal. Complexity from accidental branching is flattened.
 - A GenServer or dispatcher is split by *mutation × strongly-connected
