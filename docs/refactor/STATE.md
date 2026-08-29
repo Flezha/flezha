@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 23:16 (supervisor session 2 — segment E reported, verifying)
+**Last updated**: 2026-08-29 23:21 (supervisor session 2 — area 3 segment E committed `623ba124`)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -46,7 +46,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
 | 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | **done** | A `4b032bb8`, B `d6ef9947`, fmt `3249b6da`, C `a4358e97`, D `33efc794`, E below | one veneer core, one shape, the ABI scenario by owner, validators by rule family; prod 15 285→15 192, test 8 769→8 415; fn>50 0, files>800 0, narrative 0, sleeps 7 in all five areas; all three A/B rows clean; **the five areas are now BLOCKING ratchets** |
-| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A `a1bdfa34`, B `9f747656`, C `0f23dbd1`, D `9e4b6681` | 0a finding CLOSED; `sdk/rust` **fn>50 12→0**, files>800 9→5; `lib.rs` 821→157; `dispatcher.rs` 1921→663 |
+| 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | implementing | A–E: `a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`, `623ba124` | 0a finding CLOSED; `sdk/rust` **fn>50 12→0, files>800 9→0, long_names 9→0**, sleeps 9→3; three flakes cured with mechanisms |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
 | 5b | Controller `plugin` | `refactor-5b-plugin` | 5a | pending | | |
@@ -62,82 +62,24 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-3-rust-sdk`, **segment E** (batches 9–10, the tests: `workflow/mod.rs`
-4 280 → ~160, `poll_core_tests.rs` into four, the `tests/` splits, the four buckets
-and **both flakes**), fresh general-purpose worker, spawned 2026-08-29 22:27.
-Checkpoint 5 after batch 10. No bench arm this segment. Stages nothing.
+None. Area 3 segments A–E are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`,
+`9e4b6681`, `623ba124`). **Segment F closes the area**: batch 10b (the
+supervisor-added `procedure::expand` split), then batch 11 — which now opens with the
+supervisor-added 11.0 (`tests/common::prelude`) and ends with the area's ONE
+measurement pass.
 
-Three things the brief pins: D5's rule that the driver scenarios split into phase
-FUNCTIONS under one `#[test]` (they share ordered process-global state, so splitting
-the test would make the ordering a hope); task 9.3 is a **measurement correction**
-(265 lines and nine `long_names` move production → test) and must not be read as
-deletion; and each flake needs **≥ 20 consecutive whole-binary runs before and
-after**, both counts recorded, since the survey established a mechanism for each and
-neither is load.
+`sdk/rust` is at **no file over 800, no function over 50, no name over 32**, sleeps
+9 → 3 with each survivor named. Supervisor re-ran the suite independently: 36 binaries,
+exit 0.
 
-Area 3 segments A–D are committed (`a1bdfa34`, `9f747656`, `0f23dbd1`, `9e4b6681`);
-segment F opens with the supervisor-added batch **10b**.
-
-- last seen 23:16: **reported at checkpoint 5.** Verified by the supervisor:
-  `files_over_800` **5 → 0**, `long_names` **9 → 0**, sleeps 5 → 3, `functions_over_50`
-  0, `tests/ui/` clean, `cargo +nightly fmt --all --check` clean. A supervisor re-run
-  of the SDK suite is in flight.
-
-  **The flake work is the best in the programme so far.** The worker found that the
-  plain regime (8 threads, idle box) reproduces NEITHER flake — 20/20 before and after
-  — so a green proof there would have meant nothing. It built a stress regime
-  (`--test-threads=32` under `nproc` busy loops) that does reproduce them: flake 1
-  **14/20 → 20/20**, flake 2 **19/20 → 20/20**. It then flagged its own caveat — flake
-  1's before/after populations differ (31 tests → 3), so the binary split is itself
-  part of the cure — and stressed all seven other split binaries at 20 runs each to
-  check. **A third flake was met and fixed** per charter §9:
-  `drop_oldest_evicts_head_and_bumps_oldest_counter` asserts a delta on a
-  process-wide counter while siblings shed concurrently, 16/20 → 20/20.
-- previous 23:00: batch 10's splits have landed — **37 test binaries and not one
-  over 800 lines**. `operative_dispatch.rs` became eight behaviour files,
-  `entity_timers.rs` four (`timer_{durability,firing,lifecycle,surface}`),
-  `operative_topology.rs` three, and task 10.3's renames are in
-  (`drop_nothing_holdback{,_bound}.rs`). Ticks 48 — batch 10 ticks at its end. The
-  two ≥20-run flake proofs are still ahead and are this segment's long pole.
-- previous 22:44: batch 9 essentially done, ticks 48. **`workflow/mod.rs` 4 280 →
-  161** with `workflow/tests/` beside it; `poll_core_tests.rs` split four ways;
-  `route_latest/tests.rs` → `route_latest_tests.rs` (git records it as a rename, so
-  the 9.3 measurement correction is visible as one). 26 files, 5 592 in / 5 284 out.
-  **To check at the checkpoint**: the poll-core split landed at
-  `runner/tests/poll_core/*` where task 9.2 named `runner/poll_core_tests/*` — a
-  deviation from D7's suffix rule that may be an improvement, but needs its reason
-  stated.
-
-`sdk/rust` is at **`functions_over_50` 0** and `files_over_800` 5 (the five remaining
-are test masses batches 9–10 own). `lib.rs` 821 → 157, `dispatcher.rs` 1 921 → 663.
-
-**The supervisor's task 7.5 named two owners and the arithmetic did not close.**
-1 921 − 615 = 1 306, still 506 over the ceiling. The worker added a third owner (one
-invocation, from the call to the settle), cleared the ceiling, and reported the
-deviation instead of quietly missing the target. It also made the three modules
-CHILDREN of `dispatcher` rather than siblings, because the extracted code reads the
-type's private fields and siblings would have forced them `pub(crate)` — a widening
-the split does not need.
-
-### A defect in the measuring script itself (`5d53f7f5`)
-
-`brace_extent` stripped `//.*$|#.*$` for every language, so in **Rust** it ate
-`#[cfg(test)] mod x {` and every `#ident` a `quote!` interpolates: the brace depth
-never closed and a function's measured length stopped at whatever line survived.
-Measured effects — `flezha-macros/src/state.rs` `push` reported **142** and is **36**;
-its `expand` reported **58** and is **72**; and `procedure.rs:32 expand`, **348 lines
-with 39 `quote!` blocks**, was invisible to the ceiling entirely. The area's
-`functions_over_50` is 4, not 2.
-
-Fixed (Rust now uses `//` only), `--self-test` green, and **no blocking area moved**,
-so the correction fires no false ratchet. `flezha-macros` is a measuring area, and its
-2 → 4 is the ruler being fixed, not a regression.
-
-**Consequence: a second uncovered breach, added as batch 10b.** No task owned
-`procedure.rs::expand`. It is not one flat template — it carries its own
-`// --- … ---` phase comments — so it splits the way batch 6 split
-`build_topology_with_persistence` (282 → 42), reusing batch 8's `keyword` and `try_*`
-and adding no module.
+**How the flakes were proved, because it is the method that matters.** The plain
+regime — 8 threads, idle box — reproduces NONE of the three, 20/20 before and after,
+so a green proof there would have been worthless. The worker built a stress regime
+(`--test-threads=32` under `nproc` busy loops) that does reproduce them, and reported
+both regimes. It then named its own confound (flake 1's binary was split as part of
+the cure, so before/after populations differ) and stressed all seven sibling binaries
+to close it. That is the standard for every later area: **a flake proof is only worth
+the regime that reproduces the flake.**
 
 ## Awaiting the user's decision
 
