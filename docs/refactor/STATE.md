@@ -1,6 +1,6 @@
 # Refactor board
 
-**Last updated**: 2026-08-29 15:30 (supervisor session 2 — segment B reported, verifying)
+**Last updated**: 2026-08-29 15:40 (supervisor session 2 — segment B committed `d6ef9947`)
 **Resume**: open a session in this repo and run `/loop /refactor`. The skill
 reads this file, `git status`, and the open change's `tasks.md`, then continues.
 **Note**: `openspec/changes/` is gitignored — open and archived changes live on
@@ -10,9 +10,10 @@ one host core, tests fast and real.
 
 ## Status
 
-Done: Phase 0, 1s, area 1 (kernel), area 2 segment A (`4b032bb8`). RUNNING: area 2
-segment B (batches 3–4) from task 3.1, plus the owed checkpoint-1 A/B — the box is
-on AC again (`/sys/class/power_supply/AC/online` = 1). ~30 % of the programme done.
+Done: Phase 0, 1s, area 1 (kernel), area 2 segments A (`4b032bb8`) and B
+(`d6ef9947`, batches 3–4 + the owed checkpoint-1 A/B, verified and committed
+2026-08-29 15:40). NEXT: area 2 segment C — batches 5 and 6, checkpoint 3 after
+batch 6. ~35 % of the programme done.
 
 **The history was rewritten outside the programme.** The user ran `fix.sh` (an
 untracked `git filter-branch` that shifts commit timestamps) at 14:52; every commit
@@ -33,7 +34,7 @@ Order is dependency order; an area starts only when its dependencies are `done`.
 | 0b | Test suite mechanics (flakes, sleeps, fleets) | `refactor-0-tests` | 0a | done | `ea1f6f26` | sleeps 212→2, refutes 107→12, ExUnit 96.7 s→56.2 s; `test` now blocking |
 | 1s | Dispatcher-unification A/B spike (numbers only) | `refactor-1s-dispatcher-spike` | 0a | done | `61a8a562` (+ branch `spike/1s-dispatcher`) | converge; ≤ 1.45 % loss on every resolvable row, allocs flat |
 | 1 | `flz_core` + `flz_transport` + `flz_nif` | `refactor-1-kernel` | 0b, 1s | done | `d1eb2466`, `2f8517fc`, `e6bd6792` | −1 851 dead lines; host/engine/driver/transport by owner; one error enum per crate; doc density 25→15 %, markers 21→0, clippy 24→0, files>800 7→0; A/B: erased +5 %, roundtrip +1–13 %, typed −1.4 % (area 3) |
-| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | A: `4b032bb8` | A: one veneer core, error enum, hygiene; prod 3 444→3 274, dups 23→7; A/B owed (battery) |
+| 2 | `flz_core_ffi` glue + Node/Ruby/PHP/Python veneers | `refactor-2-ffi-veneers` | 1 | implementing | A: `4b032bb8`, B: `d6ef9947` | A+B: one veneer core and one shape; prod 3 444→3 205, test →1 722, fn>50 6→0, files>800 3→1, dups 23→8, sleeps →1; both A/Bs clean on mains |
 | 3 | `sdk/rust` + `flezha-macros` | `refactor-3-rust-sdk` | 1 | pending | | |
 | 4 | `sdk/java` | `refactor-4-java-sdk` | 1 | pending | | |
 | 5a | Controller `state` | `refactor-5a-state` | 0b | pending | | |
@@ -50,114 +51,16 @@ Status values: `pending` → `surveying` → `proposed` → `implementing` →
 
 ## Current worker
 
-`refactor-2-ffi-veneers`, **segment B** (tasks 3.1–4.5 + the owed 0.1/0.3/2.5),
-fresh general-purpose worker, spawned 2026-08-29 14:05 by supervisor session 2.
-Brief: the checkpoint-1 A/B first (arm A rebuilt from a `git worktree` of tag
-`refactor-baseline-2`, arm B2 = today's tree, which is segment A's tree unchanged),
-then batches 3 and 4, then the checkpoint-2 A/B. Stops at CHECKPOINT 2; stages
-nothing.
+None. Segment B is verified and committed; segment C (batches 5–6) is next.
 
-- last seen 15:30: **reported and being verified.** The worker stopped before the
-  row-7node ruling reached it, so it has been resumed for that one item; everything
-  else in its report is accepted pending the checks below.
-
-  Supervisor verification so far, against the repo and not the report: diff scope is
-  clean (only `flz_core_ffi/`, `sdk/node`'s type test, the two `build-*-sdk.sh`, the
-  `.pyc` deletions, `sdk/python/.gitignore` and the authorised `fixtures.mjs`);
-  `refactor_metrics.py --check` 0 regressions; every `pub fn` in `veneer/shape.rs`
-  has a caller; task 4.3 verified in code (`changed: Condvar`, notified at six
-  bookkeeping transitions, `settle`/`drain` waiting on it, **zero sleeps left in
-  `pool.rs`**); no narrative comments in any new or rewritten file. Area diff
-  (segments A+B) is 3211 in / 3592 out.
-
-  Two supervisor items found in verification: (a) `napi_host/mod.rs`'s module doc is
-  **16 lines, one over charter §5's ceiling** — to be trimmed; (b) `abi_scenario.rs`
-  remains the one file over 800 (1580), which batch 5 task 5.1 splits, so it is
-  carried, not excused.
-- previous 15:12: batch 4 ticked through 4.5 (23/41), checkpoint-2 A/B run
-  (the net-LOC figure quoted here at the time was wrong; see 15:30). **Row 7node is a real regression and the supervisor has blocked the
-  checkpoint on it** (detail below); one time-boxed fix attempt directed, then a
-  re-measure of the decisive B2-vs-B4 pass only.
-- previous 14:58: batch 4 in flight, ticks 18/41. **The D3 napi spike typed** —
-  `ThreadsafeFunction<schema::Activation, (), Unknown<'static>, Status, false>` with
-  `build_callback` compiles; the fallback is NOT taken. The handover notes missed one
-  constraint the spike found: `ThreadsafeFunctionBuilder` declares `Args: 'static`, so
-  the exported function must be spelled `Function<Unknown<'static>, ()>` —
-  `Function<Object, ()>` carries the `Env` lifetime and is refused. `napi_host.rs` is
-  split into `napi_host/{mod,pool}.rs`, `napi_glue.rs` and `native-types.test.mjs`
-  rewritten. **Net −613 lines** by the metrics script (prod 3274 → 3205, test 2266 → 1722).
-  NOTE: the raw `git diff` figure quoted at this heartbeat (−1422) was wrong — the
-  script and the diff disagree because `napi_host/` was untracked when measured.
-- previous 14:47: **batch 3 complete**, ticks 18/41. `veneer/shape.rs` 670 lines +
-  `mod.rs` 285; `python_glue.rs`, `ruby_glue.rs`, `abi_scenario.rs` rewritten onto it.
-  Coverage before/after taken per D9 (`$SCRATCH/cov/after3-*.lcov`), both veneer
-  suites rebuilt and run. Interim diff figure at this point was +12 lines; see the
-  corrected whole-segment number at 15:30 — untracked files are invisible to both
-  `git diff` and the metrics script until they are intent-added.
-- previous 14:35: **checkpoint-1 A/B done** (14:07–14:31), ticks 13/41 (0.1, 0.3,
-  2.5), batch 3 underway — `flz_core_ffi/src/veneer/shape.rs` created (25.6 KB) and
-  `mod.rs` edited at 14:33. Supervisor sent three record corrections (the authorised
-  fixtures fix to be reported on its own; the Box table's dead pre-rewrite hashes;
-  a measurement window in the prose that its own logs contradict).
-- previous 14:22: alive, row 5 (`host_loop --bench`, arm A) running; rows 7py
-  and 7node complete for arms A and B2 (5 paired rounds each + 3 arm-A floors).
-  Raw rates in `$SCRATCH/area2/logs/*.rate`; the node floors spread 44 456–50 223
-  (12.9 %), so row 7node is a paired-rounds row, not a 3 % row. Ticks 10/41; one
-  tracked edit, `test/apps/node_runner/fixtures.mjs`, authorised — see the 0a
-  regression below.
-- previous 14:10: alive, `mix bench.roundtrip --runtime node … -p 2 -m 40000`
-  (row 7node) running; arms A and B2 built with sha256 under `$SCRATCH/area2/`,
-  `ab_run.sh` written, worktree `$SCRATCH/base` at `c5ba37b2`; ticks 10/41,
-  no tracked edit yet (correct — the A/B precedes batch 3).
-
-### Checkpoint-1 A/B verdict (area 2, batches 0–2 — the one owed from session 1)
-
-Measured 2026-08-29 14:07–14:31 on mains, box `moon`, governor `powersave`, five
-paired rounds alternating A B / B A. Arm A rebuilt from a worktree of
-`refactor-baseline-2` (`c5ba37b2`), arm B2 from the segment-A tree.
-
-| row | A median | B2 median | Δ | floor | verdict |
-|---|---|---|---|---|---|
-| 5 (`host_loop` 60 s) | 769.49 ms | 782.76 ms | +1.72 % B slower | 0.83 % | no regression — B faster in 3 of 5 pairs, direction not consistent; allocs/elem 7.098 → 7.086 |
-| 7py (`--runtime python`) | 19,504 rec/s | 19,690 rec/s | +0.95 % B faster | 4.68 % | no regression — B faster in 5 of 5 pairs |
-| 7node (`--runtime node`) | 46,666 rec/s | 44,379 rec/s | −4.90 % B slower | 11.89 % | no regression — inside the floor; both arms fall monotonically across rounds (thermal drift, not the arm) |
-
-**Segment A is clear.** The battery refusal from session 1 is discharged. Row 7node
-is a paired-rounds row for the rest of this area: three arm-A floor passes fell
-50,223 → 48,515 → 44,456 over ten minutes, so an unpaired 3 % reading on this box
-means nothing.
-
-### Checkpoint-2 A/B (area 2, batches 3–4) — one row open
-
-Rows 5 and 7py settle clean: row 5 is not resolvable and does not need to be
-(B4's `host_loop` is byte-identical to B2's — batches 3 and 4 touch only the
-veneers, so the C-ABI bench cannot have moved); row 7py is −0.65 %, inside its
-4.68 % floor, B4 faster in 3 of 5 pairs.
-
-**Row 7node is a real regression, not noise.** Arm A vs B4 put B4 behind in 5 of
-5 pairs; five more rounds started from B4 read the same, so it is not the
-within-round thermal drift both arms show; and the decisive B2-vs-B4 pass, which
-isolates batches 3–4 from batch 2, gives medians 49,207 → 45,911 (−6.70 %),
-paired median −4.25 %, **B4 slower in 5 of 5, order-independent**. It sits inside
-the row's 11.89 % single-run floor and outside the charter's 3 % clause, so the
-row does not settle itself.
-
-This is D3's risk 1 arriving: moving napi's conversion onto the loop thread costs
-more on this row than skipping the fetcher-thread struct build saves. Cause, as
-the worker diagnosed and the supervisor verified in the code: `Source::get`
-(`napi_glue.rs:205`) does `Object::get` — which already performs its own presence
-check — and then adds `v.get_type()`, so every field read costs two N-API round
-trips where napi-derive's generated `FromNapiValue` cost one per object.
-`Key::spell` returns a `&'static str`, so keys are not the cost.
-
-**Ruling**: the floor is single-run resolving power; a 10-of-10 paired,
-order-independent direction is signal, so the row does not ship as it stands. One
-time-boxed fix attempt directed — collapse to a single typeof via
-`get_named_property_unchecked` + one `get_type()`, preserving absent-vs-explicit-null
-— then re-measure the B2-vs-B4 pass alone. D3's fallback is NOT to be taken: the
-cost is on the `Source` side, which the fallback does not touch. If the fix does
-not close it, the choice is accept-with-a-recorded-cost or escalate, and it comes
-back to the supervisor.
+Verification that closed segment B, done against the repo and not the report:
+diff scope clean; `refactor_metrics.py --check` 0 regressions; every `pub fn` in
+`veneer/shape.rs` has a caller; the `named` helper (`napi_glue.rs:97`) folds
+`Undefined | Null` exactly as the old reader did and both call sites go through it;
+task 4.3's condvar verified at six notify sites with zero sleeps left in `pool.rs`;
+no narrative comments in any new or rewritten file; module docs all ≤ 15 lines
+(`napi_host/mod.rs` was trimmed from 16); `cargo test -p flz_core_ffi --features
+napi` re-run by the supervisor on the final tree, exit 0.
 
 ## Awaiting the user's decision
 
